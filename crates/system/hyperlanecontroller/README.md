@@ -121,7 +121,7 @@ the token bridges and the transport adapters.
 | `setBridgeGateway` | `chainId`, `bridge`, `destinationChainId`, `adapter` | `bridge.setGateway(destinationChainId, adapter)`: the adapter the bridge sends through; a zero `adapter` clears the override |
 | `linkBridges` | `remoteChainId`, `bridge`, `adapter`, `remoteBridge`, `remoteAdapter` (the Hyperlane adapters) | on each side: `adapter.setRouterWithChain` (the other adapter), `bridge.registerRemoteBridge` (ERC-7930 of the other bridge), `bridge.setGateway(other chain, adapter)` |
 | `linkTokenBridges` | `remoteChainId`, `tokenBridge`, `remoteTokenBridge` | on each side: `tokenBridge.addPeer(other chain, other token bridge)` |
-| `addHyperlaneChain` | `chainId`, `ism`, `hook` | `add_domain` |
+| `addHyperlaneChain` | `chainId`, `icaRouter`, `ism`, `hook` | the Outbe ICA router enrolls `icaRouter` (skipped if the same router is enrolled, reverts if another one is), then `add_domain` |
 | `removeHyperlaneChain` | `chainId` | `remove_domain` |
 
 ```json

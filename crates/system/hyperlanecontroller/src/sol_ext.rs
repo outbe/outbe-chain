@@ -22,6 +22,12 @@ sol! {
         function setRouterWithChain(uint32 domain, bytes32 router, uint256 chainId) external;
     }
 
+    /// Remote-router table of Hyperlane's `Router`, which the InterchainAccountRouter extends.
+    interface IHyperlaneRouter {
+        function routers(uint32 _domain) external view returns (bytes32);
+        function enrollRemoteRouter(uint32 _domain, bytes32 _router) external;
+    }
+
     /// Owner function of `contracts/tokens/src/ERC7786TokenBridge.sol`.
     interface ITokenBridge {
         function addPeer(uint32 domain, address peerBridge) external;

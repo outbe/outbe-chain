@@ -1087,7 +1087,8 @@ mod vote_target {
                 v(0xc2)
             ),
             format!(
-                r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"ism":"{:#x}","hook":"{:#x}"}}"#,
+                r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}"}}"#,
+                v(0xe1),
                 v(0xd1),
                 hook(9)
             ),
@@ -1199,6 +1200,62 @@ mod vote_target {
         let sent = sub_calls_from(&p, start);
         assert_eq!(sent.len(), 1);
         assert_eq!(remote_calls(&sent[0].1), (SEPOLIA, vec![(bridge(), pause)]));
+    }
+
+    #[test]
+    fn add_hyperlane_chain_enrolls_the_ica_router_once_then_adds_the_domain() {
+        let add = format!(
+            r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}"}}"#,
+            v(0xe1),
+            v(0xd1),
+            hook(9)
+        );
+        let enrolled = |p: &mut HashMapStorageProvider, router: B256| {
+            p.stub_sub_call_at_selector(
+                ica_router(),
+                crate::sol_ext::IHyperlaneRouter::routersCall::SELECTOR,
+                Bytes::from(router.abi_encode()),
+            );
+        };
+        let enroll = Bytes::from(
+            crate::sol_ext::IHyperlaneRouter::enrollRemoteRouterCall {
+                _domain: ARBITRUM,
+                _router: v(0xe1).into_word(),
+            }
+            .abi_encode(),
+        );
+
+        // A new chain: enroll, then accept the remote ISM through the ICA.
+        let mut p = initialized_provider();
+        enrolled(&mut p, B256::ZERO);
+        approve(&mut p, &add);
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &add).unwrap();
+        let sent = sub_calls_from(&p, start);
+        assert_eq!(sent[0], (ica_router(), enroll));
+        assert_eq!(remote_calls(&sent[1].1).0, ARBITRUM);
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.ism_by_domain.read(&ARBITRUM).unwrap(), v(0xd1));
+        });
+
+        // The deployer enrolled the same router: no second enrollment.
+        let mut p = initialized_provider();
+        enrolled(&mut p, v(0xe1).into_word());
+        approve(&mut p, &add);
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &add).unwrap();
+        assert_eq!(sub_calls_from(&p, start).len(), 1);
+
+        // Another router is enrolled: nothing applies.
+        let mut p = initialized_provider();
+        enrolled(&mut p, v(0xe2).into_word());
+        approve(&mut p, &add);
+        let err = apply(&mut p, &add).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::RemoteRouterMismatch::SELECTOR
+        );
     }
 
     #[test]

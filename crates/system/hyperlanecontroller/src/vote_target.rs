@@ -24,7 +24,7 @@ use serde::Deserialize;
 use crate::errors::HyperlaneControllerError;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{IERC7786Bridge, IHyperlaneGatewayAdapter, ITokenBridge};
+use crate::sol_ext::{IERC7786Bridge, IHyperlaneGatewayAdapter, IHyperlaneRouter, ITokenBridge};
 use crate::RemoteCall;
 
 #[derive(Debug, Deserialize)]
@@ -67,10 +67,13 @@ enum Action {
         token_bridge: Address,
         remote_token_bridge: Address,
     },
-    /// Puts `chain_id` under the controller: it accepts the ownership of the
-    /// ISM there and starts to sync the Outbe validators to it.
+    /// Puts `chain_id` under the controller: the Outbe ICA router enrolls
+    /// `ica_router` (the ICA router on that chain), then the controller
+    /// accepts the ownership of the ISM there and starts to sync the Outbe
+    /// validators to it.
     AddHyperlaneChain {
         chain_id: u32,
+        ica_router: Address,
         ism: Address,
         hook: Address,
     },
@@ -144,9 +147,10 @@ impl Action {
             }
             Self::AddHyperlaneChain {
                 chain_id,
+                ica_router,
                 ism,
                 hook,
-            } => remote(chain_id) && !ism.is_zero() && !hook.is_zero(),
+            } => remote(chain_id) && ![ica_router, ism, hook].iter().any(|a| a.is_zero()),
             Self::RemoveHyperlaneChain { chain_id } => remote(chain_id),
         };
         if !valid {
@@ -223,9 +227,13 @@ impl Action {
         match self {
             Self::AddHyperlaneChain {
                 chain_id,
+                ica_router,
                 ism,
                 hook,
-            } => controller.add_domain(*chain_id, *ism, *hook),
+            } => {
+                controller.enroll_ica_router(*chain_id, *ica_router)?;
+                controller.add_domain(*chain_id, *ism, *hook)
+            }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
             _ => {
                 let calls = self.calls(controller.local_domain()?);
@@ -304,6 +312,36 @@ fn erc7930_evm(chain_id: u32, addr: Address) -> Bytes {
 }
 
 impl HyperlaneControllerContract<'_> {
+    /// Enrolls the ICA router of `domain` on the Outbe ICA router, so that
+    /// `call_remote` can reach that chain. The router keeps the first
+    /// enrollment forever, so the same router is a no-op and another router
+    /// reverts.
+    fn enroll_ica_router(&mut self, domain: u32, router: Address) -> Result<()> {
+        let ica_router = self.ica_router.read()?;
+        let ret = self.storage.staticcall(
+            ica_router,
+            IHyperlaneRouter::routersCall { _domain: domain }
+                .abi_encode()
+                .into(),
+        )?;
+        let enrolled = IHyperlaneRouter::routersCall::abi_decode_returns(&ret).map_err(|_| {
+            HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter routers")
+        })?;
+        if enrolled == router.into_word() {
+            return Ok(());
+        }
+        if enrolled != B256::ZERO {
+            return Err(HyperlaneControllerError::RemoteRouterMismatch { domain, enrolled }.into());
+        }
+        let data = IHyperlaneRouter::enrollRemoteRouterCall {
+            _domain: domain,
+            _router: router.into_word(),
+        }
+        .abi_encode();
+        self.call_local(ica_router, U256::ZERO, data.into())
+            .map(|_| ())
+    }
+
     /// Runs an approved action once, inside one checkpoint.
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_payload.read(&proposal_id)?;

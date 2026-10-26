@@ -719,6 +719,22 @@
   },
   {
     "type": "error",
+    "name": "RemoteRouterMismatch",
+    "inputs": [
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "enrolled",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SignerMismatch",
     "inputs": [
       {

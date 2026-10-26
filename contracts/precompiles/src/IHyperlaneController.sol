@@ -39,6 +39,7 @@ interface IHyperlaneController {
     error InvalidProposalPayload(string value);
     error UnknownApprovedAction(uint256 proposalId);
     error ApprovedPayloadMismatch(uint256 proposalId);
+    error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
