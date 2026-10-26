@@ -51,14 +51,15 @@ where
         let account = self.read_fee_route_account(signer, ctx.clone())?;
         if waiver::bootstrap_fee_waiver_authorized(tx, signer, ctx.chain_id, &account) {
             let gas_limit = tx.gas_limit();
-            if !self.sponsored_gas_fits(gas_limit) {
-                return Err(crate::sponsored_block_budget_deferral(*tx.tx_hash()));
-            }
-            let result = self.execute_without_user_fee(tx_env, recovered, f);
-            if matches!(result, Ok(Some(_))) {
-                self.charge_sponsored_gas(gas_limit);
-            }
-            return result;
+            return if self.sponsored_gas_fits(gas_limit) {
+                let result = self.execute_without_user_fee(tx_env, recovered, f);
+                if matches!(result, Ok(Some(_))) {
+                    self.charge_sponsored_gas(gas_limit);
+                }
+                result
+            } else {
+                Err(crate::sponsored_block_budget_deferral(*tx.tx_hash()))
+            };
         }
 
         let delegated_to = self.fee_route_delegation(account)?;
