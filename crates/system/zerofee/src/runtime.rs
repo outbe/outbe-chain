@@ -308,16 +308,21 @@ pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
 ///   [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`](outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
 ///   (1 h).
 ///
-/// Every validator enforces this band with the check
-/// `validate_against_parent_timestamp_millis` in the `outbe-node` consensus
-/// policy. The proposer clamps its own timestamp to the same band.
+/// Validators enforce this inclusive band with
+/// `validate_against_parent_timestamp_millis` in
+/// `crates/blockchain/node/src/consensus/policy.rs` (`outbe-node`). A parent at
+/// height zero skips only the minimum advance. Strict monotonicity and the
+/// maximum still apply. This function does not validate the timestamp. It
+/// relies on the surrounding block-validation flow.
 ///
-/// The drift band bounds the resulting exposure. A single proposer can move
-/// the UTC-day quota rollover earlier by at most
-/// `MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`. Chain time is monotonic, so each day
-/// boundary resets a signer's quota at most once. The epoch intentionally
-/// stays on the UTC timestamp day key. Thus it matches the `getCounter`
-/// view, the `day` field of the
+/// The maximum is parent-relative, not a wall-clock or cumulative bound. A
+/// proposer can cross an upcoming UTC midnight within one permitted advance.
+/// Consecutive blocks can accumulate larger advances. Along a valid monotonic
+/// chain, each day boundary resets a signer's quota at most once. This policy
+/// accepts that early rollover rather than preventing it.
+///
+/// The epoch intentionally stays on the UTC timestamp day key. Thus it matches
+/// the `getCounter` view, the `day` field of the
 /// [`SponsorshipAuthorized`](IZeroFee::SponsorshipAuthorized) event, and the
 /// day-indexed emission schedule. A unit test guards that the drift bound
 /// stays below one day.
@@ -397,7 +402,7 @@ mod tests {
     use alloy_sol_types::SolCall;
     use outbe_primitives::{
         addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS},
-        consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+        consensus::{MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS},
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
         time::SECONDS_PER_DAY,
     };
@@ -864,31 +869,37 @@ mod tests {
 
     #[test]
     fn quota_epoch_drift_bound_is_below_one_day() {
-        // The `authorize_sponsorship` doc says that one proposer can move the
-        // day rollover earlier by at most the drift bound. That reasoning is
-        // valid only while the bound is below one day. The const block makes a
-        // wider bound fail at compile time.
+        // Guard the cross-module assumption that one permitted timestamp
+        // advance cannot span a full UTC day.
         const { assert!(MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS < SECONDS_PER_DAY * 1_000) };
     }
 
     #[test]
     fn quota_resets_once_at_proposer_advanced_boundary() {
         let max_drift_secs = MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS / 1_000;
-        let previous_day = outbe_primitives::time::previous_date_key(BLOCK_DAY).expect("date step");
         let parent_ts = BLOCK_TS - 1;
+        let previous_day = timestamp_to_date_key(parent_ts);
         let advanced_ts = parent_ts + max_drift_secs;
-        let further_ts = advanced_ts + max_drift_secs;
+        let further_ts = advanced_ts + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS / 1_000;
         assert!(advanced_ts >= BLOCK_TS, "the advance must cross midnight");
+        assert_eq!(timestamp_to_date_key(advanced_ts), BLOCK_DAY);
+        assert!(
+            (MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS..=MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
+                .contains(&((advanced_ts - parent_ts) * 1_000))
+        );
         assert_eq!(timestamp_to_date_key(further_ts), BLOCK_DAY);
 
         with_storage(|storage| {
             // The signer used the full quota one second before midnight.
             seed_packed(&storage, SIGNER, previous_day, FREE_TX_DAILY_LIMIT);
             let err = authorize_sponsorship(storage.clone(), SIGNER, parent_ts).unwrap_err();
-            assert!(matches!(
+            assert_eq!(
                 err,
-                ZeroFeePolicyError::FreeTxDailyExhausted { used: 8, limit: 8 }
-            ));
+                ZeroFeePolicyError::FreeTxDailyExhausted {
+                    used: FREE_TX_DAILY_LIMIT,
+                    limit: FREE_TX_DAILY_LIMIT,
+                }
+            );
 
             // A proposer advances the timestamp past midnight by the maximum
             // drift. The quota resets one time for the new day.
@@ -896,15 +907,40 @@ mod tests {
                 let auth = authorize_sponsorship(storage.clone(), SIGNER, advanced_ts).unwrap();
                 assert_eq!(auth.current_day(), BLOCK_DAY);
                 assert_eq!(auth.next_count(), expected);
-                record_sponsorship_use(storage.clone(), auth).unwrap();
+                if expected == 1 {
+                    assert_eq!(
+                        ZeroFeeContract::new(storage.clone())
+                            .read_packed(SIGNER)
+                            .unwrap(),
+                        pack_counter(previous_day, FREE_TX_DAILY_LIMIT)
+                    );
+                }
+                assert_eq!(
+                    record_sponsorship_use(storage.clone(), auth).unwrap(),
+                    expected
+                );
             }
+            let exhausted_counter = pack_counter(BLOCK_DAY, FREE_TX_DAILY_LIMIT);
+            assert_eq!(
+                ZeroFeeContract::new(storage.clone())
+                    .read_packed(SIGNER)
+                    .unwrap(),
+                exhausted_counter
+            );
 
             // A further advance inside the same day does not reset the quota.
-            let err = authorize_sponsorship(storage, SIGNER, further_ts).unwrap_err();
-            assert!(matches!(
+            let err = authorize_sponsorship(storage.clone(), SIGNER, further_ts).unwrap_err();
+            assert_eq!(
                 err,
-                ZeroFeePolicyError::FreeTxDailyExhausted { used: 8, limit: 8 }
-            ));
+                ZeroFeePolicyError::FreeTxDailyExhausted {
+                    used: FREE_TX_DAILY_LIMIT,
+                    limit: FREE_TX_DAILY_LIMIT,
+                }
+            );
+            assert_eq!(
+                ZeroFeeContract::new(storage).read_packed(SIGNER).unwrap(),
+                exhausted_counter
+            );
         });
     }
 
