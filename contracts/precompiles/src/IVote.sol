@@ -53,9 +53,10 @@ interface IVote {
         uint64 createdHeight;
         uint64 votingDeadlineHeight;
         ProposalStatus status;
-        /// @notice Results of voting, as if calculated now.
-        /// The actual state may differ, e.g. if the validator set changes before the voting
-        /// deadline.
+        /// @notice Tally recomputed against the proposal's currently eligible electorate.
+        /// @dev This is a live view, not a stored finalization tally, and may change
+        /// after finalization. The terminal status and finalization event record the
+        /// decision made using the live electorate at finalization.
         VoteTally state;
         /// @dev This struct does not carry the full list of voters.
         /// Use `getProposalVoters` to get it.

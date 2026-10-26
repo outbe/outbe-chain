@@ -7,6 +7,20 @@
 //! - `precompile.rs` - live ABI dispatch for proposals and votes.
 //! - `lifecycle.rs` - begin-block tally entrypoint.
 //! - `events.rs` - domain event payloads used by runtime/precompile wiring.
+//!
+//! # Live electorate
+//!
+//! Admission stores the target's electorate policy, not a membership snapshot.
+//! Cast eligibility is checked against the policy's current eligible group.
+//! At finalization, after the inclusive voting deadline, the tally and quorum
+//! denominator use the same live eligible group. Stored ballots from validators
+//! no longer in that group are not counted; eligible late joiners may vote while
+//! the voting window remains open. There is no creation-time membership or count
+//! snapshot.
+//!
+//! Proposal views recalculate the tally against the current group, even after
+//! finalization. The terminal status and finalization event record the decision
+//! made at finalization; a later view does not change that decision.
 
 mod abi;
 
