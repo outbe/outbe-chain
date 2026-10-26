@@ -21,10 +21,10 @@ ignore = [
     # advisory exceptions by dependency edge or enforcing an expiry.
     { id = "RUSTSEC-2026-0387", reason = "elliptic-curve 0.13.8 requires crypto-bigint 0.5.5, which has no compatible patched release; the 0.7 dependency is patched separately" },
     # zstd 0.13.3 / zstd-safe 7.2.4 / zstd-sys 2.0.16 are transitive dependencies of
-    # reth v2.6.0 and commonware-storage v2026.9.0; patched releases (zstd >= 0.14.3,
+    # reth v2.8.1 and commonware-storage v2026.9.0; patched releases (zstd >= 0.14.3,
     # zstd-safe >= 8.2.0, zstd-sys >= 2.1.2) are semver-breaking major/exact-pin bumps
     # that require upstream reth and commonware upgrades.
-    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3 is required by reth v2.6.0 and commonware-storage v2026.9.0; patched release >=0.14.3 is semver-incompatible" },
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13.3 is required by reth v2.8.1 and commonware-storage v2026.9.0; patched release >=0.14.3 is semver-incompatible" },
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7.2.4 is required by zstd 0.13.3 and compression-codecs 0.4.37 (via reth); patched release >=8.2.0 is semver-incompatible and seekable feature is unused" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7.2.4 is required by zstd 0.13.3 and compression-codecs 0.4.37 (via reth); patched release >=8.2.0 is semver-incompatible" },
     { id = "RUSTSEC-2026-0410", reason = "zstd-sys =2.0.16 is pinned by zstd-safe 7.2.4; advisory affects only wasm32 allocator shim while Outbe targets x86_64-unknown-linux-gnu" },

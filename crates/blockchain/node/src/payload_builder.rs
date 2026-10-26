@@ -130,7 +130,8 @@ where
         } = config;
 
         let state_provider = self.provider.state_by_block_hash(parent_header.hash())?;
-        let state = StateProviderDatabase::new(state_provider.as_ref());
+        let state =
+            StateProviderDatabase::new(reth_storage_api::EvmStateProviderAdapter(&state_provider));
         let mut db = State::builder()
             .with_database(cached_reads.as_db_mut(state))
             .with_bundle_update()

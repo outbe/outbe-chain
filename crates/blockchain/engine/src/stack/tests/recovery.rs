@@ -443,6 +443,7 @@ fn recovered_fcu_completes_without_running_executor_heartbeat() {
                 state,
                 payload_attrs,
                 tx,
+                ..
             }) = engine_rx.recv().await
             else {
                 panic!("expected recovered FCU");
