@@ -71,8 +71,8 @@ pub enum IntexFactoryError {
     #[error("mining sequence overflow")]
     MiningSequenceOverflow,
 
-    #[error("exercised units exceed the series")]
-    ExercisedUnitsExceedSeries,
+    #[error("mined units exceed the series")]
+    MinedUnitsExceedSeries,
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
 }
@@ -139,9 +139,7 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::RouterAnsweredNoLegs => revert_with(I::RouterAnsweredNoLegs {}),
             IntexFactoryError::PromisOverflow => revert_with(I::PromisOverflow {}),
             IntexFactoryError::MiningSequenceOverflow => revert_with(I::MiningSequenceOverflow {}),
-            IntexFactoryError::ExercisedUnitsExceedSeries => {
-                revert_with(I::ExercisedUnitsExceedSeries {})
-            }
+            IntexFactoryError::MinedUnitsExceedSeries => revert_with(I::MinedUnitsExceedSeries {}),
             IntexFactoryError::DateStep { kind, date_key } => revert_with(I::DateStep {
                 kind,
                 dateKey: date_key,

@@ -139,7 +139,7 @@ contract IntexNFT1155MetadataTest is Test {
         assertTrue(svg.contains("15.01.1970 00:00 UTC"), "deadline date formatting");
     }
 
-    function test_uri_Expired_DerivedFromClock() public {
+    function test_uri_Forfeited_DerivedFromClock() public {
         vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
@@ -149,10 +149,10 @@ contract IntexNFT1155MetadataTest is Test {
 
         vm.warp(deadline + 1);
         bytes memory json = _json(iTok);
-        _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Expired\"}");
+        _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Forfeited\"}");
         _assertContains(json, "\"Call Deadline\"");
         bytes memory svg = json.decodeSvg();
-        assertTrue(svg.contains("EXPIRED"), "badge text");
+        assertTrue(svg.contains("FORFEITED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");
         _assertRowAt(svg, "Call Deadline", 400);
     }

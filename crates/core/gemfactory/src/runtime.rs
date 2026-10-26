@@ -13,7 +13,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemIssued, GemMined, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -475,7 +475,7 @@ pub fn mine_promis(
 
     validate_pow(gem_id, item.owner, nonce)?;
 
-    // Burn, mint and the exercise event are one transition: a rejected or
+    // Burn, mint and the mining event are one transition: a rejected or
     // failed mint leaves the settled Gem in place so the owner can retry.
     storage.clone().with_checkpoint(|| {
         burn_settled(storage, gem_id)?;
@@ -487,7 +487,7 @@ pub fn mine_promis(
 
         emit_event(
             storage,
-            GemExercised {
+            GemMined {
                 gemId: gem_id,
                 owner: item.owner,
                 promisLoadMinor: item.promis_load_minor,
@@ -516,7 +516,7 @@ pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
         pow::MiningDomain::Gem,
         gem_id,
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
     .map_err(|e| GemFactoryError::from(e).into())

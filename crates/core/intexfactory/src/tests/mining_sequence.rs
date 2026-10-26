@@ -90,7 +90,7 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
                 after.issued,
                 after.active,
                 after.settled,
-                after.exercised,
+                after.mined,
                 after.gem_factory,
                 after.forfeited
             ],
@@ -98,11 +98,11 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
                 counts.issued,
                 counts.active,
                 counts.settled,
-                counts.exercised,
+                counts.mined,
                 counts.gem_factory,
                 counts.forfeited
             ],
-            "the paid unit stays settled and unexercised"
+            "the paid unit stays settled and not mined"
         );
     });
 }

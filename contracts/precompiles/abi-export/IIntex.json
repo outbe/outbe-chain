@@ -91,7 +91,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "exercisedUnits",
+            "name": "minedUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -185,7 +185,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "exercisedUnits",
+            "name": "minedUnits",
             "type": "uint32",
             "internalType": "uint32"
           },
@@ -250,7 +250,7 @@
   },
   {
     "type": "event",
-    "name": "IntexGroupExpired",
+    "name": "IntexGroupForfeited",
     "inputs": [
       {
         "name": "groupKey",

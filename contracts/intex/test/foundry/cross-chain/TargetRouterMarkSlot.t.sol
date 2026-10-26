@@ -102,14 +102,14 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
-    function test_IssuanceAfterTheDeadlineCreatesAnExpiredSeries() public {
+    function test_IssuanceAfterTheDeadlineCreatesAForfeitedSeries() public {
         bytes memory called = _called();
         bytes memory issuance = _issuance();
         _deliver(called);
         vm.warp(block.timestamp + 1); // past a zero notice period
 
         _deliver(issuance);
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Expired), "created past its deadline");
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Forfeited), "created past its deadline");
     }
 
     function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {

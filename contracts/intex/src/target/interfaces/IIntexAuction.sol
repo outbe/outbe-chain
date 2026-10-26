@@ -177,10 +177,10 @@ interface IIntexAuction {
     /// @param units Units issued.
     event WinIssued(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
 
-    /// @notice Emitted when a win is closed after its series expired. No units are issued.
+    /// @notice Emitted when a win is closed after its series was forfeited. No units are issued.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidder Winner whose win was closed.
-    /// @param seriesId Series that expired.
+    /// @param seriesId Series that was forfeited.
     /// @param units Units the winner won.
     event WinExpired(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
 
