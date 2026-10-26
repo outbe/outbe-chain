@@ -315,8 +315,9 @@ pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
 /// The drift band bounds the resulting exposure. A single proposer can move
 /// the UTC-day quota rollover earlier by at most
 /// `MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`. Chain time is monotonic, so each day
-/// boundary resets a signer's quota at most once. The epoch intentionally stays on the UTC timestamp day key. Thus it
-/// matches the `getCounter` view, the `day` field of the
+/// boundary resets a signer's quota at most once. The epoch intentionally
+/// stays on the UTC timestamp day key. Thus it matches the `getCounter`
+/// view, the `day` field of the
 /// [`SponsorshipAuthorized`](IZeroFee::SponsorshipAuthorized) event, and the
 /// day-indexed emission schedule. A unit test guards that the drift bound
 /// stays below one day.
