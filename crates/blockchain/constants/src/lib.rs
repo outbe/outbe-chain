@@ -20,6 +20,8 @@ pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
 pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_VWAP_POLICY_VERSION: u32 = 1;
+/// Coverage share `[numerator, denominator]` a UTC day needs for its VWAP.
+pub const DEFAULT_DAY_VWAP_MIN_COVERAGE: [u64; 2] = [2, 3];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GenesisProtocolParametersV1 {
@@ -31,6 +33,7 @@ pub struct GenesisProtocolParametersV1 {
     pub vwap_lookback_seconds: u64,
     pub vwap_update_interval_seconds: u64,
     pub vwap_policy_version: u32,
+    pub day_vwap_min_coverage: [u64; 2],
 }
 
 const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
@@ -42,6 +45,7 @@ const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
     vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
     vwap_policy_version: DEFAULT_VWAP_POLICY_VERSION,
+    day_vwap_min_coverage: DEFAULT_DAY_VWAP_MIN_COVERAGE,
 };
 
 const _: () = {
@@ -78,6 +82,7 @@ struct OracleOverridesV1 {
     vwap_lookback_seconds: Option<u64>,
     vwap_update_interval_seconds: Option<u64>,
     vwap_policy_version: Option<u32>,
+    day_vwap_min_coverage: Option<[u64; 2]>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -141,6 +146,10 @@ impl GenesisProtocolParametersV1 {
                 .oracle
                 .vwap_policy_version
                 .unwrap_or(defaults.vwap_policy_version),
+            day_vwap_min_coverage: overrides
+                .oracle
+                .day_vwap_min_coverage
+                .unwrap_or(defaults.day_vwap_min_coverage),
         };
         resolved.validate()?;
         Ok(resolved)
@@ -197,6 +206,19 @@ impl GenesisProtocolParametersV1 {
                 field: "oracle.vwapLookbackSeconds",
                 requirement: "be a whole number of update intervals",
                 actual: self.vwap_lookback_seconds,
+            });
+        }
+        let [numerator, denominator] = self.day_vwap_min_coverage;
+        let [default_numerator, default_denominator] = DEFAULT_DAY_VWAP_MIN_COVERAGE;
+        if denominator == 0
+            || numerator.saturating_mul(default_denominator)
+                > default_numerator.saturating_mul(denominator)
+        {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "oracle.dayVwapMinCoverage",
+                requirement:
+                    "have a non-zero denominator and no greater share than the production default",
+                actual: numerator,
             });
         }
         if self.vwap_policy_version == 0 {
@@ -358,6 +380,12 @@ pub fn get_vwap_update_interval_seconds() -> u64 {
 
 pub fn get_vwap_policy_version() -> u32 {
     parameters().vwap_policy_version
+}
+
+/// `(numerator, denominator)`.
+pub fn get_day_vwap_min_coverage() -> (u64, u64) {
+    let [numerator, denominator] = parameters().day_vwap_min_coverage;
+    (numerator, denominator)
 }
 
 fn validate_nonzero_at_most(
@@ -560,6 +588,26 @@ mod tests {
                 actual: 0,
             })
         );
+    }
+
+    #[test]
+    fn day_vwap_coverage_can_only_be_loosened() {
+        let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
+            "oracle": { "dayVwapMinCoverage": [0, 1] }
+        })))
+        .unwrap();
+        assert_eq!(resolved.day_vwap_min_coverage, [0, 1]);
+        for share in [[3, 4], [1, 0]] {
+            assert!(matches!(
+                GenesisProtocolParametersV1::resolve(Some(&json!({
+                    "oracle": { "dayVwapMinCoverage": share }
+                }))),
+                Err(ProtocolConstantsError::InvalidValue {
+                    field: "oracle.dayVwapMinCoverage",
+                    ..
+                })
+            ));
+        }
     }
 
     #[test]

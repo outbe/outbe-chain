@@ -3,7 +3,10 @@
 use crate::constants::MIN_WINDOW_COVERAGE;
 
 pub fn meets_share(actual: u64, possible: u64) -> bool {
-    let (numerator, denominator) = MIN_WINDOW_COVERAGE;
+    meets(MIN_WINDOW_COVERAGE, actual, possible)
+}
+
+fn meets((numerator, denominator): (u64, u64), actual: u64, possible: u64) -> bool {
     actual.saturating_mul(denominator) >= possible.saturating_mul(numerator)
 }
 
@@ -52,6 +55,7 @@ impl Verdict {
 }
 
 pub(crate) struct CoverageTally {
+    share: (u64, u64),
     hours: u64,
     window_end: u64,
     vote_period: u64,
@@ -61,8 +65,9 @@ pub(crate) struct CoverageTally {
 }
 
 impl CoverageTally {
-    pub(crate) fn new(bounds: &[u64], vote_period: u64) -> Self {
+    pub(crate) fn new(bounds: &[u64], vote_period: u64, share: (u64, u64)) -> Self {
         Self {
+            share,
             hours: bounds.len().saturating_sub(1) as u64,
             window_end: bounds.last().copied().unwrap_or_default(),
             vote_period: vote_period.max(1),
@@ -74,7 +79,7 @@ impl CoverageTally {
 
     pub(crate) fn record(&mut self, span: HourSpan, snapshots: u64) -> bool {
         self.window_first.get_or_insert(span.first_block);
-        if snapshots == 0 || !meets_share(snapshots, span.possible) {
+        if snapshots == 0 || !meets(self.share, snapshots, span.possible) {
             return false;
         }
         self.counted_hours += 1;
@@ -87,8 +92,8 @@ impl CoverageTally {
         let window_first = self.window_first?;
         let possible = self.window_end.saturating_sub(window_first) / self.vote_period;
         Some(Verdict {
-            hours: meets_share(self.counted_hours, self.hours),
-            rounds: meets_share(self.counted_snapshots, possible),
+            hours: meets(self.share, self.counted_hours, self.hours),
+            rounds: meets(self.share, self.counted_snapshots, possible),
         })
     }
 }
@@ -105,7 +110,7 @@ pub fn judge_window(bounds: &[u64], snapshots: &[u64], vote_period: u64) -> Opti
         snapshots.len() + 1,
         "one bound per hour plus the window end"
     );
-    let mut tally = CoverageTally::new(bounds, vote_period);
+    let mut tally = CoverageTally::new(bounds, vote_period, MIN_WINDOW_COVERAGE);
     let mut counted = vec![false; snapshots.len()];
     for span in hour_spans(bounds, vote_period) {
         counted[span.index] = tally.record(span, snapshots[span.index]);

@@ -5,7 +5,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
 
 use super::VwapAccumulator;
-use crate::constants::VWAP_HOUR_SECONDS;
+use crate::constants::{MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS};
 use crate::coverage::{hour_spans, CoverageTally};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
@@ -34,9 +34,26 @@ impl OracleContract<'_> {
         if snapshot.cutoff() > self.storage.timestamp()?.saturating_to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
-        let (start, cutoff) = (snapshot.start(), snapshot.cutoff());
+        self.judged_window_vwap(
+            pair,
+            snapshot.start(),
+            snapshot.cutoff(),
+            MIN_WINDOW_COVERAGE,
+        )
+    }
+
+    /// VWAP over the closed window `[start, cutoff)`, judged by round coverage
+    /// as in [`Self::finalized_window_vwap`] with `share` in place of
+    /// [`MIN_WINDOW_COVERAGE`].
+    pub(crate) fn judged_window_vwap(
+        &self,
+        pair: AddressPair,
+        start: u64,
+        cutoff: u64,
+        share: (u64, u64),
+    ) -> Result<Option<U256>> {
         let vwap = match self.window_block_bounds(start, cutoff)? {
-            Some(bounds) => self.covered_window_vwap(pair, start, &bounds)?,
+            Some(bounds) => self.covered_window_vwap(pair, start, &bounds, share)?,
             // No block span to judge against (hours recorded before this
             // rule, or a window off the hour grid): unjudged, as before.
             None => self.try_calculate_vwap(pair, start, cutoff)?,
@@ -72,9 +89,10 @@ impl OracleContract<'_> {
         pair: AddressPair,
         start: u64,
         bounds: &[u64],
+        share: (u64, u64),
     ) -> Result<Option<U256>> {
         let vote_period = self.config_vote_period.read()?;
-        let mut tally = CoverageTally::new(bounds, vote_period);
+        let mut tally = CoverageTally::new(bounds, vote_period, share);
         let mut total = VwapAccumulator::default();
         for span in hour_spans(bounds, vote_period) {
             let hour = start + span.index as u64 * VWAP_HOUR_SECONDS;

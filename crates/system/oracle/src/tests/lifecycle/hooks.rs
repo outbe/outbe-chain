@@ -501,7 +501,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
 
         // Next rollover finalizes the next day contiguously (non-zero
-        // watermark path).
+        // watermark path). Day D+1 saw blocks in one hour of 24, as after a
+        // halt, so it fails coverage and gets no VWAP.
         oracle
             .write_snapshot(
                 d1_start + 2_000,
@@ -518,7 +519,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             oracle
                 .get_utc_day_vwap_for_pair(day_d1, oracle.pair_index_of(coen).unwrap())
                 .unwrap(),
-            Some(coen_iso(190))
+            None
         );
     });
 }

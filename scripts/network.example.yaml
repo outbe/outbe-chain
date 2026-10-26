@@ -122,6 +122,7 @@ tee:
 #   oracle:
 #     vwapLookbackSeconds: 21600
 #     vwapUpdateIntervalSeconds: 1800
+#     dayVwapMinCoverage: [0, 1]   # production [2, 3]; [0, 1] skips the day coverage rule
 
 # --- Protocol parameters --------------------------------------------------
 # Sections deep-merge over the baseline: scalars replace, lists replace as a
