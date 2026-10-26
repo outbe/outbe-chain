@@ -224,7 +224,7 @@ interface IIntexAuction {
     error InvalidDayState();
     /// @notice The day does not carry a price for this reference currency.
     error ReferenceCurrencyNotPriced(uint32 worldwideDay, uint16 isoCode);
-    /// @notice The declared issuance currency is not a three-digit ISO code.
+    /// @notice The declared issuance currency is not an ISO 4217 code.
     error InvalidIssuanceCurrency(uint16 isoCode);
     /// @notice Commit hash must be non-zero.
     error InvalidCommitHash();
@@ -315,9 +315,7 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
-    /// @param issuanceCurrency Declared issuance currency (ISO numeric). The contract checks only its
-    ///                         three-digit range, because the network keeps no list of issuance
-    ///                         currencies.
+    /// @param issuanceCurrency Declared issuance currency. It must be an ISO 4217 numeric code.
     /// @param referenceCurrency Reference currency the bid prices in. It must be one the day carries.
     /// @param chainId Chain id. It must equal `block.chainid`. This is a redundant check: the EIP-712
     ///                domain already binds it inside the signature.

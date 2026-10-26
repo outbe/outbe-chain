@@ -382,6 +382,20 @@ contract AuctionTest is Test {
         assertEq(uint256(escrow.lockedFunds(worldwideDay, iba1)), PROMIS_LOAD_MINOR);
     }
 
+    function test_Reveal_RevertsNonIsoIssuanceCurrency() public {
+        uint256 startTs = block.timestamp;
+        uint32 worldwideDay = 20250160;
+        _start(worldwideDay, 1, 1);
+
+        _commit(worldwideDay, iba1, 3, 120, iba1PrivateKey);
+        _enterRevealStage(worldwideDay, startTs);
+        bytes memory signature = _createSignature(worldwideDay, iba1, 3, 120, iba1PrivateKey);
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.InvalidIssuanceCurrency.selector, uint16(975)));
+        vm.prank(iba1);
+        auction.revealBid(worldwideDay, 3, 120, 975, REFERENCE_CCY, uint64(block.chainid), signature);
+    }
+
     function test_Reveal_WithoutCommit() public {
         uint256 startTs = block.timestamp;
         uint32 worldwideDay = 20250119;

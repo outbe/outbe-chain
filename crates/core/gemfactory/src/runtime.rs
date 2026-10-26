@@ -6,6 +6,7 @@ use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::markup::marked_up;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -37,8 +38,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
-    // The owner's own label: only its range is checked, as the auction checks a bid's.
-    if issuance_currency == 0 || issuance_currency > 999 {
+    if iso_4217_alpha(issuance_currency).is_none() {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
         }

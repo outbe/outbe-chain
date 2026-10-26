@@ -62,8 +62,7 @@ impl CallStamp {
     }
 }
 
-/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
-/// alpha code in ISO 4217 falls back to its zero-padded numeric code (`949`).
+/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
@@ -112,27 +111,9 @@ impl SeriesId {
         }))
     }
 
-    /// `949 -> b"949"`, `32 -> b"032"`. ISO 4217 numbers are three digits, and a
-    /// wider one has no spelling here: folding it would give two currencies one id.
-    pub fn numeric_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        if iso > 999 {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        Ok([
-            b'0' + (iso / 100) as u8,
-            b'0' + ((iso / 10) % 10) as u8,
-            b'0' + (iso % 10) as u8,
-        ])
-    }
-
-    /// How a currency is spelled inside an id: its alpha-3 code, or its numeric
-    /// code when ISO assigns none.
+    /// How a currency is spelled inside an id: its ISO 4217 alpha-3 code.
     pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        // todo validate iso and refactor this code
-        match iso_4217_alpha(iso) {
-            Some(alpha) => Ok(alpha),
-            None => Self::numeric_code(iso),
-        }
+        iso_4217_alpha(iso).ok_or(IntexError::InvalidSeriesId)
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
