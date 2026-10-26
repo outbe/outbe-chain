@@ -89,8 +89,8 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":840,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":840,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":\"USD\"}");
+        _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":\"USD\"}");
         // Six fraction digits with trailing zeros trimmed, decoded from the 1e6 wire scale.
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
         assertFalse(json.contains("Floor Price"), "no floor price");
@@ -189,16 +189,16 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(IntexMetadata.tokenURI(missing, true), token.contractURI());
     }
 
-    /// @dev A currency the oracle has no letters for keeps its digits in the id.
-    function test_tokenURI_RendersTheNumericFallbackId() public view {
+    function test_tokenURI_KeepsTheNumberOfANonIsoCurrency() public view {
         IIntexNFT1155.SeriesData memory data;
         data.worldwideDay = SERIES_ID_DAY;
-        data.seriesId = "20260622-949-U";
-        data.issuanceCurrency = 949;
+        data.seriesId = SERIES_ID;
+        data.issuanceCurrency = 975;
         data.referenceCurrency = 840;
         data.issuedAt = 1;
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, false));
-        _assertContains(json, "\"name\":\"Intex 20260622-949-U\",");
+        _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":975,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":\"USD\"}");
     }
 
     function test_contractURI_CollectionDocument() public view {

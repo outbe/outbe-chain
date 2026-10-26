@@ -35,8 +35,8 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
         Trait::amount("Entry Price", item.entry_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", view.terms.call_price_minor, PRICE_PRECISION),
         Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),
-        Trait::integer("Issuance Currency", item.issuance_currency),
-        Trait::integer("Reference Currency", item.reference_currency),
+        Trait::currency("Issuance Currency", item.issuance_currency),
+        Trait::currency("Reference Currency", item.reference_currency),
         Trait::date("Issued At", item.issued_at),
     ];
     if let Some(deadline) = deadline {

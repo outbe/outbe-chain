@@ -7,6 +7,7 @@
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use core::fmt::Write;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
 
 const DECIMALS: u32 = 6;
@@ -56,6 +57,14 @@ impl Trait {
 
     pub fn integer(name: &'static str, value: impl Into<u64>) -> Self {
         Self::Number(name, value.into().to_string())
+    }
+
+    /// An ISO 4217 code as its alpha-3, or as the number when the list lacks it.
+    pub fn currency(name: &'static str, iso: u16) -> Self {
+        match iso_4217_alpha(iso) {
+            Some(alpha) => Self::text(name, String::from_utf8_lossy(&alpha)),
+            None => Self::integer(name, iso),
+        }
     }
 
     /// A six-decimal protocol amount cut to `precision` fraction digits.
@@ -271,6 +280,12 @@ mod tests {
     }
 
     #[test]
+    fn currency_reads_as_alpha_and_keeps_the_number_outside_iso() {
+        assert_eq!(Trait::currency("C", 840), Trait::text("C", "USD"));
+        assert_eq!(Trait::currency("C", 975), Trait::integer("C", 975u16));
+    }
+
+    #[test]
     fn token_uri_embeds_the_card_and_typed_attributes() {
         let card = Card {
             title: "GEM",
@@ -288,7 +303,7 @@ mod tests {
             &[
                 Trait::text("State", "Issued"),
                 Trait::amount("Call Price", U256::from(2_280_000u64), PRICE_PRECISION),
-                Trait::integer("Issuance Currency", 840u16),
+                Trait::currency("Issuance Currency", 840),
                 Trait::date("Issued At", 1_700_000_000),
             ],
         ));
@@ -299,8 +314,7 @@ mod tests {
         assert!(
             json.contains(r#"{"trait_type":"Call Price","value":2.28,"display_type":"number"}"#)
         );
-        assert!(json
-            .contains(r#"{"trait_type":"Issuance Currency","value":840,"display_type":"number"}"#));
+        assert!(json.contains(r#"{"trait_type":"Issuance Currency","value":"USD"}"#));
         assert!(
             json.contains(r#"{"trait_type":"Issued At","value":1700000000,"display_type":"date"}"#)
         );
