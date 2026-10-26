@@ -74,6 +74,11 @@ contract EndpointV2Mock {
         delegate = _delegate;
     }
 
+    /// @dev The real endpoint keys the delegate by OApp. This mock serves one OApp.
+    function delegates(address) external view returns (address) {
+        return delegate;
+    }
+
     function setRemoteEndpoint(uint32 _remoteEid, EndpointV2Mock _remoteEndpoint) external {
         remoteEndpoints[_remoteEid] = _remoteEndpoint;
     }

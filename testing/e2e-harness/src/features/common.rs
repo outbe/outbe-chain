@@ -13,6 +13,8 @@ use cucumber::{given, then};
 use crate::world::localnet::StartOpts;
 use crate::world::World;
 
+pub(crate) const HOURLY_PRICING_ORACLE_PERIOD: u64 = 8;
+
 /// Budget a bounded test wait from the executed consensus settings.
 pub(crate) fn consensus_block_wait_budget(
     genesis: &serde_json::Value,
@@ -42,6 +44,35 @@ pub(crate) fn consensus_block_wait_budget(
         .checked_mul(certification)
         .ok_or_else(|| eyre::eyre!("consensus block wait budget overflow"))?;
     Ok(Duration::from_millis(millis))
+}
+
+pub(crate) fn wait_past_consensus_height(
+    world: &World,
+    port: u16,
+    height: u64,
+) -> eyre::Result<u64> {
+    let target = height
+        .checked_add(1)
+        .ok_or_else(|| eyre::eyre!("consensus wait height overflow"))?;
+    let observed = world.rpc.head(port).ok_or_else(|| {
+        eyre::eyre!("cannot observe consensus wait starting height on RPC {port}")
+    })?;
+    if observed >= target {
+        return Ok(observed);
+    }
+    let genesis = serde_json::from_slice(&std::fs::read(
+        world.localnet.scenario_dir().join("genesis.json"),
+    )?)?;
+    let budget = consensus_block_wait_budget(&genesis, target - observed)?;
+    let retries = u32::try_from(budget.as_millis().div_ceil(3_000))?;
+    world
+        .rpc
+        .wait_block_gt(port, height, retries)
+        .map_err(|error| {
+            eyre::eyre!(
+            "consensus height wait from {observed} past {height} with {budget:?} budget: {error:#}"
+        )
+        })
 }
 
 /// Localnet setup shared by every flow. The committee size and TEE mode come
@@ -141,7 +172,8 @@ pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str
     let profile = match crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world) {
         Some(pairs) => profile
             .with_oracle_pairs(pairs)
-            .expect("valid lifecycle Oracle registry"),
+            .and_then(|profile| profile.with_oracle_vote_period(HOURLY_PRICING_ORACLE_PERIOD))
+            .expect("valid lifecycle Oracle registry and publication period"),
         None => profile,
     };
     world
@@ -177,6 +209,29 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .expect("observe mandatory TeeRegistry bootstrap state"),
         "mandatory TEE chain did not bootstrap"
     );
+    if crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world).is_some() {
+        assert_hourly_pricing_period(world);
+    }
+}
+
+pub(crate) fn assert_hourly_pricing_period(world: &World) {
+    use crate::features::entity_lifecycle::chain::{finalized_checkpoint, verify_checkpoint};
+
+    let checkpoint = finalized_checkpoint(world);
+    for port in world.validators.committee_ports() {
+        let params = crate::internal::eth::read_call_at_result(
+            &world.rpc.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &crate::internal::eth::IOracle::getParamsCall {},
+            checkpoint.height,
+        )
+        .expect("read executed hourly-pricing fixture Oracle parameters");
+        assert_eq!(
+            params.votePeriod, HOURLY_PRICING_ORACLE_PERIOD,
+            "hourly-pricing fixture Oracle period on port {port}"
+        );
+    }
+    verify_checkpoint(world, checkpoint);
 }
 
 /// Wait for the committee to reach a usable height (>= 5), like the

@@ -42,6 +42,7 @@ exclude_patterns = [
   "**/vendor/**",
   # Codegen scripts. Inline qlty-ignore and [[triage]] do not hide their smells.
   "crates/zk/outbe-zk/build.rs",
+  "Cargo.lock",
 ]
 
 test_patterns = [

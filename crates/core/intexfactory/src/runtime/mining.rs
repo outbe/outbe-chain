@@ -58,9 +58,8 @@ pub fn mine_promis(
             .into(),
         )?;
 
-        let exercised =
-            u32::try_from(units).map_err(|_| IntexFactoryError::ExercisedUnitsExceedSeries)?;
-        outbe_intex::api::record_exercised_units(storage, series_id, owner, exercised)?;
+        let mined = u32::try_from(units).map_err(|_| IntexFactoryError::MinedUnitsExceedSeries)?;
+        outbe_intex::api::record_mined_units(storage, series_id, owner, mined)?;
         outbe_intex::api::release_if_spent(storage, series_id)?;
 
         // Promis is confidential: the mint runs inside the enclave, authorized by the
@@ -69,7 +68,7 @@ pub fn mine_promis(
 
         emit_event(
             storage,
-            crate::precompile::IIntexFactory::IntexExercised {
+            crate::precompile::IIntexFactory::IntexMined {
                 seriesId: series_id.into(),
                 owner,
                 units,

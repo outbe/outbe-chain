@@ -5,7 +5,7 @@
 //!
 //! Nod and Gem hash
 //! `domain_tag || right_id_be32 || owner_20 || mining_sequence_be8 || nonce_be8` with
-//! [`SINGLE_EXERCISE_SEQUENCE`]. Intex builds its own preimage (owner, amount,
+//! [`SINGLE_MINING_SEQUENCE`]. Intex builds its own preimage (owner, amount,
 //! series, sequence, nonce) and only reuses the difficulty check.
 
 use alloy_primitives::{Address, U256};
@@ -15,8 +15,8 @@ use ring::digest::{digest, SHA256};
 /// Identical across all entity factories.
 pub const POW_DIFFICULTY: u8 = 2;
 
-/// Mining sequence for a right that is exercised once (Nod and Gem).
-pub const SINGLE_EXERCISE_SEQUENCE: u64 = 0;
+/// Mining sequence for a right that is mined once (Nod and Gem).
+pub const SINGLE_MINING_SEQUENCE: u64 = 0;
 
 /// Length every mining domain tag shares, which keeps the preimage a fixed array.
 pub const MINING_DOMAIN_TAG_LEN: usize = 19;
@@ -101,8 +101,7 @@ mod tests {
     /// ~65536 iterations.
     fn find_valid_mining_nonce(domain: MiningDomain, right_id: U256, owner: Address) -> u64 {
         for nonce in 0u64..1_000_000 {
-            if validate_mining_pow(domain, right_id, owner, SINGLE_EXERCISE_SEQUENCE, nonce).is_ok()
-            {
+            if validate_mining_pow(domain, right_id, owner, SINGLE_MINING_SEQUENCE, nonce).is_ok() {
                 return nonce;
             }
         }
@@ -117,14 +116,14 @@ mod tests {
             MiningDomain::Nod,
             right_id,
             owner,
-            SINGLE_EXERCISE_SEQUENCE,
+            SINGLE_MINING_SEQUENCE,
             42,
         );
 
         let mut data = MiningDomain::Nod.tag().to_vec();
         data.extend_from_slice(&right_id.to_be_bytes::<32>());
         data.extend_from_slice(owner.as_slice());
-        data.extend_from_slice(&SINGLE_EXERCISE_SEQUENCE.to_be_bytes());
+        data.extend_from_slice(&SINGLE_MINING_SEQUENCE.to_be_bytes());
         data.extend_from_slice(&42u64.to_be_bytes());
         let expected = digest(&SHA256, &data);
 
@@ -135,7 +134,7 @@ mod tests {
                 MiningDomain::Nod,
                 right_id,
                 Address::repeat_byte(0x22),
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 42
             )
         );
@@ -193,15 +192,14 @@ mod tests {
                 b256!("0x0000c335baf9e3e1a75a92101c3c46efca4c5c0471ec54780e4bac231c1669a8"),
             ),
         ] {
-            let validate = |nonce| {
-                validate_mining_pow(domain, right_id, owner, SINGLE_EXERCISE_SEQUENCE, nonce)
-            };
+            let validate =
+                |nonce| validate_mining_pow(domain, right_id, owner, SINGLE_MINING_SEQUENCE, nonce);
             let pow = |nonce| {
                 B256::from(compute_mining_pow_hash(
                     domain,
                     right_id,
                     owner,
-                    SINGLE_EXERCISE_SEQUENCE,
+                    SINGLE_MINING_SEQUENCE,
                     nonce,
                 ))
             };
@@ -221,14 +219,14 @@ mod tests {
                 MiningDomain::Nod,
                 right_id,
                 owner,
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 7
             ),
             compute_mining_pow_hash(
                 MiningDomain::Gem,
                 right_id,
                 owner,
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 7
             )
         );
@@ -242,7 +240,7 @@ mod tests {
             MiningDomain::Gem,
             right_id,
             owner,
-            SINGLE_EXERCISE_SEQUENCE,
+            SINGLE_MINING_SEQUENCE,
             nod_nonce
         )
         .is_err());
@@ -258,7 +256,7 @@ mod tests {
             MiningDomain::Nod,
             right_id,
             owner,
-            SINGLE_EXERCISE_SEQUENCE,
+            SINGLE_MINING_SEQUENCE,
             nonce
         )
         .is_ok());
@@ -267,14 +265,14 @@ mod tests {
                 MiningDomain::Nod,
                 right_id,
                 owner,
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 nonce
             ),
             compute_mining_pow_hash(
                 MiningDomain::Nod,
                 right_id,
                 other,
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 nonce
             )
         );
@@ -308,7 +306,7 @@ mod tests {
                 MiningDomain::Nod,
                 right_id,
                 owner,
-                SINGLE_EXERCISE_SEQUENCE,
+                SINGLE_MINING_SEQUENCE,
                 nonce,
             )[0] != 0
             {
@@ -317,7 +315,7 @@ mod tests {
                         MiningDomain::Nod,
                         right_id,
                         owner,
-                        SINGLE_EXERCISE_SEQUENCE,
+                        SINGLE_MINING_SEQUENCE,
                         nonce
                     ),
                     Err(PowError::InsufficientProofOfWork)

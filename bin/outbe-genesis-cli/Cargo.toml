@@ -1,0 +1,36 @@
+[package]
+name = "outbe-genesis-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "outbe_genesis_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "outbe-genesis-cli"
+path = "src/main.rs"
+
+[dependencies]
+alloy-primitives.workspace = true
+base64.workspace = true
+clap.workspace = true
+flate2.workspace = true
+hex.workspace = true
+k256.workspace = true
+rand_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+time = { workspace = true, features = ["formatting", "parsing"] }
+toml.workspace = true
+walkdir.workspace = true
+
+[lints]
+workspace = true

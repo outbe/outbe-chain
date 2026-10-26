@@ -1,6 +1,6 @@
 //! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
-use alloy_sol_types::{SolCall as _, SolError as _, SolValue as _};
+use alloy_sol_types::{SolCall as _, SolValue as _};
 use outbe_primitives::{
     entity_codec::{NodGroupBodyV1, NodItemBodyV2},
     wwd_entity_id::WwdEntityId,
@@ -300,16 +300,13 @@ fn stable_live_read<T>(
 
 /// A Nod rejection uses the same strict receipt and ABI evidence as the shared
 /// negative helper, with live state observations both before and after the mined receipt.
-fn assert_live_nod_revert<C: alloy_sol_types::SolCall>(
+fn assert_live_nod_revert<C: alloy_sol_types::SolCall, E: alloy_sol_types::SolError>(
     world: &World,
     call: &C,
-    reason: &str,
+    error: &E,
 ) -> crate::world::rpc::TxOutcome {
     let payer = eth::address_of(PAYER_KEY).expect("Nod rejection payer");
-    let expected = alloy_sol_types::Revert {
-        reason: reason.to_owned(),
-    }
-    .abi_encode();
+    let expected = error.abi_encode();
     let ports = world.validators.committee_ports();
     let primary = world.validators.primary_port();
     let before = live_checkpoint(world, primary);

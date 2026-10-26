@@ -43,7 +43,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install pinned Noir build tools
-        run: scripts/release/install-zk-build-tools.sh
+        run: release/scripts/install-zk-build-tools.sh
       - uses: sigstore/cosign-installer@v4.1.1
         with:
           cosign-release: "v2.6.5"

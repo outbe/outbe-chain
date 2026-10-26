@@ -52,7 +52,7 @@ const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 const ISSUED: u8 = 0;
 const CALLED: u8 = 1;
 /// Derived against the clock on both chains. Nothing ever writes it.
-const EXPIRED: u8 = 2;
+const FORFEITED: u8 = 2;
 /// Slack past the deadline so the sweep has a block to run in.
 const EXPIRY_MARGIN_SECS: u64 = 30;
 /// Forfeits become eligible after the UTC day containing the deadline closes.
@@ -490,7 +490,7 @@ impl Lifecycle for IntexLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
 
-        let mut expired = Vec::new();
+        let mut forfeited = Vec::new();
         for (series, settled_units) in expiring_series(world)
             .into_iter()
             .zip([EXPIRING_SETTLED_UNITS, 0])
@@ -526,14 +526,14 @@ impl Lifecycle for IntexLifecycle {
                 unrealized > 0,
                 "series {series} held nothing at the deadline, so the forfeit proves nothing"
             );
-            expired.push((
+            forfeited.push((
                 series,
                 unrealized,
                 U256::from(load) * U256::from(unrealized),
             ));
         }
         let want = before
-            + expired
+            + forfeited
                 .iter()
                 .map(|(_, _, returned)| *returned)
                 .sum::<U256>();
@@ -544,7 +544,7 @@ impl Lifecycle for IntexLifecycle {
             || world.rpc.promis_limit_on(port) == Some(want),
         );
         let height = finalized_checkpoint(world).height;
-        // Both series were issued into one call group, which expires as one.
+        // Both series were issued into one call group, which is forfeited as one.
         let [series, _] = expiring_series(world);
         let group = eth::read_call_at(
             &url,
@@ -559,9 +559,12 @@ impl Lifecycle for IntexLifecycle {
             addresses::INTEX_ADDR,
             from,
             height,
-            eth::IIntex::IntexGroupExpired {
+            eth::IIntex::IntexGroupForfeited {
                 groupKey: group,
-                forfeitedUnits: expired.iter().map(|(_, units, _)| u64::from(*units)).sum(),
+                forfeitedUnits: forfeited
+                    .iter()
+                    .map(|(_, units, _)| u64::from(*units))
+                    .sum(),
                 returnedPromisMinor: want - before,
             },
         );
@@ -605,7 +608,7 @@ impl Lifecycle for IntexLifecycle {
                 op_nonce,
             })
             .expect("mine Promis from the settled units");
-            // Every unit is realized and exercised, so the series is spent and deleted.
+            // Every unit is realized and mined, so the series is spent and deleted.
             assert_eq!(
                 eth::read_call(
                     &url,
@@ -875,8 +878,8 @@ fn bring_home(world: &mut World, amount: u32) {
     }
 }
 
-#[then("the series left to run out read Expired on both chains")]
-fn unsettled_series_expired(world: &mut World) {
+#[then("the series left to run out read Forfeited on both chains")]
+fn unsettled_series_forfeited(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
@@ -904,7 +907,7 @@ fn unsettled_series_expired(world: &mut World) {
             ("committee", url.as_str(), nft),
             ("target chain", target_url.as_str(), target_nft),
         ] {
-            await_expired(
+            await_forfeited(
                 label,
                 (at, collection),
                 (&target_url, target_router),
@@ -957,18 +960,18 @@ fn apply_parked_mark(
     parked
 }
 
-/// Waits until `series` reads Expired through `collection` on the chain at `at`.
-fn await_expired(
+/// Waits until `series` reads Forfeited through `collection` on the chain at `at`.
+fn await_forfeited(
     label: &str,
     (at, collection): (&str, Address),
     (target_url, target_router): (&str, Address),
     series: FixedBytes<14>,
 ) {
     let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
-    while venue_probes::series_state(at, collection, series) != Some(EXPIRED) {
+    while venue_probes::series_state(at, collection, series) != Some(FORFEITED) {
         assert!(
             Instant::now() < deadline,
-            "series {series} never read Expired on the {label}: {:?}; the call time parked \
+            "series {series} never read Forfeited on the {label}: {:?}; the call time parked \
              on the target router reads {:?}",
             venue_probes::series_state(at, collection, series),
             eth::read_call(

@@ -5,7 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
-import {IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
+import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 enum SyntheticSource {
@@ -46,9 +46,6 @@ struct RouteSpec {
 /// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
 ///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 abstract contract BaseRoute is Script {
-    /// @dev The HyperlaneController precompile. Governance votes drive it, so it owns the bridges on Outbe.
-    address internal constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
-
     error MissingCode(address target);
     error DomainTooLarge(uint256 chainId);
     error UndeclaredChain(uint256 chainId);

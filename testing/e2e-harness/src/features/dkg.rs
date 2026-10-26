@@ -546,10 +546,14 @@ fn old_committee_crosses_planned_activation(world: &mut World) {
     // This step belongs to the explicitly configured off-grid FullNode scenario.
     // Do not probe availability to decide whether its follower is required.
     capture_dkg_owner(world, FOLLOWER_SLOT).expect("required off-grid FullNode owner");
-    // This includes reaching the freeze height with one founder offline. Missed
-    // proposer views produced 17-32 second block intervals in the SGX run, so
-    // 270 seconds expired at planned + 1 despite continuing finality.
-    let deadline = Instant::now() + Duration::from_secs(600);
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed off-grid scenario genesis");
+    let genesis = serde_json::from_slice(&genesis).expect("decode off-grid scenario genesis");
+    let timeout = super::follower::reshare_wait_budget(&genesis)
+        .expect("off-grid activation wait budget from executed genesis");
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .expect("off-grid deadline fits the monotonic clock");
     let ports = dkg_ports(world, &[0, 1, 2]).expect("three survivors and the FullNode");
     let fresh = world
         .rpc

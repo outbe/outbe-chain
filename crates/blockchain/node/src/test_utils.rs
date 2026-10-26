@@ -205,8 +205,8 @@ impl<R: StorageReadObserver, B: BlockHashReader + Clone + Send + Sync + 'static>
 
     fn multiproof_v2(
         &self,
-        _input: TrieInput,
         _targets: reth_trie::MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
         Ok(reth_trie::DecodedMultiProofV2::default())
     }
@@ -305,8 +305,18 @@ impl<R: StorageReadObserver> BlockIdReader for OpeningProviderFixture<R> {
 }
 
 impl<R: StorageReadObserver> StateProviderFactory for OpeningProviderFixture<R> {
+    type Primitives = outbe_primitives::OutbePrimitives;
+
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         Ok(Box::new(self.state.clone()))
+    }
+
+    fn state_with_block_appended(
+        &self,
+        _parent_hash: B256,
+        _block: reth_chain_state::ExecutedBlock<Self::Primitives>,
+    ) -> ProviderResult<StateProviderBox> {
+        self.latest()
     }
 
     fn state_by_block_number_or_tag(

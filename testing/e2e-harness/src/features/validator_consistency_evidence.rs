@@ -164,7 +164,7 @@ fn assert_felony_survivors_live(world: &mut World, owned: &[(u32, u32)], victim:
 }
 
 fn felony_guard_shutdown_count(log: &str) -> usize {
-    let guard = "ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+    let guard = "ERROR outbe_chain::launch::shutdown: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
     log.lines()
         .filter(|line| line.trim_end().ends_with(guard))
         .count()
@@ -1197,7 +1197,7 @@ mod tests {
 
     #[test]
     fn felony_guard_matches_current_owned_shutdown_record_exactly_once() {
-        let record = "2026-09-13T21:01:55.310776Z ERROR outbe_chain::launch::node: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
+        let record = "2026-09-13T21:01:55.310776Z ERROR outbe_chain::launch::shutdown: finalized TEE lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join";
         assert_eq!(felony_guard_shutdown_count(record), 1);
         assert_eq!(felony_guard_shutdown_count(""), 0);
         assert_eq!(
@@ -1205,9 +1205,13 @@ mod tests {
             2
         );
         for changed in [
-            record.replace("outbe_chain::launch::node:", "outbe_chain:"),
-            record.replace("outbe_chain::launch::node:", "another_module:"),
+            record.replace("outbe_chain::launch::shutdown:", "outbe_chain:"),
+            record.replace("outbe_chain::launch::shutdown:", "another_module:"),
             record.replace("ERROR", "INFO"),
+            record.replace(
+                "outbe_chain::launch::shutdown:",
+                "outbe_chain::launch::node:",
+            ),
             record.replace("validator is jailed", "finalized TEE lease expired"),
             format!("{record} unexpected suffix"),
         ] {

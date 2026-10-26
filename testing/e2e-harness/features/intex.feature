@@ -94,7 +94,7 @@ Feature: Intex from auction to Promis
     When the owner settles part of one series they let run out
     And the call notice lapses on the unpaid Intex series
     Then the unpaid Intex series is forfeited and its unpaid load returns to the unallocated pool
-    And the series left to run out read Expired on both chains
+    And the series left to run out read Forfeited on both chains
     And every paid Intex series stays Settled
     When the owners mine every paid Intex series
     Then each paid load lands in its owner's balance

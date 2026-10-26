@@ -193,8 +193,8 @@ impl StateProofProvider for DeterministicEmptyStateProvider {
 
     fn multiproof_v2(
         &self,
-        _input: TrieInput,
         _targets: reth_trie::MultiProofTargetsV2,
+        _requires_masks: bool,
     ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
         Ok(reth_trie::DecodedMultiProofV2::default())
     }

@@ -62,18 +62,25 @@ fn forged_and_rejected(world: &mut World) {
 
 fn authenticate(world: &mut World) -> Result<()> {
     let primary = world.validators.primary_port();
-    let binding = DcapSeededChainSpecBindingV1::from_genesis_path(
-        &world.localnet.scenario_dir().join("genesis.json"),
-    )
-    .map_err(|error| eyre!(error))?;
+    let genesis_path = world.localnet.scenario_dir().join("genesis.json");
+    let binding = DcapSeededChainSpecBindingV1::from_genesis_path(&genesis_path)
+        .map_err(|error| eyre!(error))?;
+    let genesis = serde_json::from_slice(&std::fs::read(&genesis_path)?)?;
+    let timeout = super::follower::reshare_wait_budget(&genesis)?
+        .checked_mul(u32::try_from(HANDOFFS)?)
+        .ok_or_else(|| eyre!("handoff wait budget overflow"))?;
     let mut history = AuthenticatedHistory::new(&binding)?;
     let mut preannounced = BTreeMap::<u64, Bytes>::new();
     let mut boundaries = BTreeMap::<u64, Bytes>::new();
-    let deadline = Instant::now() + Duration::from_secs(900);
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| eyre!("handoff deadline overflow"))?;
     while !(1..=HANDOFFS).all(|epoch| boundaries.contains_key(&epoch)) {
         ensure!(
             Instant::now() < deadline,
-            "no {HANDOFFS} committee handoffs within the window"
+            "no {HANDOFFS} committee handoffs within {timeout:?}: reached height {}, observed boundaries {:?}",
+            history.height(),
+            boundaries.keys().collect::<Vec<_>>()
         );
         let through = world.rpc.finalized_result(primary)?;
         while history.height() < through {

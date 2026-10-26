@@ -20,6 +20,11 @@ ignore = [
     # arithmetic on this legacy path. cargo-deny 0.19 does not support scoping
     # advisory exceptions by dependency edge or enforcing an expiry.
     { id = "RUSTSEC-2026-0387", reason = "elliptic-curve 0.13.8 requires crypto-bigint 0.5.5, which has no compatible patched release; the 0.7 dependency is patched separately" },
+    # reth v2.8.1 and commonware-storage pin zstd 0.13 / zstd-safe 7; the fixes
+    # ship only in zstd 0.14.3 and zstd-safe 8.2. Revisit when upstreams bump.
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is pinned upstream; no dependency calls the affected with_context constructors" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is pinned upstream; no dependency uses the seekable API" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is pinned upstream; the fix needs zstd-safe 8.2" },
 ]
 
 [licenses]

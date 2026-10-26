@@ -1,5 +1,6 @@
 //! Native Nod reads from EVM state.
 use super::*;
+use alloy_sol_types::SolError as _;
 
 impl Rpc {
     pub fn assert_one_nod_for_owner(
@@ -65,7 +66,7 @@ impl Rpc {
         owner: Address,
         index: u64,
     ) -> std::result::Result<Option<Vec<u8>>, String> {
-        let result = eth::read_call_result(
+        let result = eth::read_call_with_revert(
             &self.url(port),
             addresses::NOD_ADDR,
             &INod::tokenOfOwnerByIndexCall {
@@ -73,7 +74,12 @@ impl Rpc {
                 index: U256::from(index),
             },
         )
-        .map(|value| value.to_be_bytes::<32>().to_vec());
+        .map(|outcome| match outcome {
+            eth::ViewCallOutcome::Returned(value) => {
+                eth::ViewCallOutcome::Returned(value.to_be_bytes::<32>().to_vec())
+            }
+            eth::ViewCallOutcome::Reverted(data) => eth::ViewCallOutcome::Reverted(data),
+        });
         classify_owner_index_result(index, result)
     }
 
@@ -103,19 +109,27 @@ impl Rpc {
 
 pub(in crate::world::rpc) fn classify_owner_index_result(
     index: u64,
-    result: std::result::Result<Vec<u8>, String>,
+    result: std::result::Result<eth::ViewCallOutcome<Vec<u8>>, String>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     match result {
-        Ok(nod_id) if nod_id.len() == outbe_primitives::wwd_entity_id::WwdEntityId::len_bytes() => {
+        Ok(eth::ViewCallOutcome::Returned(nod_id))
+            if nod_id.len() == outbe_primitives::wwd_entity_id::WwdEntityId::len_bytes() =>
+        {
             Ok(Some(nod_id))
         }
-        Ok(nod_id) => Err(format!(
+        Ok(eth::ViewCallOutcome::Returned(nod_id)) => Err(format!(
             "tokenOfOwnerByIndex returned a {}-byte NOD id",
             nod_id.len()
         )),
-        Err(error) if index > 0 && error.to_ascii_lowercase().contains("index out of bounds") => {
+        Ok(eth::ViewCallOutcome::Reverted(data))
+            if index > 0 && data.as_ref() == INod::IndexOutOfBounds::SELECTOR.as_slice() =>
+        {
             Ok(None)
         }
+        Ok(eth::ViewCallOutcome::Reverted(data)) => Err(format!(
+            "tokenOfOwnerByIndex reverted with {}",
+            alloy_primitives::hex::encode_prefixed(data)
+        )),
         Err(error) => Err(error),
     }
 }

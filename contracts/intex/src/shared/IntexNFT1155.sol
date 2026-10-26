@@ -344,7 +344,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // Series must exist. We look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
 
-        // Settled units stay exercisable in every state, expired included: only a settle mints them.
+        // Settled units can be mined in every state, Forfeited included: only a settle mints them.
         uint256 sTok = _settledTokenId(seriesId);
         // CEI ok: write before _burn for symmetry with mint. _burn fires no acceptance callback
         // (to == address(0)), so no read-only-reentrancy surface here.
@@ -352,7 +352,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         $.settledSupply[sTok] -= uint32(units);
         _burn(owner, sTok, units);
 
-        emit IntexExercised(seriesId, owner, units);
+        emit IntexMined(seriesId, owner, units);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -460,7 +460,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             data.state == IIntexNFT1155.IntexState.Called
                 && block.timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod
         ) {
-            return IIntexNFT1155.IntexState.Expired;
+            return IIntexNFT1155.IntexState.Forfeited;
         }
         return data.state;
     }

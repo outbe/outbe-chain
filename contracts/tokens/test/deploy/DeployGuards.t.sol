@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {HYPERLANE_CONTROLLER} from "@precompiles/IHyperlaneController.sol";
 import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
 import {Route} from "../../script/routes/Routes.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
@@ -217,7 +218,7 @@ contract DeployGuardsTest is Test {
     function test_Bridge_HasGovernanceOwnerAndPeers() public {
         vm.chainId(OUTBE_CHAIN);
         (, address outbeBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
-        assertEq(ERC7786TokenBridge(outbeBridge).owner(), 0x000000000000000000000000000000000000EE14);
+        assertEq(ERC7786TokenBridge(outbeBridge).owner(), HYPERLANE_CONTROLLER);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(EXTERNAL_CHAIN)), outbeBridge);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(OUTBE_CHAIN)), address(0));
 

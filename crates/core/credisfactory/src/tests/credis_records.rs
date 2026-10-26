@@ -2252,7 +2252,7 @@ fn token_uri_renders_the_credis_image_and_metadata() {
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.64);
         assert_eq!(trait_value(&json, "Policy Rate").unwrap(), 0.04);
         assert_eq!(trait_value(&json, "Collateral").unwrap(), 2000);
-        assert_eq!(trait_value(&json, "Reference Currency").unwrap(), 978);
+        assert_eq!(trait_value(&json, "Reference Currency").unwrap(), "EUR");
         assert_eq!(trait_value(&json, "CCA").unwrap(), cca().to_string());
         assert_eq!(trait_value(&json, "Issued At").unwrap(), ORIGINATED_AT);
         assert!(trait_value(&json, "Settlement Deadline").is_none());

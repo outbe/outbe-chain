@@ -220,7 +220,7 @@ pub struct EnvCli {
     pub mock_bin: Option<PathBuf>,
 
     /// Genesis seed file. Defaults to
-    /// `<repo>/scripts/seed-testnet-lowstake.json`.
+    /// `<repo>/testing/fixtures/seed-testnet-lowstake.json`.
     #[arg(long)]
     pub seed: Option<PathBuf>,
 }
@@ -302,7 +302,7 @@ impl Environment {
             seed: cli
                 .seed
                 .clone()
-                .unwrap_or_else(|| repo.join("scripts/seed-testnet-lowstake.json")),
+                .unwrap_or_else(|| repo.join("testing/fixtures/seed-testnet-lowstake.json")),
             repo,
         }
     }

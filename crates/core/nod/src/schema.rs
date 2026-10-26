@@ -116,7 +116,7 @@ pub struct NodGroupState {
     #[attribute(order = 1)]
     pub reference_currency: u16,
 
-    /// Live paid entitlements. The count decreases when one is exercised.
+    /// Live paid entitlements. The count decreases when one is mined.
     #[serde(default)]
     #[attribute(order = 2)]
     pub settled_nods: u64,

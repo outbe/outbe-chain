@@ -443,6 +443,7 @@ fn recovered_fcu_completes_without_running_executor_heartbeat() {
                 state,
                 payload_attrs,
                 tx,
+                ..
             }) = engine_rx.recv().await
             else {
                 panic!("expected recovered FCU");
@@ -1355,6 +1356,7 @@ mod copied_native_dkg_prerequisites {
                             beacon_engine_handle: ConsensusEngineHandle::new(engine_tx),
                             engine_events: Default::default(),
                             jwt_secret: *AuthServerHandle::noop().jwt_secret(),
+                            sender_recovery_cache: None,
                         },
                         |_| Ok(()),
                         true,

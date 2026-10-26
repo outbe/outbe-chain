@@ -282,7 +282,7 @@ pub struct FixtureState {
     /// its finalized lease expires. The log audit accepts only the exact two-sink
     /// Reth shutdown trailers that are causally bound to that guard.
     pub expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    pub expected_tee_sidecar_outage: Option<(usize, String)>,
+    pub expected_tee_sidecar_outage: Option<(usize, String, u64, alloy_primitives::B256)>,
     /// The same manual-lease scenario deliberately fail-stops this role-neutral
     /// FullNode. Acceptance requires the owned exit and exact bounded sink records.
     pub expected_tee_lease_guard_shutdown_full_node: Option<TeeLeaseShutdownV1>,
