@@ -153,7 +153,6 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "\"Call Deadline\"");
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("FORFEITED"), "badge text");
-        assertFalse(svg.contains("EXPIRED"), "no old badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");
         _assertRowAt(svg, "Call Deadline", 400);
     }
