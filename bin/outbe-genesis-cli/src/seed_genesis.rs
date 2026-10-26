@@ -112,7 +112,27 @@ pub fn apply_seed(
         seed_contract_alloc(alloc, &seed_owned, contracts_path)?;
     }
 
+    sort_json_value(genesis);
     Ok(genesis.clone())
+}
+
+fn sort_json_value(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = std::mem::take(map).into_iter().collect();
+            entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+            for (k, mut v) in entries {
+                sort_json_value(&mut v);
+                map.insert(k, v);
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                sort_json_value(item);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
 }
 
 fn validate_seed_keys(seed: &Value) -> Result<(), GenesisError> {
@@ -136,11 +156,12 @@ fn validate_seed_keys(seed: &Value) -> Result<(), GenesisError> {
 
     let mut allowed: BTreeSet<&str> = SEED_SECTIONS.iter().copied().collect();
     allowed.insert("hyperlane_controller");
-    let unknown: Vec<&str> = seed_obj
+    let mut unknown: Vec<&str> = seed_obj
         .keys()
         .map(String::as_str)
         .filter(|key| !allowed.contains(key))
         .collect();
+    unknown.sort_unstable();
     if !unknown.is_empty() {
         let allowed_vec: Vec<&str> = allowed.into_iter().collect();
         return Err(GenesisError::validation(format!(

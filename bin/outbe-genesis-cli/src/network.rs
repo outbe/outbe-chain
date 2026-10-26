@@ -161,11 +161,12 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
         ));
     }
     let allowed = top_level_keys();
-    let unknown: Vec<&str> = obj
+    let mut unknown: Vec<&str> = obj
         .keys()
         .map(String::as_str)
         .filter(|k| !allowed.contains(k))
         .collect();
+    unknown.sort_unstable();
     if !unknown.is_empty() {
         let allowed_list: Vec<&str> = allowed.into_iter().collect();
         return Err(GenesisError::validation(format!(
@@ -213,11 +214,12 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
         ));
     };
     let allowed_tee: BTreeSet<&str> = TEE_KEYS.into_iter().collect();
-    let unknown_tee: Vec<&str> = tee
+    let mut unknown_tee: Vec<&str> = tee
         .keys()
         .map(String::as_str)
         .filter(|k| !allowed_tee.contains(k))
         .collect();
+    unknown_tee.sort_unstable();
     if !unknown_tee.is_empty() {
         return Err(GenesisError::validation(format!(
             "unknown tee key(s): {}",
