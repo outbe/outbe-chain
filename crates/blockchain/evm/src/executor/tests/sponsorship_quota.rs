@@ -272,6 +272,70 @@ fn sponsored_declined_commit_does_not_burn_quota() {
 }
 
 #[test]
+fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let signer = OWNER;
+    let gas_limit = 600_000;
+    let funded_balance =
+        U256::from(gas_limit) * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
+    for initial_balance in [U256::ZERO, funded_balance] {
+        let recovered = Recovered::new_unchecked(
+            sponsored_tx_to(0, gas_limit, reverting_calldata(), TRIBUTE_FACTORY_ADDRESS),
+            signer,
+        );
+        let mut state = delegated_state(signer, initial_balance, 0);
+        let paid_gas_used;
+        {
+            let evm = config.evm_with_env(&mut state, pectra_evm_env());
+            let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+            let result = executor.execute_transaction(recovered);
+            if initial_balance.is_zero() {
+                let error = result.expect_err("unfunded fallback must fail ordinary validation");
+                match error {
+                    BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+                        error,
+                        ..
+                    }) => {
+                        assert!(matches!(
+                            error.as_invalid_tx_err(),
+                            Some(InvalidTransaction::LackOfFundForMaxFee { .. })
+                        ));
+                    }
+                    other => panic!("expected insufficient funds, got {other}"),
+                }
+                assert!(executor.receipts().is_empty());
+                paid_gas_used = 0;
+            } else {
+                result.expect("funded fallback must execute normally");
+                let receipts = executor.receipts();
+                assert_eq!(receipts.len(), 1);
+                assert!(!receipts[0].success, "unknown selector must revert");
+                assert!(
+                    receipts[0].logs.is_empty(),
+                    "no sponsorship or policy failure logs"
+                );
+                paid_gas_used = receipts[0].cumulative_gas_used;
+                assert!(paid_gas_used > 0);
+            }
+            assert_eq!(executor.sponsored_gas_used, 0);
+            assert_eq!(executor.zero_fee_soft_failures, 0);
+        }
+        assert_eq!(live_counter(&mut state, signer), (0, 0));
+        assert_eq!(
+            signer_balance(&mut state, signer),
+            initial_balance
+                - U256::from(paid_gas_used)
+                    * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE),
+            "only the included paid revert debits ordinary gas fees"
+        );
+        assert_eq!(
+            state.basic(signer).unwrap().unwrap().nonce,
+            u64::from(!initial_balance.is_zero())
+        );
+    }
+}
+
+#[test]
 fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_resets() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let signer = OWNER;
@@ -281,7 +345,9 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
             sponsored_tx_to(
                 nonce,
                 gas_limit,
-                reverting_calldata(),
+                // Selector-only calldata is sponsored but deliberately fails ABI decoding.
+                outbe_tributefactory::precompile::ITributeFactory::offerTributeCall::SELECTOR
+                    .to_vec(),
                 TRIBUTE_FACTORY_ADDRESS,
             ),
             signer,
@@ -294,6 +360,22 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
             executor
                 .execute_transaction(large_tx(nonce, gas_limit))
                 .unwrap();
+            assert_eq!(
+                executor.sponsored_gas_used,
+                if nonce == 0 { 8_000_000 } else { 13_000_000 }
+            );
+            let receipt = executor.receipts().last().unwrap();
+            assert!(
+                !receipt.success,
+                "selector-only input must revert during ABI decoding"
+            );
+            assert!(receipt.logs.iter().any(|log| {
+                log.address == ZEROFEE_ADDRESS
+                    && log.topics().first() == Some(&SponsorshipAuthorized::SIGNATURE_HASH)
+            }));
+            let db = executor.inner.evm.db_mut();
+            assert_eq!(live_counter(db, signer), (TODAY, nonce as u32 + 1));
+            assert_eq!(signer_balance(db, signer), U256::ZERO);
         }
         assert_eq!(executor.sponsored_gas_used, 13_000_000);
         let error = executor
@@ -328,8 +410,11 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
             .execute_transaction(large_tx(3, 8_000_000))
             .unwrap();
         assert_eq!(executor.sponsored_gas_used, 8_000_000);
+        assert!(!executor.receipts()[0].success);
+        assert_eq!(executor.zero_fee_soft_failures, 0);
     }
     assert_eq!(live_counter(&mut state, signer), (TODAY, 4));
+    assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
 }
 
 #[test]
