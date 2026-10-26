@@ -225,7 +225,9 @@ where
                 error, ..
             })) => {
                 trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
-                if !error.is_nonce_too_low() {
+                if !error.is_nonce_too_low()
+                    && !outbe_evm::is_sponsored_block_budget_deferral(error.as_ref())
+                {
                     self.best_txs.mark_invalid(
                         pool_tx,
                         InvalidPoolTransactionError::Other(Box::new(PreservedInvalidUserTx {

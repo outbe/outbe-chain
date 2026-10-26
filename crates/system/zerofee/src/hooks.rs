@@ -137,12 +137,12 @@ pub enum ZeroFeePolicyError {
     /// free-tx-specific code so wallets can present a clearer error.
     #[error("free-tx must not transfer native value")]
     FreeTxDailyValueNotZero,
-    /// The sponsored tx envelope exceeds the free-tx gas limit.
+    /// The sponsored tx envelope exceeds its `(target, selector)` gas ceiling.
     #[error("free-tx gas limit {gas_limit} exceeds free-tx limit {limit}")]
     FreeTxDailyGasLimitExceeded {
         /// Actual gas limit on the tx.
         gas_limit: u64,
-        /// Sponsored-path maximum from `FREE_TX_DAILY_GAS_LIMIT`.
+        /// Selected sponsored-path maximum, default or operation-specific.
         limit: u64,
     },
     /// The sponsored tx envelope exceeds the free-tx calldata cap.
@@ -261,6 +261,22 @@ mod failure_code_tests {
             ZeroFeePolicyError::UnauthorizedSigner.to_string(),
             "zero-fee signer is not authorized for this transaction hook"
         );
+    }
+
+    #[test]
+    fn sponsored_gas_error_preserves_code_and_display_for_both_ceilings() {
+        for limit in [
+            crate::constants::FREE_TX_DAILY_GAS_LIMIT,
+            crate::constants::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+        ] {
+            let gas_limit = limit + 1;
+            let err = ZeroFeePolicyError::FreeTxDailyGasLimitExceeded { gas_limit, limit };
+            assert_eq!(err.code(), 114);
+            assert_eq!(
+                err.to_string(),
+                format!("free-tx gas limit {gas_limit} exceeds free-tx limit {limit}")
+            );
+        }
     }
 }
 
