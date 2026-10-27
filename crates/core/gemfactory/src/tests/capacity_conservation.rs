@@ -23,7 +23,7 @@ const REMAINDER: u64 = 3_000_007;
 fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
     use crate::state::{position_queue_entry, position_queue_hour};
     let max_deadline =
-        outbe_primitives::expiry_queue::day_end(outbe_primitives::math::constants::MAX_BIN_ID) - 1;
+        outbe_primitives::deadline_queue::day_end(outbe_primitives::math::constants::MAX_BIN_ID) - 1;
     for hour in [
         0,
         1,

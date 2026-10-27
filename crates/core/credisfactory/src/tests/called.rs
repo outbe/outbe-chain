@@ -969,8 +969,8 @@ fn a_forfeit_waits_for_the_day_its_deadline_falls_in_to_close() {
         let ids = open_three(&storage);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let deadline = CREATED_AT + NOTICE;
-        let day_end = outbe_primitives::expiry_queue::day_end(
-            outbe_primitives::expiry_queue::deadline_day(deadline).unwrap(),
+        let day_end = outbe_primitives::deadline_queue::day_end(
+            outbe_primitives::deadline_queue::deadline_day(deadline).unwrap(),
         );
         assert!(
             day_end > deadline + 1,
@@ -1136,10 +1136,10 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(!is_deleted(&storage, ids[0]));
         let (day, _) =
-            outbe_primitives::expiry_queue::unpack_slot(cleanup_queued_at(&storage, group));
+            outbe_primitives::deadline_queue::unpack_slot(cleanup_queued_at(&storage, group));
         assert_eq!(
             day,
-            outbe_primitives::expiry_queue::deadline_day(lapsed).unwrap()
+            outbe_primitives::deadline_queue::deadline_day(lapsed).unwrap()
         );
     });
     teardown();

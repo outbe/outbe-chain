@@ -411,7 +411,7 @@ fn config_dev_profile_terms_a_new_group() {
 #[test]
 fn a_corrupt_record_read_fails_the_forfeit_sweep() {
     use outbe_primitives::error::{PrecompileError, SweepFailure};
-    use outbe_primitives::expiry_queue::ExpiryHandler;
+    use outbe_primitives::deadline_queue::DeadlineHandler;
     with_storage(|storage| {
         let ctx = block_ctx(storage);
         let expiry = crate::expired::GemExpiry::new(&ctx);

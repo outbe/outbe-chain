@@ -6,7 +6,7 @@ use outbe_gem::{api as gem_api, CleanupDays, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
 
@@ -16,7 +16,7 @@ use crate::errors::GemFactoryError;
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemCleanup::new(ctx);
-    expiry_queue::sweep_cleanup(
+    deadline_queue::process_cleanup(
         &CleanupDays(&queue),
         ctx,
         &queue.cleanup_budget,
@@ -42,13 +42,13 @@ impl<'a, 's> GemCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unpaid gems.
-impl ExpiryHandler<B256> for GemCleanup<'_, '_> {
+impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.gem.group_gem_count.read(&group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -66,7 +66,7 @@ impl ExpiryHandler<B256> for GemCleanup<'_, '_> {
         error.record_sweep_failure()
     }
 
-    fn expire_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
+    fn process_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {
         if gem_id.is_zero() {
             return Err(GemFactoryError::EmptyMemberSlotDuringCleanup { group_key }.into());
         }

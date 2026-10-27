@@ -69,7 +69,7 @@ fn requeue_position_hour(
     position_id: U256,
     deadline: u64,
 ) -> Result<()> {
-    use outbe_primitives::expiry_queue;
+    use outbe_primitives::deadline_queue;
     let factory = crate::GemFactoryContract::new(storage.clone());
     let position = factory
         .positions
@@ -81,8 +81,8 @@ fn requeue_position_hour(
     }
     let days = crate::state::PositionExpiryDays(&factory);
     let entry = crate::state::position_queue_entry(position.expiry_hour())?;
-    expiry_queue::remove(&days, entry)?;
-    expiry_queue::push(&days, entry, deadline)?;
+    deadline_queue::remove(&days, entry)?;
+    deadline_queue::push(&days, entry, deadline)?;
     reopen_day(storage, deadline)
 }
 

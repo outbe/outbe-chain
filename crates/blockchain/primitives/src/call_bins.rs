@@ -7,7 +7,7 @@ use alloy_primitives::{keccak256, B256, U256};
 
 use crate::daily_sweep::currency_position;
 use crate::error::{CallBinError, Result};
-use crate::expiry_queue::QueueEntry;
+use crate::deadline_queue::QueueEntry;
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};

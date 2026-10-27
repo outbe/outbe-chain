@@ -451,7 +451,7 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 }
 
 #[test]
-fn an_uncalled_group_never_enters_the_expiry_queue() {
+fn an_uncalled_group_never_enters_the_deadline_queue() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
         sweep_expiry(&s, ISSUED_AT as u64 + 400 * DAY);

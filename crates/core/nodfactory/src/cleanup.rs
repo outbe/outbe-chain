@@ -8,7 +8,7 @@ use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
 
@@ -18,7 +18,7 @@ use crate::errors::NodFactoryError;
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup::new(ctx);
-    expiry_queue::sweep_cleanup(
+    deadline_queue::process_cleanup(
         &CleanupDays(&queue),
         ctx,
         &queue.cleanup_budget,
@@ -44,13 +44,13 @@ impl<'a, 's> NodCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unpaid Nods.
-impl ExpiryHandler<B256> for NodCleanup<'_, '_> {
+impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
     type Member = WwdEntityId;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.nod.group_nod_count.read(&group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -68,7 +68,7 @@ impl ExpiryHandler<B256> for NodCleanup<'_, '_> {
         error.record_sweep_failure()
     }
 
-    fn expire_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {
+    fn process_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {
         if nod_id.is_zero() {
             return Err(NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key }.into());
         }

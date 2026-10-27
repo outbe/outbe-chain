@@ -8,7 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::call_bins;
 use outbe_primitives::error::Result;
-use outbe_primitives::expiry_queue;
+use outbe_primitives::deadline_queue;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 
@@ -191,8 +191,8 @@ impl<'storage> CredisContract<'storage> {
     fn close_group(&mut self, group: B256) -> Result<()> {
         let currency = self.group_currency.read(&group)?;
         call_bins::remove(&CallBins(self, currency), group)?;
-        expiry_queue::remove(&ExpiryDays(self), group)?;
-        expiry_queue::remove(&CleanupDays(self), group)?;
+        deadline_queue::remove(&ExpiryDays(self), group)?;
+        deadline_queue::remove(&CleanupDays(self), group)?;
         self.group_currency.clear(&group)?;
         self.group_full_day.clear(&group)?;
         self.group_call_price_minor.clear(&group)?;
@@ -223,7 +223,7 @@ impl<'storage> CredisContract<'storage> {
             now,
             self.group_call_notice_period_seconds.read(&group)?,
         );
-        expiry_queue::push(&ExpiryDays(self), group, deadline)?;
+        deadline_queue::push(&ExpiryDays(self), group, deadline)?;
         Ok(deadline)
     }
 
@@ -231,16 +231,16 @@ impl<'storage> CredisContract<'storage> {
     /// Credis.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        expiry_queue::remove(&ExpiryDays(self), group)?;
-        expiry_queue::push(&CleanupDays(self), group, deadline)
+        deadline_queue::remove(&ExpiryDays(self), group)?;
+        deadline_queue::push(&CleanupDays(self), group, deadline)
     }
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
-        expiry_queue::push(&ExpiryDays(self), group, deadline)
+        deadline_queue::push(&ExpiryDays(self), group, deadline)
     }
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
-        expiry_queue::remove(&ExpiryDays(self), group)
+        deadline_queue::remove(&ExpiryDays(self), group)
     }
 }
 
@@ -263,7 +263,7 @@ fn take_from(sums: &Map<'_, Address, U256>, owner: Address, amount: U256) -> Res
 /// This queue orders called groups by the UTC day that contains their settlement deadline.
 pub struct ExpiryDays<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
+outbe_primitives::impl_deadline_queue!(ExpiryDays<B256> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
@@ -279,7 +279,7 @@ outbe_primitives::impl_expiry_queue!(ExpiryDays<B256> {
 /// Forfeited groups whose Credis wait to be deleted.
 pub struct CleanupDays<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(CleanupDays<B256> {
+outbe_primitives::impl_deadline_queue!(CleanupDays<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

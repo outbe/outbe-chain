@@ -19,7 +19,7 @@ pub mod entity_codec;
 pub mod erc;
 pub mod error;
 pub mod errors;
-pub mod expiry_queue;
+pub mod deadline_queue;
 pub mod filesystem;
 pub mod governance_journal;
 pub mod header;

@@ -9,7 +9,7 @@ use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     sweep_budget::SweepBudget,
 };
 
@@ -20,7 +20,7 @@ use crate::precompile::ICredisFactory::ExpiryDeferred;
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry::new(ctx);
-    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
@@ -28,9 +28,9 @@ pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
+    deadline_queue::process_day(
         &ExpiryDays(&queue),
         ctx,
         through_day,
@@ -56,14 +56,14 @@ impl<'a, 's> CredisExpiry<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
+impl DeadlineHandler<B256> for CredisExpiry<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.credis.group_called_at.read(&group)? != 0;
         Ok(
             match called && self.credis.group_member_count(group)? != 0 {
-                true => Due::Expire,
+                true => Due::Process,
                 false => Due::Drop,
             },
         )
@@ -79,7 +79,7 @@ impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
 
     /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
     /// Promis reserve together, in the cleanup.
-    fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let credis = self.credis.group_member_count(group)?;
         self.credis.hand_to_cleanup(group)?;
         self.credis.emit(ICredis::CredisGroupForfeited {

@@ -6,7 +6,7 @@ use outbe_intex::{CleanupDays, IntexContract, SeriesId};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
 
@@ -15,7 +15,7 @@ use outbe_primitives::{
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup::new(ctx);
-    expiry_queue::sweep_cleanup(
+    deadline_queue::process_cleanup(
         &CleanupDays(&queue),
         ctx,
         &queue.cleanup_budget,
@@ -42,13 +42,13 @@ impl<'a, 's> IntexCleanup<'a, 's> {
 
 /// A group's members are its live series. One with settled units left to mine
 /// stays, and its last mining deletes it.
-impl ExpiryHandler<B256> for IntexCleanup<'_, '_> {
+impl DeadlineHandler<B256> for IntexCleanup<'_, '_> {
     type Member = SeriesId;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.intex.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -60,7 +60,7 @@ impl ExpiryHandler<B256> for IntexCleanup<'_, '_> {
         self.intex.group_member(group, index)
     }
 
-    fn expire_member(&mut self, _group: B256, series_id: SeriesId) -> Result<()> {
+    fn process_member(&mut self, _group: B256, series_id: SeriesId) -> Result<()> {
         if outbe_intex::api::release_if_spent(self.storage, series_id)? {
             self.deleted = self.deleted.saturating_add(1);
         }

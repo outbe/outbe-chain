@@ -6,7 +6,7 @@ use outbe_credis::{CleanupDays, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     sweep_budget::SweepBudget,
 };
 
@@ -15,7 +15,7 @@ use outbe_primitives::{
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut cleanup = CredisCleanup::new(ctx);
-    expiry_queue::sweep_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
+    deadline_queue::process_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 
@@ -23,9 +23,9 @@ pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
+    deadline_queue::process_day(
         &CleanupDays(&queue),
         ctx,
         through_day,
@@ -51,13 +51,13 @@ impl<'a, 's> CredisCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unsettled Credis.
-impl ExpiryHandler<B256> for CredisCleanup<'_, '_> {
+impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.credis.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -73,7 +73,7 @@ impl ExpiryHandler<B256> for CredisCleanup<'_, '_> {
         error.record_sweep_failure()
     }
 
-    fn expire_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
+    fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
         crate::runtime::delete_forfeited_credis(self.ctx.storage.clone(), credis_id)?;
         self.deleted = self.deleted.saturating_add(1);
         Ok(())

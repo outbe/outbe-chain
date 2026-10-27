@@ -2,7 +2,7 @@
 
 use super::{
     day_end, deadline_day, entry_at, first_day, pack_cursor, remove, retarget, unpack_cursor, Due,
-    ExpiryHandler, ExpiryQueueStore, Progress,
+    DeadlineHandler, DeadlineQueueStore, Progress,
 };
 use crate::error::{decide, Decided, PrecompileError, Result};
 use crate::math::constants::MAX_BIN_ID;
@@ -21,7 +21,7 @@ pub struct SweepTime {
 /// This function processes closed scheduling days at or before the cutoff, earliest first.
 /// Each slot costs one visit, including an empty slot or a remaining entry.
 /// Each attempted member costs one write.
-pub fn sweep_through<'s, Q, H>(
+pub fn process_through<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
     time: SweepTime,
@@ -29,8 +29,8 @@ pub fn sweep_through<'s, Q, H>(
     handler: &mut H,
 ) -> Result<Progress>
 where
-    Q: ExpiryQueueStore<'s>,
-    H: ExpiryHandler<Q::Entry>,
+    Q: DeadlineQueueStore<'s>,
+    H: DeadlineHandler<Q::Entry>,
 {
     if time.through_day > MAX_BIN_ID {
         return Err(PrecompileError::Revert(
@@ -60,7 +60,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Step {
     Done,
-    /// The sweep resumes at this slot, below the stored member index.
+    /// The pass resumes at this slot, below the stored member index.
     Hold(u32),
 }
 
@@ -74,8 +74,8 @@ struct Walk<'w, 's, Q, H> {
 
 impl<'s, Q, H> Walk<'_, 's, Q, H>
 where
-    Q: ExpiryQueueStore<'s>,
-    H: ExpiryHandler<Q::Entry>,
+    Q: DeadlineQueueStore<'s>,
+    H: DeadlineHandler<Q::Entry>,
 {
     fn day(&mut self, day: u32) -> Result<bool> {
         let len = self.queue.day_len().read(&day)?;
@@ -123,7 +123,7 @@ where
 
     fn expire(&mut self, entry: Q::Entry, resume: u32) -> Result<Step> {
         match self.handler.due(entry)? {
-            Due::Expire => {}
+            Due::Process => {}
             Due::Drop => {
                 self.drop_entry(entry)?;
                 return Ok(Step::Done);
@@ -149,7 +149,7 @@ where
             let handler = &mut *self.handler;
             let outcome = self
                 .storage
-                .with_checkpoint(|| handler.expire_member(entry, member));
+                .with_checkpoint(|| handler.process_member(entry, member));
             match decide(outcome, |error| self.handler.classify(error))? {
                 Decided::Done(()) => {}
                 Decided::Stopped => {
@@ -157,7 +157,7 @@ where
                     return Ok(Step::Hold(index + 1));
                 }
                 Decided::Skipped(error) => {
-                    tracing::warn!(target: "outbe::expiry", error = ?error, "expiry sweep: member left for a later day");
+                    tracing::warn!(target: "outbe::expiry", error = ?error, "deadline pass: member left for a later day");
                     failed += 1;
                 }
             }
@@ -173,7 +173,7 @@ where
     fn retire_leftover(&mut self, entry: Q::Entry) -> Result<()> {
         match self.handler.due(entry)? {
             Due::Drop => self.drop_entry(entry),
-            Due::Expire | Due::Wait => self.defer(entry),
+            Due::Process | Due::Wait => self.defer(entry),
         }
     }
 

@@ -79,7 +79,7 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         phase: u8,
         budget: &mut SweepBudget,
     ) -> Result<outbe_primitives::daily_sweep::Progress> {
-        let through_day = outbe_primitives::expiry_queue::deadline_day(
+        let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
         match phase {

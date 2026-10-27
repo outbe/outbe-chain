@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
     sweep_budget::SweepBudget,
 };
@@ -20,7 +20,7 @@ use outbe_nod::{precompile::INod, schema::NodContract};
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut expiry = NodExpiry::new(ctx);
-    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
@@ -28,9 +28,9 @@ pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+) -> Result<deadline_queue::Progress> {
     let queue = NodContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
+    deadline_queue::process_day(
         &ExpiryDays(&queue),
         ctx,
         through_day,
@@ -56,14 +56,14 @@ impl<'a, 's> NodExpiry<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
+impl DeadlineHandler<B256> for NodExpiry<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
         Ok(
             match called && self.nod.group_nod_count.read(&group)? != 0 {
-                true => Due::Expire,
+                true => Due::Process,
                 false => Due::Drop,
             },
         )
@@ -83,7 +83,7 @@ impl ExpiryHandler<B256> for NodExpiry<'_, '_> {
 
     /// Returns the Gratis load of the group's unpaid Nods in one credit. Lysis drew it
     /// out of the day limit and only mining converts it, so unmined it goes back.
-    fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let nods = self.nod.group_nod_count.read(&group)?;
         let load = self.nod.group_unpaid_load.read(&group)?;
         if !load.is_zero() {

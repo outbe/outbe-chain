@@ -807,8 +807,8 @@ fn the_notice_period_burns_once_the_day_of_its_deadline_closes() {
         let item = call_group(storage, Address::repeat_byte(0x11), at);
         let deadline = at + NOTICE;
 
-        let day_end = outbe_primitives::expiry_queue::day_end(
-            outbe_primitives::expiry_queue::deadline_day(deadline).unwrap(),
+        let day_end = outbe_primitives::deadline_queue::day_end(
+            outbe_primitives::deadline_queue::deadline_day(deadline).unwrap(),
         );
         // Exact settlement state is independent of delayed physical deletion.
         for now in [deadline, deadline + 1, day_end - 1] {
@@ -1273,12 +1273,12 @@ fn failing_members_do_not_hold_the_cleanup() {
         assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
         assert_eq!(crate::cleanup::sweep_cleanup(&ctx).unwrap(), 3);
         assert_eq!(reserve(storage), U256::from(25u64));
-        let (day, _) = outbe_primitives::expiry_queue::unpack_slot(
+        let (day, _) = outbe_primitives::deadline_queue::unpack_slot(
             nod.cleanup_group_slot.read(&group_key).unwrap(),
         );
         assert_eq!(
             day,
-            outbe_primitives::expiry_queue::deadline_day(past).unwrap()
+            outbe_primitives::deadline_queue::deadline_day(past).unwrap()
         );
     });
 }
@@ -1425,8 +1425,8 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         assert_eq!(reserve(storage), U256::MAX);
         limit.checked_take_up_to(U256::MAX).unwrap();
         // The failed group retries at the next UTC midnight.
-        let retry = outbe_primitives::expiry_queue::day_end(
-            outbe_primitives::expiry_queue::deadline_day(past).unwrap(),
+        let retry = outbe_primitives::deadline_queue::day_end(
+            outbe_primitives::deadline_queue::deadline_day(past).unwrap(),
         );
         finalize_through(storage, retry);
         assert_eq!(scan(storage, retry), 1);
