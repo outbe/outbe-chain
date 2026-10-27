@@ -15,7 +15,7 @@ use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SEC
 use outbe_intexfactory::notify::{
     called_notice_attempts, notice_retry_at, pack_called_notice, send_call_notices, with_retry_at,
 };
-use outbe_intexfactory::precompile::IIntexFactory::CalledNoticeDropped;
+use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -199,11 +199,11 @@ fn queued(handle: &StorageHandle<'_>, index: u32) -> U256 {
         .unwrap()
 }
 
-fn dropped_notices(storage: &HashMapStorageProvider) -> Vec<CalledNoticeDropped> {
+fn failed_notices(storage: &HashMapStorageProvider) -> Vec<IntexSeriesCallNoticeFailed> {
     storage
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| CalledNoticeDropped::decode_log_data(log).ok())
+        .filter_map(|log| IntexSeriesCallNoticeFailed::decode_log_data(log).ok())
         .collect()
 }
 
@@ -227,7 +227,7 @@ fn a_refused_notice_is_requeued_with_one_more_attempt() {
         assert_eq!(SeriesId::from_word(entry), series(0));
         assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn a_refused_notice_waits_its_pause_before_the_next_attempt() {
         drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 }
 
 #[test]
@@ -263,16 +263,16 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
         assert_eq!(tail - head, 1, "still queued below the cap");
         assert_eq!(called_notice_attempts(queued(&handle, head)), 7);
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 
     StorageHandle::enter(&mut storage, |handle| {
         drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0), "the eighth refusal drops it");
     });
-    let dropped = dropped_notices(&storage);
+    let dropped = failed_notices(&storage);
     assert_eq!(dropped.len(), 1);
     assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
-    assert_eq!(dropped[0].calledAt, CALLED_AT);
+    assert_eq!(dropped[0].calledAt, u64::from(CALLED_AT));
 }
 
 #[test]
@@ -294,7 +294,7 @@ fn a_notice_accepted_at_the_last_send_is_not_dropped() {
         drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0), "the last send lands");
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
         drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 }
 
 fn same_day_series(index: u8) -> SeriesId {
@@ -367,7 +367,7 @@ fn every_entry_of_a_refused_run_is_requeued() {
             "the requeued run goes out together"
         );
     });
-    assert!(dropped_notices(&storage).is_empty());
+    assert!(failed_notices(&storage).is_empty());
 }
 
 #[test]

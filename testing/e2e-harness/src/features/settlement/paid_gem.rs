@@ -252,7 +252,7 @@ impl PaidGem {
             &burn.receipt,
             addresses::PROMIS_FACTORY_ADDR,
             &eth::IPromisFactory::CoenMined {
-                sender: owner,
+                account: owner,
                 coenMinor: native_mint,
             },
         );

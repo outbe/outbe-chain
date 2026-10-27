@@ -35,8 +35,6 @@ interface INodFactory {
 
     event NodMined(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
-    event NodBurned(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
-
     /// @notice Emitted when a Nod is settled.
     event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
 

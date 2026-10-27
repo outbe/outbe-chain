@@ -110,9 +110,9 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
     event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
-    /// @notice The router kept refusing the series' Called notice, so it was dropped
+    /// @notice All 8 sends of the series' call notice failed, so the chain sends it no more
     ///         and the targets were not told of the call.
-    event CalledNoticeDropped(bytes14 indexed seriesId, uint32 calledAt);
+    event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
 
     /// @notice `proceedsMinor` native COEN (18 decimals) of `worldwideDay`'s auction proceeds from
     ///         `srcChainId` was burned and `creditedPromisMinor` (6 decimals) was added to the Promis

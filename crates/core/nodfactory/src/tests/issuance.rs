@@ -260,7 +260,6 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
             (NOD_FACTORY_ADDRESS, INodFactory::NodSettled::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodMined::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
         ]
     );
 }

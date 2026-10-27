@@ -13,7 +13,7 @@ use crate::constants::{
     MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK,
     NOTICE_RETRY_SECONDS,
 };
-use crate::precompile::IIntexFactory::CalledNoticeDropped;
+use crate::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use crate::schema::IntexFactoryContract;
 
 /// Bit offset of the refused-attempt count, in the byte above the call time.
@@ -170,13 +170,13 @@ impl NoticeSend<'_, '_> {
             series = %series_id,
             called_at,
             attempts,
-            "called notice: dropping"
+            "call notice: all sends failed"
         );
         crate::runtime::emit_event(
             self.storage,
-            CalledNoticeDropped {
+            IntexSeriesCallNoticeFailed {
                 seriesId: series_id.into(),
-                calledAt: called_at,
+                calledAt: u64::from(called_at),
             },
         )
     }

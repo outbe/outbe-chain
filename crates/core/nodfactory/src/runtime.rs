@@ -290,14 +290,6 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
                 encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             },
         )?;
-        emit_event(
-            storage,
-            INodFactory::NodBurned {
-                owner,
-                nodId: nod_id.to_u256(),
-                encryptedGratisAmount: encrypted.encrypted_gratis_amount.into(),
-            },
-        )?;
         outbe_gratisfactory::api::encrypted_balance(storage.clone(), owner)
     })
 }
