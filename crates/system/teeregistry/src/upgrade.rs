@@ -115,6 +115,27 @@ impl TeeRegistry<'_> {
         })
     }
 
+    /// Read-only domain validation; storage/corrupt policy failures stay outer errors.
+    /// Update uses this before encoding a target refusal, without staging during V/R.
+    pub fn validate_measurement_upgrade_v1(
+        &self,
+        mrenclave: B256,
+    ) -> Result<std::result::Result<(), TeeRegistryError>> {
+        let current = self.active_policy_v1()?;
+        if mrenclave.is_zero() || current.measurement_rules.len() != 1 {
+            return Ok(Err(
+                TeeRegistryError::UpgradeRequiresSingleMeasurementPredecessor,
+            ));
+        }
+        if current.measurement_rules[0].mrenclave == mrenclave {
+            return Ok(Err(TeeRegistryError::UpgradeMustChangeMrenclave));
+        }
+        if current.policy_version.checked_add(1).is_none() {
+            return Ok(Err(TeeRegistryError::TeePolicyVersionOverflow));
+        }
+        Ok(Ok(()))
+    }
+
     pub fn stage_measurement_upgrade_v1(
         &mut self,
         proposal: U256,

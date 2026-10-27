@@ -99,16 +99,26 @@ fn stage_policy_release(
     StorageHandle::enter(provider, |storage| {
         let mut registry = TeeRegistry::new(storage.clone());
         registry.install_initial_policy_v1(current).unwrap();
-        registry
-            .stage_successor_policy_v1(proposal_id, successor)
-            .unwrap();
         schedule_update(
-            &mut Update::new(storage),
+            &mut Update::new(storage.clone()),
             proposal_id,
             crate::ScheduleUpdatePayload::new(PV, successor.activation_height, "TEE release"),
             1,
         )
         .unwrap();
+        Update::new(storage)
+            .live_plans
+            .create(&crate::schema::UpdatePlanRecord {
+                proposal_id,
+                activation_height: successor.activation_height,
+                replace_end: successor.activation_height - 100,
+                mrenclave: successor.measurement_rules[0].mrenclave,
+                prepared: true,
+            })
+            .unwrap();
+        registry
+            .stage_successor_policy_v1(proposal_id, successor)
+            .unwrap();
     });
 }
 
@@ -186,64 +196,6 @@ fn handler_failure_rolls_back_tee_policy_promotion_with_update_activation() {
                 .unwrap()
                 .status,
             ScheduledUpdateStatus::Scheduled
-        );
-    });
-}
-
-#[test]
-fn activating_update_discards_staged_policy_owned_by_canceled_update() {
-    let genesis_hash = B256::repeat_byte(0x6a);
-    let staged_proposal_id = U256::from(13);
-    let activating_proposal_id = U256::from(14);
-    let staged_activation = 202;
-    let activating_height = 101;
-    let current = initial_tee_policy(genesis_hash, B256::repeat_byte(0x6b), 0x61);
-    let successor =
-        successor_tee_policy(&current, staged_activation, B256::repeat_byte(0x6c), 0x61);
-    let mut provider = HashMapStorageProvider::new_with_chain_identity(TEST_CHAIN_ID, genesis_hash);
-    provider.set_block_number(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        let mut registry = TeeRegistry::new(storage.clone());
-        registry.install_initial_policy_v1(&current).unwrap();
-        registry
-            .stage_successor_policy_v1(staged_proposal_id, &successor)
-            .unwrap();
-        let mut update = Update::new(storage);
-        schedule_update(
-            &mut update,
-            staged_proposal_id,
-            crate::ScheduleUpdatePayload::new(PV, staged_activation, "superseded TEE release"),
-            1,
-        )
-        .unwrap();
-        schedule_update(
-            &mut update,
-            activating_proposal_id,
-            crate::ScheduleUpdatePayload::new(PV, activating_height, "selected release"),
-            1,
-        )
-        .unwrap();
-    });
-
-    provider.set_block_number(activating_height);
-    StorageHandle::enter(&mut provider, |storage| {
-        let ctx = block_ctx(storage.clone(), activating_height);
-        Update::new(storage.clone())
-            .process_begin_block_with_handlers(&ctx, &EMPTY_UPGRADE_HANDLER_REGISTRY)
-            .unwrap();
-
-        let registry = TeeRegistry::new(storage.clone());
-        assert_eq!(registry.active_policy_v1().unwrap(), current);
-        assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
-
-        let update = Update::new(storage);
-        assert_eq!(
-            scheduled_status(&update, activating_proposal_id),
-            ScheduledUpdateStatus::Activated
-        );
-        assert_eq!(
-            scheduled_status(&update, staged_proposal_id),
-            ScheduledUpdateStatus::Canceled
         );
     });
 }

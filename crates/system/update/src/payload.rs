@@ -1,15 +1,7 @@
-//! Vote payload encoding for scheduled updates.
-//!
-//! JSON schema:
-//! ```json
-//! {"version":"1.2", "activationHeight":12345, "info":"notes", "mrenclave":"0x<64 hexadecimal digits>"}
-//! ```
-//!
-//! `version` is a `"major.minor"` string (no `v` prefix). The decoder rejects raw
-//! numeric JSON values and undotted version strings. An absent, null or empty
-//! `mrenclave` means no enclave update. The decoder rejects unknown fields.
+//! Strict live Update actions derive activation height from Vote's three windows.
+//! Historical schedules retain their explicit height for stored records and direct fixtures.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -19,7 +11,113 @@ use crate::version::{
     protocol_version_major, protocol_version_minor, try_parse_protocol_version, ProtocolVersion,
 };
 
-/// JSON payload for scheduling a protocol update via vote.
+/// Live protocol plan. Callers cannot choose any phase boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UpdatePlanPayload {
+    pub version: String,
+    #[serde(default)]
+    pub info: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_mrenclave",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mrenclave: Option<B256>,
+}
+
+impl UpdatePlanPayload {
+    pub fn new(version: ProtocolVersion, info: impl Into<String>) -> Self {
+        Self {
+            version: ScheduleUpdatePayload::format_version(version),
+            info: info.into(),
+            mrenclave: None,
+        }
+    }
+
+    pub fn protocol_version(&self) -> std::result::Result<ProtocolVersion, UpdateError> {
+        ScheduleUpdatePayload::parse_version(&self.version)
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), UpdateError> {
+        if self.protocol_version()?.is_zero() {
+            return Err(UpdateError::InvalidVersion);
+        }
+        if self
+            .mrenclave
+            .is_some_and(|measurement| measurement.is_zero())
+        {
+            return Err(UpdateError::InvalidTeePolicy);
+        }
+        Ok(())
+    }
+}
+
+/// Strict, mutually exclusive live primary/cancel/replacement action shapes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UpdateVoteAction {
+    Primary(UpdatePlanPayload),
+    Cancel(UpdateCancelPayload),
+    Replace(UpdateReplacementPayload),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UpdateCancelPayload {
+    #[serde(deserialize_with = "deserialize_proposal_id")]
+    pub cancel_proposal_id: U256,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct UpdateReplacementPayload {
+    #[serde(deserialize_with = "deserialize_proposal_id")]
+    pub replace_proposal_id: U256,
+    pub update: UpdatePlanPayload,
+}
+
+fn deserialize_proposal_id<'de, D>(deserializer: D) -> Result<U256, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = String::deserialize(deserializer)?;
+    let digits = value
+        .strip_prefix("0x")
+        .filter(|digits| {
+            !digits.is_empty()
+                && digits.len() <= 64
+                && digits.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .ok_or_else(|| D::Error::custom("proposal id must be a 0x-prefixed uint256"))?;
+    let id = U256::from_str_radix(digits, 16).map_err(D::Error::custom)?;
+    if id.is_zero() {
+        return Err(D::Error::custom("proposal id must be nonzero"));
+    }
+    Ok(id)
+}
+
+impl UpdateVoteAction {
+    pub fn from_value(value: &Value) -> std::result::Result<Self, UpdateError> {
+        serde_json::from_value(value.clone()).map_err(|_| UpdateError::InvalidPayload)
+    }
+
+    pub fn plan(&self) -> Option<&UpdatePlanPayload> {
+        match self {
+            Self::Primary(plan) => Some(plan),
+            Self::Replace(replacement) => Some(&replacement.update),
+            Self::Cancel(_) => None,
+        }
+    }
+}
+
+pub fn encode_update_plan_json(version: ProtocolVersion, info: &str) -> String {
+    serde_json::to_string(&UpdatePlanPayload::new(version, info))
+        .expect("update plan JSON should serialize")
+}
+
+/// Historical payload for stored proposals and the direct scheduling API, not live Vote admission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ScheduleUpdatePayload {
@@ -112,7 +210,7 @@ impl ScheduleUpdatePayload {
     }
 }
 
-/// Encodes update fields into a vote JSON payload string.
+/// Encodes a historical stored schedule/direct-API fixture, never a live Vote action.
 pub fn encode_schedule_update_json(
     version: ProtocolVersion,
     activation_height: u64,
@@ -126,7 +224,7 @@ pub fn encode_schedule_update_json(
     .expect("schedule update payload JSON should serialize")
 }
 
-/// Decodes a vote JSON payload into update fields.
+/// Decodes historical schedule fields, preserving their caller-selected height.
 pub fn decode_schedule_update_json(
     payload: &Value,
 ) -> std::result::Result<(ProtocolVersion, u64, String), UpdateError> {
@@ -138,7 +236,7 @@ pub fn decode_schedule_update_json(
     ))
 }
 
-/// Validates structural update JSON fields and activation-height buffer.
+/// Validates a historical/direct schedule and its activation-height buffer.
 pub fn validate_schedule_update_json(
     payload: &Value,
     current_height: u64,
@@ -151,6 +249,79 @@ mod tests {
     use super::*;
     use crate::encode_protocol_version;
     use alloy_primitives::B256;
+
+    #[test]
+    fn live_actions_are_strict_and_have_no_height_alias() {
+        let primary = serde_json::json!({"version":"1.2"});
+        let cancel = serde_json::json!({"cancelProposalId":"0x1"});
+        let replacement = serde_json::json!({"replaceProposalId":"0x1","update":primary});
+        for value in [&primary, &cancel, &replacement] {
+            let action = UpdateVoteAction::from_value(value).unwrap();
+            if let Some(plan) = action.plan() {
+                plan.validate().unwrap();
+            }
+            assert_eq!(
+                serde_json::from_str::<UpdateVoteAction>(&serde_json::to_string(&action).unwrap())
+                    .unwrap(),
+                action
+            );
+        }
+        for value in [
+            serde_json::json!({"version":"1.2","activationHeight":123}),
+            serde_json::json!({"cancelProposalId":"0x1","info":"extra"}),
+            serde_json::json!({"cancelProposalId":"0x1","replaceProposalId":"0x2","update":primary}),
+            serde_json::json!({"replaceProposalId":"0x1","update":{"version":"1.2","activationHeight":123}}),
+            serde_json::json!({"replaceProposalId":"0x1","update":{"version":"1.2"},"activationHeight":123}),
+        ] {
+            assert_eq!(
+                UpdateVoteAction::from_value(&value),
+                Err(UpdateError::InvalidPayload)
+            );
+        }
+    }
+
+    #[test]
+    fn live_measurement_and_version_validation_is_not_weakened() {
+        for measurement in [
+            serde_json::json!(null),
+            serde_json::json!(""),
+            serde_json::json!("  "),
+        ] {
+            let action = UpdateVoteAction::from_value(
+                &serde_json::json!({"version":"1.2","mrenclave":measurement}),
+            )
+            .unwrap();
+            assert_eq!(action.plan().unwrap().mrenclave, None);
+        }
+        let zero = UpdateVoteAction::from_value(
+            &serde_json::json!({"version":"1.2","mrenclave":B256::ZERO}),
+        )
+        .unwrap();
+        assert_eq!(
+            zero.plan().unwrap().validate(),
+            Err(UpdateError::InvalidTeePolicy)
+        );
+        let zero_version =
+            UpdateVoteAction::from_value(&serde_json::json!({"version":"0.0"})).unwrap();
+        assert_eq!(
+            zero_version.plan().unwrap().validate(),
+            Err(UpdateError::InvalidVersion)
+        );
+        for version in [serde_json::json!(65538), serde_json::json!("65538")] {
+            assert!(
+                UpdateVoteAction::from_value(&serde_json::json!({"version":version}))
+                    .and_then(|action| action.plan().unwrap().validate())
+                    .is_err()
+            );
+        }
+        let encoded = encode_update_plan_json(encode_protocol_version(1, 2), "notes");
+        let action =
+            UpdateVoteAction::from_value(&serde_json::from_str(&encoded).unwrap()).unwrap();
+        assert_eq!(
+            action.plan().unwrap().protocol_version().unwrap(),
+            encode_protocol_version(1, 2)
+        );
+    }
 
     fn payload(activation_height: u64) -> ScheduleUpdatePayload {
         ScheduleUpdatePayload::new(ProtocolVersion::from(2), activation_height, "notes")
@@ -272,5 +443,30 @@ mod tests {
             validate_schedule_update_json(&value, 0).unwrap_err(),
             UpdateError::InvalidVersion
         );
+    }
+
+    #[test]
+    fn linked_action_ids_require_nonzero_hex_uint256_strings() {
+        for id in [
+            serde_json::json!(1),
+            serde_json::json!("1"),
+            serde_json::json!("0x"),
+            serde_json::json!("0x0"),
+            serde_json::json!("0xgg"),
+            serde_json::json!(format!("0x1{}", "0".repeat(64))),
+        ] {
+            for action in [
+                serde_json::json!({"cancelProposalId":id}),
+                serde_json::json!({"replaceProposalId":id,"update":{"version":"1.2"}}),
+            ] {
+                assert_eq!(
+                    UpdateVoteAction::from_value(&action),
+                    Err(UpdateError::InvalidPayload)
+                );
+            }
+        }
+        let maximum = serde_json::json!({"cancelProposalId":format!("0x{:x}",U256::MAX)});
+        assert!(matches!(UpdateVoteAction::from_value(&maximum),
+            Ok(UpdateVoteAction::Cancel(UpdateCancelPayload { cancel_proposal_id })) if cancel_proposal_id == U256::MAX));
     }
 }

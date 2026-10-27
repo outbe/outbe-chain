@@ -95,6 +95,153 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
 }
 
 #[test]
+fn phased_update_cancellation_precedes_preparation_and_rolls_back_with_outer_hooks() {
+    use outbe_primitives::{addresses::UPDATE_ADDRESS, error::PrecompileError};
+    use outbe_update::{payload::encode_update_plan_json, precompile::IUpdate};
+    use outbe_vote::{ProposalLifecycle, ProposalPhase, ProposalStatus, VoteTarget};
+    let ProposalLifecycle::ThreeWindow {
+        voting_window,
+        replace_window,
+        activation_window,
+    } = outbe_update::UpdateVoteTarget.lifecycle()
+    else {
+        panic!("Update must opt in")
+    };
+    const CREATED: u64 = 7;
+    let q = CREATED + voting_window + 1;
+    let t = q + replace_window;
+    let h = t + activation_window;
+    let validators = [
+        (Address::repeat_byte(0xc1), dummy_pubkey(0xc1)),
+        (Address::repeat_byte(0xc2), dummy_pubkey(0xc2)),
+        (Address::repeat_byte(0xc3), dummy_pubkey(0xc3)),
+    ];
+    let proposer = validators[0].0;
+    let parent = U256::ONE;
+    let child = U256::from(2);
+    let mut state = state_with_active_validators_seeded_at_block(&validators, CREATED, |storage| {
+        let mut vote = Vote::new(storage);
+        let payload = encode_update_plan_json(
+            outbe_update::encode_protocol_version(3, 0),
+            "cancel before unsupported activation",
+        );
+        assert_eq!(
+            vote.create_proposal(
+                proposer,
+                UPDATE_ADDRESS,
+                &payload,
+                CREATED,
+                crate::handlers::vote::registry()
+            )
+            .unwrap(),
+            parent
+        );
+        for (voter, _) in &validators[..2] {
+            vote.cast_vote_approve(parent, *voter, true, CREATED + 1)
+                .unwrap();
+        }
+    });
+    let context = |height| {
+        BlockContext::new(
+            height,
+            1_700_000_000,
+            CHAIN_ID,
+            proposer,
+            validators.iter().map(|(address, _)| *address).collect(),
+        )
+    };
+    super::run_atomic_storage_hooks(&mut state, context(q), |ctx| {
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        assert_eq!(
+            Vote::new(ctx.storage.clone())
+                .proposal_lifecycle(parent)?
+                .phase,
+            ProposalPhase::Replace
+        );
+        Ok(())
+    })
+    .unwrap();
+    super::run_atomic_storage_hooks(&mut state, context(t - 1), |ctx| {
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        let mut vote = Vote::new(ctx.storage.clone());
+        let payload = serde_json::json!({"cancelProposalId":"0x1"}).to_string();
+        assert_eq!(
+            vote.create_proposal(
+                validators[1].0,
+                UPDATE_ADDRESS,
+                &payload,
+                t - 1,
+                crate::handlers::vote::registry()
+            )?,
+            child
+        );
+        for (voter, _) in &validators[..2] {
+            vote.cast_vote_approve(child, *voter, true, t - 1)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let failed = super::run_atomic_storage_hooks(&mut state, context(t), |ctx| {
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        assert_eq!(
+            Vote::new(ctx.storage.clone())
+                .get_proposal(parent)?
+                .unwrap()
+                .status,
+            ProposalStatus::Canceled
+        );
+        Err(PrecompileError::Fatal(
+            "later hook failed after cancellation".into(),
+        ))
+    });
+    assert!(failed.is_err());
+    let (_, events) = super::run_atomic_storage_hooks(&mut state, context(t), |ctx| {
+        let vote = Vote::new(ctx.storage.clone());
+        assert_eq!(
+            vote.get_proposal(child)?.unwrap().status,
+            ProposalStatus::Pending
+        );
+        assert_eq!(
+            vote.proposal_lifecycle(parent)?.phase,
+            ProposalPhase::Replace
+        );
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        assert_eq!(
+            vote.get_proposal(parent)?.unwrap().status,
+            ProposalStatus::Canceled
+        );
+        assert_eq!(
+            vote.get_proposal(child)?.unwrap().status,
+            ProposalStatus::Approved
+        );
+        assert!(outbe_update::Update::new(ctx.storage.clone())
+            .list_waiting_for_activation_proposal_ids()?
+            .is_empty());
+        Ok(())
+    })
+    .unwrap();
+    let cancellations: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == UPDATE_ADDRESS)
+        .filter_map(|log| IUpdate::UpgradeCanceled::decode_log_data(&log.data).ok())
+        .collect();
+    assert_eq!(cancellations.len(), 1);
+    assert_eq!(cancellations[0].proposalId, parent);
+    assert_eq!(cancellations[0].activationHeight, h);
+    super::run_atomic_storage_hooks(&mut state, context(h), |ctx| {
+        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        let update = outbe_update::Update::new(ctx.storage.clone());
+        assert_eq!(update.get_active_version()?.raw(), 0);
+        assert_eq!(
+            update.read_scheduled_update(parent)?.unwrap().status,
+            outbe_update::schema::ScheduledUpdateStatus::Canceled
+        );
+        Ok(())
+    })
+    .expect("canceled unsupported update must never reach the ceiling check");
+}
+
+#[test]
 fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     let signer = test_evm_signer();
     let proposer = signer.address();

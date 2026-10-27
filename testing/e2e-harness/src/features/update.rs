@@ -53,7 +53,6 @@ fn propose_unsupported_update(world: &mut World, name: String) {
 
 #[when("a funded non-validator attempts to propose an update")]
 fn unauthorized_proposal(world: &mut World) {
-    let primary = world.validators.primary_port();
     let funder = world.validators.get(0);
     let funding = world
         .rpc
@@ -64,11 +63,8 @@ fn unauthorized_proposal(world: &mut World) {
         "non-validator funding receipt failed: {funding}"
     );
 
-    let head = world.rpc.head(primary).expect("read head");
-    let activation = head + world.state.voting_window + MIN_ACTIVATION_BUFFER + 30;
     let payload = serde_json::json!({
         "version": "0.1",
-        "activationHeight": activation,
         "info": "unauthorized e2e proposal",
     })
     .to_string();
@@ -108,52 +104,49 @@ fn unauthorized_proposal_preserves_state(world: &mut World, id: u64) {
     }
 }
 
-#[when(expr = "operator {string} proposes a conflicting update at the same activation height")]
-fn propose_conflicting_update(world: &mut World, name: String) {
+#[when(expr = "operator {string} proposes a replacement for update proposal {int}")]
+fn propose_replacement(world: &mut World, name: String, parent: u64) {
     let operator = world.validators.operator(&name).expect("resolve operator");
-    let activation = world
-        .state
-        .activation_height
-        .expect("first proposal activation height");
-    let first_version = world
-        .state
-        .proposed_version
-        .expect("first proposal version");
-    let conflicting_version = first_version + 1;
-    let version = format!(
-        "{}.{}",
-        conflicting_version >> 24,
-        conflicting_version & 0x00FF_FFFF
-    );
+    let version = world.state.proposed_version.expect("original version");
     let payload = serde_json::json!({
-        "version": version,
-        "activationHeight": activation,
-        "info": "conflicting e2e update",
+        "replaceProposalId": format!("0x{parent:x}"),
+        "update": {
+            "version": format!("{}.{}", version >> 24, version & 0x00FF_FFFF),
+            "info": format!("replacement by {name}"),
+        },
     })
     .to_string();
     let tx = world
         .rpc
         .send_propose(&operator, &format!("{UPDATE_ADDR:#x}"), &payload)
-        .expect("send conflicting proposal");
+        .expect("send replacement");
     assert!(
         world.rpc.wait_successful_receipt(&tx, 40),
-        "conflicting proposal transaction failed before tally: {tx}"
+        "replacement admission failed: {tx}"
+    );
+}
+
+#[when(expr = "operator {string} proposes cancellation of update proposal {int}")]
+fn propose_cancellation(world: &mut World, name: String, parent: u64) {
+    let operator = world.validators.operator(&name).expect("resolve operator");
+    let payload = serde_json::json!({"cancelProposalId": format!("0x{parent:x}")}).to_string();
+    let tx = world
+        .rpc
+        .send_propose(&operator, &format!("{UPDATE_ADDR:#x}"), &payload)
+        .expect("send cancellation");
+    assert!(
+        world.rpc.wait_successful_receipt(&tx, 40),
+        "cancellation admission failed: {tx}"
     );
 }
 
 fn propose_update_version(world: &mut World, name: &str, version: u64, info: &str) {
     let operator = world.validators.operator(name).expect("resolve operator");
-    let port = world.validators.primary_port();
-    let head = world.rpc.head(port).expect("read head");
-    // Both hardware testnet and mock devnet need the standard approval notice.
-    // Leave additional room for proposal inclusion and the post-deadline tally.
-    let activation = head + world.state.voting_window + MIN_ACTIVATION_BUFFER + 30;
     // VoteTarget JSON expects `"major.minor"`. The on-chain ABI still uses packed u32.
     let version_str = format!("{}.{}", version >> 24, version & 0x00FF_FFFF);
 
     let payload = serde_json::json!({
         "version": version_str,
-        "activationHeight": activation,
         "info": info,
     })
     .to_string();
@@ -165,11 +158,10 @@ fn propose_update_version(world: &mut World, name: &str, version: u64, info: &st
     assert!(world.rpc.wait_tx(&tx, 40), "propose tx not mined: {tx}");
 
     world.state.proposed_version = Some(version);
-    world.state.activation_height = Some(activation);
+    world.state.activation_height = None;
 }
 
-/// The proposal is visible, pending, targets the update module, and carries the
-/// activation height (update_operator_flow.sh:253-266).
+/// Read the protocol-derived primary phase boundaries rather than trusting payload dates.
 #[then(
     expr = "proposal {int} is pending, targets the update module, and carries the activation height"
 )]
@@ -196,16 +188,14 @@ fn proposal_pending(world: &mut World, id: u64) {
         "target {} != update module {update_addr}",
         vs.target
     );
-    let activation = world
-        .state
-        .activation_height
-        .expect("activation set by propose");
-    assert!(
-        vs.payload
-            .contains(&format!("\"activationHeight\":{activation}")),
-        "payload missing activation height {activation}: {}",
-        vs.payload
-    );
+    let deadline = vs.deadline.expect("voting deadline");
+    let replace_end = vs.replace_end.expect("replacement deadline");
+    let activation = vs.activation_height.expect("derived activation height");
+    assert_eq!(vs.phase, "voting");
+    assert_eq!(replace_end, deadline + 1 + world.state.voting_window / 2);
+    assert_eq!(activation, replace_end + MIN_ACTIVATION_BUFFER);
+    world.state.activation_height = Some(activation);
+    world.state.vote_deadline = Some(deadline);
 }
 
 /// Cast yes votes from a comma-separated list of validators
@@ -343,6 +333,16 @@ fn proposal_parity(world: &mut World, id: u64) {
         assert_eq!(actual.deadline, expected.deadline, "deadline on RPC {port}");
         assert_eq!(actual.target, expected.target, "target on RPC {port}");
         assert_eq!(actual.payload, expected.payload, "payload on RPC {port}");
+        assert_eq!(actual.phase, expected.phase, "phase on RPC {port}");
+        assert_eq!(actual.parent, expected.parent, "parent on RPC {port}");
+        assert_eq!(
+            actual.replace_end, expected.replace_end,
+            "replace boundary on RPC {port}"
+        );
+        assert_eq!(
+            actual.activation_height, expected.activation_height,
+            "activation on RPC {port}"
+        );
     }
 }
 
@@ -393,25 +393,54 @@ fn approved_schedule_parity(world: &mut World) {
     }
 }
 
-#[then(expr = "proposal {int} is errored without a schedule on every validator")]
-fn errored_without_schedule(world: &mut World, id: u64) {
-    assert!(
-        world
-            .rpc
-            .wait_vote_status(id, "error", 60)
-            .expect("observe conflicting proposal status"),
-        "conflicting proposal #{id} did not become errored"
-    );
+#[then(expr = "proposal {int} is canceled without a schedule on every validator")]
+fn canceled_without_schedule(world: &mut World, id: u64) {
+    assert!(world
+        .rpc
+        .wait_vote_status(id, "canceled", 60)
+        .expect("read canceled competitor"));
     proposal_parity(world, id);
     for port in validator_ports(world) {
-        assert!(
-            world
-                .rpc
-                .scheduled_update_absent_on(port, id)
-                .expect("observe errored schedule absence"),
-            "errored proposal #{id} created a schedule on RPC {port}"
-        );
+        assert!(world
+            .rpc
+            .scheduled_update_absent_on(port, id)
+            .expect("read schedule absence"));
     }
+}
+
+#[then(expr = "update proposal {int} is shadowed on every validator")]
+fn update_shadowed(world: &mut World, id: u64) {
+    for port in validator_ports(world) {
+        let vote = world
+            .rpc
+            .vote_status_on(port, id)
+            .expect("read shadowed Vote");
+        assert_eq!(vote.status, "canceled");
+        assert_eq!(vote.phase, "finished");
+        let update = world
+            .rpc
+            .scheduled_update_on(port, id)
+            .expect("read retained Update");
+        assert_eq!(update.status, 2, "Update must be Canceled, not deleted");
+    }
+}
+
+#[then(expr = "replacement proposal {int} starts a fresh replacement window")]
+fn replacement_window_restarts(world: &mut World, id: u64) {
+    let old_activation = world.state.activation_height.expect("original activation");
+    let lifecycle = world.rpc.vote_status(id).expect("read replacement");
+    assert_eq!(lifecycle.status, "approved");
+    assert_eq!(lifecycle.phase, "replace");
+    let activation = lifecycle.activation_height.expect("successor activation");
+    assert_eq!(activation, old_activation + world.state.voting_window / 2);
+    assert_eq!(
+        activation,
+        lifecycle.replace_end.unwrap() + MIN_ACTIVATION_BUFFER
+    );
+    world.state.proposal_id = id;
+    world.state.activation_height = Some(activation);
+    approved_and_scheduled(world, id);
+    proposal_parity(world, id);
 }
 
 #[then(expr = "approval and scheduling for proposal {int} are committed atomically exactly once")]

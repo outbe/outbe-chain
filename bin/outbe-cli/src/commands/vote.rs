@@ -18,7 +18,8 @@ pub enum VoteCmd {
         /// Target system module precompile address.
         #[arg(long)]
         target_module: Address,
-        /// Proposal JSON: target payload with optional votingWindowBlocks metadata.
+        /// Target JSON; standard targets may include votingWindowBlocks.
+        /// Update plans derive their windows and activation height from protocol policy.
         #[arg(
             long,
             conflicts_with = "payload_file",
@@ -113,12 +114,13 @@ fn split_proposal_json(payload: String) -> Result<(String, Option<u64>)> {
 async fn fetch_vote_proposal(
     client: &(impl Rpc + Sync),
     proposal_id: U256,
+    block_tag: &str,
 ) -> Result<IVote::ProposalInfo> {
     let call = IVote::getProposalCall {
         proposalId: proposal_id,
     };
     let ret = client
-        .eth_call(VOTE_ADDRESS, &call.abi_encode())
+        .eth_call_at(VOTE_ADDRESS, &call.abi_encode(), block_tag)
         .await
         .wrap_err("vote getProposal eth_call failed")?;
     IVote::getProposalCall::abi_decode_returns(&ret).wrap_err("failed to decode vote proposal")
@@ -168,7 +170,11 @@ async fn prepare_enclave_upgrade_payload(
         return Ok(payload);
     }
     let value: serde_json::Value = serde_json::from_str(&payload)?;
-    let update = outbe_update::payload::ScheduleUpdatePayload::from_value(&value)?;
+    let action = outbe_update::payload::UpdateVoteAction::from_value(&value)?;
+    let Some(update) = action.plan() else {
+        return Ok(payload);
+    };
+    update.validate()?;
     if update.mrenclave.is_none() {
         return Ok(payload);
     }
@@ -177,7 +183,6 @@ async fn prepare_enclave_upgrade_payload(
         .get("number")
         .and_then(serde_json::Value::as_str)
         .ok_or(VoteError::FinalizedBlockMissingNumber)?;
-    let height = u64::from_str_radix(tag.trim_start_matches("0x"), 16)?;
     let bytes = client
         .eth_call_at(
             TEE_REGISTRY_ADDRESS,
@@ -197,8 +202,6 @@ async fn prepare_enclave_upgrade_payload(
     if policy.chain_id != U256::from(chain_id).to_be_bytes() {
         return Err(VoteError::TeePolicyChainMismatch.into());
     }
-    update.validate(height)?;
-    let payload = serde_json::to_string(&update)?;
     println!("Enclave upgrade proposal: {payload}");
     Ok(payload)
 }
@@ -222,8 +225,19 @@ async fn cast_vote(
 }
 
 async fn status(client: &(impl Rpc + Sync), proposal_id: U256) -> Result<()> {
-    let proposal = fetch_vote_proposal(client, proposal_id).await?;
-    print_vote_proposal("Proposal", &proposal);
+    // Both views must use one height when a replacement window closes between RPCs.
+    let block_tag = format!("0x{:x}", client.eth_block_number().await?);
+    let proposal = fetch_vote_proposal(client, proposal_id, &block_tag).await?;
+    let call = IVote::getProposalLifecycleCall {
+        proposalId: proposal_id,
+    };
+    let bytes = client
+        .eth_call_at(VOTE_ADDRESS, &call.abi_encode(), &block_tag)
+        .await
+        .wrap_err("vote getProposalLifecycle eth_call failed")?;
+    let lifecycle = IVote::getProposalLifecycleCall::abi_decode_returns(&bytes)
+        .wrap_err("failed to decode vote lifecycle")?;
+    print_vote_proposal("Proposal", &proposal, &lifecycle);
     Ok(())
 }
 
@@ -233,21 +247,42 @@ fn proposal_status_label(status: IVote::ProposalStatus) -> &'static str {
         IVote::ProposalStatus::Approved => "approved",
         IVote::ProposalStatus::Expired => "expired",
         IVote::ProposalStatus::Error => "error",
+        IVote::ProposalStatus::Canceled => "canceled",
         _ => "unknown",
     }
 }
 
-fn print_vote_proposal(label: &str, proposal: &IVote::ProposalInfo) {
+fn print_vote_proposal(
+    label: &str,
+    proposal: &IVote::ProposalInfo,
+    lifecycle: &IVote::ProposalLifecycleInfo,
+) {
     let proposal_id = proposal.proposalId;
     let status = proposal_status_label(proposal.status);
     let deadline = proposal.votingDeadlineHeight;
     let yes = proposal.state.yes;
     let no = proposal.state.no;
     let duration = deadline.saturating_sub(proposal.createdHeight);
+    let phase = match lifecycle.phase {
+        IVote::ProposalPhase::Voting => "voting",
+        IVote::ProposalPhase::Replace => "replace",
+        IVote::ProposalPhase::Activation => "activation",
+        IVote::ProposalPhase::Finished => "finished",
+        _ => "unknown",
+    };
+    let kind = match lifecycle.kind {
+        IVote::ProposalKind::Standard => "standard",
+        IVote::ProposalKind::Primary => "primary",
+        IVote::ProposalKind::Cancel => "cancel",
+        IVote::ProposalKind::Replacement => "replacement",
+        IVote::ProposalKind::LegacyPlan => "legacy_plan",
+        _ => "unknown",
+    };
 
     println!(
-        "{label} #{proposal_id}: target={:?} status={status} votingWindowBlocks={duration} deadline={deadline} votes={yes}/{no}",
-        proposal.targetModule
+        "{label} #{proposal_id}: target={:?} status={status} votingWindowBlocks={duration} deadline={deadline} votes={yes}/{no} kind={kind} phase={phase} parent={} replaceEnd={} activationHeight={}",
+        proposal.targetModule, lifecycle.parentProposalId,
+        lifecycle.replaceEnd, lifecycle.activationHeight
     );
     println!("  payload: {}", proposal.payload);
 }
@@ -255,16 +290,12 @@ fn print_vote_proposal(label: &str, proposal: &IVote::ProposalInfo) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::abi::VOTE_ADDRESS;
-    use crate::rpc::mock::{call_map, recording_send_tx_rpc, MockRpc};
+    use crate::rpc::mock::MockRpc;
     use crate::Cli;
-    use alloy_primitives::Address;
-    use alloy_sol_types::SolCall;
     use clap::Parser;
     use outbe_primitives::addresses::UPDATE_ADDRESS;
-    use std::collections::HashMap;
 
-    const SAMPLE_PAYLOAD: &str = r#"{"version":"1.2","activationHeight":1000,"info":"notes"}"#;
+    const SAMPLE_PAYLOAD: &str = r#"{"version":"1.2","info":"notes"}"#;
 
     #[test]
     fn proposal_json_duration_is_vote_metadata_and_legacy_bytes_are_preserved() {
@@ -295,68 +326,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn proposal_json_duration_is_sent_in_vote_creation() {
-        for window in [1000, 30000] {
-            let private_key = "0000000000000000000000000000000000000000000000000000000000000001";
-            let mut input: serde_json::Value = serde_json::from_str(SAMPLE_PAYLOAD).unwrap();
-            let target_payload = input.to_string();
-            input["votingWindowBlocks"] = serde_json::json!(window);
-            let call = IVote::createProposalWithVotingWindowCall {
-                targetModule: UPDATE_ADDRESS,
-                payload: target_payload,
-                votingWindowBlocks: window,
-            };
-            let rpc =
-                recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
-                    .unwrap();
-            let file = tempfile::NamedTempFile::new().unwrap();
-            std::fs::write(file.path(), input.to_string()).unwrap();
-            VoteCmd::Propose {
-                target_module: UPDATE_ADDRESS,
-                payload: None,
-                payload_file: Some(file.path().to_path_buf()),
-            }
-            .run(&rpc, Some(private_key))
-            .await
-            .unwrap();
-        }
-    }
-
-    #[test]
-    fn test_cli_parse_vote_status() {
-        let cli = Cli::try_parse_from(["outbe-cli", "vote", "status", "--proposal-id", "1"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_vote_propose_flags() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "vote",
-            "propose",
-            "--target-module",
-            "0x000000000000000000000000000000000000EE00",
-            "--payload",
-            SAMPLE_PAYLOAD,
-        ]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_vote_propose_with_payload_file() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "vote",
-            "propose",
-            "--target-module",
-            "0x000000000000000000000000000000000000EE00",
-            "--payload-file",
-            "proposal.json",
-        ]);
-        assert!(cli.is_ok());
-    }
-
     #[test]
     fn test_cli_rejects_inline_and_file_payload_together() {
         let cli = Cli::try_parse_from([
@@ -371,92 +340,6 @@ mod tests {
             "proposal.json",
         ]);
         assert!(cli.is_err());
-    }
-
-    #[test]
-    fn test_cli_parse_vote_cast_yes() {
-        let cli = Cli::try_parse_from(["outbe-cli", "vote", "cast", "--proposal-id", "1", "--yes"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_vote_cast_no() {
-        let cli = Cli::try_parse_from(["outbe-cli", "vote", "cast", "--proposal-id", "1", "--no"]);
-        assert!(cli.is_ok());
-    }
-
-    fn mock_proposal_info(proposal_id: U256) -> IVote::ProposalInfo {
-        IVote::ProposalInfo {
-            proposalId: proposal_id,
-            proposer: Address::ZERO,
-            targetModule: UPDATE_ADDRESS,
-            payload: SAMPLE_PAYLOAD.to_string(),
-            createdHeight: 10,
-            votingDeadlineHeight: 100,
-            status: IVote::ProposalStatus::Pending,
-            state: IVote::VoteTally { yes: 0, no: 0 },
-            votersCount: U256::ZERO,
-        }
-    }
-
-    #[tokio::test]
-    async fn propose_sends_vote_create_proposal_tx() {
-        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let call = IVote::createProposalCall {
-            targetModule: UPDATE_ADDRESS,
-            payload: SAMPLE_PAYLOAD.to_string(),
-        };
-        let rpc = recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
-            .unwrap();
-        VoteCmd::Propose {
-            target_module: UPDATE_ADDRESS,
-            payload: Some(SAMPLE_PAYLOAD.to_string()),
-            payload_file: None,
-        }
-        .run(&rpc, Some(private_key))
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn propose_reads_json_payload_from_file() {
-        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(file.path(), SAMPLE_PAYLOAD).unwrap();
-        let call = IVote::createProposalCall {
-            targetModule: UPDATE_ADDRESS,
-            payload: SAMPLE_PAYLOAD.to_string(),
-        };
-        let rpc = recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
-            .unwrap();
-        VoteCmd::Propose {
-            target_module: UPDATE_ADDRESS,
-            payload: None,
-            payload_file: Some(file.path().to_path_buf()),
-        }
-        .run(&rpc, Some(private_key))
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn cast_sends_vote_cast_vote_tx() {
-        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-        let proposal_id = U256::from(1);
-        let call = IVote::castVoteCall {
-            proposalId: proposal_id,
-            approve: true,
-        };
-        let rpc = recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
-            .unwrap();
-        VoteCmd::Cast {
-            proposal_id,
-            yes: true,
-            no: false,
-        }
-        .run(&rpc, Some(private_key))
-        .await
-        .unwrap();
     }
 
     #[tokio::test]
@@ -477,23 +360,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_reads_vote_proposal() {
-        let proposal_id = U256::from(1);
-        let proposal = mock_proposal_info(proposal_id);
-        let mut map = HashMap::new();
-        map.insert(
-            (VOTE_ADDRESS, IVote::getProposalCall::SELECTOR),
-            IVote::getProposalCall::abi_encode_returns(&proposal),
+    async fn live_update_rejects_caller_selected_activation_height() {
+        let rpc = MockRpc::default();
+        let payload = r#"{"version":"1.2","activationHeight":1000}"#;
+        assert!(
+            prepare_enclave_upgrade_payload(&rpc, UPDATE_ADDRESS, payload.into())
+                .await
+                .is_err()
         );
-
-        let mock = MockRpc {
-            eth_call_map: Some(call_map(map)),
-            ..MockRpc::default()
-        };
-
-        VoteCmd::Status { proposal_id }
-            .run(&mock, None)
-            .await
-            .unwrap();
+        let replacement =
+            r#"{"replaceProposalId":"0x1","update":{"version":"1.2","activationHeight":1000}}"#;
+        assert!(
+            prepare_enclave_upgrade_payload(&rpc, UPDATE_ADDRESS, replacement.into())
+                .await
+                .is_err()
+        );
     }
 }

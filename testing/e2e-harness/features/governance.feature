@@ -33,7 +33,7 @@ Feature: Governance proposals and protocol updates
 
   @pfs-005-01 @pfs-005-restart-recovery
   Scenario: An approved update survives voting, scheduling, and activation-boundary restarts
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh localnet with a 40-block voting window
     And the committee has reached a usable height
     When operator "validator-0" proposes an update to the next protocol version
     Then proposal 1 is pending, targets the update module, and carries the activation height
@@ -57,7 +57,7 @@ Feature: Governance proposals and protocol updates
 
   @pfs-005-duplicate-vote
   Scenario: A duplicate ballot cannot change an approved update
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh localnet with a 40-block voting window
     And the committee has reached a usable height
     When operator "validator-0" proposes an update to the next protocol version
     Then proposal 1 is pending, targets the update module, and carries the activation height
@@ -69,28 +69,55 @@ Feature: Governance proposals and protocol updates
     Then proposal 1 is approved and the scheduled update matches the proposal
     And approval and scheduling for proposal 1 are committed atomically exactly once
 
-  @pfs-005-authorization-conflict
-  Scenario: Unauthorized and conflicting updates leave one atomic schedule
-    Given a fresh localnet with a 20-block voting window
+  @pfs-005-authorization-replacement
+  Scenario: The lowest-ID replacement wins and cancels a later competing cancellation
+    Given a fresh localnet with a 80-block voting window
     And the committee has reached a usable height
     When a funded non-validator attempts to propose an update
     Then the unauthorized proposal is rejected without creating proposal 1
     When operator "validator-0" proposes an update to the next protocol version
     Then proposal 1 is pending, targets the update module, and carries the activation height
-    When operator "validator-1" proposes a conflicting update at the same activation height
-    Then proposal 2 is pending, targets the update module, and carries the activation height
-    When validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 1
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    When operator "validator-1" proposes a replacement for update proposal 1
+    And operator "validator-2" proposes cancellation of update proposal 1
+    And validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 2
+    And validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 3
+    Then proposal 3 is still pending with 3 yes votes
+    When the committee passes the vote deadline
+    Then update proposal 1 is shadowed on every validator
+    And proposal 3 is canceled without a schedule on every validator
+    And replacement proposal 2 starts a fresh replacement window
+    And approval and scheduling for proposal 2 are committed atomically exactly once
+    When the committee passes the activation height
+    Then the active protocol version equals the proposed version
+    And the scheduled update is marked activated
+    And update proposal 1 is shadowed on every validator
+
+  @pfs-005-cancellation
+  Scenario: A passed cancellation prevents activation while retaining history
+    Given a fresh localnet with a 40-block voting window
+    And the committee has reached a usable height
+    When operator "validator-0" proposes an update to the next protocol version
+    Then proposal 1 is pending, targets the update module, and carries the activation height
+    When validators "validator-0,validator-1,validator-2" cast yes votes
+    Then proposal 1 is still pending with 3 yes votes
+    When the committee passes the vote deadline
+    Then proposal 1 is approved and the scheduled update matches the proposal
+    When operator "validator-1" proposes cancellation of update proposal 1
     And validators "validator-0,validator-1,validator-2" cast confirmed yes votes on proposal 2
     Then proposal 2 is still pending with 3 yes votes
     When the committee passes the vote deadline
-    Then proposal 1 is approved and the scheduled update matches the proposal
-    And proposal 2 is errored without a schedule on every validator
-    And approval and scheduling for proposal 1 are committed atomically exactly once
+    Then update proposal 1 is shadowed on every validator
+    When the committee passes the activation height
+    Then the active protocol version remains baseline on every validator
     And the committee continues producing finalized blocks
 
   @pfs-005-expired
   Scenario: A below-quorum update expires without scheduling or version mutation
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh localnet with a 40-block voting window
     And the committee has reached a usable height
     When operator "validator-0" proposes an update to the next protocol version
     Then proposal 1 is pending, targets the update module, and carries the activation height
@@ -102,7 +129,7 @@ Feature: Governance proposals and protocol updates
     And the committee continues producing finalized blocks
 
   Scenario: Oversized proposal pagination cannot kill an RPC node
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh localnet with a 40-block voting window
     And the committee has reached a usable height
     When operator "validator-0" proposes an update to the next protocol version
     And validator "validator-0" receives listProposals with index 2^256-1 and count 1
@@ -111,7 +138,7 @@ Feature: Governance proposals and protocol updates
 
   @pfs-005-09
   Scenario: Unsupported update activation stalls fail-closed and recovers with a compatible binary
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh localnet with a 40-block voting window
     And the committee has reached a usable height
     When operator "validator-0" proposes an update to an unsupported protocol version
     Then proposal 1 is pending, targets the update module, and carries the activation height

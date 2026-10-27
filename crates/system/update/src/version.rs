@@ -15,12 +15,12 @@ pub struct ProtocolVersion(u32);
 impl ProtocolVersion {
     pub const ZERO: Self = Self(0);
 
-    /// Const fn impl From<u32> for ProtocolVersion.
+    /// Const fn equivalent of `From<u32>` for `ProtocolVersion`.
     pub const fn from_raw(raw: u32) -> Self {
         Self(raw)
     }
 
-    /// Const fn impl Into<u32> for ProtocolVersion.
+    /// Const fn equivalent of `Into<u32>` for `ProtocolVersion`.
     pub const fn raw(self) -> u32 {
         self.0
     }

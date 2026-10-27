@@ -3,8 +3,11 @@ pragma solidity ^0.8.30;
 
 /// @title IUpdate
 /// @notice Protocol update / hardfork precompile at 0x000000000000000000000000000000000000EE0B
-/// @dev Vote manages this precompile. After approval, the inner cross-module API
-/// handles the proposal. (see: /crates/system/update/)
+/// @dev Vote manages this precompile through primary, replacement and activation windows.
+/// Live plans carry version/info/mrenclave, not a caller-selected activationHeight.
+/// Linked actions cancel or replace a specific plan at the end of its replace window.
+/// TEE preparation starts only after that window closes; getScheduledUpdate exposes
+/// the derived activation height. Existing software-only records retain their heights.
 interface IUpdate {
     /// Caller-facing domain revert.
     error ScheduledUpdateNotFound();

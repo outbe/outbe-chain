@@ -17,7 +17,7 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_update::constants::PROTOCOL_VERSION;
 use outbe_update::lifecycle::UpdateLifecycle;
-use outbe_update::payload::encode_schedule_update_json;
+use outbe_update::payload::{encode_schedule_update_json, encode_update_plan_json};
 use outbe_update::precompile::{dispatch, IUpdate};
 use outbe_update::schema::Update;
 use outbe_update::state::ScheduledUpdateStatus;
@@ -68,11 +68,11 @@ fn setup_four_validators(storage: StorageHandle) {
 }
 
 fn tally_block(created: u64) -> u64 {
-    created.saturating_add(VOTING_WINDOW_BLOCKS + 1)
+    created + VOTING_WINDOW_BLOCKS / 2 + 1
 }
 
 fn proposal_activation(created: u64) -> u64 {
-    min_activation(tally_block(created))
+    min_activation(tally_block(created) + VOTING_WINDOW_BLOCKS / 2)
 }
 
 fn seed_oracle_for_pre_exec(storage: StorageHandle) {
@@ -165,23 +165,17 @@ fn has_update_event(provider: &HashMapStorageProvider, topic0: B256) -> bool {
         .any(|log| log.topics().first() == Some(&topic0))
 }
 
-fn create_update_proposal(
-    vote: &mut Vote<'_>,
-    version: ProtocolVersion,
-    activation: u64,
-    current: u64,
-) -> U256 {
-    create_update_proposal_from(vote, PROPOSER, version, activation, current)
+fn create_update_proposal(vote: &mut Vote<'_>, version: ProtocolVersion, current: u64) -> U256 {
+    create_update_proposal_from(vote, PROPOSER, version, current)
 }
 
 fn create_update_proposal_from(
     vote: &mut Vote<'_>,
     proposer: Address,
     version: ProtocolVersion,
-    activation: u64,
     current: u64,
 ) -> U256 {
-    let payload = encode_schedule_update_json(version, activation, "");
+    let payload = encode_update_plan_json(version, "");
     vote.create_proposal(
         proposer,
         UPDATE_ADDRESS,
@@ -348,7 +342,7 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
     with_vote_runtime_at(100, |storage, current| {
         let activation = proposal_activation(current);
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_update_proposal(&mut vote, PROTOCOL_VERSION, activation, current);
+        let proposal_id = create_update_proposal(&mut vote, PROTOCOL_VERSION, current);
 
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
             .unwrap();
@@ -367,6 +361,10 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
         assert_eq!(scheduled.version, PROTOCOL_VERSION);
         assert_eq!(scheduled.activation_height, activation);
 
+        run_vote_begin_block(
+            storage.clone(),
+            activation - outbe_update::constants::MIN_ACTIVATION_BUFFER,
+        );
         run_update_begin_block(storage.clone(), activation);
 
         let update = Update::new(storage.clone());
@@ -384,7 +382,7 @@ fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
     with_vote_runtime_at(100, |storage, current| {
         let activation = proposal_activation(current);
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_update_proposal(&mut vote, V1_2, activation, current);
+        let proposal_id = create_update_proposal(&mut vote, V1_2, current);
 
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
             .unwrap();
@@ -432,9 +430,8 @@ fn full_vote_update_flow_2_of_4_yes_expires_without_update_state_change() {
     setup_four_validators(storage.clone());
 
     let current = 100u64;
-    let activation = proposal_activation(current);
     let mut vote = Vote::new(storage.clone());
-    let proposal_id = create_update_proposal(&mut vote, V1_2, activation, current);
+    let proposal_id = create_update_proposal(&mut vote, V1_2, current);
 
     vote.cast_vote_approve(proposal_id, PROPOSER, true, current + 1)
         .unwrap();
@@ -466,9 +463,8 @@ fn downgrade_vote_proposal_errors_without_update_state_change() {
         let mut update = Update::new(storage.clone());
         update.set_active_version(V1_3, 50).unwrap();
 
-        let activation = proposal_activation(current);
         let mut vote = Vote::new(storage.clone());
-        let proposal_id = create_update_proposal(&mut vote, V1_2, activation, current);
+        let proposal_id = create_update_proposal(&mut vote, V1_2, current);
 
         for (voter, seed) in [(VOTER_A, 1), (VOTER_B, 2), (VOTER_C, 3)] {
             vote.cast_vote_approve(proposal_id, voter, true, current + seed)
@@ -490,16 +486,14 @@ fn downgrade_vote_proposal_errors_without_update_state_change() {
 #[test]
 fn conflicting_update_proposal_errors_without_update_state_change() {
     with_vote_runtime_at(100, |storage, current| {
-        let activation = proposal_activation(current);
-
         let mut vote = Vote::new(storage.clone());
-        let first = create_update_proposal(&mut vote, V1_2, activation, current);
+        let first = create_update_proposal(&mut vote, V1_2, current);
         for (voter, seed) in [(VOTER_A, 1), (VOTER_B, 2), (VOTER_C, 3)] {
             vote.cast_vote_approve(first, voter, true, current + seed)
                 .unwrap();
         }
 
-        let second = create_update_proposal_from(&mut vote, VOTER_A, V1_3, activation, current);
+        let second = create_update_proposal_from(&mut vote, VOTER_A, V1_3, current);
         vote.cast_vote_approve(second, PROPOSER, true, current + 4)
             .unwrap();
         vote.cast_vote_approve(second, VOTER_A, true, current + 5)
@@ -573,14 +567,13 @@ fn executor_runs_vote_before_update() {
         100_000,
     );
 
-    let created = activation_block - 1 - VOTING_WINDOW_BLOCKS;
-    let proposal_activation = proposal_activation(created);
+    let created = activation_block - 1 - VOTING_WINDOW_BLOCKS / 2;
     let mut vote = Vote::new(storage.clone());
     let proposal_id = vote
         .create_proposal(
             PROPOSER,
             UPDATE_ADDRESS,
-            &encode_schedule_update_json(V1_3, proposal_activation, ""),
+            &encode_update_plan_json(V1_3, ""),
             created,
             handlers::vote::registry(),
         )

@@ -96,6 +96,10 @@ fn run_outbe_pre_execution_hooks_inner(
         }
     }
 
+    // Verify coordinated cutover before Vote can process an old enclave plan.
+    outbe_update::schema::Update::new(hook_ctx.storage.clone())
+        .assert_no_legacy_pending_enclave_rollout()?;
+
     // Vote: tally expired proposals and dispatch approved ones.
     outbe_vote::lifecycle::VoteLifecycle::begin_block_with_handlers(
         hook_ctx,

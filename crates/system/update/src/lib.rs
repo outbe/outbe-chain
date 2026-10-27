@@ -1,7 +1,11 @@
 //! `Update` - on-chain protocol version scheduling and activation.
 //!
-//! Vote owns proposal lifecycle; update stores scheduled upgrades and
-//! activates them at `activationHeight` via begin-block processing.
+//! Vote owns V/R/A boundaries. Update reserves accepted plans without TEE side
+//! effects during V/R, prepares enclave successors at T, and activates at H.
+//! Live payloads omit `activationHeight`: primary `{version, info?, mrenclave?}`,
+//! cancel `{cancelProposalId}`, replacement `{replaceProposalId, update}`.
+//! Historical software schedules retain H; pending legacy enclave rollouts must
+//! be resolved before coordinated binary cutover, never silently migrated.
 
 mod active_version;
 pub mod api;
@@ -20,8 +24,9 @@ pub mod vote_target;
 
 pub use handlers::{UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers};
 pub use payload::{
-    decode_schedule_update_json, encode_schedule_update_json, validate_schedule_update_json,
-    ScheduleUpdatePayload,
+    decode_schedule_update_json, encode_schedule_update_json, encode_update_plan_json,
+    validate_schedule_update_json, ScheduleUpdatePayload, UpdateCancelPayload, UpdatePlanPayload,
+    UpdateReplacementPayload, UpdateVoteAction,
 };
 pub use schema::Update;
 pub use state::ScheduledUpdateInfo;

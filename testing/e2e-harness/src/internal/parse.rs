@@ -52,7 +52,7 @@ pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
 pub struct VoteStatus {
     /// The `Proposal #<id>:` line was present.
     pub visible: bool,
-    /// `status=` field (pending/approved/expired/error).
+    /// `status=` field, including terminal cancellation.
     pub status: String,
     /// `target=` field (module address, as printed).
     pub target: String,
@@ -64,6 +64,10 @@ pub struct VoteStatus {
     pub no: u64,
     /// The `payload:` line contents.
     pub payload: String,
+    pub phase: String,
+    pub parent: Option<u64>,
+    pub replace_end: Option<u64>,
+    pub activation_height: Option<u64>,
 }
 
 /// Parse `outbe-cli vote status --proposal-id <id>` output for proposal `id`.
@@ -78,6 +82,10 @@ pub(crate) fn parse_vote_status(stdout: &str, id: u64) -> VoteStatus {
             vs.target = field_after(line, "target=");
             vs.status = field_after(line, "status=");
             vs.deadline = hex_or_dec(&field_after(line, "deadline="));
+            vs.phase = field_after(line, "phase=");
+            vs.parent = hex_or_dec(&field_after(line, "parent="));
+            vs.replace_end = hex_or_dec(&field_after(line, "replaceEnd="));
+            vs.activation_height = hex_or_dec(&field_after(line, "activationHeight="));
             let votes = field_after(line, "votes=");
             if let Some((y, n)) = votes.split_once('/') {
                 vs.yes = y.trim().parse().unwrap_or(0);
@@ -142,13 +150,20 @@ mod tests {
 
     #[test]
     fn vote_status_line() {
-        let out = "Proposal #1: target=0x000000000000000000000000000000000000EE0B status=pending deadline=100 votes=3/0\n  payload: {\"activationHeight\":1160}";
+        let out = "Proposal #1: target=0x000000000000000000000000000000000000EE0B status=approved deadline=100 votes=3/0 kind=Primary phase=replace parent=0 replaceEnd=150 activationHeight=250\n  payload: {\"version\":\"0.1\"}";
         let vs = parse_vote_status(out, 1);
         assert!(vs.visible);
-        assert_eq!(vs.status, "pending");
+        assert_eq!(vs.status, "approved");
         assert_eq!(vs.deadline, Some(100));
         assert_eq!((vs.yes, vs.no), (3, 0));
-        assert!(vs.payload.contains("activationHeight"));
+        assert_eq!(vs.phase, "replace");
+        assert_eq!(vs.parent, Some(0));
+        assert_eq!(vs.replace_end, Some(150));
+        assert_eq!(vs.activation_height, Some(250));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&vs.payload).unwrap()["version"],
+            "0.1"
+        );
         assert!(vs
             .target
             .eq_ignore_ascii_case("0x000000000000000000000000000000000000EE0B"));

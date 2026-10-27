@@ -9404,6 +9404,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",

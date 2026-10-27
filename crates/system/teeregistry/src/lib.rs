@@ -4,6 +4,9 @@
 //! `tribute_offer_public_key`. The OST3 block-1 system transaction writes this
 //! key once. [`v1_precompile`] is the only public ABI. There is no
 //! caller-authorized registration dispatcher or fallback admission path.
+//! Update prepares a measurement successor only at the end of Vote's replacement
+//! window, never during voting or replacement. Governance cannot cancel a prepared
+//! successor. Completed strict-retirement metadata remains authenticated after promotion.
 
 pub mod errors;
 pub mod runtime;

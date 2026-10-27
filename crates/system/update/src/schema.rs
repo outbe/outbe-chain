@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
@@ -62,6 +62,22 @@ impl ScheduledUpdateRecord {
     }
 }
 
+/// Appended sidecar: historical ScheduledUpdateRecord layout must never change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = activation_height)]
+pub struct UpdatePlanRecord {
+    #[key]
+    pub proposal_id: U256,
+    #[attribute(order = 0)]
+    pub activation_height: u64,
+    #[attribute(order = 1)]
+    pub replace_end: u64,
+    #[attribute(order = 2)]
+    pub mrenclave: B256,
+    #[attribute(order = 3)]
+    pub prepared: bool,
+}
+
 /// EVM storage layout for the Update precompile.
 #[storage_schema]
 #[contract(addr = UPDATE_ADDRESS)]
@@ -80,4 +96,10 @@ pub struct Update {
 
     #[attribute(order = 4)]
     pub version_history: Mapping<u64, ProtocolVersion>,
+
+    #[attribute(order = 5)]
+    pub live_plans: outbe_primitives::storage::dsl::Map<U256, UpdatePlanRecord>,
+
+    #[attribute(order = 6)]
+    pub three_window_cutover_checked: outbe_primitives::storage::dsl::Value<bool>,
 }
