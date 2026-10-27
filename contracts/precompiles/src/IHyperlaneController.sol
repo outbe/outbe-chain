@@ -10,8 +10,8 @@ address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE
 /// Governance-owned controller of the Hyperlane bridge. Holds only the local
 /// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`
 /// table (the Outbe chain included under its own domain). Validator sets live
-/// in the ISMs themselves. The validator vote target applies every mutation except
-/// `initialize` and `fund` (see the crate README for the JSON payloads).
+/// in the ISMs themselves. The crosschain vote target approves owner actions,
+/// and `applyApproved` runs them (see the crate README for the JSON payloads).
 interface IHyperlaneController {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
@@ -41,6 +41,9 @@ interface IHyperlaneController {
     error InsufficientBalance(uint256 required, uint256 available);
     error UndecodableReturn(string value);
     error InvalidProposalPayload(string value);
+    error UnknownApprovedAction(uint256 proposalId);
+    error ApprovedPayloadMismatch(uint256 proposalId);
+    error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
@@ -53,6 +56,8 @@ interface IHyperlaneController {
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event LivenessMiss(address indexed validator, uint32 misses);
     event LivenessJailed(address indexed validator);
+    event ApprovedActionApplied(uint256 indexed proposalId);
+    event ApprovedActionExpired(uint256 indexed proposalId);
 
     /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
     /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
@@ -89,6 +94,12 @@ interface IHyperlaneController {
     /// already matches. Permissionless: it only applies what consensus decided.
     /// Returns whether a rotation was dispatched.
     function sync() external returns (bool changed);
+
+    /// Runs a crosschain action that a governance vote approved. Permissionless: the vote decided,
+    /// and `payload` must be the approved JSON (its keccak256 is stored). An action older than the
+    /// governance voting window is dropped with `ApprovedActionExpired`, so a stale approval cannot
+    /// undo a newer one. A remote action pays the Hyperlane fee from the controller balance.
+    function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
