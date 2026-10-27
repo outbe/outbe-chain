@@ -1,4 +1,6 @@
-//! The series id shared by the rights: the 14 ASCII bytes of `20260212-TRY-U`.
+//! The series id shared by the rights. `YYYYMMDD-III-R` names the issuance code and the
+//! reference letter when the two currencies differ; `YYYYMMDD-CCC` names the one currency
+//! when they match, padded with two `0x00` bytes in the 14-byte field.
 
 use alloy_primitives::{FixedBytes, U256};
 use std::fmt;
@@ -12,12 +14,13 @@ pub const SERIES_ID_LEN: usize = 14;
 const DAY_DIGITS: usize = 8;
 const ISSUANCE_AT: usize = 9;
 const REFERENCE_AT: usize = 13;
+const SHORT_LEN: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("invalid series id components")]
 pub struct InvalidSeriesId;
 
-/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`.
+/// Series identifier: `20260212-TRY-U`, or `20261102-EUR` plus two `0x00` bytes.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
@@ -46,6 +49,13 @@ impl SeriesId {
         Ok(Self(bytes))
     }
 
+    /// The one-currency form: `YYYYMMDD-CCC` with two `0x00` bytes at the end.
+    pub fn pack_same(worldwide_day: WorldwideDay, code: [u8; 3]) -> Result<Self, InvalidSeriesId> {
+        let mut id = Self::pack(worldwide_day, code, b'0')?;
+        id.0[SHORT_LEN..].fill(0);
+        Ok(id)
+    }
+
     pub const fn from_bytes(bytes: [u8; SERIES_ID_LEN]) -> Self {
         Self(bytes)
     }
@@ -71,11 +81,11 @@ impl SeriesId {
         issuance: u16,
         reference: u16,
     ) -> Result<Self, InvalidSeriesId> {
-        Self::pack(
-            worldwide_day,
-            Self::currency_code(issuance)?,
-            Self::currency_code(reference)?[0],
-        )
+        let code = Self::currency_code(issuance)?;
+        if issuance == reference {
+            return Self::pack_same(worldwide_day, code);
+        }
+        Self::pack(worldwide_day, code, Self::currency_code(reference)?[0])
     }
 }
 
@@ -85,7 +95,8 @@ const fn is_code_byte(byte: u8) -> bool {
 
 impl fmt::Display for SeriesId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&String::from_utf8_lossy(&self.0))
+        let end = self.0.iter().rposition(|byte| *byte != 0).map_or(0, |at| at + 1);
+        f.write_str(&String::from_utf8_lossy(&self.0[..end]))
     }
 }
 
@@ -185,6 +196,17 @@ mod tests {
 
         let same_day_a = SeriesId::pack(DAY, *b"AED", b'U').unwrap();
         assert!(same_day_a < early_z);
+    }
+
+    #[test]
+    fn one_currency_takes_the_short_form_with_zero_padding() {
+        let id = SeriesId::for_pair(DAY, 840, 840).unwrap();
+        assert_eq!(id.as_bytes(), b"20260212-USD\0\0");
+        assert_eq!(id.to_string(), "20260212-USD");
+        assert_eq!(id.worldwide_day(), DAY);
+        assert_eq!(SeriesId::pack_same(DAY, *b"USD").unwrap(), id);
+        assert_ne!(id, SeriesId::pack(DAY, *b"USD", b'U').unwrap());
+        assert!(SeriesId::pack_same(DAY, *b"usd").is_err());
     }
 
     #[test]

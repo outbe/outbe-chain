@@ -2437,7 +2437,7 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 
         let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
         let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
-        assert_eq!(usd.to_string(), "20260101-USD-U");
+        assert_eq!(usd.to_string(), "20260101-USD");
         assert_eq!(lira.to_string(), "20260101-TRY-E");
 
         // Each series holds only its own winners and its own reference price.
