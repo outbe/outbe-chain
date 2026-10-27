@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use super::common::*;
 
 /// Probes the macro-assigned slot for `reference_currencies` so that
-/// `scripts/seed_genesis.py` can mirror the layout. The StorageVec stores
+/// `outbe-genesis-cli` can mirror the layout. The StorageVec stores
 /// its length at the base slot. The test pushes two values. Then it scans
 /// slots 0..128 linearly for the length cell (== 2) to recover the slot.
 #[test]
@@ -45,10 +45,10 @@ fn reference_currencies_occupies_slot_55() {
             "data[1] mismatch at slot {slot}"
         );
 
-        // Hard-coded slot that scripts/seed_genesis.py uses. Keep in sync.
+        // Hard-coded slot that `outbe-genesis-cli` uses. Keep in sync.
         assert_eq!(
             slot, 55,
-            "macro-assigned reference_currencies slot changed; update scripts/seed_genesis.py"
+            "macro-assigned reference_currencies slot changed; update outbe-genesis-cli"
         );
     });
 }
@@ -57,8 +57,8 @@ fn reference_currencies_occupies_slot_55() {
 ///
 /// It sits immediately after the retired settlement hole (40-42). Thus only the
 /// `#[slot(43)]` anchor keeps it in place. Without the anchor, the running slot
-/// counter of the macro would slide it into the hole and silently repoint
-/// `scripts/seed_genesis.py`. The quote word lives at `+1` inside the hashed
+/// counter of the macro would slide it into the hole and silently repoint the
+/// Rust genesis seeder. The quote word lives at `+1` inside the hashed
 /// namespace of the key, not in a declaration slot. Thus the test asserts the
 /// quote word directly and does not find it by sweeping slot numbers.
 #[test]
@@ -86,7 +86,7 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
             word(entry_slot + U256::from(1)),
             USDC,
             "the quote word is not at the entry slot + 1; update \
-             scripts/seed_genesis.py::set_mapping_pair"
+             outbe-genesis-cli's seed_codec::StorageBuilder::set_mapping_pair"
         );
     });
 }

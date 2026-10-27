@@ -12,7 +12,7 @@ release-sgx-e2e = []
 # e2e harness. The scenarios are Gherkin fixtures under `features/`; the step
 # code behind them drives the `world/` handles. Chain reads/sends are native
 # (alloy provider + `sol!`); the committee validators, joiner, followers, and
-# their enclave containers are Rust-owned processes (no `run-testnet.sh`/`nohup`).
+# their enclave containers are Rust-owned processes, without background shell wrappers.
 # Bootstrap keeps one one-shot subprocess (`outbe-chain dkg bootstrap`) plus
 # in-process genesis seeding (`outbe-genesis-cli`); governance/tribute sends go through `outbe-cli` (the
 # product CLI under test). It is the canonical owner of localnet e2e orchestration.

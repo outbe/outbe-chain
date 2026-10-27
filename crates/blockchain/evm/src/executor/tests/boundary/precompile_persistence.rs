@@ -20,7 +20,7 @@ fn marker_list_covers_stateful_precompiles() {
     const MARKER_EXEMPT: [Address; 7] = [
         // Stateless verifier - no EVM storage to preserve.
         ZKPROOF_VERIFY_ADDRESS,
-        // Seeded with genesis marker bytecode by scripts/seed_genesis.py, so these
+        // Seeded with genesis marker bytecode by outbe-genesis-cli, so these
         // accounts are never EIP-161-empty.
         ZEROFEE_ADDRESS,
         VAULT_ROUTER_ADDRESS,

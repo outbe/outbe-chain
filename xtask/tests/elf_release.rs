@@ -113,10 +113,9 @@ fn explicit_elf_commands_run_without_git_metadata() {
     permissions.set_mode(0o755);
     fs::set_permissions(&fake_cargo, permissions).expect("make fake cargo executable");
     let current_path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(fake_bin).chain(std::env::split_paths(&current_path)),
-    )
-    .expect("compose PATH");
+    let path =
+        std::env::join_paths(std::iter::once(fake_bin).chain(std::env::split_paths(&current_path)))
+            .expect("compose PATH");
 
     let build_spec = source_root.join("release/reproducible-elf-build-v1.json");
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
@@ -180,9 +179,7 @@ fn explicit_elf_commands_run_without_git_metadata() {
         .args(["--source-date-epoch", &source_date_epoch_arg])
         .args(["--lifecycle", "build-candidate"])
         .arg("--verification-gates")
-        .arg(
-            source_root.join("release/reproducible-elf-candidate-gates-v1.json"),
-        )
+        .arg(source_root.join("release/reproducible-elf-candidate-gates-v1.json"))
         .arg("--resolved-system-packages")
         .arg(&packages)
         .arg("--output")

@@ -242,7 +242,7 @@ mod tests {
         let _ = AddressPair::ZERO.mapping_slot(U256::ZERO);
     }
 
-    /// Pins the exact slot `scripts/seed_genesis.py` has to reproduce for the
+    /// Pins the exact slot `outbe-genesis-cli` has to reproduce for the
     /// canonical COEN/840 pair at the pair-registry base slot. Its `mapping_key`
     /// helper already agrees: `rjust(32)` never truncates, so a 40-byte key
     /// falls through unpadded. A change here is genesis-breaking, not a refactor.

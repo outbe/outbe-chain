@@ -27,5 +27,5 @@ enclave_image: ghcr.io/outbe/outbe-tee-enclave-mainnet@sha256:<exact-64-hex-dige
 price_feed_rest: https://prices.outbe.net
 
 # All omitted protocol and tokenomics sections come from the canonical
-# production baseline used by create_genesis.py. Do not add test-only
+# production baseline used by `outbe-genesis-cli`. Do not add test-only
 # protocol_constants overrides to a Mainnet input.
