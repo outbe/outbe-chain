@@ -63,7 +63,7 @@ contract IntexNFT1155ForfeitedTest is Test {
     function test_TransferStaysFrozenAfterExpiry() public {
         vm.warp(deadline + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, iTok));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, iTok));
         token.safeTransferFrom(user, makeAddr("other"), iTok, 1, "");
     }
 

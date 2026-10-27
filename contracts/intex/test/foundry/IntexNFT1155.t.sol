@@ -277,9 +277,8 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
     }
 
-    /// @dev In Called the gate is the owner, not the caller: any relayer may move a balance, but only
-    ///      back to the same owner.
-    function test_CrosschainBurn_InCalled_RefusesAChangeOfHolder() public {
+    /// @dev A Called series still changes holder across the bridge until its cutoff.
+    function test_CrosschainBurn_InCalled_CarriesToAnotherHolder() public {
         address plainRelayer = address(0x9999);
         vm.startPrank(admin);
         nft.grantRole(nft.RELAYER_ROLE(), plainRelayer);
@@ -292,12 +291,8 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
 
         vm.prank(plainRelayer);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
         nft.crosschainBurn(user, user2, TOKEN_ID_1, 1);
-
-        vm.prank(plainRelayer);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 9, "the owner may still carry their own balance");
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 9, "burned on the source, bound for another holder");
     }
 
     function test_ReadData() public {
@@ -336,11 +331,16 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
 
-        // Called freezes owner-to-owner transfers. The settlement obligation
-        // stays with the owner, and the owner cannot transfer it.
+        // A Called series still transfers until its settlement deadline.
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
+        assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
+
+        // Past the deadline its unpaid units are forfeited and stay put.
+        vm.warp(block.timestamp + 1);
+        vm.prank(user);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, TOKEN_ID_1));
+        nft.safeTransferFrom(user, user2, TOKEN_ID_1, 1, "");
     }
 
     function test_TransferRestrictionsIssued() public {
@@ -405,12 +405,13 @@ contract IntexNFT1155Test is Test {
         amounts[0] = 5;
         amounts[1] = 5;
 
-        // A batch containing a Called series id reverts atomically.
+        // A batch containing a series past its settlement deadline reverts atomically.
+        vm.warp(block.timestamp + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, TOKEN_ID_1));
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
 
-        // The non-Called series still transfers on its own.
+        // The uncalled series still transfers on its own.
         vm.prank(user);
         nft.safeTransferFrom(user, user2, TOKEN_ID_2, 5, "");
         assertEq(nft.balanceOf(user2, TOKEN_ID_1), 0);

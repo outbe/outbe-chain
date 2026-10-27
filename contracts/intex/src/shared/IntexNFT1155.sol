@@ -221,16 +221,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Bridge crosschainBurn gating:
     ///      - Series state `Issued`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, owner-initiated moves while the series is tradable).
-    ///      - Series state `Called`: allowed only when the destination owner is the source owner,
-    ///        and only until the bridge cutoff before the deadline. Ownership is frozen once a series is Called.
+    ///      - Series state `Called`: allowed only until the bridge cutoff before the deadline.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // A bridge hop that changes owner is a transfer, which Called forbids.
-            if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances
             // freeze. A hop leaves no later than the cutoff, so its `crosschainMint` has the
             // margin to land before the deadline.
@@ -373,15 +370,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return IntexMetadata.contractURI();
     }
 
-    /// @notice ERC1155 transfer hook: freezes Called series.
+    /// @notice ERC1155 transfer hook: freezes Forfeited series.
     /// @dev Transfer lock.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, burnIntex,
     ///        bridge crosschainBurn/crosschainMint).
-    ///      - Owner-to-owner transfers:
-    ///          * Token ids are transferable while the series is Issued.
-    ///            A Called series freezes owner-to-owner transfers: the settlement
-    ///            obligation stays with the owner and cannot be passed on. Bridge gating
-    ///            is separate and lives in `crosschainBurn` / `crosschainMint`.
+    ///      - Owner-to-owner transfers stay open until a Called series' settlement deadline.
+    ///        Its unpaid units are forfeited then, so they no longer move. Bridge gating is
+    ///        separate and lives in `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).
     /// @param ids Array of token IDs.
@@ -391,8 +386,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             IntexNFT1155Storage storage $ = _s();
             for (uint256 i = 0; i < ids.length; i++) {
                 IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
-                if (data.state == IIntexNFT1155.IntexState.Called) {
-                    revert TransferOnCalledForbidden(ids[i]);
+                if (data.state == IIntexNFT1155.IntexState.Called && block.timestamp > _settlementDeadline(data)) {
+                    revert TransferOnForfeitedForbidden(ids[i]);
                 }
             }
         }

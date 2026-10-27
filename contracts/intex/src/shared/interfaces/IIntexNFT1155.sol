@@ -129,8 +129,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroUnits();
     /// @notice A mint or crosschainMint exceeds the units its packed storage field can hold.
     error UnitsTooLarge(uint256 units);
-    /// @notice Owner-to-owner transfer attempted while the series is Called.
-    error TransferOnCalledForbidden(uint256 tokenId);
+    /// @notice Owner-to-owner transfer attempted after a Called series' settlement deadline.
+    error TransferOnForfeitedForbidden(uint256 tokenId);
     /// @notice Bridge crosschainMint attempted on a `Called` series after the settlement deadline
     ///         (`calledAt + callNoticePeriod`) has passed.
     error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);

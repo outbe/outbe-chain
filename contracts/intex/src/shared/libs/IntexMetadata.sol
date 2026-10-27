@@ -15,7 +15,7 @@ import {Iso4217} from "./Iso4217.sol";
 ///      passes a SeriesData snapshot whose state already carries the derived Forfeited.
 library IntexMetadata {
     string internal constant COLLECTION_DESCRIPTION =
-        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Units stay transferable until the series is called. A settlement on Outbe burns them here and moves them to the Settled Intex collection of the Outbe Intex precompile.";
+        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Units stay transferable until the settlement deadline of a called series. A settlement on Outbe burns them here and moves them to the Settled Intex collection of the Outbe Intex precompile.";
 
     /// @dev First row baseline of the card and the step between rows.
     uint256 private constant ROW_TOP = 265;
@@ -75,7 +75,7 @@ library IntexMetadata {
             " from the Worldwide Day ",
             Strings.toString(data.worldwideDay),
             " auction. A unit is a mining right: its owner pays the settlement cost at the series'",
-            " fixed entry price. Units stay transferable until the series is called."
+            " fixed entry price. Units stay transferable until the settlement deadline of a called series."
         );
     }
 
