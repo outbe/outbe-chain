@@ -243,34 +243,6 @@
   },
   {
     "type": "function",
-    "name": "registerValidator",
-    "inputs": [
-      {
-        "name": "validatorAddress",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "consensusPubkey",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "radicleNodeId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "blsRegistrationSignature",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "resolveValidator",
     "inputs": [
       {
@@ -1046,11 +1018,6 @@
   },
   {
     "type": "error",
-    "name": "CannotStakeBeforeRegistration",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "CommitteeSnapshotLengthExceedsU64",
     "inputs": []
   },
@@ -1353,11 +1320,6 @@
   {
     "type": "error",
     "name": "RetainedJailHistoryHeightMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SelfRegistrationLimitReached",
     "inputs": []
   },
   {
