@@ -14,7 +14,7 @@ mod borrow_code_fixture;
 use borrow_code_fixture::borrow_code;
 
 use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError};
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::{
@@ -63,6 +63,20 @@ fn funded(balance: u64) -> AccountInfo {
 
 fn stake_calldata(validator: Address, amount: u64) -> Bytes {
     IStaking::stakeCall {
+        validatorAddress: validator,
+        amount: U256::from(amount),
+        consensusPubkey: Bytes::from(vec![1; 48]),
+        radicleNodeId: B256::from([1; 32]),
+        blsRegistrationSignature: Bytes::from(vec![1; 96]),
+        p2pVersion: 0,
+        p2pEncoded: Bytes::new(),
+    }
+    .abi_encode()
+    .into()
+}
+
+fn topup_calldata(validator: Address, amount: u64) -> Bytes {
+    IStaking::topupCall {
         validatorAddress: validator,
         amount: U256::from(amount),
     }
@@ -175,31 +189,31 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
 #[test]
 fn callcode_to_staking_with_value_cannot_credit_stake() {
     // CALLCODE sets `caller` to the executing account, so the borrower stakes to
-    // itself and the self-stake gate passes. Only the value boundary stands
-    // between this frame and a credited stake.
-    let outcome = run(
-        db_with_borrower(0xf2),
-        BORROWER,
-        STAKE_VALUE,
+    // itself. Both payable selectors must fail at the frame boundary, before
+    // registration validation or stake accounting.
+    for calldata in [
         stake_calldata(BORROWER, STAKE_VALUE),
-    );
+        topup_calldata(BORROWER, STAKE_VALUE),
+    ] {
+        let outcome = run(db_with_borrower(0xf2), BORROWER, STAKE_VALUE, calldata);
 
-    assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
-        Some("outbe precompile: delegated call frame cannot execute a precompile"),
-        "CALLCODE frame must be rejected at the value boundary, got {:?}",
-        outcome.result
-    );
-    assert_eq!(
-        storage_writes(&outcome, STAKING_ADDRESS),
-        0,
-        "no stake may be booked: the staking ledger must be untouched"
-    );
-    assert_eq!(
-        balance_of(&outcome, STAKING_ADDRESS),
-        U256::ZERO,
-        "no balance may reach STAKING_ADDRESS through a borrowed frame"
-    );
+        assert_eq!(
+            revert_reason(&outcome.result).as_deref(),
+            Some("outbe precompile: delegated call frame cannot execute a precompile"),
+            "CALLCODE frame must be rejected at the value boundary, got {:?}",
+            outcome.result
+        );
+        assert_eq!(
+            storage_writes(&outcome, STAKING_ADDRESS),
+            0,
+            "no stake may be booked: the staking ledger must be untouched"
+        );
+        assert_eq!(
+            balance_of(&outcome, STAKING_ADDRESS),
+            U256::ZERO,
+            "no balance may reach STAKING_ADDRESS through a borrowed frame"
+        );
+    }
 }
 
 /// DELEGATECALL inherits the frame's value for `CALLVALUE` purposes and moves no
@@ -208,26 +222,26 @@ fn callcode_to_staking_with_value_cannot_credit_stake() {
 fn delegatecall_to_staking_with_value_cannot_credit_stake() {
     // DELEGATECALL keeps the inherited `caller`, which is the EOA that funded
     // the borrower. So the stake must name the EOA for the self-stake gate to
-    // pass. Then the value boundary is the only remaining check.
-    let outcome = run(
-        db_with_borrower(0xf4),
-        BORROWER,
-        STAKE_VALUE,
+    // pass. The boundary rejects both payable selectors before their own validation.
+    for calldata in [
         stake_calldata(EOA, STAKE_VALUE),
-    );
+        topup_calldata(EOA, STAKE_VALUE),
+    ] {
+        let outcome = run(db_with_borrower(0xf4), BORROWER, STAKE_VALUE, calldata);
 
-    assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
-        Some("outbe precompile: delegated call frame cannot execute a precompile"),
-        "DELEGATECALL frame must be rejected at the value boundary, got {:?}",
-        outcome.result
-    );
-    assert_eq!(
-        storage_writes(&outcome, STAKING_ADDRESS),
-        0,
-        "no stake may be booked through an inherited-value frame"
-    );
-    assert_eq!(balance_of(&outcome, STAKING_ADDRESS), U256::ZERO);
+        assert_eq!(
+            revert_reason(&outcome.result).as_deref(),
+            Some("outbe precompile: delegated call frame cannot execute a precompile"),
+            "DELEGATECALL frame must be rejected at the value boundary, got {:?}",
+            outcome.result
+        );
+        assert_eq!(
+            storage_writes(&outcome, STAKING_ADDRESS),
+            0,
+            "no stake may be booked through an inherited-value frame"
+        );
+        assert_eq!(balance_of(&outcome, STAKING_ADDRESS), U256::ZERO);
+    }
 }
 
 /// The refusal is not about value: a borrowed frame carrying nothing is refused
@@ -285,12 +299,12 @@ fn plain_call_with_value_credits_a_payable_precompile() {
         db,
         STAKING_ADDRESS,
         STAKE_VALUE,
-        stake_calldata(EOA, STAKE_VALUE),
+        topup_calldata(EOA, STAKE_VALUE),
     );
 
     assert!(
         outcome.result.is_success(),
-        "a funded self-stake through a plain CALL must succeed, got {:?}",
+        "a funded self-topup through a plain CALL must succeed, got {:?}",
         outcome.result
     );
     assert_eq!(

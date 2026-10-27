@@ -2,14 +2,14 @@ use crate::initialization::CommandDenial;
 use crate::transport::tests::*;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV2, NodTermsV2},
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
     wwd_entity_id::WwdEntityId,
 };
 
-fn encrypted_nod() -> EncryptedNodV2 {
+fn encrypted_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20250115);
-    let terms = NodTermsV2 {
+    let terms = NodTermsV1 {
         chain_id: 54322345,
         nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(6)),
         owner: Address::repeat_byte(3),
@@ -25,7 +25,7 @@ fn encrypted_nod() -> EncryptedNodV2 {
 #[test]
 fn a_keyless_enclave_or_an_expired_lease_is_not_ready() {
     let enclave = Enclave::new(0x51);
-    let read = EnclaveRequest::ReadNodAmountV2 {
+    let read = EnclaveRequest::ReadNodAmountV1 {
         nod: encrypted_nod(),
     };
     assert_eq!(
@@ -88,7 +88,7 @@ fn a_command_this_state_never_allows_is_forbidden() {
     ));
     assert!(matches!(
         enclave.initialization.authorize_command(
-            &EnclaveRequest::ReadNodAmountV2 {
+            &EnclaveRequest::ReadNodAmountV1 {
                 nod: encrypted_nod()
             },
             true,

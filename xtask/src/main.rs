@@ -344,9 +344,9 @@ enum SgxCommand {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let repo_root = sgx::repository_root()?;
     match cli.command {
         Command::ProtocolBench(arguments) => {
+            let repo_root = sgx::repository_root()?;
             let (action, options) = match arguments.command {
                 ProtocolBenchCommand::Run(options) => (protocol_bench::Action::Run, options),
                 ProtocolBenchCommand::BaselineCheck(options) => {
@@ -368,37 +368,44 @@ fn main() -> Result<()> {
             )?;
         }
         Command::Release(release) => match release.command {
-            ReleaseCommand::Elf(elf_args) => run_elf_command(&repo_root, elf_args.command)?,
-            ReleaseCommand::Sgx(sgx_args) => run_sgx_command(&repo_root, sgx_args.command)?,
+            ReleaseCommand::Elf(elf_args) => run_elf_command(elf_args.command)?,
+            ReleaseCommand::Sgx(sgx_args) => {
+                let repo_root = sgx::repository_root()?;
+                run_sgx_command(&repo_root, sgx_args.command)?;
+            }
             ReleaseCommand::Toolchain(toolchain_args) => {
+                let repo_root = sgx::repository_root()?;
                 run_toolchain_command(&repo_root, toolchain_args.command)?;
             }
         },
-        Command::Stablecoin(stablecoin_args) => match stablecoin_args.command {
-            StablecoinCommand::AbiCheck => {
-                let report = stablecoin::check_abi_exports(&repo_root)?;
-                println!(
-                    "stablecoin ABI exports ok: {} complete interfaces",
-                    report.interfaces
-                );
+        Command::Stablecoin(stablecoin_args) => {
+            let repo_root = sgx::repository_root()?;
+            match stablecoin_args.command {
+                StablecoinCommand::AbiCheck => {
+                    let report = stablecoin::check_abi_exports(&repo_root)?;
+                    println!(
+                        "stablecoin ABI exports ok: {} complete interfaces",
+                        report.interfaces
+                    );
+                }
+                StablecoinCommand::NamespaceCheck { genesis, preseed } => {
+                    let report = stablecoin::check_namespace(&repo_root, &genesis, preseed)?;
+                    println!(
+                        "stablecoin namespace ok: {} declared addresses, {} Ethereum built-ins, {} genesis files, {} seed predeploys, {} planned classes",
+                        report.declared_addresses,
+                        report.ethereum_builtins,
+                        report.genesis_files,
+                        report.predeploy_addresses,
+                        report.planned_classes,
+                    );
+                }
             }
-            StablecoinCommand::NamespaceCheck { genesis, preseed } => {
-                let report = stablecoin::check_namespace(&repo_root, &genesis, preseed)?;
-                println!(
-                    "stablecoin namespace ok: {} declared addresses, {} Ethereum built-ins, {} genesis files, {} seed predeploys, {} planned classes",
-                    report.declared_addresses,
-                    report.ethereum_builtins,
-                    report.genesis_files,
-                    report.predeploy_addresses,
-                    report.planned_classes,
-                );
-            }
-        },
+        }
     }
     Ok(())
 }
 
-fn run_elf_command(default_repo_root: &Path, command: ElfCommand) -> Result<()> {
+fn run_elf_command(command: ElfCommand) -> Result<()> {
     match command {
         ElfCommand::Inputs {
             build_spec,
@@ -473,12 +480,13 @@ fn run_elf_command(default_repo_root: &Path, command: ElfCommand) -> Result<()> 
             second,
             repo_root,
             output,
-        } => run_elf_compare(
-            &first,
-            &second,
-            repo_root.as_deref().unwrap_or(default_repo_root),
-            &output,
-        ),
+        } => {
+            let repo_root = match repo_root {
+                Some(repo_root) => repo_root,
+                None => sgx::repository_root()?,
+            };
+            run_elf_compare(&first, &second, &repo_root, &output)
+        }
     }
 }
 

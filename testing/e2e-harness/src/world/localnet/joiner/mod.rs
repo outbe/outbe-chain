@@ -3,7 +3,6 @@
 //! `e2e_provision_joiner` / `e2e_launch_joiner`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use alloy_primitives::{hex, Address, Bytes, B256};
@@ -13,7 +12,7 @@ use serde::Deserialize;
 
 use crate::internal::{
     addresses,
-    eth::{self, IValidatorSet},
+    eth::{self, IStaking},
     proc::{self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed},
 };
 use crate::world::rpc::TxOutcome;
@@ -105,14 +104,6 @@ fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1
     }
 }
 
-fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
-    let active_keys = run_dir.join("validator-0/data/keys");
-    (
-        active_keys.join("dkg_polynomial.hex"),
-        active_keys.join("dkg_output.hex"),
-    )
-}
-
 fn full_node_joiner_role_args(
     p2p_secret_file: &str,
     tee_enclave_socket: &str,
@@ -179,6 +170,7 @@ impl Localnet {
 
     /// Stop only the live FullNode incarnation observed by the scenario, and
     /// retain its actual exit status before permitting a replacement role.
+    #[cfg(test)]
     pub(crate) fn stop_joiner_full_node_owned(
         &mut self,
         index: usize,
@@ -411,11 +403,11 @@ impl Localnet {
             .map(drop)
     }
 
-    /// Preserve the real registration and P2P receipts for finalized assertions.
+    /// Preserve the atomic registration, stake, and P2P receipt for finalized assertions.
     pub(crate) fn provision_existing_node_as_joiner_observed(
         &mut self,
         index: usize,
-    ) -> Result<[TxOutcome; 2]> {
+    ) -> Result<TxOutcome> {
         let outcomes = self.provision_joiner_registration_observed(index)?;
         Ok(outcomes)
     }
@@ -426,7 +418,7 @@ impl Localnet {
         self.provision_joiner_registration_observed(index).map(drop)
     }
 
-    fn provision_joiner_registration_observed(&mut self, index: usize) -> Result<[TxOutcome; 2]> {
+    fn provision_joiner_registration_observed(&mut self, index: usize) -> Result<TxOutcome> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(&vd)?;
         let signing_key = vd.join("signing-key.hex").display().to_string();
@@ -436,15 +428,7 @@ impl Localnet {
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
-        let radicle_output = self.keygen(&[
-            "radicle",
-            "--output-dir",
-            &vd.join("radicle").display().to_string(),
-        ])?;
-        let radicle_node_id = first_hex(&radicle_output, 64)
-            .and_then(|value| hex::decode(value).ok())
-            .map(|value| B256::from_slice(&value))
-            .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))?;
+        let radicle_node_id = self.ensure_radicle_key_material(index)?;
         let sig = self.sign_registration(&signing_key, addr, radicle_node_id)?;
         let p2p_secret = vd.join("reth-p2p-secret.hex");
         if !p2p_secret.is_file() {
@@ -488,62 +472,58 @@ impl Localnet {
         bls_public_key: Bytes,
         radicle_node_id: B256,
         registration_signature: Bytes,
-    ) -> Result<[TxOutcome; 2]> {
-        // Steps:
-        // 1. Fund from validator-0.
-        // 2. Prove that an unrelated EOA cannot register this ValidatorSet identity.
-        // 3. Self-register and publish the P2P address.
-        // The rejected call uses the joiner's otherwise-valid BLS binding. This
-        // isolates caller authorization from proof validation.
+    ) -> Result<TxOutcome> {
+        let amount = eth::read_call_result(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            &IStaking::getMinStakeCall {},
+        )
+        .map_err(eyre::Report::msg)?;
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
-        let registration = IValidatorSet::registerValidatorCall {
+        eth::send_value(&self.cfg.rpc0, addr, &v0, amount + eth::coen(2_000))?;
+        let registration = IStaking::stakeCall {
             validatorAddress: addr,
+            amount,
             consensusPubkey: bls_public_key,
             radicleNodeId: radicle_node_id,
             blsRegistrationSignature: registration_signature,
+            p2pVersion: 1,
+            p2pEncoded: Bytes::from(hex::decode("00047f00000176c4")?),
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
         let unrelated_address =
             eth::address_of(&unrelated).ok_or_else(|| eyre!("bad unrelated EOA key"))?;
+        // Equal value isolates self-only authorization from the payable-value guard.
         let height = eth::finalized_number(&self.cfg.rpc0)
             .ok_or_else(|| eyre!("missing finalized registration checkpoint"))?;
         let unauthorized = eth::read_call_revert_data_at(
             &self.cfg.rpc0,
-            addresses::VS_ADDR,
+            addresses::STK_ADDR,
             unrelated_address,
             &registration,
             eth::RevertAt {
-                value: alloy_primitives::U256::ZERO,
+                value: amount,
                 height,
             },
         )?;
         eyre::ensure!(
             unauthorized.as_ref()
                 == alloy_sol_types::SolError::abi_encode(
-                    &IValidatorSet::UnauthorizedOwnerOrValidator {}
+                    &IStaking::ThirdPartyStakingNotSupported {}
                 ),
             "unexpected unrelated-EOA registration revert for {addr:#x}: {unauthorized:#x}"
         );
-        let register_tx =
-            eth::send_call(&self.cfg.rpc0, addresses::VS_ADDR, key, &registration, None)?;
-        let register = registration_outcome(&self.cfg.rpc0, &register_tx)?;
-        let p2p_tx = eth::send_call(
+        let transaction = eth::send_call(
             &self.cfg.rpc0,
-            addresses::VS_ADDR,
+            addresses::STK_ADDR,
             key,
-            &IValidatorSet::setP2pAddressCall {
-                validatorAddress: addr,
-                version: 1,
-                encoded: Bytes::from(hex::decode("00047f00000176c4")?),
-            },
-            None,
+            &registration,
+            Some(amount),
         )?;
-        let p2p = registration_outcome(&self.cfg.rpc0, &p2p_tx)?;
-        Ok([register, p2p])
+        registration_outcome(&self.cfg.rpc0, &transaction)
     }
 
-    /// Launch the joiner node (validator-mode, verifier-join args), passing any
+    /// Launch the joiner node (validator-mode with in-process upstream bootstrap), passing any
     /// extra node args (e.g. `--consensus.keys-dir ...`). Port of `e2e_launch_joiner`.
     pub fn launch_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
         let argv = self.joiner_validator_args(index, extra)?;
@@ -564,10 +544,11 @@ impl Localnet {
         // File-based flag: the key must never appear in argv (`ps` leak).
         let secret_file = proc::normalized_secret_file(&vd.join("reth-p2p-secret.hex"))?;
 
-        let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
         a.extend(args![
             "--validator",
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(0)),
             "--bootnodes",
             self.bootnodes().unwrap_or_default(),
             "--p2p-secret-key",
@@ -589,10 +570,6 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--consensus.public-polynomial",
-            public_polynomial.display(),
-            "--consensus.dkg-output",
-            dkg_output.display(),
         ]);
         self.extend_real_sgx_startup_timeout(&mut a);
         if let Some(offset) = self.start_opts.unix_time_offset_secs {
@@ -686,6 +663,33 @@ impl Localnet {
                 "node key material is partial: both {} and {} must exist or both be absent",
                 bls.display(),
                 evm.display()
+            )),
+        }
+    }
+
+    pub(crate) fn ensure_radicle_key_material(&self, index: usize) -> Result<B256> {
+        let radicle_home = self.cfg.validator_dir(index).join("radicle");
+        let secret = radicle_home.join("keys/radicle");
+        let public = radicle_home.join("keys/radicle.pub");
+        match (secret.is_file(), public.is_file()) {
+            (true, true) => Ok(B256::from(super::radicle::provisioned_radicle_node_id(
+                &radicle_home,
+            )?)),
+            (false, false) => {
+                let radicle_output = self.keygen(&[
+                    "radicle",
+                    "--output-dir",
+                    &radicle_home.display().to_string(),
+                ])?;
+                first_hex(&radicle_output, 64)
+                    .and_then(|value| hex::decode(value).ok())
+                    .map(|value| B256::from_slice(&value))
+                    .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))
+            }
+            _ => Err(eyre!(
+                "Radicle key material is partial: both {} and {} must exist or both be absent",
+                secret.display(),
+                public.display()
             )),
         }
     }

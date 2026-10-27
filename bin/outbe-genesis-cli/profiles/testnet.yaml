@@ -1,6 +1,6 @@
 # testnet.yaml - one file describing a complete Outbe network.
 #
-#   python3 scripts/create_genesis.py testnet.yaml
+#   cargo run --locked --release -p outbe-genesis-cli -- create bin/outbe-genesis-cli/profiles/testnet.yaml
 #
 # One run produces genesis.json, reth-bootnodes.txt, per-machine launch scripts
 # and DEPLOY.md.
@@ -94,7 +94,8 @@ feeder_seeds: testnet/seeds.yaml
 # epoch_length_blocks: 300
 # dkg_prepare_window_blocks: 30
 # dkg_activation_grace_blocks: 30
-# prefund_coen_units: 10000000000000000000000 # 10000 COEN per validator
+# prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
+# min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys
@@ -121,8 +122,8 @@ feeder_seeds: testnet/seeds.yaml
 
 # Staking: stake floor, unbonding and slashing timers.
 staking:
-  min_stake: "100000000000000000000000"
-  genesis_validator_stake: "100000000000000000000000"
+  min_stake: "10000000000000000000000000"
+  genesis_validator_stake: "10000000000000000000000000"
   unbonding_period: 1814400
   slashed_withdrawal_delay: 3628800
   max_stake_percent: 33
@@ -188,7 +189,7 @@ balance:
 tributes: []
 
 # Pre-deployed external contracts. Paths resolve against
-# `contracts_dir` (default scripts/contracts).
+# `contracts_dir` (default contracts/predeploys).
 contracts:
   - address: "0x4e59b44847b379578588920cA78FbF26c0B4956C"
     code: create2_deployer.code.hex

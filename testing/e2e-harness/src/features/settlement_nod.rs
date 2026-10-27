@@ -2,7 +2,7 @@
 use super::*;
 use alloy_sol_types::{SolCall as _, SolValue as _};
 use outbe_primitives::{
-    entity_codec::{NodGroupBodyV1, NodItemBodyV2},
+    entity_codec::{NodGroupBodyV1, NodItemBodyV1},
     wwd_entity_id::WwdEntityId,
 };
 
@@ -224,8 +224,8 @@ fn assert_payment_delta(before: [U256; 4], after: [U256; 4], amount: U256) {
 }
 
 fn assert_paid_transition(
-    before: &(NodItemBodyV2, NodGroupBodyV1),
-    after: &(NodItemBodyV2, NodGroupBodyV1),
+    before: &(NodItemBodyV1, NodGroupBodyV1),
+    after: &(NodItemBodyV1, NodGroupBodyV1),
 ) {
     assert!(!before.0.is_settled);
     let mut item = before.0.clone();
@@ -608,7 +608,7 @@ fn assert_index_transition(
     }
 }
 
-fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV2, NodGroupBodyV1)) {
+fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodGroupBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
     let item = &bodies.0;
     assert_eq!(body.nodId, item.encrypted.terms.nod_id.to_u256());
@@ -654,7 +654,7 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
     })
 }
 
-fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV2, NodGroupBodyV1) {
+fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV1, NodGroupBodyV1) {
     let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), minimum, 120)
@@ -792,9 +792,9 @@ mod tests {
     fn paid_nod_oracle_rejects_missing_count_and_changed_owner_or_load() {
         let day = outbe_primitives::time::WorldwideDay::new(20260917);
         let group_key = B256::repeat_byte(2);
-        let item = NodItemBodyV2 {
-            encrypted: outbe_primitives::nod_encryption::EncryptedNodV2 {
-                terms: outbe_primitives::nod_encryption::NodTermsV2 {
+        let item = NodItemBodyV1 {
+            encrypted: outbe_primitives::nod_encryption::EncryptedNodV1 {
+                terms: outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: 1,
                     nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
                     owner: Address::repeat_byte(3),

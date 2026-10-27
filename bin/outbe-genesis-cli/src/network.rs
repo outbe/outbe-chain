@@ -25,7 +25,7 @@ pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
 pub const DEFAULT_CONSENSUS_P2P_PORT: u16 = 30400;
-pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 10_000 * 1_000_000_000_000_000_000;
+pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000_000;
 pub const FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
@@ -56,7 +56,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "network",
     "validators",
     "keys_dir",
@@ -72,6 +72,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
     "dkg_prepare_window_blocks",
     "dkg_activation_grace_blocks",
     "prefund_coen_units",
+    "min_stake",
     "worldwide_day",
     "fresh_metadosis",
     "contracts_dir",

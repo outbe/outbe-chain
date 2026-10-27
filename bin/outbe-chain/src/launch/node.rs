@@ -114,6 +114,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
 
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
+        bridge.set_operating_mode(if args.is_validator {
+            outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+        } else {
+            outbe_primitives::consensus::ConsensusOperatingMode::Follower
+        });
         let proof_chain_id = builder.config().chain.chain().id();
         let genesis_hash = builder.config().chain.genesis_hash();
         let outbe_node = build_outbe_node(
@@ -193,12 +198,15 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tee_canary_handle,
             upgrade_promotion,
             upgrade_handle,
+            finalization_notify,
+            tee_lease_armed_rx,
         } = tee::start_runtime_workers(
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
             (tee_canary_status.clone(), shutdown_token.clone(), shutdown.clone()),
-        )?;
+        )
+        .await?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,
@@ -242,6 +250,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 node,
                 args,
                 finalized_execution_barrier,
+                finalization_notify,
+                tee_lease_armed_rx,
                 radicle_consensus,
                 radicle_drained,
             ));
@@ -328,10 +338,8 @@ fn create_outbe_rpc_handler<P>(
     bridge: ConsensusExecutionBridge,
     (is_validator, is_follower): (bool, bool),
 ) -> outbe_rpc::OutbeApiHandler<P> {
-    if is_validator {
+    if is_validator || is_follower {
         outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
-    } else if is_follower {
-        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
     } else {
         outbe_rpc::OutbeApiHandler::new(provider)
     }
@@ -358,11 +366,11 @@ fn install_selected_reth_identity(
 }
 
 fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {
-    if has_upstream {
-        info!("outbe node launched in FOLLOWER mode (--upstream)");
-        true
-    } else if is_validator {
+    if is_validator {
         info!("outbe node launched in VALIDATOR mode");
+        true
+    } else if has_upstream {
+        info!("outbe node launched in FOLLOWER mode (--upstream)");
         true
     } else {
         info!("outbe node launched in FULL NODE mode - no consensus thread spawned");

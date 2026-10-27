@@ -98,8 +98,8 @@ pub mod test_enclave {
     }
 
     pub(crate) fn try_mine(
-        request: &outbe_tee::nod_mine::MineEncryptedNodRequestV2,
-    ) -> Option<Result<outbe_tee::nod_mine::MineEncryptedNodResultV2>> {
+        request: &outbe_tee::nod_mine::MineEncryptedNodRequestV1,
+    ) -> Option<Result<outbe_tee::nod_mine::MineEncryptedNodResultV1>> {
         STATE_KEY.with(|key| {
             key.borrow().map(|state_key| {
                 let fidelity_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
@@ -156,8 +156,8 @@ pub mod test_enclave {
 }
 
 pub(crate) fn mine_encrypted_nod(
-    request: outbe_tee::nod_mine::MineEncryptedNodRequestV2,
-) -> Result<outbe_tee::nod_mine::MineEncryptedNodResultV2> {
+    request: outbe_tee::nod_mine::MineEncryptedNodRequestV1,
+) -> Result<outbe_tee::nod_mine::MineEncryptedNodResultV1> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_mine(&request) {
         return result;

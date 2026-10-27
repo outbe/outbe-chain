@@ -1,16 +1,16 @@
 //! Canonical self-contained encrypted NOD bodies.
 use super::*;
-use crate::nod_encryption::{EncryptedNodV2, NodTermsV2};
+use crate::nod_encryption::{EncryptedNodV1, NodTermsV1};
 
-pub const NOD_BODY_SCHEMA_V2: u32 = 2;
+pub const NOD_BODY_SCHEMA_V1: u32 = BODY_SCHEMA_V1;
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NodItemBodyV2 {
-    pub encrypted: EncryptedNodV2,
+pub struct NodItemBodyV1 {
+    pub encrypted: EncryptedNodV1,
     pub group_key: B256,
     pub issued_at: u64,
     pub is_settled: bool,
 }
-pub fn encode_nod_item_v2(body: &NodItemBodyV2) -> Result<Vec<u8>, CanonicalBodyError> {
+pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     if !body.encrypted.has_valid_encoding() {
         return Err(CanonicalBodyError::InvalidEncryptedNod);
     }
@@ -32,7 +32,7 @@ pub fn encode_nod_item_v2(body: &NodItemBodyV2) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(14, body.encrypted.encryption_binding.as_slice(), &mut out);
     Ok(out)
 }
-pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyError> {
+pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
     let mut f = Fields::new(bytes);
     let nod_id = WwdEntityId::try_from(required_bytes(&mut f, 1)?)?;
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut f, 2)?, 2)?);
@@ -49,9 +49,9 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
     let is_settled = optional_bool(&mut f, 13)?;
     let encryption_binding = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 14)?, 14)?);
     f.finish()?;
-    let body = NodItemBodyV2 {
-        encrypted: EncryptedNodV2 {
-            terms: NodTermsV2 {
+    let body = NodItemBodyV1 {
+        encrypted: EncryptedNodV1 {
+            terms: NodTermsV1 {
                 chain_id,
                 nod_id,
                 owner,
@@ -69,17 +69,17 @@ pub fn decode_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyEr
         issued_at,
         is_settled,
     };
-    if encode_nod_item_v2(&body)? != bytes {
+    if encode_nod_item_v1(&body)? != bytes {
         return Err(CanonicalBodyError::NonCanonicalEncoding);
     }
     Ok(body)
 }
-pub fn decode_stored_nod_item_v2(bytes: &[u8]) -> Result<NodItemBodyV2, CanonicalBodyError> {
+pub fn decode_stored_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
     let stored = super::decode_stored_body(bytes)?;
-    if stored.schema_version() != NOD_BODY_SCHEMA_V2 {
+    if stored.schema_version() != NOD_BODY_SCHEMA_V1 {
         return Err(CanonicalBodyError::UnsupportedSchema {
             actual: stored.schema_version(),
         });
     }
-    decode_nod_item_v2(stored.payload())
+    decode_nod_item_v1(stored.payload())
 }

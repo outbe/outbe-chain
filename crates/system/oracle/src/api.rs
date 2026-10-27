@@ -8,7 +8,7 @@ use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
 
-pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
+pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, REFERENCE_CURRENCIES};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 pub use crate::window::{
     active_vwap_policy, get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY,
@@ -17,39 +17,18 @@ pub use crate::window::{
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
-/// Validates that `iso_code` is registered as a reference currency.
+/// Validates that `iso_code` is a reference currency.
 ///
-/// Returns `Ok(())` if the code is present in `reference_currencies`, or
+/// Returns `Ok(())` if the code is in [`REFERENCE_CURRENCIES`], or
 /// [`OracleError::NotReferenceCurrency`] otherwise.
-///
-/// Reference currencies are the ISO 4217 numeric codes considered valid
-/// for off-chain pricing references. Genesis pre-fills six codes:
-/// CNY 156, HKD 344, JPY 392, GBP 826, USD 840, and EUR 978.
-/// USD is the mandatory member. Future protocol upgrades may extend it.
-pub fn check_reference_currency(ctx: &BlockRuntimeContext, iso_code: u16) -> Result<()> {
-    check_reference_currency_with_storage(ctx.storage.clone(), iso_code)
-}
-
-pub fn get_all_reference_currencies(ctx: &BlockRuntimeContext) -> Result<Vec<u16>> {
-    reference_currencies(ctx.storage.clone())
-}
-
-/// Same validation as [`check_reference_currency`] but takes a bare
-/// [`StorageHandle`] for callers (e.g. precompile dispatch) that do not have
-/// a [`BlockRuntimeContext`] in scope.
-pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u16) -> Result<()> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let len = oracle.reference_currencies.len()?;
-    for i in 0..len {
-        if let Some(code) = oracle.reference_currencies.get(i)? {
-            if code == iso_code {
-                return Ok(());
-            }
-        }
+pub fn check_reference_currency(iso_code: u16) -> Result<()> {
+    if REFERENCE_CURRENCIES.binary_search(&iso_code).is_ok() {
+        Ok(())
+    } else {
+        Err(OracleError::NotReferenceCurrency { iso_code }.into())
     }
-    Err(OracleError::NotReferenceCurrency { iso_code }.into())
 }
 
 /// Current COEN price to currency `iso_code` in the COEN/ISO six-decimal scale.
@@ -108,7 +87,7 @@ fn cross_rate_with(
 /// Current COEN price to currency `iso_code`, or `None` when the pair is not
 /// registered or carries no published rate.
 ///
-/// [`get_all_reference_currencies`] lists currencies independently of whether
+/// [`REFERENCE_CURRENCIES`] lists currencies independently of whether
 /// their `COEN/<iso>` pair is registered and priced. A block hook that walks that
 /// registry therefore needs a read that reports "not priceable yet" instead of
 /// reverting and halting the block. Storage faults still propagate.
@@ -175,11 +154,6 @@ pub fn settlement_fx_rates(
         issuance_currency_vwap_minor,
         reference_currency_vwap_minor,
     }))
-}
-
-/// Reference currencies available for pricing through a storage-only caller.
-pub fn reference_currencies(storage: StorageHandle) -> Result<Vec<u16>> {
-    OracleContract::new(storage).reference_currencies.read_all()
 }
 
 /// Current COEN price for `iso_code`, accepted only when its canonical
@@ -363,21 +337,9 @@ pub fn priced_reference_currencies(
 ) -> Result<Vec<(u16, U256)>> {
     let oracle = OracleContract::new(storage);
     let mut priced = Vec::new();
-    // The day-type currency is priced from the same per-pair day VWAP as every
-    // other currency. Each price comes from its own registered pair.
-    let day_type_index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
-    if day_type_index != 0 {
-        if let Some(vwap) = oracle
-            .get_utc_day_vwap_for_pair(utc_day, day_type_index)?
-            .filter(|value| !value.is_zero())
-        {
-            priced.push((DAY_TYPE_ISO, vwap));
-        }
-    }
-    for iso_code in oracle.reference_currencies.read_all()? {
-        if iso_code == DAY_TYPE_ISO {
-            continue;
-        }
+    // The list is sorted, so the result is ascending by currency. The day-type
+    // currency is one of them, priced from its own pair like every other.
+    for iso_code in REFERENCE_CURRENCIES {
         let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
         if index == 0 {
             continue;
@@ -389,7 +351,6 @@ pub fn priced_reference_currencies(
             priced.push((iso_code, vwap));
         }
     }
-    priced.sort_by_key(|(iso_code, _)| *iso_code);
     Ok(priced)
 }
 

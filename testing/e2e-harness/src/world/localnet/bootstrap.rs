@@ -1,7 +1,6 @@
-//! Bootstrap glue (ported `bootstrap-testnet.sh`): keys/DKG + genesis. The heavy
-//! lifting stays one-shot subprocesses (`outbe-chain dkg bootstrap` and
-//! `python3 seed_genesis.py`). The genesis skeleton, port rewrite, and dev felony
-//! patch are native Rust.
+//! Bootstrap glue for keys, DKG and genesis. DKG remains a one-shot
+//! `outbe-chain` subprocess; genesis assembly, seeding and localnet patches are
+//! native Rust.
 
 use std::collections::HashSet;
 #[cfg(all(test, unix))]
@@ -31,10 +30,10 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^18`) as hex - the per-validator liquid balance.
-const VALIDATOR_BALANCE_HEX: &str = "0x21e19e0c9bab2400000";
+/// 100000000 COEN (`100_000_000 * 10^18`) as hex - the per-validator liquid balance.
+const VALIDATOR_BALANCE_HEX: &str = "0x52b7d2dcc80cd2e4000000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
-/// localnet epoch. It must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
+/// localnet epoch. It must stay `<` the epoch length.
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
@@ -76,10 +75,10 @@ impl Localnet {
     }
 
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
-    /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
-    /// subprocesses. The genesis skeleton, port rewrite, and felony patch are
-    /// native. `tuning` strictly maps the legacy `TESTNET_*` knobs used by
-    /// existing flows into a [`BootstrapProfile`]. Pass `&[]` for defaults.
+    /// `outbe-chain dkg bootstrap` stays a one-shot subprocess. Genesis seeding,
+    /// port rewriting and the felony patch are native. `tuning` strictly maps
+    /// the `TESTNET_*` knobs used by existing flows into a [`BootstrapProfile`].
+    /// Pass `&[]` for defaults.
     pub fn bootstrap(&self, n: usize, tuning: &[(&str, String)]) -> Result<()> {
         let profile = BootstrapProfile::from_tuning(tuning)?;
         self.bootstrap_with_profile(n, &profile)
@@ -92,7 +91,7 @@ impl Localnet {
         self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
-        // Step 1: DKG bootstrap - keys, polynomial, dkg-output, validators.json,
+        // Step 1: DKG bootstrap - keys, polynomial, DKG output, validators.json,
         // reth-bootnodes.txt.
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.args([
@@ -144,8 +143,7 @@ impl Localnet {
     }
 
     /// Rewrite `validators.json` `p2p_address` to the resolved consensus port and
-    /// each `reth-bootnodes.txt` enode's port to the resolved p2p port
-    /// (`bootstrap-testnet.sh:105-128`).
+    /// each `reth-bootnodes.txt` enode's port to the resolved p2p port.
     fn rewrite_ports(&self) -> Result<()> {
         let vpath = self.cfg.dir.join("validators.json");
         let mut v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&vpath)?)?;
@@ -227,8 +225,7 @@ impl Localnet {
     }
 
     /// Write the genesis skeleton: profiled chain id / epoch / DKG parameters
-    /// plus a pre-funded `alloc` of each validator address
-    /// (`bootstrap-testnet.sh:133-203`).
+    /// plus a pre-funded `alloc` of each validator address.
     fn write_genesis(&self, profile: &BootstrapProfile) -> Result<()> {
         let validator_balance = validator_balance_hex(profile);
         let vjson: serde_json::Value =
@@ -327,8 +324,7 @@ impl Localnet {
         Ok(())
     }
 
-    /// Seed precompile storage into genesis (`bootstrap-testnet.sh:209-226`) via
-    /// `outbe-genesis-cli`.
+    /// Seed precompile storage into genesis via `outbe-genesis-cli`.
     fn seed_genesis(&self, worldwide_day: &str, profile: &BootstrapProfile) -> Result<()> {
         let genesis = self.cfg.dir.join("genesis.json");
         let seed = self.prepare_scenario_seed(profile)?;
@@ -358,7 +354,7 @@ impl Localnet {
     }
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
-    /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
+    /// within the short dev epoch.
     fn patch_felony(&self, profile: &BootstrapProfile) -> Result<()> {
         let felony_threshold = profile.dev_felony_threshold;
         let path = self.cfg.dir.join("genesis.json");
@@ -405,7 +401,7 @@ impl Localnet {
         Ok(())
     }
 
-    /// Create the seed consumed by `seed_genesis.py` without changing the
+    /// Create the seed consumed by `outbe-genesis-cli` without changing the
     /// caller-supplied seed file.
     fn prepare_scenario_seed(&self, profile: &BootstrapProfile) -> Result<std::path::PathBuf> {
         let mut seed: serde_json::Value =
@@ -691,7 +687,7 @@ fn validate_code_registry_genesis(
 }
 
 /// Whether an alloc key normalizes (lowercase, `0x`-stripped, left-padded to 40)
-/// to a SlashIndicator address ending in `ee01` (`bootstrap-testnet.sh:244`).
+/// to a SlashIndicator address ending in `ee01`.
 fn ends_with_ee01(key: &str) -> bool {
     address_has_suffix(key, "ee01")
 }

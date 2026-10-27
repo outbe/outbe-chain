@@ -15,7 +15,7 @@ use outbe_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
 use outbe_nod::schema::{CallTerms, NodItemState};
-use outbe_primitives::nod_encryption::EncryptedNodV2;
+use outbe_primitives::nod_encryption::EncryptedNodV1;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::{date_step_error, NodFactoryError};
@@ -23,13 +23,13 @@ use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
-pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
+pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
     issue_nod_with_cost(storage, encrypted, issued_at, None, None)
@@ -52,7 +52,7 @@ pub fn issue_lysis_nod(
 /// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
 pub fn issue_tribute_nod(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     gratis_load_minor: U256,
 ) -> Result<WwdEntityId> {
     let cost =
@@ -72,7 +72,7 @@ pub fn issue_tribute_nod(
 /// `gratis_load_minor` is read through the enclave when the caller does not know it.
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     issued_at: u64,
     verified_cost: Option<U256>,
     gratis_load_minor: Option<U256>,

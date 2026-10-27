@@ -282,8 +282,8 @@ pub(super) fn restart_validate_membership(
         state.status == status && state.active == expected && state.participants == expected,
         "restart changed exact expected membership or validator status"
     );
-    if status == 0 {
-        ensure!(state.stake.is_zero(), "registered restart acquired stake");
+    if status == 1 {
+        ensure!(!state.stake.is_zero(), "pending restart lost its bond");
     }
     Ok(())
 }
@@ -306,7 +306,7 @@ pub(super) fn restart_pin_before(world: &mut World, status: u8, restarted: usize
         .ok_or_else(|| eyre!("missing joiner identity"))?;
     let state = restart_snapshot(world, checkpoint, &address, "restart_before")?;
     restart_require_membership(world, &state, status)?;
-    if status == 0 {
+    if status == 1 {
         ensure!(
             state.p2p_version == 1 && !state.p2p_encoded.is_empty(),
             "registered restart has no committed P2P identity"

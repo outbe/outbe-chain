@@ -345,7 +345,7 @@ mod tests {
         assert!(checkpoint
             .verify_active(fixture.dir.path(), &fixture.owner)
             .is_err());
-        // Debug contains only the public record, never the signing-share bytes.
+        // Debug contains only the public record, never the threshold share bytes.
         let private_encoding = hex::encode(fixture.dkg.shares[0].encode());
         assert!(!format!("{checkpoint:?}").contains(&private_encoding));
     }

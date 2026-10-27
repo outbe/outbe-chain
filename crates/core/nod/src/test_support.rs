@@ -4,14 +4,14 @@ use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV2, NodTermsV2},
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
 };
 
-pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNodV2 {
+pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNodV1 {
     let nod_id = crate::identity::generate_nod_id(params.owner, params.worldwide_day).unwrap();
     encrypt(
-        NodTermsV2 {
+        NodTermsV1 {
             chain_id,
             nod_id,
             owner: params.owner,
@@ -24,7 +24,7 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
         params.gratis_load_minor,
     )
 }
-fn encrypt(terms: NodTermsV2, amount: U256) -> EncryptedNodV2 {
+fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
     install();
     let public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x6b; 32]));
     outbe_tee_enclave::nod_encryption::encrypt_nod(
@@ -50,7 +50,7 @@ pub struct NodItemFixture {
 }
 pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
     let encrypted = encrypt(
-        NodTermsV2 {
+        NodTermsV1 {
             chain_id: 1,
             nod_id: f.nod_id,
             owner: f.owner,
@@ -76,7 +76,7 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
     }
 }
 /// Creates an unsettled fixture with a group derived from its encrypted terms.
-pub fn unsettled_item(terms: NodTermsV2, amount: U256, issued_at: u64) -> NodItemState {
+pub fn unsettled_item(terms: NodTermsV1, amount: U256, issued_at: u64) -> NodItemState {
     assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
     let group_key = group_key(issued_at, terms.entry_price_minor, terms.reference_currency);
     item(
@@ -103,7 +103,7 @@ pub fn set_terms(item: &mut NodItemState) {
     let amount = crate::api::calculation_amount(item).unwrap();
     let t = &item.encrypted.terms;
     item.encrypted = encrypt(
-        NodTermsV2 {
+        NodTermsV1 {
             chain_id: t.chain_id,
             nod_id: item.nod_id,
             owner: item.owner,

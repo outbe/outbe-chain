@@ -45,7 +45,7 @@ use commonware_codec::Encode as _;
 use commonware_consensus::{
     marshal::{self, core::DigestFallback, Start},
     simplex::types::{Activity, Notarization, Notarize, Proposal},
-    types::{Epoch, FixedEpocher, Round, View, ViewDelta},
+    types::{Epoch, Round, View, ViewDelta},
     Reporter as _,
 };
 use commonware_cryptography::{
@@ -210,7 +210,7 @@ async fn start_marshal_node(
         blocks_archive,
         marshal::Config {
             provider: scheme_provider,
-            epocher: FixedEpocher::new(NonZeroU64::new(10_000).expect("non-zero epoch")),
+            epocher: crate::follow::FollowerEpocher::new(10_000, 0),
             start: Start::Genesis(consensus_block_with_number(0x00, 0)),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),

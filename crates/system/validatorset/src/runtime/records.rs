@@ -1,5 +1,5 @@
 use crate::errors::ValidatorSetError;
-use crate::schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT};
+use crate::schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT, AUTHORITATIVE_MIN_STAKE_SLOT};
 use crate::state_machine::{
     HistoryCounters, P2pInfo, StakeProjection, StoredValidatorFields, ValidatorHistory,
     ValidatorLifecycle, ValidatorState,
@@ -7,7 +7,10 @@ use crate::state_machine::{
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::{Mapping, Storable};
+use outbe_primitives::storage::{
+    types::{Mapping, Slot},
+    Storable,
+};
 
 use std::num::NonZeroU64;
 
@@ -62,6 +65,16 @@ impl ValidatorSet<'_> {
             self.storage.clone(),
         )
         .read(addr)
+    }
+
+    /// Reads the configured minimum stake from `Staking.config_min_stake`.
+    pub(crate) fn read_authoritative_min_stake(&self) -> Result<U256> {
+        Slot::<U256>::new(
+            U256::from(AUTHORITATIVE_MIN_STAKE_SLOT),
+            STAKING_ADDRESS,
+            self.storage.clone(),
+        )
+        .read()
     }
 
     /// Reads the raw validator columns in their storage order.

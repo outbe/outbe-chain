@@ -21,12 +21,24 @@ pub fn run_create_genesis(
     config_path: &Path,
     output_override: Option<&Path>,
 ) -> Result<PathBuf, GenesisError> {
+    run_create_genesis_with_min_stake(config_path, output_override, None)
+}
+
+/// Execute the full `create_genesis` pipeline from `config_path` with an optional `min_stake` override.
+pub fn run_create_genesis_with_min_stake(
+    config_path: &Path,
+    output_override: Option<&Path>,
+    min_stake_override: Option<&str>,
+) -> Result<PathBuf, GenesisError> {
     let resolved_config_path =
         fs::canonicalize(config_path).unwrap_or_else(|_| config_path.to_path_buf());
     let config_dir = resolved_config_path
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let config = load_yaml(config_path)?;
+    let mut config = load_yaml(config_path)?;
+    if let Some(min_stake) = min_stake_override {
+        apply_min_stake_override(&mut config, min_stake);
+    }
     validate_config(&config)?;
     let (network, chain_id, chain_name) = network_identity(&config)?;
 
@@ -152,13 +164,24 @@ pub struct SeedCliArgs {
 
 /// Execute the `seed_genesis` CLI pipeline.
 pub fn run_seed_cli(args: &SeedCliArgs) -> Result<(), GenesisError> {
+    run_seed_cli_with_min_stake(args, None)
+}
+
+/// Execute the `seed_genesis` CLI pipeline with an optional `min_stake` override.
+pub fn run_seed_cli_with_min_stake(
+    args: &SeedCliArgs,
+    min_stake_override: Option<&str>,
+) -> Result<(), GenesisError> {
     let genesis_raw =
         fs::read_to_string(&args.genesis).map_err(|err| GenesisError::io(&args.genesis, err))?;
     let base_genesis: Value = serde_json::from_str(&genesis_raw)?;
 
     let seed_raw =
         fs::read_to_string(&args.seed).map_err(|err| GenesisError::io(&args.seed, err))?;
-    let seed: Value = serde_json::from_str(&seed_raw)?;
+    let mut seed: Value = serde_json::from_str(&seed_raw)?;
+    if let Some(min_stake) = min_stake_override {
+        apply_min_stake_override(&mut seed, min_stake);
+    }
 
     let validators: Vec<Value> = match &args.validators {
         Some(path) => {
@@ -223,6 +246,17 @@ pub fn run_seed_cli(args: &SeedCliArgs) -> Result<(), GenesisError> {
     println!("\nGenesis written to {}", args.output.display());
     println!("Total storage entries: {total_storage}");
     Ok(())
+}
+
+fn apply_min_stake_override(root: &mut Value, min_stake: &str) {
+    if let Some(obj) = root.as_object_mut() {
+        let staking = obj
+            .entry("staking".to_owned())
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Some(staking_obj) = staking.as_object_mut() {
+            staking_obj.insert("min_stake".to_owned(), Value::String(min_stake.to_owned()));
+        }
+    }
 }
 
 fn relative_to_dir(base: &Path, value: &str) -> PathBuf {

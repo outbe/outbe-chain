@@ -30,6 +30,12 @@ pub fn load_signing_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::P
         .wrap_err_with(|| format!("failed to load signing key: {}", path.display()))
 }
 
+/// Load the BLS individual signing key's public key from a file.
+pub fn load_signing_public_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PublicKey> {
+    use commonware_cryptography::Signer as _;
+    Ok(load_signing_key(path, backend)?.public_key())
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Dynamic reading from EVM state
 // ---------------------------------------------------------------------------
@@ -229,10 +235,9 @@ pub fn read_pending_validators_from_state(
 }
 
 /// Read peers admitted to consensus P2P as SECONDARY from on-chain state:
-/// `WaitingForStake` (REGISTERED, which includes P2P-announced TEE full-nodes
-/// that are NOT staked), both pending phases, and both jailed phases
-/// (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission source so
-/// these peers sync + execute offer blocks. Admission grants no vote.
+/// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
+/// phases (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission
+/// source so these peers sync + execute offer blocks. Admission grants no vote.
 pub fn read_admitted_non_consensus_from_state(
     state_access: &dyn RethStateAccess,
 ) -> Result<ValidatorSet> {
@@ -251,10 +256,9 @@ enum ValidatorSetKind {
     /// sync to head before the reshare that makes them signers.
     PendingValidators,
     /// Peers admitted to consensus P2P as SECONDARY so they sync + execute
-    /// offer blocks: `WaitingForStake` (REGISTERED), both pending phases, and both
-    /// jailed phases. REGISTERED includes TEE full-nodes (P2P-announced,
-    /// enclave-registered, NOT staked). Voting still needs `has_bls_share`, so
-    /// this cannot affect consensus. Distinct from `ReshareTarget`.
+    /// offer blocks: both pending phases (`WaitingForReadiness`, `Joining`) and
+    /// both jailed phases (`JailRetained`, `Jail`). Voting still needs
+    /// `has_bls_share`, so this cannot affect consensus. Distinct from `ReshareTarget`.
     AdmittedNonConsensus,
 }
 
@@ -538,6 +542,21 @@ pub fn read_tee_offer_public_at_latest(
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_tee_offer_public_from_state(&state)
+}
+
+/// Read the on-chain tribute offer public key from the EVM state at a given block hash.
+pub fn read_tee_offer_public_at_block(
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<B256> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_tee_offer_public_from_state(&state)
 }
 

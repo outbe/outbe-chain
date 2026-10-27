@@ -12,6 +12,12 @@ use crate::seed_codec::{
     SECONDS_PER_DAY,
 };
 
+/// The reference currencies. The Oracle code defines them as
+/// `REFERENCE_CURRENCIES` in crates/system/oracle/src/constants.rs, and genesis
+/// does not write them. The seeder uses this copy only to check that each one
+/// has a policy rate. A test compares the copy with the Rust constant.
+pub const REFERENCE_CURRENCIES: [u32; 6] = [156, 344, 392, 826, 840, 978];
+
 /// Default overnight policy rates at scale `1e6` (`(iso_code, annual_rate_1e6)`).
 pub const DEFAULT_POLICY_RATES: [(u32, u64); 6] = [
     (156, 12_624),
@@ -252,7 +258,7 @@ fn seed_oracle_registry(
     }
     if is_truthy(config.get("settlement_currencies")) {
         return Err(GenesisError::validation(
-            "oracle.settlement_currencies was removed: register the COEN/<iso> pair instead, and list the ISO under oracle.reference_currencies",
+            "oracle.settlement_currencies was removed: register the COEN/<iso> pair instead",
         ));
     }
     Ok(pair_ids)
@@ -300,46 +306,15 @@ fn seed_oracle_currencies(
     storage: &mut StorageBuilder,
     config: &Value,
 ) -> Result<(), GenesisError> {
-    let reference_currencies = seed_reference_currencies(storage, config)?;
-    seed_policy_rates(storage, config, &reference_currencies)
+    if config.get("reference_currencies").is_some() {
+        return Err(GenesisError::validation(
+            "oracle.reference_currencies was removed: the Oracle code defines the reference currencies",
+        ));
+    }
+    seed_policy_rates(storage, config)
 }
 
-fn seed_reference_currencies(
-    storage: &mut StorageBuilder,
-    config: &Value,
-) -> Result<Vec<u32>, GenesisError> {
-    let reference_currencies: Vec<u32> =
-        match config.get("reference_currencies").and_then(Value::as_array) {
-            Some(arr) => arr.iter().map(parse_u32).collect::<Result<Vec<_>, _>>()?,
-            None => vec![156, 344, 392, 826, 840, 978],
-        };
-    if reference_currencies.contains(&0) {
-        return Err(GenesisError::validation(
-            "oracle reference iso_code must be non-zero",
-        ));
-    }
-    if !is_sorted_unique(&reference_currencies) {
-        return Err(GenesisError::validation(
-            "oracle reference currencies must be sorted and unique",
-        ));
-    }
-    if !reference_currencies.contains(&840) {
-        return Err(GenesisError::validation(
-            "oracle reference currencies must include USD 840",
-        ));
-    }
-    storage.set_slot(55u64, reference_currencies.len());
-    for (i, &iso_code) in reference_currencies.iter().enumerate() {
-        storage.set_raw_slot(data_slot(55u64) + U256::from(i), iso_code);
-    }
-    Ok(reference_currencies)
-}
-
-fn seed_policy_rates(
-    storage: &mut StorageBuilder,
-    config: &Value,
-    reference_currencies: &[u32],
-) -> Result<(), GenesisError> {
+fn seed_policy_rates(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
     let parsed_policy_rates: Vec<(u32, u64)> = match config
         .get("policy_rates")
         .and_then(Value::as_array)
@@ -360,7 +335,7 @@ fn seed_policy_rates(
             .collect::<Result<Vec<_>, GenesisError>>()?,
         None => DEFAULT_POLICY_RATES.to_vec(),
     };
-    validate_policy_rates(&parsed_policy_rates, reference_currencies)?;
+    validate_policy_rates(&parsed_policy_rates)?;
     storage.set_slot(74u64, parsed_policy_rates.len());
     for (i, &(iso_code, rate)) in parsed_policy_rates.iter().enumerate() {
         storage.set_raw_slot(data_slot(74u64) + U256::from(i), iso_code);
@@ -369,10 +344,7 @@ fn seed_policy_rates(
     Ok(())
 }
 
-fn validate_policy_rates(
-    parsed_policy_rates: &[(u32, u64)],
-    reference_currencies: &[u32],
-) -> Result<(), GenesisError> {
+fn validate_policy_rates(parsed_policy_rates: &[(u32, u64)]) -> Result<(), GenesisError> {
     if parsed_policy_rates.iter().any(|&(iso, _)| iso == 0) {
         return Err(GenesisError::validation(
             "oracle policy iso_code must be non-zero",
@@ -389,7 +361,7 @@ fn validate_policy_rates(
             "oracle policy rates must be sorted and unique",
         ));
     }
-    let missing: Vec<u32> = reference_currencies
+    let missing: Vec<u32> = REFERENCE_CURRENCIES
         .iter()
         .copied()
         .filter(|iso| !policy_isos.contains(iso))

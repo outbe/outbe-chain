@@ -301,7 +301,6 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
 #[test]
 fn begin_block_scurve_hook_records_the_daily_peak() {
     with_oracle(|storage, oracle| {
-        oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
         // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
@@ -374,10 +373,6 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
 #[test]
 fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
     with_oracle(|storage, oracle| {
-        oracle.reference_currencies.push(840).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
-        oracle.reference_currencies.push(392).unwrap(); // no pair: no-op
-
         let usd_pair = AddressPair::new_coen_to(840);
         let eur_pair = AddressPair::new_coen_to(978);
         let cad_pair = AddressPair::new_coen_to(124); // active, priced, non-reference

@@ -571,26 +571,36 @@ fn reach_original_deadline(world: &mut World) {
     );
 }
 
-#[then("validator 3 is jailed without slash while three validators keep finalizing")]
-fn missed_validator_is_jailed_without_slash(world: &mut World) {
+fn stake_after_eight_percent_slash(stake: U256) -> U256 {
+    let hundred = U256::from(100u64);
+    let percent = U256::from(8u64);
+    let slashed = (stake / hundred) * percent + ((stake % hundred) * percent) / hundred;
+    stake - slashed
+}
+
+#[then("validator 3 is jailed with an 8% slash while three validators keep finalizing")]
+fn missed_validator_is_jailed_with_eight_percent_slash(world: &mut World) {
     let scenario = state();
     let address = scenario
         .missed_validator_address
         .as_deref()
         .expect("missed validator address");
-    let record = finalized_validator(world, "jailed_without_slash", address)
+    let record = finalized_validator(world, "jailed_with_eight_percent_slash", address)
         .expect("TEE-expired validator record");
     assert_eq!(record.status, STATUS_JAILED, "TEE-expiry jail status");
+    let baseline_stake = scenario.missed_validator_stake.expect("baseline stake");
     assert_eq!(
         record.stake,
-        scenario.missed_validator_stake.expect("baseline stake")
+        stake_after_eight_percent_slash(baseline_stake),
+        "TEE expiry slashes 8% of stake"
     );
     assert_eq!(
         record.slash_count,
         scenario
             .missed_validator_slash_count
-            .expect("baseline slash count"),
-        "TEE expiry must not record a felony slash"
+            .expect("baseline slash count")
+            + 1,
+        "TEE expiry records one slash"
     );
     drop(scenario);
     wait_until(
@@ -1245,15 +1255,19 @@ fn recovered_nodes_resume(world: &mut World) {
     let completed = finalized_validator(world, "completion_validator", &address)
         .expect("completion finalized record");
     assert!(completed.status == STATUS_ACTIVE && completed.has_bls_share);
+    let baseline_stake = state().missed_validator_stake.expect("baseline stake");
     assert_eq!(
-        Some(completed.stake),
-        state().missed_validator_stake,
-        "recovery changed stake"
+        completed.stake,
+        stake_after_eight_percent_slash(baseline_stake),
+        "recovery changed the post-slash stake"
     );
     assert_eq!(
-        Some(completed.slash_count),
-        state().missed_validator_slash_count,
-        "recovery introduced a slash"
+        completed.slash_count,
+        state()
+            .missed_validator_slash_count
+            .expect("baseline slash count")
+            + 1,
+        "recovery changed the TEE-expiry slash count"
     );
     let misses = finalized_voter_misses(world, "misses_at_completion", &address);
     assert!(

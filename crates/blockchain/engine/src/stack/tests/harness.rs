@@ -192,7 +192,7 @@ where
         blocks_archive,
         marshal::Config {
             provider,
-            epocher: FixedEpocher::new(NonZeroU64::new(10_000).unwrap()),
+            epocher: outbe_consensus::follow::FollowerEpocher::new(10_000, 0),
             // 2026.5.0: the floor/genesis anchor is now an explicit `Start`.
             // A fresh epoch starts from the height-0 genesis block (the actor
             // asserts the anchor height is zero).
@@ -241,9 +241,6 @@ pub(super) fn validator_signer_args(
         is_validator: true,
         signing_key: Some(signing_key),
         validator_evm_key: Some(evm_key),
-        signing_share: None,
-        public_polynomial: None,
-        dkg_output: None,
         listen_address: std::net::SocketAddr::from(([127, 0, 0, 1], 30400)),
         storage_dir: None,
         keys_dir: None,

@@ -42,7 +42,7 @@ fn stake_addition_overflows_leave_accounting_unchanged() {
             let before = ValidatorSet::new(storage.clone())
                 .validator_state(validator)
                 .unwrap();
-            let error = s.stake(validator, validator, U256::from(1)).unwrap_err();
+            let error = s.topup(validator, validator, U256::from(1)).unwrap_err();
             assert!(
                 matches!(error, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected)
             );
@@ -112,10 +112,10 @@ fn concentration_uses_wide_products_at_cap_boundaries() {
             s.config_max_stake_percent.write(50).unwrap();
             // The first staker remains exempt even though it owns 100% of stake.
             stake_registered(storage.clone(), s, other, half).unwrap();
-            assert!(s.stake(other, other, U256::from(1)).is_err());
+            assert!(s.topup(other, other, U256::from(1)).is_err());
             assert_eq!(s.get_total_staked().unwrap(), half);
             register_validator(storage.clone(), validator);
-            let result = s.stake(validator, validator, amount);
+            let result = s.topup(validator, validator, amount);
             if amount > half {
                 assert!(
                     matches!(result.unwrap_err(), PrecompileError::RevertBytes(bytes)
@@ -141,7 +141,7 @@ fn concentration_uses_wide_products_at_cap_boundaries() {
         with_staking(|storage, s| {
             s.config_max_stake_percent.write(max_pct).unwrap();
             stake_registered(storage.clone(), s, validator, half).unwrap();
-            s.stake(validator, validator, U256::from(1)).unwrap();
+            s.topup(validator, validator, U256::from(1)).unwrap();
             assert_eq!(s.get_total_staked().unwrap(), half + U256::from(1));
         });
     }
@@ -159,6 +159,7 @@ fn slash_large_and_remainder_amounts_match_wide_oracle_and_native_burn() {
         (U256::from(1), U256::ZERO, 0),
     ] {
         with_staking(|storage, s| {
+            s.config_min_stake.write(U256::from(1)).unwrap();
             seed_staking_balance_u256(storage.clone(), amount);
             stake_registered(storage.clone(), s, validator, amount).unwrap();
             if !unbonding.is_zero() {
@@ -322,7 +323,23 @@ pub(crate) fn register_validator(storage: StorageHandle, validator: Address) {
         .expect("register_validator");
 }
 
-fn stake_registered(
+fn test_bls_registration_material(validator: Address, seed: u8) -> ([u8; 48], B256, [u8; 96]) {
+    use blst::min_pk::SecretKey;
+    use outbe_primitives::validators::{
+        validator_registration_message, VALIDATOR_REGISTRATION_DST,
+    };
+
+    let mut ikm = [seed; 32];
+    ikm[..20].copy_from_slice(validator.as_slice());
+    let sk = SecretKey::key_gen(&ikm, &[]).expect("BLS keygen");
+    let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
+    let node_id = alloy_primitives::keccak256(validator.as_slice());
+    let msg = validator_registration_message(CHAIN_ID, validator, node_id);
+    let sig: [u8; 96] = sk.sign(&msg, VALIDATOR_REGISTRATION_DST, &[]).to_bytes();
+    (pk, node_id, sig)
+}
+
+pub(crate) fn stake_registered(
     storage: StorageHandle,
     staking: &mut Staking<'_>,
     validator: Address,
@@ -332,16 +349,16 @@ fn stake_registered(
     if !val_set.is_validator(validator)? {
         register_validator(storage, validator);
     }
-    staking.stake(validator, validator, amount)
+    staking.topup(validator, validator, amount)
 }
 
 /// Seeds STAKING_ADDRESS with balance (simulating EVM-level msg.value transfer).
 /// stake() no longer transfers. In production, the EVM does it.
-fn seed_staking_balance(storage: StorageHandle, amount: u64) {
+pub(crate) fn seed_staking_balance(storage: StorageHandle, amount: u64) {
     seed_staking_balance_u256(storage, U256::from(amount));
 }
 
-fn seed_staking_balance_u256(storage: StorageHandle, amount: U256) {
+pub(crate) fn seed_staking_balance_u256(storage: StorageHandle, amount: U256) {
     let ctx = storage.clone();
     let current = ctx.balance(STAKING_ADDRESS).unwrap();
     ctx.set_balance(STAKING_ADDRESS, current + amount).unwrap();
@@ -373,11 +390,15 @@ fn test_stake_with_eighteen_decimal_native_coen_fixture() {
     with_staking(|storage, s| {
         let validator = address!("0x1212121212121212121212121212121212121212");
         let amount = checked_whole_coen_to_native(U256::from(100_000u64)).unwrap();
+        let (pk, node_id, sig) = test_bls_registration_material(validator, 0x12);
 
-        register_validator(storage.clone(), validator);
+        ValidatorSet::new(storage.clone())
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
         s.config_min_stake.write(amount).unwrap();
         seed_staking_balance_u256(storage.clone(), amount);
-        s.stake(validator, validator, amount).unwrap();
+        s.stake(validator, validator, amount, (&pk, node_id, &sig), (0, &[]))
+            .unwrap();
 
         assert_eq!(s.get_stake(validator).unwrap(), amount);
         assert_eq!(s.get_total_staked().unwrap(), amount);
@@ -391,10 +412,20 @@ fn test_stake_with_eighteen_decimal_native_coen_fixture() {
 #[test]
 fn test_stake_third_party_rejected() {
     with_staking(|_storage, s| {
-        // Third-party staking is no longer supported
+        // Staking rejects third-party stake and topup calls.
         let validator = address!("0x1111111111111111111111111111111111111111");
         let caller = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-        assert!(s.stake(caller, validator, U256::from(500u64)).is_err());
+        let (pk, node_id, sig) = test_bls_registration_material(validator, 0x11);
+        assert!(s
+            .stake(
+                caller,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk, node_id, &sig),
+                (0, &[])
+            )
+            .is_err());
+        assert!(s.topup(caller, validator, U256::from(500u64)).is_err());
     });
 }
 
@@ -416,22 +447,32 @@ fn test_stake_accumulates() {
 fn test_stake_marks_registered_validator_pending() {
     with_staking(|storage, s| {
         let validator = address!("0x2222222222222222222222222222222222222222");
-        register_validator(storage.clone(), validator);
+        let (pk, node_id, sig) = test_bls_registration_material(validator, 0x22);
+        ValidatorSet::new(storage.clone())
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
 
-        // Check initial status is REGISTERED
+        // Initial status is Absent.
         assert!(matches!(
             test_lifecycle_of(storage.clone(), validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::Absent
         ));
 
-        // Stake enough to meet min_stake
+        // Stake enough to meet min_stake -> registers and enters WaitingForReadiness (PENDING)
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), MIN_STAKE);
-        stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
+        s.stake(
+            validator,
+            validator,
+            U256::from(MIN_STAKE),
+            (&pk, node_id, &sig),
+            (0, &[]),
+        )
+        .unwrap();
 
-        // PoS: staking to min_stake marks the validator PENDING (admitted, syncing,
-        // not yet voting). The DKG reshare promotes PENDING->ACTIVE once it gets a
-        // share. The pending_set_change flag is raised so consensus schedules it.
+        // PoS: staking at or above min_stake registers and marks the validator PENDING
+        // (admitted, syncing, not yet voting). The DKG reshare promotes PENDING->ACTIVE
+        // once it gets a share. Registration sets pending_set_change so consensus schedules it.
         let val_set = ValidatorSet::new(storage.clone());
         let lifecycle = val_set.validator_lifecycle(validator).unwrap();
         assert!(matches!(
@@ -447,7 +488,17 @@ fn test_stake_marks_registered_validator_pending() {
 fn test_stake_zero_fails() {
     with_staking(|_storage, s| {
         let validator = address!("0x1111111111111111111111111111111111111111");
-        assert!(s.stake(validator, validator, U256::ZERO).is_err());
+        let (pk, node_id, sig) = test_bls_registration_material(validator, 0x11);
+        assert!(s
+            .stake(
+                validator,
+                validator,
+                U256::ZERO,
+                (&pk, node_id, &sig),
+                (0, &[])
+            )
+            .is_err());
+        assert!(s.topup(validator, validator, U256::ZERO).is_err());
     });
 }
 
@@ -497,8 +548,8 @@ fn test_unstake_below_min_sets_exiting_status() {
             .promote_pending_validator_for_test(validator)
             .unwrap();
 
-        // Unstake to drop below min_stake
-        s.unstake(validator, U256::from(500u64)).unwrap();
+        // Full unstake from ACTIVE transitions to EXITING (DKG reshare pending to exclude from consensus)
+        s.unstake(validator, U256::from(MIN_STAKE)).unwrap();
 
         // Should now be EXITING (DKG reshare pending to exclude from consensus)
         assert!(matches!(
@@ -509,22 +560,24 @@ fn test_unstake_below_min_sets_exiting_status() {
 }
 
 #[test]
-fn test_unstake_below_min_reverts_pending_to_registered() {
+fn test_unstake_below_min_rejected_while_full_unstake_moves_pending_to_unbonding() {
     with_staking_timed(0, |storage, s| {
         let validator = address!("0x4A44444444444444444444444444444444444444");
         register_validator(storage.clone(), validator);
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
-        // PENDING joiner (not yet activated) unstaking below min reverts to REGISTERED.
+        // PENDING joiner (not yet activated) unstaking to a non-zero remainder below min_stake
+        // reverts with BondedStakeBelowMinimum. A full unstake (remainder == 0) moves to Unbonding.
         assert!(matches!(
             test_lifecycle_of(storage.clone(), validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
-        s.unstake(validator, U256::from(500u64)).unwrap();
+        assert!(s.unstake(validator, U256::from(500u64)).is_err());
+        s.unstake(validator, U256::from(MIN_STAKE)).unwrap();
         assert!(matches!(
             test_lifecycle_of(storage.clone(), validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::Unbonding(_)
         ));
     });
 }
@@ -702,27 +755,29 @@ fn test_slash_below_min_stake_transitions_to_exiting() {
 }
 
 #[test]
-fn test_slash_below_min_stake_reverts_pending_to_registered() {
+fn test_slash_below_min_stake_demotes_joining_to_waiting_for_readiness() {
     with_staking(|storage, s| {
         let validator = address!("0x9A99999999999999999999999999999999999999");
         register_validator(storage.clone(), validator);
 
-        // Stake -> PENDING (staked joiner, not yet activated by a reshare).
+        // Stake -> PENDING, then confirm readiness -> Joining.
         seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
         seed_staking_balance(storage.clone(), MIN_STAKE);
         stake_registered(storage.clone(), s, validator, U256::from(MIN_STAKE)).unwrap();
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set.confirm_validator_ready(validator).unwrap();
         assert!(matches!(
             test_lifecycle_of(storage.clone(), validator).unwrap(),
-            ValidatorLifecycle::WaitingForReadiness(_)
+            ValidatorLifecycle::Joining(_)
         ));
 
-        // Slash below min before activation -> revert PENDING->REGISTERED so the next
+        // Slash below min before activation -> demote Joining to WaitingForReadiness so the next
         // reshare target does not select an under-staked joiner.
         s.slash_stake(validator, 50).unwrap();
         let val_set = ValidatorSet::new(storage.clone());
         assert!(matches!(
             val_set.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
         assert!(val_set.has_pending_set_change().unwrap());
     });
@@ -1449,7 +1504,7 @@ fn dispatch_stake(
     seed_staking_balance(storage.clone(), amount);
     dispatch(
         storage,
-        &IStaking::stakeCall {
+        &IStaking::topupCall {
             validatorAddress: validator,
             amount: U256::from(amount),
         }
@@ -1501,7 +1556,7 @@ fn stake_events_report_resulting_bonded_on_both_credit_branches() {
         assert!(dispatch_stake(storage.clone(), other, 0).is_err());
         assert!(dispatch(
             storage.clone(),
-            &IStaking::stakeCall {
+            &IStaking::topupCall {
                 validatorAddress: validator,
                 amount: U256::from(500u64),
             }
@@ -1530,7 +1585,7 @@ fn stake_events_report_resulting_bonded_on_both_credit_branches() {
         dispatch_stake(storage.clone(), validator, 500).unwrap();
         assert!(dispatch(
             storage,
-            &IStaking::stakeCall {
+            &IStaking::topupCall {
                 validatorAddress: validator,
                 amount: U256::from(500u64),
             }
@@ -1590,6 +1645,7 @@ fn deadline_only_queue_change_emits_update_without_slashed() {
 fn unchanged_slash_emits_no_staking_event() {
     let validator = address!("0x1313131313131313131313131313131313131313");
     let logs = staking_session(5_000, 100, |storage, staking| {
+        staking.config_min_stake.write(U256::from(100u64)).unwrap();
         dispatch_stake(storage.clone(), validator, 1_000).unwrap();
         dispatch_unstake(storage.clone(), validator, 100).unwrap();
         staking.config_slashed_withdrawal_delay.write(1).unwrap();
@@ -1769,6 +1825,7 @@ fn ordered_replay_matches_balances_after_index_reuse() {
 fn zero_remainder_slash_reuses_index_without_a_claim_event() {
     let validator = address!("0x1616161616161616161616161616161616161616");
     let logs = staking_session(1_000, 100, |storage, staking| {
+        staking.config_min_stake.write(U256::from(10u64)).unwrap();
         dispatch_stake(storage.clone(), validator, 100).unwrap();
         dispatch_unstake(storage.clone(), validator, 80).unwrap();
         let slashed = staking.slash_stake(validator, 100).unwrap();
@@ -1870,6 +1927,22 @@ fn term_getters_return_configured_units_and_effective_delay() {
             IStaking::getMinStakeCall::abi_decode_returns(&min).unwrap(),
             U256::from(MIN_STAKE)
         );
+        staking.config_min_stake.write(U256::ZERO).unwrap();
+        let default_min = dispatch(
+            storage.clone(),
+            &IStaking::getMinStakeCall {}.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IStaking::getMinStakeCall::abi_decode_returns(&default_min).unwrap(),
+            crate::contract::DEFAULT_MIN_STAKE
+        );
+        staking
+            .config_min_stake
+            .write(U256::from(MIN_STAKE))
+            .unwrap();
         let period = dispatch(
             storage.clone(),
             &IStaking::getUnbondingPeriodCall {}.abi_encode(),
@@ -1940,5 +2013,358 @@ fn slashed_withdrawal_delay_getter_keeps_typed_overflow() {
             }
             other => panic!("typed overflow, got {other:?}"),
         }
+    });
+}
+
+#[test]
+fn stake_registers_with_optional_or_v1_p2p_and_rejects_below_min_stake() {
+    use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
+    use outbe_primitives::consensus_p2p::{encode_v1, P2pAddress, P2P_ADDRESS_VERSION_V1};
+    use outbe_validatorset::precompile::IValidatorSet;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    let v1 = address!("0x2121212121212121212121212121212121212121");
+    let v2 = address!("0x2222222222222222222222222222222222222222");
+    let (pk1, node1, sig1) = test_bls_registration_material(v1, 0x21);
+    let (pk2, node2, sig2) = test_bls_registration_material(v2, 0x22);
+    let p2p_bytes = encode_v1(&P2pAddress::Symmetric(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        30400,
+    )));
+
+    let logs = staking_session(0, 3_600, |storage, staking| {
+        ValidatorSet::new(storage.clone())
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
+
+        // 1. Below min_stake reverts with BondedStakeBelowMinimum and writes nothing.
+        let sub_min = U256::from(MIN_STAKE - 1);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        let err = staking
+            .stake(v1, v1, sub_min, (&pk1, node1, &sig1), (0, &[]))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref()
+                    == IValidatorSet::BondedStakeBelowMinimum {
+                        bonded: sub_min,
+                        minimum: U256::from(MIN_STAKE),
+                    }
+                    .abi_encode()
+        ));
+        assert_eq!(staking.get_stake(v1).unwrap(), U256::ZERO);
+        assert!(!ValidatorSet::new(storage.clone()).is_validator(v1).unwrap());
+
+        // 2. Non-empty p2p_encoded with version != 1 reverts with UnsupportedP2pAddressVersion.
+        let err = staking
+            .stake(
+                v1,
+                v1,
+                U256::from(MIN_STAKE),
+                (&pk1, node1, &sig1),
+                (2, &p2p_bytes),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref()
+                    == IValidatorSet::UnsupportedP2pAddressVersion { version: 2 }.abi_encode()
+        ));
+
+        // 3. Empty p2p_encoded registers with P2pInfo::Unset (even if p2p_version is 0).
+        staking
+            .stake(
+                v1,
+                v1,
+                U256::from(MIN_STAKE),
+                (&pk1, node1, &sig1),
+                (0, &[]),
+            )
+            .unwrap();
+        assert_eq!(
+            ValidatorSet::new(storage.clone())
+                .get_p2p_address(v1)
+                .unwrap(),
+            None
+        );
+
+        // 4. Non-empty v1 p2p_encoded registers and stores P2P address.
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        staking
+            .stake(
+                v2,
+                v2,
+                U256::from(MIN_STAKE),
+                (&pk2, node2, &sig2),
+                (P2P_ADDRESS_VERSION_V1, &p2p_bytes),
+            )
+            .unwrap();
+        assert_eq!(
+            ValidatorSet::new(storage).get_p2p_address(v2).unwrap(),
+            Some((P2P_ADDRESS_VERSION_V1, p2p_bytes.clone()))
+        );
+    });
+
+    // Both v1 and v2 emitted ValidatorRegistered + ValidatorPending on ValidatorSet, and Staked on Staking.
+    let vs_logs: Vec<_> = logs
+        .iter()
+        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+        .collect();
+    assert_eq!(vs_logs.len(), 4);
+    assert_eq!(
+        vs_logs[0].topics().first(),
+        Some(&IValidatorSet::ValidatorRegistered::SIGNATURE_HASH)
+    );
+    assert_eq!(
+        vs_logs[1].topics().first(),
+        Some(&IValidatorSet::ValidatorPending::SIGNATURE_HASH)
+    );
+    let st_logs = staking_logs(&logs);
+    assert_eq!(st_logs.len(), 2);
+}
+
+#[test]
+fn topup_requires_registered_eligible_lifecycle_and_emits_only_staked() {
+    use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
+    use outbe_validatorset::precompile::IValidatorSet;
+
+    let validator = address!("0x2323232323232323232323232323232323232323");
+    let (pk, node, sig) = test_bls_registration_material(validator, 0x23);
+
+    let logs = staking_session(0, 3_600, |storage, staking| {
+        ValidatorSet::new(storage.clone())
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
+
+        // Absent validator rejected on topup with ValidatorNotRegistered.
+        seed_staking_balance(storage.clone(), MIN_STAKE * 3);
+        let err = staking
+            .topup(validator, validator, U256::from(100u64))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IValidatorSet::ValidatorNotRegistered {}.abi_encode()
+        ));
+
+        // Initial stake registers into WaitingForReadiness.
+        staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk, node, &sig),
+                (0, &[]),
+            )
+            .unwrap();
+
+        // Duplicate stake on WaitingForReadiness rejected with ValidatorAlreadyRegistered.
+        let err = staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk, node, &sig),
+                (0, &[]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IValidatorSet::ValidatorAlreadyRegistered {}.abi_encode()
+        ));
+
+        // Topup in WaitingForReadiness succeeds.
+        staking
+            .topup(validator, validator, U256::from(250u64))
+            .unwrap();
+        assert_eq!(
+            staking.get_stake(validator).unwrap(),
+            U256::from(MIN_STAKE + 250)
+        );
+    });
+
+    // Initial stake emits one ValidatorRegistered and one ValidatorPending. Topup emits only Staked.
+    let vs_logs: Vec<_> = logs
+        .iter()
+        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
+        .collect();
+    assert_eq!(vs_logs.len(), 2);
+    let st_logs = staking_logs(&logs);
+    assert_eq!(st_logs.len(), 2);
+}
+
+#[test]
+fn unstake_enforces_min_stake_floor_and_full_exit_in_jail_and_zero_bond_exit() {
+    use outbe_validatorset::precompile::IValidatorSet;
+
+    let v_jailed = address!("0x2424242424242424242424242424242424242424");
+    let v_slashed = address!("0x2525252525252525252525252525252525252525");
+
+    let logs = staking_session(0, 3_600, |storage, staking| {
+        seed_staking_balance(storage.clone(), MIN_STAKE * 4);
+        stake_registered(
+            storage.clone(),
+            staking,
+            v_jailed,
+            U256::from(MIN_STAKE * 2),
+        )
+        .unwrap();
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set
+            .activate_validator_via_boundary_for_test(v_jailed)
+            .unwrap();
+        val_set.jail_validator(v_jailed).unwrap();
+
+        // In JailRetained, partial unstake (even leaving >= MIN_STAKE) must revert with
+        // JailedValidatorMustFullyUnstakeForExit.
+        let err = staking
+            .unstake(v_jailed, U256::from(MIN_STAKE))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref()
+                    == IValidatorSet::JailedValidatorMustFullyUnstakeForExit {}
+                        .abi_encode()
+        ));
+
+        // Boundary exclusion moves the validator to Jail. Partial unstake still reverts with JailedValidatorMustFullyUnstakeForExit.
+        val_set
+            .test_activate_validated_boundary_set(&[], B256::ZERO, 1)
+            .unwrap();
+        let err = staking
+            .unstake(v_jailed, U256::from(MIN_STAKE))
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref()
+                    == IValidatorSet::JailedValidatorMustFullyUnstakeForExit {}
+                        .abi_encode()
+        ));
+
+        // While current > 0, unstake(0) reverts with AmountZero.
+        let err = staking.unstake(v_jailed, U256::ZERO).unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IStaking::AmountZero {}.abi_encode()
+        ));
+
+        // 100% slash of v_slashed in WaitingForReadiness leaves current == 0.
+        stake_registered(storage.clone(), staking, v_slashed, U256::from(MIN_STAKE)).unwrap();
+        staking.slash_stake(v_slashed, 100).unwrap();
+        assert_eq!(staking.get_stake(v_slashed).unwrap(), U256::ZERO);
+
+        // unstake(0) when current == 0 and no pending unbonding transitions WaitingForReadiness -> Unbonding -> Inactive
+        // without creating an unbonding entry or emitting UnbondingStarted.
+        let count_before = staking.unbonding_count.read().unwrap();
+        staking.unstake(v_slashed, U256::ZERO).unwrap();
+        assert_eq!(staking.unbonding_count.read().unwrap(), count_before);
+        assert!(matches!(
+            ValidatorSet::new(storage)
+                .validator_lifecycle(v_slashed)
+                .unwrap(),
+            ValidatorLifecycle::Inactive(_)
+        ));
+    });
+
+    assert!(staking_logs(&logs)
+        .iter()
+        .all(|log| log.topics().first() != Some(&IStaking::UnbondingStarted::SIGNATURE_HASH)));
+}
+
+#[test]
+fn reregistration_via_stake_blocks_same_epoch_even_when_cooldown_zero() {
+    use outbe_validatorset::precompile::IValidatorSet;
+    use outbe_validatorset::test_support::StorageOverrides;
+    use outbe_validatorset::EpochSnapshot;
+
+    let validator = address!("0x2626262626262626262626262626262626262626");
+    let (pk1, node, sig1) = test_bls_registration_material(validator, 0x26);
+    let (pk2, _, sig2) = test_bls_registration_material(validator, 0x27);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(15);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = staking_with_unbonding_period(storage.clone(), 0);
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
+        val_set
+            .test_set_epoch_snapshot(EpochSnapshot {
+                number: U256::from(1u64),
+                start_timestamp: 100,
+                start_block: 10,
+                length_blocks: 10,
+            })
+            .unwrap();
+
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE * 2);
+        staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk1, node, &sig1),
+                (0, &[]),
+            )
+            .unwrap();
+
+        // Exit in block 15 (> epoch_start_block 10) and claim immediately (period = 0) -> Inactive.
+        staking.unstake(validator, U256::from(MIN_STAKE)).unwrap();
+        staking.claim_unbonded(validator).unwrap();
+        assert!(matches!(
+            ValidatorSet::new(storage.clone())
+                .validator_lifecycle(validator)
+                .unwrap(),
+            ValidatorLifecycle::Inactive(_)
+        ));
+
+        // Same-epoch re-registration (deactivated_at 15 > epoch_start_block 10) must revert
+        // even with cooldown == 0.
+        let err = staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk2, node, &sig2),
+                (0, &[]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IValidatorSet::ReregistrationCooldownNotExpired {}.abi_encode()
+        ));
+    });
+
+    // Advance to next epoch (epoch_start_block = 20 >= deactivated_at 15) -> re-registration succeeds.
+    provider.set_block_number(20);
+    StorageHandle::enter(&mut provider, |storage| {
+        ValidatorSet::new(storage.clone())
+            .update_epoch(200, 20)
+            .unwrap();
+        let mut staking = Staking::new(storage.clone());
+        staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk2, node, &sig2),
+                (0, &[]),
+            )
+            .unwrap();
+        assert!(matches!(
+            ValidatorSet::new(storage)
+                .validator_lifecycle(validator)
+                .unwrap(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
     });
 }

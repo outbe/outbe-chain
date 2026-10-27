@@ -377,8 +377,12 @@ impl TributeContract<'_> {
                 currency: record.reference_currency,
             })?;
 
-            let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
-                outbe_primitives::nod_encryption::NodTermsV2 {
+            let encrypted_tribute = record
+                .encrypted()
+                .ok_or(TributeError::InvalidEncryptedEncoding)?;
+            let encrypted_nod = crate::enclave_client::encrypt_nod_for_tribute(
+                encrypted_tribute,
+                outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: storage.chain_id()?,
                     nod_id: tribute_id,
                     owner: record.owner,
@@ -389,7 +393,8 @@ impl TributeContract<'_> {
                     entry_price_minor: gratis_day_price,
                 },
                 gratis_load_minor,
-            );
+            )
+            .map_err(TributeError::private_amount_read_failed)?;
             outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
 
             // Atomically burn the Tribute upon Nod creation, keeping partition accounting consistent.

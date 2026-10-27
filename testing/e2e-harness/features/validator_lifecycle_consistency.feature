@@ -14,10 +14,10 @@ Feature: Validator lifecycle state remains internally consistent
     Then the cross-chain proof replay is rejected without changing the registry identity bundle
 
   @risk-d-01b
-  Scenario: ValidatorSet owner cannot register a validator without possession proof
+  Scenario: ValidatorSet owner cannot register another validator even with possession proof
     Given a fresh localnet whose configured ValidatorSet owner is "validator-0"
     And a funded unregistered validator identity
-    When the owner submits its registration with an empty possession proof
+    When the owner submits its registration with a valid possession proof
     Then owner registration is rejected without changing the registry identity bundle
 
   @risk-d-02 @tee
@@ -46,10 +46,10 @@ Feature: Validator lifecycle state remains internally consistent
     And staking without a new readiness confirmation cannot activate the re-registered validator
 
   @risk-d-07
-  Scenario: Partial jailed unstake does not begin validator exit
+  Scenario: Partial jailed unstake is rejected without changing its bond
     Given an active validator is jailed by valid felony evidence
-    When it unstakes below minimum while leaving a nonzero bonded amount
-    Then it remains JAILED with the remaining stake and no exit transition
+    When it attempts a partial unstake leaving at least the minimum bond
+    Then it remains JAILED with unchanged stake and no exit transition
 
   @risk-d-10
   Scenario: Early unjail never leaves a pending validator with a live share
@@ -59,12 +59,11 @@ Feature: Validator lifecycle state remains internally consistent
     And the validator cannot participate until readiness is reconfirmed and a fresh reshare commits
 
   @risk-s-01 @tee
-  Scenario: Leaving pending through unstake clears readiness
+  Scenario: A rejected subminimum unstake preserves readiness
     Given a staked PENDING joiner has confirmed readiness
     When it unstakes below minimum before activation
-    Then it is REGISTERED with readiness cleared
-    When it stakes again without another readiness confirmation
-    Then it remains PENDING and excluded after the next scheduled reshare
+    Then the subminimum unstake is rejected without changing its bond
+    And it activates after the next scheduled reshare without another confirmation
 
   @risk-s-02
   Scenario: Direct activation is unreachable through the public ABI

@@ -181,9 +181,7 @@ async fn start_empty_marshal(
         blocks_archive,
         commonware_consensus::marshal::Config {
             provider: HybridSchemeProvider::<MinSig>::new(),
-            epocher: commonware_consensus::types::FixedEpocher::new(
-                NonZeroU64::new(10_000).expect("non-zero epoch"),
-            ),
+            epocher: crate::follow::FollowerEpocher::new(10_000, 0),
             start: commonware_consensus::marshal::Start::Genesis(backfill_genesis_block()),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),

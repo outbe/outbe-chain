@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
-    nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+    nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
 };
 use outbe_tee::{
-    nod_mine::MineEncryptedNodRequestV2,
+    nod_mine::MineEncryptedNodRequestV1,
     protocol::{
         FidelityCohortOp, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpStatus, ModifyAuth,
     },
@@ -20,7 +20,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let amount = U256::from(123);
     let creator = PublicKey::from(&StaticSecret::from([11; 32])).to_bytes();
     let day = WorldwideDay::new(20250115);
-    let terms = NodTermsV2 {
+    let terms = NodTermsV1 {
         chain_id: 1,
         nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(4)),
         owner: account,
@@ -46,7 +46,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         ),
         op_nonce: nonce,
     };
-    let request = MineEncryptedNodRequestV2 {
+    let request = MineEncryptedNodRequestV1 {
         nod,
         current_balance: vec![],
         modify_auth: auth(GratisOp::Mint, amount, 0),

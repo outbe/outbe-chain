@@ -160,7 +160,7 @@ pub struct EnvCli {
     #[arg(long)]
     pub no_cleanup: bool,
 
-    /// Repo root (working dir for scripts/binaries). Defaults to this crate's
+    /// Repo root (working dir for binaries). Defaults to this crate's
     /// workspace root.
     #[arg(long)]
     pub repo: Option<PathBuf>,

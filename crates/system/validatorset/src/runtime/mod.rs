@@ -4,15 +4,15 @@
 //! the executor, and the begin-block path call them after their own checks.
 //! An external account reaches ValidatorSet only through `IValidatorSet` and
 //! [`crate::precompile::dispatch`]. That route exposes the views plus
-//! `setDelegate`, `revokeDelegate`, `registerValidator`, `setP2pAddress`,
+//! `setDelegate`, `revokeDelegate`, `setP2pAddress`,
 //! `deactivateValidator`, and `confirmValidatorReady`.
 //! `confirmValidatorReady` uses the transaction sender. `activateResharedSet`
 //! is not an external selector.
 //!
 //! Production callers of the in-process methods:
 //!
-//! - `record_stake_increase`, `record_unstake`, and `record_stake_slash` are
-//!   called from `crates/system/staking/src/logic.rs`.
+//! - `crates/system/staking/src/logic.rs` calls `register_with_initial_stake`,
+//!   `record_stake_increase`, `record_unstake`, and `record_stake_slash`.
 //! - `complete_unbonding` and `record_unstake` are called from
 //!   `crates/system/staking/src/unbonding.rs`.
 //! - `unjail_after_stake_check` is called from `Staking::unjail_validator` in
@@ -62,6 +62,7 @@ mod staking;
 mod test_support;
 
 pub use lifecycle::DeferredValidatorPunishment;
+pub use registration::decode_registration_key_and_proof;
 
 /// Stable ABI status constants. The effective Rust states are richer: PENDING
 /// distinguishes readiness from joining, and JAILED distinguishes retained from
@@ -75,27 +76,6 @@ pub mod status {
     pub const INACTIVE: u8 = 5;
     pub const JAILED: u8 = 6;
 }
-
-/// maximum number of validators that may be in the `REGISTERED`
-/// (self-registered, not-yet-staked) state at once.
-///
-/// `REGISTERED` self-registration is permissionless and free on the ZeroFee
-/// chain. The consensus P2P secondary tier intentionally admits a `REGISTERED`
-/// node, so a TEE verifier full-node can sync and execute offer blocks before
-/// staking (see [`ValidatorSet::get_admitted_non_consensus_validators`]). That
-/// admission is by design. But without a bound, an attacker can self-register
-/// up to `config_max_validators` free Sybil identities. These identities consume:
-///
-/// - registration slots (griefing legitimate staked joins with "max validators
-///   reached"),
-/// - consensus-P2P connection / handshake / decode slots.
-///
-/// This constant caps the unstaked self-registration surface well below
-/// `config_max_validators` (default 128). Legitimate verifiers (few) still
-/// register, but Sybils cannot fill the validator set. The owner
-/// (`config_owner`) is NOT subject to this cap and may register validators
-/// directly beyond it.
-pub const MAX_SELF_REGISTERED_UNSTAKED: u32 = 32;
 
 /// Canonical committee/codec bound shared by every validator-registry scan.
 /// This is not a configurable product capacity.

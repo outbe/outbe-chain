@@ -7,9 +7,9 @@ chain_id = 54322345
 gasless_oracle_votes = true
 
 [account]
-# scripts/price-oracle/run.sh rewrites this from <testnet-dir>/validator-N/evm-key.hex.
+# Replace this template value with the validator's EVM private key.
 private_key = "0x0000000000000000000000000000000000000000000000000000000000000001"
-# scripts/price-oracle/run.sh rewrites this from <testnet-dir>/validators.json.
+# Replace this template value with the matching validator address.
 validator_address = "0x1111111111111111111111111111111111111111"
 
 [oracle]

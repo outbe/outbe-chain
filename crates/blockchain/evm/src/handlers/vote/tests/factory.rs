@@ -151,12 +151,19 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
                 .unwrap(),
             ProposalStatus::Expired
         );
-        // The expired bond is a native burn: no capacity credit of any kind.
+        // The expired bond credits whole protocol units to PromisLimit.
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .promis_limit()
                 .unwrap(),
             promis_limit_before
+                + STABLECOIN_CREATE_BOND / outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .native_rest()
+                .unwrap(),
+            STABLECOIN_CREATE_BOND % outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT
         );
         assert_eq!(
             vote.proposal_bond(proposal_id).unwrap().state,

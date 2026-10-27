@@ -38,7 +38,7 @@ pub struct NodItemState {
 
     pub owner: Address,
 
-    pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV2,
+    pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV1,
 
     pub worldwide_day: WorldwideDay,
 

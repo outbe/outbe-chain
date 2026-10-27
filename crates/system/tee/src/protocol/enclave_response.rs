@@ -402,12 +402,17 @@ pub enum EnclaveResponse {
         request_hash: B256,
         artifact: Vec<u8>,
     },
-    NodCreatedForTestV2 {
-        nod: outbe_primitives::nod_encryption::EncryptedNodV2,
+    NodCreatedForTestV1 {
+        nod: outbe_primitives::nod_encryption::EncryptedNodV1,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    EncryptedNodMintRejectedV2 {
+    NodEncryptedForTributeV1 {
+        nod: outbe_primitives::nod_encryption::EncryptedNodV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    EncryptedNodMintRejectedV1 {
         reason: String,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
@@ -421,29 +426,29 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    EncryptedNodMinedV2 {
-        result: Box<crate::nod_mine::MineEncryptedNodResultV2>,
+    EncryptedNodMinedV1 {
+        result: Box<crate::nod_mine::MineEncryptedNodResultV1>,
     },
-    NodAmountReadV2 {
+    NodAmountReadV1 {
         amount: U256,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
-    NodTransferAckV2 {
+    NodTransferAckV1 {
         id: B256,
         next_offset: u32,
     },
-    NodTransferReadyV2 {
+    NodTransferReadyV1 {
         id: B256,
         total: u32,
         digest: B256,
     },
-    NodTransferOutputV2 {
+    NodTransferOutputV1 {
         id: B256,
         offset: u32,
         bytes: Vec<u8>,
     },
-    NodTransferDiscardedV2 {
+    NodTransferDiscardedV1 {
         id: B256,
     },
     EncryptedTributeOfferBatchV2 {

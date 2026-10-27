@@ -1,10 +1,10 @@
 # network.yaml - describes an Outbe network; produces its genesis.
 #
-#   python3 scripts/create_genesis.py network.yaml
+#   cargo run --locked --release -p outbe-genesis-cli -- create network.yaml
 #
 # The uncommented block below is the whole required input. Every commented
 # key shows its default value; uncomment to change it. Section defaults come
-# from scripts/seed-testnet.json, the single baseline profile.
+# from profiles/testnet.yaml, the single baseline profile.
 
 chain_id: 424242
 
@@ -85,7 +85,8 @@ tee:
 # epoch_length_blocks: 300
 # dkg_prepare_window_blocks: 30
 # dkg_activation_grace_blocks: 30
-# prefund_coen_units: 10000000000000000000000 # 10000 COEN per validator
+# prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
+# min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys    # code files for the `contracts` section
@@ -128,8 +129,8 @@ tee:
 # whole, mappings merge key by key.
 
 # staking:
-#   min_stake: "100000000000000000000000"
-#   genesis_validator_stake: "100000000000000000000000"
+#   min_stake: "10000000000000000000000000"
+#   genesis_validator_stake: "10000000000000000000000000"
 #   unbonding_period: 1814400
 #   slashed_withdrawal_delay: 3628800
 #   max_stake_percent: 33

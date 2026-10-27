@@ -1,8 +1,8 @@
 # 4-validator local testnet.
 #
 # Prerequisites:
-#   1. Build host bootstrap binary: cargo build --bin outbe-chain
-#   2. Bootstrap keys/genesis: OUTBE_CONSENSUS_HOST_PATTERN='validator-{i}' ./scripts/bootstrap-testnet.sh 4 ./testnet
+#   1. Build the localnet binaries listed by the `localnet` mise task.
+#   2. Bootstrap keys/genesis: OUT_DIR="$PWD/testnet" mise run localnet-bootstrap
 #   3. Build the image: docker build -t outbe-chain .
 #   4. Start: docker compose up
 # Each validator gets unique P2P, RPC, and metrics ports.
@@ -20,8 +20,6 @@ services:
     volumes:
       - ./testnet/validator-0:/data
       - ./testnet/genesis.json:/genesis.json:ro
-      - ./testnet/polynomial.hex:/dkg-polynomial.hex:ro
-      - ./testnet/dkg-output.hex:/dkg-output.hex:ro
     ports:
       - "30400:30400"
       - "8545:8545"
@@ -39,9 +37,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
-      - --consensus.signing-share=/data/signing-share.hex
-      - --consensus.public-polynomial=/dkg-polynomial.hex
-      - --consensus.dkg-output=/dkg-output.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30400
       - --consensus.use-local-defaults
 
@@ -51,8 +47,6 @@ services:
     volumes:
       - ./testnet/validator-1:/data
       - ./testnet/genesis.json:/genesis.json:ro
-      - ./testnet/polynomial.hex:/dkg-polynomial.hex:ro
-      - ./testnet/dkg-output.hex:/dkg-output.hex:ro
     ports:
       - "30401:30401"
       - "8546:8545"
@@ -70,9 +64,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
-      - --consensus.signing-share=/data/signing-share.hex
-      - --consensus.public-polynomial=/dkg-polynomial.hex
-      - --consensus.dkg-output=/dkg-output.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30401
       - --consensus.use-local-defaults
 
@@ -82,8 +74,6 @@ services:
     volumes:
       - ./testnet/validator-2:/data
       - ./testnet/genesis.json:/genesis.json:ro
-      - ./testnet/polynomial.hex:/dkg-polynomial.hex:ro
-      - ./testnet/dkg-output.hex:/dkg-output.hex:ro
     ports:
       - "30402:30402"
       - "8547:8545"
@@ -101,9 +91,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
-      - --consensus.signing-share=/data/signing-share.hex
-      - --consensus.public-polynomial=/dkg-polynomial.hex
-      - --consensus.dkg-output=/dkg-output.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30402
       - --consensus.use-local-defaults
 
@@ -113,8 +101,6 @@ services:
     volumes:
       - ./testnet/validator-3:/data
       - ./testnet/genesis.json:/genesis.json:ro
-      - ./testnet/polynomial.hex:/dkg-polynomial.hex:ro
-      - ./testnet/dkg-output.hex:/dkg-output.hex:ro
     ports:
       - "30403:30403"
       - "8548:8545"
@@ -132,9 +118,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
-      - --consensus.signing-share=/data/signing-share.hex
-      - --consensus.public-polynomial=/dkg-polynomial.hex
-      - --consensus.dkg-output=/dkg-output.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30403
       - --consensus.use-local-defaults
 

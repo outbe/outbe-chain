@@ -463,10 +463,8 @@ pub(in crate::stack) fn active_set_hash_from_addresses(addresses: &[EthAddress])
 /// - the ceremony times out,
 /// - the joiner goes ACTIVE-but-voteless.
 ///
-/// The node's in-memory `last_dkg_output` may be the stale CLI `--consensus.dkg-output`
-/// bootstrap value when it joins WITHOUT first following a reshare or restarting. On a
-/// TEE chain, the runtime-derived genesis consensus output differs from the bootstrap
-/// file. Refresh the value from the chain's latest finalized DKG boundary (scanning back
+/// The node's in-memory `last_dkg_output` may be stale when the node joins WITHOUT
+/// first following a reshare or restarting. Refresh the value from the chain's latest finalized DKG boundary (scanning back
 /// from `scan_height`) before the ceremony. Signers already hold the correct output from
 /// their prior ceremony, so this only runs for the share-less case. Best-effort: on any
 /// recovery/decode failure it keeps the local value and warns.

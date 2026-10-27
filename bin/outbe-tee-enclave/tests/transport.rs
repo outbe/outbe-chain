@@ -268,7 +268,7 @@ fn transport_throughput_offers_per_sec() {
     //  - default (env unset): start an in-process enclave server over UDS -> the
     //    NATIVE figure (no SGX).
     //  - OUTBE_TEE_BENCH_ENDPOINT=<host:port|path>: connect to an EXTERNAL enclave
-    //    (e.g. one running under gramine-sgx, launched by scripts/sgx-bench.sh) ->
+    //    (e.g. one running under gramine-sgx by a hardware benchmark harness) ->
     //    the PRODUCTION SGX figure incl. enclave enter/exit + gramine syscall
     //    emulation. The test fetches the offer public key via GetPublicKeys, so we
     //    encrypt to whatever key that enclave actually holds.

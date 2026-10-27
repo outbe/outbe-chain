@@ -21,7 +21,7 @@ struct RelayedNod {
     hardened: bool,
 }
 struct PaidNod {
-    paid: (NodItemBodyV2, NodGroupBodyV1),
+    paid: (NodItemBodyV1, NodGroupBodyV1),
     paid_indexes: NodSnapshot,
     settled: eth::MinedCallOutcome,
     duplicate: crate::world::rpc::TxOutcome,

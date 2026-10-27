@@ -2,9 +2,9 @@
 //!
 //! These tests pin three independent contracts for the V2 greenfield genesis:
 //!
-//! 1. `scripts/seed_genesis.py` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
+//! 1. `outbe-genesis-cli` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
 //!    with the canonical `0xef` marker bytecode and `slot 0 = 0`.
-//! 2. The Python seeder must not write any `ValidatorSet` storage entry at
+//! 2. The genesis seeder must not write any `ValidatorSet` storage entry at
 //!    the direct slots 31..40. Those slots are reserved for the runtime
 //!    `CommitteeSnapshotStore`, whose first writer is block 1's
 //!    `BoundaryOutcome` system transaction.
@@ -35,7 +35,8 @@ use tempfile::TempDir;
 const ACCOUNTING_PROGRESS_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee04";
 const VALIDATOR_SET_ADDRESS_HEX: &str = "000000000000000000000000000000000000ee00";
 
-/// `0xef` marker bytecode, mirroring `MARKER_CODE` in `scripts/seed_genesis.py`
+/// `0xef` marker bytecode, mirroring `MARKER_CODE` in
+/// `bin/outbe-genesis-cli/src/seed_codec.rs`
 /// and the executor's marker-bytecode allowlist in
 /// `crates/blockchain/evm/src/executor.rs`.
 const MARKER_BYTECODE_HEX: &str = "0xef";
@@ -51,7 +52,7 @@ const FIXTURE_GENESIS: &str = r#"{
 const FIXTURE_SEED: &str = "{}";
 
 // 96-hex-char (48-byte) placeholder BLS MinPk public keys. The length matches
-// the length check in `scripts/seed_genesis.py::pubkey_bytes`.
+// the length check in `outbe-genesis-cli`'s `seed_codec::pubkey_bytes`.
 const FIXTURE_VALIDATORS_4_PUBLIC_ONLY: &str = r#"[
   { "address": "0x1111111111111111111111111111111111111111",
     "public_key": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
@@ -122,7 +123,7 @@ fn storage_keys(entry: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// the Python seeder writes `ACCOUNTING_PROGRESS_ADDRESS` with
+/// The genesis seeder writes `ACCOUNTING_PROGRESS_ADDRESS` with
 /// marker bytecode `0xef` and explicit `slot 0 = 0`.
 #[test]
 fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
@@ -157,7 +158,7 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
     );
 }
 
-/// `seed_genesis.py` does not write any direct-slot
+/// `outbe-genesis-cli` does not write any direct-slot
 /// storage entry at `ValidatorSet` slots 31..40. This matches the Rust schema in
 /// `crates/system/validatorset/src/schema.rs`. In that schema, slots 31..39 are
 /// mappings with no base-slot value. Slot 40 is a reserved `Slot<B256>` that
@@ -175,7 +176,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
         outbe_validatorset::test_support::assert_committee_snapshot_schema_slots(&vs);
     });
 
-    // 2. Python-output check: for each slot in 31..=40, the corresponding
+    // 2. Seeder-output check: for each slot in 31..=40, the corresponding
     //    direct slot key (`hex32(N)`) must be absent from the seeded
     //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 31..39) write at
     //    keccak-derived keys and never the base slot itself. The reserved
@@ -191,7 +192,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
         let hex = format!("0x{:064x}", slot);
         assert!(
             !keys.iter().any(|k| k == &hex),
-            "seed_genesis.py wrote direct-slot entry at ValidatorSet slot {slot} \
+            "outbe-genesis-cli wrote direct-slot entry at ValidatorSet slot {slot} \
              ({hex}); slots 31..40 are reserved for runtime CommitteeSnapshotStore"
         );
     }
@@ -200,7 +201,7 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
 /// Cross-checks all sources of the EIP-161 preservation contract. Every
 /// stateful dispatch-registered precompile must survive state-root computation
 /// through either the executor's runtime `0xEF` marker list or genesis `0xEF`
-/// bytecode seeded by `scripts/seed_genesis.py`. This binds route registration,
+/// bytecode seeded by `outbe-genesis-cli`. This binds route registration,
 /// runtime preservation, and genesis seeding so an uncovered precompile fails
 /// loudly instead of losing its storage.
 ///
@@ -231,7 +232,7 @@ fn every_stateful_precompile_preserved_by_marker_or_genesis() {
 
         let in_marker = OUTBE_RUNTIME_MARKER_ADDRESSES.contains(addr);
 
-        // Match the alloc key format used by `alloc_entry` / `seed_genesis.py`:
+        // Match the alloc key format used by `alloc_entry` / `outbe-genesis-cli`:
         // lowercase 40-hex chars, NO `0x` prefix (`address_bytes(addr).hex()`).
         let hex = format!("{:x}", addr);
         let in_genesis = genesis["alloc"][&hex]["code"].as_str() == Some(MARKER_BYTECODE_HEX);

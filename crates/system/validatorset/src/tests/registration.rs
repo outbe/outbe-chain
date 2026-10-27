@@ -1,6 +1,4 @@
 use super::*;
-use crate::precompile::IValidatorSet as I;
-use alloy_sol_types::SolError;
 
 fn test_radicle_node_id(validator: Address) -> B256 {
     keccak256(validator.as_slice())
@@ -21,8 +19,8 @@ fn test_register_validator() {
         assert_eq!(vs.address_to_index.read(&val_addr).unwrap(), 1);
         assert_eq!(vs.index_to_address.read(&1u64).unwrap(), val_addr);
 
-        // Status must be REGISTERED after registration
-        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::REGISTERED);
+        // Status must be PENDING after registration
+        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
 
         // Consensus pubkey stored correctly (read back via get_validator)
         let record = vs.get_validator(val_addr).unwrap().unwrap();
@@ -197,7 +195,6 @@ fn production_validator_set_selector_allow_list_is_exact() {
         "revokeDelegate(uint8)",
         "getDelegate(address,uint8)",
         "resolveValidator(uint8,address)",
-        "registerValidator(address,bytes,bytes32,bytes)",
         "getRadicleNodeId(address)",
         "validatorByRadicleNodeId(bytes32)",
         "setP2pAddress(address,uint8,bytes)",
@@ -282,8 +279,8 @@ fn test_reregister_inactive_validator() {
         // Re-register with a new pubkey
         vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
 
-        // Status reset to REGISTERED
-        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::REGISTERED);
+        // Status reset to PENDING
+        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
 
         // New pubkey stored
         let record = vs.get_validator(val_addr).unwrap().unwrap();
@@ -372,82 +369,6 @@ fn test_register_self_invalid_sig_rejected() {
 }
 
 /// Valid self-registration with correct BLS signature succeeds.
-// The free, permissionless self-registration surface is capped at
-// MAX_SELF_REGISTERED_UNSTAKED. Owner registrations bypass the cap.
-#[test]
-fn m27_self_registration_capped_owner_bypasses() {
-    use crate::runtime::MAX_SELF_REGISTERED_UNSTAKED;
-    use blst::min_pk::SecretKey;
-
-    fn self_reg_inputs(i: u32) -> (Address, [u8; 48], [u8; 96]) {
-        let mut ikm = [7u8; 32];
-        ikm[28..].copy_from_slice(&i.to_be_bytes());
-        let sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let mut ab = [0u8; 20];
-        ab[16..].copy_from_slice(&i.to_be_bytes());
-        // avoid the zero address (index 0 sentinel) by setting a high byte.
-        ab[0] = 0x5a;
-        let val = Address::from(ab);
-        let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-        let node_id = test_radicle_node_id(val);
-        let message = validator_registration_message(CHAIN_ID, val, node_id);
-        let sig: [u8; 96] = sk
-            .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
-            .to_bytes();
-        (val, pk, sig)
-    }
-
-    // max_validators well above the self-registration cap so the cap, not the
-    // global capacity, is what bites.
-    with_vs_configured(200, |vs| {
-        for i in 0..MAX_SELF_REGISTERED_UNSTAKED {
-            let (val, pk, sig) = self_reg_inputs(i);
-            vs.register_validator_with_sig(val, val, &pk, test_radicle_node_id(val), Some(&sig))
-                .unwrap_or_else(|e| panic!("self-registration {i} within cap must succeed: {e}"));
-        }
-        assert_eq!(
-            vs.registered_count().unwrap(),
-            MAX_SELF_REGISTERED_UNSTAKED,
-            "exactly the cap of self-registrations should be REGISTERED"
-        );
-
-        // The next self-registration is rejected before consuming a slot.
-        let (val, pk, sig) = self_reg_inputs(MAX_SELF_REGISTERED_UNSTAKED);
-        let err = vs
-            .register_validator_with_sig(val, val, &pk, test_radicle_node_id(val), Some(&sig))
-            .unwrap_err();
-        match err {
-            PrecompileError::RevertBytes(bytes) => assert_eq!(
-                bytes.to_vec(),
-                I::SelfRegistrationLimitReached {}.abi_encode(),
-                "over-cap self-registration must return the declared error"
-            ),
-            other => panic!("expected typed revert bytes, got {other:?}"),
-        }
-
-        // The owner can still register validators directly, bypassing the cap.
-        let owner_val = address!("0x000000000000000000000000000000000000beef");
-        let mut ikm = [9u8; 32];
-        ikm[28..].copy_from_slice(&(MAX_SELF_REGISTERED_UNSTAKED + 1).to_be_bytes());
-        let owner_sk = SecretKey::key_gen(&ikm, &[]).unwrap();
-        let owner_pk: [u8; 48] = owner_sk.sk_to_pk().to_bytes();
-        let owner_node_id = test_radicle_node_id(owner_val);
-        let owner_message = validator_registration_message(CHAIN_ID, owner_val, owner_node_id);
-        let owner_sig: [u8; 96] = owner_sk
-            .sign(&owner_message, VALIDATOR_REGISTRATION_DST, &[])
-            .to_bytes();
-        vs.register_validator_with_sig(
-            OWNER,
-            owner_val,
-            &owner_pk,
-            owner_node_id,
-            Some(&owner_sig),
-        )
-        .expect("owner registration must bypass the self-registration cap");
-        assert!(vs.is_validator(owner_val).unwrap());
-    });
-}
-
 #[test]
 fn test_register_self_valid_sig_accepted() {
     use blst::min_pk::SecretKey;

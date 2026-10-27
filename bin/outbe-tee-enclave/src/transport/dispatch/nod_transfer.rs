@@ -81,7 +81,7 @@ pub(super) fn append(id: B256, total: u32, offset: u32, bytes: &[u8]) -> Enclave
         return error("NOD transfer chunk mismatch");
     }
     entry.touched = Instant::now();
-    EnclaveResponse::NodTransferAckV2 {
+    EnclaveResponse::NodTransferAckV1 {
         id,
         next_offset: (offset + bytes.len()) as u32,
     }
@@ -97,7 +97,7 @@ pub(super) fn execute(
         return error("NOD transfer missing");
     };
     if let Some(output) = &entry.output {
-        return EnclaveResponse::NodTransferReadyV2 {
+        return EnclaveResponse::NodTransferReadyV1 {
             id,
             total: output.len() as u32,
             digest: keccak256(output),
@@ -117,7 +117,7 @@ pub(super) fn execute(
     entry.input.clear();
     entry.input.shrink_to_fit();
     entry.touched = Instant::now();
-    let ready = EnclaveResponse::NodTransferReadyV2 {
+    let ready = EnclaveResponse::NodTransferReadyV1 {
         id,
         total: output.len() as u32,
         digest: keccak256(&output),
@@ -155,7 +155,7 @@ pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {
         return error("NOD transfer offset outside result");
     }
     entry.touched = Instant::now();
-    EnclaveResponse::NodTransferOutputV2 {
+    EnclaveResponse::NodTransferOutputV1 {
         id,
         offset,
         bytes: output[start..(start + TRANSFER_CHUNK_BYTES).min(output.len())].to_vec(),
@@ -163,7 +163,7 @@ pub(super) fn read(id: B256, offset: u32) -> EnclaveResponse {
 }
 pub(super) fn discard(id: B256) -> EnclaveResponse {
     store().remove(&id);
-    EnclaveResponse::NodTransferDiscardedV2 { id }
+    EnclaveResponse::NodTransferDiscardedV1 { id }
 }
 
 #[cfg(test)]
@@ -183,7 +183,7 @@ mod tests {
             let id = keccak256(bytes);
             assert!(matches!(
                 append(id, bytes.len() as u32, 0, bytes),
-                EnclaveResponse::NodTransferAckV2 { .. }
+                EnclaveResponse::NodTransferAckV1 { .. }
             ));
             for _ in 0..2 {
                 assert!(matches!(
@@ -218,11 +218,11 @@ mod tests {
             let offset = (index * TRANSFER_CHUNK_BYTES) as u32;
             assert!(matches!(
                 append(id, bytes.len() as u32, offset, chunk),
-                EnclaveResponse::NodTransferAckV2 { .. }
+                EnclaveResponse::NodTransferAckV1 { .. }
             ));
             assert!(matches!(
                 append(id, bytes.len() as u32, offset, chunk),
-                EnclaveResponse::NodTransferAckV2 { .. }
+                EnclaveResponse::NodTransferAckV1 { .. }
             ));
         }
         assert!(matches!(
@@ -232,14 +232,14 @@ mod tests {
         let keys = EnclaveKeys::new([0x43; 32], None).unwrap();
         let offer: SharedTributeOfferKey = Arc::new(OnceLock::new());
         let (total, digest) = match execute(id, &keys, &offer, B256::ZERO) {
-            EnclaveResponse::NodTransferReadyV2 { total, digest, .. } => (total, digest),
+            EnclaveResponse::NodTransferReadyV1 { total, digest, .. } => (total, digest),
             response => panic!("expected transfer result, got {response:?}"),
         };
         assert!(
-            matches!(execute(id,&keys,&offer,B256::ZERO),EnclaveResponse::NodTransferReadyV2 {total:t,digest:d,..} if t==total&&d==digest)
+            matches!(execute(id,&keys,&offer,B256::ZERO),EnclaveResponse::NodTransferReadyV1 {total:t,digest:d,..} if t==total&&d==digest)
         );
         let output = match read(id, 0) {
-            EnclaveResponse::NodTransferOutputV2 { bytes, .. } => bytes,
+            EnclaveResponse::NodTransferOutputV1 { bytes, .. } => bytes,
             response => panic!("expected output chunk, got {response:?}"),
         };
         assert_eq!(keccak256(&output), digest);

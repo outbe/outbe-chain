@@ -236,6 +236,11 @@ where
         self.application_epoch_fence
             .arm_activation_boundary(previous_epoch, activation_anchor);
         self.application_epoch_fence.advance_epoch(active_epoch);
+        super::activation::observe_activated_epoch_boundary(
+            &self.epocher,
+            active_epoch,
+            activation_anchor,
+        )?;
         self.state.current_epoch = active_epoch;
         self.publish_repository_material();
         self.rotation.frozen_dkg_target = None;

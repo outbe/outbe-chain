@@ -62,7 +62,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
     let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
     let encrypted = outbe_tee::nod_mine::create_nod_for_test(
-        outbe_primitives::nod_encryption::NodTermsV2 {
+        outbe_primitives::nod_encryption::NodTermsV1 {
             chain_id: storage.chain_id()?,
             nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
             owner: call.owner,
@@ -113,7 +113,7 @@ fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     nod.call_sweep_day.write(day)?;
     nod.daily_phase.write(0)?;
     nod.call_currency_cursor.write(0)?;
-    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+    for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
         nod.call_bin_cursor.write(&currency, 0)?;
         nod.call_scan_failed_day.clear(&currency)?;
     }

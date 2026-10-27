@@ -15,11 +15,11 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
             super::nod::execute_lysis(keys, offer_key, chain_id, &request)
         }
         #[cfg(not(feature = "e2e-test"))]
-        EnclaveRequest::CreateNodForTestV2 { .. } => EnclaveResponse::Error {
+        EnclaveRequest::CreateNodForTestV1 { .. } => EnclaveResponse::Error {
             message: "NOD fixture command disabled".into(),
         },
         #[cfg(feature = "e2e-test")]
-        EnclaveRequest::CreateNodForTestV2 {
+        EnclaveRequest::CreateNodForTestV1 {
             terms,
             creator_public,
             amount,
@@ -33,23 +33,37 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 amount,
             },
         ),
-        EnclaveRequest::MineEncryptedNodV2 { request } => {
+        EnclaveRequest::MineEncryptedNodV1 { request } => {
             super::nod::mine(keys, offer_key, chain_id, &request)
         }
-        EnclaveRequest::ReadNodAmountV2 { nod } => {
+        EnclaveRequest::ReadNodAmountV1 { nod } => {
             super::nod::read_amount(keys, offer_key, chain_id, &nod)
         }
-        EnclaveRequest::NodTransferChunkV2 {
+        EnclaveRequest::EncryptNodForTributeV1 {
+            tribute,
+            terms,
+            amount,
+        } => super::nod::encrypt_for_tribute(
+            keys,
+            offer_key,
+            chain_id,
+            super::nod::NodTributeInput {
+                tribute: &tribute,
+                terms,
+                amount,
+            },
+        ),
+        EnclaveRequest::NodTransferChunkV1 {
             id,
             total,
             offset,
             bytes,
         } => super::nod_transfer::append(id, total, offset, &bytes),
-        EnclaveRequest::ExecuteNodTransferV2 { id } => {
+        EnclaveRequest::ExecuteNodTransferV1 { id } => {
             super::nod_transfer::execute(id, keys, offer_key, chain_id)
         }
-        EnclaveRequest::ReadNodTransferV2 { id, offset } => super::nod_transfer::read(id, offset),
-        EnclaveRequest::DiscardNodTransferV2 { id } => super::nod_transfer::discard(id),
+        EnclaveRequest::ReadNodTransferV1 { id, offset } => super::nod_transfer::read(id, offset),
+        EnclaveRequest::DiscardNodTransferV1 { id } => super::nod_transfer::discard(id),
         _ => unreachable!("request family is checked by the exhaustive dispatcher"),
     }
 }

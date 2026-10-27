@@ -12,8 +12,8 @@
   "max_repositories": -1
  },
  "staking": {
-    "min_stake": "1000000000000000000000",
-    "genesis_validator_stake": "100000000000000000000000",
+    "min_stake": "10000000000000000000000000",
+    "genesis_validator_stake": "10000000000000000000000000",
   "unbonding_period": 1814400,
   "slashed_withdrawal_delay": 3628800,
   "max_stake_percent": 33

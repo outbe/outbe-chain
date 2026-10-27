@@ -12,7 +12,7 @@ use outbe_genesis_cli::seed_codec::{
     parse_header_timestamp, u32_bytes, StorageBuilder,
 };
 use outbe_genesis_cli::seed_economy::{clear_seeded_metadosis_days, seed_cycle};
-use outbe_genesis_cli::seed_oracle::seed_oracle;
+use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES, REFERENCE_CURRENCIES};
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
 
@@ -111,13 +111,13 @@ fn checked_in_seed_profiles_split_native_and_protocol_units() {
     let profiles = [
         (
             &lowstake,
-            "1000000000000000000000",
-            "100000000000000000000000",
+            "10000000000000000000000000",
+            "10000000000000000000000000",
         ),
         (
             &baseline,
-            "100000000000000000000000",
-            "100000000000000000000000",
+            "10000000000000000000000000",
+            "10000000000000000000000000",
         ),
     ];
 
@@ -143,12 +143,8 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
     let mut storage = StorageBuilder::new();
     seed_oracle(&mut storage, &json!({})).expect("seed_oracle default");
 
-    assert_eq!(storage.entries[&hex32(55u64)], hex32(6u64));
+    assert!(!storage.entries.contains_key(&hex32(55u64)));
     let iso_codes = [156_u64, 344, 392, 826, 840, 978];
-    for (index, &iso_code) in iso_codes.iter().enumerate() {
-        let key = hex32(data_slot(55u64) + U256::from(index));
-        assert_eq!(storage.entries[&key], hex32(iso_code));
-    }
 
     assert!(!storage
         .entries
@@ -164,12 +160,30 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
 
 #[test]
 fn every_reference_currency_needs_a_policy_rate() {
-    let cfg = json!({
-        "reference_currencies": [840, 978],
-        "policy_rates": [{"iso_code": 840, "annual_rate_1e6": 38_800}]
-    });
+    let policy_rates: Vec<Value> = DEFAULT_POLICY_RATES
+        .iter()
+        .filter(|&&(iso_code, _)| iso_code != 978)
+        .map(|&(iso_code, rate)| json!({"iso_code": iso_code, "annual_rate_1e6": rate}))
+        .collect();
+    let cfg = json!({ "policy_rates": policy_rates });
     let err = seed_oracle(&mut StorageBuilder::new(), &cfg).expect_err("missing policy rate");
     assert!(err.to_string().contains("no policy rate: [978]"));
+}
+
+#[test]
+fn reference_currencies_match_the_oracle_constant() {
+    let constants = fs::read_to_string(repo_root().join("crates/system/oracle/src/constants.rs"))
+        .expect("read oracle constants");
+    let line = constants
+        .lines()
+        .find(|line| line.starts_with("pub const REFERENCE_CURRENCIES:"))
+        .expect("REFERENCE_CURRENCIES");
+    let list = line.rsplit('[').next().unwrap().split(']').next().unwrap();
+    let rust: Vec<u32> = list
+        .split(',')
+        .map(|code| code.trim().parse().unwrap())
+        .collect();
+    assert_eq!(REFERENCE_CURRENCIES.to_vec(), rust);
 }
 
 #[test]

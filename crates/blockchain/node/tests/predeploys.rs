@@ -1,17 +1,15 @@
 //! Integration tests for genesis pre-deployed external contracts.
 //!
-//! The genesis pipeline places these contracts at well-known addresses. The
-//! pipeline is `scripts/seed_genesis.py`, which consumes
-//! `seed-testnet.json:contracts[]`. That list references the bytecode/state
-//! triplet under `scripts/contracts/`, which `scripts/fetch_contract.py`
-//! produces. These contracts are ordinary EVM accounts that hold canonical
-//! third-party (or Outbe-internal) runtime bytecode. They are not Outbe
-//! stateful precompiles.
+//! The `outbe-genesis-cli` pipeline places these contracts at well-known
+//! addresses from the selected profile's `contracts[]` list. That list
+//! references the bytecode/state triplet under `contracts/predeploys/`.
+//! These contracts are ordinary EVM accounts that hold canonical third-party
+//! (or Outbe-internal) runtime bytecode. They are not Outbe stateful precompiles.
 //!
 //! Coverage:
 //!  * `predeployed_bytecode_matches_vendored_artifacts` - the test genesis
 //!    `alloc` carries byte-identical bytecode to the canonical `*.code.hex`
-//!    files under `scripts/contracts/`. The test also cross-checks the
+//!    files under `contracts/predeploys/`. The test also cross-checks the
 //!    corresponding `*.meta.json` against the address constant in
 //!    `addresses.rs`. This catches artifacts fetched from the wrong address.
 //!  * `entrypoint_v07_inlines_sender_creator_immutable` - EntryPoint v0.7's
@@ -90,7 +88,7 @@ fn load_meta(name: &str) -> Value {
 
 fn alloc_key(addr: Address) -> String {
     // The test asset stores alloc keys as lowercase hex without 0x prefix
-    // (matching the convention in scripts/seed_genesis.py).
+    // (matching the convention in outbe-genesis-cli).
     format!("{addr:x}")
 }
 

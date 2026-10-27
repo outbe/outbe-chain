@@ -874,10 +874,10 @@ mod tests {
     }
 
     #[test]
-    fn test_price_oracle_script_config_loads() {
+    fn test_price_oracle_template_config_loads() {
         let path = format!("{}/config/config.toml", env!("CARGO_MANIFEST_DIR"));
         let cfg = FeederConfig::load(&path).unwrap();
-        // Canonical localnet chain id (scripts/prepare_network.py DEFAULT_CHAIN_ID).
+        // Canonical testnet chain id (`outbe_genesis_cli::network::TESTNET_CHAIN_ID`).
         assert_eq!(cfg.chain.chain_id, 54322345);
         assert_eq!(cfg.oracle.vote_period, 60);
         // COEN/840 is the only pair the chain registers. The decorative

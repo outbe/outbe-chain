@@ -21,8 +21,8 @@ impl Localnet {
             .then(|| format!("{:064x}", i + 1))
     }
 
-    /// Launch validator `i`'s enclave container (`run-testnet.sh:215-293`), owned
-    /// and foreground (no `-d`), and wait for its socket.
+    /// Launch validator `i`'s enclave container in the foreground, own it and
+    /// wait for its socket.
     pub(super) fn start_enclave(&mut self, i: usize, chain_id_hex: &str) -> Result<()> {
         let seed = self.default_dkg_seed(i);
         self.start_enclave_with_seed(i, chain_id_hex, seed)

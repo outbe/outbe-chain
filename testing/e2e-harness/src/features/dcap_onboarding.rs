@@ -11,9 +11,8 @@ use crate::world::World;
 const FULL_NODE_NAME: &str = "dcap-full-node";
 const VALIDATOR_CATCHUP_LOG: &str = "local TEE lease guard armed at authenticated catch-up anchor";
 
-fn wait_for_live_follower_log(
+fn wait_for_live_validator_log(
     world: &mut World,
-    name: &str,
     index: usize,
     needle: &str,
     attempts: u32,
@@ -26,7 +25,7 @@ fn wait_for_live_follower_log(
         {
             return true;
         }
-        if !world.localnet.follower_running(name) {
+        if !world.localnet.validator_running(index) {
             return false;
         }
         sleep(Duration::from_secs(1));
@@ -97,43 +96,47 @@ fn validator_joins_and_restarts(world: &mut World) {
         "durable admission anchor is not canonical on the primary"
     );
 
-    // A fresh validator datadir cannot start authority at height zero merely
-    // because its enclave has a finalized admission. First sync the exact same
-    // NodeHost/datadir through a certified, non-authority follower path.
-    let catchup_name = format!("validator-{index}");
-    world
-        .localnet
-        .launch_dcap_full_node(&catchup_name, index, 0)
-        .expect("launch admitted validator datadir as a certified follower");
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(port, anchor.finalized_height, 120),
-        "certified follower did not reach its durable admission anchor"
-    );
-    assert_eq!(
-        world.rpc.block_hash(port, anchor.finalized_height),
-        Some(anchor_hash),
-        "certified follower reached a noncanonical admission checkpoint"
-    );
-    assert!(
-        wait_for_live_follower_log(world, &catchup_name, index, VALIDATOR_CATCHUP_LOG, 60,),
-        "certified follower did not authenticate and arm the admission anchor"
-    );
-    let catchup_finalized = world
-        .rpc
-        .finalized(port)
-        .expect("certified follower finalized height before validator launch");
-    world
-        .localnet
-        .stop_follower(&catchup_name)
-        .expect("stop certified follower before validator authority startup");
-
+    // Launch the validator once with `--validator --upstream`: it starts in
+    // UpstreamBootstrap at height zero, authenticates and arms its durable
+    // admission anchor, and promotes in-process to Verifier without restart.
     world
         .localnet
         .launch_joiner(index, &[])
         .expect("launch joined production validator");
-    let checkpoint = require_live_validator_progress(world, index, catchup_finalized, "joined");
+    let initial_pids = world
+        .localnet
+        .live_validator_and_enclave_pids(index)
+        .expect("live joined validator and enclave PIDs");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(port, anchor.finalized_height, 120),
+        "validator in UpstreamBootstrap did not reach its durable admission anchor"
+    );
+    assert_eq!(
+        world.rpc.block_hash(port, anchor.finalized_height),
+        Some(anchor_hash),
+        "validator reached a noncanonical admission checkpoint"
+    );
+    assert!(
+        wait_for_live_validator_log(world, index, VALIDATOR_CATCHUP_LOG, 60),
+        "validator did not authenticate and arm the admission anchor"
+    );
+    let checkpoint =
+        require_live_validator_progress(world, index, anchor.finalized_height, "joined");
+    assert_eq!(
+        world
+            .localnet
+            .live_validator_and_enclave_pids(index)
+            .expect("live promoted validator and enclave PIDs"),
+        initial_pids,
+        "validator process or enclave restarted during UpstreamBootstrap -> Verifier promotion"
+    );
+    assert_eq!(
+        world.rpc.consensus_status_field(port, "mode").as_deref(),
+        Some("verifier"),
+        "joined shareless validator did not promote in-process to verifier mode"
+    );
     world.state.joiner_offer_public_before_restart = Some(
         world
             .localnet
@@ -156,6 +159,11 @@ fn validator_joins_and_restarts(world: &mut World) {
         .launch_joiner(index, &[])
         .expect("restart joined production validator");
     require_live_validator_progress(world, index, restart_baseline, "restarted");
+    assert_eq!(
+        world.rpc.consensus_status_field(port, "mode").as_deref(),
+        Some("verifier"),
+        "restarted shareless validator did not boot into verifier mode"
+    );
 }
 
 #[then("the validator reopens the exact permanent key without re-registration")]
