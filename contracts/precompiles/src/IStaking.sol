@@ -23,6 +23,9 @@ interface IStaking {
     error MissingValidatorHistory();
     error ValidatorRegistryExceedsConsensusBound(uint32 count, uint32 bound);
     error SweepCountOverflow(string value);
+    error TooManyUnbondingEntries(address validator, uint32 maxEntries);
+    error UnbondingIndexOverflow();
+    error ClaimableAmountOverflow();
 
     /// `amount` is the deposit. `bonded` is that validator's stake after the credit.
     event Staked(address indexed validator, uint256 amount, uint256 bonded);

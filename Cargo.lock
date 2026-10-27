@@ -9141,6 +9141,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-slashindicator",
  "outbe-staking",
  "outbe-validatorset",
@@ -9216,6 +9217,7 @@ dependencies = [
  "outbe-promislimit",
  "outbe-teeregistry",
  "outbe-validatorset",
+ "proptest",
  "thiserror 2.0.18",
 ]
 
@@ -9477,6 +9479,7 @@ dependencies = [
  "outbe-chain-constants",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-update",
  "outbe-validatorset",
  "serde_json",

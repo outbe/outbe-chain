@@ -113,6 +113,16 @@ impl Staking<'_> {
     }
 
     fn checked_stake_credit(&self, validator: Address, amount: U256) -> Result<(U256, U256)> {
+        let open_entries = self.per_val_unbonding_len.read(&validator)?;
+        let max_partial = crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1;
+        if open_entries >= max_partial {
+            return Err(StakingError::TooManyUnbondingEntries {
+                validator,
+                max_entries: max_partial,
+            }
+            .into());
+        }
+
         let current = self.stake_amount.read(&validator)?;
         let new_stake = current
             .checked_add(amount)
@@ -123,6 +133,8 @@ impl Staking<'_> {
             .ok_or(StakingError::TotalStakeAccountingOverflow)?;
 
         let max_pct = self.config_max_stake_percent.read()?;
+        // When `total` is zero, the first staker holds 100% of `new_total`.
+        // Skip the concentration check on an empty pool so the first validator can bond.
         if max_pct > 0 && max_pct < 100 && !total.is_zero() {
             if U512::from(new_stake) * U512::from(100u64)
                 > U512::from(max_pct) * U512::from(new_total)
@@ -131,6 +143,41 @@ impl Staking<'_> {
             }
         }
         Ok((new_stake, new_total))
+    }
+
+    fn ensure_zero_unstake_allowed(&self, caller: Address, current: U256) -> Result<()> {
+        if !current.is_zero() {
+            return Err(StakingError::AmountZero.into());
+        }
+        let val_set = ValidatorSet::new(self.storage.clone());
+        match val_set.validator_lifecycle(caller)? {
+            ValidatorLifecycle::Absent => Err(ValidatorSetError::ValidatorNotRegistered.into()),
+            ValidatorLifecycle::Inactive(_) => Err(ValidatorSetError::ValidatorIsInactive.into()),
+            ValidatorLifecycle::WaitingForReadiness(_)
+            | ValidatorLifecycle::Joining(_)
+            | ValidatorLifecycle::JailRetained(_)
+            | ValidatorLifecycle::Jail(_) => Ok(()),
+            ValidatorLifecycle::Active(_)
+            | ValidatorLifecycle::Exiting(_)
+            | ValidatorLifecycle::Unbonding(_) => Err(StakingError::AmountZero.into()),
+        }
+    }
+
+    fn ensure_unbonding_capacity(&self, validator: Address, full_exit: bool) -> Result<()> {
+        let open_entries = self.per_val_unbonding_len.read(&validator)?;
+        let max_entries = if full_exit {
+            crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR
+        } else {
+            crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1
+        };
+        if open_entries >= max_entries {
+            return Err(StakingError::TooManyUnbondingEntries {
+                validator,
+                max_entries,
+            }
+            .into());
+        }
+        Ok(())
     }
 
     /// Unstakes `amount` from the caller (self-unstake only).
@@ -144,27 +191,7 @@ impl Staking<'_> {
     pub fn unstake(&mut self, caller: Address, amount: U256) -> Result<()> {
         let current = self.stake_amount.read(&caller)?;
         if amount.is_zero() {
-            if !current.is_zero() {
-                return Err(StakingError::AmountZero.into());
-            }
-            let val_set = ValidatorSet::new(self.storage.clone());
-            match val_set.validator_lifecycle(caller)? {
-                ValidatorLifecycle::Absent => {
-                    return Err(ValidatorSetError::ValidatorNotRegistered.into());
-                }
-                ValidatorLifecycle::Inactive(_) => {
-                    return Err(ValidatorSetError::ValidatorIsInactive.into());
-                }
-                ValidatorLifecycle::WaitingForReadiness(_)
-                | ValidatorLifecycle::Joining(_)
-                | ValidatorLifecycle::JailRetained(_)
-                | ValidatorLifecycle::Jail(_) => {}
-                ValidatorLifecycle::Active(_)
-                | ValidatorLifecycle::Exiting(_)
-                | ValidatorLifecycle::Unbonding(_) => {
-                    return Err(StakingError::AmountZero.into());
-                }
-            }
+            self.ensure_zero_unstake_allowed(caller, current)?;
         }
         if amount > current {
             return Err(StakingError::InsufficientStakedAmount.into());
@@ -181,6 +208,10 @@ impl Staking<'_> {
         let new_total = total
             .checked_sub(amount)
             .ok_or(StakingError::StakeAccountingUnderflow { validator: caller })?;
+
+        if !amount.is_zero() {
+            self.ensure_unbonding_capacity(caller, new_stake.is_zero())?;
+        }
 
         let guard = self.storage.checkpoint_guard();
         if !amount.is_zero() {
@@ -310,6 +341,7 @@ impl Staking<'_> {
             return Err(StakingError::InvalidSlashPercent.into());
         }
 
+        let guard = self.storage.checkpoint_guard();
         let current = self.stake_amount.read(&validator)?;
         let timestamp = self.storage.now_secs()?;
         let mut total_slashed = U256::ZERO;
@@ -358,11 +390,14 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // Burn slashed tokens from STAKING_ADDRESS so native balance stays
-        // in sync with accounting. Without this, slashed amounts become orphaned.
+        // Burn slashed units from STAKING_ADDRESS and credit the Promis Limit.
         if !total_slashed.is_zero() {
-            self.storage
-                .decrease_balance(STAKING_ADDRESS, total_slashed)?;
+            outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+                .burn_native_to_promis_limit(
+                    STAKING_ADDRESS,
+                    total_slashed,
+                    outbe_promislimit::NativeBurnSource::Slash,
+                )?;
         }
 
         // Cross-call: pass the post-write amount after stake, claim, and burn
@@ -383,6 +418,7 @@ impl Staking<'_> {
                 unbondingSlashed: unbonding_slashed,
             })?;
         }
+        guard.commit();
 
         Ok(total_slashed)
     }

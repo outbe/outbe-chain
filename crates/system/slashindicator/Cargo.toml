@@ -39,6 +39,7 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 # Test only: the shared committee-entry fixture in `test_harness`.
 outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-promislimit.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true
 rand_chacha = "0.3"

@@ -11,7 +11,9 @@ use commonware_utils::ordered::Set;
 use outbe_consensus::proof::notarize_namespace;
 use outbe_evm::{test_support::seed_storage, OutbeEvmFactory};
 use outbe_primitives::{
-    addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS},
+    addresses::{
+        PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
+    },
     chain::CHAIN_ID,
     storage::StorageHandle,
 };
@@ -220,12 +222,13 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
                 logs.iter().map(|log| log.address).collect::<Vec<_>>(),
                 vec![
                     VALIDATOR_SET_ADDRESS,
+                    PROMIS_LIMIT_ADDRESS,
                     STAKING_ADDRESS,
                     SLASH_INDICATOR_ADDRESS
                 ]
             );
             assert_eq!(
-                logs[1].data,
+                logs[2].data,
                 IStaking::Slashed {
                     validator: ACCUSED,
                     bondedSlashed: U256::from(80_000),
@@ -248,7 +251,13 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
         // This checks the EVM journal result, not an explicit StorageHandle checkpoint.
         db.commit(outcome.state);
         seed_storage(&mut db, 100, SUBMITTER, |storage| {
-            assert_penalty_state(storage, evidence_hash, nonce == 1)
+            assert_penalty_state(storage.clone(), evidence_hash, nonce == 1);
+            let limit = outbe_promislimit::PromisLimitContract::new(storage);
+            assert_eq!(limit.promis_limit().unwrap(), U256::ZERO);
+            assert_eq!(
+                limit.native_rest().unwrap(),
+                U256::from(if nonce == 0 { 0 } else { 80_000 })
+            );
         });
         assert_eq!(
             db.basic(STAKING_ADDRESS).unwrap().unwrap().balance,

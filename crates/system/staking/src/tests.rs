@@ -337,7 +337,7 @@ fn test_bls_registration_material(validator: Address, seed: u8) -> ([u8; 48], B2
     (pk, node_id, sig)
 }
 
-fn stake_registered(
+pub(crate) fn stake_registered(
     storage: StorageHandle,
     staking: &mut Staking<'_>,
     validator: Address,
@@ -352,11 +352,11 @@ fn stake_registered(
 
 /// Seeds STAKING_ADDRESS with balance (simulating EVM-level msg.value transfer).
 /// stake() no longer transfers. In production, the EVM does it.
-fn seed_staking_balance(storage: StorageHandle, amount: u64) {
+pub(crate) fn seed_staking_balance(storage: StorageHandle, amount: u64) {
     seed_staking_balance_u256(storage, U256::from(amount));
 }
 
-fn seed_staking_balance_u256(storage: StorageHandle, amount: U256) {
+pub(crate) fn seed_staking_balance_u256(storage: StorageHandle, amount: U256) {
     let ctx = storage.clone();
     let current = ctx.balance(STAKING_ADDRESS).unwrap();
     ctx.set_balance(STAKING_ADDRESS, current + amount).unwrap();

@@ -419,8 +419,8 @@ fn reporter_submits_evidence_and_replays(world: &mut World) {
         "the first evidence must slash a positive amount"
     );
     assert!(
-        !event.submitter_reward.is_zero(),
-        "the first evidence must reward its reporter"
+        event.submitter_reward.is_zero(),
+        "the first evidence pays a reporter reward of 0"
     );
     world
         .rpc
@@ -589,8 +589,8 @@ fn exactly_one_punishment_changes_all_surfaces(world: &mut World) {
         "exactly one EvidenceFelonyApplied event must be finalized"
     );
     assert!(
-        !reward.is_zero(),
-        "the one accepted punishment must carry one positive reporter reward"
+        reward.is_zero(),
+        "the accepted punishment pays a reporter reward of 0"
     );
 }
 
