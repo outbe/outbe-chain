@@ -439,10 +439,10 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
                 .write(PERIOD)
                 .expect("setup: unbonding period");
             staking
-                .stake(proposer, proposer, U256::from(STAKE))
+                .topup(proposer, proposer, U256::from(STAKE))
                 .expect("setup: proposer stake");
             staking
-                .stake(subject, subject, U256::from(STAKE))
+                .topup(subject, subject, U256::from(STAKE))
                 .expect("setup: subject stake");
             storage
                 .set_balance(STAKING_ADDRESS, U256::from(STAKE) * U256::from(2u64))

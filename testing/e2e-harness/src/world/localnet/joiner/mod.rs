@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::internal::{
     addresses,
-    eth::{self, IValidatorSet},
+    eth::{self, IStaking},
     proc::{self, args, attach_log, first_hex, random_hex_32, read_evm_key, read_trimmed},
 };
 use crate::world::rpc::TxOutcome;
@@ -411,11 +411,11 @@ impl Localnet {
             .map(drop)
     }
 
-    /// Preserve the real registration and P2P receipts for finalized assertions.
+    /// Preserve the atomic registration, stake, and P2P receipt for finalized assertions.
     pub(crate) fn provision_existing_node_as_joiner_observed(
         &mut self,
         index: usize,
-    ) -> Result<[TxOutcome; 2]> {
+    ) -> Result<TxOutcome> {
         let outcomes = self.provision_joiner_registration_observed(index)?;
         Ok(outcomes)
     }
@@ -426,7 +426,7 @@ impl Localnet {
         self.provision_joiner_registration_observed(index).map(drop)
     }
 
-    fn provision_joiner_registration_observed(&mut self, index: usize) -> Result<[TxOutcome; 2]> {
+    fn provision_joiner_registration_observed(&mut self, index: usize) -> Result<TxOutcome> {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(&vd)?;
         let signing_key = vd.join("signing-key.hex").display().to_string();
@@ -488,59 +488,55 @@ impl Localnet {
         bls_public_key: Bytes,
         radicle_node_id: B256,
         registration_signature: Bytes,
-    ) -> Result<[TxOutcome; 2]> {
-        // Steps:
-        // 1. Fund from validator-0.
-        // 2. Prove that an unrelated EOA cannot register this ValidatorSet identity.
-        // 3. Self-register and publish the P2P address.
-        // The rejected call uses the joiner's otherwise-valid BLS binding. This
-        // isolates caller authorization from proof validation.
+    ) -> Result<TxOutcome> {
+        let amount = eth::read_call_result(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            &IStaking::getMinStakeCall {},
+        )
+        .map_err(eyre::Report::msg)?;
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, addr, &v0, eth::coen(2000))?;
-        let registration = IValidatorSet::registerValidatorCall {
+        eth::send_value(&self.cfg.rpc0, addr, &v0, amount + eth::coen(2_000))?;
+        let registration = IStaking::stakeCall {
             validatorAddress: addr,
+            amount,
             consensusPubkey: bls_public_key,
             radicleNodeId: radicle_node_id,
             blsRegistrationSignature: registration_signature,
+            p2pVersion: 1,
+            p2pEncoded: Bytes::from(hex::decode("00047f00000176c4")?),
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
         let unrelated_address =
             eth::address_of(&unrelated).ok_or_else(|| eyre!("bad unrelated EOA key"))?;
+        // Equal value isolates self-only authorization from the payable-value guard.
         let height = eth::finalized_number(&self.cfg.rpc0)
             .ok_or_else(|| eyre!("missing finalized registration checkpoint"))?;
         let unauthorized = eth::read_call_revert_data_at(
             &self.cfg.rpc0,
-            addresses::VS_ADDR,
+            addresses::STK_ADDR,
             unrelated_address,
             &registration,
             eth::RevertAt {
-                value: alloy_primitives::U256::ZERO,
+                value: amount,
                 height,
             },
         )?;
         eyre::ensure!(
             unauthorized.as_ref()
                 == alloy_sol_types::SolError::abi_encode(
-                    &IValidatorSet::UnauthorizedOwnerOrValidator {}
+                    &IStaking::ThirdPartyStakingNotSupported {}
                 ),
             "unexpected unrelated-EOA registration revert for {addr:#x}: {unauthorized:#x}"
         );
-        let register_tx =
-            eth::send_call(&self.cfg.rpc0, addresses::VS_ADDR, key, &registration, None)?;
-        let register = registration_outcome(&self.cfg.rpc0, &register_tx)?;
-        let p2p_tx = eth::send_call(
+        let transaction = eth::send_call(
             &self.cfg.rpc0,
-            addresses::VS_ADDR,
+            addresses::STK_ADDR,
             key,
-            &IValidatorSet::setP2pAddressCall {
-                validatorAddress: addr,
-                version: 1,
-                encoded: Bytes::from(hex::decode("00047f00000176c4")?),
-            },
-            None,
+            &registration,
+            Some(amount),
         )?;
-        let p2p = registration_outcome(&self.cfg.rpc0, &p2p_tx)?;
-        Ok([register, p2p])
+        registration_outcome(&self.cfg.rpc0, &transaction)
     }
 
     /// Launch the joiner node (validator-mode, verifier-join args), passing any

@@ -27,8 +27,8 @@ fn test_activate_deactivate() {
     with_vs_configured(10, |vs| {
         register_validators(vs, &[(val_addr, 4)]).unwrap();
 
-        // Initially REGISTERED
-        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::REGISTERED);
+        // Initially PENDING
+        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
 
         vs.activate_validator_via_boundary_for_test(val_addr)
             .unwrap();
@@ -441,7 +441,7 @@ fn test_reregistration_cooldown_gates_then_allows() {
     // h1100: 1000 blocks elapsed -> allowed.
     at_height(&mut storage, 1100, |vs| {
         register_validators(vs, &[(val, 0xFF)]).unwrap();
-        assert_eq!(vs.val_status.read(&val).unwrap(), status::REGISTERED);
+        assert_eq!(vs.val_status.read(&val).unwrap(), status::PENDING);
     });
 }
 
@@ -460,7 +460,7 @@ fn test_reregistration_no_cooldown_configured() {
         // Re-register immediately - should succeed (no cooldown)
         let pk_new = dummy_consensus_pubkey(0xBB);
         vs.register_validator(OWNER, val, &pk_new).unwrap();
-        assert_eq!(vs.val_status.read(&val).unwrap(), status::REGISTERED);
+        assert_eq!(vs.val_status.read(&val).unwrap(), status::PENDING);
     });
 }
 
@@ -508,7 +508,7 @@ enum ForceExitStart {
     Exiting,
     Unbonding,
     Inactive,
-    Registered,
+    Pending,
 }
 
 impl ForceExitStart {
@@ -526,7 +526,7 @@ impl ForceExitStart {
                 vs.activate_reshared_set(&[], B256::ZERO)?;
             }
             Self::Inactive => make_inactive_for_test(vs, val),
-            Self::Registered => {}
+            Self::Pending => {}
         }
         Ok(())
     }
@@ -536,7 +536,7 @@ impl ForceExitStart {
 fn force_exit_from_each_status() {
     // force_exit_validator across every starting status: ACTIVE->EXITING, an
     // already-EXITING idempotent call, the UNBONDING/INACTIVE idempotent no-ops,
-    // and the REGISTERED rejection.
+    // and the PENDING rejection.
     let val = address!("0x0909090909090909090909090909090909090909");
     let cases: &[(&str, ForceExitStart, bool, u8)] = &[
         (
@@ -564,10 +564,10 @@ fn force_exit_from_each_status() {
             status::INACTIVE,
         ),
         (
-            "REGISTERED rejected",
-            ForceExitStart::Registered,
+            "PENDING rejected",
+            ForceExitStart::Pending,
             false,
-            status::REGISTERED,
+            status::PENDING,
         ),
     ];
     for (i, (label, start, expect_ok, final_status)) in cases.iter().enumerate() {

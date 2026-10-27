@@ -83,9 +83,7 @@ fn promotion_consensus_plan(rpc: &Rpc, port: u16) -> (u64, u64, u64) {
 fn eligible_promotion_activation(
     excluded: u64,
     previous_version: u64,
-    version: u64,
-    last: u64,
-    next: u64,
+    (version, last, next): (u64, u64, u64),
     readiness: u64,
     prepare: u64,
 ) -> eyre::Result<Option<u64>> {
@@ -117,8 +115,7 @@ fn eligible_promotion_activation(
 
 fn promotion_participation_observed(
     previous_version: u64,
-    version: u64,
-    last: u64,
+    (version, last): (u64, u64),
     head: u64,
     activation: u64,
     participant: bool,
@@ -496,7 +493,7 @@ fn warm_promotion(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
     world.state.joiner_addr = Some(addr.clone());
-    world.rpc.stake(&key, 1000).expect("stake");
+    world.rpc.topup(&key, 1000).expect("stake");
     world
         .localnet
         .launch_joiner(idx, &[])
@@ -578,9 +575,7 @@ fn resubmit_promotion_readiness(world: &mut World) {
     eligible_promotion_activation(
         planned,
         previous_version,
-        version,
-        last,
-        next,
+        (version, last, next),
         readiness,
         prepare,
     )
@@ -669,9 +664,7 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         if let Some(next) = eligible_promotion_activation(
             excluded,
             previous_version,
-            version,
-            last,
-            next,
+            (version, last, next),
             readiness,
             prepare,
         )
@@ -743,8 +736,7 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         }
         if promotion_participation_observed(
             previous_version,
-            version,
-            last,
+            (version, last),
             head,
             activation,
             participant,
@@ -889,15 +881,15 @@ mod timing_tests {
     #[test]
     fn late_readiness_uses_first_plan_after_excluded_rotation() {
         assert_eq!(
-            eligible_promotion_activation(120, 1, 1, 60, 120, 109, 15).unwrap(),
+            eligible_promotion_activation(120, 1, (1, 60, 120), 109, 15).unwrap(),
             None
         );
         assert_eq!(
-            eligible_promotion_activation(120, 1, 2, 120, 180, 109, 15).unwrap(),
+            eligible_promotion_activation(120, 1, (2, 120, 180), 109, 15).unwrap(),
             Some(180)
         );
         assert_eq!(
-            eligible_promotion_activation(120, 1, 2, 123, 183, 109, 15).unwrap(),
+            eligible_promotion_activation(120, 1, (2, 123, 183), 109, 15).unwrap(),
             Some(183)
         );
         for (version, last, next, readiness) in [
@@ -908,20 +900,22 @@ mod timing_tests {
             (3, 180, 240, 109),
         ] {
             assert!(
-                eligible_promotion_activation(120, 1, version, last, next, readiness, 15).is_err()
+                eligible_promotion_activation(120, 1, (version, last, next), readiness, 15)
+                    .is_err()
             );
         }
-        assert!(!promotion_participation_observed(1, 2, 120, 179, 180, false).unwrap());
-        assert!(!promotion_participation_observed(1, 3, 180, 181, 180, false).unwrap());
-        assert!(!promotion_participation_observed(1, 3, 183, 184, 180, false).unwrap());
-        assert!(promotion_participation_observed(1, 3, 183, 185, 180, true).unwrap());
+        assert!(!promotion_participation_observed(1, (2, 120), 179, 180, false).unwrap());
+        assert!(!promotion_participation_observed(1, (3, 180), 181, 180, false).unwrap());
+        assert!(!promotion_participation_observed(1, (3, 183), 184, 180, false).unwrap());
+        assert!(promotion_participation_observed(1, (3, 183), 185, 180, true).unwrap());
         for (version, last, head, participant) in [
             (2, 120, 179, true),
             (3, 180, 182, false),
             (4, 240, 242, true),
         ] {
             assert!(
-                promotion_participation_observed(1, version, last, head, 180, participant).is_err()
+                promotion_participation_observed(1, (version, last), head, 180, participant)
+                    .is_err()
             );
         }
     }

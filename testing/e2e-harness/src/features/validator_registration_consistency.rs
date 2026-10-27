@@ -22,7 +22,7 @@ use crate::world::rpc::{TxOutcome, ValidatorP2pAddress, ValidatorRecord};
 use crate::world::validators::RegistrationIdentity;
 use crate::world::World;
 
-const REGISTERED: u8 = 0;
+const PENDING: u8 = 1;
 const ACTIVE: u8 = 2;
 const UNBONDING: u8 = 4;
 const P2P_V1: u8 = 1;
@@ -205,7 +205,14 @@ fn validator_state_bundle(world: &World, port: u16) -> ValidatorStateBundle {
 fn fund_identity(world: &World, identity: &RegistrationIdentity) {
     world
         .rpc
-        .fund_key(&world.validators.get(0), identity.evm_key(), 100)
+        .fund_key(
+            &world.validators.get(0),
+            identity.evm_key(),
+            world
+                .rpc
+                .registration_funding_coen()
+                .expect("registration funding"),
+        )
         .expect("fund registration identity");
 }
 
@@ -277,7 +284,7 @@ fn fixture_is_accepted(world: &mut World) {
         .expect("registered validator record");
     assert_eq!(record.address, identity.address());
     assert_eq!(record.consensus_pubkey, public_key_before);
-    assert_eq!(record.status, REGISTERED);
+    assert_eq!(record.status, PENDING);
     assert!(!record.has_bls_share);
     assert_eq!(
         world.rpc.validator_count(port),
@@ -425,8 +432,8 @@ fn funded_unregistered_identity(world: &mut World) {
     state.registry_before = Some(before);
 }
 
-#[when("the owner submits its registration with an empty possession proof")]
-fn owner_submits_empty_proof_registration(world: &mut World) {
+#[when("the owner submits its registration with a valid possession proof")]
+fn owner_submits_other_validator_registration(world: &mut World) {
     let identity = scenario_state()
         .identity
         .clone()
@@ -440,27 +447,27 @@ fn owner_submits_empty_proof_registration(world: &mut World) {
         world,
         &owner_key,
         &identity,
-        &[],
-        &IValidatorSet::BlsPopWrongLength {}.abi_encode(),
+        identity.registration_signature(),
+        &crate::internal::eth::IStaking::ThirdPartyStakingNotSupported {}.abi_encode(),
     );
     scenario_state().outcome = Some(outcome);
 }
 
 #[then("owner registration is rejected without changing the registry identity bundle")]
-fn owner_registration_without_pop_is_rejected(world: &mut World) {
+fn owner_registration_for_other_validator_is_rejected(world: &mut World) {
     assert_registration_rejected_unchanged(
         world,
         RejectionCase {
             invariant: "D-01B",
-            transaction: "owner no-PoP transaction",
-            candidate: "no-PoP identity",
+            transaction: "owner third-party registration transaction",
+            candidate: "self-only registration identity",
         },
     );
 }
 
 #[given("the public validator state bundle is snapshotted")]
 fn snapshot_public_validator_state_bundle(world: &mut World) {
-    // S-02 uses a real REGISTERED, unconfirmed member whose state must
+    // S-02 uses a real PENDING, unconfirmed member whose state must
     // survive rejection of the unsupported public activation selector.
     let identity = world
         .localnet
@@ -479,8 +486,8 @@ fn snapshot_public_validator_state_bundle(world: &mut World) {
             .rpc
             .validator_record(port, &address_string(identity.address()))
             .map(|record| record.status),
-        Some(REGISTERED),
-        "direct-activation fixture must remain REGISTERED and unconfirmed"
+        Some(PENDING),
+        "direct-activation fixture must remain PENDING and unconfirmed"
     );
     let bundle = validator_state_bundle(world, port);
     let mut state = scenario_state();
@@ -791,7 +798,6 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
         .localnet
         .launch_caught_up_joiner(index, &[])
         .expect("launch registered joiner");
-    world.rpc.stake(&key, 1_000).expect("stake joiner");
     assert_eq!(
         world
             .rpc
@@ -967,7 +973,7 @@ fn p2p_pair_is_cleared_after_reregistration(world: &mut World) {
         }
         match world.rpc.validator_record(port, &address_text) {
             Some(record)
-                if record.status == REGISTERED
+                if record.status == PENDING
                     && record.consensus_pubkey == *replacement.bls_public_key()
                     && !record.has_bls_share => {}
             other => violations.push(format!(
@@ -1124,7 +1130,7 @@ fn rejected_registrations_are_atomic(world: &mut World) {
     if !first_record.as_ref().is_some_and(|record| {
         record.address == first.address()
             && record.consensus_pubkey == *first.bls_public_key()
-            && record.status == REGISTERED
+            && record.status == PENDING
     }) {
         violations.push("the valid key owner record was not preserved".to_owned());
     }

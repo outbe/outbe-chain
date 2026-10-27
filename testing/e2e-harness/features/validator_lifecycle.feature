@@ -10,9 +10,9 @@ Feature: Validator admission, membership, recovery, and removal
     Then the committee processes and projects the offer
     When a full node joins and syncs to the committee tip
     Then the full node matches committee supply and state root and is not a participant
-    When the synced full node restarts as a registered shareless validator
-    Then it keeps finalizing without stake, a share, or consensus participation
-    When the shareless validator stakes and confirms readiness
+    When the synced full node stakes and restarts as a shareless PENDING validator
+    Then it keeps finalizing with its bond but without a share or consensus participation
+    When the shareless validator tops up and confirms readiness
     Then it activates through DKG in the same process and the in-flight offer lands once
     When the promoted validator deactivates
     Then it exits, the committee reshares down, and the node demotes to a follower
@@ -47,7 +47,7 @@ Feature: Validator admission, membership, recovery, and removal
   @pfs-006-09
   Scenario: Registration survives a joining node and enclave restart
     Given a fresh localnet with a 6-block voting window
-    When a registered joining node and enclave restart before staking
+    When a staked PENDING node and enclave restart before readiness
     Then registration survives and the join can activate once
 
   @pfs-006-09
@@ -91,14 +91,9 @@ Feature: Validator admission, membership, recovery, and removal
     Then the confirmed joiner activates on the next reshare
 
   @p2p-admission-retention
-  Scenario Outline: Secondary source IP remains admitted across repeated DKG rotations
+  Scenario: Secondary source IP remains admitted across repeated DKG rotations
     Given a fresh localnet with a short valid DKG schedule
-    And a <status> transport peer has its own registered source IP
+    And a PENDING transport peer has its own registered source IP
     Then its source IP is admitted before any retention eviction
     When two complete DKG rotations exclude the transport peer
     Then its source IP remains admitted on every active validator
-
-    Examples:
-      | status     |
-      | Registered |
-      | Pending    |

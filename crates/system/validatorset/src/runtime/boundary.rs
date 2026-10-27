@@ -154,15 +154,21 @@ impl ValidatorSet<'_> {
                 }
                 Ok(ValidatorLifecycle::JailRetained(jailed))
             }
-            ValidatorLifecycle::WaitingForStake(waiting) => Ok(ValidatorLifecycle::Exiting(
-                state_machine::exit_waiting_for_stake_at_boundary(
+            ValidatorLifecycle::WaitingForReadiness(waiting) => Ok(ValidatorLifecycle::Exiting(
+                state_machine::exit_waiting_for_readiness_at_boundary(
                     waiting,
                     demotion_height(before, freeze_height)?,
                 )?,
             )),
-            ValidatorLifecycle::WaitingForReadiness(waiting) => Ok(ValidatorLifecycle::Exiting(
-                state_machine::exit_waiting_for_readiness_at_boundary(
-                    waiting,
+            ValidatorLifecycle::Unbonding(unbonding) => Ok(ValidatorLifecycle::Exiting(
+                state_machine::exit_unbonding_at_boundary(
+                    unbonding,
+                    demotion_height(before, freeze_height)?,
+                )?,
+            )),
+            ValidatorLifecycle::Inactive(inactive) => Ok(ValidatorLifecycle::Exiting(
+                state_machine::exit_inactive_at_boundary(
+                    inactive,
                     demotion_height(before, freeze_height)?,
                 )?,
             )),

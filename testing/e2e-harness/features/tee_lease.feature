@@ -12,7 +12,7 @@ Feature: Manual consensus-enforced TEE lease lifecycle
     And validators 0, 1, and 2 manually renew their enclave leases
     Then their exact next deadlines finalize without changing any permanent offer key
     When finalized consensus time reaches the original lease deadline
-    Then validator 3 is jailed without slash while three validators keep finalizing
+    Then validator 3 is jailed with an 8% slash while three validators keep finalizing
     And the expired FullNode fail-stops and late renewal is rejected for both missed nodes
     When the jailed validator is excluded at the normal DKG boundary
     And validator 3 unjails and both expired nodes complete fresh TEE join

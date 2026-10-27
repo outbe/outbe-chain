@@ -87,9 +87,6 @@ fn route(
         resolveValidator(c) => view(c, |c| resolved_signer(vs, c.signer, c.role)),
         getRadicleNodeId(c) => view(c, |c| vs.get_radicle_node_id(c.validator)),
         validatorByRadicleNodeId(c) => view(c, |c| vs.validator_by_radicle_node_id(c.nodeId)),
-        registerValidator(c) => mutate_void(storage, c, caller, |sender, c| {
-            register_from_call(vs, sender, &c)
-        }),
         setP2pAddress(c) => mutate_void(storage, c, caller, |sender, c| {
             vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
         }),
@@ -174,44 +171,6 @@ fn p2p_view(vs: &crate::schema::ValidatorSet<'_>, validator: Address) -> Result<
     Ok((version, Bytes::from(encoded)))
 }
 
-/// Registers the validator of a `registerValidator` call from `sender`.
-fn register_from_call(
-    vs: &mut crate::schema::ValidatorSet<'_>,
-    sender: Address,
-    call: &IValidatorSet::registerValidatorCall,
-) -> Result<()> {
-    let (pubkey, sig) =
-        registration_key_and_proof(&call.consensusPubkey, &call.blsRegistrationSignature)?;
-    vs.register_validator_with_sig(
-        sender,
-        call.validatorAddress,
-        &pubkey,
-        call.radicleNodeId,
-        Some(sig),
-    )
-}
-
-/// The 48-byte consensus key and the 96-byte BLS proof of possession of a
-/// registration call. The key length is checked first.
-fn registration_key_and_proof<'a>(
-    consensus_pubkey: &[u8],
-    signature: &'a [u8],
-) -> Result<([u8; 48], &'a [u8; 96])> {
-    if consensus_pubkey.len() != 48 {
-        return Err(ValidatorSetError::ConsensusPubkeyWrongLength.into());
-    }
-    let pubkey: [u8; 48] = consensus_pubkey[..48]
-        .try_into()
-        .map_err(|_| PrecompileError::from(ValidatorSetError::ConsensusPubkeyConversionFailed))?;
-    if signature.len() != 96 {
-        return Err(ValidatorSetError::BlsPopWrongLength.into());
-    }
-    let sig: &[u8; 96] = signature[..96]
-        .try_into()
-        .map_err(|_| PrecompileError::from(ValidatorSetError::BlsSignatureConversionFailed))?;
-    Ok((pubkey, sig))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,21 +199,16 @@ mod tests {
         provider.set_block_number(1);
 
         StorageHandle::enter(&mut provider, |storage| {
-            let vs = crate::schema::ValidatorSet::new(storage.clone());
+            let mut vs = crate::schema::ValidatorSet::new(storage.clone());
             vs.config_owner.write(validator).unwrap();
             vs.config_max_validators.write(10).unwrap();
 
-            dispatch(
-                storage.clone(),
-                &IValidatorSet::registerValidatorCall {
-                    validatorAddress: validator,
-                    consensusPubkey: Bytes::copy_from_slice(&public_key),
-                    radicleNodeId: node_id,
-                    blsRegistrationSignature: Bytes::copy_from_slice(&signature),
-                }
-                .abi_encode(),
+            vs.register_with_initial_stake(
                 validator,
-                U256::ZERO,
+                validator,
+                (&public_key, node_id, Some(&signature)),
+                (0, &[]),
+                (U256::from(100_000u64), U256::from(100_000u64)),
             )
             .unwrap();
 

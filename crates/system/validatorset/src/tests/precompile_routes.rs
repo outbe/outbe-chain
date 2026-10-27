@@ -222,26 +222,21 @@ fn delegate_routes_decode_the_role_first() -> Result<()> {
 }
 
 #[test]
-fn registration_route_checks_key_length_before_proof_length() -> Result<()> {
-    let mut storage = routed_storage()?;
-    let register = |key_len: usize, proof_len: usize| I::registerValidatorCall {
-        validatorAddress: UNKNOWN,
-        consensusPubkey: vec![0xF4; key_len].into(),
-        radicleNodeId: B256::repeat_byte(0xF4),
-        blsRegistrationSignature: vec![0xF5; proof_len].into(),
+fn registration_helper_checks_key_length_before_proof_length() -> Result<()> {
+    let decode = |key_len: usize, proof_len: usize| {
+        let key = vec![0xF4; key_len];
+        let proof = vec![0xF5; proof_len];
+        crate::logic::decode_registration_key_and_proof(&key, &proof).map(|_| Bytes::new())
     };
     assert_eq!(
-        outcome_text(send(&mut storage, OWNER, &register(47, 95))),
+        outcome_text(decode(47, 95)),
         super::typed_revert(I::ConsensusPubkeyWrongLength {}.abi_encode())
     );
     assert_eq!(
-        outcome_text(send(&mut storage, OWNER, &register(48, 95))),
+        outcome_text(decode(48, 95)),
         super::typed_revert(I::BlsPopWrongLength {}.abi_encode())
     );
-    assert_eq!(
-        outcome_text(send(&mut storage, OWNER, &register(48, 96))),
-        super::typed_revert(I::InvalidBlsPublicKey {}.abi_encode())
-    );
+    assert_eq!(outcome_text(decode(48, 96)), "Ok(0x)");
     Ok(())
 }
 

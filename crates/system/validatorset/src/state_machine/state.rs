@@ -25,10 +25,6 @@ pub enum ValidatorLifecycle {
     /// `address_to_index == 0`. All validator-owned storage is empty.
     Absent,
 
-    /// Persisted `REGISTERED`. Identity exists, but bonded stake has not
-    /// admitted the validator to the readiness path.
-    WaitingForStake(WaitingForStake),
-
     /// Persisted `PENDING` with readiness not yet confirmed.
     WaitingForReadiness(WaitingForReadiness),
 
@@ -253,7 +249,6 @@ macro_rules! validator_payload {
     };
 }
 
-validator_payload!(WaitingForStake, stake);
 validator_payload!(WaitingForReadiness, stake);
 validator_payload!(Joining, stake);
 validator_payload!(Active, stake);

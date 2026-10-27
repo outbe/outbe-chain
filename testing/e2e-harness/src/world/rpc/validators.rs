@@ -227,7 +227,7 @@ impl Rpc {
         )
     }
 
-    /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
+    /// Status code: 0 reserved, 1 PENDING, 2 ACTIVE, 3 EXITING,
     /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
         self.validator_record(port, addr)
@@ -468,15 +468,15 @@ impl Rpc {
         })
     }
 
-    /// Stake `amount` whole COEN from `key` (REGISTERED/PENDING joiner).
-    pub fn stake(&self, key: &str, amount: u64) -> Result<String> {
+    /// Add `amount` whole COEN to an existing validator bond.
+    pub fn topup(&self, key: &str, amount: u64) -> Result<String> {
         let v = eth::address_of(key).ok_or_else(|| eyre!("cannot derive address for stake"))?;
         let base_units = eth::coen(amount);
         let tx = eth::send_call(
             &self.cfg.rpc0,
             addresses::STK_ADDR,
             key,
-            &IStaking::stakeCall {
+            &IStaking::topupCall {
                 validatorAddress: v,
                 amount: base_units,
             },
@@ -486,6 +486,28 @@ impl Rpc {
             return Err(eyre!("stake receipt was not successful: {tx}"));
         }
         Ok(tx)
+    }
+
+    /// Read the configured minimum rather than assuming the localnet seed uses mainnet values.
+    pub fn registration_amount(&self) -> Result<U256> {
+        eth::read_call_result(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            &IStaking::getMinStakeCall {},
+        )
+        .map_err(eyre::Report::msg)
+    }
+
+    /// Fund a minimum bond and transaction gas in whole COEN.
+    pub fn registration_funding_coen(&self) -> Result<u64> {
+        let minimum = self.registration_amount()?;
+        let whole = minimum.div_ceil(eth::coen(1));
+        let whole: u64 = whole
+            .try_into()
+            .map_err(|_| eyre!("minimum stake exceeds funding range"))?;
+        whole
+            .checked_add(100)
+            .ok_or_else(|| eyre!("registration funding overflow"))
     }
 
     /// Submit validator registration and return either success or a mined
@@ -498,17 +520,21 @@ impl Rpc {
         radicle_node_id: B256,
         bls_signature: &[u8],
     ) -> Result<TxOutcome> {
+        let amount = self.registration_amount()?;
         eth::send_call_outcome(
             &self.cfg.rpc0,
-            addresses::VS_ADDR,
+            addresses::STK_ADDR,
             caller_key,
-            &IValidatorSet::registerValidatorCall {
+            &IStaking::stakeCall {
                 validatorAddress: validator,
+                amount,
                 consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
                 radicleNodeId: radicle_node_id,
                 blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
+                p2pVersion: 0,
+                p2pEncoded: Bytes::new(),
             },
-            None,
+            Some(amount),
         )
         .map(Into::into)
     }
@@ -659,7 +685,7 @@ impl Rpc {
         )
     }
 
-    /// Submit `claimUnbonded()` followed by `registerValidator()` with
+    /// Submit `claimUnbonded()` followed by atomic `stake()` with
     /// sequential explicit nonces before waiting for either receipt.
     ///
     /// The returned receipts expose their block numbers; D-06 asserts that they
@@ -674,11 +700,15 @@ impl Rpc {
         bls_signature: &[u8],
     ) -> Result<[TxOutcome; 2]> {
         let claim = IStaking::claimUnbondedCall {};
-        let register = IValidatorSet::registerValidatorCall {
+        let amount = self.registration_amount()?;
+        let register = IStaking::stakeCall {
             validatorAddress: validator,
+            amount,
             consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
             radicleNodeId: radicle_node_id,
             blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
+            p2pVersion: 0,
+            p2pEncoded: Bytes::new(),
         };
         let outcomes = eth::send_prepared_calls_outcomes(
             &self.cfg.rpc0,
@@ -690,9 +720,9 @@ impl Rpc {
                     value: None,
                 },
                 eth::PreparedCall {
-                    to: addresses::VS_ADDR,
+                    to: addresses::STK_ADDR,
                     data: Bytes::from(register.abi_encode()),
-                    value: None,
+                    value: Some(amount),
                 },
             ],
         )?

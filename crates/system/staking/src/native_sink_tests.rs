@@ -1,11 +1,12 @@
-//! Slashed stake is a native burn: it leaves the staking escrow, reaches no
-//! account, and credits no Promis Limit capacity.
+//! Slashed stake is a native burn from the staking escrow that credits the
+//! Promis Limit and stores any sub-protocol-unit remainder in `native_rest`.
 
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
 };
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::contract::Staking;
@@ -23,14 +24,14 @@ fn with_staked_validator<R>(f: impl FnOnce(StorageHandle<'_>, &mut Staking<'_>) 
         seed_balance(storage.clone(), VALIDATOR, 1_000_000);
         seed_balance(storage.clone(), STAKING_ADDRESS, STAKE);
         staking
-            .stake(VALIDATOR, VALIDATOR, U256::from(STAKE))
+            .topup(VALIDATOR, VALIDATOR, U256::from(STAKE))
             .unwrap();
         f(storage, staking)
     })
 }
 
 #[test]
-fn slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing() {
+fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
     with_staked_validator(|storage, staking| {
         let balances = |storage: &StorageHandle<'_>| {
             [
@@ -45,9 +46,9 @@ fn slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing(
             .map(|account| storage.balance(account).unwrap())
         };
         let before = balances(&storage);
-        let promis_limit_before = PromisLimitContract::new(storage.clone())
-            .promis_limit()
-            .unwrap();
+        let promis_limit = PromisLimitContract::new(storage.clone());
+        let promis_limit_before = promis_limit.promis_limit().unwrap();
+        let rest_before = promis_limit.native_rest().unwrap();
 
         let slashed = staking.slash_stake(VALIDATOR, 20).unwrap();
         assert_eq!(slashed, U256::from(2_000u64));
@@ -68,14 +69,43 @@ fn slashing_burns_exactly_the_slashed_stake_from_the_escrow_and_credits_nothing(
             before.iter().sum::<U256>() - slashed,
             "the slashed stake is removed from native supply"
         );
-        assert_eq!(
-            PromisLimitContract::new(storage.clone())
-                .promis_limit()
-                .unwrap(),
-            promis_limit_before,
-            "slashing must not credit Promis Limit capacity"
-        );
+        let promis_limit_after = promis_limit.promis_limit().unwrap();
+        let rest_after = promis_limit.native_rest().unwrap();
+        assert_eq!(promis_limit_after, promis_limit_before);
+        assert_eq!(rest_after, rest_before + slashed);
         assert_eq!(staking.get_stake(VALIDATOR).unwrap(), U256::from(8_000u64));
         assert_eq!(staking.get_total_staked().unwrap(), U256::from(8_000u64));
+    });
+}
+
+#[test]
+fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
+    with_staking(|storage, staking| {
+        register_validator(storage.clone(), VALIDATOR);
+        let initial_stake = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(15u64);
+        storage.set_balance(STAKING_ADDRESS, initial_stake).unwrap();
+        staking.topup(VALIDATOR, VALIDATOR, initial_stake).unwrap();
+
+        let promis_limit = PromisLimitContract::new(storage.clone());
+        let one_and_half =
+            NATIVE_UNITS_PER_PROTOCOL_UNIT + (NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64));
+
+        // 10% of 15 protocol units = 1.5 protocol units.
+        let first_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
+        assert_eq!(first_slash, one_and_half);
+        assert_eq!(promis_limit.promis_limit().unwrap(), U256::ONE);
+        assert_eq!(
+            promis_limit.native_rest().unwrap(),
+            NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64)
+        );
+        assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
+
+        // Top up back to 15 protocol units and slash 10% again (another 1.5 units).
+        storage.set_balance(STAKING_ADDRESS, initial_stake).unwrap();
+        staking.topup(VALIDATOR, VALIDATOR, first_slash).unwrap();
+        let second_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
+        assert_eq!(second_slash, one_and_half);
+        assert_eq!(promis_limit.promis_limit().unwrap(), U256::from(3u64));
+        assert_eq!(promis_limit.native_rest().unwrap(), U256::ZERO);
     });
 }

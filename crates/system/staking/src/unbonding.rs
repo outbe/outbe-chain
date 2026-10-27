@@ -42,19 +42,27 @@ impl Staking<'_> {
         }
 
         let idx = self.unbonding_count.read()?;
+        let next_idx = idx
+            .checked_add(1)
+            .ok_or(StakingError::UnbondingIndexOverflow)?;
+        let prev_len = self.per_val_unbonding_len.read(&validator)?;
+        let next_len = prev_len
+            .checked_add(1)
+            .ok_or(StakingError::UnbondingIndexOverflow)?;
         self.unbonding_validator.write(&idx, validator)?;
         self.unbonding_amount.write(&idx, amount)?;
         self.unbonding_complete_time.write(&idx, complete_time)?;
-        self.unbonding_count.write(idx + 1)?;
+        self.unbonding_count.write(next_idx)?;
 
         let prev_head_stored = self.per_val_unbonding_head.read(&validator)?;
         self.unbonding_next.write(&idx, prev_head_stored)?;
-        self.per_val_unbonding_head.write(&validator, idx + 1)?;
+        self.per_val_unbonding_head.write(&validator, next_idx)?;
+        self.per_val_unbonding_len.write(&validator, next_len)?;
 
         Ok(Some(idx))
     }
 
-    fn has_pending_unbonding(&self, validator: Address) -> Result<bool> {
+    pub(crate) fn has_pending_unbonding(&self, validator: Address) -> Result<bool> {
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
         while current_stored != 0 {
             let idx = current_stored - 1;
@@ -66,7 +74,7 @@ impl Staking<'_> {
         Ok(false)
     }
 
-    fn finalize_inactive_if_complete(
+    pub(crate) fn finalize_inactive_if_complete(
         &self,
         val_set: &mut ValidatorSet,
         validator: Address,
@@ -96,6 +104,7 @@ impl Staking<'_> {
         let mut current_stored = self.per_val_unbonding_head.read(&caller)?;
         let mut new_head_stored: u32 = 0;
         let mut pending_tail_stored: u32 = 0;
+        let mut unlinked_count: u32 = 0;
 
         while current_stored != 0 {
             let idx = current_stored - 1;
@@ -105,7 +114,12 @@ impl Staking<'_> {
             if timestamp >= complete_time {
                 // Mature: claim it
                 let amount = self.unbonding_amount.read(&idx)?;
-                total_claimable += amount;
+                total_claimable = total_claimable
+                    .checked_add(amount)
+                    .ok_or(StakingError::ClaimableAmountOverflow)?;
+                unlinked_count = unlinked_count
+                    .checked_add(1)
+                    .ok_or(StakingError::UnbondingIndexOverflow)?;
                 if !amount.is_zero() {
                     paid_entries.push((idx, amount));
                 }
@@ -134,6 +148,13 @@ impl Staking<'_> {
         }
         self.per_val_unbonding_head
             .write(&caller, new_head_stored)?;
+        if unlinked_count > 0 {
+            let prev_len = self.per_val_unbonding_len.read(&caller)?;
+            let new_len = prev_len
+                .checked_sub(unlinked_count)
+                .ok_or(StakingError::UnbondingLengthUnderflow { validator: caller })?;
+            self.per_val_unbonding_len.write(&caller, new_len)?;
+        }
 
         // Transfer accumulated claimable amount from staking contract to caller
         if !total_claimable.is_zero() {

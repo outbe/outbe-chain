@@ -11,7 +11,8 @@ use crate::contract::Staking;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IStaking::stakeCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] =
+    &[IStaking::stakeCall::SELECTOR, IStaking::topupCall::SELECTOR];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -44,7 +45,33 @@ pub fn dispatch(
                     if val != c.amount {
                         return Err(crate::errors::StakingError::MsgValueMismatch.into());
                     }
-                    staking.stake(sender, c.validatorAddress, c.amount)
+                    let (pubkey, sig) =
+                        outbe_validatorset::logic::decode_registration_key_and_proof(
+                            &c.consensusPubkey,
+                            &c.blsRegistrationSignature,
+                        )?;
+                    staking.stake(
+                        sender,
+                        c.validatorAddress,
+                        c.amount,
+                        (&pubkey, c.radicleNodeId, sig),
+                        (c.p2pVersion, &c.p2pEncoded),
+                    )
+                },
+            ),
+            topup(c) => mutate_void_payable(
+                &storage,
+                c,
+                PayableCallContext {
+                    selectors: PAYABLE_SELECTORS,
+                    sender: caller,
+                    value,
+                },
+                |sender, c, val| {
+                    if val != c.amount {
+                        return Err(crate::errors::StakingError::MsgValueMismatch.into());
+                    }
+                    staking.topup(sender, c.validatorAddress, c.amount)
                 },
             ),
             unstake(c) => mutate_void(&storage, c, caller, |sender, c| {

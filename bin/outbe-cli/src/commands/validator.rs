@@ -1,6 +1,6 @@
 //! Validator management commands.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use clap::{Subcommand, ValueEnum};
 use eyre::{Result, WrapErr as _};
@@ -34,18 +34,6 @@ pub enum ValidatorCmd {
     },
     /// Show participation stats for all active validators.
     Participation,
-    /// Register a new validator
-    Register {
-        /// BLS consensus public key (hex)
-        #[arg(long)]
-        pubkey: String,
-        /// Radicle Ed25519 NodeId as 32-byte hex.
-        #[arg(long)]
-        radicle_node_id: B256,
-        /// BLS registration signature (hex)
-        #[arg(long)]
-        bls_sig: String,
-    },
     /// Deactivate your validator
     Deactivate,
     /// Confirm that your PENDING validator reached the head and is ready for
@@ -110,11 +98,6 @@ impl ValidatorCmd {
             } => list(client, active_only, status, sort).await,
             Self::Info { address } => info(client, address).await,
             Self::Participation => participation(client).await,
-            Self::Register {
-                pubkey,
-                radicle_node_id,
-                bls_sig,
-            } => register(client, private_key, pubkey, radicle_node_id, bls_sig).await,
             Self::Deactivate => deactivate(client, private_key).await,
             Self::ConfirmReady => confirm_ready(client, private_key).await,
             Self::Delegate {
@@ -319,27 +302,6 @@ async fn send_validator_set_tx(
     Ok(())
 }
 
-async fn register(
-    client: &(impl Rpc + Sync),
-    private_key: Option<&str>,
-    pubkey: String,
-    radicle_node_id: B256,
-    bls_sig: String,
-) -> Result<()> {
-    send_validator_set_tx(client, private_key, |signer| {
-        let pubkey_bytes = hex::decode(pubkey.strip_prefix("0x").unwrap_or(&pubkey))?;
-        let sig_bytes = hex::decode(bls_sig.strip_prefix("0x").unwrap_or(&bls_sig))?;
-        Ok(IValidatorSet::registerValidatorCall {
-            validatorAddress: signer.address(),
-            consensusPubkey: pubkey_bytes.into(),
-            radicleNodeId: radicle_node_id,
-            blsRegistrationSignature: sig_bytes.into(),
-        }
-        .abi_encode())
-    })
-    .await
-}
-
 async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
     send_validator_set_tx(client, private_key, |signer| {
         Ok(IValidatorSet::deactivateValidatorCall {
@@ -454,7 +416,7 @@ async fn get_p2p(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
     Ok(())
 }
 
-fn build_p2p_address(
+pub(crate) fn build_p2p_address(
     symmetric: Option<SocketAddr>,
     ingress_socket: Option<SocketAddr>,
     ingress_dns_host: Option<String>,
@@ -545,7 +507,6 @@ async fn participation(client: &(impl Rpc + Sync)) -> Result<()> {
 
 fn status_label(status: u8) -> &'static str {
     match status {
-        0 => "Registered",
         1 => "Pending",
         2 => "Active",
         3 => "Exiting",
@@ -560,7 +521,8 @@ fn status_label(status: u8) -> &'static str {
 /// Returns 255 for unknown strings (matches nothing).
 fn parse_status_filter(s: &str) -> u8 {
     match s.to_lowercase().as_str() {
-        "registered" => 0,
+        // The protocol reserves status 0 and never emits it.
+        "registered" => 255,
         "pending" => 1,
         "active" => 2,
         "exiting" => 3,
@@ -578,7 +540,7 @@ mod tests {
     #[test]
     fn test_status_filter_maps_to_expected_codes() {
         // Must match `validator_status` in validatorset/src/runtime.rs.
-        assert_eq!(parse_status_filter("registered"), 0);
+        assert_eq!(parse_status_filter("registered"), 255);
         assert_eq!(parse_status_filter("pending"), 1);
         assert_eq!(parse_status_filter("active"), 2);
         assert_eq!(parse_status_filter("exiting"), 3);
@@ -736,80 +698,6 @@ mod tests {
     const TEST_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 
     #[tokio::test]
-    async fn test_register_sends_expected_tx() {
-        let signer = TxSigner::new(TEST_KEY).unwrap();
-        let pubkey = vec![0xaa, 0xbb, 0xcc];
-        let bls_sig = vec![0x11, 0x22, 0x33];
-        let radicle_node_id = B256::repeat_byte(0x44);
-        let data = IValidatorSet::registerValidatorCall {
-            validatorAddress: signer.address(),
-            consensusPubkey: pubkey.clone().into(),
-            radicleNodeId: radicle_node_id,
-            blsRegistrationSignature: bls_sig.clone().into(),
-        }
-        .abi_encode();
-        let mock =
-            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
-
-        register(
-            &mock,
-            Some(TEST_KEY),
-            "0xaabbcc".to_string(),
-            radicle_node_id,
-            "0x112233".to_string(),
-        )
-        .await
-        .unwrap();
-        mock.assert_done();
-    }
-
-    #[tokio::test]
-    async fn test_register_invalid_pubkey_does_not_call_rpc() {
-        let mock =
-            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, vec![], U256::ZERO).unwrap();
-        let err = register(
-            &mock,
-            Some(TEST_KEY),
-            "not_hex".to_string(),
-            B256::repeat_byte(0x44),
-            "0x112233".to_string(),
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("Invalid") || err.to_string().contains("Odd"),
-            "expected hex decode error, got: {err}"
-        );
-        assert!(
-            mock.recorded_calls().is_empty(),
-            "invalid pubkey must not call RPC"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_register_no_private_key_errors_before_rpc() {
-        let mock =
-            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, vec![], U256::ZERO).unwrap();
-        let err = register(
-            &mock,
-            None,
-            "0xaabbcc".to_string(),
-            B256::repeat_byte(0x44),
-            "0x112233".to_string(),
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("--private-key required"),
-            "expected private-key error, got: {err}"
-        );
-        assert!(
-            mock.recorded_calls().is_empty(),
-            "missing signer must not call RPC"
-        );
-    }
-
-    #[tokio::test]
     async fn test_deactivate_sends_expected_tx() {
         let signer = TxSigner::new(TEST_KEY).unwrap();
         let data = IValidatorSet::deactivateValidatorCall {
@@ -876,12 +764,13 @@ mod tests {
 
     #[test]
     fn test_status_label_all_known() {
-        assert_eq!(status_label(0), "Registered");
+        assert_eq!(status_label(0), "Unknown");
         assert_eq!(status_label(1), "Pending");
         assert_eq!(status_label(2), "Active");
         assert_eq!(status_label(3), "Exiting");
         assert_eq!(status_label(4), "Unbonding");
         assert_eq!(status_label(5), "Inactive");
+        assert_eq!(status_label(6), "Jailed");
     }
 
     #[test]

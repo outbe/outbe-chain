@@ -162,7 +162,9 @@ impl SlashIndicator<'_> {
         Ok((fc, slash_percent, slashed_amount))
     }
 
-    /// Applies a felony penalty from evidence submission: jail, slash, reward submitter.
+    /// Applies an evidence felony.
+    /// The method jails the validator and slashes its stake.
+    /// The default submitter reward is 0% of the slashed amount.
     pub(crate) fn apply_evidence_felony(
         &mut self,
         validator: Address,
@@ -195,10 +197,10 @@ impl SlashIndicator<'_> {
             "evidence-based felony applied - validator force-exited, stake slashed, submitter rewarded",
         );
 
-        // Reward evidence submitter: mint floor(slashed * percent / 100).
-        // slash_stake burns slashed tokens from STAKING_ADDRESS.
-        // This method mints the reward directly to the submitter.
-        // The token supply decreases by (slashed - reward).
+        // Mint floor(slashed amount * reward percent / 100) to the submitter.
+        // The default reward percent is 0.
+        // slash_stake burns the slashed amount from the staking escrow.
+        // The method reduces native supply by the slashed amount minus the reward.
         let reward = floor_percent(slashed_amount, reward_pct);
         if !reward.is_zero() {
             self.storage.increase_balance(evidence_submitter, reward)?;

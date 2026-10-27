@@ -10,18 +10,19 @@ fn test_confirm_ready_signals_pending_until_certified_boundary() {
         let val = address!("0x1111111111111111111111111111111111111111");
         let pk = dummy_consensus_pubkey(0x01);
 
-        // Register -> REGISTERED, pending_set_change = true
+        // Register -> WaitingForReadiness (PENDING), pending_set_change = true
         vs.register_validator(OWNER, val, &pk).unwrap();
         assert!(vs.has_pending_set_change().unwrap());
 
-        // Simulate reshare completed (without this validator, they had no stake).
-        // activate_reshared_set with empty set -> clears pending.
+        // An empty boundary while val is WaitingForReadiness retains pending_set_change = true
+        // until val confirms readiness and enters the active set at a certified boundary.
         vs.activate_reshared_set(&[], B256::with_last_byte(0x01))
             .unwrap();
-        assert!(!vs.has_pending_set_change().unwrap());
+        assert!(vs.has_pending_set_change().unwrap());
 
-        // Staking and confirm-ready signal that a new certified boundary is due.
-        vs.mark_pending(val).unwrap();
+        // Even if a prior step clears pending_set_change, confirm-ready sets it.
+        vs.test_set_pending_set_change(false).unwrap();
+        assert!(!vs.has_pending_set_change().unwrap());
         confirm_ready(vs, val, 0x01);
         assert!(vs.has_pending_set_change().unwrap());
 
@@ -61,15 +62,14 @@ fn test_activate_reshared_set_clears_pending_after_join() {
 #[test]
 fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
     // TEE full-node admission: the secondary-tier P2P set must
-    // contain REGISTERED (full-node, not staked) + PENDING (staked joiner), but NOT
-    // ACTIVE (already a primary peer). The reshare target is the mirror image
-    // ({ACTIVE, PENDING}). REGISTERED must never be a reshare player (no stake).
+    // contain PENDING (unconfirmed and confirmed staked joiner), but NOT
+    // ACTIVE (already a primary peer). The reshare target is {ACTIVE, confirmed PENDING}.
     with_vs_configured(128, |vs| {
-        let reg = address!("0x1111111111111111111111111111111111111111");
+        let unconfirmed = address!("0x1111111111111111111111111111111111111111");
         let pend = address!("0x2222222222222222222222222222222222222222");
         let act = address!("0x3333333333333333333333333333333333333333");
 
-        register_validators(vs, &[(reg, 0x01), (pend, 0x02)]).unwrap();
+        register_validators(vs, &[(unconfirmed, 0x01), (pend, 0x02)]).unwrap();
         vs.mark_pending(pend).unwrap();
         register_boundary_active(vs, act, 0x03).unwrap();
 
@@ -80,8 +80,8 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
             .map(|v| v.validator_address)
             .collect();
         assert!(
-            admitted.contains(&reg),
-            "REGISTERED full-node must be admitted"
+            admitted.contains(&unconfirmed),
+            "unconfirmed PENDING joiner must be admitted"
         );
         assert!(admitted.contains(&pend), "PENDING joiner must be admitted");
         assert!(
@@ -98,8 +98,8 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
             .map(|v| v.validator_address)
             .collect();
         assert!(
-            !reshare_before.contains(&reg),
-            "REGISTERED (unstaked) must NOT be a reshare player"
+            !reshare_before.contains(&unconfirmed),
+            "unconfirmed PENDING joiner must NOT be a reshare player"
         );
         assert!(
             !reshare_before.contains(&pend),
@@ -124,17 +124,14 @@ fn test_admitted_non_consensus_includes_registered_and_pending_not_active() {
 
 #[test]
 fn test_confirm_validator_ready_requires_pending() {
-    // confirmValidatorReady is only valid from PENDING; REGISTERED and ACTIVE revert.
+    // confirmValidatorReady accepts only PENDING validators. ACTIVE and unregistered callers revert.
     with_vs_configured(128, |vs| {
-        let reg = address!("0x1111111111111111111111111111111111111111");
+        let pend = address!("0x1111111111111111111111111111111111111111");
         let act = address!("0x3333333333333333333333333333333333333333");
-        register_validators(vs, &[(reg, 0x01), (act, 0x03)]).unwrap();
+        register_validators(vs, &[(pend, 0x01), (act, 0x03)]).unwrap();
         vs.activate_validator_via_boundary_for_test(act).unwrap();
 
-        assert!(
-            vs.confirm_validator_ready(reg).is_err(),
-            "REGISTERED cannot confirm readiness"
-        );
+        vs.confirm_validator_ready(pend).unwrap();
         assert!(
             vs.confirm_validator_ready(act).is_err(),
             "ACTIVE cannot confirm readiness"
@@ -149,16 +146,6 @@ fn test_confirm_validator_ready_requires_pending() {
 
 #[test]
 fn certified_activation_rejects_registered_and_unconfirmed_pending_members() {
-    let registered = Address::repeat_byte(0x5A);
-    with_vs_configured(128, |vs| {
-        register_validators(vs, &[(registered, 0x5A)]).unwrap();
-        let error = vs
-            .activate_reshared_set(&[registered], B256::repeat_byte(0xA1))
-            .unwrap_err();
-        assert!(matches!(error, PrecompileError::RevertBytes(_)));
-        assert_eq!(vs.val_status.read(&registered).unwrap(), status::REGISTERED);
-    });
-
     let pending = Address::repeat_byte(0x5B);
     with_vs_configured(128, |vs| {
         register_validators(vs, &[(pending, 0x5B)]).unwrap();
@@ -188,7 +175,7 @@ fn inactive_reentry_with_same_bls_requires_fresh_readiness() {
         make_inactive_for_test(vs, validator);
         vs.register_validator(OWNER, validator, &consensus_pubkey)
             .unwrap();
-        assert_eq!(vs.val_status.read(&validator).unwrap(), status::REGISTERED);
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
         assert!(!vs.val_join_confirmed.read(&validator).unwrap());
 
         vs.mark_pending(validator).unwrap();
@@ -229,6 +216,66 @@ fn test_already_active_validator_does_not_raise_pending() {
         assert!(
             !vs.has_pending_set_change().unwrap(),
             "already-active validator should not trigger spurious pending_set_change"
+        );
+    });
+}
+
+#[test]
+fn confirm_validator_ready_requires_minimum_bond_in_waiting_and_joining() {
+    use crate::precompile::IValidatorSet as I;
+    use alloy_sol_types::SolError;
+
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x6666666666666666666666666666666666666666");
+        let pk = dummy_consensus_pubkey(0x66);
+        let minimum = U256::from(1_000u64);
+        let sub_min = U256::from(999u64);
+
+        vs.register_validator(OWNER, validator, &pk).unwrap();
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        vs.test_seed_authoritative_bonded(validator, sub_min)
+            .unwrap();
+
+        // WaitingForReadiness below minimum stake must revert with BondedStakeBelowMinimum.
+        let err = vs.confirm_validator_ready(validator).unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                I::BondedStakeBelowMinimum {
+                    bonded: sub_min,
+                    minimum,
+                }
+                .abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
+        );
+        assert!(!vs.val_join_confirmed.read(&validator).unwrap());
+
+        // Restore minimum stake -> confirmValidatorReady succeeds.
+        vs.test_seed_authoritative_bonded(validator, minimum)
+            .unwrap();
+        vs.confirm_validator_ready(validator).unwrap();
+        assert!(vs.val_join_confirmed.read(&validator).unwrap());
+
+        // If bonded stake drops below minimum while Joining, idempotent confirm_validator_ready
+        // must also reject with BondedStakeBelowMinimum.
+        vs.test_seed_authoritative_bonded(validator, sub_min)
+            .unwrap();
+        let err = vs.confirm_validator_ready(validator).unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                I::BondedStakeBelowMinimum {
+                    bonded: sub_min,
+                    minimum,
+                }
+                .abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
         );
     });
 }
