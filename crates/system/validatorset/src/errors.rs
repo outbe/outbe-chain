@@ -682,7 +682,7 @@ pub enum ValidatorSetError {
 
     /// Test fixture attempted to activate a validator with an ineligible status.
     #[error(
-        "cannot activate validator with status {status}: only REGISTERED or PENDING allowed in test fixtures"
+        "cannot activate validator with status {status}: only PENDING allowed in test fixtures"
     )]
     CannotActivateValidatorInTestFixture {
         /// Stored status code.

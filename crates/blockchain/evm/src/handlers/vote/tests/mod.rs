@@ -88,8 +88,15 @@ fn register_active_validator(storage: StorageHandle<'_>, validator: Address, see
     validator_set.set_config_max_validators(100).unwrap();
     let mut public_key = [0u8; 48];
     public_key[0] = seed;
+    let minimum = U256::from(1_000u64);
+    validator_set
+        .test_seed_authoritative_min_stake(minimum)
+        .unwrap();
     validator_set
         .register_validator(VALIDATOR_OWNER, validator, &public_key)
+        .unwrap();
+    validator_set
+        .test_seed_authoritative_bonded(validator, minimum)
         .unwrap();
     validator_set
         .activate_validator_via_boundary_for_test(validator)

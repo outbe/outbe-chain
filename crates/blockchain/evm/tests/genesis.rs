@@ -376,7 +376,11 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
         vs.config_owner.write(owner).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         vs.register_validator(owner, validator, &consensus_pubkey)
+            .unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.mark_pending(validator).unwrap();
         vs.confirm_validator_ready(validator).unwrap();

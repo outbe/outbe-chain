@@ -107,7 +107,10 @@ fn participant(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
 
 /// A PENDING validator that waits for its readiness confirmation.
 fn waiting_for_readiness(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum)?;
     register(vs, validator)?;
+    vs.test_seed_authoritative_bonded(validator, minimum)?;
     vs.mark_pending(validator)
 }
 

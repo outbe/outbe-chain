@@ -130,6 +130,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
     seed_storage(&mut db, 100, SUBMITTER, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.test_configure_registry(Address::ZERO).unwrap();
+        vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(1);
         vs.test_set_epoch_snapshot(epoch).unwrap();

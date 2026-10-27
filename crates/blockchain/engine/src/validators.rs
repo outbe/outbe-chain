@@ -739,7 +739,11 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
+            let minimum = alloy_primitives::U256::from(1_000u64);
+            vs.test_seed_authoritative_min_stake(minimum).unwrap();
             vs.register_validator(OWNER, validator, &valid_consensus_pubkey(11))
+                .unwrap();
+            vs.test_seed_authoritative_bonded(validator, minimum)
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
                 .unwrap();
@@ -764,9 +768,13 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
+            let minimum = alloy_primitives::U256::from(1_000u64);
+            vs.test_seed_authoritative_min_stake(minimum).unwrap();
             for (index, &validator) in validators.iter().enumerate() {
                 let consensus_pubkey = valid_consensus_pubkey((index + 1) as u8);
                 vs.register_validator(OWNER, validator, &consensus_pubkey)
+                    .unwrap();
+                vs.test_seed_authoritative_bonded(validator, minimum)
                     .unwrap();
                 vs.activate_validator_via_boundary_for_test(validator)
                     .unwrap();
@@ -799,7 +807,11 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
+            let minimum = alloy_primitives::U256::from(1_000u64);
+            vs.test_seed_authoritative_min_stake(minimum).unwrap();
             vs.register_validator(OWNER, validator, &valid_consensus_pubkey(0x31))
+                .unwrap();
+            vs.test_seed_authoritative_bonded(validator, minimum)
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
                 .unwrap();
@@ -1096,10 +1108,14 @@ mod tests {
             vs.config_owner.write(OWNER).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
+            let minimum = alloy_primitives::U256::from(1_000u64);
+            vs.test_seed_authoritative_min_stake(minimum).unwrap();
             vs.register_validator(OWNER, active, &valid_consensus_pubkey(1))
                 .unwrap();
             vs.register_validator(OWNER, exiting, &valid_consensus_pubkey(2))
                 .unwrap();
+            vs.test_seed_authoritative_bonded(active, minimum).unwrap();
+            vs.test_seed_authoritative_bonded(exiting, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(active).unwrap();
             vs.activate_validator_via_boundary_for_test(exiting)
                 .unwrap();

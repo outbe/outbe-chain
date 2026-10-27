@@ -1023,8 +1023,15 @@ mod copied_genesis_validator_history {
         let public_key: [u8; 48] = encoded.as_ref().try_into().unwrap();
         StorageHandle::enter(provider, |storage| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let minimum = U256::from(1_000u64);
+            validators
+                .test_seed_authoritative_min_stake(minimum)
+                .unwrap();
             validators
                 .register_validator(OWNER, address, &public_key)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(address, minimum)
                 .unwrap();
             validators
                 .activate_validator_via_boundary_for_test(address)
@@ -1209,7 +1216,12 @@ mod copied_native_dkg_prerequisites {
         let bytes: [u8; 48] = encoded.as_ref().try_into().unwrap();
         StorageHandle::enter(provider, |storage| {
             let mut contract = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let minimum = U256::from(1_000u64);
+            contract.test_seed_authoritative_min_stake(minimum).unwrap();
             contract.register_validator(OWNER, address, &bytes).unwrap();
+            contract
+                .test_seed_authoritative_bonded(address, minimum)
+                .unwrap();
             contract
                 .activate_validator_via_boundary_for_test(address)
                 .unwrap();

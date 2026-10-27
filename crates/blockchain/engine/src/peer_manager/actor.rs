@@ -191,14 +191,13 @@ where
     async fn try_refresh_from_block(&mut self, block: ConsensusBlock) -> eyre::Result<()> {
         ensure_provider_ready(&self.node.provider, &block)?;
         // PRIMARY = current consensus participants (ACTIVE|EXITING with share, the
-        // voting committee). SECONDARY = non-voting admitted peers (status in
-        // {REGISTERED, PENDING}, no share). SECONDARY holds:
-        // - PENDING joiners (staked, syncing toward their activating reshare).
-        // - TEE full-nodes (REGISTERED, P2P-announced, enclave-registered, NOT staked).
-        // Both are admitted so they reach head and execute offer blocks BEFORE voting.
-        // A joiner must be synced before the reshare, else its DKG output diverges. A
-        // full-node only syncs and serves. Voting needs `has_bls_share`, so a secondary
-        // peer cannot affect consensus. The tiers are disjoint by status.
+        // voting committee). SECONDARY = non-voting admitted peers (WaitingForReadiness,
+        // Joining, JailRetained, or Jail without an active consensus share). SECONDARY
+        // holds joiners and jailed validators syncing toward their next reshare or unjail.
+        // They are admitted so they reach head and execute offer blocks BEFORE voting.
+        // A joiner must be synced before the reshare, else its DKG output diverges.
+        // Voting needs `has_bls_share`, so a secondary peer cannot affect consensus.
+        // The tiers are disjoint by status.
         let consensus_set =
             read_consensus_validators_at_block(&self.node.provider, block.block_hash())
                 .wrap_err("failed to read consensus validators for peer manager")?;

@@ -43,9 +43,14 @@ pub fn register_active_submitter(
     let mut pubkey = [0u8; 48];
     pubkey[0] = 0x77;
     match bonded {
-        Some(bonded) => vs.test_register_active_validator(submitter, &pubkey, bonded),
+        Some(bonded) => {
+            vs.test_seed_authoritative_min_stake(bonded.min(U256::from(1)))?;
+            vs.test_register_active_validator(submitter, &pubkey, bonded)
+        }
         None => {
+            vs.test_seed_authoritative_min_stake(U256::from(1))?;
             vs.test_register_validator_without_pop(submitter, &pubkey)?;
+            vs.test_seed_authoritative_bonded(submitter, U256::from(1))?;
             vs.activate_validator_via_boundary_for_test(submitter)?;
             Ok(())
         }

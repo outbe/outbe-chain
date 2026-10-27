@@ -60,13 +60,15 @@ fn projection_reads_staking_amount_and_leaves_slot7_empty() {
 fn active_with_bonded(bonded: u64) -> HashMapStorageProvider {
     let mut storage = configured_storage(10);
     storage.enter(|storage| {
-        ValidatorSet::new(storage)
-            .test_register_active_validator(
-                VALIDATOR,
-                &dummy_consensus_pubkey(0xE1),
-                U256::from(bonded),
-            )
+        let mut vs = ValidatorSet::new(storage);
+        vs.test_seed_authoritative_min_stake(U256::from(bonded))
             .unwrap();
+        vs.test_register_active_validator(
+            VALIDATOR,
+            &dummy_consensus_pubkey(0xE1),
+            U256::from(bonded),
+        )
+        .unwrap();
     });
     storage
 }

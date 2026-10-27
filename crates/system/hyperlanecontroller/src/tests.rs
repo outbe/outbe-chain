@@ -516,7 +516,10 @@ fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) -> Result<(), P
     }
     let mut pubkey = [0u8; 48];
     pubkey[0] = seed;
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum)?;
     vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)?;
+    vs.test_seed_authoritative_bonded(addr, minimum)?;
     vs.activate_validator_via_boundary_for_test(addr)?;
     Ok(())
 }

@@ -20,7 +20,7 @@ pub enum ValidatorCmd {
         /// Show only active validators
         #[arg(long)]
         active_only: bool,
-        /// Filter by status: active, inactive, exiting, unbonding
+        /// Filter by status: pending, active, exiting, unbonding, inactive, jailed
         #[arg(long)]
         status: Option<String>,
         /// Sort by: stake, address, status (default: index)

@@ -163,8 +163,10 @@ impl ValidatorSet<'_> {
         })
     }
 
-    /// Registers a validator with BLS proof-of-possession verification using
-    /// the current authoritative bonded stake and the configured minimum stake.
+    /// Registers a validator with BLS proof-of-possession verification in
+    /// unit tests (without requiring pre-existing Staking bond on an Absent
+    /// record).
+    #[cfg(test)]
     pub fn register_validator_with_sig(
         &mut self,
         caller: Address,
@@ -174,7 +176,6 @@ impl ValidatorSet<'_> {
         bls_signature: Option<&[u8; 96]>,
     ) -> Result<()> {
         let bonded = self.read_authoritative_bonded(&validator_addr)?;
-        let minimum = self.read_authoritative_min_stake()?;
         self.register_validator_inner(&RegistrationRequest {
             caller,
             validator: validator_addr,
@@ -183,7 +184,7 @@ impl ValidatorSet<'_> {
             bls_signature,
             p2p: P2pInfo::Unset,
             bonded,
-            minimum,
+            minimum: U256::ZERO,
             allow_bootstrap_without_pop: false,
         })
     }
@@ -355,7 +356,7 @@ impl ValidatorSet<'_> {
             .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?
             .last_deactivated_at_height();
         let epoch_start = self.epoch_start_block.read()?;
-        if epoch_start > 0 && deactivated_at.is_some_and(|height| height > epoch_start) {
+        if deactivated_at.is_some_and(|height| height > epoch_start) {
             return Err(ValidatorSetError::ReregistrationCooldownNotExpired.into());
         }
         let cooldown = self.config_reregistration_cooldown.read()?;
