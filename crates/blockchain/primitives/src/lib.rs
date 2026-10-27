@@ -40,6 +40,7 @@ pub mod radicle_genesis;
 pub mod radicle_publication;
 pub mod reshare_artifact;
 pub mod runtime_audit_v1;
+pub mod series_id;
 pub mod settlement;
 pub mod signer;
 pub mod slashing_journal;

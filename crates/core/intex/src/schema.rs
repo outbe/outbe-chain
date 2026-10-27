@@ -1,14 +1,11 @@
 //! Storage schema for the Intex runtime module: the canonical per-series
 //! identity + lifecycle ledger. One record per `seriesId`.
 
-use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::call_breach::group_key;
-use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
-use std::fmt;
 
 use crate::errors::IntexError;
 
@@ -62,120 +59,7 @@ impl CallStamp {
     }
 }
 
-/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SeriesId([u8; SERIES_ID_LEN]);
-
-pub const SERIES_ID_LEN: usize = 14;
-
-const DAY_DIGITS: usize = 8;
-const ISSUANCE_AT: usize = 9;
-const REFERENCE_AT: usize = 13;
-
-impl SeriesId {
-    /// Rejects a day outside eight digits and code bytes outside `A-Z` / `0-9`.
-    pub fn pack(
-        worldwide_day: WorldwideDay,
-        issuance: [u8; 3],
-        reference: u8,
-    ) -> Result<Self, IntexError> {
-        let mut day = worldwide_day.value();
-        if day == 0 || day > 99_999_999 {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        if !issuance.iter().all(|byte| is_code_byte(*byte)) || !is_code_byte(reference) {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        let mut bytes = [b'-'; SERIES_ID_LEN];
-        for slot in bytes[..DAY_DIGITS].iter_mut().rev() {
-            *slot = b'0' + (day % 10) as u8;
-            day /= 10;
-        }
-        bytes[ISSUANCE_AT..ISSUANCE_AT + 3].copy_from_slice(&issuance);
-        bytes[REFERENCE_AT] = reference;
-        Ok(Self(bytes))
-    }
-
-    pub const fn from_bytes(bytes: [u8; SERIES_ID_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(&self) -> &[u8; SERIES_ID_LEN] {
-        &self.0
-    }
-
-    pub fn worldwide_day(&self) -> WorldwideDay {
-        WorldwideDay::new(self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
-            acc * 10 + u32::from(byte.wrapping_sub(b'0'))
-        }))
-    }
-
-    /// How a currency is spelled inside an id: its ISO 4217 alpha-3 code.
-    pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        iso_4217_alpha(iso).ok_or(IntexError::InvalidSeriesId)
-    }
-
-    /// The id of the series a day issues for one `(issuance, reference)` pair.
-    pub fn for_pair(
-        worldwide_day: WorldwideDay,
-        issuance: u16,
-        reference: u16,
-    ) -> Result<Self, IntexError> {
-        Self::pack(
-            worldwide_day,
-            Self::currency_code(issuance)?,
-            Self::currency_code(reference)?[0],
-        )
-    }
-}
-
-const fn is_code_byte(byte: u8) -> bool {
-    byte.is_ascii_uppercase() || byte.is_ascii_digit()
-}
-
-impl fmt::Display for SeriesId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&String::from_utf8_lossy(&self.0))
-    }
-}
-
-impl StorableType for SeriesId {
-    const SLOTS: usize = 1;
-}
-
-/// Left-aligned in the word, matching the Solidity `bytes14` layout.
-impl Storable for SeriesId {
-    fn from_word(word: U256) -> Self {
-        let mut bytes = [0u8; SERIES_ID_LEN];
-        bytes.copy_from_slice(&word.to_be_bytes::<32>()[..SERIES_ID_LEN]);
-        Self(bytes)
-    }
-
-    fn to_word(&self) -> U256 {
-        let mut word = [0u8; 32];
-        word[..SERIES_ID_LEN].copy_from_slice(&self.0);
-        U256::from_be_bytes(word)
-    }
-}
-
-impl StorageKey for SeriesId {
-    fn key_bytes(&self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-}
-
-impl From<SeriesId> for FixedBytes<SERIES_ID_LEN> {
-    fn from(id: SeriesId) -> Self {
-        Self(id.0)
-    }
-}
-
-impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
-    fn from(value: FixedBytes<SERIES_ID_LEN>) -> Self {
-        Self(value.0)
-    }
-}
+pub use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
 
 /// Identity parameters captured once at series creation.
 ///

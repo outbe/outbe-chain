@@ -12,7 +12,6 @@ use crate::config;
 use crate::precompile::{dispatch, IIntex};
 use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState, SeriesId};
 use crate::IntexContract;
-use outbe_primitives::storage::types::{Storable, StorageKey};
 
 mod group_index;
 mod layout;
@@ -32,8 +31,6 @@ const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 const ENTRY_PRICE_MINOR: u64 = 2_000_000;
 
 const CALL_PRICE_MINOR: u64 = 900_000;
-
-const DAY: WorldwideDay = WorldwideDay::new(20_260_212);
 
 fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
