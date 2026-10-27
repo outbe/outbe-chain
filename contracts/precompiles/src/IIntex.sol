@@ -110,9 +110,7 @@ interface IIntex {
     function symbol() external view returns (string memory);
 
     /// @notice Emitted when a settlement mints Settled units and when mining burns them.
-    event TransferSingle(
-        address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value
-    );
+    event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
 
     /// @notice The call group was force-called. Each of its series settles until
     ///         `settlementDeadline`, inclusive.
