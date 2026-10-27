@@ -10,10 +10,10 @@ The node reports its phase in `outbe_consensusStatus.mode`:
 
 | `mode` | Meaning |
 |---|---|
-| `follower` | Certified follower (`--upstream` without `--validator`). The RPC also reports it before the consensus thread starts. |
-| `upstreamBootstrap` | Validator that syncs certified blocks from `--upstream` until it is bootstrap-ready. |
-| `verifier` | Validator stack with a verifier scheme. The node has no threshold share. |
-| `signer` | Validator stack with a signer scheme. The node signs. |
+| `follower` | Certified follower (`--upstream` without `--validator`). |
+| `upstreamBootstrap` | Validator (`--validator --upstream`) that syncs certified blocks from `--upstream` until it is bootstrap-ready. |
+| `verifier` | Validator stack running with a verifier scheme (either because the node has no threshold share for the epoch or because the Radicle approval gate withholds signing), or a `--validator` node before Simplex starts. |
+| `signer` | Validator stack running with an active signer scheme (`radicle_signer == true`). |
 
 `isValidator` is `true` for `upstreamBootstrap`, `verifier` and `signer`.
 The `phase1VerificationMode` field no longer exists.

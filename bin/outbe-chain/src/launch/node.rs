@@ -114,6 +114,11 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tee::prepare(builder.config(), &args, node_data_dir.clone(), &initial_tee_policy).await?;
 
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
+        bridge.set_operating_mode(if args.is_validator {
+            outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+        } else {
+            outbe_primitives::consensus::ConsensusOperatingMode::Follower
+        });
         let proof_chain_id = builder.config().chain.chain().id();
         let genesis_hash = builder.config().chain.genesis_hash();
         let outbe_node = build_outbe_node(

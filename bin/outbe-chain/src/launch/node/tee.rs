@@ -266,11 +266,30 @@ async fn initial_tee_lease_gate_v1(
         } else {
             (false, None)
         };
+    let local_is_genesis_founder = if durable.is_none() && local_finalized_height == 0 {
+        let signing_key_path = args
+            .signing_key
+            .as_ref()
+            .ok_or(outbe_engine::errors::StackEpochError::SigningKeyRequired)?;
+        let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
+        let local_consensus_key =
+            outbe_engine::validators::load_signing_public_key(signing_key_path, &key_backend)
+                .wrap_err("failed to load consensus signing public key for TEE lease guard")?;
+        let genesis_validators =
+            outbe_engine::validators::read_consensus_validators_at_block(&node.provider, chain.1)
+                .wrap_err("failed to read genesis consensus validator set for TEE lease guard")?;
+        genesis_validators
+            .public_keys
+            .contains(&local_consensus_key)
+    } else {
+        false
+    };
     let upstream = args.upstream.as_deref();
     if let Some(gate) = local_validator_tee_gate_v1(
         durable,
         local_finalized_height,
         local_ready_with_offer,
+        local_is_genesis_founder,
         upstream.is_some(),
     ) {
         if gate == TeeLeaseGuardGateV1::AwaitingAnchor {
@@ -319,6 +338,50 @@ pub(super) struct TeeRuntimeWorkers {
     pub(super) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
+fn verify_initial_local_tee_admission_v1(
+    (node, args): (&OutbeFullNode, &ConsensusArgs),
+    chain: outbe_node::tee_remote_session::RegistryChainIdentity,
+    local_tee_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    anchors: &mut crate::launch::admission::TeeLeaseGuardAnchorsV1,
+    node_data_dir: &Path,
+) -> eyre::Result<()> {
+    let validator_has_recovery_anchor =
+        args.is_validator && anchors.gate.pending_anchor().is_some();
+    if let Some(admission) = read_gated_finalized_local_tee_admission(
+        &node.provider,
+        chain,
+        local_tee_identity,
+        anchors,
+    )? {
+        let rejection = if validator_has_recovery_anchor {
+            validator_recovery_startup_admission_rejection(admission)
+        } else {
+            tee_lease_admission_rejection(admission)
+        };
+        if let Some(reason) = rejection {
+            return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
+        }
+        if args.is_validator && args.upstream.is_none() && !anchors.gate.is_armed() {
+            if let Some(reason) = crate::launch::admission::read_finalized_local_tee_admission(
+                &node.provider,
+                chain.chain_id,
+                chain.genesis_hash,
+                local_tee_identity,
+            )?
+            .and_then(validator_recovery_startup_admission_rejection)
+            {
+                return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
+            }
+        }
+    }
+    require_validator_tee_recovery_complete_v1(
+        args.is_validator,
+        args.upstream.is_some(),
+        anchors.gate,
+        node_data_dir,
+    )
+}
+
 pub(super) async fn start_runtime_workers(
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
@@ -345,27 +408,11 @@ pub(super) async fn start_runtime_workers(
         tee_admission_anchor,
     )
     .await?;
-    let validator_has_recovery_anchor =
-        args.is_validator && anchors.gate.pending_anchor().is_some();
-    if let Some(admission) = read_gated_finalized_local_tee_admission(
-        &node.provider,
+    verify_initial_local_tee_admission_v1(
+        (node, args),
         chain,
         local_tee_identity,
         &mut anchors,
-    )? {
-        let rejection = if validator_has_recovery_anchor {
-            validator_recovery_startup_admission_rejection(admission)
-        } else {
-            tee_lease_admission_rejection(admission)
-        };
-        if let Some(reason) = rejection {
-            return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
-        }
-    }
-    require_validator_tee_recovery_complete_v1(
-        args.is_validator,
-        args.upstream.is_some(),
-        anchors.gate,
         node_data_dir,
     )?;
     let finalization_notify = Arc::new(tokio::sync::Notify::new());

@@ -545,6 +545,21 @@ pub fn read_tee_offer_public_at_latest(
     read_tee_offer_public_from_state(&state)
 }
 
+/// Read the on-chain tribute offer public key from the EVM state at a given block hash.
+pub fn read_tee_offer_public_at_block(
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<B256> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
+    read_tee_offer_public_from_state(&state)
+}
+
 /// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
 /// state. The current permanent genesis offer key uses epoch zero. This function
 /// decodes the field explicitly. Onboarding code does not infer it.

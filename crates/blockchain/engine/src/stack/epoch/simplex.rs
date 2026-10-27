@@ -37,6 +37,16 @@ pub(in crate::stack) fn epoch_elector_config(
     }
 }
 
+pub(in crate::stack) const fn effective_validator_operating_mode(
+    radicle_signer: bool,
+) -> outbe_primitives::consensus::ConsensusOperatingMode {
+    if radicle_signer {
+        outbe_primitives::consensus::ConsensusOperatingMode::Signer
+    } else {
+        outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+    }
+}
+
 impl<E> EpochSupervisor<E>
 where
     E: BufferPooler
@@ -223,11 +233,7 @@ where
             simplex_cfg,
         );
         self.bridge
-            .set_operating_mode(if self.state.signing_share.is_some() {
-                outbe_primitives::consensus::ConsensusOperatingMode::Signer
-            } else {
-                outbe_primitives::consensus::ConsensusOperatingMode::Verifier
-            });
+            .set_operating_mode(effective_validator_operating_mode(radicle_signer));
         let engine_handle_task = engine.start(vote, cert, res);
 
         info!(epoch = %self.state.current_epoch, "simplex engine started - blocks can now be produced");

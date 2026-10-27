@@ -450,7 +450,7 @@ pub enum StackDkgError {
 
     /// Indicates that startup cannot recover threshold material before sync starts.
     #[error(
-        "startup cannot recover threshold material before sync starts: {reason}. Clear stale DKG material (`outbe-chain dkg force-restart`) or pass --upstream <URL> so the node can sync and recover threshold material from the finalized on-chain boundary"
+        "startup cannot recover threshold material before sync starts: {reason}. If this validator is a player in the current finalized boundary, restore its dkg-keys backup (`outbe-chain dkg import-share`) or wait until rotated out at a subsequent reshare; otherwise clear stale DKG material (`outbe-chain dkg force-restart`) or pass --upstream <URL> so the node can sync and recover public threshold material from the finalized on-chain boundary"
     )]
     MissingCurrentThresholdMaterial {
         /// Failure reason.

@@ -881,17 +881,17 @@ impl<E: FollowerRuntime> LiveFollower<E> {
         // A clean marshal stop must not hide an executor error observed while its
         // mailbox drains, nor discard a queued finality reconciliation.
         let accepted_work = async move {
-            let exit = follower_shutdown
-                .finish(executor_exit, finality_observer)
+            follower_shutdown
+                .await_work(executor_exit, finality_observer)
                 .await?;
             follower_phase_cancel.send_replace(true);
             finalization_drainer.await.map_err(|error| {
                 crate::errors::FollowerStackError::ExecutorTaskFailed(format!("{error:?}"))
             })?;
-            Ok::<_, eyre::Report>(exit)
+            Ok::<_, eyre::Report>(follower_shutdown)
         };
-        let (_, exit) = futures::try_join!(follow_engine, accepted_work)?;
-        Ok(exit)
+        let (_, follower_shutdown) = futures::try_join!(follow_engine, accepted_work)?;
+        follower_shutdown.complete()
     }
 }
 #[derive(Debug, thiserror::Error)]
@@ -962,18 +962,22 @@ impl FinalityObserver {
             && persisted >= self.initial_upstream_tip
             && readiness.is_validator_bootstrap_ready(&self.observer_node, persisted)?
         {
-            self.driver_cancel.send_replace(true);
             self.observer_ingress.initiate_promotion(persisted)?;
+            self.driver_cancel.send_replace(true);
             self.bootstrap = None;
         }
         Ok(())
     }
 }
 
-async fn wait_for_bootstrap_tee_lease(bootstrap: Option<&mut ValidatorBootstrap>) {
+pub(in crate::stack) async fn wait_for_bootstrap_tee_lease(
+    bootstrap: Option<&mut ValidatorBootstrap>,
+) {
     match bootstrap {
         Some(readiness) => {
-            let _ = readiness.tee_lease_armed_rx.changed().await;
+            if readiness.tee_lease_armed_rx.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
         }
         None => std::future::pending::<()>().await,
     }

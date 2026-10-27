@@ -85,9 +85,10 @@ impl FollowerDrainControl {
                 return Ok(());
             }
             ingress.quiescing = true;
-            ingress
-                .reason
-                .get_or_insert(FollowerQuiesceReason::Shutdown);
+            // Host shutdown takes precedence over an in-flight promotion until
+            // the entire follower phase (executor, finality observer,
+            // finalization drainer, and Marshal) has completed.
+            ingress.reason = Some(FollowerQuiesceReason::Shutdown);
             // Dropping the sole sender closes ingress. The executor drains its
             // already accepted queue and closes its height notification stream.
             ingress.executor.take();
@@ -124,12 +125,16 @@ impl FollowerDrain {
         }))
     }
 
-    pub(crate) async fn finish(
-        self,
+    pub(crate) async fn await_work(
+        &self,
         executor: impl std::future::Future<Output = Result<()>>,
         observer: impl std::future::Future<Output = Result<()>>,
-    ) -> Result<FollowStackExit> {
+    ) -> Result<()> {
         futures::try_join!(executor, observer)?;
+        Ok(())
+    }
+
+    pub(crate) fn complete(self) -> Result<FollowStackExit> {
         let exit = {
             let mut ingress = self
                 .ingress
@@ -153,6 +158,16 @@ impl FollowerDrain {
             .send(())
             .map_err(|_| crate::errors::FollowerShutdownError::DrainOwnerDisappeared)?;
         Ok(exit)
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn finish(
+        self,
+        executor: impl std::future::Future<Output = Result<()>>,
+        observer: impl std::future::Future<Output = Result<()>>,
+    ) -> Result<FollowStackExit> {
+        self.await_work(executor, observer).await?;
+        self.complete()
     }
 }
 
@@ -203,6 +218,60 @@ mod tests {
             }
         );
         control.drain(Duration::ZERO).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_during_in_flight_promotion_overrides_promotion_exit() {
+        // Window (a): host drain arrives while executor/observer work is still in flight.
+        {
+            let (control, drain) = follower_drain_pair();
+            let (tx, mut rx) = mpsc::unbounded();
+            let reporter = drain.install(Mailbox::from_sender(tx)).unwrap().unwrap();
+            reporter.initiate_promotion(17).unwrap();
+            assert!(reporter.is_quiescing().unwrap());
+            assert!(rx.next().await.is_none());
+
+            let (exec_tx, exec_rx) = oneshot::channel();
+            let (obs_tx, obs_rx) = oneshot::channel();
+            let wait = control.drain(Duration::from_secs(1));
+            tokio::pin!(wait);
+            {
+                let work = drain.await_work(async { exec_rx.await.unwrap() }, async {
+                    obs_rx.await.unwrap()
+                });
+                tokio::pin!(work);
+                assert!(work.as_mut().now_or_never().is_none());
+                assert!(wait.as_mut().now_or_never().is_none());
+
+                exec_tx.send(Ok(())).unwrap();
+                obs_tx.send(Ok(())).unwrap();
+                work.await.unwrap();
+            }
+            assert!(wait.as_mut().now_or_never().is_none());
+
+            assert_eq!(drain.complete().unwrap(), FollowStackExit::Shutdown);
+            wait.await.unwrap();
+        }
+
+        // Window (b): host drain arrives after await_work finished, while
+        // finalization_drainer / Marshal are still closing (before complete()).
+        {
+            let (control, drain) = follower_drain_pair();
+            let (tx, _rx) = mpsc::unbounded();
+            let reporter = drain.install(Mailbox::from_sender(tx)).unwrap().unwrap();
+            reporter.initiate_promotion(23).unwrap();
+            drain
+                .await_work(async { Ok(()) }, async { Ok(()) })
+                .await
+                .unwrap();
+
+            let wait = control.drain(Duration::from_secs(1));
+            tokio::pin!(wait);
+            assert!(wait.as_mut().now_or_never().is_none());
+
+            assert_eq!(drain.complete().unwrap(), FollowStackExit::Shutdown);
+            wait.await.unwrap();
+        }
     }
 
     #[tokio::test]

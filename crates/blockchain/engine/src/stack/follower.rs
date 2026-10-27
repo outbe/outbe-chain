@@ -1,6 +1,8 @@
 mod finalization;
 pub(in crate::stack) mod local_anchor;
 mod startup;
+#[cfg(test)]
+pub(in crate::stack) use startup::wait_for_bootstrap_tee_lease;
 
 use finalization::finalization_bytes_for_height;
 

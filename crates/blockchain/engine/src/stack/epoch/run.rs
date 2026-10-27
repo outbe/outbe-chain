@@ -159,6 +159,7 @@ where
     {
         return Ok(());
     }
+    bridge.set_operating_mode(outbe_primitives::consensus::ConsensusOperatingMode::Verifier);
     let ctx = ctx.child("validator_epoch");
 
     // -- 2. Load validator set -------------------------------------------

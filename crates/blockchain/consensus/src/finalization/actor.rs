@@ -513,7 +513,7 @@ impl FinalizationActor {
 
         self.publish_consensus_status(&finalized, &consensus_data, block_number);
         self.note_finalized_dkg_artifact(&block, digest, block_number);
-        self.observe_finalized_boundary(&block, block_number);
+        self.observe_finalized_boundary(&block, block_number)?;
         if let Some(notify) = &self.finalization_notify {
             notify.notify_waiters();
         }
@@ -702,30 +702,34 @@ impl FinalizationActor {
 
     /// Record an authenticated `BoundaryOutcome` on the shared epocher.
     /// A missing artifact is normal. A malformed artifact is logged by
-    /// [`Self::note_finalized_dkg_artifact`]. An observation conflict is logged
-    /// and does not fail finalization.
-    fn observe_finalized_boundary(&self, block: &ConsensusBlock, height: u64) {
+    /// [`Self::note_finalized_dkg_artifact`]. An observation conflict fails
+    /// closed so the shared epocher never silently diverges from finalized
+    /// boundary history.
+    fn observe_finalized_boundary(
+        &self,
+        block: &ConsensusBlock,
+        height: u64,
+    ) -> std::result::Result<(), crate::errors::FinalizationError> {
         let Some(epocher) = &self.epocher else {
-            return;
+            return Ok(());
         };
         let Ok(Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))) =
             extract_header_artifact_from_block(block)
         else {
-            return;
+            return Ok(());
         };
         if boundary.epoch == 0 {
-            return;
+            return Ok(());
         }
-        if let Err(error) =
-            epocher.observe_boundary(Epoch::new(boundary.epoch), Height::new(height))
-        {
-            warn!(
-                %error,
-                height,
-                epoch = boundary.epoch,
-                "failed to observe finalized epoch boundary"
-            );
-        }
+        epocher
+            .observe_boundary(Epoch::new(boundary.epoch), Height::new(height))
+            .map_err(
+                |source| crate::errors::FinalizationError::BoundaryObservationFailed {
+                    epoch: boundary.epoch,
+                    height,
+                    source,
+                },
+            )
     }
 
     /// Record the finalized block's DKG header artifact (if present) with the

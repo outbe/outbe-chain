@@ -434,6 +434,18 @@ pub enum StackEpochError {
         reason: String,
     },
 
+    /// Indicates that recording an epoch boundary in `FollowerEpocher` failed.
+    #[error("failed to observe epoch {epoch} boundary at height {height}: {source}")]
+    EpochBoundaryObservationFailed {
+        /// Target consensus epoch.
+        epoch: Epoch,
+        /// Boundary carrier block height.
+        height: u64,
+        /// Underlying boundary observation error.
+        #[source]
+        source: outbe_consensus::follow::BoundaryObservationError,
+    },
+
     /// Indicates that a mandatory TEE chain requires the enclave socket argument.
     #[error("mandatory TEE chain requires --tee-enclave-socket before consensus startup")]
     MandatoryTeeRequiresEnclaveSocket,

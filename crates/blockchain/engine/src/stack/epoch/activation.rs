@@ -2,6 +2,24 @@
 use super::super::*;
 use super::runtime::*;
 
+pub(in crate::stack) fn observe_activated_epoch_boundary(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    next_epoch: Epoch,
+    activation_anchor: u64,
+) -> std::result::Result<u64, crate::errors::StackEpochError> {
+    let boundary_carrier_height = activation_anchor.saturating_add(1);
+    epocher
+        .observe_boundary(next_epoch, Height::new(boundary_carrier_height))
+        .map_err(
+            |source| crate::errors::StackEpochError::EpochBoundaryObservationFailed {
+                epoch: next_epoch,
+                height: boundary_carrier_height,
+                source,
+            },
+        )?;
+    Ok(boundary_carrier_height)
+}
+
 impl<E> EpochSupervisor<E>
 where
     E: BufferPooler
@@ -216,17 +234,11 @@ where
                     self.state.participants = activated_participants;
                     self.application_epoch_fence.advance_epoch(next_epoch);
                     engine.abort();
-                    if let Err(error) = self.epocher.observe_boundary(
+                    observe_activated_epoch_boundary(
+                        &self.epocher,
                         next_epoch,
-                        Height::new(epoch_boundary_height.saturating_add(1)),
-                    ) {
-                        warn!(
-                            %error,
-                            epoch = %next_epoch,
-                            boundary_height = epoch_boundary_height,
-                            "failed to observe activated epoch boundary"
-                        );
-                    }
+                        epoch_boundary_height,
+                    )?;
                     self.state.current_epoch = next_epoch;
                     self.publish_repository_material();
                     info!(
@@ -521,17 +533,7 @@ where
                     self.rotation.frozen_dkg_target = None;
                     self.application_epoch_fence.advance_epoch(next_epoch);
                     engine.abort();
-                    if let Err(error) = self.epocher.observe_boundary(
-                        next_epoch,
-                        Height::new(activation_height.saturating_add(1)),
-                    ) {
-                        warn!(
-                            %error,
-                            epoch = %next_epoch,
-                            boundary_height = activation_height,
-                            "failed to observe dealer-only activated epoch boundary"
-                        );
-                    }
+                    observe_activated_epoch_boundary(&self.epocher, next_epoch, activation_height)?;
                     self.state.current_epoch = next_epoch;
                     self.publish_repository_material();
                     // Anchor wait (mirror the verifier activation): the restarted

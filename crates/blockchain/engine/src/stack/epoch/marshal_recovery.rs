@@ -99,7 +99,7 @@ where
     let latest_boundary =
         recover_latest_boundary_artifact(&node.provider, scan_height, dkg_rotation_params)?
             .map(|(carrier_height, boundary)| (carrier_height, boundary.epoch));
-    reset_validator_marshal_epocher(&epocher, latest_boundary);
+    reset_validator_marshal_epocher(&epocher, latest_boundary)?;
 
     info!(
         marshal_processed_height = last_consensus_finalized.get(),
@@ -117,12 +117,21 @@ where
 pub(in crate::stack) fn reset_validator_marshal_epocher(
     epocher: &outbe_consensus::follow::FollowerEpocher,
     latest_boundary: Option<(u64, u64)>,
-) {
+) -> Result<()> {
     if let Some((carrier_height, epoch)) = latest_boundary {
         if epoch > 0 && carrier_height > 0 {
-            epocher.reset_from_anchor(Epoch::new(epoch), Height::new(carrier_height));
+            epocher
+                .reset_from_anchor(Epoch::new(epoch), Height::new(carrier_height))
+                .map_err(|source| {
+                    crate::errors::StackEpochError::EpochBoundaryObservationFailed {
+                        epoch: Epoch::new(epoch),
+                        height: carrier_height,
+                        source,
+                    }
+                })?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -134,6 +143,7 @@ pub(in crate::stack) fn validator_marshal_epocher(
         rotation.epoch_length_blocks,
         rotation.activation_grace_blocks,
     );
-    reset_validator_marshal_epocher(&epocher, latest_boundary);
+    reset_validator_marshal_epocher(&epocher, latest_boundary)
+        .expect("valid boundary anchor in test");
     epocher
 }
