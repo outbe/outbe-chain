@@ -201,6 +201,8 @@ impl OracleContract<'_> {
         } else {
             volume
         };
+        // As in `VwapBucket::add`: COEN/ISO markets reject an overflow.
+        // Generic markets saturate.
         let pv = if is_coen_iso_market(pair) {
             rate.checked_mul(vol)
                 .ok_or(OracleError::VwapOverflow("rate * volume"))?
