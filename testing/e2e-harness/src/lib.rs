@@ -5,7 +5,7 @@
 //! sends are native (alloy [`Provider`]/`sol!`, see `internal::eth`). One handle
 //! ([`world::localnet`], via [`internal::proc`]) launches the committee
 //! validators, joiner, followers, and their enclave containers as Rust-owned
-//! processes, with no `run-testnet.sh`/`nohup`. Bootstrap keeps only two
+//! processes, without background shell wrappers. Bootstrap keeps only two
 //! one-shot subprocess (`outbe-chain dkg bootstrap`) and in-process genesis seeding (`outbe-genesis-cli`).
 //! Governance/tribute sends still go through `outbe-cli`.
 //!

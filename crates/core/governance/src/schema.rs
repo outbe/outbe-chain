@@ -90,7 +90,7 @@ pub struct GovernanceContract {
     // record field, for keccak namespacing). Because `oips`/`gips` come last,
     // every seeded slot (texts, versions, hashes, revisions, counters) stays at
     // a fixed index, regardless of how the record types grow.
-    // `scripts/seed_genesis.py` depends on this stability. The
+    // `outbe-genesis-cli` depends on this stability. The
     // `storage_layout_matches_seeder` test pins it.
     #[attribute(order = 8)]
     pub next_oip_id: outbe_primitives::storage::dsl::Value<u64>,

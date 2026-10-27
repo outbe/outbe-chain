@@ -8,7 +8,8 @@ use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE
 
 /// Genesis policy rate of each reference currency, as `(iso_code, annual_rate_1e6)`
 /// in ascending ISO order: the overnight rate of that currency.
-/// Keep in sync with `DEFAULT_POLICY_RATES` in `scripts/genesis_seed_oracle.py`.
+/// Keep in sync with `DEFAULT_POLICY_RATES` in
+/// `bin/outbe-genesis-cli/src/seed_oracle.rs`.
 pub const DEFAULT_POLICY_RATES: [(u16, u64); 6] = [
     (156, 12_624), // CNY DR001 1.2624%, CFETS, 2026-10-19
     (344, 23_667), // HKD HONIA 2.36666%, TMA 30-day compounded, 2026-10-02

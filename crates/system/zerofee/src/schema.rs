@@ -8,7 +8,7 @@
 //! ```
 //!
 //! Slot 0 carries the schema version (currently `1`).
-//! `scripts/seed_genesis.py::seed_zerofee` writes it at genesis. The
+//! `outbe-genesis-cli` writes it at genesis. The
 //! macro-allocated `counter` Map uses slot 0 as its keccak base. But Map
 //! entries are stored at `keccak256(addr || base_slot)`, which never
 //! collides with slot 0 itself. A future layout migration would bump

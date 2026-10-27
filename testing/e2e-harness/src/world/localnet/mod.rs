@@ -9,7 +9,7 @@
 //! stateless datadir/run-tag sweep as the SIGINT backstop. The distinct
 //! lifecycles live in submodules over this one struct:
 //!
-//! - [`bootstrap`] - genesis/key generation glue (`dkg bootstrap` + `seed_genesis.py`).
+//! - [`bootstrap`] - genesis/key generation glue (`dkg bootstrap` + `outbe-genesis-cli`).
 //! - [`committee`] - the bootstrapped validator set (start/stop/restart/kill).
 //! - [`joiner`] - a validator that joins a running localnet (index = committee size).
 //! - [`follower`] - full-execution follower nodes (`--upstream`).
@@ -538,7 +538,7 @@ impl Localnet {
         (!joined.is_empty()).then_some(joined)
     }
 
-    /// Run a one-shot setup subprocess (`dkg bootstrap`, `seed_genesis.py`).
+    /// Run a one-shot setup subprocess such as `dkg bootstrap`.
     /// Quiet by default: this method captures stdout/stderr and surfaces them only
     /// when the command fails. Under `--debug` it streams live and shows the full
     /// DKG/seed progress (`balance: ... entries`, `Total storage entries: ...`, ...).
@@ -797,9 +797,8 @@ fn extend_real_sgx_process_environment(mode: crate::env::TeeMode, cmd: &mut Comm
     }
 }
 
-/// The chain's current worldwide-day key (`YYYYMMDD`), matching how
-/// `bootstrap-testnet.sh` seeds genesis: `date_key(now + UTC_PLUS_14_OFFSET)`
-/// (lib.sh:33-34).
+/// The chain's current worldwide-day key (`YYYYMMDD`), using the same helper as
+/// genesis seeding.
 pub fn worldwide_day() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)

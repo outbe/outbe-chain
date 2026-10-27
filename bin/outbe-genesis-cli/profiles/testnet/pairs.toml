@@ -1,5 +1,5 @@
-# Testnet feeder pairs and markets. `create_genesis.py` registers these
-# pairs in genesis, and `launch_bundle.py` copies this file to each
+# Testnet feeder pairs and markets. `outbe-genesis-cli` registers these
+# pairs in genesis and copies this file to each
 # validator's pairs.toml. The cross pairs use the mainnet markets
 # (crates/system/oracle/sources). COEN/840 comes from the mock_http price
 # server, because COEN has no market on testnet.

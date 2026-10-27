@@ -1,6 +1,6 @@
 # testnet.yaml - one file describing a complete Outbe network.
 #
-#   python3 scripts/create_genesis.py testnet.yaml
+#   cargo run --locked --release -p outbe-genesis-cli -- create bin/outbe-genesis-cli/profiles/testnet.yaml
 #
 # One run produces genesis.json, reth-bootnodes.txt, per-machine launch scripts
 # and DEPLOY.md.
@@ -189,7 +189,7 @@ balance:
 tributes: []
 
 # Pre-deployed external contracts. Paths resolve against
-# `contracts_dir` (default scripts/contracts).
+# `contracts_dir` (default contracts/predeploys).
 contracts:
   - address: "0x4e59b44847b379578588920cA78FbF26c0B4956C"
     code: create2_deployer.code.hex

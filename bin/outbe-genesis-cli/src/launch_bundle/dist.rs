@@ -359,7 +359,7 @@ and saves the ready encrypted Nod records. No separate entity datasource is conf
 \n\
 - `reth-bootnodes.txt` pins each machine's reth identity:\n\
 {bootnode_lines}\n\
-- Re-running `create_genesis.py` without the pinned `timestamp:` produces a\n\
+- Re-running `outbe-genesis-cli` without the pinned `timestamp:` produces a\n\
   different genesis hash. Keep the\n\
   timestamp that is now in your yaml.\n"
     ))

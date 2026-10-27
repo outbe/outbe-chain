@@ -1,10 +1,10 @@
 # network.yaml - describes an Outbe network; produces its genesis.
 #
-#   python3 scripts/create_genesis.py network.yaml
+#   cargo run --locked --release -p outbe-genesis-cli -- create network.yaml
 #
 # The uncommented block below is the whole required input. Every commented
 # key shows its default value; uncomment to change it. Section defaults come
-# from scripts/seed-testnet.json, the single baseline profile.
+# from profiles/testnet.yaml, the single baseline profile.
 
 chain_id: 424242
 
