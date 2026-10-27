@@ -842,6 +842,10 @@ fn active_validator_has_staggered_claims(world: &mut World) {
     let validator = world.validators.get(3);
     let key = validator.evm_key().expect("staggered validator key");
     let address = world.rpc.address_of(&key).expect("staggered address");
+    world
+        .rpc
+        .topup(&key, 200)
+        .expect("top up before partial unstakes");
     let first = world.rpc.unstake(&key, 100).expect("first partial unstake");
     assert!(first.success);
     let first_end = world

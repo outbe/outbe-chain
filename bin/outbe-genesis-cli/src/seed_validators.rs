@@ -217,13 +217,16 @@ pub fn seed_founders(
     let staking_cfg = seed.get("staking").unwrap_or(&Value::Null);
     let min_stake = staking_cfg
         .get("min_stake")
+        .or_else(|| seed.get("min_stake"))
         .map(parse_u256)
         .transpose()?
+        .filter(|value| !value.is_zero())
         .unwrap_or_else(|| U256::from(MIN_STAKE));
     let validator_stake = staking_cfg
         .get("genesis_validator_stake")
         .map(parse_u256)
         .transpose()?
+        .filter(|value| !value.is_zero())
         .unwrap_or(min_stake);
     if validator_stake < min_stake {
         return Err(GenesisError::validation(

@@ -33,6 +33,20 @@ impl Staking<'_> {
             .emit_event(STAKING_ADDRESS, event.encode_log_data())
     }
 
+    /// Returns the effective minimum stake required for an active validator.
+    ///
+    /// When `config_min_stake` (slot 0) is zero (unset in genesis), falls back
+    /// to [`crate::contract::DEFAULT_MIN_STAKE`] (`10_000_000` COEN in base
+    /// units `unit`).
+    pub fn min_stake(&self) -> Result<U256> {
+        let configured = self.config_min_stake.read()?;
+        if configured.is_zero() {
+            Ok(crate::contract::DEFAULT_MIN_STAKE)
+        } else {
+            Ok(configured)
+        }
+    }
+
     /// Atomically registers `validator` (or re-registers an `INACTIVE`
     /// validator) and bonds `amount >= min_stake`, transitioning directly to
     /// `WaitingForReadiness` (`PENDING`).
@@ -50,7 +64,7 @@ impl Staking<'_> {
         if caller != validator {
             return Err(StakingError::ThirdPartyStakingNotSupported.into());
         }
-        let min_stake = self.config_min_stake.read()?;
+        let min_stake = self.min_stake()?;
         if amount < min_stake {
             return Err(ValidatorSetError::BondedStakeBelowMinimum {
                 bonded: amount,
@@ -95,7 +109,7 @@ impl Staking<'_> {
         }
 
         let (new_stake, new_total) = self.checked_stake_credit(validator, amount)?;
-        let min_stake = self.config_min_stake.read()?;
+        let min_stake = self.min_stake()?;
 
         let guard = self.storage.checkpoint_guard();
         let mut val_set = ValidatorSet::new(self.storage.clone());
@@ -201,7 +215,7 @@ impl Staking<'_> {
         let timestamp = self.storage.now_secs()?;
         let unbonding_period = self.config_unbonding_period.read()?;
         let complete_time = self.checked_complete_time(timestamp, unbonding_period)?;
-        let min_stake = self.config_min_stake.read()?;
+        let min_stake = self.min_stake()?;
         let new_stake = current
             .checked_sub(amount)
             .ok_or(StakingError::StakeAccountingUnderflow { validator: caller })?;
@@ -263,7 +277,7 @@ impl Staking<'_> {
             return Err(StakingError::UnjailRequiresLiveEnclaveBinding.into());
         }
         let stake = self.stake_amount.read(&caller)?;
-        let min_stake = self.config_min_stake.read()?;
+        let min_stake = self.min_stake()?;
         if stake < min_stake {
             return Err(StakingError::UnjailInsufficientStake {
                 have: stake,
@@ -405,7 +419,7 @@ impl Staking<'_> {
         // accounting succeeds. Preserve the existing unbonding-end hint.
         // Individual Staking claim timestamps remain authoritative.
         let remaining_stake = self.stake_amount.read(&validator)?;
-        let min_stake = self.config_min_stake.read()?;
+        let min_stake = self.min_stake()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_slash(validator, remaining_stake, min_stake, None)?;
 

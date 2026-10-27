@@ -163,6 +163,16 @@ pub fn build_seed(config: &Value) -> Result<Value, GenesisError> {
             seed_map.insert(section.to_owned(), merged);
         }
     }
+    if let Some(top_min_stake) = config.get("min_stake") {
+        let staking_entry = seed_map
+            .entry("staking".to_owned())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if let Some(staking_obj) = staking_entry.as_object_mut() {
+            if config.pointer("/staking/min_stake").is_none() {
+                staking_obj.insert("min_stake".to_owned(), top_min_stake.clone());
+            }
+        }
+    }
     let mut seed = Value::Object(seed_map);
     add_feeder_pairs(&mut seed, config)?;
     Ok(seed)

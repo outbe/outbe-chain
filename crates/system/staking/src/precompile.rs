@@ -87,9 +87,7 @@ pub fn dispatch(
             getTotalStaked(_) => {
                 metadata::<IStaking::getTotalStakedCall>(|| staking.get_total_staked())
             }
-            getMinStake(_) => {
-                metadata::<IStaking::getMinStakeCall>(|| staking.config_min_stake.read())
-            }
+            getMinStake(_) => metadata::<IStaking::getMinStakeCall>(|| staking.min_stake()),
             getUnbondingPeriod(_) => metadata::<IStaking::getUnbondingPeriodCall>(|| {
                 staking.config_unbonding_period.read()
             }),

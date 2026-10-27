@@ -10,6 +10,19 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// an automatic retirement in `process_unbonding`.
 pub const MAX_UNBONDING_ENTRIES_PER_VALIDATOR: u32 = 64;
 
+/// Default minimum stake required to be an active validator when
+/// `config_min_stake` (slot 0) is zero in genesis:
+/// `10_000_000` COEN (`10_000_000 * 10^18` base units `unit`).
+pub const DEFAULT_MIN_STAKE_UNITS: u128 = 10_000_000 * 1_000_000_000_000_000_000;
+
+/// Default minimum stake as a [`U256`] in COEN base units (`unit`).
+pub const DEFAULT_MIN_STAKE: U256 = U256::from_limbs([
+    DEFAULT_MIN_STAKE_UNITS as u64,
+    (DEFAULT_MIN_STAKE_UNITS >> 64) as u64,
+    0,
+    0,
+]);
+
 /// EVM storage layout for the Staking contract.
 ///
 /// Tracks validator stake amounts, total staked, and the unbonding queue.
