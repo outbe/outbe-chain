@@ -96,13 +96,10 @@ where
         last_consensus_finalized.get(),
         args.trust_el_head,
     )?;
-    if let Some((carrier_height, boundary)) =
+    let latest_boundary =
         recover_latest_boundary_artifact(&node.provider, scan_height, dkg_rotation_params)?
-    {
-        if boundary.epoch > 0 {
-            epocher.reset_from_anchor(Epoch::new(boundary.epoch), Height::new(carrier_height));
-        }
-    }
+            .map(|(carrier_height, boundary)| (carrier_height, boundary.epoch));
+    reset_validator_marshal_epocher(&epocher, latest_boundary);
 
     info!(
         marshal_processed_height = last_consensus_finalized.get(),
@@ -115,4 +112,28 @@ where
         processed_height: last_consensus_finalized,
         epocher,
     })
+}
+
+pub(in crate::stack) fn reset_validator_marshal_epocher(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    latest_boundary: Option<(u64, u64)>,
+) {
+    if let Some((carrier_height, epoch)) = latest_boundary {
+        if epoch > 0 && carrier_height > 0 {
+            epocher.reset_from_anchor(Epoch::new(epoch), Height::new(carrier_height));
+        }
+    }
+}
+
+#[cfg(test)]
+pub(in crate::stack) fn validator_marshal_epocher(
+    latest_boundary: Option<(u64, u64)>,
+    rotation: DkgRotationParams,
+) -> outbe_consensus::follow::FollowerEpocher {
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(
+        rotation.epoch_length_blocks,
+        rotation.activation_grace_blocks,
+    );
+    reset_validator_marshal_epocher(&epocher, latest_boundary);
+    epocher
 }

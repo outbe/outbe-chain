@@ -15,23 +15,30 @@ pub(crate) struct LocalTeeAdmissionAnchorV1 {
     pub(crate) finalized_hash: alloy_primitives::B256,
 }
 
+/// Local TEE lease guard state. `is_armed()` is true only after an admission
+/// anchor validated against the local canonical chain, or for a genesis
+/// founder at height zero. A non-founding validator can never satisfy
+/// `ValidatorBootstrapReady` before that validation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TeeLeaseGuardGateV1 {
+    /// Node is waiting for an admission anchor to be established/loaded.
     AwaitingAnchor,
+    /// Node has a target admission anchor and must validate it at `local_finalized_height >= anchor.finalized_height`.
     Pending(LocalTeeAdmissionAnchorV1),
+    /// Anchor has been validated against the local canonical Reth DB (or node is a genesis founder at H == 0).
     Armed,
 }
 
 impl TeeLeaseGuardGateV1 {
-    pub(crate) const fn new(pending_anchor: Option<LocalTeeAdmissionAnchorV1>) -> Self {
-        match pending_anchor {
-            Some(anchor) => Self::Pending(anchor),
-            None => Self::AwaitingAnchor,
-        }
-    }
-
     pub(crate) const fn is_armed(self) -> bool {
         matches!(self, Self::Armed)
+    }
+
+    pub(crate) const fn pending_anchor(self) -> Option<LocalTeeAdmissionAnchorV1> {
+        match self {
+            Self::Pending(anchor) => Some(anchor),
+            Self::AwaitingAnchor | Self::Armed => None,
+        }
     }
 
     pub(crate) const fn anchor_to_validate(
@@ -80,26 +87,119 @@ impl TeeLeaseGuardGateV1 {
     }
 }
 
+/// A validator without `--upstream` must not start while its gate is not
+/// armed. With `--upstream`, the engine runs `UpstreamBootstrap` until the
+/// gate arms.
 pub(crate) fn require_validator_tee_recovery_complete_v1(
     is_validator: bool,
+    has_upstream: bool,
     gate: TeeLeaseGuardGateV1,
     node_data_dir: &Path,
 ) -> eyre::Result<()> {
-    if !is_validator || gate.is_armed() {
+    if !is_validator || has_upstream || gate.is_armed() {
         return Ok(());
     }
-
-    let TeeLeaseGuardGateV1::Pending(anchor) = gate else {
-        return Err(
-            outbe_engine::errors::StackEpochError::ValidatorBootstrapRequiresUpstream.into(),
-        );
-    };
+    let (height, hash) = gate
+        .pending_anchor()
+        .map_or((0, alloy_primitives::B256::ZERO), |anchor| {
+            (anchor.finalized_height, anchor.finalized_hash)
+        });
     Err(LaunchError::ValidatorRecoveryCatchUpRequired {
-        height: anchor.finalized_height,
-        hash: anchor.finalized_hash,
+        height,
+        hash,
         datadir: node_data_dir.display().to_string(),
     }
     .into())
+}
+
+/// TEE admission anchors verified before the lease guard starts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TeeLeaseGuardAnchorsV1 {
+    pub(crate) gate: TeeLeaseGuardGateV1,
+    /// Durable join anchor that the guard also checks against the local
+    /// canonical chain when it arms a different (upstream) target anchor.
+    pub(crate) durable: Option<LocalTeeAdmissionAnchorV1>,
+}
+
+/// Fail-closed dual anchor decision for `--validator --upstream`.
+///
+/// The durable join anchor must not be above the upstream anchor, and the
+/// upstream canonical hash at the durable height must equal the durable hash.
+/// The target anchor is the higher of the two.
+pub(crate) fn select_validator_upstream_anchor_v1(
+    durable: Option<LocalTeeAdmissionAnchorV1>,
+    upstream: LocalTeeAdmissionAnchorV1,
+    upstream_hash_at_durable: Option<alloy_primitives::B256>,
+) -> eyre::Result<TeeLeaseGuardAnchorsV1> {
+    let Some(durable) = durable else {
+        return Ok(TeeLeaseGuardAnchorsV1 {
+            gate: TeeLeaseGuardGateV1::Pending(upstream),
+            durable: None,
+        });
+    };
+    if durable.finalized_height > upstream.finalized_height {
+        return Err(LaunchError::TeeJoinAnchorAboveUpstreamAnchor {
+            durable: durable.finalized_height,
+            upstream: upstream.finalized_height,
+        }
+        .into());
+    }
+    let observed = upstream_hash_at_durable.ok_or(LaunchError::TeeAdmissionAnchorHashMismatch {
+        height: durable.finalized_height,
+        expected: durable.finalized_hash,
+        local: alloy_primitives::B256::ZERO,
+    })?;
+    if observed != durable.finalized_hash {
+        return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+            height: durable.finalized_height,
+            expected: durable.finalized_hash,
+            local: observed,
+        }
+        .into());
+    }
+    let target = if durable.finalized_height == upstream.finalized_height {
+        durable
+    } else {
+        upstream
+    };
+    Ok(TeeLeaseGuardAnchorsV1 {
+        gate: TeeLeaseGuardGateV1::Pending(target),
+        durable: (target != durable).then_some(durable),
+    })
+}
+
+/// Initial validator gate from local facts only (no upstream).
+///
+/// - A durable join anchor at or below the local finalized height is pending
+///   and validates at once.
+/// - Without a durable anchor at height `H >= 1`, a `Ready` local admission at
+///   the latest finalized block and a resident offer key equal to the
+///   on-chain key start the gate armed. This covers founding validators and
+///   nodes without an expected enclave identity.
+/// - A genesis founder at height zero starts armed. The engine still requires
+///   genesis `ValidatorSet` membership at that height.
+///
+/// `None` means that local facts cannot arm the gate. The caller then needs
+/// the upstream path.
+pub(crate) fn local_validator_tee_gate_v1(
+    durable: Option<LocalTeeAdmissionAnchorV1>,
+    local_finalized_height: u64,
+    local_ready_with_offer: bool,
+    has_upstream: bool,
+) -> Option<TeeLeaseGuardGateV1> {
+    match durable {
+        Some(anchor) if local_finalized_height >= anchor.finalized_height => {
+            Some(TeeLeaseGuardGateV1::Pending(anchor))
+        }
+        Some(anchor) if !has_upstream => Some(TeeLeaseGuardGateV1::Pending(anchor)),
+        Some(_) => None,
+        None if local_finalized_height >= 1 && local_ready_with_offer => {
+            Some(TeeLeaseGuardGateV1::Armed)
+        }
+        None if local_finalized_height == 0 && !has_upstream => Some(TeeLeaseGuardGateV1::Armed),
+        None if has_upstream => None,
+        None => Some(TeeLeaseGuardGateV1::AwaitingAnchor),
+    }
 }
 
 pub(crate) fn validator_admission_anchor_from_durable_v1(
@@ -177,7 +277,6 @@ pub(crate) fn tee_lease_admission_rejection(
     }
 }
 
-#[cfg(test)]
 pub(crate) fn validator_recovery_startup_admission_rejection(
     admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
 ) -> Option<String> {
@@ -302,122 +401,82 @@ where
         })
 }
 
-fn authenticate_pending_gate_anchor<P>(
-    provider: &P,
-    chain: RegistryChainIdentity,
-    fullnode_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    gate: TeeLeaseGuardGateV1,
-    finalized_number: u64,
-) -> eyre::Result<bool>
-where
-    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
-{
-    let Some(anchor) = gate.anchor_to_validate(finalized_number) else {
-        return Ok(!matches!(gate, TeeLeaseGuardGateV1::Pending(_)));
-    };
-    let (mut hash, mut admission) = read_local_tee_admission_at_height(
-        provider,
-        chain.chain_id,
-        chain.genesis_hash,
-        fullnode_identity,
-        anchor.finalized_height,
-    )?;
-    if hash != anchor.finalized_hash {
-        (hash, admission) = read_local_tee_admission_at_height(
-            provider,
-            chain.chain_id,
-            chain.genesis_hash,
-            fullnode_identity,
-            anchor.finalized_height,
-        )?;
-    }
-    // Authenticate the checkpoint without granting validator authority yet.
-    let mut authenticated = TeeLeaseGuardGateV1::Pending(anchor);
-    authenticated.validate_and_arm(hash, admission)?;
-    Ok(true)
-}
-
-fn resident_offer_matches_finalized_state<P>(
-    provider: &P,
-    finalized_hash: alloy_primitives::B256,
-    has_validator_identity: bool,
-) -> eyre::Result<bool>
-where
-    P: StateProviderFactory,
-{
-    if !has_validator_identity {
-        return Ok(true);
-    }
-    let state = provider.state_by_block_hash(finalized_hash)?;
-    let on_chain_offer = outbe_engine::validators::read_tee_offer_public_from_state(&state)?;
-    if on_chain_offer.is_zero() {
-        return Ok(false);
-    }
-    if outbe_tee::resident_offer_public_key_state_v1()? != Some(on_chain_offer) {
-        return Err(LaunchError::LocalEnclaveOfferKeyMismatch.into());
-    }
-    Ok(true)
-}
-
 pub(crate) fn read_gated_finalized_local_tee_admission<P>(
     provider: &P,
-    chain_id: u64,
-    genesis_hash: alloy_primitives::B256,
+    chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    gate: &mut TeeLeaseGuardGateV1,
+    anchors: &mut TeeLeaseGuardAnchorsV1,
 ) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let RegistryChainIdentity {
+        chain_id,
+        genesis_hash,
+    } = chain;
+    let durable = anchors.durable;
+    let gate = &mut anchors.gate;
     let Some(finalized) = provider
         .finalized_block_num_hash()
         .wrap_err("read finalized head for gated TEE lease admission")?
-        .filter(|finalized| finalized.number != 0)
     else {
         return Ok(None);
     };
-    if gate.is_armed() {
-        return read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity);
-    }
-    // Replay checks the NodeHost lease before validator stake/binding exists.
-    let fullnode_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
-        validator: None,
-        ..identity
-    };
-    if !authenticate_pending_gate_anchor(
-        provider,
-        RegistryChainIdentity {
-            chain_id,
-            genesis_hash,
-        },
-        fullnode_identity,
-        *gate,
-        finalized.number,
-    )? {
+    if finalized.number == 0 {
         return Ok(None);
     }
-    let fullnode =
-        read_finalized_local_tee_admission(provider, chain_id, genesis_hash, fullnode_identity)?;
-    let validator = read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)?;
-    if matches!(
-        (&fullnode, &validator),
-        (
-            Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. }),
-            Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. }),
-        )
-    ) && resident_offer_matches_finalized_state(
+    let Some(anchor) = gate.anchor_to_validate(finalized.number) else {
+        return if gate.is_armed() {
+            read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+        } else {
+            Ok(None)
+        };
+    };
+
+    let (mut anchor_hash, mut anchor_admission) = read_local_tee_admission_at_height(
         provider,
-        finalized.hash,
-        identity.validator.is_some(),
-    )? {
-        *gate = TeeLeaseGuardGateV1::Armed;
-        info!(
-            local_finalized_height = finalized.number,
-            "local TEE lease guard armed at authenticated catch-up anchor"
-        );
-        return Ok(validator);
+        chain_id,
+        genesis_hash,
+        identity,
+        anchor.finalized_height,
+    )?;
+    if anchor_hash != anchor.finalized_hash {
+        (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+            provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            anchor.finalized_height,
+        )?;
     }
-    Ok(fullnode)
+    // The durable join anchor must also be canonical in the local chain
+    // before the guard arms at the higher upstream anchor.
+    if let Some(durable) = durable.filter(|durable| *durable != anchor) {
+        let local_hash = provider
+            .sealed_header(durable.finalized_height)
+            .wrap_err("read local header at the durable TEE join anchor")?
+            .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?
+            .hash();
+        if local_hash != durable.finalized_hash {
+            return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+                height: durable.finalized_height,
+                expected: durable.finalized_hash,
+                local: local_hash,
+            }
+            .into());
+        }
+    }
+    gate.validate_and_arm(anchor_hash, anchor_admission)?;
+    info!(
+        anchor_height = anchor.finalized_height,
+        anchor_hash = %anchor.finalized_hash,
+        local_finalized_height = finalized.number,
+        "local TEE lease guard armed at authenticated catch-up anchor"
+    );
+    if finalized.number == anchor.finalized_height {
+        return Ok(Some(anchor_admission));
+    }
+    read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
 }
 
 pub(crate) async fn require_upstream_fullnode_tee_admission(
@@ -450,65 +509,80 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     })
 }
 
-#[derive(Debug, thiserror::Error)]
-enum UpstreamJoinAnchorError {
-    #[error("durable join anchor at {durable} is ahead of upstream finalized height {upstream}")]
-    Ahead { durable: u64, upstream: u64 },
-    #[error("upstream canonical block at durable join height has no hash")]
-    MissingHash,
-}
-
-pub(crate) async fn validate_upstream_join_anchor(
-    upstream: &str,
-    durable: LocalTeeAdmissionAnchorV1,
-    anchor: LocalTeeAdmissionAnchorV1,
-) -> eyre::Result<()> {
-    use outbe_operator::rpc::FinalityRpc as _;
-    if durable.finalized_height > anchor.finalized_height {
-        return Err(UpstreamJoinAnchorError::Ahead {
-            durable: durable.finalized_height,
-            upstream: anchor.finalized_height,
-        }
-        .into());
-    }
-    let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream)?;
-    let block = rpc.block_by_number(durable.finalized_height).await?;
-    let hash: alloy_primitives::B256 = serde_json::from_value(
-        block
-            .get("hash")
-            .cloned()
-            .ok_or(UpstreamJoinAnchorError::MissingHash)?,
-    )?;
-    if hash != durable.finalized_hash {
-        return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
-            height: durable.finalized_height,
-            expected: durable.finalized_hash,
-            local: hash,
-        }
-        .into());
-    }
-    Ok(())
-}
-
 pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) chain: RegistryChainIdentity,
     pub(crate) identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    pub(crate) gate: TeeLeaseGuardGateV1,
+    /// Initial gate and the durable join anchor that must also validate when
+    /// the gate arms.
+    pub(crate) anchors: TeeLeaseGuardAnchorsV1,
+    /// Signalled by the FinalizationActor and the FinalityObserver on every
+    /// local finalization.
+    pub(crate) finalization_notify: Arc<tokio::sync::Notify>,
+    /// Publishes `true` when the gate becomes `Armed`.
+    pub(crate) armed: tokio::sync::watch::Sender<bool>,
 }
 
-fn maybe_retire_remote_sessions<P>(
+pub(crate) async fn run_tee_lease_guard_v1<P>(
+    provider: P,
+    config: TeeLeaseGuardConfigV1,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> eyre::Result<Option<String>>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    let TeeLeaseGuardConfigV1 {
+        chain,
+        identity,
+        mut anchors,
+        finalization_notify,
+        armed,
+    } = config;
+    let mut retired_at = 0;
+    let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        // Each local finalization wakes the guard at once. The interval
+        // remains a fallback for missed wake-ups.
+        tokio::select! {
+            _ = shutdown.cancelled() => return Ok(None),
+            _ = finalization_notify.notified() => {}
+            _ = interval.tick() => {}
+        }
+        if anchors.gate.is_armed() {
+            retire_superseded_remote_sessions_v1(&provider, chain, &mut retired_at)?;
+        }
+        let result =
+            read_gated_finalized_local_tee_admission(&provider, chain, identity, &mut anchors);
+        if anchors.gate.is_armed() && !*armed.borrow() {
+            // Receivers may be gone (consensus stopped). The guard still runs.
+            let _ = armed.send(true);
+        }
+        let admission = result
+            .map_err(|error| error.wrap_err("finalized TEE lease admission failed closed"))?;
+        if let Some(reason) = admission.and_then(tee_lease_admission_rejection) {
+            return Ok(Some(reason));
+        }
+    }
+}
+
+/// Ask the enclave to retire remote sessions once the local finalized chain
+/// schedules a successor retirement above `retired_at`.
+fn retire_superseded_remote_sessions_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
-    gate: TeeLeaseGuardGateV1,
     retired_at: &mut u64,
 ) -> eyre::Result<()>
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    if !gate.is_armed()
-        || provider
-            .finalized_block_num_hash()?
-            .is_none_or(|head| head.number == 0)
+    if provider
+        .finalized_block_num_hash()?
+        .is_none_or(|head| head.number == 0)
     {
         return Ok(());
     }
@@ -529,59 +603,6 @@ where
     }
     *retired_at = activation_height;
     Ok(())
-}
-
-pub(crate) async fn run_tee_lease_guard_v1<P>(
-    provider: P,
-    config: TeeLeaseGuardConfigV1,
-    shutdown: tokio_util::sync::CancellationToken,
-    finalization_notify: Arc<tokio::sync::Notify>,
-    tee_lease_armed_tx: tokio::sync::watch::Sender<bool>,
-) -> eyre::Result<Option<String>>
-where
-    P: BlockIdReader
-        + HeaderProvider<Header = OutbeHeader>
-        + StateProviderFactory
-        + Send
-        + Sync
-        + 'static,
-{
-    let TeeLeaseGuardConfigV1 {
-        chain,
-        identity,
-        mut gate,
-    } = config;
-    let RegistryChainIdentity {
-        chain_id,
-        genesis_hash,
-    } = chain;
-    let mut retired_at = 0;
-    let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => return Ok(None),
-            _ = interval.tick() => {},
-            _ = finalization_notify.notified() => {}
-        }
-        maybe_retire_remote_sessions(&provider, chain, gate, &mut retired_at)?;
-        let admission = read_gated_finalized_local_tee_admission(
-            &provider,
-            chain_id,
-            genesis_hash,
-            identity,
-            &mut gate,
-        )
-        .wrap_err("finalized TEE lease admission failed closed")?;
-        if let Some(admission) = admission {
-            if gate.is_armed() {
-                tee_lease_armed_tx.send_replace(true);
-            }
-            if let Some(reason) = tee_lease_admission_rejection(admission) {
-                return Ok(Some(reason));
-            }
-        }
-    }
 }
 
 /// A canonical lease rejection is an expected stop. Failure to read that state

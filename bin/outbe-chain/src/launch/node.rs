@@ -200,7 +200,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
             (tee_canary_status.clone(), shutdown_token.clone(), shutdown.clone()),
-        )?;
+        )
+        .await?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,

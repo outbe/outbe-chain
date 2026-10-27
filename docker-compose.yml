@@ -37,6 +37,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30400
       - --consensus.use-local-defaults
 
@@ -63,6 +64,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30401
       - --consensus.use-local-defaults
 
@@ -89,6 +91,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30402
       - --consensus.use-local-defaults
 
@@ -115,6 +118,7 @@ services:
       - --validator
       - --consensus.signing-key=/data/signing-key.hex
       - --validator.evm-key=/data/evm-key.hex
+      - --consensus.keys-dir=/data/dkg-keys
       - --consensus.listen-addr=0.0.0.0:30403
       - --consensus.use-local-defaults
 

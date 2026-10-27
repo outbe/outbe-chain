@@ -66,6 +66,7 @@ mod fixtures;
 mod follower;
 mod genesis_formation;
 mod harness;
+mod lifecycle;
 mod local_anchor;
 mod marshal_reporter;
 #[cfg(test)]

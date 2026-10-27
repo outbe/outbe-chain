@@ -209,15 +209,15 @@ where
                     let Some((their_epoch, (from, _))) = backup_vote else {
                         continue;
                     };
-                    if Epoch::new(their_epoch) > self.state.current_epoch {
-                        if let Some(hint_height) =
-                            self.epocher.backup_vote_hint_height(self.state.current_epoch)
-                        {
-                            self.marshal_mailbox.hint_finalized(
-                                hint_height,
-                                commonware_utils::vec::NonEmptyVec::new(from),
-                            );
-                        }
+                    if let Some(hint_height) = future_epoch_hint_height(
+                        &self.epocher,
+                        self.state.current_epoch,
+                        Epoch::new(their_epoch),
+                    ) {
+                        self.marshal_mailbox.hint_finalized(
+                            hint_height,
+                            commonware_utils::vec::NonEmptyVec::new(from),
+                        );
                     }
                 },
 
@@ -386,4 +386,15 @@ where
         )
         .await
     }
+}
+
+pub(in crate::stack) fn future_epoch_hint_height(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    current_epoch: Epoch,
+    their_epoch: Epoch,
+) -> Option<Height> {
+    if their_epoch <= current_epoch {
+        return None;
+    }
+    epocher.backup_vote_hint_height(current_epoch)
 }

@@ -92,7 +92,7 @@ impl Localnet {
         self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
-        // Step 1: DKG bootstrap - keys, polynomial, dkg-output, validators.json,
+        // Step 1: DKG bootstrap - keys, polynomial, DKG output, validators.json,
         // reth-bootnodes.txt.
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.args([

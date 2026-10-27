@@ -3,7 +3,7 @@
 //!
 //! Validator activation can be delayed inside the configured grace window, and
 //! every subsequent plan is measured from that actual activation. Therefore
-//! neither `FixedEpocher` nor `(height-1)/L` is authoritative after the first
+//! a fixed-length epocher or `(height-1)/L` is not authoritative after the first
 //! delayed rotation. [`FollowerEpocher`] records exact, authenticated
 //! `BoundaryOutcome` carrier heights and derives every completed interval from
 //! adjacent observations. Length and activation grace only bound discovery of

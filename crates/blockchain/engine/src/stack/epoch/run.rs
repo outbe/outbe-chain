@@ -971,7 +971,7 @@ fn reconcile_recovered_vrf_material(
     // These strict checks (saved polynomial / DKG output must equal the recovered
     // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
     // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
-    // set (not its polynomial). So its CLI `--public-polynomial`/`--dkg-output` may be
+    // set (not its polynomial). So its local public material may be
     // off without affecting sync. Examples: a TEE chain's runtime-derived genesis
     // consensus polynomial differs from the bootstrap file, or the chain rotated past
     // it. Only its local VRF/leader view degrades (process-local, non-fatal, same as
@@ -994,7 +994,7 @@ fn reconcile_recovered_vrf_material(
         // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
         // FULL previous output into its `info_hash` (not just the group key). So if the
         // verifier later becomes a frozen-target player, it MUST present the committee's
-        // current output as prev_output. Otherwise its stale `--consensus.dkg-output`
+        // current output as prev_output. Otherwise its stale local output
         // would cause this sequence:
         // 1. it yields a divergent `info_hash`.
         // 2. the dealers' bundles get dropped.

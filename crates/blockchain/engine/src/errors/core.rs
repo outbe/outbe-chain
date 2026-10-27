@@ -37,6 +37,11 @@ pub enum ArgsError {
     /// Indicates that nocertify mode lacks an upstream endpoint.
     #[error("--upstream.nocertify requires --upstream")]
     UpstreamNocertifyRequiresUpstream,
+    /// Indicates that a validator requested uncertified upstream sync.
+    #[error(
+        "--validator rejects --upstream.nocertify: UpstreamBootstrap must verify every certificate"
+    )]
+    ValidatorRejectsUpstreamNocertify,
     /// Indicates that validator mode lacks a consensus signing key path.
     #[error(
         "--validator requires --consensus.signing-key. Provide the path to your BLS signing key file."

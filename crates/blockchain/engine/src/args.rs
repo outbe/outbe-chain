@@ -235,15 +235,18 @@ pub struct ConsensusArgs {
     #[arg(long = "radicle.status-address", value_name = "SOCKET")]
     pub radicle_status_address: Option<SocketAddr>,
 
-    /// Run as a FOLLOWER (`--upstream` without `--validator`) or bootstrap a
-    /// VALIDATOR (`--validator --upstream`) by syncing finalized blocks from
-    /// this upstream node. Each block is verified against the committee,
-    /// anchored on the genesis validator set read from local genesis state.
+    /// Certified upstream node. Without `--validator`, the node runs as a
+    /// FOLLOWER: it cold-syncs finalized blocks from this upstream and verifies
+    /// them against the committee, anchored on the genesis validator set in its
+    /// own genesis state. With `--validator`, the node uses this upstream only
+    /// for the `UpstreamBootstrap` phase. It then starts the validator stack in
+    /// the same process when the local chain is bootstrap-ready. A validator
+    /// whose local chain is already ready ignores this value.
     #[arg(long = "upstream", value_name = "URL")]
     pub upstream: Option<String>,
 
     /// Dev only: follow without verifying consensus certificates (EL-only sync).
-    /// Requires `--upstream`.
+    /// Requires `--upstream`. Rejected with `--validator`.
     #[arg(
         long = "upstream.nocertify",
         default_value_t = false,
@@ -308,6 +311,10 @@ impl ConsensusArgs {
         if self.upstream_nocertify && self.upstream.is_none() {
             return Err(crate::errors::ArgsError::UpstreamNocertifyRequiresUpstream.into());
         }
+        // UpstreamBootstrap must verify every certificate through CommitteeChain.
+        if self.upstream_nocertify && self.is_validator {
+            return Err(crate::errors::ArgsError::ValidatorRejectsUpstreamNocertify.into());
+        }
         if self.is_validator && self.signing_key.is_none() {
             return Err(crate::errors::ArgsError::ValidatorRequiresSigningKey.into());
         }
@@ -347,6 +354,9 @@ impl ConsensusArgs {
     }
 
     fn validate_key_material(&self) -> eyre::Result<()> {
+        // Threshold material comes only from the keys directory or from
+        // in-process DKG. A shareless verifier recovers its public material
+        // from the latest finalized on-chain boundary.
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {
             return Err(crate::errors::ArgsError::EncryptedBackendRequiresPassphraseArg.into());
         }
@@ -516,35 +526,61 @@ mod tests {
         assert!(args.validate().is_ok());
     }
 
-    #[test]
-    fn test_validator_with_upstream_ok() {
+    fn validator_args() -> ConsensusArgs {
         let mut args = default_args();
-        args.upstream = Some("http://upstream:8545".to_string());
         args.is_validator = true;
         args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+        args.validator_evm_key = Some(PathBuf::from("/tmp/evm-key.hex"));
         args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
-        args.radicle_status_address = Some("127.0.0.1:8777".parse().unwrap());
-        assert!(args.validate().is_ok());
+        args.radicle_status_address = Some("127.0.0.1:9100".parse().unwrap());
+        args
+    }
 
+    #[test]
+    fn validator_accepts_upstream_for_bootstrap() {
+        let mut args = validator_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        args.validate()
+            .expect("validator plus upstream is one lifecycle");
+    }
+
+    #[test]
+    fn cli_parses_validator_with_upstream_signing_key_evm_key_and_radicle() {
         let cli = TestConsensusCli::try_parse_from([
             "test",
             "--validator",
             "--upstream",
             "http://upstream:8545",
             "--consensus.signing-key",
-            "/tmp/signing-key.hex",
+            "/tmp/key.hex",
+            "--validator.evm-key",
+            "/tmp/evm-key.hex",
             "--radicle.control-socket",
             "/tmp/radicle.sock",
             "--radicle.status-address",
-            "127.0.0.1:8777",
+            "127.0.0.1:9100",
         ])
-        .unwrap();
+        .expect("clap accepts validator plus upstream");
         assert!(cli.consensus.is_validator);
         assert_eq!(
             cli.consensus.upstream.as_deref(),
             Some("http://upstream:8545")
         );
-        assert!(cli.consensus.validate().is_ok());
+        cli.consensus
+            .validate()
+            .expect("validator plus upstream validates");
+    }
+
+    #[test]
+    fn validator_rejects_upstream_nocertify() {
+        let mut args = validator_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        args.upstream_nocertify = true;
+        let error = args.validate().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<crate::errors::ArgsError>(),
+            Some(&crate::errors::ArgsError::ValidatorRejectsUpstreamNocertify)
+        );
     }
 
     #[test]
@@ -812,9 +848,6 @@ mod tests {
             &["test", "--consensus.execution-watchdog-fatal-enabled"],
             &["test", "--consensus.leader-timeout-ms", "30000"],
             &["test", "--consensus.certification-timeout-ms", "30000"],
-            &["test", "--consensus.signing-share", "/tmp/share.hex"],
-            &["test", "--consensus.public-polynomial", "/tmp/poly.hex"],
-            &["test", "--consensus.dkg-output", "/tmp/output.hex"],
         ] {
             let err = TestConsensusCli::try_parse_from(argv)
                 .unwrap_err()

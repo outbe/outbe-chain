@@ -165,7 +165,7 @@ where
         };
     // Threshold material, not CLI file presence, owns consensus authority. A
     // recovered validator excluded from the current boundary is VerifierOnly even
-    // when its original signing-share path is still configured on disk.
+    // when its local keys directory still contains old material on disk.
     let shareless_verifier = signing_share.is_none();
 
     // Verifier-join supplies public threshold material without a signing share.

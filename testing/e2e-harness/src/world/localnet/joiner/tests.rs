@@ -229,9 +229,6 @@ fn cold_joiner_follower_preserves_provisioned_paths_and_protocol_options() {
                 "--upstream".to_owned(),
                 format!("http://127.0.0.1:{}", localnet.cfg.http_port(0)),
             ]));
-        for removed in ["--consensus.public-polynomial", "--consensus.dkg-output"] {
-            assert!(!argv.iter().any(|arg| arg == removed));
-        }
         let inherited = argv
             .iter()
             .filter(|arg| arg.starts_with("--testnet.unix-time-offset-secs"))
