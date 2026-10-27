@@ -122,16 +122,6 @@ impl MaterialFixture {
         .unwrap();
     }
 
-    fn cli(&self, path: &std::path::Path) -> ConsensusArgs {
-        self.save(path);
-        ConsensusArgs {
-            signing_share: Some(path.join(DKG_SHARE_FILE)),
-            public_polynomial: Some(path.join(DKG_POLYNOMIAL_FILE)),
-            dkg_output: Some(path.join(DKG_OUTPUT_FILE)),
-            ..default_args()
-        }
-    }
-
     fn obtain(
         &self,
         args: &ConsensusArgs,
@@ -178,16 +168,13 @@ impl MaterialFixture {
 }
 
 #[test]
-fn saved_material_wins_before_broken_pending_and_cli_inputs() {
+fn saved_material_wins_before_broken_pending() {
     let fixture = MaterialFixture::new();
     let dir = tempfile::tempdir().unwrap();
     fixture.save(dir.path());
     std::fs::write(dir.path().join(DKG_PENDING_SHARE_FILE), b"corrupt").unwrap();
     let args = ConsensusArgs {
         keys_dir: Some(dir.path().to_path_buf()),
-        signing_share: Some(dir.path().join("absent-share")),
-        public_polynomial: Some(dir.path().join("absent-polynomial")),
-        dkg_output: Some(dir.path().join("absent-output")),
         ..default_args()
     };
     fixture.assert_ready(
@@ -337,14 +324,16 @@ fn failed_pending_promotion_preserves_pending_and_retry_evidence() {
 }
 
 #[test]
-fn corrupt_saved_without_eligible_pending_never_falls_through_to_cli_or_genesis() {
+fn corrupt_saved_without_eligible_pending_never_falls_through_to_genesis() {
     let fixture = MaterialFixture::new();
     for pending in ["absent", "corrupt", "unanchored"] {
         let dir = tempfile::tempdir().unwrap();
-        let mut args = fixture.cli(&dir.path().join("manual"));
         let local = dir.path().join("local");
         std::fs::create_dir(&local).unwrap();
-        args.keys_dir = Some(local.clone());
+        let args = ConsensusArgs {
+            keys_dir: Some(local.clone()),
+            ..default_args()
+        };
         std::fs::write(local.join(DKG_SHARE_FILE), b"corrupt").unwrap();
         if pending == "corrupt" {
             std::fs::write(local.join(DKG_PENDING_SHARE_FILE), b"corrupt").unwrap();
@@ -368,11 +357,13 @@ fn corrupt_saved_without_eligible_pending_never_falls_through_to_cli_or_genesis(
 }
 
 #[test]
-fn local_boundary_recovery_requires_material_or_explicit_shareless_provisioning() {
+fn local_boundary_recovery_requires_matching_saved_or_pending_material() {
     let fixture = MaterialFixture::new();
     let dir = tempfile::tempdir().unwrap();
-    let mut args = fixture.cli(&dir.path().join("manual"));
-    args.keys_dir = Some(dir.path().join("empty-local"));
+    let args = ConsensusArgs {
+        keys_dir: Some(dir.path().join("empty-local")),
+        ..default_args()
+    };
     let error = fixture
         .obtain(&args, fixture.boundary_context(true))
         .err()
@@ -382,17 +373,10 @@ fn local_boundary_recovery_requires_material_or_explicit_shareless_provisioning(
         error.contains("startup cannot recover threshold material before sync starts"),
         "{error}"
     );
-    assert!(error.contains("--consensus.public-polynomial"), "{error}");
-    assert!(error.contains("--consensus.dkg-output"), "{error}");
-    assert!(
-        error.contains("without --consensus.signing-share"),
-        "{error}"
-    );
     assert!(
         error.contains("saved and pending DKG material do not match"),
         "{error}"
     );
-    args.signing_share = None;
     let error = fixture
         .obtain(&args, fixture.boundary_context(false))
         .err()
@@ -404,129 +388,6 @@ fn local_boundary_recovery_requires_material_or_explicit_shareless_provisioning(
         ),
         "{error}"
     );
-    // Preserve the explicit verifier-join contract, including its original public-material policy.
-    let context = StartupDkgContext {
-        recovered_vrf_group_public_key: Some(B256::ZERO),
-        recovered_dkg_output_hash: Some(B256::ZERO),
-        ..fixture.boundary_context(true)
-    };
-    let ThresholdMaterial::VerifierOnly {
-        polynomial,
-        last_dkg_output,
-    } = fixture.obtain(&args, context).unwrap()
-    else {
-        panic!("expected shareless verifier")
-    };
-    assert_eq!(
-        commonware_codec::Encode::encode(&polynomial),
-        commonware_codec::Encode::encode(&fixture.polynomial)
-    );
-    assert_eq!(last_dkg_output.as_ref(), Some(&fixture.output));
-}
-
-#[test]
-fn cli_signer_requires_current_and_consistent_material_when_output_is_bound() {
-    let fixture = MaterialFixture::new();
-    let other = MaterialFixture::new();
-    let dir = tempfile::tempdir().unwrap();
-    let args = fixture.cli(&dir.path().join("manual"));
-    other.save(&dir.path().join("other"));
-    for context in [fresh_context(), fixture.boundary_context(true)] {
-        fixture.assert_ready(fixture.obtain(&args, context).unwrap());
-    }
-    let mut no_output = args.clone();
-    no_output.dkg_output = None;
-    let ThresholdMaterial::Ready {
-        last_dkg_output,
-        bootstrap_from_live_dkg,
-        ..
-    } = fixture.obtain(&no_output, fresh_context()).unwrap()
-    else {
-        panic!("expected manually provisioned signer")
-    };
-    assert!(last_dkg_output.is_none());
-    assert!(!bootstrap_from_live_dkg);
-    let error = fixture
-        .obtain(&no_output, fixture.boundary_context(true))
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(
-        error.contains("CLI DKG material lacks the output required"),
-        "{error}"
-    );
-    for context in [
-        StartupDkgContext {
-            recovered_vrf_group_public_key: Some(B256::ZERO),
-            ..fixture.boundary_context(true)
-        },
-        StartupDkgContext {
-            recovered_dkg_output_hash: Some(B256::ZERO),
-            ..fixture.boundary_context(true)
-        },
-    ] {
-        let error = fixture.obtain(&args, context).err().unwrap().to_string();
-        assert!(error.contains("CLI DKG material is stale"), "{error}");
-    }
-    let mut inconsistent = args.clone();
-    inconsistent.dkg_output = Some(dir.path().join("other").join(DKG_OUTPUT_FILE));
-    let error = fixture
-        .obtain(&inconsistent, fresh_context())
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(
-        error.contains("CLI DKG material triplet is inconsistent"),
-        "{error}"
-    );
-    for (field, message) in [
-        (0, "failed to load BLS signing share"),
-        (1, "failed to load BLS public polynomial"),
-        (2, "failed to load BLS DKG output"),
-    ] {
-        let mut broken = args.clone();
-        let absent = Some(dir.path().join("absent"));
-        match field {
-            0 => broken.signing_share = absent,
-            1 => broken.public_polynomial = absent,
-            _ => broken.dkg_output = absent,
-        }
-        let error = fixture
-            .obtain(&broken, fresh_context())
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(error.contains(message), "{error}");
-    }
-}
-
-#[test]
-fn manual_shareless_material_precedes_genesis_and_incomplete_pairs_do_not() {
-    let fixture = MaterialFixture::new();
-    let dir = tempfile::tempdir().unwrap();
-    let mut args = fixture.cli(dir.path());
-    args.signing_share = None;
-    assert!(matches!(
-        fixture.obtain(&args, fresh_context()).unwrap(),
-        ThresholdMaterial::VerifierOnly { .. }
-    ));
-    for missing_output in [true, false] {
-        let mut incomplete = args.clone();
-        if missing_output {
-            incomplete.dkg_output = None;
-        } else {
-            incomplete.public_polynomial = None;
-        }
-        let error = fixture
-            .obtain(&incomplete, fixture.boundary_context(true))
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(
-            error.contains("no current threshold material is available"),
-            "{error}"
-        );
-    }
 }
 
 #[test]

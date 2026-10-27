@@ -379,6 +379,11 @@ fn follower_exact_finality(world: &mut World) {
         "FullNode unexpectedly entered validator mode"
     );
     assert_eq!(
+        world.rpc.consensus_status_field(follower, "mode"),
+        Some("follower".to_string()),
+        "FullNode did not report follower operating mode"
+    );
+    assert_eq!(
         world.rpc.has_threshold_shares(follower),
         Some(false),
         "FullNode unexpectedly required participant DKG material"
@@ -399,6 +404,11 @@ fn fifth_full_node_exact_finality(world: &mut World) {
         world.rpc.consensus_status_field(follower, "isValidator"),
         Some("false".to_string()),
         "fifth FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "mode"),
+        Some("follower".to_string()),
+        "fifth FullNode did not report follower operating mode"
     );
     assert_eq!(
         world.rpc.has_threshold_shares(follower),

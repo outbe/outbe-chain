@@ -30,6 +30,12 @@ pub fn load_signing_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::P
         .wrap_err_with(|| format!("failed to load signing key: {}", path.display()))
 }
 
+/// Load the BLS individual signing key's public key from a file.
+pub fn load_signing_public_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PublicKey> {
+    use commonware_cryptography::Signer as _;
+    Ok(load_signing_key(path, backend)?.public_key())
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Dynamic reading from EVM state
 // ---------------------------------------------------------------------------
@@ -536,6 +542,21 @@ pub fn read_tee_offer_public_at_latest(
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+    read_tee_offer_public_from_state(&state)
+}
+
+/// Read the on-chain tribute offer public key from the EVM state at a given block hash.
+pub fn read_tee_offer_public_at_block(
+    provider: &(impl StateProviderFactory + ?Sized),
+    block_hash: B256,
+) -> Result<B256> {
+    let state =
+        provider
+            .state_by_block_hash(block_hash)
+            .map_err(|e| ValidatorsError::GetStateAtBlock {
+                block_hash,
+                error: format!("{e}"),
+            })?;
     read_tee_offer_public_from_state(&state)
 }
 

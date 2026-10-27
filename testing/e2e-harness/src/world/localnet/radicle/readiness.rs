@@ -24,7 +24,7 @@ pub(super) struct RadicleReadiness<'a> {
 
 /// Decode only the provisioned OpenSSH public file, without a CLI profile or
 /// any fallback to the private key. Metadata errors and symlinks fail closed.
-pub(super) fn provisioned_radicle_node_id(home: &Path) -> Result<[u8; 32]> {
+pub(crate) fn provisioned_radicle_node_id(home: &Path) -> Result<[u8; 32]> {
     let public = home.join("keys/radicle.pub");
     let metadata = fs::symlink_metadata(&public)
         .wrap_err_with(|| format!("inspect Radicle public identity {}", public.display()))?;

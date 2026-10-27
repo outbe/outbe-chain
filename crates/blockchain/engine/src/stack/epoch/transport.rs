@@ -1,5 +1,6 @@
 //! Authenticated transport admission and pre-registered startup channels.
 use super::super::*;
+use commonware_p2p::utils::mux::Builder as _;
 use outbe_radicle::integration::{EndpointSigningIdentity, EndpointTransport};
 
 pub(super) type Channel<E> = (
@@ -18,6 +19,10 @@ pub(super) type EpochSubchannels<E> = outbe_consensus::epoch_subchannels::EpochS
     lookup::Sender<bls12381::PublicKey, E>,
     lookup::Receiver<bls12381::PublicKey>,
 >;
+pub(super) type VoteBackupRx = commonware_utils::channel::mpsc::Receiver<(
+    u64,
+    (bls12381::PublicKey, commonware_runtime::IoBuf),
+)>;
 pub(in crate::stack) fn radicle_channel_config() -> (u64, u32) {
     (
         config::RADICLE_ENDPOINT_CHANNEL,
@@ -36,6 +41,7 @@ pub(super) struct StartupTransport<E: Clock> {
     pub(super) broadcast_channel: Channel<E>,
     pub(super) marshal_channel: Channel<E>,
     pub(super) vote_mux: ChannelMux<E>,
+    pub(super) vote_backup_rx: VoteBackupRx,
     pub(super) cert_mux: ChannelMux<E>,
     pub(super) res_mux: ChannelMux<E>,
     pub(super) dkg_mux: ChannelMux<E>,
@@ -201,7 +207,10 @@ where
     // -- 5. Create Muxers from physical channels ------------------------
     // The Muxers split consensus channels by epoch. Each engine restart
     // gets fresh sub-channels, which prevents message interference.
-    let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX);
+    let (vote_muxer, vote_mux, vote_backup_rx) =
+        Muxer::builder(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX)
+            .with_backup()
+            .build();
     vote_muxer.start();
 
     let (cert_muxer, cert_mux) = Muxer::new(
@@ -273,6 +282,7 @@ where
         broadcast_channel,
         marshal_channel,
         vote_mux,
+        vote_backup_rx,
         cert_mux,
         res_mux,
         dkg_mux,
