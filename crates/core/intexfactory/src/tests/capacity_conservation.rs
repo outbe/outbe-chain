@@ -87,7 +87,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             10
         );
         let factory = IntexContract::new(s.clone());
-        let key = api::read_series(&s, id)
+        let key = api::get_series(&s, id)
             .unwrap()
             .group_key()
             .expect("date step");

@@ -180,7 +180,7 @@ fn a_group_is_called_once() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(9)).unwrap();
         outbe_intex::api::call_group_of(&s, sid(9), ISSUED_AT + 10).unwrap();
-        let series = outbe_intex::api::read_series(&s, sid(9)).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(9)).unwrap();
         assert_eq!(series_state(&s, sid(9)), outbe_intex::IntexState::Called);
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &series).unwrap().called_at,

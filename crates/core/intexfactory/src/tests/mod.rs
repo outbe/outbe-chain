@@ -124,13 +124,13 @@ fn sid(worldwide_day: u32) -> SeriesId {
 
 /// The series' state as of this block.
 fn series_state(s: &StorageHandle<'_>, id: SeriesId) -> IntexState {
-    let record = outbe_intex::api::read_series(s, id).unwrap();
+    let record = outbe_intex::api::get_series(s, id).unwrap();
     outbe_intex::api::state(s, &record).unwrap()
 }
 
 /// The call group the series belongs to.
 fn group_of(s: &StorageHandle<'_>, id: SeriesId) -> B256 {
-    outbe_intex::api::read_series(s, id)
+    outbe_intex::api::get_series(s, id)
         .unwrap()
         .group_key()
         .expect("date step")
@@ -207,7 +207,7 @@ impl SeedCalledGroup for IntexContract<'_> {
         member: SeriesId,
         deadline: u64,
     ) -> outbe_primitives::error::Result<()> {
-        let record = outbe_intex::api::read_series(&self.storage, member)?;
+        let record = outbe_intex::api::get_series(&self.storage, member)?;
         let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
         self.record_group_called(
             record.group_key().expect("date step"),

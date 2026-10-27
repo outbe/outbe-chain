@@ -81,7 +81,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
         let mut forfeited_units: u64 = 0;
         let mut returned = U256::ZERO;
         for series_id in self.intex.group_members(group)? {
-            let series = outbe_intex::api::read_series(self.storage, series_id)?;
+            let series = outbe_intex::api::get_series(self.storage, series_id)?;
             let forfeited = outbe_intex::api::forfeitable_units(self.storage, &series)?;
             forfeited_units = forfeited_units.saturating_add(u64::from(forfeited.units));
             returned = forfeited

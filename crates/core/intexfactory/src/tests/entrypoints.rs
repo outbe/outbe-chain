@@ -73,7 +73,7 @@ fn config_dev_profile_drives_issuance() {
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = outbe_intex::config::IntexParams::DEV;
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
             r.call_price_minor,

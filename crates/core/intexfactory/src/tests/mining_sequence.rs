@@ -19,7 +19,7 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
-        let promis_amount = outbe_intex::api::read_series(&s, sid(7))
+        let promis_amount = outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .promis_load_minor;
         let mut factory = IntexFactoryContract::new(s.clone());
@@ -34,7 +34,7 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
     let events = storage.get_ordered_events().to_vec();
     let (series, counts) = StorageHandle::enter(&mut storage, |s| {
         (
-            outbe_intex::api::read_series(&s, sid(7)).unwrap(),
+            outbe_intex::api::get_series(&s, sid(7)).unwrap(),
             outbe_intex::api::unit_counts(&s, sid(7)).unwrap(),
         )
     });
@@ -81,7 +81,7 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
             u32::MAX,
             "the sequence must not wrap"
         );
-        let after = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let after = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(after.issued_units, series.issued_units);
         assert_eq!(after.promis_load_minor, series.promis_load_minor);
         let after = outbe_intex::api::unit_counts(&s, sid(7)).unwrap();

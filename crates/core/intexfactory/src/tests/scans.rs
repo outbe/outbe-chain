@@ -46,7 +46,7 @@ fn a_called_series_reports_its_settlement_deadline() {
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
-        outbe_intex::api::read_series(&s, sid(7))
+        outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds
     });
@@ -698,7 +698,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         assert!(outbe_intex::api::series_exists(&s, kept).unwrap());
         assert_eq!(f.group_members(group).unwrap(), vec![kept]);
         assert_eq!(f.first_cleanup_day().unwrap(), None);
-        let record = outbe_intex::api::read_series(&s, kept).unwrap();
+        let record = outbe_intex::api::get_series(&s, kept).unwrap();
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &record)
                 .unwrap()
