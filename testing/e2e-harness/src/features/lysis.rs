@@ -24,8 +24,8 @@ fn fresh_native_lysis(world: &mut World) {
         .expect("native Offering fixture");
     world
         .localnet
-        .prepare_lysis_entry_price(day)
-        .expect("nonzero native Lysis entry price");
+        .prepare_native_lysis_fixture(day)
+        .expect("linked native Lysis allocation and entry price");
     world.state.wwd = Some(day.to_string());
     world.state.tribute_owner_keys = world
         .localnet

@@ -482,3 +482,72 @@ fn activation_bootstrap(
         ],
     )
 }
+
+#[test]
+fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once() {
+    use crate::executor::hooks::enforce_enclave_upgrade_deadline;
+    use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+
+    for (configured_percent, expected_percent) in [(0, 8u64), (17, 17)] {
+        let validator = Address::repeat_byte(0x73);
+        let proposal_id = U256::from(9u64);
+        let stake = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(100u64) + U256::from(100u64);
+        let slashed = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(expected_percent)
+            + U256::from(expected_percent);
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(100);
+        provider.set_balance(STAKING_ADDRESS, stake);
+        provider.enter(|storage| {
+            seed_registered_active_validator(storage.clone(), validator, &dummy_pubkey(0x73));
+            let staking = outbe_staking::contract::Staking::new(storage.clone());
+            staking.stake_amount.write(&validator, stake).unwrap();
+            staking.total_staked.write(stake).unwrap();
+            outbe_slashindicator::schema::SlashIndicator::new(storage.clone())
+                .config_slash_amount_percent
+                .write(configured_percent)
+                .unwrap();
+            let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
+            registry.strict_upgrade_proposal.write(proposal_id).unwrap();
+            registry.strict_upgrade_height.write(100).unwrap();
+            registry
+                .strict_upgrade_mrenclave
+                .write(B256::repeat_byte(0x74))
+                .unwrap();
+            registry
+                .strict_upgrade_successor
+                .write(B256::repeat_byte(0x75))
+                .unwrap();
+            registry
+                .active_v1_policy_proposal_id
+                .write(proposal_id)
+                .unwrap();
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(100, TEST_BLOCK_TIMESTAMP_BASE, CHAIN_ID),
+                storage.clone(),
+            );
+
+            enforce_enclave_upgrade_deadline(&ctx).unwrap();
+            assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
+            assert_eq!(staking.get_total_staked().unwrap(), stake - slashed);
+            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
+            let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            assert_eq!(
+                validators.get_validator(validator).unwrap().unwrap().status,
+                outbe_validatorset::runtime::status::JAILED
+            );
+            assert!(registry
+                .upgrade_penalty_applied_v1(proposal_id, validator)
+                .unwrap());
+            assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
+            let limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+            assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
+            assert_eq!(limit.native_rest().unwrap(), U256::from(expected_percent));
+
+            enforce_enclave_upgrade_deadline(&ctx).unwrap();
+            assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
+            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
+            assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
+            assert_eq!(limit.native_rest().unwrap(), U256::from(expected_percent));
+        });
+    }
+}

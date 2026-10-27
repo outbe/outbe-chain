@@ -11,6 +11,8 @@ pub(super) fn expected_tee_sidecar_outage_records(
     validators: usize,
     expected_validator: usize,
     tx_hash: &str,
+    height: u64,
+    block_hash: alloy_primitives::B256,
 ) -> Result<LogRecords, String> {
     if expected_validator >= validators || !tx_hash.starts_with("0x") || tx_hash.len() != 66 {
         return Err("invalid expected TEE sidecar outage identity".into());
@@ -25,7 +27,7 @@ pub(super) fn expected_tee_sidecar_outage_records(
         let one_fail_stop = || format!("expected one TEE outage fail-stop in {}", path.display());
         let lines = content.lines().collect::<Vec<_>>();
         let Some(SidecarFailStop { fatal, proof }) =
-            sidecar_fail_stop(&lines, sink, tx_hash).map_err(|_| one_fail_stop())?
+            sidecar_fail_stop(&lines, sink, height, block_hash).map_err(|_| one_fail_stop())?
         else {
             continue;
         };
@@ -80,7 +82,8 @@ struct SidecarFailStop {
 fn sidecar_fail_stop(
     lines: &[&str],
     sink: &str,
-    tx_hash: &str,
+    height: u64,
+    block_hash: alloy_primitives::B256,
 ) -> Result<Option<SidecarFailStop>, ()> {
     let fatal = lines
         .iter()
@@ -114,10 +117,11 @@ fn sidecar_fail_stop(
         if line.trim() == "0: executor actor returned fatal error" {
             actor_error = Some(trailer_index);
         }
-        if line.contains("2: internal EVM error occurred when executing transaction")
-            && line.contains(tx_hash)
-            && line.contains("tee_sidecar_unavailable: io error: Connection refused")
-        {
+        if line.trim() == format!(
+            "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+             execution stopped on a node-local dependency failure: \
+             tee_sidecar_unavailable: io error: Connection refused (os error 111)"
+        ) {
             sidecar_error = Some(trailer_index);
         }
     }

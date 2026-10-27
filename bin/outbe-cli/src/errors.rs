@@ -8,7 +8,7 @@ mod tee_upgrade;
 
 pub(crate) use commands::{
     CommandInputError, EpochError, MonitorError, OracleError, RadError, RadicleError, SlashError,
-    StablecoinError, TributeError, ValidatorError, VoteError, ZeroFeeError,
+    StablecoinError, StakingError, TributeError, ValidatorError, VoteError, ZeroFeeError,
 };
 pub(crate) use rpc::{RpcError, TxError};
 pub(crate) use tee_common::{

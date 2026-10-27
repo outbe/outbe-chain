@@ -305,6 +305,7 @@ async fn assert_heartbeat_only(
             state,
             payload_attrs,
             tx,
+            ..
         } = message
         else {
             panic!("exact recovered H caused payload execution");

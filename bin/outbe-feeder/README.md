@@ -389,23 +389,11 @@ ABI and price formula references:
 [Infinity CL](https://github.com/pancakeswap/infinity-core/blob/main/src/pool-cl/interfaces/ICLPoolManager.sol),
 [Infinity Bin PriceHelper](https://github.com/pancakeswap/infinity-core/blob/main/src/pool-bin/libraries/PriceHelper.sol).
 
-For the migrated price-oracle testnet config and launcher, bootstrap a local
-testnet with oracle genesis params, start the node, then run one feeder. Do not
-set `PRICE_REST_URL` for the normal remote price endpoint; `run.sh` uses
-`https://prc.testnet.outbe.net` from `scripts/price-oracle/config.toml` by
-default:
+The canonical Rust E2E harness owns the localnet, feeder configuration and
+feeder process lifecycle. Run the price-oracle scenarios with:
 
 ```bash
-./scripts/bootstrap-testnet.sh 4 /tmp/outbe-testnet
-./scripts/run-testnet.sh start /tmp/outbe-testnet
-./scripts/price-oracle/run.sh /tmp/outbe-testnet 0
-```
-
-`PRICE_REST_URL` is only an override for replacing the configured REST endpoint.
-Use it only when a local mock price server is already running:
-
-```bash
-PRICE_REST_URL=http://localhost:8000 ./scripts/price-oracle/run.sh /tmp/outbe-testnet 0
+mise run e2e -- --tags @price-oracle
 ```
 
 ## Architecture

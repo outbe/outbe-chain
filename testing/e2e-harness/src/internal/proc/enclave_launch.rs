@@ -48,7 +48,7 @@ pub(crate) enum EnclaveLaunch {
     NativeHost,
 }
 
-/// Everything needed to launch one enclave (mirrors `run-testnet.sh:215-293`).
+/// Everything needed to launch one enclave.
 pub(crate) struct EnclaveSpec {
     pub name: String,
     pub tee_port: u16,

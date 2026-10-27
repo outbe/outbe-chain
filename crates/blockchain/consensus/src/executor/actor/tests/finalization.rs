@@ -74,6 +74,7 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } => {
                     assert_eq!(state.head_block_hash, finalized_hash);
                     assert_eq!(state.finalized_block_hash, finalized_hash);
@@ -92,6 +93,7 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } => {
                     assert_eq!(state.head_block_hash, finalized_hash);
                     assert_eq!(state.finalized_block_hash, finalized_hash);

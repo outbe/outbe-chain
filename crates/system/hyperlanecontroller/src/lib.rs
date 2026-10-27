@@ -10,8 +10,10 @@
 //!   `setHyperlaneSigner`, and `submitCheckpoint`.
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
-//!   `call_remote`, `call_local`, `add_domain`, and `remove_domain` have no
-//!   production caller yet.
+//! - `CrosschainVoteTarget` stores the hash of an approved owner action.
+//!   Permissionless `applyApproved` then runs it through `call_local`,
+//!   `call_remote`, `add_domain`, or `remove_domain`, with the controller as
+//!   `msg.sender`. The vote tally runs where sub-calls are not available.
 //! - The controller pays remote dispatch fees (IGP quote) from its own
 //!   balance. `fund` adds value to that balance.
 
@@ -25,6 +27,7 @@ mod liveness;
 mod remote;
 mod runtime;
 mod sol_ext;
+mod vote_target;
 
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
@@ -32,6 +35,7 @@ pub use liveness::{
 pub use remote::RemoteCall;
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
+pub use vote_target::CrosschainVoteTarget;
 
 #[cfg(test)]
 mod tests;

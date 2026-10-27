@@ -53,5 +53,22 @@ fn genesis_validation_accepts_staked_active_validator() {
         };
 
         super::super::validate_genesis_state(storage.clone(), &genesis).unwrap();
+
+        // When `config_min_stake` is zero (unset in genesis), `validate_genesis_state`
+        // defaults to `DEFAULT_MIN_STAKE` (10_000_000 COEN in base units `unit`).
+        staking.config_min_stake.write(U256::ZERO).unwrap();
+        let err = super::super::validate_genesis_state(storage.clone(), &genesis).unwrap_err();
+        assert!(err.to_string().contains("stake below min_stake"));
+
+        let default_min = outbe_staking::contract::DEFAULT_MIN_STAKE;
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.test_set_stake_projection(
+            validator,
+            outbe_validatorset::StakeProjection::new(default_min, None),
+        )
+        .unwrap();
+        staking.stake_amount.write(&validator, default_min).unwrap();
+        staking.total_staked.write(default_min).unwrap();
+        super::super::validate_genesis_state(storage.clone(), &genesis).unwrap();
     });
 }

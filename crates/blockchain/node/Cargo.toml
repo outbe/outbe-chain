@@ -21,6 +21,7 @@ outbe-validatorset.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
+reth-chain-state.workspace = true
 reth-chainspec.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-consensus-common.workspace = true
@@ -61,9 +62,10 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
-reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
-reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
-reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.6.0" }
+outbe-genesis-cli.workspace = true
+reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
+reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
+reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 outbe-chain-constants.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave = { workspace = true, features = ["mock"] }

@@ -17,7 +17,7 @@
       },
       {
         "path": "/etc/apt/sources.list.d/ubuntu.sources",
-        "sha256": "94e2925a468fb6f5c4e66ceb9b15dc02d0596b6eab594d8b3a6ac3572af1dc8f"
+        "sha256": "5c57f2b8fba5298dbd25ca27ae32e4da2976f5b4d32277cb8cef348f3176a044"
       },
       {
         "path": "/usr/share/keyrings/gramine-keyring.gpg",

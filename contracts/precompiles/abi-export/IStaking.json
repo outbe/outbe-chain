@@ -103,6 +103,49 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "consensusPubkey",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "radicleNodeId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "blsRegistrationSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "p2pVersion",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "p2pEncoded",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "topup",
+    "inputs": [
+      {
+        "name": "validatorAddress",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -278,6 +321,11 @@
   },
   {
     "type": "error",
+    "name": "ClaimableAmountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InsufficientStakedAmount",
     "inputs": []
   },
@@ -351,12 +399,33 @@
   },
   {
     "type": "error",
+    "name": "TooManyUnbondingEntries",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "maxEntries",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "TotalStakeAccountingOverflow",
     "inputs": []
   },
   {
     "type": "error",
     "name": "UnbondingCompletionTimestampOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnbondingIndexOverflow",
     "inputs": []
   },
   {

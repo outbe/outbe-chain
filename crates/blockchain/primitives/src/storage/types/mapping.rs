@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(mapping.read_pair(&2).unwrap(), AddressPair::ZERO);
     }
 
-    /// Pins the two-word layout `scripts/seed_genesis.py` and the native state opening
+    /// Pins the two-word layout `outbe-genesis-cli` and the native state opening
     /// plan both reproduce by hand: base at the key's mapping slot, quote at +1.
     #[test]
     fn test_mapping_address_pair_occupies_two_consecutive_slots() {

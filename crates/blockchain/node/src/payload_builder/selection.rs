@@ -14,7 +14,7 @@ use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::execute::BlockBuilder;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
-use reth_revm::cancelled::CancelOnDrop;
+use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::{
     error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     BestTransactions, PoolTransaction, TransactionPool, ValidPoolTransaction,

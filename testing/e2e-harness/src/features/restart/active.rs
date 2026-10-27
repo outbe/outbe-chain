@@ -46,7 +46,7 @@ fn joiner_active_persisted_share(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner identity");
     world.state.joiner_addr = Some(addr.clone());
-    world.rpc.stake(&key, 1000).expect("stake");
+    world.rpc.topup(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));
     world.rpc.confirm_ready(&key).expect("confirm ready");
     assert!(

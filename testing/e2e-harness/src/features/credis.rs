@@ -58,6 +58,8 @@ fn gem_of(url: &str, owner: Address) -> U256 {
 fn prepare(world: &mut World) {
     let (user, cca_key, cca) = credis::actors();
     let profile = BootstrapProfile::default()
+        .with_oracle_vote_period(crate::features::common::HOURLY_PRICING_ORACLE_PERIOD)
+        .expect("Credis hourly-pricing Oracle period")
         .with_credis_accounts(user, cca)
         .expect("Credis seed profile");
     world.state.voting_window = 6;
@@ -67,6 +69,7 @@ fn prepare(world: &mut World) {
         .bootstrap_with_profile(world.validators.size(), &profile)
         .expect("bootstrap Credis localnet");
     crate::features::common::start_bootstrapped_localnet(world, &StartOpts::with_voting_window(6));
+    crate::features::common::assert_hourly_pricing_period(world);
     let url = world.rpc.url(world.validators.primary_port());
     let currency = settlement_currency::deploy(
         world,

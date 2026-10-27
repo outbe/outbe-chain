@@ -946,7 +946,8 @@ fn launcher_fixture() -> LauncherFixture {
 }
 
 fn launcher_command(home: &Path, binary: &Path) -> Command {
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/run-radicle.sh");
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../deploy/validator/run-radicle.sh");
     let mut command = Command::new(script);
     command
         .env("OUTBE_RADICLE_BINARY", binary)

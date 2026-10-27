@@ -1,10 +1,12 @@
 use alloy_primitives::{address, b256, Address, LogData, B256, U256, U512};
 use alloy_sol_types::{SolError, SolEvent};
-use outbe_primitives::addresses::{SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
+use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, SLASH_INDICATOR_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_promislimit::PromisLimitContract;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::test_support::test_lifecycle_of;
@@ -86,6 +88,14 @@ fn register_and_activate_with_pubkey_and_stake(
         sub_pk[0] = 0xEE;
         register_active_fixture(&mut vs, SUBMITTER, &sub_pk, U256::from(1));
     }
+}
+
+fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
+    let contract = PromisLimitContract::new(storage.clone());
+    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
+    assert_eq!(contract.native_rest().unwrap(), slashed % unit);
+    assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 
 fn register_active_fixture(
@@ -463,7 +473,8 @@ fn direct_equivocation_timestamp_overflow_preserves_replay_flag_and_retry() {
                 Staking::new(storage.clone()).get_stake(VAL_A).unwrap(),
                 U256::from(920_000)
             );
-            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
+            assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+            assert_slash_credits_promis_limit(storage, U256::from(80_000));
         });
     }
 }
@@ -510,8 +521,9 @@ fn test_evidence_reward() {
         // seed the committee snapshot the evidence verifier resolves.
         write_test_committee(&storage);
 
-        // Submit evidence
+        // Submit evidence at a configured 100% reward. Stored 0 is the 0% default.
         let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(100).unwrap();
         si.submit_double_proposal_evidence(SUBMITTER, &ev1_data, &ev2_data)
             .unwrap();
 
@@ -527,6 +539,7 @@ fn test_evidence_reward() {
         // reward  = 80_000 * 100 / 100 = 80_000
         let ctx = storage.clone();
         assert_eq!(ctx.balance(SUBMITTER).unwrap(), U256::from(80_000u64));
+        assert_slash_credits_promis_limit(ctx, U256::from(80_000u64));
     });
 }
 
@@ -757,8 +770,9 @@ fn test_conflicting_vote_evidence() {
 
         write_test_committee(&storage);
 
-        // Submit conflicting vote evidence
+        // Submit conflicting vote evidence at a configured 100% reward.
         let mut si = SlashIndicator::new(storage.clone());
+        si.config_evidence_reward_percent.write(100).unwrap();
         si.submit_conflicting_vote_evidence(SUBMITTER, &notarize_data, &nullify_data)
             .unwrap();
 
@@ -885,7 +899,7 @@ fn test_full_lifecycle_integration() {
             .unwrap();
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
 
         // 3. Setup Staking config and stake
@@ -897,11 +911,11 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(validator, U256::from(1_000_000u64))
             .unwrap();
 
-        // Stake to meet min_stake -> PENDING (PoS lifecycle). Then activate, so the
+        // Top up stake to meet min_stake while in PENDING (PoS lifecycle). Then activate, so the
         // felony has an ACTIVE consensus participant to act on. The DKG reshare
         // normally promotes PENDING->ACTIVE. This test uses the semantic boundary fixture.
         staking
-            .stake(validator, validator, U256::from(10_000u64))
+            .topup(validator, validator, U256::from(10_000u64))
             .unwrap();
         // stake() no longer transfers funds (EVM call value does it).
         // slash_stake burns from STAKING_ADDRESS. Fund it for the test.
@@ -995,6 +1009,7 @@ fn slash_voter_felony_force_exits_and_slashes_at_threshold() {
         // 1_000_000 stake slashed by 8% -> 920_000.
         let staking = Staking::new(storage.clone());
         assert_eq!(staking.get_stake(VAL_A).unwrap(), U256::from(920_000u64));
+        assert_slash_credits_promis_limit(storage, U256::from(80_000u64));
     });
 }
 
@@ -1014,7 +1029,7 @@ fn default_thresholds_warn_before_they_punish() {
                 si.slash_amount_percent().unwrap(),
                 si.evidence_reward_percent().unwrap(),
             ),
-            (32, 128, 128, 512, 8, 100)
+            (32, 128, 128, 512, 8, 0)
         );
         assert!(
             si.proposer_misdemeanor_threshold().unwrap() < si.proposer_felony_threshold().unwrap()
@@ -1031,11 +1046,11 @@ fn unset_and_zero_percents_use_defaults_and_reads_reject_above_100() {
     with_storage(|storage| {
         let si = SlashIndicator::new(storage.clone());
         assert_eq!(si.slash_amount_percent().unwrap(), 8);
-        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 0);
         si.config_slash_amount_percent.write(0).unwrap();
         si.config_evidence_reward_percent.write(0).unwrap();
         assert_eq!(si.slash_amount_percent().unwrap(), 8);
-        assert_eq!(si.evidence_reward_percent().unwrap(), 100);
+        assert_eq!(si.evidence_reward_percent().unwrap(), 0);
 
         si.config_slash_amount_percent.write(100).unwrap();
         si.config_evidence_reward_percent.write(100).unwrap();

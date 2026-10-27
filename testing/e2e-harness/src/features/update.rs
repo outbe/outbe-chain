@@ -6,7 +6,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use alloy_primitives::U256;
-use alloy_sol_types::{Revert, SolError};
+use alloy_sol_types::SolError;
 use cucumber::{then, when};
 use outbe_update::constants::MIN_ACTIVATION_BUFFER;
 
@@ -83,10 +83,7 @@ fn unauthorized_proposal(world: &mut World) {
             },
         },
         U256::ZERO,
-        &Revert {
-            reason: "caller is not an active validator".to_owned(),
-        }
-        .abi_encode(),
+        &IVote::NotValidator {}.abi_encode(),
     );
 }
 
@@ -256,10 +253,7 @@ fn repeat_yes_vote(world: &mut World, name: String, id: u64) {
             },
         },
         U256::ZERO,
-        &Revert {
-            reason: "validator has already voted on proposal".to_owned(),
-        }
-        .abi_encode(),
+        &IVote::AlreadyVoted {}.abi_encode(),
     );
 }
 
@@ -329,7 +323,9 @@ fn proposal_parity(world: &mut World, id: u64) {
         .expect("primary head for proposal parity");
     for port in validator_ports(world) {
         assert!(
-            world.rpc.wait_finalized_at_least(port, observation_height, 15),
+            world
+                .rpc
+                .wait_finalized_at_least(port, observation_height, 15),
             "RPC {port} did not finalize proposal parity observation height {observation_height}: head={:?}, finalized={:?}",
             world.rpc.head(port),
             world.rpc.finalized(port)
@@ -611,9 +607,7 @@ fn still_pending_with_votes(world: &mut World, id: u64, yes: u64) {
 fn pass_vote_deadline(world: &mut World) {
     let deadline = world.state.vote_deadline.expect("deadline captured");
     let port = world.validators.primary_port();
-    let h = world
-        .rpc
-        .wait_block_gt(port, deadline, 80)
+    let h = super::common::wait_past_consensus_height(world, port, deadline)
         .expect("committee RPC must pass vote deadline");
     assert!(
         h > deadline,
@@ -654,9 +648,7 @@ fn approved_and_scheduled(world: &mut World, id: u64) {
 fn pass_activation_height(world: &mut World) {
     let activation = world.state.activation_height.expect("activation captured");
     let port = world.validators.primary_port();
-    let h = world
-        .rpc
-        .wait_block_gt(port, activation, 180)
+    let h = super::common::wait_past_consensus_height(world, port, activation)
         .expect("committee RPC must pass activation height");
     assert!(
         h > activation,
@@ -671,10 +663,11 @@ fn approach_activation_height(world: &mut World) {
     let activation = world.state.activation_height.expect("activation captured");
     let target = activation.saturating_sub(1);
     let port = world.validators.primary_port();
-    let h = world
-        .rpc
-        .wait_block(port, target, 180)
-        .expect("committee RPC must approach activation height");
+    let h = match target.checked_sub(1) {
+        Some(predecessor) => super::common::wait_past_consensus_height(world, port, predecessor),
+        None => world.rpc.wait_block(port, 0, 0),
+    }
+    .expect("committee RPC must approach activation height");
     assert!(
         h >= target,
         "did not approach activation {activation} (want head>={target}, got {h})"

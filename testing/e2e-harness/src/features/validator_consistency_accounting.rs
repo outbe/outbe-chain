@@ -29,7 +29,6 @@ use crate::world::validators::RegistrationIdentity;
 use crate::world::World;
 
 const COEN: u128 = 1_000_000_000_000_000_000;
-const REGISTRATION_FUNDING_COEN: u64 = 100;
 const PERIODIC_EXCLUSION_TRIES: u32 = 240;
 // Accounting deliberately removes one old-set proposer through jail. Allow
 // missed leader rounds before the same scheduled exclusion, without changing
@@ -307,7 +306,7 @@ fn exiting_validator_with_residue(world: &mut World) {
     let address = format!("{:#x}", identity.address());
     world
         .rpc
-        .stake(identity.evm_key(), 1000)
+        .topup(identity.evm_key(), 1000)
         .expect("stake joiner");
     world
         .rpc
@@ -411,8 +410,11 @@ fn reregistration_resets_residue(world: &mut World) {
         scratch.dense_index
     );
     assert_eq!(world.rpc.validator_count(port), Some(5));
-    assert_eq!(record.status, 0);
-    assert_eq!(record.stake, U256::ZERO);
+    assert_eq!(record.status, 1);
+    assert_eq!(
+        record.stake,
+        world.rpc.registration_amount().expect("registration bond")
+    );
     assert_eq!(record.slash_count, 0);
     assert_eq!(record.missed_blocks, 0);
     assert_eq!(record.missed_votes, 0);
@@ -452,7 +454,14 @@ fn old_bls_key_released_once(world: &mut World) {
         .expect("bind released old BLS key");
     let funding = world
         .rpc
-        .fund_key(&funder, rebound.evm_key(), REGISTRATION_FUNDING_COEN)
+        .fund_key(
+            &funder,
+            rebound.evm_key(),
+            world
+                .rpc
+                .registration_funding_coen()
+                .expect("registration funding"),
+        )
         .expect("fund old-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
     let accepted = world
@@ -481,7 +490,14 @@ fn old_bls_key_released_once(world: &mut World) {
         .expect("bind duplicate old BLS key");
     let funding = world
         .rpc
-        .fund_key(&funder, second_rebound.evm_key(), REGISTRATION_FUNDING_COEN)
+        .fund_key(
+            &funder,
+            second_rebound.evm_key(),
+            world
+                .rpc
+                .registration_funding_coen()
+                .expect("registration funding"),
+        )
         .expect("fund duplicate old-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
     let duplicate = assert_registration_revert(
@@ -523,7 +539,10 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         .fund_key(
             &world.validators.get(0),
             duplicate_identity.evm_key(),
-            REGISTRATION_FUNDING_COEN,
+            world
+                .rpc
+                .registration_funding_coen()
+                .expect("registration funding"),
         )
         .expect("fund duplicate new-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
@@ -554,7 +573,7 @@ fn reregistered_validator_requires_reconfirmation(world: &mut World) {
     let port = world.validators.primary_port();
     world
         .rpc
-        .stake(scratch.new_identity.evm_key(), 1000)
+        .topup(scratch.new_identity.evm_key(), 1000)
         .expect("restake re-registered validator");
     assert_eq!(wait_status(world, &scratch.address, 1, 20).status, 1);
     let start = world
@@ -615,7 +634,7 @@ fn run_accounting_lifecycle(world: &mut World) {
     let mut claims = U256::ZERO;
     assert_accounting(world, claims, "genesis");
 
-    world.rpc.stake(&victim_key, 100).expect("successful stake");
+    world.rpc.topup(&victim_key, 100).expect("successful stake");
     assert_accounting(world, claims, "successful stake");
 
     let stake_before_rejected = world
@@ -629,7 +648,7 @@ fn run_accounting_lifecycle(world: &mut World) {
         NegativeTx {
             to: STK_ADDR,
             key: &victim_key,
-            call: &IStaking::stakeCall {
+            call: &IStaking::topupCall {
                 validatorAddress: victim_address.parse().expect("victim address"),
                 amount: U256::ZERO,
             },
@@ -823,6 +842,10 @@ fn active_validator_has_staggered_claims(world: &mut World) {
     let validator = world.validators.get(3);
     let key = validator.evm_key().expect("staggered validator key");
     let address = world.rpc.address_of(&key).expect("staggered address");
+    world
+        .rpc
+        .topup(&key, 200)
+        .expect("top up before partial unstakes");
     let first = world.rpc.unstake(&key, 100).expect("first partial unstake");
     assert!(first.success);
     let first_end = world

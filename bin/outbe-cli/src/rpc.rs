@@ -519,6 +519,17 @@ pub mod mock {
         data: Vec<u8>,
         value: U256,
     ) -> Result<RecordingRpc> {
+        recording_send_tx_rpc_after(private_key, to, data, value, std::iter::empty())
+    }
+
+    /// `send_tx` consumes `leading` before the chain-id read.
+    pub fn recording_send_tx_rpc_after(
+        private_key: &str,
+        to: Address,
+        data: Vec<u8>,
+        value: U256,
+        leading: impl IntoIterator<Item = ExpectedRpcCall>,
+    ) -> Result<RecordingRpc> {
         const CHAIN_ID: u64 = 1337;
         const NONCE: u64 = 0;
         const GAS_ESTIMATE: u64 = 21_000;
@@ -539,7 +550,9 @@ pub mod mock {
             chain_id: CHAIN_ID,
         })?;
 
-        Ok(RecordingRpc::new([
+        let mut expected = Vec::new();
+        expected.extend(leading);
+        expected.extend([
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthChainId,
                 RecordedRpcResponse::U64(CHAIN_ID),
@@ -569,7 +582,8 @@ pub mod mock {
                 RecordedRpcCall::EthSendRawTransaction { raw_tx },
                 RecordedRpcResponse::Text(TX_HASH.to_string()),
             ),
-        ]))
+        ]);
+        Ok(RecordingRpc::new(expected))
     }
 
     /// A configurable mock. `eth_call_fn` dispatches based on (address, selector).

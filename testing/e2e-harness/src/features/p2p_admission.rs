@@ -122,13 +122,9 @@ fn probe_receivers(world: &mut World, phase: &str) -> Result<()> {
     Ok(())
 }
 
-#[given(expr = "a {word} transport peer has its own registered source IP")]
-fn registered_transport_peer(world: &mut World, status: String) {
+#[given("a PENDING transport peer has its own registered source IP")]
+fn registered_transport_peer(world: &mut World) {
     (|| -> Result<()> {
-        ensure!(
-            status == "Registered" || status == "Pending",
-            "unknown admission status"
-        );
         let index = world.validators.joiner_index();
         world.localnet.provision_joiner(index)?;
         let key = world.validators.joiner().evm_key()?;
@@ -154,9 +150,6 @@ fn registered_transport_peer(world: &mut World, status: String) {
             receipt["status"] == "0x1",
             "probe P2P registration reverted"
         );
-        if status == "Pending" {
-            world.rpc.stake(&key, 1000)?;
-        }
         for i in 0..4 {
             capture_dkg_owner(world, i)?;
         }
@@ -164,14 +157,13 @@ fn registered_transport_peer(world: &mut World, status: String) {
         let target = world.rpc.fresh_finality_target(&ports)?;
         let anchor = world.rpc.wait_finalized_checkpoint(&ports, target, 40)?;
         world.state.lifecycle_before = Some(anchor);
-        let expected_status = if status == "Pending" { 1 } else { 0 };
         for &port in &ports {
             ensure!(
                 world
                     .rpc
                     .validator_record_at(port, &format!("{address:#x}"), anchor.height)
-                    .is_some_and(|record| record.status == expected_status),
-                "probe did not reach the requested {status} status"
+                    .is_some_and(|record| record.status == 1),
+                "probe did not reach PENDING status"
             );
         }
         unchanged_secondary(world, &ports, anchor.height)?;

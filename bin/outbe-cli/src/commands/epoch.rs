@@ -176,7 +176,7 @@ impl TransitionTopics {
             Some(format!(
                 "{:<14} {:<14} {:<44} index={}",
                 parsed.block,
-                "REGISTERED",
+                "PENDING",
                 validator,
                 parsed.word_u64(0)
             ))
@@ -386,5 +386,24 @@ mod tests {
     async fn test_transitions_rpc_error() {
         let mock = MockRpc::default();
         assert!(transitions(&mock, 50).await.is_err());
+    }
+
+    #[test]
+    fn test_validator_registered_row_prints_pending() {
+        let topics = TransitionTopics::new();
+        let topic0 = topics.registered.clone();
+        let log = serde_json::json!({
+            "blockNumber": "0x10",
+            "topics": [
+                topic0,
+                "0x000000000000000000000000abcdef0123456789abcdef0123456789abcdef01",
+            ],
+            "data": format!("0x{:064x}", 7u64),
+        });
+        let parsed = crate::commands::ParsedLog::from_value(&log);
+        let row = topics.format_row(&parsed).expect("registered topic");
+        assert!(row.contains("PENDING"), "{row}");
+        assert!(!row.contains("REGISTERED"), "{row}");
+        assert!(row.contains("index=7"), "{row}");
     }
 }

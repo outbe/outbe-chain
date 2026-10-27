@@ -36,7 +36,7 @@ pub type PairIndex = u32;
 /// Slot number == field declaration index. Every field below occupies exactly
 /// one slot, including `Mapping<_, AddressPair>`. Its second word lives at
 /// `keccak256(key || slot) + 1`, inside the key's own hashed namespace and not
-/// in the next declaration slot. `openings.rs` and `scripts/seed_genesis.py`
+/// in the next declaration slot. `openings.rs` and the Rust genesis seeder
 /// hardcode these numbers. Read the slot-parity tests in `tests/state.rs` before
 /// you reorder anything.
 #[contract(addr = ORACLE_ADDRESS)]

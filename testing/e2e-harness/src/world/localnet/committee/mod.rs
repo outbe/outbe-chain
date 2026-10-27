@@ -1,5 +1,5 @@
 //! The bootstrapped committee: start/stop/restart the validator set and its
-//! enclaves (ported `run-testnet.sh` start), owned as Rust child processes.
+//! enclaves, owned as Rust child processes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -189,7 +189,7 @@ impl Localnet {
         )?;
 
         // Survival check: a node that dies in the first couple seconds is a
-        // config error. Surface it with its log tail (`run-testnet.sh:386-407`).
+        // config error. Surface it with its log tail.
         sleep(Duration::from_secs(2));
         for &i in &launched {
             if self.validators.get_mut(&i).is_some_and(|g| g.exited()) {
@@ -633,7 +633,7 @@ impl Localnet {
         Ok(status)
     }
 
-    /// Launch one committee validator as an owned child (`run-testnet.sh:317-349`):
+    /// Launch one committee validator as an owned child:
     /// `--consensus.use-local-defaults`, signing-key + evm-key only (peers come
     /// from the on-chain ValidatorSet), no `run-supervised` wrapper.
     fn launch_validator(

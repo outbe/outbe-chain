@@ -107,8 +107,7 @@ impl Localnet {
         // Its config argv is rooted under this run/scenario directory.
         let feeder = format!("outbe-feeder.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
-        // Nodes first (release MDBX locks), then their enclaves - matching the
-        // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
+        // Nodes first (release MDBX locks), then their enclaves.
         let node_result = self.stop_owned_nodes(expected_failed_slots, expected_dkg_expiry_exits);
         self.radicle_sidecars.clear();
         self.user_radicle = None;

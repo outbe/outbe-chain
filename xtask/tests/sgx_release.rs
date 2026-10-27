@@ -411,10 +411,10 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
         );
     }
 
-    let adapter = fs::read_to_string(root.join("scripts/release/build-sgx-bundle-in-container.sh"))
+    let adapter = fs::read_to_string(root.join("release/scripts/build-sgx-bundle-in-container.sh"))
         .expect("Gramine container adapter");
     assert!(adapter.contains("--chroot \"${bundle_root}\""));
-    assert!(adapter.contains("verify_dcap_native_qvl.py"));
+    assert!(adapter.contains("verify-toolchain-in-container.sh"));
     assert!(adapter.contains("--install-dir"));
 
     let sgx_release = [
@@ -446,7 +446,7 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
         bundle_spec["project_toolchain"],
         "release/project-toolchain-v1.json"
     );
-    assert!(inputs.contains(&"scripts/release/verify_dcap_native_qvl.py"));
+    assert!(inputs.contains(&"release/scripts/verify-toolchain-in-container.sh"));
 }
 
 #[test]
@@ -513,7 +513,7 @@ fn assert_cross_region_release_pipeline(workflow: &str) {
     }
     assert_eq!(
         workflow
-            .matches("scripts/release/reproducible-build.sh")
+            .matches("release/scripts/reproducible-build.sh")
             .count(),
         1,
         "one matrix build step must fan out across FR and MUM"
@@ -643,7 +643,7 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
         "RUSTFLAGS=-D warnings",
         "--features release-sgx-e2e --bin outbe-release-sgx-e2e",
         "--bin outbe-release-dcap-evidence",
-        "scripts/release/verify_reproducible_elf.py",
+        "cargo xtask release elf compare",
         "cargo xtask release sgx prepare",
         "cargo xtask release sgx compare",
         "openssl genrsa -3",
@@ -658,7 +658,7 @@ fn release_preflight_rehearses_critical_paths_without_release_authority() {
     }
     assert_eq!(
         workflow
-            .matches("scripts/release/reproducible-build.sh")
+            .matches("release/scripts/reproducible-build.sh")
             .count(),
         1,
         "one matrix build step must fan out across FR and MUM"
@@ -1035,7 +1035,7 @@ fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() 
             "tee": {"mock": false, "stage": "unsigned-bare-elf"}
         }],
         "build": {
-            "provenance": {"entrypoint": "scripts/release/reproducible-build.sh", "mode": "local-container"},
+            "provenance": {"entrypoint": "release/scripts/reproducible-build.sh", "mode": "local-container"},
             "source_date_epoch": source.source_date_epoch
         },
         "canonicalization": {},

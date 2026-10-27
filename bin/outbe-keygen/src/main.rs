@@ -492,14 +492,12 @@ fn cmd_validator(output_dir: PathBuf, chain_id: u64, backend: &KeyBackend) -> Re
     println!();
 
     println!("registration (fund {} first):", bundle.validator_address);
-    println!("  outbe-cli --private-key <evm-key> validator register \\");
-    println!("    --pubkey {} \\", hex::encode(bundle.bls_public_key));
+    println!("  outbe-cli --private-key <evm-key> staking stake \\");
+    println!("    --validator {} \\", bundle.validator_address);
+    println!("    --amount <amount> \\");
+    println!("    --keys-dir {}", output_dir.display());
     println!(
-        "    --radicle-node-id 0x{} \\",
-        hex::encode(bundle.radicle.node_id_bytes)
-    );
-    println!(
-        "    --bls-sig {}",
+        "  registration signature: {}",
         hex::encode(bundle.registration_signature)
     );
     println!();

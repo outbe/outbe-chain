@@ -91,6 +91,9 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
             U256::from(STAKE_AFTER_EIGHT_PERCENT)
         );
         assert_eq!(jailed.slash_count, 1);
+        let limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
+        assert_eq!(limit.promis_limit().unwrap(), U256::ZERO);
+        assert_eq!(limit.native_rest().unwrap(), U256::from(80_000u64));
         assert_eq!(
             staking.get_total_staked().unwrap(),
             U256::from(STAKE_AFTER_EIGHT_PERCENT)
@@ -101,6 +104,7 @@ fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
         );
         assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
         assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
+        assert_eq!(limit.native_rest().unwrap(), U256::from(80_000u64));
         assert_eq!(
             staking.get_stake(VALIDATOR).unwrap(),
             U256::from(STAKE_AFTER_EIGHT_PERCENT)

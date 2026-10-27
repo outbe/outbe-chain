@@ -125,6 +125,18 @@ pub enum TransportDispatchError {
     /// Building the NOD test fixture attestation preimage failed.
     #[error("invalid NOD fixture result")]
     InvalidNodFixtureResult,
+    /// The NOD Tribute encryption chain ID does not match the resident chain.
+    #[error("NOD Tribute encryption chain mismatch")]
+    NodTributeEncryptChainMismatch,
+    /// Hashing the NOD Tribute encryption inputs failed.
+    #[error("invalid NOD Tribute encryption inputs")]
+    InvalidNodTributeEncryptInputs,
+    /// Encrypting the NOD from the source Tribute failed.
+    #[error("invalid NOD Tribute encryption")]
+    InvalidNodTributeEncrypt,
+    /// Building the NOD Tribute encryption attestation preimage failed.
+    #[error("invalid NOD Tribute encryption result")]
+    InvalidNodTributeEncryptResult,
     /// The NOD transfer total size or payload is out of bounds.
     #[error("invalid NOD transfer bounds")]
     InvalidNodTransferBounds,

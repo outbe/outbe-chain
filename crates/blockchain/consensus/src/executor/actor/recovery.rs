@@ -67,10 +67,11 @@ where
                         "beacon consensus engine task stopped before its FCU response".to_string(),
                     )
                 }
-                Err(error @ BeaconForkChoiceUpdateError::ForkchoiceUpdateError(_))
-                | Err(error @ BeaconForkChoiceUpdateError::Internal(_)) => {
-                    RecoveredForkchoiceAttempt::Fatal(error.to_string())
-                }
+                Err(
+                    error @ (BeaconForkChoiceUpdateError::ForkchoiceUpdateError(_)
+                    | BeaconForkChoiceUpdateError::PayloadJob(_)
+                    | BeaconForkChoiceUpdateError::Internal(_)),
+                ) => RecoveredForkchoiceAttempt::Fatal(error.to_string()),
             }
         })
     }

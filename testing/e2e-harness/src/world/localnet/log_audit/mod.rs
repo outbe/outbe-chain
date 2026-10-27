@@ -35,7 +35,7 @@ type LogRecords = BTreeSet<(PathBuf, usize)>;
 
 pub(crate) struct ExpectedTeeFailures<'a> {
     pub(crate) lease_guard_validator: Option<usize>,
-    pub(crate) sidecar_outage: Option<(usize, &'a str)>,
+    pub(crate) sidecar_outage: Option<(usize, &'a str, u64, alloy_primitives::B256)>,
     pub(crate) lease_guard_full_node: Option<&'a TeeLeaseShutdownV1>,
 }
 
@@ -271,7 +271,7 @@ struct AuditExpectations<'a> {
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&'a str>,
     expected_tee_lease_guard_shutdown_validator: Option<usize>,
-    expected_tee_sidecar_outage: Option<(usize, &'a str)>,
+    expected_tee_sidecar_outage: Option<(usize, &'a str, u64, alloy_primitives::B256)>,
     expected_tee_lease_guard_shutdown_full_node: Option<&'a TeeLeaseShutdownV1>,
 }
 
@@ -302,8 +302,10 @@ impl ExpectedRecords {
         let tee_sidecar_outage = records_or_finding(
             expectations
                 .expected_tee_sidecar_outage
-                .map(|(validator, tx)| {
-                    expected_tee_sidecar_outage_records(logs, validators, validator, tx)
+                .map(|(validator, tx, height, hash)| {
+                    expected_tee_sidecar_outage_records(
+                        logs, validators, validator, tx, height, hash,
+                    )
                 }),
             findings,
         );

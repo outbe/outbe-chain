@@ -17,7 +17,9 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 ///      remote domain is equal to the chain id. When `WIRE_LOOPBACK` is true, the script wires the
 ///      local chain itself as a destination through the loopback adapter.
 ///
-/// Required env (DEPLOYER_PK must be BRIDGE_OWNER): `DEPLOYER_PK`, `CONTRACT_SALT`,
+/// Run it before `4_HandOver`, while the deployer still owns the hub and the adapters.
+///
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`,
 /// `CREATE3_FACTORY_ADDRESS`, `REMOTE_CHAIN_IDS` (csv). When the script wires LayerZero, it also
 /// requires `REMOTE_EIDS` (csv, parallel).
 contract ConfigureBridge is Script {

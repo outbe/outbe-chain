@@ -15,14 +15,15 @@ import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 ///      - Hyperlane when `HYPERLANE_MAILBOX` is present.
 ///      - The loopback (same-chain) adapter when `WIRE_LOOPBACK` is true.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `BRIDGE_OWNER`, and at
-/// least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
+///      The deployer owns the adapters until `4_HandOver` gives them to governance.
+///
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, and at least one of
+/// `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 contract DeployAdapters is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        address owner = vm.envAddress("BRIDGE_OWNER");
         address deployer = vm.addr(deployerPk);
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
@@ -31,13 +32,13 @@ contract DeployAdapters is Script {
 
         vm.startBroadcast(deployerPk);
         if (lzEndpoint != address(0)) {
-            console2.log("LayerZeroGatewayAdapter:", deployLayerZeroAdapter(factory, salt, owner, lzEndpoint));
+            console2.log("LayerZeroGatewayAdapter:", deployLayerZeroAdapter(factory, salt, deployer, lzEndpoint));
         }
         if (mailbox != address(0)) {
-            console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(factory, salt, owner, mailbox));
+            console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(factory, salt, deployer, mailbox));
         }
         if (vm.envOr("WIRE_LOOPBACK", false)) {
-            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(factory, salt, deployer, owner));
+            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(factory, salt, deployer, deployer));
         }
         vm.stopBroadcast();
     }

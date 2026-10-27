@@ -58,6 +58,9 @@ pub fn dispatch(
                     |sender, _, amount| controller.fund(sender, amount),
                 ),
                 sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),
+                applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
+                    controller.apply_approved(c.proposalId, &c.payload)
+                }),
                 setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
                 }),

@@ -104,10 +104,10 @@ impl ValidatorSet<'_> {
     }
 
     /// Returns validators admitted to consensus P2P as secondary peers:
-    /// `WaitingForStake`, both pending phases, and both jailed phases. This view
-    /// controls network admission only. A live share independently gates the
-    /// current-participant predicate. Downstream code drops peers without P2P
-    /// information.
+    /// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
+    /// phases (`JailRetained`, `Jail`). This view controls network admission
+    /// only. A live share independently gates the current-participant predicate.
+    /// Downstream code drops peers without P2P information.
     pub fn get_admitted_non_consensus_validators(&self) -> Result<Vec<ValidatorRecord>> {
         self.get_validators_matching(ValidatorLifecycle::is_secondary_admission)
     }
@@ -127,18 +127,6 @@ impl ValidatorSet<'_> {
             .len()
             .try_into()
             .map_err(|_| ValidatorSetError::ActiveValidatorCountExceedsU32)?;
-        Ok(count)
-    }
-
-    /// number of validators currently in the `REGISTERED` (self-registered,
-    /// not-yet-staked) state. Used to bound the free, permissionless
-    /// self-registration Sybil surface. See [`MAX_SELF_REGISTERED_UNSTAKED`].
-    pub fn registered_count(&self) -> Result<u32> {
-        let count: u32 = self
-            .validator_addresses_matching(ValidatorLifecycle::is_registered_status)?
-            .len()
-            .try_into()
-            .map_err(|_| ValidatorSetError::RegisteredValidatorCountExceedsU32)?;
         Ok(count)
     }
 

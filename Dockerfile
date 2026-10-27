@@ -31,7 +31,7 @@ WORKDIR /build
 
 # outbe-zk compiles the in-tree Noir circuits from build.rs. Install the exact
 # checksum-pinned nargo and bb versions before Cargo reaches that crate.
-RUN scripts/release/install-zk-build-tools.sh /usr/local/bin
+RUN release/scripts/install-zk-build-tools.sh /usr/local/bin
 
 # Build release binaries
 RUN cargo build --release --bin outbe-chain --bin outbe-keygen --bin outbe-cli

@@ -1,18 +1,57 @@
-use super::{status, MAX_SELF_REGISTERED_UNSTAKED};
+use super::status;
 use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
-use crate::state_machine::{self, P2pInfo, ValidatorLifecycle, ValidatorState};
-use alloy_primitives::{Address, B256};
+use crate::state_machine::{self, P2pInfo, StakeProjection, ValidatorLifecycle, ValidatorState};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::consensus_p2p::{
     decode_versioned, MAX_P2P_ADDRESS_ENCODED_LEN, P2P_ADDRESS_VERSION_V1,
 };
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
 use outbe_primitives::time::iso8601_now;
 use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 use std::num::NonZeroU64;
 use tracing::info;
+
+/// The 48-byte consensus key and the 96-byte BLS proof of possession of a
+/// registration call. The parser reads the 48-byte key length first.
+pub fn decode_registration_key_and_proof<'a>(
+    consensus_pubkey: &[u8],
+    signature: &'a [u8],
+) -> Result<([u8; 48], &'a [u8; 96])> {
+    if consensus_pubkey.len() != 48 {
+        return Err(ValidatorSetError::ConsensusPubkeyWrongLength.into());
+    }
+    let pubkey: [u8; 48] = consensus_pubkey[..48]
+        .try_into()
+        .map_err(|_| PrecompileError::from(ValidatorSetError::ConsensusPubkeyConversionFailed))?;
+    if signature.len() != 96 {
+        return Err(ValidatorSetError::BlsPopWrongLength.into());
+    }
+    let sig: &[u8; 96] = signature[..96]
+        .try_into()
+        .map_err(|_| PrecompileError::from(ValidatorSetError::BlsSignatureConversionFailed))?;
+    Ok((pubkey, sig))
+}
+
+fn decode_registration_p2p(version: u8, encoded: &[u8]) -> Result<P2pInfo> {
+    if encoded.is_empty() {
+        return Ok(P2pInfo::Unset);
+    }
+    if version != P2P_ADDRESS_VERSION_V1 {
+        return Err(ValidatorSetError::UnsupportedP2pAddressVersion { version }.into());
+    }
+    if encoded.len() > MAX_P2P_ADDRESS_ENCODED_LEN {
+        return Err(ValidatorSetError::P2pAddressPayloadTooLong {
+            max_len: MAX_P2P_ADDRESS_ENCODED_LEN,
+        }
+        .into());
+    }
+    let decoded =
+        decode_versioned(version, encoded).map_err(ValidatorSetError::invalid_p2p_address)?;
+    Ok(P2pInfo::V1(decoded))
+}
 
 /// Verifies a BLS MinPk registration signature.
 ///
@@ -99,16 +138,33 @@ impl ValidatorSet<'_> {
         Ok(Some(p2p.encode_stored()))
     }
 
-    /// Registers a new validator with BLS proof-of-possession verification.
-    ///
-    /// When `bls_signature` is `Some`, verifies that the BLS MinPk key signed the
-    /// chain-bound registration message under
-    /// `OUTBE_VALIDATOR_REGISTRATION_V2`.
-    /// This production API rejects `None`. Genesis is storage-seeded.
-    /// Feature-gated tests use [`Self::register_validator`] explicitly.
-    ///
-    /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
-    /// `bls_signature` is an optional 96-byte BLS MinPk signature.
+    /// Registers a new validator (or re-registers an `INACTIVE` validator) with
+    /// initial stake at or above `minimum` and transitions directly to
+    /// `WaitingForReadiness` (`PENDING`).
+    pub fn register_with_initial_stake(
+        &mut self,
+        caller: Address,
+        validator_addr: Address,
+        (consensus_pubkey, radicle_node_id, bls_signature): (&[u8; 48], B256, Option<&[u8; 96]>),
+        (p2p_version, p2p_encoded): (u8, &[u8]),
+        (bonded, minimum): (U256, U256),
+    ) -> Result<()> {
+        let p2p = decode_registration_p2p(p2p_version, p2p_encoded)?;
+        self.register_validator_inner(&RegistrationRequest {
+            caller,
+            validator: validator_addr,
+            consensus_pubkey,
+            radicle_node_id,
+            bls_signature,
+            p2p,
+            bonded,
+            minimum,
+            allow_bootstrap_without_pop: false,
+        })
+    }
+
+    /// Registers a validator with BLS proof-of-possession verification using
+    /// the current authoritative bonded stake and the configured minimum stake.
     pub fn register_validator_with_sig(
         &mut self,
         caller: Address,
@@ -117,12 +173,17 @@ impl ValidatorSet<'_> {
         radicle_node_id: B256,
         bls_signature: Option<&[u8; 96]>,
     ) -> Result<()> {
+        let bonded = self.read_authoritative_bonded(&validator_addr)?;
+        let minimum = self.read_authoritative_min_stake()?;
         self.register_validator_inner(&RegistrationRequest {
             caller,
             validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
             bls_signature,
+            p2p: P2pInfo::Unset,
+            bonded,
+            minimum,
             allow_bootstrap_without_pop: false,
         })
     }
@@ -152,14 +213,14 @@ impl ValidatorSet<'_> {
             return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
         }
 
-        // Authorization: owner or self-registration
+        // Only the owner or the validator may register at the ValidatorSet
+        // boundary. External callers enter through Staking::stake.
         if request.caller != owner && request.caller != request.validator {
             return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
         }
         self.ensure_not_operational_delegate(request.validator)?;
         let radicle_owner = self.available_radicle_owner(request)?;
         self.verify_proof_of_possession(request)?;
-        self.ensure_self_registration_capacity(request)?;
         self.ensure_consensus_key_available(request)?;
         Ok(radicle_owner)
     }
@@ -198,25 +259,6 @@ impl ValidatorSet<'_> {
         }
     }
 
-    /// Bounds the free, permissionless self-registration Sybil surface.
-    ///
-    /// The consensus P2P secondary tier admits a self-registered REGISTERED
-    /// node (the TEE verifier flow). So cap how many unstaked REGISTERED
-    /// validators can exist at once, far below `config_max_validators`. An
-    /// attacker then cannot fill the validator set (or the consensus P2P set)
-    /// with free Sybils. Owner registrations (`caller == owner`) bypass this
-    /// cap. This check runs before any state mutation (including the
-    /// re-registration path), so an over-cap self-registration never consumes
-    /// a registration slot.
-    fn ensure_self_registration_capacity(&self, request: &RegistrationRequest<'_>) -> Result<()> {
-        if request.caller == request.validator
-            && self.registered_count()? >= MAX_SELF_REGISTERED_UNSTAKED
-        {
-            return Err(ValidatorSetError::SelfRegistrationLimitReached.into());
-        }
-        Ok(())
-    }
-
     /// Verifies that the BLS pubkey is not already used by another validator.
     /// Without this check, two validators could register the same BLS key,
     /// causing undefined behavior during DKG/reshare.
@@ -251,6 +293,9 @@ impl ValidatorSet<'_> {
             validator: validator_addr,
             index: existing_index.get(),
         })?;
+        self.emit(IValidatorSet::ValidatorPending {
+            validator: validator_addr,
+        })?;
         guard.commit();
 
         publish_registration(
@@ -262,12 +307,8 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
-    /// The re-registered `WaitingForStake` state of an INACTIVE validator and
-    /// the reverse-lookup hash of its old consensus key.
-    ///
-    /// The checks run in this order: INACTIVE status, kept Radicle NodeId,
-    /// consistent reverse binding, cooldown, consensus key, transition, and
-    /// the configured cooldown.
+    /// The re-registered `WaitingForReadiness` state of an INACTIVE validator
+    /// and the reverse-lookup hash of its old consensus key.
     fn reregistered_state(
         &self,
         request: &RegistrationRequest<'_>,
@@ -290,30 +331,37 @@ impl ValidatorSet<'_> {
             .consensus_pubkey()
             .ok_or(ValidatorSetError::RegisteredValidatorMissingConsensusPubkey)?;
         let old_pk_hash = Self::consensus_pubkey_hash(old_pubkey);
-        let lifecycle = ValidatorLifecycle::WaitingForStake(state_machine::reregister(
+        let stake = StakeProjection::new(request.bonded, None);
+        let lifecycle = ValidatorLifecycle::WaitingForReadiness(state_machine::reregister(
             inactive,
-            *request.consensus_pubkey,
+            (*request.consensus_pubkey, request.p2p.clone()),
+            (stake, request.minimum),
             target.block_number,
         )?);
         let after = existing_state.clone().with_lifecycle(lifecycle)?;
         Ok((after, old_pk_hash))
     }
 
-    /// Requires the configured re-registration cooldown to have passed since
-    /// the last deactivation.
+    /// Rejects a validator that exited in the current epoch
+    /// (`deactivated_at > epoch_start_block`) or before the re-registration
+    /// cooldown expires.
     fn ensure_reregistration_cooldown(
         &self,
         existing_state: &ValidatorState,
         block_number: u64,
     ) -> Result<()> {
-        let cooldown = self.config_reregistration_cooldown.read()?;
-        if cooldown == 0 {
-            return Ok(());
-        }
         let deactivated_at = existing_state
             .history()
             .ok_or(ValidatorSetError::RegisteredValidatorMissingHistory)?
             .last_deactivated_at_height();
+        let epoch_start = self.epoch_start_block.read()?;
+        if epoch_start > 0 && deactivated_at.is_some_and(|height| height > epoch_start) {
+            return Err(ValidatorSetError::ReregistrationCooldownNotExpired.into());
+        }
+        let cooldown = self.config_reregistration_cooldown.read()?;
+        if cooldown == 0 {
+            return Ok(());
+        }
         let ready_at = deactivated_at
             .map(|height| {
                 height
@@ -337,12 +385,13 @@ impl ValidatorSet<'_> {
         let (new_index, registry_index) = self.next_registry_index()?;
         let new_index_u64 = registry_index.get();
 
-        // Construct and persist the complete first-time registry bundle. The
-        // typed decoder guarantees that absent addresses carry no stake residue.
+        // Construct and persist the complete first-time registry bundle.
+        let stake = StakeProjection::new(request.bonded, None);
         let registered_state = state_machine::register(
             target.existing_state.clone(),
             registry_index,
-            *request.consensus_pubkey,
+            (*request.consensus_pubkey, request.p2p.clone()),
+            (stake, request.minimum),
             target.block_number,
         )?;
 
@@ -373,6 +422,9 @@ impl ValidatorSet<'_> {
         self.emit(IValidatorSet::ValidatorRegistered {
             validator: validator_addr,
             index: new_index_u64,
+        })?;
+        self.emit(IValidatorSet::ValidatorPending {
+            validator: validator_addr,
         })?;
         guard.commit();
 
@@ -409,6 +461,9 @@ pub(super) struct RegistrationRequest<'a> {
     pub(super) consensus_pubkey: &'a [u8; 48],
     pub(super) radicle_node_id: B256,
     pub(super) bls_signature: Option<&'a [u8; 96]>,
+    pub(super) p2p: P2pInfo,
+    pub(super) bonded: U256,
+    pub(super) minimum: U256,
     /// Only the feature-gated bootstrap/test helper may skip proof of
     /// possession.
     pub(super) allow_bootstrap_without_pop: bool,
@@ -430,7 +485,7 @@ enum RegistrationPath {
 
 /// Records the metrics, journal entry and log of a committed registration.
 fn publish_registration(validator: Address, index: u64, block_number: u64, path: RegistrationPath) {
-    crate::metrics::record_validator_status(validator, status::REGISTERED);
+    crate::metrics::record_validator_status(validator, status::PENDING);
     crate::metrics::record_validator_register(
         validator,
         matches!(path, RegistrationPath::Reregistered),

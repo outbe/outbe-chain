@@ -22,6 +22,10 @@ alloy-sol-types.workspace = true
 alloy-eips.workspace = true
 outbe-consensus.workspace = true
 outbe-primitives.workspace = true
+blst.workspace = true
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
+radicle-crypto = { workspace = true, features = ["ssh"] }
 outbe-operator.workspace = true
 outbe-zerofee.workspace = true
 outbe-zk.workspace = true
@@ -53,6 +57,9 @@ tempfile.workspace = true
 [dev-dependencies]
 outbe-operator = { workspace = true, features = ["test-support"] }
 outbe-rpc = { workspace = true, features = ["test-support"] }
+commonware-math.workspace = true
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 
 [lints]
 workspace = true

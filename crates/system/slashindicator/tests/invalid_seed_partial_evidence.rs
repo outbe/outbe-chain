@@ -13,8 +13,10 @@ use commonware_cryptography::Signer as _;
 use outbe_consensus::bls::bootstrap_dkg;
 use outbe_consensus::dkg_manager::public_polynomial_hash;
 use outbe_consensus::proof::{hybrid_seed_namespace, seed_partial_attest_message};
-use outbe_primitives::addresses::STAKING_ADDRESS;
+use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_promislimit::PromisLimitContract;
 use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
@@ -34,6 +36,14 @@ const ROUND_EPOCH: u64 = 3;
 const ROUND_VIEW: u64 = 100;
 const VRF_VERSION: u64 = 0;
 const N: u32 = 4;
+
+fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
+    let contract = PromisLimitContract::new(storage.clone());
+    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
+    assert_eq!(contract.native_rest().unwrap(), slashed % unit);
+    assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
+}
 
 fn validator_addr(i: u32) -> Address {
     let mut b = [0u8; 20];
@@ -220,7 +230,8 @@ fn wide_timestamp_does_not_consume_invalid_partial_evidence() {
                 .unwrap(),
             U256::from(920_000)
         );
-        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::from(80_000));
+        assert_eq!(storage.balance(SUBMITTER).unwrap(), U256::ZERO);
+        assert_slash_credits_promis_limit(storage, U256::from(80_000));
     });
 }
 

@@ -348,6 +348,7 @@ mod tests {
         provider.add_account(sender, ExtendedAccount::new(0, U256::MAX));
         let blob_store = InMemoryBlobStore::default();
         let inner = EthTransactionValidatorBuilder::new(provider.clone(), EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .build(blob_store.clone());
         let validator = crate::OutbeTransactionValidator::new(inner);
         let pool = Pool::new(
