@@ -29,6 +29,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     error ERC7786BridgeRemoteNotRegistered(bytes2 chainType, bytes chainReference);
     error ERC7786BridgeGatewayNotSet();
     error ERC7786BridgeInvalidExecutionReturnValue();
+    error ERC7786BridgeWrongDestinationChain(uint256 chainId);
+    error ERC7786BridgeNonZeroValue();
 
     // =================================================== Storage ===================================================
 
@@ -131,7 +133,10 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
      * Reverts if:
      * - the caller is not the source chain's gateway,
      * - the message does not originate from the registered bridge,
+     * - the call carries native value (no gateway delivers value, and the bridge has no way to
+     *   return it),
      * - the message was already executed,
+     * - the message names another destination chain,
      * - or the recipient reverts / returns an invalid value.
      *
      * On a recipient revert, the whole call reverts, so the deduplication flag is rolled back.
@@ -149,6 +154,8 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         whenNotPaused
         returns (bytes4)
     {
+        require(msg.value == 0, ERC7786BridgeNonZeroValue());
+
         // Only the source chain's gateway may deliver, and only from the registered bridge on the
         // source chain.
         (uint256 srcChainId,) = sender.parseEvmV1Calldata();
@@ -166,7 +173,9 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         (, bytes memory originalSender, bytes memory recipient, bytes memory unwrappedPayload) =
             abi.decode(payload, (uint256, bytes, bytes, bytes));
 
-        (, address target) = recipient.parseEvmV1();
+        // The gateway is trusted to route, but a misrouted message must not execute here.
+        (uint256 dstChainId, address target) = recipient.parseEvmV1();
+        require(dstChainId == block.chainid, ERC7786BridgeWrongDestinationChain(dstChainId));
         bytes4 magic = IERC7786Recipient(target).receiveMessage(id, originalSender, unwrappedPayload);
         require(magic == IERC7786Recipient.receiveMessage.selector, ERC7786BridgeInvalidExecutionReturnValue());
 

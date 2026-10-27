@@ -76,6 +76,13 @@ contract RecordingGatewayMock is IERC7786GatewaySource, IGatewayQuote {
     }
 }
 
+/// @dev Exposes {GasLimitAttribute-resolve}, which takes calldata.
+contract GasLimitAttributeHarness {
+    function resolve(bytes[] calldata attributes, uint128 defaultGasLimit) external pure returns (uint128) {
+        return GasLimitAttribute.resolve(attributes, defaultGasLimit);
+    }
+}
+
 contract ERC7786BridgeTest is Test {
     ERC7786Bridge internal bridge;
 
@@ -117,9 +124,25 @@ contract ERC7786BridgeTest is Test {
         return false;
     }
 
+    // ============================================== GasLimitAttribute ==============================================
+
+    function testFuzz_GasLimitResolve_BoundsToUint128(uint256 requested) public {
+        GasLimitAttributeHarness harness = new GasLimitAttributeHarness();
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encode(requested);
+
+        if (requested > type(uint128).max) {
+            vm.expectRevert();
+            harness.resolve(attrs, 1);
+        } else {
+            assertEq(harness.resolve(attrs, 1), requested, "attribute value wins");
+        }
+        assertEq(harness.resolve(_noAttrs(), 7), 7, "default without the attribute");
+    }
+
     // ============================================ sendMessage (outbound) ============================================
 
-    function test_SendMessage_ForwardsThroughGatewayAndRoundTrips() public {
+    function testFuzz_SendMessage_ForwardsThroughGatewayAndRoundTrips(bytes calldata payload) public {
         GatewayMock gateway = new GatewayMock();
         ERC7786Bridge bridgeA = new ERC7786Bridge(owner, address(gateway));
         ERC7786Bridge bridgeB = new ERC7786Bridge(owner, address(gateway));
@@ -129,8 +152,6 @@ contract ERC7786BridgeTest is Test {
         bridgeA.registerRemoteBridge(_interop(address(bridgeB)));
         bridgeB.registerRemoteBridge(_interop(address(bridgeA)));
         vm.stopPrank();
-
-        bytes memory payload = abi.encode("hello", uint256(42));
 
         vm.recordLogs();
         vm.prank(app);
@@ -151,22 +172,17 @@ contract ERC7786BridgeTest is Test {
     }
 
     function test_SendMessage_ForwardsNativeValue() public {
-        GatewayMock gateway = new GatewayMock();
-        ERC7786Bridge bridgeA = new ERC7786Bridge(owner, address(gateway));
-        ERC7786Bridge bridgeB = new ERC7786Bridge(owner, address(gateway));
-        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridgeB));
-
-        vm.startPrank(owner);
-        bridgeA.registerRemoteBridge(_interop(address(bridgeB)));
-        bridgeB.registerRemoteBridge(_interop(address(bridgeA)));
-        vm.stopPrank();
+        RecordingGatewayMock gateway = new RecordingGatewayMock();
+        vm.prank(owner);
+        bridge.setGateway(address(gateway));
 
         uint256 fee = 0.1 ether;
         vm.deal(app, fee);
         vm.prank(app);
-        bridgeA.sendMessage{value: fee}(_interop(address(recipient)), abi.encode("hello"), _noAttrs());
+        bridge.sendMessage{value: fee}(_interop(sourceBridge), abi.encode("hello"), _noAttrs());
 
-        assertEq(address(bridgeB).balance, fee, "native fee forwarded through the bridge");
+        assertEq(address(gateway).balance, fee, "native fee forwarded to the gateway");
+        assertEq(address(bridge).balance, 0, "the bridge keeps nothing");
     }
 
     function test_RevertWhen_SendWithoutGateway() public {
@@ -281,6 +297,31 @@ contract ERC7786BridgeTest is Test {
         vm.prank(gw);
         vm.expectRevert();
         bridge.receiveMessage(bytes32(0), hex"deadbeef", payload);
+    }
+
+    function test_RevertWhen_ReceiveForOtherDestinationChain() public {
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+        uint256 otherChain = block.chainid + 1;
+        bytes memory payload = abi.encode(
+            uint256(1),
+            _interop(app),
+            InteroperableAddress.formatEvmV1(otherChain, address(recipient)),
+            abi.encode("inner")
+        );
+
+        vm.prank(gw);
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Bridge.ERC7786BridgeWrongDestinationChain.selector, otherChain));
+        bridge.receiveMessage(bytes32(0), _interop(sourceBridge), payload);
+    }
+
+    function test_RevertWhen_ReceiveWithValue() public {
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+        bytes memory payload = _wrap(1, app, address(recipient), abi.encode("inner"));
+        vm.deal(gw, 1 ether);
+
+        vm.prank(gw);
+        vm.expectRevert(ERC7786Bridge.ERC7786BridgeNonZeroValue.selector);
+        bridge.receiveMessage{value: 1}(bytes32(0), _interop(sourceBridge), payload);
     }
 
     function test_RevertWhen_ReceiveAlreadyExecuted() public {
