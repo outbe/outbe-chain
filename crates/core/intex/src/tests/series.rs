@@ -69,7 +69,7 @@ fn a_spent_series_is_deleted_and_leaves_the_enumeration() {
     with_registry(|s| {
         api::create_series(&s, sample_params(11)).unwrap();
         api::create_series(&s, sample_params(22)).unwrap();
-        api::record_settled_units(&s, sid(11), 100).unwrap();
+        api::record_settled_units(&s, sid(11), owner(), 100).unwrap();
         assert!(
             !api::release_if_spent(&s, sid(11)).unwrap(),
             "settled units still to mine"

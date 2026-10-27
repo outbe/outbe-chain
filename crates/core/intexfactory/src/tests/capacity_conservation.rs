@@ -51,7 +51,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         .unwrap();
         // Settled, mined and converted footprints. The settlement and mining
         // tests cover their authorization.
-        api::record_settled_units(&s, id, 3).unwrap();
+        api::record_settled_units(&s, id, Address::repeat_byte(1), 3).unwrap();
         api::record_mined_units(&s, id, Address::repeat_byte(1), 1).unwrap();
         api::record_gem_factory_units(&s, id, Address::repeat_byte(1), 2).unwrap();
         IntexContract::new(s.clone())

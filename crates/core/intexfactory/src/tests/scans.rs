@@ -695,7 +695,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let deadline = now + DAY;
         let spent = grouped_series(&s, 20260101);
         let kept = series_in(&s, 20260102, 20260101);
-        outbe_intex::api::record_settled_units(&s, kept, 1).unwrap();
+        outbe_intex::api::record_settled_units(&s, kept, owner(), 1).unwrap();
         IntexContract::new(s.clone())
             .seed_called_group(spent, deadline)
             .unwrap();

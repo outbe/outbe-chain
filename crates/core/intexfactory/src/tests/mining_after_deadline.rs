@@ -46,7 +46,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
     let (promis_minor, nonce) = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), owner(), 1).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let promis_minor = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
@@ -167,7 +167,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
     let load = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), SETTLED).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), owner(), SETTLED).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         outbe_intex::api::read_series(&s, sid(7))
             .unwrap()

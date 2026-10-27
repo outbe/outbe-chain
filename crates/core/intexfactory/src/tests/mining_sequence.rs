@@ -18,7 +18,7 @@ fn a_mining_sequence_at_its_maximum_refuses_the_next_mining_without_writes() {
     let nonce = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), owner(), 1).unwrap();
         let promis_amount = outbe_intex::api::read_series(&s, sid(7))
             .unwrap()
             .promis_load_minor;
