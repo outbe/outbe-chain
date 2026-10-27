@@ -107,12 +107,17 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         },
     );
     let mut visible_system_gas_used = 0u64;
+    let mut gross_phase_gas = Vec::new();
     for tx in system_txs.clone() {
         let signed_gas_limit = tx.tx().gas_limit();
         let intrinsic_gas = system_tx_intrinsic_gas(tx.tx().input()).unwrap();
         let gas_used = executor
-            .execute_transaction(tx)
-            .expect("begin-zone system tx should execute in tx loop");
+            .execute_transaction_with_commit_condition(tx, |output| {
+                gross_phase_gas.push(output.result.result.gas().total_gas_spent());
+                CommitChanges::Yes
+            })
+            .expect("begin-zone system tx should execute in tx loop")
+            .expect("begin-zone system tx should commit");
         assert!(
             (intrinsic_gas..=signed_gas_limit).contains(&gas_used.tx_gas_used()),
             "receipt gas must stay between intrinsic gas and the signed envelope limit"
@@ -127,6 +132,10 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
             visible_system_gas_used
         );
     }
+    println!("block-one calibration: gross_phase_gas={gross_phase_gas:?}");
+    // CycleTick, TeeBootstrap, OracleSlashWindow. HookEvents publishes a
+    // synthetic receipt without an EVM call and contributes no internal work.
+    assert_eq!(gross_phase_gas, [588_000, 266_400, 300]);
 
     assert_eq!(executor.receipts().len(), 4);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
@@ -434,10 +443,25 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     );
     let cycle_tx = system_txs.remove(0);
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
+    let mut gross_internal_gas = None;
     let cycle_gas = executor
-        .execute_transaction(cycle_tx)
+        .execute_transaction_with_commit_condition(cycle_tx, |output| {
+            gross_internal_gas = Some(output.result.result.gas().total_gas_spent());
+            CommitChanges::Yes
+        })
         .expect("dense CycleTick should execute")
+        .expect("dense CycleTick should commit")
         .tx_gas_used();
+    let gross_internal_gas = gross_internal_gas.expect("gross CycleTick work must be measured");
+    println!(
+        "GAS-05 calibration: validators={DENSE_VALIDATOR_COUNT}, WAA={DENSE_ADDRESS_COUNT}, \
+         SRA={DENSE_ADDRESS_COUNT}, gross_internal_gas={gross_internal_gas}"
+    );
+    assert!(gross_internal_gas > cycle_gas);
+    // Gross work includes settlement and the full 256-recipient accrual slice,
+    // before refunds. This fixture alone does not calibrate every trigger or
+    // bound non-trigger maintenance.
+    assert_eq!(gross_internal_gas, 8_889_900);
 
     let cycle_receipt = executor
         .receipts()

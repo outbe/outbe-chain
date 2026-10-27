@@ -104,6 +104,60 @@ fn caught_invalid_opcode_is_not_free() {
 }
 
 #[test]
+fn cycle_notice_count_limit_does_not_reserve_internal_work() {
+    use outbe_intex::SeriesId;
+    use outbe_primitives::{
+        block::{BlockContext, BlockRuntimeContext},
+        stablecoin::ISO_4217_NUMERIC_CODES,
+        storage::StorageHandle,
+        time::WorldwideDay,
+    };
+
+    let mut ctx = context(&[]);
+    // A halting callee consumes its admitted allowance without an expensive
+    // interpreter loop. This is a gas-admission stress fixture, not a router
+    // deployment or a measurement of successful bridge delivery.
+    let code = Bytecode::new_raw(Bytes::from_static(&[0xfe]));
+    ctx.journaled_state.database.insert_account_info(
+        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+        AccountInfo {
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        },
+    );
+    let mut p = provider(&mut ctx, u64::MAX);
+    StorageHandle::enter(&mut p, |storage| {
+        let factory = outbe_intexfactory::schema::IntexFactoryContract::new(storage);
+        let day = WorldwideDay::new(20260101);
+        // Three messages, well below the per-block limit of 64 calls.
+        let count = 3 * outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
+        for (index, &issuance) in ISO_4217_NUMERIC_CODES.iter().take(count).enumerate() {
+            let id = SeriesId::for_pair(day, issuance, 840).unwrap();
+            factory
+                .notify_at
+                .write(
+                    &(index as u32),
+                    outbe_intexfactory::notify::pack_called_notice(id, 1),
+                )
+                .unwrap();
+        }
+        factory.notify_tail.write(count as u32).unwrap();
+    });
+
+    let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
+    p.gas = SubcallGasMeter::new(limit);
+    let result = StorageHandle::enter(&mut p, |storage| {
+        let block = BlockContext::new(1, 2, 1, CALLER, vec![CALLER]);
+        outbe_intexfactory::notify::send_notices(&BlockRuntimeContext::new(block, storage))
+    });
+    assert!(matches!(result, Err(PrecompileError::OutOfGas)));
+    let spent = limit.checked_sub(p.gas.remaining()).unwrap();
+    println!("notice admission stress: messages=3, gross_internal_gas={spent}, limit={limit}");
+    assert!(p.gas.remaining() < 5_000);
+}
+
+#[test]
 fn admission_oog_exhausts_parent_and_cannot_be_hidden_by_try_call() {
     let mut ctx = context(GAS_WORD);
     let mut p = provider(&mut ctx, 99);
