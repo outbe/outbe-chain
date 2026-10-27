@@ -6,9 +6,12 @@ use crate::{
     transport::SharedTributeOfferKey,
 };
 use alloy_primitives::B256;
-use outbe_primitives::nod_encryption::EncryptedNodV2;
+use outbe_primitives::{
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
+    tribute_encryption::EncryptedTributeV2,
+};
 use outbe_tee::{
-    nod_mine::{self, MineEncryptedNodRequestV2},
+    nod_mine::{self, MineEncryptedNodRequestV1},
     protocol::EnclaveResponse,
     response_auth,
 };
@@ -17,7 +20,7 @@ pub(super) fn mine(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-    request: &MineEncryptedNodRequestV2,
+    request: &MineEncryptedNodRequestV1,
 ) -> EnclaveResponse {
     response((|| -> EnclaveResult<EnclaveResponse> {
         let key = offer
@@ -36,9 +39,9 @@ pub(super) fn mine(
                 let inputs = nod_mine::inputs_hash(request)
                     .map_err(|_| TransportDispatchError::InvalidNodMintInputs)?;
                 let preimage =
-                    response_auth::attestation(b"outbe/nod/mint-rejected/v2", inputs, &reason)
+                    response_auth::attestation(b"outbe/nod/mint-rejected/v1", inputs, &reason)
                         .map_err(|_| TransportDispatchError::InvalidNodRejectionResult)?;
-                return Ok(EnclaveResponse::EncryptedNodMintRejectedV2 {
+                return Ok(EnclaveResponse::EncryptedNodMintRejectedV1 {
                     reason,
                     inputs_canonical_hash: inputs,
                     attestation_tag: keys.sign_attestation(&preimage).to_vec(),
@@ -49,7 +52,7 @@ pub(super) fn mine(
         let preimage = nod_mine::result_preimage(&result)
             .map_err(|_| TransportDispatchError::InvalidNodMineResult)?;
         result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
-        Ok(EnclaveResponse::EncryptedNodMinedV2 {
+        Ok(EnclaveResponse::EncryptedNodMinedV1 {
             result: Box::new(result),
         })
     })())
@@ -58,7 +61,7 @@ pub(super) fn read_amount(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,
     chain: B256,
-    nod: &EncryptedNodV2,
+    nod: &EncryptedNodV1,
 ) -> EnclaveResponse {
     let Some(key) = offer.get() else {
         return EnclaveResponse::NotReady {
@@ -74,8 +77,50 @@ pub(super) fn read_amount(
         let inputs = nod_mine::nod_read_hash(nod)
             .map_err(|_| TransportDispatchError::InvalidNodReadInputs)?;
         let preimage = nod_mine::nod_read_preimage(inputs, amount);
-        Ok(EnclaveResponse::NodAmountReadV2 {
+        Ok(EnclaveResponse::NodAmountReadV1 {
             amount,
+            inputs_canonical_hash: inputs,
+            attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+        })
+    })())
+}
+
+pub(super) struct NodTributeInput<'a> {
+    pub tribute: &'a EncryptedTributeV2,
+    pub terms: NodTermsV1,
+    pub amount: alloy_primitives::U256,
+}
+
+pub(super) fn encrypt_for_tribute(
+    keys: &EnclaveKeys,
+    offer: &SharedTributeOfferKey,
+    chain: B256,
+    input: NodTributeInput<'_>,
+) -> EnclaveResponse {
+    response((|| -> EnclaveResult<EnclaveResponse> {
+        let key = offer
+            .get()
+            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
+        if input.terms.chain_id != resident_chain_id(chain)? {
+            return Err(TransportDispatchError::NodTributeEncryptChainMismatch.into());
+        }
+        let inputs = response_auth::hash(
+            b"outbe/nod/tribute-create-inputs/v1",
+            &(input.tribute, &input.terms, input.amount),
+        )
+        .map_err(|_| TransportDispatchError::InvalidNodTributeEncryptInputs)?;
+        let nod = crate::nod_encryption::encrypt_nod_for_tribute(
+            key.secret(),
+            input.tribute,
+            input.terms,
+            input.amount,
+        )
+        .map_err(|_| TransportDispatchError::InvalidNodTributeEncrypt)?;
+        let preimage =
+            response_auth::attestation(b"outbe/nod/tribute-create-result/v1", inputs, &nod)
+                .map_err(|_| TransportDispatchError::InvalidNodTributeEncryptResult)?;
+        Ok(EnclaveResponse::NodEncryptedForTributeV1 {
+            nod,
             inputs_canonical_hash: inputs,
             attestation_tag: keys.sign_attestation(&preimage).to_vec(),
         })
@@ -84,7 +129,7 @@ pub(super) fn read_amount(
 
 #[cfg(feature = "e2e-test")]
 pub(super) struct NodFixtureInput {
-    pub terms: outbe_primitives::nod_encryption::NodTermsV2,
+    pub terms: outbe_primitives::nod_encryption::NodTermsV1,
     pub creator_public: [u8; 32],
     pub amount: alloy_primitives::U256,
 }
@@ -108,15 +153,15 @@ pub(super) fn create_for_test(
             return Err(TransportDispatchError::NodFixtureChainMismatch.into());
         }
         let inputs = response_auth::hash(
-            b"outbe/nod/test-create-inputs/v2",
+            b"outbe/nod/test-create-inputs/v1",
             &(&terms, &creator_public, amount),
         )
         .map_err(|_| TransportDispatchError::InvalidNodFixtureInputs)?;
         let nod = crate::nod_encryption::encrypt_nod(key.secret(), &creator_public, terms, amount)
             .map_err(|_| TransportDispatchError::InvalidNodFixture)?;
-        let preimage = response_auth::attestation(b"outbe/nod/test-create-result/v2", inputs, &nod)
+        let preimage = response_auth::attestation(b"outbe/nod/test-create-result/v1", inputs, &nod)
             .map_err(|_| TransportDispatchError::InvalidNodFixtureResult)?;
-        Ok(EnclaveResponse::NodCreatedForTestV2 {
+        Ok(EnclaveResponse::NodCreatedForTestV1 {
             nod,
             inputs_canonical_hash: inputs,
             attestation_tag: keys.sign_attestation(&preimage).to_vec(),

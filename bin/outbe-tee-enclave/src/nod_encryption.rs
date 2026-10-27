@@ -7,7 +7,7 @@ use crate::{
 };
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV2, NodTermsV2, NOD_AMOUNT_NONCE_INFO},
+    nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_AMOUNT_NONCE_INFO},
     tribute_encryption::EncryptedTributeV2,
 };
 use ring::hmac;
@@ -23,9 +23,9 @@ const AMOUNT: SlotCipherDomain = SlotCipherDomain {
 pub fn encrypt_nod_for_tribute(
     network_secret: &[u8; 32],
     tribute: &EncryptedTributeV2,
-    terms: NodTermsV2,
+    terms: NodTermsV1,
     amount: U256,
-) -> Result<EncryptedNodV2> {
+) -> Result<EncryptedNodV1> {
     let source = &tribute.context;
     let source_terms = (
         source.chain_id,
@@ -54,10 +54,10 @@ pub fn encrypt_nod_for_tribute(
 pub fn encrypt_nod(
     network_secret: &[u8; 32],
     creator: &[u8; 32],
-    terms: NodTermsV2,
+    terms: NodTermsV1,
     amount: U256,
-) -> Result<EncryptedNodV2> {
-    let mut nod = EncryptedNodV2 {
+) -> Result<EncryptedNodV1> {
+    let mut nod = EncryptedNodV1 {
         encryption_binding: binding(network_secret, &terms, creator, amount),
         terms,
         encrypted_creator_public_key: Vec::new(),
@@ -73,10 +73,7 @@ pub fn encrypt_nod(
         .write_blob(0, plaintext.as_ref())?;
     Ok(nod)
 }
-pub fn decrypt_nod(network_secret: &[u8; 32], nod: &EncryptedNodV2) -> Result<U256> {
-    if let Some(amount) = outbe_primitives::nod_encryption::decode_v1_nod_amount(nod) {
-        return Ok(amount);
-    }
+pub fn decrypt_nod(network_secret: &[u8; 32], nod: &EncryptedNodV1) -> Result<U256> {
     if !nod.has_valid_encoding() {
         return Err(TeeError::DecryptFailed);
     }
@@ -102,7 +99,7 @@ pub fn decrypt_nod(network_secret: &[u8; 32], nod: &EncryptedNodV2) -> Result<U2
     }
     Ok(amount)
 }
-fn binding(secret: &[u8; 32], terms: &NodTermsV2, creator: &[u8; 32], amount: U256) -> B256 {
+fn binding(secret: &[u8; 32], terms: &NodTermsV1, creator: &[u8; 32], amount: U256) -> B256 {
     let mut input = b"outbe/nod/issuance-binding/v2".to_vec();
     input.extend_from_slice(terms.digest().as_slice());
     input.extend_from_slice(creator);
@@ -114,7 +111,7 @@ fn binding(secret: &[u8; 32], terms: &NodTermsV2, creator: &[u8; 32], amount: U2
 fn amount_key(
     secret: &[u8; 32],
     creator: &[u8; 32],
-    nod: &EncryptedNodV2,
+    nod: &EncryptedNodV1,
 ) -> Result<Zeroizing<[u8; 32]>> {
     let secret = StaticSecret::from(*secret);
     let shared = secret.diffie_hellman(&PublicKey::from(*creator));

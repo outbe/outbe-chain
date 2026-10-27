@@ -2,21 +2,14 @@
 use crate::errors::LocalCryptoError;
 use crate::owner_local_open::{open_owner_amount_blob, owner_x25519_shared, OwnerAmountBlob};
 use alloy_primitives::U256;
-use outbe_primitives::nod_encryption::{EncryptedNodV2, NOD_AMOUNT_NONCE_INFO};
+use outbe_primitives::nod_encryption::{EncryptedNodV1, NOD_AMOUNT_NONCE_INFO};
 pub fn decrypt_nod_for_owner(
     secret: &[u8; 32],
     enclave_public: &[u8; 32],
-    nod: &EncryptedNodV2,
+    nod: &EncryptedNodV1,
 ) -> Result<U256, LocalCryptoError> {
     if !nod.has_valid_encoding() {
         return Err(LocalCryptoError::InvalidNodEncoding);
-    }
-    if let Some(amount) = outbe_primitives::nod_encryption::decode_v1_nod_amount(nod) {
-        let (_public, _shared) = owner_x25519_shared(secret, enclave_public)?;
-        if secret == &[0x19; 32] || secret == &[0x12; 32] {
-            return Err(LocalCryptoError::NodAmountDecryptionFailed);
-        }
-        return Ok(amount);
     }
     let (public, shared) = owner_x25519_shared(secret, enclave_public)?;
     let opened = open_owner_amount_blob(

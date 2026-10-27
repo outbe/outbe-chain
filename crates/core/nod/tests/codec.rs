@@ -4,7 +4,7 @@ use outbe_nod::{
     NodItemState,
 };
 use outbe_primitives::entity_codec::{
-    decode_stored_nod_group_v1, decode_stored_nod_item_v2, encode_nod_group_v1, encode_nod_item_v2,
+    decode_stored_nod_group_v1, decode_stored_nod_item_v1, encode_nod_group_v1, encode_nod_item_v1,
     StoredBody,
 };
 use outbe_primitives::time::WorldwideDay;
@@ -35,8 +35,8 @@ fn group(group_id: WwdEntityId) -> NodGroupState {
 
 fn stored_nod(body: &NodItemState) -> Vec<u8> {
     StoredBody::new(
-        outbe_primitives::entity_codec::NOD_BODY_SCHEMA_V2,
-        encode_nod_item_v2(&canonical_item(body)).unwrap(),
+        outbe_primitives::entity_codec::NOD_BODY_SCHEMA_V1,
+        encode_nod_item_v1(&canonical_item(body)).unwrap(),
     )
     .unwrap()
     .encode()
@@ -101,7 +101,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         ),
     ] {
         let stored = stored_nod(&body);
-        let decoded = from_canonical_item(decode_stored_nod_item_v2(&stored).unwrap());
+        let decoded = from_canonical_item(decode_stored_nod_item_v1(&stored).unwrap());
         assert_eq!(decoded.nod_id, body.nod_id);
         assert_eq!(decoded.owner, body.owner);
         assert_eq!(
@@ -152,25 +152,25 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
         reference_currency: 978,
     };
     let encrypted = outbe_nod::test_support::encrypted_fixture(&params, 7);
-    let body = outbe_primitives::entity_codec::NodItemBodyV2 {
+    let body = outbe_primitives::entity_codec::NodItemBodyV1 {
         encrypted: encrypted.clone(),
         group_key: B256::repeat_byte(0x74),
         issued_at: 99,
         is_settled: false,
     };
-    let payload = encode_nod_item_v2(&body).unwrap();
+    let payload = encode_nod_item_v1(&body).unwrap();
     let creator = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x6b; 32]));
     assert!(!payload
         .windows(32)
         .any(|bytes| bytes == amount.to_be_bytes::<32>()));
     assert!(!payload.windows(32).any(|bytes| bytes == creator.as_bytes()));
     let stored = outbe_primitives::entity_codec::StoredBody::new(
-        outbe_primitives::entity_codec::NOD_BODY_SCHEMA_V2,
+        outbe_primitives::entity_codec::NOD_BODY_SCHEMA_V1,
         payload,
     )
     .unwrap();
     let decoded = from_canonical_item(
-        outbe_primitives::entity_codec::decode_stored_nod_item_v2(&stored.encode()).unwrap(),
+        outbe_primitives::entity_codec::decode_stored_nod_item_v1(&stored.encode()).unwrap(),
     );
     assert_eq!(decoded.encrypted, encrypted);
     assert_eq!(
@@ -179,11 +179,11 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     );
     let mut corrupted = body.clone();
     corrupted.encrypted.encrypted_gratis_amount.truncate(55);
-    assert!(encode_nod_item_v2(&corrupted).is_err());
-    let legacy = outbe_primitives::entity_codec::StoredBody::new(
-        outbe_primitives::entity_codec::BODY_SCHEMA_V1,
-        encode_nod_item_v2(&body).unwrap(),
-    )
-    .unwrap();
-    assert!(outbe_primitives::entity_codec::decode_stored_nod_item_v2(&legacy.encode()).is_err());
+    assert!(encode_nod_item_v1(&corrupted).is_err());
+    let unsupported =
+        outbe_primitives::entity_codec::StoredBody::new(2, encode_nod_item_v1(&body).unwrap())
+            .unwrap();
+    assert!(
+        outbe_primitives::entity_codec::decode_stored_nod_item_v1(&unsupported.encode()).is_err()
+    );
 }

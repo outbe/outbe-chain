@@ -4,10 +4,10 @@ use thiserror::Error;
 
 use crate::wwd_entity_id::WwdEntityId;
 
-mod nod_v2;
-pub use nod_v2::{
-    decode_nod_item_v2, decode_stored_nod_item_v2, encode_nod_item_v2, NodItemBodyV2,
-    NOD_BODY_SCHEMA_V2,
+mod nod_v1;
+pub use nod_v1::{
+    decode_nod_item_v1, decode_stored_nod_item_v1, encode_nod_item_v1, NodItemBodyV1,
+    NOD_BODY_SCHEMA_V1,
 };
 mod tribute_v2;
 pub use tribute_v2::{
@@ -28,21 +28,6 @@ pub struct TributeBodyV1 {
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-}
-
-/// Canonical v1 Nod item payload.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NodItemBodyV1 {
-    pub nod_id: WwdEntityId,
-    pub owner: Address,
-    pub gratis_load_minor: U256,
-    pub worldwide_day: WorldwideDay,
-    pub league_id: u16,
-    pub group_key: B256,
-    pub issuance_currency: u16,
-    pub reference_currency: u16,
-    pub issued_at: u64,
-    pub is_settled: bool,
 }
 
 /// Canonical v1 Nod group payload.
@@ -182,63 +167,6 @@ pub fn decode_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyErr
 pub fn decode_stored_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyError> {
     let stored = decode_active_stored_body(bytes)?;
     decode_tribute_v1(stored.payload())
-}
-
-/// Encodes and validates the canonical v1 Nod item payload.
-pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
-    validate_identity_day(body.nod_id, body.worldwide_day)?;
-    let mut output = Vec::with_capacity(224);
-    encode_bytes_field(1, body.nod_id.as_slice(), &mut output);
-    encode_bytes_field(2, body.owner.as_slice(), &mut output);
-    encode_bytes_field(3, &body.gratis_load_minor.to_be_bytes::<32>(), &mut output);
-    encode_optional_varint_field(4, u64::from(body.worldwide_day.value()), &mut output);
-    encode_optional_varint_field(5, u64::from(body.league_id), &mut output);
-    encode_bytes_field(6, body.group_key.as_slice(), &mut output);
-    encode_optional_varint_field(7, u64::from(body.issuance_currency), &mut output);
-    encode_optional_varint_field(8, u64::from(body.reference_currency), &mut output);
-    encode_optional_varint_field(9, body.issued_at, &mut output);
-    encode_optional_varint_field(10, u64::from(body.is_settled), &mut output);
-    Ok(output)
-}
-
-/// Strictly decodes one canonical v1 Nod item payload.
-pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
-    let mut fields = Fields::new(bytes);
-    let nod_id = WwdEntityId::try_from(required_bytes(&mut fields, 1)?)?;
-    let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?);
-    let gratis_load_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
-    let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 4)?);
-    let league_id = optional_u16(&mut fields, 5)?;
-    let group_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 6)?, 6)?);
-    let issuance_currency = optional_u16(&mut fields, 7)?;
-    let reference_currency = optional_u16(&mut fields, 8)?;
-    let issued_at = optional_varint(&mut fields, 9)?;
-    let is_settled = optional_bool(&mut fields, 10)?;
-    fields.finish()?;
-
-    let body = NodItemBodyV1 {
-        nod_id,
-        owner,
-        gratis_load_minor,
-        worldwide_day,
-        league_id,
-        group_key,
-        issuance_currency,
-        reference_currency,
-        issued_at,
-        is_settled,
-    };
-    validate_identity_day(body.nod_id, body.worldwide_day)?;
-    if encode_nod_item_v1(&body)? != bytes {
-        return Err(CanonicalBodyError::NonCanonicalEncoding);
-    }
-    Ok(body)
-}
-
-/// Decodes a StoredBody and requires its fork-active Nod item schema.
-pub fn decode_stored_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
-    let stored = decode_active_stored_body(bytes)?;
-    decode_nod_item_v1(stored.payload())
 }
 
 /// Encodes the canonical v1 Nod group payload.
@@ -572,7 +500,7 @@ fn canonical_decoded<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nod_encryption::{encode_v1_nod, NodTermsV2};
+    use crate::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
     use crate::tribute_encryption::{
         EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN, TRIBUTE_PUBLIC_KEY_BLOB_LEN,
     };
@@ -648,10 +576,14 @@ mod tests {
             tribute_v2
         );
 
-        // V2 Nod roundtrip.
-        let nod_v2 = NodItemBodyV2 {
-            encrypted: encode_v1_nod(
-                NodTermsV2 {
+        // V1 encrypted Nod roundtrip.
+        let mut nod_pk_blob = vec![0xcc; NOD_BLOB_LEN];
+        nod_pk_blob[..8].copy_from_slice(&1u64.to_be_bytes());
+        let mut nod_amt_blob = vec![0xdd; NOD_BLOB_LEN];
+        nod_amt_blob[..8].copy_from_slice(&1u64.to_be_bytes());
+        let nod_v1 = NodItemBodyV1 {
+            encrypted: EncryptedNodV1 {
+                terms: NodTermsV1 {
                     chain_id: 2026,
                     nod_id: id,
                     owner,
@@ -661,18 +593,20 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 840,
                 },
-                U256::from(5_000_000u64),
-            ),
+                encryption_binding: B256::repeat_byte(0x55),
+                encrypted_creator_public_key: nod_pk_blob,
+                encrypted_gratis_amount: nod_amt_blob,
+            },
             group_key: B256::repeat_byte(0x44),
             issued_at: 1_700_000_000,
             is_settled: true,
         };
-        let encoded_nod_v2 = encode_nod_item_v2(&nod_v2).unwrap();
-        assert_eq!(decode_nod_item_v2(&encoded_nod_v2).unwrap(), nod_v2);
-        let stored_nod_v2 = StoredBody::new(NOD_BODY_SCHEMA_V2, encoded_nod_v2)
+        let encoded_nod_v1 = encode_nod_item_v1(&nod_v1).unwrap();
+        assert_eq!(decode_nod_item_v1(&encoded_nod_v1).unwrap(), nod_v1);
+        let stored_nod_v1 = StoredBody::new(NOD_BODY_SCHEMA_V1, encoded_nod_v1)
             .unwrap()
             .encode();
-        assert_eq!(decode_stored_nod_item_v2(&stored_nod_v2).unwrap(), nod_v2);
+        assert_eq!(decode_stored_nod_item_v1(&stored_nod_v1).unwrap(), nod_v1);
 
         // Non-canonical wire rejections on StoredBody:
         // 1) non-minimal varint tag (0x88, 0x00 instead of 0x08 for field 1 varint)

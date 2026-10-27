@@ -62,7 +62,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
     let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
     let encrypted = outbe_tee::nod_mine::create_nod_for_test(
-        outbe_primitives::nod_encryption::NodTermsV2 {
+        outbe_primitives::nod_encryption::NodTermsV1 {
             chain_id: storage.chain_id()?,
             nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
             owner: call.owner,

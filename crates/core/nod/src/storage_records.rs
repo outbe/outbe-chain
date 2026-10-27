@@ -69,8 +69,8 @@ impl From<StoredNod> for crate::NodItemState {
             reference_currency: item.reference_currency,
             issued_at: item.issued_at,
             is_settled: item.is_settled,
-            encrypted: outbe_primitives::nod_encryption::EncryptedNodV2 {
-                terms: outbe_primitives::nod_encryption::NodTermsV2 {
+            encrypted: outbe_primitives::nod_encryption::EncryptedNodV1 {
+                terms: outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: item.chain_id,
                     nod_id: item.nod_id,
                     owner: item.owner,
