@@ -68,7 +68,6 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         let pair =
             outbe_oracle::api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(840).unwrap();
         let latest = previous_date_key(timestamp_to_date_key(CALLED)).expect("date step");
         let mut day = latest;
         for _ in 0..28 {

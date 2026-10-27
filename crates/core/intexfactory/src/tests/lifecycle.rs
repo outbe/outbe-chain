@@ -20,14 +20,6 @@ fn issue_enrolls_in_call_bin() {
 /// columns are keyed by it.
 const PAIR_ID: u32 = 1;
 
-/// List the reference currency in the oracle's reference registry, which the
-/// scans walk to decide which currencies to price this block.
-pub(super) fn list_reference(oracle: &OracleContract) {
-    if oracle.reference_currencies.len().unwrap() == 0 {
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-    }
-}
-
 pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
     let pair_id = PAIR_ID;
@@ -38,7 +30,6 @@ pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
-    list_reference(oracle);
     pair
 }
 

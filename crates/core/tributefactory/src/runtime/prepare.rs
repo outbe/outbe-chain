@@ -110,10 +110,7 @@ fn pricing(
         .into());
     }
 
-    outbe_oracle::api::check_reference_currency_with_storage(
-        storage.clone(),
-        input.reference_currency,
-    )?;
+    outbe_oracle::api::check_reference_currency(input.reference_currency)?;
 
     // Price the tribute against its own day, not whichever day happens to be
     // first in the OFFERING list.

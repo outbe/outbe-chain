@@ -33,10 +33,6 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(outbe_oracle::api::DAY_TYPE_ISO)
-            .unwrap();
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,

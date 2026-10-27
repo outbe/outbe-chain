@@ -76,11 +76,22 @@ const _: () = assert!(ISO_4217_ALPHA.len() == ISO_4217_NUMERIC_CODES.len());
 /// The alpha-3 code for an ISO 4217 numeric code, or `None` when the pinned list
 /// does not carry it. The two tables are positional, so the numeric list is both
 /// the index and the search key.
-pub fn iso_4217_alpha(iso_code: u16) -> Option<[u8; 3]> {
-    ISO_4217_NUMERIC_CODES
-        .binary_search(&iso_code)
-        .ok()
-        .map(|index| ISO_4217_ALPHA[index])
+pub const fn iso_4217_alpha(iso_code: u16) -> Option<[u8; 3]> {
+    // A const binary search, so compile-time checks can read the table.
+    let (mut low, mut high) = (0, ISO_4217_NUMERIC_CODES.len());
+    while low < high {
+        let mid = (low + high) / 2;
+        let code = ISO_4217_NUMERIC_CODES[mid];
+        if code == iso_code {
+            return Some(ISO_4217_ALPHA[mid]);
+        }
+        if code < iso_code {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    None
 }
 
 pub fn validate_currency_code(iso_code: u16) -> Result<(), CurrencyCodeError> {

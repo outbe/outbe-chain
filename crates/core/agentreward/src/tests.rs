@@ -488,7 +488,7 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
 
 /// Registers COEN/840 with `price` as its spot and previous-day VWAP.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
-    outbe_oracle::test_support::publish_day_type_quote(storage, price, 1, T_NOW).unwrap();
+    outbe_oracle::test_support::publish_day_type_rate(storage, price, 1, T_NOW).unwrap();
     seed_day_vwap(storage, price);
 }
 
@@ -521,9 +521,7 @@ fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: b
             vwap,
         )
         .unwrap();
-    if reference {
-        oracle.reference_currencies.push(iso).unwrap();
-    }
+    if reference {}
 }
 
 /// `price` less the agent discount, the entry of an agent reward Gem.
@@ -733,12 +731,8 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(500u64);
 
-    with_contract_mut(|storage, contract| {
+    with_contract_mut(|_storage, contract| {
         // USD is a reference currency, with no pair, no quote and no closed day.
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(USD)
-            .unwrap();
         contract
             .add_claimable_reward(RewardPool::Waa, alice, load)
             .unwrap();
@@ -804,10 +798,6 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
 
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(EUR)
-            .unwrap();
         let err = claim_waa_in(contract, alice, load, USD, EUR).unwrap_err();
         assert_eq!(
             err.to_string(),
