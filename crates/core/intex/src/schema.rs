@@ -13,7 +13,7 @@ use std::fmt;
 use crate::errors::IntexError;
 
 /// Series lifecycle state: `Issued -> Called -> Forfeited`, derived from the series' group.
-/// A Called series becomes Forfeited after its notice-period deadline.
+/// A Called series becomes Forfeited once the transit margin past its settlement deadline ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {

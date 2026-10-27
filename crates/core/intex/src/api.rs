@@ -79,7 +79,7 @@ pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Res
     Ok(true)
 }
 
-/// What a series forfeited after its notice-period deadline.
+/// What a series forfeited after its transit close.
 pub struct Forfeited {
     pub units: u32,
     pub promis_load_minor: U256,
