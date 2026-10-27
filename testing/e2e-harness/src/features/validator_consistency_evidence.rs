@@ -608,38 +608,56 @@ fn active_validator_is_jailed_by_evidence(world: &mut World) {
 }
 
 fn jailed_partial_unstake_remainder(stake: U256, minimum_stake: U256) -> Option<U256> {
-    let bounded = stake.min(minimum_stake);
-    let remainder = bounded / U256::from(2_u8);
-    (!remainder.is_zero()).then_some(remainder)
+    (stake > minimum_stake && !minimum_stake.is_zero()).then_some(minimum_stake)
 }
 
-#[when("it unstakes below minimum while leaving a nonzero bonded amount")]
+#[when("it attempts a partial unstake leaving at least the minimum bond")]
 fn jailed_validator_partially_unstakes(world: &mut World) {
     let port = primary(world);
     let victim = world.state.joiner_addr.clone().expect("jailed victim");
     let victim_key = world.validators.get(3).evm_key().expect("victim key");
-    let stake = world
-        .rpc
-        .stake_on(port, &victim)
-        .expect("jailed stake before partial unstake");
-    let remaining = jailed_partial_unstake_remainder(stake, crate::internal::eth::coen(1_000))
-        .expect("jailed validator must retain a positive partial stake");
-    assert!(
-        stake > remaining,
-        "jailed validator must have enough stake to leave a nonzero below-minimum remainder"
+    let minimum = world.rpc.registration_amount().expect("minimum bond");
+    let mut stake = world.rpc.stake_on(port, &victim).expect("jailed bond");
+    if stake <= minimum {
+        let topup = crate::internal::eth::send_call_outcome(
+            &world.rpc.url(port),
+            STK_ADDR,
+            &victim_key,
+            &IStaking::topupCall {
+                validatorAddress: victim.parse().expect("victim address"),
+                amount: minimum,
+            },
+            Some(minimum),
+        )
+        .expect("restore enough jailed bond to isolate the full-exit guard");
+        assert!(topup.success, "jailed topup reverted");
+        stake = world
+            .rpc
+            .stake_on(port, &victim)
+            .expect("topped-up jailed bond");
+    }
+    let remaining = jailed_partial_unstake_remainder(stake, minimum)
+        .expect("partial jailed withdrawal leaves at least the minimum");
+    let survivors = (0..3)
+        .map(|index| world.validators.http_port(index))
+        .collect::<Vec<_>>();
+    assert_mined_revert_on(
+        world,
+        &survivors,
+        NegativeTx {
+            to: STK_ADDR,
+            key: &victim_key,
+            call: &IStaking::unstakeCall {
+                amount: stake - remaining,
+            },
+        },
+        U256::ZERO,
+        &IValidatorSet::JailedValidatorMustFullyUnstakeForExit {}.abi_encode(),
     );
-    let outcome = world
-        .rpc
-        .unstake_base_units(&victim_key, stake - remaining)
-        .expect("submit jailed partial unstake");
-    assert!(
-        outcome.success,
-        "the public partial unstake must reach its lifecycle transition"
-    );
-    world.state.slash_stake_after = Some(remaining);
+    world.state.slash_stake_after = Some(stake);
 }
 
-#[then("it remains JAILED with the remaining stake and no exit transition")]
+#[then("it remains JAILED with unchanged stake and no exit transition")]
 fn partial_jailed_unstake_does_not_exit(world: &mut World) {
     let port = primary(world);
     let victim = world.state.joiner_addr.clone().expect("jailed victim");
@@ -653,7 +671,7 @@ fn partial_jailed_unstake_does_not_exit(world: &mut World) {
         .validator_record(port, &victim)
         .expect("victim after partial jailed unstake");
 
-    // D-07 target invariant: a nonzero bonded amount retains the jail state.
+    // A rejected partial withdrawal preserves both the jail and its full bond.
     assert_eq!(
         record.status, STATUS_JAILED,
         "D-07 target invariant: partial jailed unstake must remain JAILED, got status {} (EXITING={STATUS_EXITING})",
@@ -1220,18 +1238,16 @@ mod tests {
     }
 
     #[test]
-    fn jailed_partial_unstake_remainder_is_positive_and_below_the_minimum() {
-        let minimum = U256::from(1_000_000_000_000_000_000_000_u128);
+    fn jailed_partial_unstake_remainder_is_at_least_minimum_and_less_than_bond() {
+        let minimum = U256::from(1_000);
         assert_eq!(
-            jailed_partial_unstake_remainder(U256::from(900_000_000_000_000_000_000_u128), minimum,),
-            Some(U256::from(450_000_000_000_000_000_000_u128))
+            jailed_partial_unstake_remainder(U256::from(900), minimum),
+            None
         );
+        assert_eq!(jailed_partial_unstake_remainder(minimum, minimum), None);
         assert_eq!(
-            jailed_partial_unstake_remainder(
-                U256::from(2_000_000_000_000_000_000_000_u128),
-                minimum,
-            ),
-            Some(U256::from(500_000_000_000_000_000_000_u128))
+            jailed_partial_unstake_remainder(U256::from(2_000), minimum),
+            Some(minimum)
         );
         assert_eq!(jailed_partial_unstake_remainder(U256::ZERO, minimum), None);
     }

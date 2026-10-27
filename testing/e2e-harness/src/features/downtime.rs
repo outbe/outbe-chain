@@ -104,7 +104,7 @@ fn prepare_downtime(world: &mut World, name: &str) -> Result<()> {
         );
     }
 
-    let transaction_hash = world.rpc.stake(&key, TOP_UP_COEN)?;
+    let transaction_hash = world.rpc.topup(&key, TOP_UP_COEN)?;
     let receipt = world
         .rpc
         .transaction_receipt(&transaction_hash, ports[0])

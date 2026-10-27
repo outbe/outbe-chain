@@ -54,7 +54,7 @@ impl Staking<'_> {
         Ok(Some(idx))
     }
 
-    fn has_pending_unbonding(&self, validator: Address) -> Result<bool> {
+    pub(crate) fn has_pending_unbonding(&self, validator: Address) -> Result<bool> {
         let mut current_stored = self.per_val_unbonding_head.read(&validator)?;
         while current_stored != 0 {
             let idx = current_stored - 1;
@@ -66,7 +66,7 @@ impl Staking<'_> {
         Ok(false)
     }
 
-    fn finalize_inactive_if_complete(
+    pub(crate) fn finalize_inactive_if_complete(
         &self,
         val_set: &mut ValidatorSet,
         validator: Address,

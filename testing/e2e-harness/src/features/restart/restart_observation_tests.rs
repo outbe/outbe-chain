@@ -111,12 +111,12 @@ fn membership_cannot_pass_with_missing_or_duplicate_fifth_peer() {
     state.active[4] = expected[3];
     assert!(restart_validate_membership(&state, 2, &expected).is_err());
     assert!(restart_validate_membership(&state, 2, &expected[..4]).is_err());
-    state.status = 0;
+    state.status = 1;
     state.active = expected[..4].to_vec();
     state.participants = state.active.clone();
-    assert!(restart_validate_membership(&state, 0, &expected[..4]).is_err());
+    restart_validate_membership(&state, 1, &expected[..4]).unwrap();
     state.stake = alloy_primitives::U256::ZERO;
-    restart_validate_membership(&state, 0, &expected[..4]).unwrap();
+    assert!(restart_validate_membership(&state, 1, &expected[..4]).is_err());
 }
 
 #[test]
@@ -284,8 +284,8 @@ fn registered_restart_preserves_bls_and_p2p_identity_across_later_rotations() {
         p2p_version: 1,
         p2p_encoded: alloy_primitives::Bytes::from(vec![0, 4, 127, 0, 0, 1, 1, 2]),
         epoch: 1,
-        status: 0,
-        stake: alloy_primitives::U256::ZERO,
+        status: 1,
+        stake: alloy_primitives::U256::ONE,
         active: Vec::new(),
         participants: Vec::new(),
         voter_misses: 0,

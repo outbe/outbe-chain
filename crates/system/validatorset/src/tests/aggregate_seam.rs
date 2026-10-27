@@ -258,7 +258,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
         (
             "absent",
             |_| {},
-            super::typed_revert(I::CannotStakeBeforeRegistration {}.abi_encode()),
+            super::typed_revert(I::ValidatorNotRegistered {}.abi_encode()),
         ),
         (
             "exiting",

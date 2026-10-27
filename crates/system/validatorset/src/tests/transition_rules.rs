@@ -135,7 +135,7 @@ fn punishment_rejects_absent_and_waiting_validators_without_effect() -> Result<(
         &super::typed_revert(
             IValidatorSet::CannotPunishValidatorStatus {
                 action: "jail".into(),
-                status: 0,
+                status: 1,
             }
             .abi_encode(),
         ),
@@ -333,13 +333,17 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
         |vs| vs.unjail_after_stake_check(FIRST),
         &super::typed_revert(IValidatorSet::UnjailRequiresJailedStatus { status: 2 }.abi_encode()),
     );
+    let exiting = |vs: &mut ValidatorSet<'_>| {
+        participant(vs, FIRST)?;
+        vs.deactivate_validator(OWNER, FIRST)
+    };
     assert_without_effect(
-        &mut seeded(|vs| register(vs, FIRST))?,
+        &mut seeded(exiting)?,
         |vs| vs.jail_validator_for_tee_expiry(FIRST),
         &super::typed_revert(
             IValidatorSet::TeeExpirySweepIneligibleStatus {
                 addr: FIRST,
-                status: 0,
+                status: status::EXITING,
             }
             .abi_encode(),
         ),
@@ -470,18 +474,8 @@ fn proposer_and_missed_block_counters_increment_once() -> Result<()> {
     Ok(())
 }
 
-fn pending_logs(storage: &HashMapStorageProvider) -> Vec<Address> {
-    storage
-        .get_ordered_events()
-        .iter()
-        .filter(|log| log.address == VALIDATOR_SET_ADDRESS)
-        .filter_map(|log| IValidatorSet::ValidatorPending::decode_log(log).ok())
-        .map(|event| event.data.validator)
-        .collect()
-}
-
 #[test]
-fn stake_increase_emits_pending_only_when_minimum_is_reached() -> Result<()> {
+fn stake_increase_is_a_noop_on_status_and_events_for_pending_and_active() -> Result<()> {
     let minimum = U256::from(1_000u64);
     let mut storage = seeded(|vs| register(vs, FIRST))?;
     let below = call_effect(&mut storage, |vs| {
@@ -490,57 +484,43 @@ fn stake_increase_emits_pending_only_when_minimum_is_reached() -> Result<()> {
     assert_eq!(below.outcome, "Ok(())");
     assert_eq!(below.events, Vec::<B256>::new());
 
-    let seed = || seeded(|vs| register(vs, FIRST)).unwrap();
-    let view = |storage: &mut HashMapStorageProvider| {
-        let columns = storage.enter(|storage| -> Result<_> {
-            let vs = ValidatorSet::new(storage);
-            Ok((vs.val_status.read(&FIRST)?, vs.has_pending_set_change()?))
-        });
-        (outcome_text(columns), pending_logs(storage))
-    };
-    let initial = view(&mut seed());
-    let views = HashMapStorageProvider::mutation_prefix_views(
-        seed,
-        |storage| ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum),
-        view,
-    )?;
-    assert!(views.mutations > 0);
-    assert!(views
-        .before_mutation
-        .iter()
-        .all(|before| *before == initial));
-    assert_eq!(views.complete, ("Ok((1, true))".to_string(), vec![FIRST]));
-
-    let mut pending = seeded(|vs| register(vs, FIRST))?;
-    pending.enter(|storage| {
-        ValidatorSet::new(storage).record_stake_increase(FIRST, minimum, minimum)
-    })?;
-    let repeat = call_effect(&mut pending, |vs| {
+    let at_min = call_effect(&mut storage, |vs| {
         vs.record_stake_increase(FIRST, minimum, minimum)
     });
-    assert_eq!(repeat.outcome, "Ok(())");
-    assert_eq!(repeat.events, Vec::<B256>::new());
+    assert_eq!(at_min.outcome, "Ok(())");
+    assert_eq!(at_min.events, Vec::<B256>::new());
+
+    let mut active = seeded(|vs| participant(vs, FIRST))?;
+    let topup = call_effect(&mut active, |vs| {
+        vs.record_stake_increase(FIRST, minimum * U256::from(2u64), minimum)
+    });
+    assert_eq!(topup.outcome, "Ok(())");
+    assert_eq!(topup.events, Vec::<B256>::new());
     Ok(())
 }
 
 #[test]
 fn mark_pending_and_unjail_do_not_emit_validator_pending() -> Result<()> {
     let mut storage = seeded(|vs| register(vs, FIRST))?;
+    let events_before = storage.get_ordered_events().len();
     let effect = call_effect(&mut storage, |vs| vs.mark_pending(FIRST));
     assert_eq!(effect.outcome, "Ok(())");
     assert_eq!(effect.events, Vec::<B256>::new());
-    assert_eq!(pending_logs(&storage), Vec::<Address>::new());
+    assert_eq!(storage.get_ordered_events().len(), events_before);
 
     let mut unjailed = seeded(|vs| {
         retained_jail(vs)?;
         vs.activate_reshared_set(&[], B256::ZERO)
     })?;
+    let events_before = unjailed.get_ordered_events().len();
     let effect = call_effect(&mut unjailed, |vs| vs.unjail_after_stake_check(FIRST));
     assert_eq!(
         effect.events,
         vec![IValidatorSet::ValidatorUnjailed::SIGNATURE_HASH]
     );
-    assert_eq!(pending_logs(&unjailed), Vec::<Address>::new());
+    assert!(unjailed.get_ordered_events()[events_before..]
+        .iter()
+        .all(|log| IValidatorSet::ValidatorPending::decode_log(log).is_err()));
     Ok(())
 }
 
@@ -549,7 +529,7 @@ fn demotion_and_slash_do_not_emit_pending_or_ready() -> Result<()> {
     let minimum = U256::from(1_000u64);
     let mut demoted = seeded(|vs| waiting_for_readiness(vs, FIRST))?;
     let effect = call_effect(&mut demoted, |vs| {
-        vs.record_unstake(FIRST, U256::from(1u64), minimum, 0)
+        vs.record_unstake(FIRST, U256::ZERO, minimum, 0)
     });
     assert_eq!(effect.outcome, "Ok(())");
     assert_eq!(effect.events, Vec::<B256>::new());

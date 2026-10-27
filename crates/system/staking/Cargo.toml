@@ -15,6 +15,7 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+blst.workspace = true
 outbe-promislimit.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 

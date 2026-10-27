@@ -10,14 +10,14 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::storage::types::{Mapping, Slot};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::{
     errors::ValidatorSetError,
     hooks::{activate_boundary_atomic, BoundaryActivationInputs},
     runtime::status,
-    schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT},
+    schema::{ValidatorSet, AUTHORITATIVE_BONDED_BASE_SLOT, AUTHORITATIVE_MIN_STAKE_SLOT},
     state::{
         write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
         COMMITTEE_SNAPSHOT_RETAIN_EPOCHS,
@@ -37,7 +37,6 @@ pub fn admit_validator_for_boundary(
         .get_validator(validator)?
         .ok_or(ValidatorSetError::TestValidatorNotRegistered)?;
     match record.status {
-        status::REGISTERED => validators.mark_pending(validator)?,
         status::PENDING | status::ACTIVE => {}
         other => {
             return Err(ValidatorSetError::TestBoundaryCannotAdmitStatus { status: other }.into())
@@ -223,10 +222,6 @@ impl ValidatorSet<'_> {
         let before = self.validator_state(address)?;
         let with_stake = state_machine::with_stake(before.lifecycle().clone(), stake)?;
         let active = match with_stake {
-            ValidatorLifecycle::WaitingForStake(waiting) => {
-                let waiting = state_machine::reach_minimum(waiting, stake, minimum)?;
-                state_machine::activate_at_boundary(state_machine::confirm_ready(waiting))
-            }
             ValidatorLifecycle::WaitingForReadiness(waiting) => {
                 state_machine::activate_at_boundary(state_machine::confirm_ready(waiting))
             }
@@ -296,6 +291,16 @@ impl ValidatorSet<'_> {
             self.storage.clone(),
         )
         .write(&address, bonded)
+    }
+
+    /// Writes `Staking.config_min_stake` for a fixture. Production methods must not.
+    pub fn test_seed_authoritative_min_stake(&self, minimum: U256) -> Result<()> {
+        Slot::<U256>::new(
+            U256::from(AUTHORITATIVE_MIN_STAKE_SLOT),
+            STAKING_ADDRESS,
+            self.storage.clone(),
+        )
+        .write(minimum)
     }
 
     /// Replaces retained historical counters/heights for a registered fixture.

@@ -23,7 +23,7 @@ fn with_staked_validator<R>(f: impl FnOnce(StorageHandle<'_>, &mut Staking<'_>) 
         seed_balance(storage.clone(), VALIDATOR, 1_000_000);
         seed_balance(storage.clone(), STAKING_ADDRESS, STAKE);
         staking
-            .stake(VALIDATOR, VALIDATOR, U256::from(STAKE))
+            .topup(VALIDATOR, VALIDATOR, U256::from(STAKE))
             .unwrap();
         f(storage, staking)
     })

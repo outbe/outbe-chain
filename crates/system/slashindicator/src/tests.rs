@@ -885,7 +885,7 @@ fn test_full_lifecycle_integration() {
             .unwrap();
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
 
         // 3. Setup Staking config and stake
@@ -897,11 +897,11 @@ fn test_full_lifecycle_integration() {
         ctx.set_balance(validator, U256::from(1_000_000u64))
             .unwrap();
 
-        // Stake to meet min_stake -> PENDING (PoS lifecycle). Then activate, so the
+        // Top up stake to meet min_stake while in PENDING (PoS lifecycle). Then activate, so the
         // felony has an ACTIVE consensus participant to act on. The DKG reshare
         // normally promotes PENDING->ACTIVE. This test uses the semantic boundary fixture.
         staking
-            .stake(validator, validator, U256::from(10_000u64))
+            .topup(validator, validator, U256::from(10_000u64))
             .unwrap();
         // stake() no longer transfers funds (EVM call value does it).
         // slash_stake burns from STAKING_ADDRESS. Fund it for the test.

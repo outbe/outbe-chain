@@ -1,14 +1,11 @@
-use super::status;
 use crate::errors::ValidatorSetError;
-use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
 use crate::state_machine::{self, StakeProjection, ValidatorLifecycle};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
-    /// Records a successful stake increase from Staking and performs the
-    /// REGISTERED -> PENDING threshold transition when required.
+    /// Records a successful stake increase (`topup`) from Staking.
     ///
     /// Staking owns the authoritative balance and passes the post-write amount.
     /// This method, `record_unstake`, `record_stake_slash`, and
@@ -17,43 +14,26 @@ impl ValidatorSet<'_> {
         &mut self,
         addr: Address,
         bonded: U256,
-        minimum: U256,
+        _minimum: U256,
     ) -> Result<()> {
         let before = self.validator_state(addr)?;
         let stake = StakeProjection::new(bonded, before.unbonding_end_hint());
         if let Some(rejection) = state_machine::stake_target_rejection(before.lifecycle()) {
             return Err(rejection);
         }
-        let (lifecycle, became_pending) = match before.lifecycle().clone() {
+        let lifecycle = match before.lifecycle().clone() {
             ValidatorLifecycle::Exiting(_) | ValidatorLifecycle::Unbonding(_) => {
                 return Err(ValidatorSetError::CannotIncreaseStakeWhileExitingOrUnbonding.into());
             }
-            ValidatorLifecycle::WaitingForStake(waiting) if bonded >= minimum => (
-                ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
-                    waiting, stake, minimum,
-                )?),
-                true,
-            ),
-            lifecycle => (state_machine::with_stake(lifecycle, stake)?, false),
+            lifecycle => state_machine::with_stake(lifecycle, stake)?,
         };
         let after = before.clone().with_lifecycle(lifecycle)?;
-        if became_pending {
-            let guard = self.storage.checkpoint_guard();
-            self.persist_validator_state_delta(&before, &after)?;
-            self.pending_set_change.write(true)?;
-            self.emit(IValidatorSet::ValidatorPending { validator: addr })?;
-            guard.commit();
-            crate::metrics::record_validator_status(addr, status::PENDING);
-            crate::metrics::record_pending_set_change(true);
-        } else {
-            self.commit_transition(&before, &after, false)?;
-        }
+        self.commit_transition(&before, &after, false)?;
         Ok(())
     }
 
     /// Records a voluntary withdrawal and applies the complete coupled lifecycle
-    /// transition. A demotion consumes readiness. A jailed validator may leave
-    /// only after it fully unstakes.
+    /// transition. A jailed validator may leave only after it fully unstakes.
     pub fn record_unstake(
         &mut self,
         addr: Address,
@@ -69,6 +49,7 @@ impl ValidatorSet<'_> {
         );
         let mut set_change = false;
         let height = self.storage.block_number()?;
+        let below_minimum = !minimum.is_zero() && !bonded.is_zero() && bonded < minimum;
         let next = match lifecycle {
             ValidatorLifecycle::Absent => {
                 return Err(ValidatorSetError::ValidatorNotRegistered.into());
@@ -76,30 +57,39 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Inactive(_) => {
                 return Err(ValidatorSetError::ValidatorIsInactive.into());
             }
-            ValidatorLifecycle::WaitingForReadiness(waiting) if bonded < minimum => {
-                set_change = true;
-                ValidatorLifecycle::WaitingForStake(state_machine::demote_waiting_for_readiness(
-                    waiting, stake, minimum,
-                )?)
-            }
-            ValidatorLifecycle::Joining(joining) if bonded < minimum => {
-                set_change = true;
-                ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
-                    joining, stake, minimum, height,
-                )?)
-            }
-            ValidatorLifecycle::Active(active) if bonded < minimum => {
-                set_change = true;
-                ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?)
-            }
-            ValidatorLifecycle::JailRetained(jailed) if bonded.is_zero() => {
+            ValidatorLifecycle::JailRetained(jailed) => {
+                if !bonded.is_zero() {
+                    return Err(ValidatorSetError::JailedValidatorMustFullyUnstakeForExit.into());
+                }
                 set_change = true;
                 ValidatorLifecycle::Exiting(state_machine::full_exit_jailed_retained(
                     jailed, stake,
                 )?)
             }
-            ValidatorLifecycle::Jail(jailed) if bonded.is_zero() => {
+            ValidatorLifecycle::Jail(jailed) => {
+                if !bonded.is_zero() {
+                    return Err(ValidatorSetError::JailedValidatorMustFullyUnstakeForExit.into());
+                }
                 ValidatorLifecycle::Unbonding(state_machine::full_exit_jailed(jailed, stake)?)
+            }
+            _ if below_minimum => {
+                return Err(ValidatorSetError::BondedStakeBelowMinimum { bonded, minimum }.into());
+            }
+            ValidatorLifecycle::WaitingForReadiness(waiting) if bonded.is_zero() => {
+                set_change = true;
+                ValidatorLifecycle::Unbonding(state_machine::unbond_waiting_for_readiness(
+                    waiting, stake, height,
+                )?)
+            }
+            ValidatorLifecycle::Joining(joining) if bonded.is_zero() => {
+                set_change = true;
+                ValidatorLifecycle::Unbonding(state_machine::unbond_joining(
+                    joining, stake, height,
+                )?)
+            }
+            ValidatorLifecycle::Active(active) if bonded.is_zero() => {
+                set_change = true;
+                ValidatorLifecycle::Exiting(state_machine::begin_exit(active, stake, height)?)
             }
             lifecycle => state_machine::with_stake(lifecycle, stake)?,
         };
@@ -113,7 +103,8 @@ impl ValidatorSet<'_> {
     }
 
     /// Records a stake slash. This is intentionally distinct from voluntary
-    /// withdrawal: a JAILED validator remains JAILED after the slash.
+    /// withdrawal: a JAILED validator remains JAILED after the slash, and an
+    /// unconfirmed `WaitingForReadiness` validator stays in `WaitingForReadiness`.
     pub fn record_stake_slash(
         &mut self,
         addr: Address,
@@ -135,15 +126,9 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Inactive(_) => {
                 return Err(ValidatorSetError::ValidatorIsInactive.into());
             }
-            ValidatorLifecycle::WaitingForReadiness(waiting) if below_minimum => {
-                set_change = true;
-                ValidatorLifecycle::WaitingForStake(state_machine::demote_waiting_for_readiness(
-                    waiting, stake, minimum,
-                )?)
-            }
             ValidatorLifecycle::Joining(joining) if below_minimum => {
                 set_change = true;
-                ValidatorLifecycle::WaitingForStake(state_machine::demote_joining(
+                ValidatorLifecycle::WaitingForReadiness(state_machine::demote_joining(
                     joining, stake, minimum, height,
                 )?)
             }
