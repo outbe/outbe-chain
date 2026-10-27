@@ -79,11 +79,6 @@ pub fn mine_promis(
     })
 }
 
-/// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
-pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
-    U256::from_be_slice(series_id.as_bytes())
-}
-
 /// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
 ///
 /// `owner` and `seq` earn their place here, unlike in the shared scheme: the

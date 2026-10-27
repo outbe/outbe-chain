@@ -1,4 +1,4 @@
-//! The terms an Intex series is issued under.
+//! The terms an Intex series is issued under, and the Settled Intex collection.
 
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::units::SCALE_1E6_U128;
@@ -17,3 +17,11 @@ pub const CALL_THRESHOLD: u32 = 21 * SECONDS_PER_DAY_U32;
 /// Commit-entry bond on the target-chain auction: 100M COEN in protocol units. The target
 /// escrow scales it to its payment token.
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
+
+pub const SETTLED_TOKEN_NAME: &str = "Settled Intex";
+pub const SETTLED_TOKEN_SYMBOL: &str = "SINTEX";
+pub const SETTLED_TOKEN_DESCRIPTION: &str = concat!(
+    "Settled units of an Intex series on the Outbe network: their settlement cost is paid. ",
+    "Settled units are never transferable and can be mined with no deadline; ",
+    "mining one mints its Promis load."
+);

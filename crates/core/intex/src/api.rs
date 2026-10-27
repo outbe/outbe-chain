@@ -9,10 +9,12 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::{date_step_error, IntexError};
+use crate::precompile::IIntex;
 use crate::schema::{
     CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
     SeriesRecordEntryExt,
@@ -114,7 +116,8 @@ pub fn record_settled_units(
     units: u32,
 ) -> Result<()> {
     add_realized_units(storage, series_id, units, RealizedKind::Settled)?;
-    add_owner_units(storage, series_id, owner, units, OwnerLedger::Settled)
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::Settled)?;
+    emit_settled_transfer(storage, series_id, Address::ZERO, owner, units)
 }
 
 /// Record `units` sent to the Gem Factory by `owner`: their load moved into the position.
@@ -177,7 +180,25 @@ pub fn record_mined_units(
     registry.owner_settled_units.write(&key, owner_settled)?;
     registry.settled_units.write(&series_id, settled)?;
     registry.mined_units.write(&series_id, mined)?;
-    add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)?;
+    emit_settled_transfer(storage, series_id, owner, Address::ZERO, units)
+}
+
+/// The Settled collection's ERC-1155 record of a mint (`from` zero) or a burn (`to` zero).
+fn emit_settled_transfer(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    from: Address,
+    to: Address,
+    units: u32,
+) -> Result<()> {
+    IntexContract::new(storage.clone()).emit(IIntex::TransferSingle {
+        operator: INTEX_FACTORY_ADDRESS,
+        from,
+        to,
+        id: series_id.token_id(),
+        value: U256::from(units),
+    })
 }
 
 /// Adds to one owner's ledger for the series.

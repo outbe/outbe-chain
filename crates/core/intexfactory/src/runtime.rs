@@ -202,7 +202,7 @@ pub(crate) fn owner_balances(
     let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
         0
     } else {
-        nft_units_of(storage, owner, issued_token_id(series_id))?
+        nft_units_of(storage, owner, series_id.token_id())?
     };
     let settled = outbe_intex::api::owner_settled_units(storage, series_id, owner)?;
     Ok(crate::precompile::IIntexFactory::OwnerBalances {
@@ -241,7 +241,7 @@ pub fn settle_intex(
     let series = outbe_intex::api::read_series(storage, series_id)?;
     require_settleable(storage, &series)?;
 
-    let balance = nft_balance_of(storage, owner, issued_token_id(series_id))?;
+    let balance = nft_balance_of(storage, owner, series_id.token_id())?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
@@ -323,7 +323,7 @@ mod proceeds;
 
 #[cfg(test)]
 pub(crate) use mining::compute_pow_hash;
-pub(crate) use mining::{issued_token_id, validate_pow};
+pub(crate) use mining::validate_pow;
 pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;
 #[cfg(test)]

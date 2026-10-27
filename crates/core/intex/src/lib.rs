@@ -3,12 +3,14 @@
 //! the cleanup queue of expired groups.
 //!
 //! IntexFactory runs the lifecycle and writes the registry through the Rust-to-Rust API
-//! in [`api`]. The [`precompile`] surface is read-only.
+//! in [`api`]. The [`precompile`] surface is read-only: the series views and the Settled
+//! Intex ERC-1155 collection.
 
 pub mod api;
 pub mod config;
 pub mod constants;
 pub mod errors;
+mod metadata;
 pub mod precompile;
 pub mod schema;
 pub(crate) mod state;

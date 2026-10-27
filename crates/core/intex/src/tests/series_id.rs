@@ -66,3 +66,11 @@ fn round_trips_through_storage_word_and_key() {
     assert_eq!(SeriesId::from_word(id.to_word()), id);
     assert_eq!(id.key_bytes(), b"20260212-EUR-E".to_vec());
 }
+
+#[test]
+fn a_series_token_id_round_trips() {
+    let id = sid(7);
+    assert_eq!(SeriesId::from_token_id(id.token_id()), Some(id));
+    assert!(id.token_id() < U256::ONE << 112);
+    assert_eq!(SeriesId::from_token_id(U256::ONE << 112), None);
+}

@@ -105,6 +105,23 @@ impl SeriesId {
         &self.0
     }
 
+    /// The ERC-1155 token id of the series' units: `uint256(uint112(seriesId))`.
+    pub fn token_id(&self) -> U256 {
+        U256::from_be_slice(&self.0)
+    }
+
+    /// The series a token id names; `None` above the 14-byte id space.
+    pub fn from_token_id(id: U256) -> Option<Self> {
+        let word = id.to_be_bytes::<32>();
+        let (high, low) = word.split_at(32 - SERIES_ID_LEN);
+        if high.iter().any(|byte| *byte != 0) {
+            return None;
+        }
+        let mut bytes = [0u8; SERIES_ID_LEN];
+        bytes.copy_from_slice(low);
+        Some(Self(bytes))
+    }
+
     pub fn worldwide_day(&self) -> WorldwideDay {
         WorldwideDay::new(self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
             acc * 10 + u32::from(byte.wrapping_sub(b'0'))
