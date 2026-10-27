@@ -47,19 +47,25 @@ impl ColdCatchup<'_> {
             self.rpc.checkpoint_at(self.port, expected.height)? == expected,
             "cold joiner finalized checkpoint diverged from upstream"
         );
-        let Some(anchor) = self.anchor else {
-            return Ok(None);
-        };
-        let observed = self.rpc.checkpoint_at(self.port, anchor.finalized_height)?;
-        require_cold_admission_checkpoint(anchor, observed)?;
-        Ok((!log.contains(LEASE_GUARD_ARMED))
-            .then(|| "finalized parity reached; lease guard not yet armed".to_owned()))
+        if let Some(anchor) = self.anchor {
+            let observed = self.rpc.checkpoint_at(self.port, anchor.finalized_height)?;
+            require_cold_admission_checkpoint(anchor, observed)?;
+            if !log.contains(LEASE_GUARD_ARMED) {
+                return Ok(Some(
+                    "finalized parity reached; lease guard not yet armed".to_owned(),
+                ));
+            }
+        }
+        let mode = self.rpc.consensus_status_field(self.port, "mode");
+        Ok((!matches!(mode.as_deref(), Some("verifier" | "signer")))
+            .then(|| format!("finalized parity reached; consensus mode is {mode:?}")))
     }
 }
 
 impl Localnet {
-    /// Cold admission only. Deliberate warm promotion and crash/restart tests
-    /// use launch_joiner directly so their fault boundary is not pre-recovered.
+    /// Cold admission with in-process `UpstreamBootstrap -> Verifier` promotion.
+    /// Deliberate warm promotion and crash/restart tests use `launch_joiner`
+    /// directly so their fault boundary is not pre-waited.
     pub fn launch_caught_up_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
         ensure!(
             !self.validators.contains_key(&index),
@@ -88,12 +94,8 @@ impl Localnet {
         if let Some(anchor) = anchor {
             verify_upstream_admission(&rpc, primary, baseline, anchor)?;
         }
-        let follower_args = super::super::follower::derive_validator_recovery_follower_args(
-            &argv,
-            &format!("http://127.0.0.1:{primary}"),
-        )?;
         let mut log = LaunchLog::arm(&vd.join("node.log"))?;
-        self.launch_certified_follower_with_args(&name, index, follower_args)?;
+        self.spawn_joiner_with_args(index, argv)?;
         let catchup = ColdCatchup {
             rpc: &rpc,
             primary,
@@ -102,12 +104,14 @@ impl Localnet {
             anchor,
             log_path: vd.join("node.log"),
         };
-        let result = self.wait_cold_catchup(&name, &mut log, &catchup);
-        // Drop/interrupt reaps the sole writer before authority is launched.
-        let stopped = self.stop_follower(&name);
+        let result = self.wait_cold_catchup(index, &mut log, &catchup);
+        let stopped = if result.is_err() {
+            self.stop_joiner(index)
+        } else {
+            Ok(())
+        };
         let sealed = log.seal();
         finish_cold_catchup(result, stopped, sealed)?;
-        self.spawn_joiner_with_args(index, argv)?;
         rpc.wait_finalized_checkpoint(
             &[primary, port],
             baseline
@@ -139,14 +143,14 @@ impl Localnet {
 
     fn wait_cold_catchup(
         &mut self,
-        name: &str,
+        index: usize,
         log: &mut LaunchLog,
         catchup: &ColdCatchup<'_>,
     ) -> Result<()> {
         let deadline = Instant::now() + COLD_CATCHUP_TIMEOUT;
         let mut target = None;
         loop {
-            self.live_follower_pid(name)?;
+            self.live_validator_and_enclave_pids(index)?;
             let text = log.read()?;
             if target.is_none() {
                 target = catchup.pinned_target()?;

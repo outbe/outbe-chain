@@ -57,12 +57,13 @@ use cli::dkg::run_dkg_command;
 
 use cli::version::print_outbe_version;
 
+#[cfg(test)]
+use launch::admission::validator_recovery_startup_admission_rejection;
 use launch::admission::{
     read_gated_finalized_local_tee_admission, require_upstream_fullnode_tee_admission,
     require_validator_tee_recovery_complete_v1, run_tee_lease_guard_v1,
     tee_lease_admission_rejection, tee_lease_exit_reason,
-    validator_admission_anchor_from_durable_v1, validator_recovery_startup_admission_rejection,
-    TeeLeaseGuardGateV1,
+    validator_admission_anchor_from_durable_v1, TeeLeaseGuardGateV1,
 };
 
 use launch::configuration::{

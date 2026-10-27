@@ -177,6 +177,7 @@ pub(crate) fn tee_lease_admission_rejection(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn validator_recovery_startup_admission_rejection(
     admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
 ) -> Option<String> {
@@ -505,9 +506,9 @@ where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     if !gate.is_armed()
-        || !provider
+        || provider
             .finalized_block_num_hash()?
-            .is_some_and(|head| head.number > 0)
+            .is_none_or(|head| head.number == 0)
     {
         return Ok(());
     }

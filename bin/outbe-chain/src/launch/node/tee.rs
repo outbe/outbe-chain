@@ -198,14 +198,14 @@ pub(super) fn start_runtime_workers(
                 .signing_key
                 .as_ref()
                 .ok_or(outbe_engine::errors::StackEpochError::SigningKeyRequired)?;
-            let key = outbe_engine::validators::load_signing_key(key_path, &args.key_backend()?)?;
-            use commonware_cryptography::Signer as _;
+            let public_key =
+                outbe_engine::validators::load_signing_public_key(key_path, &args.key_backend()?)?;
             outbe_engine::validators::read_consensus_validators_at_block(
                 &node.provider,
                 genesis_hash,
             )?
             .public_keys
-            .contains(&key.public_key())
+            .contains(&public_key)
         } else {
             let admission = crate::launch::admission::read_finalized_local_tee_admission(
                 &node.provider,

@@ -133,20 +133,13 @@ fn joined(world: &mut World) -> Result<()> {
 
 fn live(world: &mut World) -> Result<()> {
     let count = ports(world)?.len();
-    let full_node = count == 5 && world.state.promoted_validator_pid.is_none();
-    let expected_validators = (0..if full_node { 4 } else { count }).collect::<Vec<_>>();
+    let expected_validators = (0..count).collect::<Vec<_>>();
     ensure!(
         world.localnet.owned_validator_indices() == expected_validators,
         "lifecycle validator ownership changed"
     );
     for index in 0..count {
-        let observed = if full_node && index == 4 {
-            let (pid, exit) = world.localnet.owned_full_node_process(index)?;
-            ensure!(exit.is_none(), "owned FullNode exited");
-            (pid, world.localnet.live_enclave_pid(index)?)
-        } else {
-            world.localnet.live_validator_and_enclave_pids(index)?
-        };
+        let observed = world.localnet.live_validator_and_enclave_pids(index)?;
         let expected = world
             .state
             .lifecycle_incarnations
@@ -158,6 +151,31 @@ fn live(world: &mut World) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn wait_for_consensus_mode(
+    world: &mut World,
+    port: u16,
+    expected_mode: &str,
+    tries: u32,
+) -> Result<()> {
+    for _ in 0..tries {
+        live(world)?;
+        if world.rpc.consensus_status_field(port, "mode").as_deref() == Some(expected_mode)
+            && world
+                .rpc
+                .consensus_status_field(port, "isValidator")
+                .as_deref()
+                == Some("true")
+        {
+            return Ok(());
+        }
+        sleep(Duration::from_secs(1));
+    }
+    Err(eyre!(
+        "validator on port {port} did not reach consensus mode {expected_mode}; observed {:?}",
+        world.rpc.consensus_status_field(port, "mode")
+    ))
 }
 
 fn log_bounds(world: &mut World) -> Result<Value> {
@@ -651,12 +669,13 @@ fn full_node_syncs(world: &mut World) {
         live(world)?;
         let dir = world.localnet.scenario_dir().join("validator-4");
         std::fs::create_dir_all(&dir)?;
+        world.localnet.ensure_radicle_key_material(4)?;
+        world.localnet.provision_full_node_node_host(4)?;
+        world.localnet.wait_selected_upstream_admission(4, 0)?;
         let node_log = LaunchLog::arm(&dir.join("node.log"))?;
-        let enclave_log = LaunchLog::arm(&dir.join("enclave.log"))?;
-        world.localnet.launch_joiner_full_node(4, 0)?;
-        let (node_pid, exit) = world.localnet.owned_full_node_process(4)?;
-        ensure!(exit.is_none(), "FullNode exited during startup");
-        let enclave_pid = world.localnet.live_enclave_pid(4)?;
+        let enclave_log = LaunchLog::checkpoint(&dir.join("enclave.log"))?;
+        world.localnet.launch_joiner(4, &[])?;
+        let (node_pid, enclave_pid) = world.localnet.live_validator_and_enclave_pids(4)?;
         world.state.lifecycle_incarnations.insert(
             4,
             RestartIncarnation {
@@ -667,11 +686,14 @@ fn full_node_syncs(world: &mut World) {
             },
         );
         joined(world)?;
+        let joiner_port = world.validators.http_port(4);
+        wait_for_consensus_mode(world, joiner_port, "upstreamBootstrap", 30)?;
         // Keep the existing sync budget and minimum height, but prove finality.
         wait(world, "lifecycle_full_node_sync", 20, 40)?;
+        wait_for_consensus_mode(world, joiner_port, "upstreamBootstrap", 5)?;
         Ok(())
     })()
-    .expect("owned FullNode reaches shared finalized tip");
+    .expect("owned validator in upstreamBootstrap mode reaches shared finalized tip");
 }
 
 #[then("the full node matches committee supply and state root and is not a participant")]
@@ -686,6 +708,7 @@ fn full_node_parity(world: &mut World) {
             !state.consensus.contains(&address(world, 4)?),
             "FullNode became a participant"
         );
+        wait_for_consensus_mode(world, world.validators.http_port(4), "upstreamBootstrap", 5)?;
         Ok(())
     })()
     .expect("all five owned peers share fresh finalized hash/root and supply");
@@ -696,6 +719,12 @@ fn full_node_restarts_as_shareless_validator(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
         let before_offer_key = world.localnet.node_offer_public(4)?;
+        let old = world
+            .state
+            .lifecycle_incarnations
+            .get(&4)
+            .ok_or_else(|| eyre!("missing joiner incarnation"))?;
+        let initial_pids = (old.node_pid, old.enclave_pid);
         let outcome = world
             .localnet
             .provision_existing_node_as_joiner_observed(4)?;
@@ -723,58 +752,42 @@ fn full_node_restarts_as_shareless_validator(world: &mut World) {
             !world.localnet.has_share_file_result(4)?,
             "share exists before DKG"
         );
-        let old = world
-            .state
-            .lifecycle_incarnations
-            .get(&4)
-            .ok_or_else(|| eyre!("missing FullNode incarnation"))?;
-        let old_pids = (old.node_pid, old.enclave_pid);
-        let exit = world.localnet.stop_joiner_full_node_owned(4, old_pids.0)?;
-        {
-            let old = world
-                .state
-                .lifecycle_incarnations
-                .get_mut(&4)
-                .ok_or_else(|| eyre!("missing FullNode logs"))?;
-            old.node_log.seal()?;
-            old.enclave_log.seal()?;
-        }
-        let bounds = log_bounds(world)?;
-        retain(
-            world,
-            "lifecycle_full_node_stopped",
-            json!({
-                "node_pid": old_pids.0, "enclave_pid": old_pids.1,
-                "exit": exit.to_string(), "checkpoint": checkpoint_json(before),
-                "processes": bounds, "offer_public_key": hex::encode(before_offer_key),
-            }),
-        );
-        let dir = world.localnet.scenario_dir().join("validator-4");
-        let node_log = LaunchLog::arm(&dir.join("node.log"))?;
-        let enclave_log = LaunchLog::checkpoint(&dir.join("enclave.log"))?;
-        world.localnet.launch_joiner(4, &[])?;
+        let joiner_port = world.validators.http_port(4);
+        wait_for_consensus_mode(world, joiner_port, "verifier", 30)?;
         let (node_pid, enclave_pid) = world.localnet.live_validator_and_enclave_pids(4)?;
         ensure!(
-            node_pid != old_pids.0 && enclave_pid == old_pids.1,
-            "role switch replaced enclave or retained node PID"
+            (node_pid, enclave_pid) == initial_pids,
+            "in-process upstreamBootstrap -> verifier promotion restarted node or enclave"
         );
         ensure!(
             world.localnet.node_offer_public(4)? == before_offer_key,
-            "role switch changed resident offer identity"
+            "in-process promotion changed resident offer identity"
         );
+        {
+            let incarnation = world
+                .state
+                .lifecycle_incarnations
+                .get_mut(&4)
+                .ok_or_else(|| eyre!("missing joiner logs"))?;
+            ensure!(
+                incarnation
+                    .node_log
+                    .read()?
+                    .contains("local TEE lease guard armed at authenticated catch-up anchor"),
+                "in-process promotion did not arm local TEE lease guard"
+            );
+        }
         world.state.promoted_validator_pid = Some(node_pid);
-        world.state.lifecycle_incarnations.insert(
-            4,
-            RestartIncarnation {
-                node_pid,
-                enclave_pid,
-                node_log,
-                enclave_log,
-            },
+        let bounds = log_bounds(world)?;
+        retain(
+            world,
+            "lifecycle_in_process_verifier_promoted",
+            json!({
+                "node_pid": initial_pids.0, "enclave_pid": initial_pids.1,
+                "checkpoint": checkpoint_json(before),
+                "processes": bounds, "offer_public_key": hex::encode(before_offer_key),
+            }),
         );
-        // The replacement has just spawned: wait for its RPC/finality before
-        // issuing pinned reads. The following shareless step samples fresh +2
-        // from every peer after this readiness barrier.
         let (_, after) = wait(
             world,
             "lifecycle_shareless_restart",
@@ -790,17 +803,18 @@ fn full_node_restarts_as_shareless_validator(world: &mut World) {
                 && account(&after)?.address == registered.address
                 && account(&after)?.p2p_version == registered.p2p_version
                 && account(&after)?.p2p_encoded == registered.p2p_encoded,
-            "role switch changed registered public identity"
+            "in-process promotion changed registered public identity"
         );
         Ok(())
     })()
-    .expect("finalized admission and owned same-datadir role switch");
+    .expect("finalized admission and in-process upstreamBootstrap -> verifier promotion");
 }
 
 #[then("it keeps finalizing with its bond but without a share or consensus participation")]
 fn shareless_validator_keeps_finalizing_before_readiness(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
+        wait_for_consensus_mode(world, world.validators.http_port(4), "verifier", 5)?;
         let (_, state) = fresh(world, "lifecycle_shareless_before_readiness", 0, 30)?;
         let registered = account(&state)?;
         ensure!(
@@ -904,6 +918,7 @@ fn promoted_with_inflight_offer(world: &mut World) {
             sleep(Duration::from_secs(1));
         }
         ensure!(loaded, "activation did not install the threshold share");
+        wait_for_consensus_mode(world, world.validators.http_port(4), "signer", 30)?;
         let (closed_height, end_height) = signing_heights(activation)?;
         let closed = historical(world, "lifecycle_pre_eligibility_closed", closed_height, 60)?;
         let end = historical(world, "lifecycle_eligible_signing_closed", end_height, 60)?;
@@ -923,9 +938,57 @@ fn promoted_with_inflight_offer(world: &mut World) {
         world
             .projection
             .wait_for_tribute_projection_on_nodes(&tx, 60, 5)?;
+        verify_direct_signer_restart(world, end_height)?;
         Ok(())
     })()
     .expect("same-process canonical activation and complete eligible signing window");
+}
+
+fn verify_direct_signer_restart(world: &mut World, end_height: u64) -> Result<()> {
+    let old_pids = {
+        let incarnation = world
+            .state
+            .lifecycle_incarnations
+            .get_mut(&4)
+            .ok_or_else(|| eyre!("missing active joiner incarnation"))?;
+        incarnation.node_log.seal()?;
+        (incarnation.node_pid, incarnation.enclave_pid)
+    };
+    world.localnet.stop_joiner(4)?;
+    let dir = world.localnet.scenario_dir().join("validator-4");
+    let node_log = LaunchLog::arm(&dir.join("node.log"))?;
+    let enclave_log = LaunchLog::checkpoint(&dir.join("enclave.log"))?;
+    world.localnet.launch_joiner(4, &[])?;
+    let (node_pid, enclave_pid) = world.localnet.live_validator_and_enclave_pids(4)?;
+    ensure!(
+        node_pid != old_pids.0 && enclave_pid == old_pids.1,
+        "signer restart did not replace node process while preserving enclave"
+    );
+    world.state.promoted_validator_pid = Some(node_pid);
+    world.state.lifecycle_incarnations.insert(
+        4,
+        RestartIncarnation {
+            node_pid,
+            enclave_pid,
+            node_log,
+            enclave_log,
+        },
+    );
+    let joiner_port = world.validators.http_port(4);
+    fresh(world, "lifecycle_signer_restart", end_height, 30)?;
+    wait_for_consensus_mode(world, joiner_port, "signer", 30)?;
+    let restarted_log = world
+        .state
+        .lifecycle_incarnations
+        .get_mut(&4)
+        .ok_or_else(|| eyre!("missing restarted signer incarnation"))?
+        .node_log
+        .read()?;
+    ensure!(
+        !restarted_log.contains("follower mode (--upstream) selected"),
+        "restarted signer unexpectedly entered upstreamBootstrap"
+    );
+    Ok(())
 }
 
 #[when("the promoted validator deactivates")]
@@ -1041,6 +1104,7 @@ fn exits_and_demotes(world: &mut World) {
             demotion_seen(&incarnation.node_log.read()?, usize::try_from(offset)?)?,
             "current process did not demote after deactivation"
         );
+        wait_for_consensus_mode(world, world.validators.http_port(4), "verifier", 30)?;
         retain(
             world,
             "lifecycle_demotion_observed",

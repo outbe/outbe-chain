@@ -170,6 +170,7 @@ impl Localnet {
 
     /// Stop only the live FullNode incarnation observed by the scenario, and
     /// retain its actual exit status before permitting a replacement role.
+    #[cfg(test)]
     pub(crate) fn stop_joiner_full_node_owned(
         &mut self,
         index: usize,
@@ -427,15 +428,7 @@ impl Localnet {
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
-        let radicle_output = self.keygen(&[
-            "radicle",
-            "--output-dir",
-            &vd.join("radicle").display().to_string(),
-        ])?;
-        let radicle_node_id = first_hex(&radicle_output, 64)
-            .and_then(|value| hex::decode(value).ok())
-            .map(|value| B256::from_slice(&value))
-            .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))?;
+        let radicle_node_id = self.ensure_radicle_key_material(index)?;
         let sig = self.sign_registration(&signing_key, addr, radicle_node_id)?;
         let p2p_secret = vd.join("reth-p2p-secret.hex");
         if !p2p_secret.is_file() {
@@ -670,6 +663,33 @@ impl Localnet {
                 "node key material is partial: both {} and {} must exist or both be absent",
                 bls.display(),
                 evm.display()
+            )),
+        }
+    }
+
+    pub(crate) fn ensure_radicle_key_material(&self, index: usize) -> Result<B256> {
+        let radicle_home = self.cfg.validator_dir(index).join("radicle");
+        let secret = radicle_home.join("keys/radicle");
+        let public = radicle_home.join("keys/radicle.pub");
+        match (secret.is_file(), public.is_file()) {
+            (true, true) => Ok(B256::from(super::radicle::provisioned_radicle_node_id(
+                &radicle_home,
+            )?)),
+            (false, false) => {
+                let radicle_output = self.keygen(&[
+                    "radicle",
+                    "--output-dir",
+                    &radicle_home.display().to_string(),
+                ])?;
+                first_hex(&radicle_output, 64)
+                    .and_then(|value| hex::decode(value).ok())
+                    .map(|value| B256::from_slice(&value))
+                    .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))
+            }
+            _ => Err(eyre!(
+                "Radicle key material is partial: both {} and {} must exist or both be absent",
+                secret.display(),
+                public.display()
             )),
         }
     }

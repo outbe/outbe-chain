@@ -30,6 +30,12 @@ pub fn load_signing_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::P
         .wrap_err_with(|| format!("failed to load signing key: {}", path.display()))
 }
 
+/// Load the BLS individual signing key's public key from a file.
+pub fn load_signing_public_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PublicKey> {
+    use commonware_cryptography::Signer as _;
+    Ok(load_signing_key(path, backend)?.public_key())
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Dynamic reading from EVM state
 // ---------------------------------------------------------------------------

@@ -99,7 +99,7 @@ impl Localnet {
     /// Positive-start barrier for the selected upstream, not a substitute for
     /// the node's own authenticated admission. The owner is stopped while its
     /// exact durable anchor is loaded. Polling never reopens the owner journal.
-    pub(super) fn wait_selected_upstream_admission(
+    pub(crate) fn wait_selected_upstream_admission(
         &self,
         index: usize,
         upstream_slot: usize,
