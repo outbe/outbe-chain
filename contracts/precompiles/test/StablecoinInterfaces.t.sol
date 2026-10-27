@@ -40,6 +40,7 @@ contract StablecoinInterfacesTest {
         require(uint8(IVote.ProposalStatus.Approved) == 1, "approved status");
         require(uint8(IVote.ProposalStatus.Expired) == 2, "expired status");
         require(uint8(IVote.ProposalStatus.Error) == 3, "error status");
+        require(uint8(IVote.ProposalStatus.Canceled) == 4, "canceled status");
     }
 
     function testPolicyOperationEncodingIsFrozen() public pure {

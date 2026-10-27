@@ -25,15 +25,16 @@ interface IVote {
     error DuplicateTargetModule();
     error StoredPayloadInvalid(string module);
 
-    /// Voting either reaches quorum or does not. Applied approval is Approved;
-    /// no quorum is Expired. Error is an execution failure, not a negative vote.
-    /// Removing the former reserved Rejected member changes ABI ordinals; regenerate client bindings.
+    /// Approved records the passed ballot/accepted target plan. For phased
+    /// targets, inspect getProposalLifecycle before treating the plan as executed.
+    /// Error is a technical failure; Canceled is a superseded plan or sibling.
     /// ABI ordinals map explicitly to stable stored status codes, not by casting.
     enum ProposalStatus {
         Pending,
         Approved,
         Expired,
-        Error
+        Error,
+        Canceled
     }
 
     enum BondState {
@@ -41,6 +42,32 @@ interface IVote {
         Escrowed,
         Refunded,
         Burned
+    }
+
+    enum ProposalKind {
+        Standard,
+        Primary,
+        Cancel,
+        Replacement,
+        LegacyPlan
+    }
+
+    enum ProposalPhase {
+        Voting,
+        Replace,
+        Activation,
+        Finished
+    }
+
+    struct ProposalLifecycleInfo {
+        ProposalKind kind;
+        ProposalPhase phase;
+        uint256 parentProposalId;
+        /// First block after the replacement ballot window; tally precedes preparation.
+        uint64 replaceEnd;
+        /// For an unselected linked ballot this refers to its parent's plan.
+        /// Finished or Canceled proposals do not acquire future execution from this field.
+        uint64 activationHeight;
     }
 
     struct VoteTally {
@@ -81,11 +108,20 @@ interface IVote {
     /// @notice Voting closed without reaching quorum.
     event ProposalExpired(uint256 indexed proposalId, VoteTally state);
 
-    /// @notice Voting reached quorum and the target was applied successfully.
+    /// @notice Voting reached quorum and the target action or plan registration succeeded.
     event ProposalApproved(uint256 indexed proposalId, VoteTally state);
 
     /// @notice Target execution failed and its effects were rolled back; this is not a negative vote.
     event ProposalErrored(uint256 indexed proposalId, VoteTally state);
+
+    /// @notice A plan or competing ballot became non-executable.
+    /// @dev byProposalId is the winning vote or closed parent; zero denotes automatic target cancellation.
+    event ProposalCanceled(uint256 indexed proposalId, uint256 indexed byProposalId);
+
+    /// @notice An opted-in target plan changed its execution phase.
+    event ProposalPhaseChanged(
+        uint256 indexed proposalId, ProposalPhase phase, uint64 replaceEnd, uint64 activationHeight
+    );
 
     /// @notice A target-specific proposal bond was recorded as escrowed.
     event ProposalBondEscrowed(uint256 indexed proposalId, address indexed owner, uint256 amount);
@@ -102,6 +138,8 @@ interface IVote {
     /// @notice Creates a generic proposal.
     /// @dev Vote enforces its raw UTF-8 payload byte limit before target decoding
     /// or storage writes. This admission-only bound is separate from decoded field limits.
+    /// Target-declared phased proposals derive their deadlines; linked actions inherit
+    /// their parent's open replacement window, not a new ordinary voting duration.
     /// @param targetModule Target system module precompile address.
     /// @param payload JSON payload decoded only by the target module handler.
     function createProposal(address targetModule, string calldata payload) external payable returns (uint256 proposalId);
@@ -110,6 +148,7 @@ interface IVote {
     /// @param votingWindowBlocks Duration in 1..=the network governance voting window.
     /// @dev Admission and bond rules are identical to createProposal. The deadline
     /// is createdHeight + votingWindowBlocks, inclusive; tally runs in the next block.
+    /// A phased target does not permit this entry point to bypass its declared windows.
     function createProposalWithVotingWindow(address targetModule, string calldata payload, uint64 votingWindowBlocks)
         external
         payable
@@ -125,6 +164,10 @@ interface IVote {
 
     /// @notice Returns proposal details.
     function getProposal(uint256 proposalId) external view returns (ProposalInfo memory);
+
+    /// @notice Returns the stored proposal kind, parent and execution phase.
+    /// Standard legacy records retain ordinary timing; Finished does not imply success.
+    function getProposalLifecycle(uint256 proposalId) external view returns (ProposalLifecycleInfo memory);
 
     /// @notice Returns the recorded bond amount and bond state for a proposal.
     function getProposalBond(uint256 proposalId) external view returns (uint256 amount, BondState state);

@@ -81,6 +81,28 @@ fn dispatch_vote_call(
                 get_proposal(storage.clone(), c.proposalId)?.ok_or(VoteError::ProposalNotFound)?;
             Ok(proposal_info_return(&info))
         }),
+        getProposalLifecycle(c) => view(c, |c| {
+            let info = governance.proposal_lifecycle(c.proposalId)?;
+            use crate::windows::{ProposalKind, ProposalPhase};
+            Ok(IVote::ProposalLifecycleInfo {
+                kind: match info.kind {
+                    ProposalKind::Standard => IVote::ProposalKind::Standard,
+                    ProposalKind::Primary => IVote::ProposalKind::Primary,
+                    ProposalKind::Cancel => IVote::ProposalKind::Cancel,
+                    ProposalKind::Replacement => IVote::ProposalKind::Replacement,
+                    ProposalKind::LegacyPlan => IVote::ProposalKind::LegacyPlan,
+                },
+                phase: match info.phase {
+                    ProposalPhase::Voting => IVote::ProposalPhase::Voting,
+                    ProposalPhase::Replace => IVote::ProposalPhase::Replace,
+                    ProposalPhase::Activation => IVote::ProposalPhase::Activation,
+                    ProposalPhase::Finished => IVote::ProposalPhase::Finished,
+                },
+                parentProposalId: info.parent_id,
+                replaceEnd: info.replace_end,
+                activationHeight: info.activation_height,
+            })
+        }),
         getProposalVoters(c) => view(c, |c| {
             get_proposal_voters(storage.clone(), c.proposalId, c.index, c.count)
         }),
@@ -131,6 +153,7 @@ fn proposal_status_to_abi(status: ProposalStatus) -> IVote::ProposalStatus {
         ProposalStatus::Approved => IVote::ProposalStatus::Approved,
         ProposalStatus::Expired => IVote::ProposalStatus::Expired,
         ProposalStatus::Error => IVote::ProposalStatus::Error,
+        ProposalStatus::Canceled => IVote::ProposalStatus::Canceled,
     }
 }
 
@@ -140,6 +163,7 @@ fn proposal_status_from_abi(status: IVote::ProposalStatus) -> Result<ProposalSta
         IVote::ProposalStatus::Approved => Ok(ProposalStatus::Approved),
         IVote::ProposalStatus::Expired => Ok(ProposalStatus::Expired),
         IVote::ProposalStatus::Error => Ok(ProposalStatus::Error),
+        IVote::ProposalStatus::Canceled => Ok(ProposalStatus::Canceled),
         _ => Err(VoteError::InvalidProposalStatus.into()),
     }
 }

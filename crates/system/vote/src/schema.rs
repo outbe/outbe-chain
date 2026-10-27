@@ -1,4 +1,5 @@
 use crate::errors::VoteError;
+pub use crate::windows::{ProposalKind, ProposalLifecycleInfo, ProposalPhase};
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::VOTE_ADDRESS;
@@ -11,16 +12,14 @@ use outbe_primitives::storage::{Storable, StorableType};
 /// The removed reserved status is invalid rather than reused: old records must
 /// never acquire a different meaning when the public enum is compacted.
 ///
-/// Voting has two outcomes after the inclusive `voting_deadline_height`:
-/// - Quorum reached: dispatch to the target; successful application is `Approved`.
-/// - Quorum not reached: the proposal is `Expired`.
+/// Standard targets apply on quorum; phased targets register an `Approved` plan
+/// and expose its later execution through [`crate::ProposalPhase`]. A no-quorum
+/// ballot is `Expired`. `Canceled` preserves a shadowed plan or losing sibling.
 ///
-/// `Pending` is intermediate. A target-declared execution failure is `Error`,
-/// not a rejection by the voters. It is terminal, leaves the pending index and
-/// refunds its bond in the same pass; the module does not retry it.
-///
-/// There is no manual cancellation or separate conflict-rejection transition.
-/// Further state, such as a scheduled upgrade, belongs to the target module.
+/// A target-declared execution failure is `Error`, not a negative vote. Terminal
+/// ballots leave the pending index; opted-in active plans use a separate bounded
+/// index so a full plan queue cannot prevent linked cancellation ballots.
+/// Ordinary target errors retain the existing exactly-once bond refund.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProposalStatus {
@@ -28,6 +27,7 @@ pub enum ProposalStatus {
     Approved = 1,
     Expired = 3,
     Error = 4,
+    Canceled = 5,
 }
 
 /// State of the native bond of a proposal.
@@ -56,7 +56,13 @@ impl BondState {
 }
 
 impl ProposalStatus {
-    const VARIANTS: [Self; 4] = [Self::Pending, Self::Approved, Self::Expired, Self::Error];
+    const VARIANTS: [Self; 5] = [
+        Self::Pending,
+        Self::Approved,
+        Self::Expired,
+        Self::Error,
+        Self::Canceled,
+    ];
 
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
         decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
@@ -71,7 +77,10 @@ impl ProposalStatus {
     /// `Error` is terminal. The module never retries a target-execution failure.
     /// It refunds the bond when it records the `Error` status.
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Approved | Self::Expired | Self::Error)
+        matches!(
+            self,
+            Self::Approved | Self::Expired | Self::Error | Self::Canceled
+        )
     }
 }
 
@@ -160,6 +169,33 @@ impl Storable for VoteRecord {
     }
 }
 
+/// Appended lifecycle sidecar. Never extend `ProposalRecord`: its slot width
+/// determines every existing map that follows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[storage_record(exists_field = marker)]
+pub struct ProposalWindowRecord {
+    #[key]
+    pub id: U256,
+    #[attribute(order = 0)]
+    pub marker: u8,
+    #[attribute(order = 1)]
+    pub kind: u8,
+    #[attribute(order = 2)]
+    pub phase: u8,
+    #[attribute(order = 3)]
+    pub parent_id: U256,
+    #[attribute(order = 4)]
+    pub voting_window: u64,
+    #[attribute(order = 5)]
+    pub replace_window: u64,
+    #[attribute(order = 6)]
+    pub activation_window: u64,
+    #[attribute(order = 7)]
+    pub replace_end: u64,
+    #[attribute(order = 8)]
+    pub activation_height: u64,
+}
+
 /// EVM storage layout for the generic Vote precompile.
 ///
 /// Storage slots:
@@ -172,6 +208,9 @@ impl Storable for VoteRecord {
 ///   11: proposal_bond_state: mapping(proposalId => BondState)
 ///   12: escrowed_bond_total
 ///   13: proposal_electorate: mapping(proposalId => TargetElectorate)
+///   14..=22: proposal_windows: appended nine-slot lifecycle sidecar map
+///   23: active_plan_ids: bounded scheduled-plan index
+///   24: active_plan_positions: 1-based positions in active_plan_ids
 #[storage_schema]
 #[contract(addr = VOTE_ADDRESS)]
 pub struct Vote {
@@ -213,4 +252,16 @@ pub struct Vote {
     /// Immutable target policy; absent legacy values select ACTIVE-only voting.
     #[attribute(order = 8)]
     pub proposal_electorate: outbe_primitives::storage::dsl::Map<U256, u8>,
+
+    /// Sidecars start at slot 14, after all legacy maps.
+    #[attribute(order = 9)]
+    pub proposal_windows: outbe_primitives::storage::dsl::Map<U256, ProposalWindowRecord>,
+
+    /// Bounded scheduled plans, independent of the terminal ballot index.
+    #[attribute(order = 10)]
+    pub active_plan_ids: outbe_primitives::storage::dsl::List<U256>,
+
+    /// Zero means absent; swap-remove maintains the moved plan's position.
+    #[attribute(order = 11)]
+    pub active_plan_positions: outbe_primitives::storage::dsl::Map<U256, u32>,
 }

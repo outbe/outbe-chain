@@ -452,10 +452,14 @@ fn status_views_map_stable_storage_codes_to_compact_abi() {
         let errored = create_update_proposal(&mut vote, PROPOSER, 200).unwrap();
         vote.set_proposal_status(errored, ProposalStatus::Error)
             .unwrap();
+        let canceled = create_update_proposal(&mut vote, PROPOSER, 200).unwrap();
+        vote.set_proposal_status(canceled, ProposalStatus::Canceled)
+            .unwrap();
 
         for (id, stored_code, abi_status, abi_code) in [
             (expired, 3, IVote::ProposalStatus::Expired, 2),
             (errored, 4, IVote::ProposalStatus::Error, 3),
+            (canceled, 5, IVote::ProposalStatus::Canceled, 4),
         ] {
             assert_eq!(vote.proposals.get(id).unwrap().unwrap().status, stored_code);
             let get = IVote::getProposalCall { proposalId: id }.abi_encode();
@@ -498,9 +502,10 @@ fn invalid_abi_status_does_not_fall_back_to_pending() {
         .unwrap();
         assert_eq!(ids.as_slice(), &[pending]);
 
-        // The previous ABI Error code is outside the compact public enum.
-        data[4 + 31] = 4;
-        assert!(dispatch(storage, &data, PROPOSER, U256::ZERO).is_err());
+        for invalid in [5, 255] {
+            data[4 + 31] = invalid;
+            assert!(dispatch(storage.clone(), &data, PROPOSER, U256::ZERO).is_err());
+        }
     });
 }
 

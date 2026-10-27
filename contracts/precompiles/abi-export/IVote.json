@@ -187,6 +187,52 @@
   },
   {
     "type": "function",
+    "name": "getProposalLifecycle",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IVote.ProposalLifecycleInfo",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum IVote.ProposalKind"
+          },
+          {
+            "name": "phase",
+            "type": "uint8",
+            "internalType": "enum IVote.ProposalPhase"
+          },
+          {
+            "name": "parentProposalId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "replaceEnd",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "activationHeight",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getProposalVoters",
     "inputs": [
       {
@@ -375,6 +421,25 @@
   },
   {
     "type": "event",
+    "name": "ProposalCanceled",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "byProposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ProposalCreated",
     "inputs": [
       {
@@ -468,6 +533,37 @@
             "internalType": "uint64"
           }
         ]
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ProposalPhaseChanged",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "phase",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum IVote.ProposalPhase"
+      },
+      {
+        "name": "replaceEnd",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "activationHeight",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false

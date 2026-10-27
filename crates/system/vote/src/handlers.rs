@@ -8,6 +8,30 @@ use outbe_primitives::storage::StorageHandle;
 use crate::errors::VoteError;
 use crate::schema::{ProposalRecord, ProposalStatus};
 
+/// Timing policy selected by the target for newly admitted proposals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposalLifecycle {
+    Standard,
+    ThreeWindow {
+        voting_window: u64,
+        replace_window: u64,
+        activation_window: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProposalAction {
+    Primary,
+    Cancel(U256),
+    Replace(U256),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VotePlanContext {
+    pub replace_end: u64,
+    pub activation_height: u64,
+}
+
 /// Static handler table entry type.
 pub type VoteTargetHandlers = &'static [&'static dyn VoteTarget];
 
@@ -85,6 +109,57 @@ pub trait VoteTarget: Send + Sync {
         TargetElectorate::Active
     }
 
+    fn lifecycle(&self) -> ProposalLifecycle {
+        ProposalLifecycle::Standard
+    }
+
+    /// Validate admission and classify the parent-bound action in one pass.
+    fn proposal_action(
+        &self,
+        payload: &[u8],
+        context: VoteTargetContext,
+    ) -> Result<ProposalAction> {
+        self.validate(payload, context)?;
+        Ok(ProposalAction::Primary)
+    }
+
+    fn register_plan(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _id: U256,
+        _payload: &[u8],
+        _context: VoteTargetContext,
+        _plan: VotePlanContext,
+    ) -> Result<TargetExecutionOutcome> {
+        Err(outbe_primitives::error::PrecompileError::Unsupported)
+    }
+
+    fn cancel_plan(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _parent: U256,
+        _by_proposal: U256,
+    ) -> Result<TargetExecutionOutcome> {
+        Err(outbe_primitives::error::PrecompileError::Unsupported)
+    }
+
+    fn prepare_plan(
+        &self,
+        _ctx: &BlockRuntimeContext,
+        _id: U256,
+        _activation_height: u64,
+    ) -> Result<()> {
+        Err(outbe_primitives::error::PrecompileError::Unsupported)
+    }
+
+    fn existing_plan(
+        &self,
+        _storage: StorageHandle<'_>,
+        _proposal: &ProposalRecord,
+    ) -> Result<Option<VotePlanContext>> {
+        Ok(None)
+    }
+
     /// Fail-fast validation used during proposal creation.
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()>;
 
@@ -120,9 +195,10 @@ pub trait VoteTarget: Send + Sync {
     ) -> Result<TargetExecutionOutcome> {
         match status {
             ProposalStatus::Approved => self.handle_approved(ctx, proposal_id, payload, context),
-            ProposalStatus::Expired | ProposalStatus::Pending | ProposalStatus::Error => {
-                Ok(TargetExecutionOutcome::Applied)
-            }
+            ProposalStatus::Expired
+            | ProposalStatus::Pending
+            | ProposalStatus::Error
+            | ProposalStatus::Canceled => Ok(TargetExecutionOutcome::Applied),
         }
     }
 }

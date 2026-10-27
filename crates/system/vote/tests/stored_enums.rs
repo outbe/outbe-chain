@@ -45,6 +45,7 @@ fn proposal_status_preserves_all_storage_bytes_and_errors() {
             (1, ProposalStatus::Approved),
             (3, ProposalStatus::Expired),
             (4, ProposalStatus::Error),
+            (5, ProposalStatus::Canceled),
         ],
         ProposalStatus::from_u8,
         ProposalStatus::to_u8,

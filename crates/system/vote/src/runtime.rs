@@ -12,7 +12,8 @@ use crate::constants::{
 };
 use crate::errors::VoteError;
 use crate::handlers::{
-    TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext, VoteTargetRegistry,
+    ProposalAction, TargetAdmission, TargetExecutionOutcome, VoteTarget, VoteTargetContext,
+    VoteTargetRegistry,
 };
 use crate::notify::ProposalFinalization;
 use crate::schema::{BondState, Vote};
@@ -56,6 +57,7 @@ struct AdmittedProposal<'a> {
     voting_deadline: u64,
     admission: TargetAdmission,
     target_context: VoteTargetContext,
+    action: ProposalAction,
 }
 
 impl Vote<'_> {
@@ -95,6 +97,11 @@ impl Vote<'_> {
         voting_window_blocks: u64,
         registry: &VoteTargetRegistry,
     ) -> Result<U256> {
+        if registry.lookup(submission.target_module)?.lifecycle()
+            != crate::handlers::ProposalLifecycle::Standard
+        {
+            return Err(crate::windows::WindowError::TimingOverride.into());
+        }
         let maximum = outbe_chain_constants::get_governance_voting_window_blocks();
         if voting_window_blocks == 0 || voting_window_blocks > maximum {
             return Err(VoteError::InvalidVotingWindow {
@@ -140,13 +147,14 @@ impl Vote<'_> {
             block_number: submission.created_height,
             chain_id,
         };
-        target.validate(submission.payload.as_bytes(), target_context)?;
+        let action = target.proposal_action(submission.payload.as_bytes(), target_context)?;
 
         let admitted = AdmittedProposal {
             submission,
             voting_deadline,
             admission,
             target_context,
+            action,
         };
         self.commit_proposal(admitted, target)
     }
@@ -231,13 +239,26 @@ impl Vote<'_> {
             voting_deadline,
             admission,
             target_context,
+            action,
         } = admitted;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
+            let window = self.admit_window(&submission, target, action)?;
+            let voting_deadline = match &window {
+                Some(window) if window.parent_id.is_zero() => submission
+                    .created_height
+                    .checked_add(window.voting_window)
+                    .ok_or(VoteError::VotingDeadlineOverflow)?,
+                Some(window) => window.replace_end - 1,
+                None => voting_deadline,
+            };
             let proposal_id =
                 self.write_proposal(&submission, voting_deadline, ProposalStatus::Pending)?;
             self.proposal_electorate
                 .write(&proposal_id, target.electorate() as u8)?;
+            if let Some(window) = &window {
+                self.commit_window(window)?;
+            }
             target.reserve(
                 storage.clone(),
                 proposal_id,
@@ -318,6 +339,7 @@ impl Vote<'_> {
             .proposals
             .get(proposal_id)?
             .ok_or(VoteError::ProposalNotFound)?;
+        self.window_record(proposal_id)?;
         if proposal.proposal_status()? != ProposalStatus::Pending {
             return Err(VoteError::NotPending.into());
         }
@@ -354,6 +376,7 @@ impl Vote<'_> {
         ctx: &BlockRuntimeContext,
         registry: &VoteTargetRegistry,
     ) -> Result<()> {
+        self.validate_active_plan_index()?;
         let block_number = ctx.block.block_number;
         let pending_ids = self.list_pending_proposal_ids()?;
         for proposal_id in pending_ids {
@@ -361,6 +384,10 @@ impl Vote<'_> {
                 return Err(VoteError::ProposalNotFound.into());
             };
             match proposal.proposal_status()? {
+                ProposalStatus::Pending
+                    if self
+                        .window_record(proposal_id)?
+                        .is_some_and(|window| !window.parent_id.is_zero()) => {}
                 ProposalStatus::Pending if block_number > proposal.voting_deadline_height => {
                     self.finalize_voting(ctx, proposal_id, registry)?;
                 }
@@ -369,9 +396,13 @@ impl Vote<'_> {
                 ProposalStatus::Error => {
                     self.close_legacy_error(proposal_id, proposal.proposer)?;
                 }
-                ProposalStatus::Pending | ProposalStatus::Approved | ProposalStatus::Expired => {}
+                ProposalStatus::Pending
+                | ProposalStatus::Approved
+                | ProposalStatus::Expired
+                | ProposalStatus::Canceled => {}
             }
         }
+        self.process_plan_windows(ctx, registry)?;
         Ok(())
     }
 
@@ -405,6 +436,9 @@ impl Vote<'_> {
         if proposal.proposal_status()? != ProposalStatus::Pending {
             return Ok(());
         }
+        if let Some(window) = self.window_record(proposal_id)? {
+            return self.finalize_primary(ctx, &proposal, window, registry);
+        }
 
         let active = self.eligible_validator_addresses(proposal_id)?;
         let tally = calculate_vote_tally(self, &proposal, &active)?;
@@ -426,7 +460,7 @@ impl Vote<'_> {
                 let outcome = match status {
                     ProposalStatus::Approved => ProposalFinalization::Approved,
                     ProposalStatus::Expired => ProposalFinalization::Expired,
-                    ProposalStatus::Pending | ProposalStatus::Error => {
+                    ProposalStatus::Pending | ProposalStatus::Error | ProposalStatus::Canceled => {
                         return Err(VoteError::InvalidProposalStatus.into());
                     }
                 };
@@ -470,7 +504,7 @@ impl Vote<'_> {
         match status {
             // Approved and target-execution Error both return the escrow to the
             // proposer once. Only an expired vote burns it.
-            ProposalStatus::Approved | ProposalStatus::Error => {
+            ProposalStatus::Approved | ProposalStatus::Error | ProposalStatus::Canceled => {
                 self.storage
                     .transfer_balance(VOTE_ADDRESS, owner, bond.amount)?;
                 self.set_bond_state(proposal_id, BondState::Refunded)?;

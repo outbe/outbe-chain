@@ -22,6 +22,39 @@ fn abi_vote_tally(tally: &VoteTally) -> IVote::VoteTally {
 }
 
 impl Vote<'_> {
+    pub(crate) fn notify_proposal_canceled(&mut self, id: U256, by: U256) -> Result<()> {
+        self.emit(IVote::ProposalCanceled {
+            proposalId: id,
+            byProposalId: by,
+        })
+    }
+
+    pub(crate) fn notify_proposal_phase_changed(
+        &mut self,
+        id: U256,
+        phase: u8,
+        replace_end: u64,
+        activation_height: u64,
+    ) -> Result<()> {
+        let phase = match phase {
+            0 => IVote::ProposalPhase::Voting,
+            1 => IVote::ProposalPhase::Replace,
+            2 => IVote::ProposalPhase::Activation,
+            3 => IVote::ProposalPhase::Finished,
+            _ => {
+                return Err(outbe_primitives::error::PrecompileError::Fatal(
+                    "invalid Vote phase".into(),
+                ))
+            }
+        };
+        self.emit(IVote::ProposalPhaseChanged {
+            proposalId: id,
+            phase,
+            replaceEnd: replace_end,
+            activationHeight: activation_height,
+        })
+    }
+
     /// Emits canonical `ProposalCreated` receipt evidence.
     pub(crate) fn notify_proposal_created(
         &mut self,

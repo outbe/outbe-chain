@@ -57,7 +57,7 @@ fn complete_exported_abis_match_golden_hashes() {
     assert_eq!(
         canonical_abi_hash(vote),
         // Enum ordinals are not represented in the export; pin their wire encoding below.
-        b256!("d70f8faa5eab98ddebd07e706f1fbadac3fb1e3db207b440ebff591fe48cbf18")
+        b256!("63788b1ff4116fa5e7bf772a33a1767cd49b4dde42b5d2b0151223cd5c705d46")
     );
 }
 
@@ -156,6 +156,10 @@ fn vote_status_filters_match_compact_abi_vectors() {
         (
             IVote::ProposalStatus::Error,
             hex!("42d1895700000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a"),
+        ),
+        (
+            IVote::ProposalStatus::Canceled,
+            hex!("42d1895700000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a"),
         ),
     ] {
         let call = IVote::listProposalsByStatusCall {

@@ -245,6 +245,7 @@ mod error_bond;
 mod guards;
 mod precompile;
 mod targets;
+mod windows;
 
 fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
@@ -369,7 +370,13 @@ fn proposal_status_storage_roundtrip() {
     assert!(!ProposalStatus::Pending.is_terminal());
     assert!(ProposalStatus::Error.is_terminal());
     assert_eq!(ProposalStatus::from_u8(4).unwrap(), ProposalStatus::Error);
-    assert!(ProposalStatus::from_u8(5).is_err());
+    assert_eq!(
+        ProposalStatus::from_u8(5).unwrap(),
+        ProposalStatus::Canceled
+    );
+    assert!(ProposalStatus::Canceled.is_terminal());
+    assert!(ProposalStatus::from_u8(2).is_err());
+    assert!(ProposalStatus::from_u8(6).is_err());
 }
 
 #[test]

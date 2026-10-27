@@ -149,7 +149,7 @@ pub mod vote {
                     StablecoinFactoryApi::release(ctx.storage.clone(), proposal_id)?;
                     Ok(TargetExecutionOutcome::Applied)
                 }
-                ProposalStatus::Pending | ProposalStatus::Error => {
+                ProposalStatus::Pending | ProposalStatus::Error | ProposalStatus::Canceled => {
                     Ok(TargetExecutionOutcome::Applied)
                 }
             }
