@@ -11,7 +11,7 @@
 ## else. Advancing the toolchain means editing this timestamp and regenerating
 ## the closure digest:
 ##
-##   scripts/release/regenerate_apt_closure.py --write
+##   cargo xtask release toolchain regenerate-apt-closure --write
 ##
 ## This file's own digest is pinned in apt_provenance.source_files, so the
 ## timestamp cannot be changed without also updating the pin.

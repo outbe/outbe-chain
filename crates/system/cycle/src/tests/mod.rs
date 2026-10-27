@@ -37,8 +37,8 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     let genesis_hash = B256::repeat_byte(0x11);
     let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     storage.set_block_number(1);
-    StorageHandle::enter(&mut storage, |handle| {
-        let ctx = BlockRuntimeContext::new(
+    storage.enter(|handle| {
+        let ctx = runtime_context(
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
@@ -73,6 +73,17 @@ pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
 }
 
+/// Synchronizes provider time; callers set provider height before entering each block.
+pub(super) fn runtime_context(
+    block: BlockContext,
+    storage: StorageHandle<'_>,
+) -> BlockRuntimeContext<'_> {
+    storage
+        .set_block_timestamp(U256::from(block.timestamp))
+        .unwrap();
+    BlockRuntimeContext::new(block, storage)
+}
+
 pub(super) fn anchor_genesis(ctx: &BlockRuntimeContext) {
     outbe_rewards::runtime::ensure_genesis_anchor(ctx).unwrap();
 }
@@ -92,7 +103,6 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     let oracle = ctx
         .storage
         .contract::<outbe_oracle::schema::OracleContract<'_>>();
-    oracle.reference_currencies.push(840).unwrap();
     oracle
         .utc_day_vwap_last_finalized
         .write(29_991_231)
@@ -209,7 +219,7 @@ pub(super) fn dispatch_at(
     block_number: u64,
     timestamp: u64,
 ) -> BlockRuntimeContext<'_> {
-    let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
+    let ctx = runtime_context(block_ctx(block_number, timestamp), handle);
     account_parent(&ctx, block_number);
     dispatch_triggers(&ctx).unwrap();
     ctx
@@ -236,8 +246,9 @@ pub(super) fn with_anchored_cycle(f: impl FnOnce(StorageHandle<'_>)) {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_at(handle.clone(), ANCHOR_TS);
-        f(handle);
     });
+    storage.set_block_number(2);
+    storage.enter(f);
 }
 
 /// `last_executed_at` of the ProtocolCycle trigger.
@@ -251,7 +262,7 @@ pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
 
 /// Block 1 at `timestamp` after the Rewards genesis anchor.
 pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
-    let ctx = BlockRuntimeContext::new(block_ctx(1, timestamp), handle);
+    let ctx = runtime_context(block_ctx(1, timestamp), handle);
     anchor_genesis(&ctx);
     initialize_daily_passes(&ctx);
     ctx

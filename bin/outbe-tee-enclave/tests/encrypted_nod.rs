@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
-    nod_encryption::NodTermsV2,
+    nod_encryption::NodTermsV1,
     time::WorldwideDay,
     tribute_encryption::{TributeAmountsV2, TributeContextV2},
     wwd_entity_id::WwdEntityId,
@@ -38,7 +38,7 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
         },
     )
     .unwrap();
-    let terms = NodTermsV2 {
+    let terms = NodTermsV1 {
         chain_id: 54322345,
         nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(6)),
         owner: owner_address,

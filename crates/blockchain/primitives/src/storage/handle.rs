@@ -68,8 +68,9 @@ impl<'storage> StorageHandle<'storage> {
         self.require_cycle_lifecycle(super::metadosis_init_genesis_binding)
     }
 
-    pub fn require_metadosis_cycle_allocation(&self) -> Result<()> {
-        self.require_cycle_lifecycle(super::metadosis_cycle_allocation_binding)
+    /// Allocation authority is bound to the target UTC day, not execution time.
+    pub fn require_metadosis_cycle_allocation(&self, timestamp: u64) -> Result<()> {
+        self.require_cycle_lifecycle_at(super::metadosis_cycle_allocation_binding, timestamp)
     }
 
     pub fn require_metadosis_advance_due(&self) -> Result<()> {
@@ -77,9 +78,16 @@ impl<'storage> StorageHandle<'storage> {
     }
 
     fn require_cycle_lifecycle(&self, binding_for: fn(u64, u64, u64) -> B256) -> Result<()> {
+        self.require_cycle_lifecycle_at(binding_for, self.now_secs()?)
+    }
+
+    fn require_cycle_lifecycle_at(
+        &self,
+        binding_for: fn(u64, u64, u64) -> B256,
+        timestamp: u64,
+    ) -> Result<()> {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
-        let timestamp = self.now_secs()?;
         let binding = binding_for(chain_id, block_number, timestamp);
         self.with_provider(|provider| {
             provider.require_metadosis_mutation_frame(

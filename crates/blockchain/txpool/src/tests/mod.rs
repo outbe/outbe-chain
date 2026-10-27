@@ -118,6 +118,7 @@ fn pool_admits_true_type4_bootstrap_with_one_atomic_unit() {
     provider.add_account(signer, ExtendedAccount::new(0, U256::from(1)));
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
@@ -149,6 +150,7 @@ fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
     provider.add_account(signer, ExtendedAccount::new(0, U256::ZERO));
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
@@ -412,6 +414,132 @@ fn decision_accepts_well_formed_delegated_envelope() {
 }
 
 #[test]
+fn decision_tribute_elevated_gas_requires_granted_selector() {
+    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+    use outbe_zerofee::constants::ELEVATED_SPONSORED_GAS;
+
+    let (_, selector, elevated_limit) = ELEVATED_SPONSORED_GAS
+        .iter()
+        .find(|(target, _, _)| *target == TRIBUTE_FACTORY_ADDRESS)
+        .expect("TributeFactory grant");
+    let unknown = [0xde, 0xad, 0xbe, 0xef];
+    assert_ne!(selector, &unknown);
+    for input in [
+        selector.as_slice(),
+        unknown.as_slice(),
+        &[],
+        &[1],
+        &[1, 2],
+        &[1, 2, 3],
+    ] {
+        for gas_limit in [500_000, 500_001, *elevated_limit, *elevated_limit + 1] {
+            let mut tx = sponsored_envelope(NON_VALIDATOR_SIGNER, input);
+            tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+            tx.call.gas_limit = gas_limit;
+            let expected = if gas_limit <= 500_000
+                || (input == selector.as_slice() && gas_limit <= *elevated_limit)
+            {
+                SponsorshipOutcome::Accepted
+            } else {
+                SponsorshipOutcome::NotSponsored
+            };
+            assert_eq!(
+                sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
+                    .expect("envelope mismatch must fall back, not return a policy error"),
+                expected,
+                "input={input:?}, gas_limit={gas_limit}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pool_tribute_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
+    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+    use outbe_zerofee::constants::ELEVATED_SPONSORED_GAS;
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_transaction_pool::{
+        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+    };
+
+    let (_, selector, _) = ELEVATED_SPONSORED_GAS
+        .iter()
+        .find(|(target, _, _)| *target == TRIBUTE_FACTORY_ADDRESS)
+        .expect("TributeFactory grant");
+    let gas_limit = 600_000;
+    let funded_balance = U256::from(gas_limit) * U256::from(MIN_PROTOCOL_BASE_FEE);
+    for (input, account_balance, sponsored) in [
+        (Bytes::copy_from_slice(selector), U256::ZERO, true),
+        (
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            U256::ZERO,
+            false,
+        ),
+        (
+            Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+            funded_balance,
+            false,
+        ),
+    ] {
+        let transaction = pooled_tx_with_gas(
+            TRIBUTE_FACTORY_ADDRESS,
+            input,
+            MIN_PROTOCOL_BASE_FEE as u128,
+            0,
+            gas_limit,
+        );
+        let signer = transaction.sender();
+        let mut delegation_designator = vec![0xef, 0x01, 0x00];
+        delegation_designator.extend_from_slice(ZEROFEE_ADDRESS.as_slice());
+        let chain_spec = reth_chainspec::ChainSpecBuilder::mainnet()
+            .prague_activated()
+            .build();
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new()
+            .with_chain_spec(chain_spec)
+            .with_genesis_block();
+        provider.add_account(
+            signer,
+            ExtendedAccount::new(0, account_balance)
+                .with_bytecode(Bytes::from(delegation_designator)),
+        );
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .set_block_gas_limit(30_000_000)
+        .set_eip7702(true)
+        .disable_balance_check()
+        .build(InMemoryBlobStore::default());
+        let validator = OutbeTransactionValidator::new(inner);
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, transaction),
+        );
+        if sponsored || !account_balance.is_zero() {
+            let TransactionValidationOutcome::Valid { balance, .. } = outcome else {
+                panic!("funded or sponsored transaction must be admitted, got {outcome:?}");
+            };
+            assert_eq!(
+                balance,
+                if sponsored {
+                    U256::MAX
+                } else {
+                    account_balance
+                }
+            );
+        } else {
+            let TransactionValidationOutcome::Invalid(_, error) = outcome else {
+                panic!("unfunded paid fallback must be rejected, got {outcome:?}");
+            };
+            assert!(matches!(
+                error,
+                InvalidPoolTransactionError::Overdraft { cost, balance }
+                    if cost == funded_balance && balance.is_zero()
+            ));
+        }
+    }
+}
+
+#[test]
 fn decision_value_bearing_delegated_tx_falls_through_to_normal_path() {
     // Delegated, but the envelope carries native value, so
     // it is NOT a sponsorship request. It must fall through to the
@@ -544,6 +672,7 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
 
     let inner =
         EthTransactionValidatorBuilder::new(provider, reth_ethereum::evm::EthEvmConfig::mainnet())
+            .set_block_gas_limit(30_000_000)
             .set_eip7702(true)
             .disable_balance_check()
             .build(InMemoryBlobStore::default());
@@ -553,7 +682,9 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
         validator.validate_transaction(TransactionOrigin::External, transaction),
     );
     let TransactionValidationOutcome::Valid { balance, .. } = outcome else {
-        panic!("quota-exhausted delegated sponsored tx must still be admitted by pool, got {outcome:?}");
+        panic!(
+            "quota-exhausted delegated sponsored tx must still be admitted by pool, got {outcome:?}"
+        );
     };
     assert_eq!(balance, U256::MAX);
 }

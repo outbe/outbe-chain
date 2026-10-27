@@ -44,7 +44,8 @@ pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Resul
         return Some(guarded(storage, || {
             let day = outbe_primitives::time::previous_date_key(
                 outbe_primitives::time::timestamp_to_date_key(storage.now_secs()?),
-            );
+            )
+            .map_err(crate::errors::date_step_error)?;
             reopen_day(storage, day)
         }));
     }
@@ -61,7 +62,7 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
 fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
     let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
     let encrypted = outbe_tee::nod_mine::create_nod_for_test(
-        outbe_primitives::nod_encryption::NodTermsV2 {
+        outbe_primitives::nod_encryption::NodTermsV1 {
             chain_id: storage.chain_id()?,
             nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
             owner: call.owner,
@@ -101,5 +102,20 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     // The fixture may target a closed day before this temporary chain's genesis.
-    outbe_oracle::reopen_daily_call_sweep!(NodContract::new(storage.clone()), storage, day)
+    let nod = NodContract::new(storage.clone());
+    let genesis_day = nod.daily_genesis_day.read()?;
+    if genesis_day == 0 || day < genesis_day {
+        nod.daily_genesis_day.write(day)?;
+    }
+    if day > nod.call_latest_day.read()? {
+        nod.call_latest_day.write(day)?;
+    }
+    nod.call_sweep_day.write(day)?;
+    nod.daily_phase.write(0)?;
+    nod.call_currency_cursor.write(0)?;
+    for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
+        nod.call_bin_cursor.write(&currency, 0)?;
+        nod.call_scan_failed_day.clear(&currency)?;
+    }
+    Ok(())
 }

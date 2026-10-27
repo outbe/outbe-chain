@@ -6,13 +6,14 @@ use outbe_oracle::api::get_utc_day_vwap_for_iso;
 use outbe_primitives::addresses::{GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::markup::marked_up;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemExercised, GemIssued, GemPositionIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemIssued, GemMined, GemPositionIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -37,14 +38,13 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
-    // The owner's own label: only its range is checked, as the auction checks a bid's.
-    if issuance_currency == 0 || issuance_currency > 999 {
+    if iso_4217_alpha(issuance_currency).is_none() {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
         }
         .into());
     }
-    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    outbe_oracle::api::check_reference_currency(reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
@@ -168,10 +168,7 @@ pub fn issue_gem_position(
     }
 
     // The daily call scan walks only listed reference currencies.
-    outbe_oracle::api::check_reference_currency_with_storage(
-        storage.clone(),
-        series.reference_currency,
-    )?;
+    outbe_oracle::api::check_reference_currency(series.reference_currency)?;
 
     let issued_at = storage.now_secs()?;
 
@@ -475,7 +472,7 @@ pub fn mine_promis(
 
     validate_pow(gem_id, item.owner, nonce)?;
 
-    // Burn, mint and the exercise event are one transition: a rejected or
+    // Burn, mint and the mining event are one transition: a rejected or
     // failed mint leaves the settled Gem in place so the owner can retry.
     storage.clone().with_checkpoint(|| {
         burn_settled(storage, gem_id)?;
@@ -487,7 +484,7 @@ pub fn mine_promis(
 
         emit_event(
             storage,
-            GemExercised {
+            GemMined {
                 gemId: gem_id,
                 owner: item.owner,
                 promisLoadMinor: item.promis_load_minor,
@@ -516,7 +513,7 @@ pub fn validate_pow(gem_id: U256, owner: Address, nonce: u64) -> Result<()> {
         pow::MiningDomain::Gem,
         gem_id,
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
     .map_err(|e| GemFactoryError::from(e).into())

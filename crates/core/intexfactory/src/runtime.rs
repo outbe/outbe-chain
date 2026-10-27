@@ -194,14 +194,14 @@ pub fn to_wire_price(price_minor: U256) -> Result<u64> {
 }
 
 /// One owner's units of `series_id`: its current balances, Issued ones only until the
-/// series expires, and its own exercise and Gem Factory history.
+/// series is forfeited, and its own mining and Gem Factory history.
 pub(crate) fn owner_balances(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     owner: Address,
 ) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Expired {
+    let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
         0
     } else {
         nft_units_of(storage, owner, issued_token_id(series_id))?
@@ -210,7 +210,7 @@ pub(crate) fn owner_balances(
     Ok(crate::precompile::IIntexFactory::OwnerBalances {
         issuedUnits: issued,
         settledUnits: settled,
-        exercisedUnits: outbe_intex::api::owner_exercised_units(storage, series_id, owner)?,
+        minedUnits: outbe_intex::api::owner_mined_units(storage, series_id, owner)?,
         gemFactoryUnits: outbe_intex::api::owner_gem_factory_units(storage, series_id, owner)?,
         ownerUnits: issued
             .checked_add(settled)
@@ -299,7 +299,7 @@ pub fn settle_intex(
 fn require_settleable(storage: &StorageHandle<'_>, series: &SeriesRecord) -> Result<()> {
     match outbe_intex::api::state(storage, series)? {
         IntexState::Issued | IntexState::Called => Ok(()),
-        IntexState::Expired => Err(IntexFactoryError::SettlementDeadlinePassed.into()),
+        IntexState::Forfeited => Err(IntexFactoryError::SettlementDeadlinePassed.into()),
     }
 }
 

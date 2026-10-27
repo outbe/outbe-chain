@@ -171,7 +171,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
 #[test]
 fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     use outbe_primitives::{
-        nod_encryption::NodTermsV2, time::WorldwideDay, wwd_entity_id::WwdEntityId,
+        nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
     };
     use outbe_tee::nod_decrypt::decrypt_nod_for_owner;
     use outbe_tee_enclave::nod_encryption::encrypt_nod;
@@ -184,7 +184,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let network = word(&v["networkSecret"]);
     let network_public = PublicKey::from(&StaticSecret::from(network)).to_bytes();
     assert_eq!(network_public, word(&v["networkPublicKey"]));
-    let terms = NodTermsV2 {
+    let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
         nod_id: WwdEntityId::from(decimal(&v["nodId"])),
         owner: v["owner"].as_str().unwrap().parse().unwrap(),

@@ -105,7 +105,7 @@ pub fn burn_pledged(storage: &StorageHandle<'_>, account: Address, amount: U256)
 /// Consume a canonical, settled encrypted NOD without exporting its amount.
 pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {

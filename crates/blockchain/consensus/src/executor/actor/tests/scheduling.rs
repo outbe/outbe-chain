@@ -37,6 +37,7 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } => {
                     assert_eq!(state.head_block_hash, target);
                     assert_eq!(state.finalized_block_hash, target);
@@ -172,6 +173,7 @@ fn mailbox_updates_are_processed_before_ready_heartbeat() {
                     state,
                     payload_attrs,
                     tx,
+                    ..
                 } => {
                     assert!(payload_attrs.is_none());
                     heads.push(state.head_block_hash);

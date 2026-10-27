@@ -104,8 +104,17 @@ impl BlockIdReader for ApprovalProvider {
     }
 }
 impl StateProviderFactory for ApprovalProvider {
+    type Primitives = <MockEthProvider as StateProviderFactory>::Primitives;
+
     fn latest(&self) -> ProviderResult<StateProviderBox> {
         panic!("must read exact hash, not latest")
+    }
+    fn state_with_block_appended(
+        &self,
+        _: B256,
+        _: reth_chain_state::ExecutedBlock<Self::Primitives>,
+    ) -> ProviderResult<StateProviderBox> {
+        panic!("must read exact hash, not appended block")
     }
     fn state_by_block_number_or_tag(
         &self,

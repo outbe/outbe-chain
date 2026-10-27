@@ -22,9 +22,11 @@ remappings = [
     "solidity-bytes-utils/=dependencies/solidity-bytes-utils-0.8.4/",
     # Protocol-wide Solidity shared across the contracts/* projects (Create3Factory, ...).
     "@shared/=../shared/src/",
+    # The precompile interfaces, as in contracts/tokens.
+    "@precompiles/=../precompiles/src/",
 ]
 # @shared files import their own vendored deps by relative path, which land outside this project.
-allow_paths = ["../shared/src"]
+allow_paths = ["../shared/src", "../precompiles/src"]
 
 gas_reports = ["*"]
 fs_permissions = [{ access = "read-write", path = "./" }]

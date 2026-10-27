@@ -36,7 +36,7 @@ pub type PairIndex = u32;
 /// Slot number == field declaration index. Every field below occupies exactly
 /// one slot, including `Mapping<_, AddressPair>`. Its second word lives at
 /// `keccak256(key || slot) + 1`, inside the key's own hashed namespace and not
-/// in the next declaration slot. `openings.rs` and `scripts/seed_genesis.py`
+/// in the next declaration slot. `openings.rs` and the Rust genesis seeder
 /// hardcode these numbers. Read the slot-parity tests in `tests/state.rs` before
 /// you reorder anything.
 #[contract(addr = ORACLE_ADDRESS)]
@@ -199,12 +199,8 @@ pub struct OracleContract {
     // slot 54: mapping(pair => mapping(utc_day_ts => cumulative volume sum))
     pub daily_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
 
-    // === Reference Currencies (slot 55) ===
-    // Dynamic list of ISO 4217 numeric codes considered "reference" currencies
-    // for off-chain pricing. Length at the base slot, data at keccak256(slot)
-    // + index. Genesis pre-fills CNY 156, HKD 344, JPY 392, GBP 826,
-    // USD 840, and EUR 978. USD is the mandatory member.
-    pub reference_currencies: StorageVec<u16>,
+    // Slot 55 (`reference_currencies`) is a retired hole. Do not reuse. The list
+    // is the `REFERENCE_CURRENCIES` constant.
 
     // === Per-UTC-Day VWAP Snapshots (slots 58-59) ===
     // Finalized VWAP for a full UTC calendar day, keyed by a yyyymmdd UTC date
@@ -325,7 +321,6 @@ mod tests {
         assert_eq!(c.worldwide_day_vwap_value.base_slot(), U256::from(52));
         assert_eq!(c.daily_pv_sum.base_slot(), U256::from(53));
         assert_eq!(c.daily_vol_sum.base_slot(), U256::from(54));
-        assert_eq!(c.reference_currencies.base_slot(), U256::from(55));
         assert_eq!(c.utc_day_vwap_value.base_slot(), U256::from(58));
         assert_eq!(c.utc_day_vwap_last_finalized.slot(), U256::from(59));
         assert_eq!(c.wwd_suffix_pv_sum.base_slot(), U256::from(70));

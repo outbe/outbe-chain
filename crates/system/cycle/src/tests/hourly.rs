@@ -23,6 +23,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
 
     storage.enter(|handle| seed_trigger_clock(&handle, fire_at));
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.set_block_number(20);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), 20, fire_at);
 

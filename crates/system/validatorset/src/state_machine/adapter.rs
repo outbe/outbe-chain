@@ -10,14 +10,13 @@ use crate::runtime::status::{ACTIVE, EXITING, INACTIVE, JAILED, PENDING, REGISTE
 use super::state::{
     Active, ConsensusPubkey, Exiting, Inactive, Jail, JailRetained, Joining, P2pInfo,
     StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
-    WaitingForReadiness, WaitingForStake,
+    WaitingForReadiness,
 };
 
 macro_rules! lifecycle_ref {
     ($lifecycle:expr, $field:ident) => {
         match $lifecycle {
             ValidatorLifecycle::Absent => None,
-            ValidatorLifecycle::WaitingForStake(state) => Some(&state.$field),
             ValidatorLifecycle::WaitingForReadiness(state) => Some(&state.$field),
             ValidatorLifecycle::Joining(state) => Some(&state.$field),
             ValidatorLifecycle::Active(state) => Some(&state.$field),
@@ -255,7 +254,6 @@ impl StoredValidatorFields {
     /// readiness flag select, or `None` for a non-canonical combination.
     fn coupled_shape(&self) -> Option<CoupledShape> {
         let shape = match (self.stored_status, self.has_bls_share, self.join_confirmed) {
-            (REGISTERED, false, false) => CoupledShape::WaitingForStake,
             (PENDING, false, false) => CoupledShape::WaitingForReadiness,
             (PENDING, false, true) => CoupledShape::Joining,
             (ACTIVE, true, false) => CoupledShape::Active,
@@ -273,7 +271,6 @@ impl StoredValidatorFields {
 /// The canonical lifecycle selected by the coupled raw fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CoupledShape {
-    WaitingForStake,
     WaitingForReadiness,
     Joining,
     Active,
@@ -323,9 +320,6 @@ impl RegisteredPayload {
         jailed_at: u64,
     ) -> Result<ValidatorLifecycle> {
         Ok(match shape {
-            CoupledShape::WaitingForStake => {
-                ValidatorLifecycle::WaitingForStake(registered_payload!(self, WaitingForStake))
-            }
             CoupledShape::WaitingForReadiness => ValidatorLifecycle::WaitingForReadiness(
                 registered_payload!(self, WaitingForReadiness),
             ),
@@ -367,7 +361,7 @@ impl RegisteredPayload {
 
 impl ValidatorLifecycle {
     pub(crate) fn validate_stored_status(status: u8) -> Result<()> {
-        if status <= JAILED {
+        if (PENDING..=JAILED).contains(&status) {
             Ok(())
         } else {
             Err(ValidatorSetError::UnknownValidatorStatus { status }.into())
@@ -377,7 +371,6 @@ impl ValidatorLifecycle {
     pub fn stored_status(&self) -> Option<u8> {
         match self {
             Self::Absent => None,
-            Self::WaitingForStake(_) => Some(REGISTERED),
             Self::WaitingForReadiness(_) | Self::Joining(_) => Some(PENDING),
             Self::Active(_) => Some(ACTIVE),
             Self::Exiting(_) => Some(EXITING),
@@ -414,10 +407,6 @@ impl ValidatorLifecycle {
         matches!(self, Self::WaitingForReadiness(_) | Self::Joining(_))
     }
 
-    pub const fn is_registered_status(&self) -> bool {
-        matches!(self, Self::WaitingForStake(_))
-    }
-
     pub const fn is_current_consensus_participant(&self) -> bool {
         matches!(
             self,
@@ -432,11 +421,7 @@ impl ValidatorLifecycle {
     pub const fn is_secondary_admission(&self) -> bool {
         matches!(
             self,
-            Self::WaitingForStake(_)
-                | Self::WaitingForReadiness(_)
-                | Self::Joining(_)
-                | Self::JailRetained(_)
-                | Self::Jail(_)
+            Self::WaitingForReadiness(_) | Self::Joining(_) | Self::JailRetained(_) | Self::Jail(_)
         )
     }
 
@@ -454,7 +439,6 @@ impl ValidatorLifecycle {
 
     pub fn stake(&self) -> Option<&StakeProjection> {
         match self {
-            Self::WaitingForStake(state) => Some(&state.stake),
             Self::WaitingForReadiness(state) => Some(&state.stake),
             Self::Joining(state) => Some(&state.stake),
             Self::Active(state) => Some(&state.stake),

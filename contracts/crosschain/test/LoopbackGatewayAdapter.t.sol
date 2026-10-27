@@ -222,6 +222,23 @@ contract LoopbackGatewayAdapterTest is Test {
         assertEq(recipient.received(), 1, "no double execution through retry");
     }
 
+    /// A delivery parks only after it received the full gas limit. With less gas, the send reverts.
+    function testFuzz_ParkGasBoundary(uint128 gasLimit, uint16 payloadLen) public {
+        gasLimit = uint128(bound(gasLimit, 2_000_000, 20_000_000));
+        bytes memory payload = new bytes(bound(payloadLen, 0, 4_096));
+        GasBurnerRecipientMock recipient = new GasBurnerRecipientMock();
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encode(gasLimit);
+
+        vm.prank(app);
+        vm.expectRevert(abi.encodeWithSelector(LoopbackGatewayAdapter.InsufficientForwardGas.selector, gasLimit));
+        bridge.sendMessage{gas: gasLimit / 2 + 500_000}(_interop(address(recipient)), payload, attrs);
+
+        vm.prank(app);
+        bridge.sendMessage{gas: uint256(gasLimit) * 2 + 1_000_000}(_interop(address(recipient)), payload, attrs);
+        assertEq(loopback.nextParkedIdx(), 1, "a delivery with the full limit parks");
+    }
+
     function test_GasAttribute_BoundsDelivery() public {
         GasBurnerRecipientMock recipient = new GasBurnerRecipientMock();
         bytes[] memory attrs = new bytes[](1);

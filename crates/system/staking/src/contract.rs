@@ -3,27 +3,47 @@ use outbe_macros::contract;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot};
 
+/// Maximum number of open unbonding entries for one validator.
+///
+/// Partial unstakes can create up to `MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1`
+/// entries. The protocol reserves the 64th slot for a full voluntary exit or
+/// an automatic retirement in `process_unbonding`.
+pub const MAX_UNBONDING_ENTRIES_PER_VALIDATOR: u32 = 64;
+
+/// Default minimum stake required to be an active validator when
+/// `config_min_stake` (slot 0) is zero in genesis:
+/// `10_000_000` COEN (`10_000_000 * 10^18` base units `unit`).
+pub const DEFAULT_MIN_STAKE_UNITS: u128 = 10_000_000 * 1_000_000_000_000_000_000;
+
+/// Default minimum stake as a [`U256`] in COEN base units (`unit`).
+pub const DEFAULT_MIN_STAKE: U256 = U256::from_limbs([
+    DEFAULT_MIN_STAKE_UNITS as u64,
+    (DEFAULT_MIN_STAKE_UNITS >> 64) as u64,
+    0,
+    0,
+]);
+
 /// EVM storage layout for the Staking contract.
 ///
 /// Tracks validator stake amounts, total staked, and the unbonding queue.
 /// The unbonding queue uses a flat array pattern keyed by index (u32).
 #[contract(addr = STAKING_ADDRESS)]
 pub struct Staking {
-    // slot 0: minimum stake required to be an active validator
+    // slot 0: minimum stake required to be an active validator, in COEN base units (unit), integer scale
     pub config_min_stake: Slot<U256>,
     // slot 1: unbonding period in seconds
     pub config_unbonding_period: Slot<u64>,
     // slot 2: maximum stake percent of total staked (5 = 5%). A value outside (0, 100) disables the cap.
     pub config_max_stake_percent: Slot<u64>,
-    // slot 3: mapping(validator address => staked amount)
+    // slot 3: mapping(validator address => staked amount in COEN base units (unit), integer scale)
     pub stake_amount: Mapping<Address, U256>,
-    // slot 4: total amount staked across all validators
+    // slot 4: total amount staked across all validators, in COEN base units (unit), integer scale
     pub total_staked: Slot<U256>,
     // slot 5: unbonding queue tail. Trimmed zero entries free the index for reuse.
     pub unbonding_count: Slot<u32>,
     // slot 6: mapping(index => validator address) for unbonding queue
     pub unbonding_validator: Mapping<u32, Address>,
-    // slot 7: mapping(index => unbonding amount) for unbonding queue
+    // slot 7: mapping(index => unbonding amount in COEN base units (unit), integer scale) for unbonding queue
     pub unbonding_amount: Mapping<u32, U256>,
     // slot 8: mapping(index => complete timestamp) for unbonding queue
     pub unbonding_complete_time: Mapping<u32, u64>,
@@ -33,6 +53,8 @@ pub struct Staking {
     pub unbonding_next: Mapping<u32, u32>,
     // slot 11: withdrawability delay for slashed validators. 0 = default to 2x unbonding_period.
     pub config_slashed_withdrawal_delay: Slot<u64>,
+    // slot 12: mapping(validator address => number of linked unbonding entries)
+    pub per_val_unbonding_len: Mapping<Address, u32>,
 }
 
 #[cfg(test)]
@@ -57,5 +79,6 @@ mod tests {
         assert_eq!(c.per_val_unbonding_head.base_slot(), U256::from(9));
         assert_eq!(c.unbonding_next.base_slot(), U256::from(10));
         assert_eq!(c.config_slashed_withdrawal_delay.slot(), U256::from(11));
+        assert_eq!(c.per_val_unbonding_len.base_slot(), U256::from(12));
     }
 }

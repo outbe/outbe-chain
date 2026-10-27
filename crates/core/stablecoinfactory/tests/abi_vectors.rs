@@ -58,7 +58,7 @@ fn complete_exported_abis_match_golden_hashes() {
         canonical_abi_hash(vote),
         // Pin the published interface including the unified bond error; its
         // selector and dynamic error payload are independently pinned below.
-        b256!("4e909c8fcc77584593044a24d6b256f77114d2bef37417120bfe9b05c9aee9c8")
+        b256!("fe40568b81a166b265f10624d3d2f8e0fd3370f8c4ec8b55ab2800234730288c")
     );
 }
 

@@ -78,7 +78,7 @@ impl Localnet {
         let node_id = provisioned_radicle_node_id(&home)?;
         fs::create_dir_all(validator_dir.join("logs"))?;
 
-        let script = self.cfg.repo.join("scripts/run-radicle.sh");
+        let script = self.cfg.repo.join("deploy/validator/run-radicle.sh");
         let listen = format!("127.0.0.1:{peer_port}");
         let status = format!("127.0.0.1:{}", self.cfg.radicle_status_port(index));
         let advertise = listen.clone();
@@ -344,7 +344,7 @@ impl Localnet {
         let slot = self.committee_size() + 32;
         let listen = format!("127.0.0.1:{}", self.cfg.radicle_port(slot));
         let status = format!("127.0.0.1:{}", self.cfg.radicle_status_port(slot));
-        let script = self.cfg.repo.join("scripts/run-radicle.sh");
+        let script = self.cfg.repo.join("deploy/validator/run-radicle.sh");
         let max_validators = materialized_max_validators(&self.cfg.dir.join("genesis.json"))?;
         let control_socket = self.cfg.user_radicle_control_socket();
         prepare_private_socket_parent(&self.cfg.radicle_runtime_root, &control_socket, home)?;

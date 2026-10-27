@@ -95,6 +95,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// fresh per block, so this resets per block. It is identical on the
     /// proposer (build) and validator (re-execution) paths.
     pub(super) zero_fee_soft_failures: u32,
+    /// Sum of included sponsored and bootstrap gas limits, reset per block.
+    pub(super) sponsored_gas_used: u64,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -161,6 +163,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             pending_tee_bootstrap,
             whitelisted_hook_event_logs: Vec::new(),
             zero_fee_soft_failures: 0,
+            sponsored_gas_used: 0,
         }
     }
 }

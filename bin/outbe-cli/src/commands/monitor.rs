@@ -143,7 +143,7 @@ async fn print_watch_validator_row(
 
 fn watch_status_label(status: u8) -> &'static str {
     const LABELS: [&str; 7] = [
-        "Registered",
+        "Unknown",
         "Pending",
         "Active",
         "Exiting",
@@ -383,11 +383,9 @@ async fn run_metrics(endpoint: &str, show_all: bool) -> Result<()> {
 /// Interprets a validator status code from the on-chain ValidatorSet.
 ///
 /// Returns (human-readable label, is_ready). Only ACTIVE (2) is considered ready.
-/// Corrected status codes matching runtime enum:
-///   0=REGISTERED, 1=PENDING, 2=ACTIVE, 3=EXITING, 4=UNBONDING, 5=INACTIVE
+/// The protocol reserves status 0. 1=PENDING, 2=ACTIVE, 3=EXITING, 4=UNBONDING, 5=INACTIVE, 6=JAILED.
 fn interpret_validator_status(status: u8) -> (&'static str, bool) {
     match status {
-        0 => ("registered (not yet active)", false),
         1 => ("pending", false),
         2 => ("active", true),
         3 => ("exiting", false),
@@ -403,10 +401,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_readiness_status_0_registered_not_ready() {
+    fn test_readiness_status_0_is_unknown() {
         let (label, ready) = interpret_validator_status(0);
-        assert!(!ready, "REGISTERED must not be ready");
-        assert!(label.contains("registered"));
+        assert!(!ready, "reserved status 0 must not be ready");
+        assert!(label.contains("unknown"), "{label}");
+        assert!(!label.contains("registered"), "{label}");
     }
 
     #[test]

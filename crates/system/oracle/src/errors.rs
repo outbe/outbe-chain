@@ -101,14 +101,6 @@ pub enum OracleError {
     RatioAboveOne { field: &'static str, value: U256 },
     #[error("slash percent of slash_fraction {slash_fraction} exceeds u64")]
     SlashPercentOutOfRange { slash_fraction: U256 },
-    #[error("reference iso_code must be non-zero")]
-    ReferenceIsoCodeZero,
-    #[error("duplicate reference iso_code: {iso_code}")]
-    DuplicateReferenceIsoCode { iso_code: u16 },
-    #[error("reference currencies must be sorted in ascending ISO order")]
-    ReferenceCurrenciesNotSorted,
-    #[error("reference currencies must include USD 840")]
-    MissingUsdReferenceCurrency,
     #[error("policy iso_code must be non-zero")]
     PolicyIsoCodeZero,
     #[error("duplicate policy iso_code: {iso_code}")]
@@ -310,18 +302,6 @@ impl From<OracleError> for PrecompileError {
             OracleError::SlashPercentOutOfRange { slash_fraction } => PrecompileError::RevertBytes(
                 Bytes::from(IOracle::SlashPercentOutOfRange { slash_fraction }.abi_encode()),
             ),
-            OracleError::ReferenceIsoCodeZero => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::ReferenceIsoCodeZero {}.abi_encode(),
-            )),
-            OracleError::DuplicateReferenceIsoCode { iso_code } => PrecompileError::RevertBytes(
-                Bytes::from(IOracle::DuplicateReferenceIsoCode { iso_code }.abi_encode()),
-            ),
-            OracleError::ReferenceCurrenciesNotSorted => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::ReferenceCurrenciesNotSorted {}.abi_encode(),
-            )),
-            OracleError::MissingUsdReferenceCurrency => PrecompileError::RevertBytes(Bytes::from(
-                IOracle::MissingUsdReferenceCurrency {}.abi_encode(),
-            )),
             OracleError::PolicyIsoCodeZero => PrecompileError::RevertBytes(Bytes::from(
                 IOracle::PolicyIsoCodeZero {}.abi_encode(),
             )),

@@ -45,5 +45,5 @@ pub use state::{
 pub use state_machine::{
     Active, ConsensusPubkey, Exiting, HistoryCounters, Inactive, Jail, JailRetained, Joining,
     P2pInfo, StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
-    WaitingForReadiness, WaitingForStake,
+    WaitingForReadiness,
 };

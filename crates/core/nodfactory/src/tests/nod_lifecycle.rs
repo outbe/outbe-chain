@@ -125,10 +125,6 @@ fn register(storage: &StorageHandle<'_>, iso: u16) {
         .is_none()
     {
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso)).unwrap();
-        OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(iso)
-            .unwrap();
     }
 }
 
@@ -1372,7 +1368,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
 }
 
 #[test]
-fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_exercise() {
+fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined() {
     harness(|storage| {
         let items: Vec<_> = [0x91, 0x92, 0x93, 0x95]
             .into_iter()
@@ -1524,7 +1520,7 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
 }
 
 /// A group paid in full leaves its bin once no Nod can join it, so later walks do not
-/// visit it again. Its paid Nod stays with the group until exercised.
+/// visit it again. Its paid Nod stays with the group until mined.
 #[test]
 fn a_group_paid_in_full_leaves_its_call_bin() {
     harness(|storage| {
@@ -1691,7 +1687,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 }
 
 /// Promis Limit moves by the unpaid loads, not by reaching
-/// Forfeited or emitting `NodGroupForfeited`. A paid-but-unexercised member is
+/// Forfeited or emitting `NodGroupForfeited`. A paid-but-unmined member is
 /// not credited. If `checked_credit` were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]

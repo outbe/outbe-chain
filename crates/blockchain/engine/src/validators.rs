@@ -229,10 +229,9 @@ pub fn read_pending_validators_from_state(
 }
 
 /// Read peers admitted to consensus P2P as SECONDARY from on-chain state:
-/// `WaitingForStake` (REGISTERED, which includes P2P-announced TEE full-nodes
-/// that are NOT staked), both pending phases, and both jailed phases
-/// (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission source so
-/// these peers sync + execute offer blocks. Admission grants no vote.
+/// both pending phases (`WaitingForReadiness`, `Joining`) and both jailed
+/// phases (`JailRetained`, `Jail`). Used as the secondary-tier P2P admission
+/// source so these peers sync + execute offer blocks. Admission grants no vote.
 pub fn read_admitted_non_consensus_from_state(
     state_access: &dyn RethStateAccess,
 ) -> Result<ValidatorSet> {
@@ -251,10 +250,9 @@ enum ValidatorSetKind {
     /// sync to head before the reshare that makes them signers.
     PendingValidators,
     /// Peers admitted to consensus P2P as SECONDARY so they sync + execute
-    /// offer blocks: `WaitingForStake` (REGISTERED), both pending phases, and both
-    /// jailed phases. REGISTERED includes TEE full-nodes (P2P-announced,
-    /// enclave-registered, NOT staked). Voting still needs `has_bls_share`, so
-    /// this cannot affect consensus. Distinct from `ReshareTarget`.
+    /// offer blocks: both pending phases (`WaitingForReadiness`, `Joining`) and
+    /// both jailed phases (`JailRetained`, `Jail`). Voting still needs
+    /// `has_bls_share`, so this cannot affect consensus. Distinct from `ReshareTarget`.
     AdmittedNonConsensus,
 }
 
@@ -377,7 +375,7 @@ fn outbe_p2p_to_commonware(
 /// Convenience wrapper that obtains a `StateProviderBox` from the factory
 /// and delegates to [`read_validators_from_state`].
 pub fn read_validators_at_block(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     block_hash: B256,
 ) -> Result<ValidatorSet> {
     let state =
@@ -392,7 +390,7 @@ pub fn read_validators_at_block(
 
 /// Read current consensus participants from the EVM state at a given block hash.
 pub fn read_consensus_validators_at_block(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     block_hash: B256,
 ) -> Result<ValidatorSet> {
     let state =
@@ -408,7 +406,7 @@ pub fn read_consensus_validators_at_block(
 /// Read PENDING validators from the EVM state at a given block hash (secondary-tier
 /// P2P admission candidates).
 pub fn read_pending_validators_at_block(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     block_hash: B256,
 ) -> Result<ValidatorSet> {
     let state =
@@ -425,7 +423,7 @@ pub fn read_pending_validators_at_block(
 /// given block hash - the secondary-tier P2P admission candidates, including
 /// TEE full-nodes. See [`read_admitted_non_consensus_from_state`] for the set.
 pub fn read_admitted_non_consensus_at_block(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     block_hash: B256,
 ) -> Result<ValidatorSet> {
     let state =
@@ -442,7 +440,9 @@ pub fn read_admitted_non_consensus_at_block(
 ///
 /// Scopes the underlying `StateProviderBox` so its MDBX read transaction
 /// cannot live across await points in consensus stack startup.
-pub fn read_validators_at_latest(provider: &dyn StateProviderFactory) -> Result<ValidatorSet> {
+pub fn read_validators_at_latest(
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<ValidatorSet> {
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
@@ -453,7 +453,7 @@ pub fn read_validators_at_latest(provider: &dyn StateProviderFactory) -> Result<
 /// the latest committed state. Same lifetime guarantees as
 /// [`read_validators_at_latest`].
 pub fn read_consensus_validators_at_latest(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
 ) -> Result<ValidatorSet> {
     let state = provider
         .latest()
@@ -483,7 +483,7 @@ pub fn read_committee_snapshot_from_state(
 
 /// Latest-state wrapper for [`read_committee_snapshot_from_state`].
 pub fn read_committee_snapshot_at_latest(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     epoch: u64,
 ) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
     let state = provider
@@ -530,7 +530,9 @@ pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> R
 }
 
 /// Read the on-chain tribute offer public from the latest committed state.
-pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> Result<B256> {
+pub fn read_tee_offer_public_at_latest(
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<B256> {
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
@@ -540,7 +542,9 @@ pub fn read_tee_offer_public_at_latest(provider: &dyn StateProviderFactory) -> R
 /// Read the on-chain tribute-offer epoch (`TeeRegistry` slot 4) from the latest
 /// state. The current permanent genesis offer key uses epoch zero. This function
 /// decodes the field explicitly. Onboarding code does not infer it.
-pub fn read_tee_offer_epoch_at_latest(provider: &dyn StateProviderFactory) -> Result<u64> {
+pub fn read_tee_offer_epoch_at_latest(
+    provider: &(impl StateProviderFactory + ?Sized),
+) -> Result<u64> {
     let state = provider
         .latest()
         .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
@@ -582,7 +586,7 @@ pub fn read_tee_recipient_x25519_from_state(
 
 /// Read a validator's on-chain registered `recipient_x25519` from the latest state.
 pub fn read_tee_recipient_x25519_at_latest(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     validator: Address,
 ) -> Result<B256> {
     let state = provider
@@ -594,20 +598,20 @@ pub fn read_tee_recipient_x25519_at_latest(
 /// Check if current binary version is compatible with active (or approved) proposals.
 /// Also warns if there are approved versions without registered handlers.
 pub fn check_binary_version_compatibility(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
     registry: &outbe_update::handlers::UpgradeHandlerRegistry,
 ) -> Result<()> {
-    let active_version = read_active_protocol_version_at_latest(&provider)?;
+    let active_version = read_active_protocol_version_at_latest(provider)?;
     outbe_update::startup::assert_binary_protocol_compatible(active_version)
         .map_err(eyre::Error::msg)?;
-    let waiting = read_waiting_scheduled_updates_at_latest(&provider)?;
+    let waiting = read_waiting_scheduled_updates_at_latest(provider)?;
     outbe_update::startup::warn_missing_handlers_for_waiting_updates(&waiting, registry);
     Ok(())
 }
 
 /// Read the on-chain active protocol version from the latest committed state.
 fn read_active_protocol_version_at_latest(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
 ) -> Result<outbe_update::ProtocolVersion> {
     let state = provider
         .latest()
@@ -621,7 +625,7 @@ fn read_active_protocol_version_at_latest(
 
 /// Read scheduled updates waiting for activation from the latest committed state.
 fn read_waiting_scheduled_updates_at_latest(
-    provider: &dyn StateProviderFactory,
+    provider: &(impl StateProviderFactory + ?Sized),
 ) -> Result<Vec<outbe_update::ScheduledUpdateInfo>> {
     let state = provider
         .latest()

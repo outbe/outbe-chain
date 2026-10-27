@@ -43,6 +43,17 @@ pub enum StakingError {
     ValidatorRegistryExceedsConsensusBound { count: u32, bound: u32 },
     #[error("{0}")]
     SweepCountOverflow(&'static str),
+    #[error("validator {validator} reached the unbonding entry limit ({max_entries})")]
+    TooManyUnbondingEntries {
+        validator: Address,
+        max_entries: u32,
+    },
+    #[error("unbonding queue index overflow")]
+    UnbondingIndexOverflow,
+    #[error("claimable unbonding amount overflow")]
+    ClaimableAmountOverflow,
+    #[error("unbonding queue length underflow for validator {validator}")]
+    UnbondingLengthUnderflow { validator: Address },
 }
 
 impl From<StakingError> for PrecompileError {
@@ -78,7 +89,8 @@ impl From<StakingError> for PrecompileError {
             StakingError::SlashedWithdrawalDelayOverflow => PrecompileError::RevertBytes(
                 Bytes::from(IStaking::SlashedWithdrawalDelayOverflow {}.abi_encode()),
             ),
-            error @ StakingError::StakeAccountingUnderflow { .. } => {
+            error @ (StakingError::StakeAccountingUnderflow { .. }
+            | StakingError::UnbondingLengthUnderflow { .. }) => {
                 PrecompileError::FatalWithCause(Box::new(error))
             }
             StakingError::StakeAccountingOverflow { validator } => PrecompileError::RevertBytes(
@@ -103,6 +115,22 @@ impl From<StakingError> for PrecompileError {
                     value: value.to_string(),
                 }
                 .abi_encode(),
+            )),
+            StakingError::TooManyUnbondingEntries {
+                validator,
+                max_entries,
+            } => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::TooManyUnbondingEntries {
+                    validator,
+                    maxEntries: max_entries,
+                }
+                .abi_encode(),
+            )),
+            StakingError::UnbondingIndexOverflow => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::UnbondingIndexOverflow {}.abi_encode(),
+            )),
+            StakingError::ClaimableAmountOverflow => PrecompileError::RevertBytes(Bytes::from(
+                IStaking::ClaimableAmountOverflow {}.abi_encode(),
             )),
         }
     }

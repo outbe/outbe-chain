@@ -179,7 +179,6 @@ fn register_pair(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
-    oracle.reference_currencies.push(iso_code).unwrap();
 }
 
 /// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads.
@@ -2458,11 +2457,9 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 }
 
 #[test]
-fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
-    // CHF and CNY both spell their series `C`. The day keeps the lower code, so the
-    // survivor cannot depend on the order the two brief paths collect prices in.
+fn a_day_priced_in_every_reference_currency_starts_with_one_row_each() {
     with_storage(|s| {
-        open_clearing_priced(&s, 4, &[756, 156]);
+        open_clearing_priced(&s, 4, &outbe_oracle::api::REFERENCE_CURRENCIES);
         let config = s
             .contract::<DesisContract>()
             .read_auction_config(WORLDWIDE_DAY)
@@ -2473,9 +2470,8 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .iter()
                 .map(|row| row.iso_code)
                 .collect::<Vec<_>>(),
-            vec![156]
+            outbe_oracle::api::REFERENCE_CURRENCIES.to_vec()
         );
-        assert!(config.price_for(756).is_none());
     });
 }
 
@@ -2698,7 +2694,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
     with_targets(&[chain], |s| {
         open_clearing(&s, 2);
         let mut relayed = bids(1, 200);
-        relayed[0].issuance_currency = 1949;
+        relayed[0].issuance_currency = 975;
 
         let err = runtime::process_bids_batch(
             s.clone(),
@@ -2715,7 +2711,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::DesisError::UnspellableBidCurrency(1949, 840)
+                crate::errors::DesisError::UnspellableBidCurrency(975, 840)
             )
             .to_string()
         );

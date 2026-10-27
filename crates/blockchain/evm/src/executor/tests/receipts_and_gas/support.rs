@@ -214,8 +214,8 @@ pub(super) fn assert_approved_factory_state(
         ProposalStatus::Approved
     );
     assert_eq!(
-        vote.proposal_bond(U256::from(1u64)).unwrap().settlement,
-        BondSettlement::Refunded
+        vote.proposal_bond(U256::from(1u64)).unwrap().state,
+        BondState::Refunded
     );
     assert_eq!(vote.bond_liabilities().unwrap(), U256::ZERO);
     assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);

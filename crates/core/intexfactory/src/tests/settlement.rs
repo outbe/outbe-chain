@@ -749,7 +749,7 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
-        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
+        outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
 
         // Through dispatch, so the selector and the struct encoding are covered too.
         let out = outbe_intex::precompile::dispatch(
@@ -768,13 +768,13 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         assert_eq!(counts.issuedUnits, 100);
         assert_eq!(counts.activeUnits, 50);
         assert_eq!(counts.settledUnits, 25);
-        assert_eq!(counts.exercisedUnits, 15);
+        assert_eq!(counts.minedUnits, 15);
         assert_eq!(counts.gemFactoryUnits, 10);
         assert_eq!(counts.forfeitedUnits, 0);
     });
 }
 
-/// Live balances count until the series expires. The owner's history stays with the owner.
+/// Live balances count until the series is forfeited. The owner's history stays with the owner.
 #[test]
 fn the_owner_balances_view_reports_live_units_and_owner_history() {
     use crate::sol_ext::IERC1155;
@@ -804,12 +804,12 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
-        outbe_intex::api::record_exercised_units(&s, sid(7), owner(), 15).unwrap();
+        outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
 
         let live = read(&s);
         assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
-        assert_eq!((live.exercisedUnits, live.gemFactoryUnits), (15, 10));
+        assert_eq!((live.minedUnits, live.gemFactoryUnits), (15, 10));
         assert_eq!(live.ownerUnits, 6);
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
         outbe_intex::api::call_stamp(&s, &series).unwrap().deadline
@@ -817,9 +817,9 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
 
     storage.set_timestamp(U256::from(deadline + 1));
     StorageHandle::enter(&mut storage, |s| {
-        let expired = read(&s);
-        assert_eq!((expired.issuedUnits, expired.settledUnits), (0, 3));
-        assert_eq!((expired.exercisedUnits, expired.gemFactoryUnits), (15, 10));
-        assert_eq!(expired.ownerUnits, 3);
+        let forfeited = read(&s);
+        assert_eq!((forfeited.issuedUnits, forfeited.settledUnits), (0, 3));
+        assert_eq!((forfeited.minedUnits, forfeited.gemFactoryUnits), (15, 10));
+        assert_eq!(forfeited.ownerUnits, 3);
     });
 }

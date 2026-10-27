@@ -351,7 +351,7 @@ fn get_exchange_rate_reverts_for_an_unregistered_pair() {
 
 /// The three rate columns key on the registry index, so a price read is
 /// `pair_to_index` and then slot 12. This test pins the raw slots that
-/// `scripts/seed_genesis.py` writes. It also asserts that nothing lands at the
+/// `outbe-genesis-cli` writes. It also asserts that nothing lands at the
 /// pair-derived slot they used to use. Otherwise a schema key-type revert would
 /// pass every behavioural test above while silently orphaning every seeded rate.
 #[test]
@@ -385,7 +385,7 @@ fn the_rate_columns_are_keyed_by_the_registry_index() {
                 at(index.mapping_slot(base)),
                 expected,
                 "{field} is not keyed by the registry index at base slot {base}; \
-                 scripts/seed_genesis.py hardcodes it"
+                 outbe-genesis-cli hardcodes it"
             );
             assert_eq!(
                 at(pair_key(COEN, USDT).mapping_slot(base)),

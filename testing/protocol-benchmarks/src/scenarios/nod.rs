@@ -25,7 +25,7 @@ impl NodScenario {
 
 pub struct PreparedNod {
     provider: HashMapStorageProvider,
-    encrypted: Vec<outbe_primitives::nod_encryption::EncryptedNodV2>,
+    encrypted: Vec<outbe_primitives::nod_encryption::EncryptedNodV1>,
 }
 
 fn item_count(profile: Profile) -> usize {

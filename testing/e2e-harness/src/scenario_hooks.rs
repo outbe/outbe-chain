@@ -156,7 +156,7 @@ fn audit_scenario_logs(world: &World) -> eyre::Result<LogAudit> {
                 .state
                 .expected_tee_sidecar_outage
                 .as_ref()
-                .map(|(index, tx)| (*index, tx.as_str())),
+                .map(|(index, tx, height, hash)| (*index, tx.as_str(), *height, *hash)),
             lease_guard_full_node: world
                 .state
                 .expected_tee_lease_guard_shutdown_full_node

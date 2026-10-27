@@ -40,7 +40,7 @@ fn restart_active_validator_during_reshare(world: &mut World) {
     world.state.joiner_addr = Some(world.rpc.address_of(&key).expect("joiner identity"));
     restart_capture_incarnations(world, 3)
         .expect("arm incumbent and survivor identities before reshare");
-    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.topup(&key, 1000).expect("stake joiner");
     world.rpc.confirm_ready(&key).expect("confirm joiner ready");
     let mut ceremony_started = false;
     for _ in 0..1_800 {

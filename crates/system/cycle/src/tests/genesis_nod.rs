@@ -23,11 +23,14 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
                 .is_some(),
             "block 1 at the UTC+14 boundary must create the canonical WWD"
         );
-
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
         // Block at 00:00:01 UTC day D+1 - CycleTick fires.
         // prev_day = D = genesis_utc_day -> day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
-        let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        let ctx_fire = runtime_context(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
         run_cycle_lifecycle(&ctx_fire).unwrap();
 
@@ -316,7 +319,6 @@ fn seed_closed_day_prices<'s>(
         storage.clone(),
         outbe_oracle::api::AddressPair::new_coen_to(840),
     )?;
-    oracle.reference_currencies.push(840)?;
     let mut day = previous_date_key(timestamp_to_date_key(midnight)).expect("date step");
     oracle.utc_day_vwap_last_finalized.write(day)?;
     for _ in 0..28 {

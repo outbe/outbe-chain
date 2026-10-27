@@ -961,8 +961,8 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0x525c39084866f7aef96001a574851e1d3949719fcc9a3bde33f9bc6374e0cf88"),
-            b256!("0x9f7a59222ece8b49d974f5dd9f1cda3ccc0bfceb61788bbe180afdac442865ae"),
+            b256!("0x72bcab7503ff2e351206c869ce918115e26750a206cae214596b7fa03928dde9"),
+            b256!("0x5b6092c1ff70df9258866b73972aad235121ba0b98193e92639c210c02596a42"),
         ]
     );
     assert_eq!(
@@ -973,28 +973,28 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 reads: 92,
                 writes: 44,
                 logs: b256!("0x59b3ca3f3148e9e0003f491a3ca360375164f443e75533f2e54a2c3aded618c2"),
-                state: b256!("0x55dcce9f99ec08b689df6875cde8e9bbc9c078b8f79e15eb1a6a2754ef504111"),
+                state: b256!("0x78dcd886a3243f7c508674295e2e482bad3238cd093bc45c07b6b873c3ac980d"),
             },
             Footprint {
                 gas: 135800,
                 reads: 108,
                 writes: 25,
                 logs: b256!("0xfa9255ee438839b0520014084f89e0ce1198398f2c6d5ac90a2deaef5d6e3cfe"),
-                state: b256!("0xddb18b6c52507b66b5863726bd4880a74b7deeb973902b9fe67c6b419259b144"),
+                state: b256!("0xed753484753a9f47f16a3030ed5901ceecd27d2e721afe94d938ee979b0bc157"),
             },
             Footprint {
                 gas: 7800,
                 reads: 78,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0xddb18b6c52507b66b5863726bd4880a74b7deeb973902b9fe67c6b419259b144"),
+                state: b256!("0xed753484753a9f47f16a3030ed5901ceecd27d2e721afe94d938ee979b0bc157"),
             },
             Footprint {
                 gas: 236800,
                 reads: 118,
                 writes: 45,
                 logs: b256!("0xd29e96c90ec5d2d18b6ba358502c03c9857a2354e6c5c6dd748b1ef1746fd260"),
-                state: b256!("0x8e032db3107503ef415c039ccde3d4a280cf24ab410fd5d2cd28eda559859aad"),
+                state: b256!("0x4288a55902e1b083369772e7ed40e8be9fdf24c5abd34e3214b5086c1011034b"),
             },
             Footprint {
                 gas: 7800,
@@ -1002,14 +1002,14 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
                 // Daily scheduling keys and nonzero queue locations change stored state.
-                state: b256!("0xd6e9b1310b841c09f094362b0feb2c6e61d7c25500139c7e8715662ea8024dbf"),
+                state: b256!("0xb2f355fd3b69f53544008a935fdf27afb3428814712057fffc031f1e7f679496"),
             },
             Footprint {
                 gas: 370100,
                 reads: 151,
                 writes: 71,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0x55cc30ee179b8fcb447ea0b608317ee350d891ee660a0c53d98f77204735939f"),
+                state: b256!("0x0099a42f939c83cfd81df42b9f41cd838d3b6cab217c5ad2a955708db5738cd9"),
             },
         ]
     );

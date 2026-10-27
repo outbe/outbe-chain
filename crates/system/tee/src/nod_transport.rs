@@ -20,7 +20,7 @@ pub(crate) fn request(
     crate::try_with_enclave(|client| {
         let key = client.attestation_pub();
         let result = upload(client, id, &bytes).and_then(|()| download(client, id));
-        let _ = client.request(&EnclaveRequest::DiscardNodTransferV2 { id });
+        let _ = client.request(&EnclaveRequest::DiscardNodTransferV1 { id });
         result.map(|response| (key, response))
     })
     .ok_or(crate::errors::TeeClientVerificationError::TeeSidecarUnavailable)?
@@ -29,13 +29,13 @@ pub(crate) fn request(
 fn upload(client: &mut EnclaveSession, id: B256, bytes: &[u8]) -> Result<(), TransportError> {
     for (index, chunk) in bytes.chunks(TRANSFER_CHUNK_BYTES).enumerate() {
         let offset = index * TRANSFER_CHUNK_BYTES;
-        match client.request(&EnclaveRequest::NodTransferChunkV2 {
+        match client.request(&EnclaveRequest::NodTransferChunkV1 {
             id,
             total: bytes.len() as u32,
             offset: offset as u32,
             bytes: chunk.to_vec(),
         })? {
-            EnclaveResponse::NodTransferAckV2 {
+            EnclaveResponse::NodTransferAckV1 {
                 id: response_id,
                 next_offset,
             } if response_id == id && next_offset as usize == offset + chunk.len() => {}
@@ -46,8 +46,8 @@ fn upload(client: &mut EnclaveSession, id: B256, bytes: &[u8]) -> Result<(), Tra
 }
 
 fn download(client: &mut EnclaveSession, id: B256) -> Result<EnclaveResponse, TransportError> {
-    let (total, digest) = match client.request(&EnclaveRequest::ExecuteNodTransferV2 { id })? {
-        EnclaveResponse::NodTransferReadyV2 {
+    let (total, digest) = match client.request(&EnclaveRequest::ExecuteNodTransferV1 { id })? {
+        EnclaveResponse::NodTransferReadyV1 {
             id: response_id,
             total,
             digest,
@@ -72,11 +72,11 @@ fn read_chunk(
     offset: usize,
     total: usize,
 ) -> Result<Vec<u8>, TransportError> {
-    match client.request(&EnclaveRequest::ReadNodTransferV2 {
+    match client.request(&EnclaveRequest::ReadNodTransferV1 {
         id,
         offset: offset as u32,
     })? {
-        EnclaveResponse::NodTransferOutputV2 {
+        EnclaveResponse::NodTransferOutputV1 {
             id: response_id,
             offset: response_offset,
             bytes,

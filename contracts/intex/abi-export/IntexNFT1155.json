@@ -1153,31 +1153,6 @@
     },
     {
       "type": "event",
-      "name": "IntexExercised",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "owner",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "units",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "IntexIssued",
       "inputs": [
         {
@@ -1194,6 +1169,31 @@
         },
         {
           "name": "to",
+          "type": "address",
+          "indexed": true,
+          "internalType": "address"
+        },
+        {
+          "name": "units",
+          "type": "uint256",
+          "indexed": false,
+          "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IntexMined",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "owner",
           "type": "address",
           "indexed": true,
           "internalType": "address"

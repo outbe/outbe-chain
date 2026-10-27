@@ -50,7 +50,7 @@ impl IntexContract<'_> {
         self.series_index().remove(series_id)?;
         self.settled_units.clear(&series_id)?;
         self.gem_factory_units.clear(&series_id)?;
-        self.exercised_units.clear(&series_id)?;
+        self.mined_units.clear(&series_id)?;
         self.series.delete(series_id)
     }
 

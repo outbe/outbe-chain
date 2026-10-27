@@ -698,7 +698,7 @@ pub(crate) fn series_exists(
 }
 
 /// A series' lifecycle state as the collection reads it: 0 Issued, 1 Called,
-/// 2 Expired.
+/// 2 Forfeited.
 pub(crate) fn series_state(
     url: &str,
     nft: Address,

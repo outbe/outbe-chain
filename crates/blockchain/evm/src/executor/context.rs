@@ -42,10 +42,7 @@ pub(in crate::executor) fn validate_genesis_state(
     validate_genesis_configuration(&vs, genesis)?;
 
     let staking = outbe_staking::contract::Staking::new(storage.clone());
-    let min_stake = staking.config_min_stake.read()?;
-    if min_stake.is_zero() {
-        return Err(ExecutorHookError::StakingMinStakeUninitialized.into());
-    }
+    let min_stake = staking.min_stake()?;
 
     let mut expected_total = U256::ZERO;
     for validator in &genesis.validators {

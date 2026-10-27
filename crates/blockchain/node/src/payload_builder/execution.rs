@@ -9,7 +9,7 @@ use reth_evm::execute::BlockBuilder;
 use reth_payload_builder::BlobSidecars;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
-use reth_revm::cancelled::CancelOnDrop;
+use reth_tasks::CancelOnDrop;
 use tracing::{trace, warn};
 
 use super::{preparation::PayloadContext, size_budget::BlockSizeBudget};

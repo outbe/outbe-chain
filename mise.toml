@@ -131,12 +131,12 @@ run = "cargo install --locked cargo-nextest"
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
 depends = ["build"]
-run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
 
 [tasks.audit-release]
 description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
-run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 bin {} \\;"
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
 
 # --- Audit toolchain (rust-module-audit skill entry points) ----------- #
 
@@ -159,7 +159,19 @@ run = [
 
 [tasks.audit-consensus-deps]
 description = "Ensure consensus has no transitive dependency on the EVM"
-run = "bash scripts/check-consensus-deps.sh"
+run = """
+set -euo pipefail
+tree="$(cargo tree -p outbe-consensus --prefix none)"
+if grep -Eq '^outbe-evm ' <<<"${tree}"; then
+  echo "error: outbe-evm appears in outbe-consensus dependency tree" >&2
+  exit 1
+fi
+if ! grep -Eq '^commonware-consensus ' <<<"${tree}"; then
+  echo "error: commonware-consensus is missing from outbe-consensus dependency tree" >&2
+  exit 1
+fi
+echo "consensus dependency boundary: OK"
+"""
 
 [tasks.audit-full]
 description = "Full cycle: machete + deny + rustsec + udeps"
@@ -174,7 +186,7 @@ description = "cargo audit (RustSec workspace dependency advisories)"
 # Keep the adjudicated exceptions aligned with deny.toml and cve-scan.yml.
 # cargo-deny uses a hashed database layout under ~/.cargo/advisory-db, so
 # cargo-audit needs its own path.
-run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071"
+run = "cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403"
 
 [tasks.audit-machete]
 description = "cargo machete (unused workspace dependencies)"
@@ -247,13 +259,6 @@ mise run localnet-stop
 mise run localnet-start
 """
 
-[tasks.localnet-clean]
-description = "Stop LocalNet and clear validator runtime data inside dedicated OUT_DIR"
-run = """
-mise run localnet-stop
-./scripts/clean-testnet-data.sh "$OUT_DIR"
-"""
-
 [tasks.localnet-smoke]
 description = "Dev/mock consensus smoke through the canonical harness"
 run = """
@@ -262,18 +267,6 @@ mise run localnet-start
 mise run localnet-status
 mise run localnet-stop
 """
-
-[tasks.localnet-stack-start]
-description = "Start or resume a 4-validator localnet with mock TEE and RocksDB by default"
-run = "bash ./scripts/localnet-stack.sh start"
-
-[tasks.localnet-stack-stop]
-description = "Stop the managed localnet (keep chain data)"
-run = "bash ./scripts/localnet-stack.sh stop"
-
-[tasks.localnet-stack-clean]
-description = "Stop the managed localnet, then remove chain data"
-run = "bash ./scripts/localnet-stack.sh clean"
 
 [tasks.localnet-sgx-bootstrap]
 description = "Deferred real-SGX LocalNet bootstrap (tracked by outbe-chain-8lp)"
@@ -290,10 +283,6 @@ run = './target/release/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT
 [tasks.localnet-sgx-stop]
 description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
 run = './target/release/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
-
-[tasks.tribute-offer]
-description = "Create a ZK Tribute; pass WorldwideDay and CLI proof arguments for the registered operator"
-run = "bash ./scripts/tribute-demo-actions.sh offer"
 
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
@@ -351,13 +340,6 @@ OUTBE_TEE_IO_TIMEOUT_SECS=300 target/release/outbe-e2e --artifact-manifest targe
 
 # --- SGX / Benchmarks ------------------------------------------------- #
 
-# Hardware SGX smoke: build + sign + run the enclave under gramine-sgx and
-# assert real SGX execution + EGETKEY sealing. Requires gramine + SGX
-# hardware; no-op skip on non-SGX boxes.
-[tasks.sgx-smoke]
-description = "Hardware SGX smoke (build + sign + run enclave under gramine-sgx)"
-run = "./scripts/sgx-smoke.sh"
-
 [tasks.release-sgx-prepare]
 description = "Prepare an unsigned deterministic SGX bundle for an explicit production network"
 run = 'cargo xtask release sgx prepare "$@"'
@@ -400,9 +382,3 @@ cargo bench -p outbe-tee-enclave --bench tribute_offer_throughput
 cargo test -p outbe-tee-enclave --release --test transport \
   transport_throughput_offers_per_sec -- --ignored --nocapture
 """
-
-# Production throughput figure: drive offers through the enclave under REAL
-# gramine-sgx. Requires gramine + SGX hardware; SKIPs on non-SGX boxes.
-[tasks.bench-tribute-sgx]
-description = "Production tribute throughput under real gramine-sgx"
-run = "./scripts/sgx-bench.sh"

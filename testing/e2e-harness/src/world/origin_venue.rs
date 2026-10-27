@@ -108,7 +108,9 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64, targets: &[u64]) -> Result<
                     .join(","),
             ),
             ("CONTRACT_SALT", SALT_VERSION.to_owned()),
-            ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
+            // This chain is Outbe, so the hand-over gives the hub to the
+            // HyperlaneController precompile.
+            ("OUTBE_CHAIN_ID", chain_id.to_string()),
             ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
             ("HYPERLANE_MAILBOX", format!("{mailbox:?}")),
             ("ACTIVE_GATEWAY", "hyperlane".to_owned()),

@@ -340,31 +340,36 @@ pub enum EnclaveRequest {
         anchor_outcome: Vec<u8>,
         export: bool,
     },
-    CreateNodForTestV2 {
-        terms: outbe_primitives::nod_encryption::NodTermsV2,
+    CreateNodForTestV1 {
+        terms: outbe_primitives::nod_encryption::NodTermsV1,
         creator_public: [u8; 32],
         amount: U256,
     },
-    MineEncryptedNodV2 {
-        request: Box<crate::nod_mine::MineEncryptedNodRequestV2>,
+    MineEncryptedNodV1 {
+        request: Box<crate::nod_mine::MineEncryptedNodRequestV1>,
     },
-    ReadNodAmountV2 {
-        nod: outbe_primitives::nod_encryption::EncryptedNodV2,
+    ReadNodAmountV1 {
+        nod: outbe_primitives::nod_encryption::EncryptedNodV1,
     },
-    NodTransferChunkV2 {
+    EncryptNodForTributeV1 {
+        tribute: Box<outbe_primitives::tribute_encryption::EncryptedTributeV2>,
+        terms: outbe_primitives::nod_encryption::NodTermsV1,
+        amount: U256,
+    },
+    NodTransferChunkV1 {
         id: B256,
         total: u32,
         offset: u32,
         bytes: Vec<u8>,
     },
-    ExecuteNodTransferV2 {
+    ExecuteNodTransferV1 {
         id: B256,
     },
-    ReadNodTransferV2 {
+    ReadNodTransferV1 {
         id: B256,
         offset: u32,
     },
-    DiscardNodTransferV2 {
+    DiscardNodTransferV1 {
         id: B256,
     },
     /// Creator-owned encrypted Tribute records; requires the installed network key.
@@ -391,14 +396,15 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::CreateNodForTestV2 { .. } => "create_nod_for_test_v2",
+            Self::CreateNodForTestV1 { .. } => "create_nod_for_test_v1",
             Self::ExecuteLysis { .. } => "execute_lysis",
-            Self::MineEncryptedNodV2 { .. } => "mine_encrypted_nod_v2",
-            Self::ReadNodAmountV2 { .. } => "read_nod_amount_v2",
-            Self::NodTransferChunkV2 { .. } => "nod_transfer_chunk_v2",
-            Self::ExecuteNodTransferV2 { .. } => "execute_nod_transfer_v2",
-            Self::ReadNodTransferV2 { .. } => "read_nod_transfer_v2",
-            Self::DiscardNodTransferV2 { .. } => "discard_nod_transfer_v2",
+            Self::MineEncryptedNodV1 { .. } => "mine_encrypted_nod_v1",
+            Self::ReadNodAmountV1 { .. } => "read_nod_amount_v1",
+            Self::EncryptNodForTributeV1 { .. } => "encrypt_nod_for_tribute_v1",
+            Self::NodTransferChunkV1 { .. } => "nod_transfer_chunk_v1",
+            Self::ExecuteNodTransferV1 { .. } => "execute_nod_transfer_v1",
+            Self::ReadNodTransferV1 { .. } => "read_nod_transfer_v1",
+            Self::DiscardNodTransferV1 { .. } => "discard_nod_transfer_v1",
             Self::ApplyTributeDayOpV2 { .. } => "apply_tribute_day_op_v2",
             Self::ReadTributeDayAmountV2 { .. } => "read_tribute_day_amount_v2",
             Self::ProcessEncryptedTributeOfferBatchV2 { .. } => {
@@ -470,15 +476,16 @@ impl EnclaveRequest {
     /// choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
-            Self::CreateNodForTestV2 { .. } => true,
+            Self::CreateNodForTestV1 { .. } => true,
             Self::GetQuote { .. }
             | Self::ExecuteLysis { .. }
-            | Self::MineEncryptedNodV2 { .. }
-            | Self::ReadNodAmountV2 { .. }
-            | Self::NodTransferChunkV2 { .. }
-            | Self::ExecuteNodTransferV2 { .. }
-            | Self::ReadNodTransferV2 { .. }
-            | Self::DiscardNodTransferV2 { .. }
+            | Self::MineEncryptedNodV1 { .. }
+            | Self::ReadNodAmountV1 { .. }
+            | Self::EncryptNodForTributeV1 { .. }
+            | Self::NodTransferChunkV1 { .. }
+            | Self::ExecuteNodTransferV1 { .. }
+            | Self::ReadNodTransferV1 { .. }
+            | Self::DiscardNodTransferV1 { .. }
             | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
             | Self::ReadTributeAmountsV2 { .. }
             | Self::ApplyTributeDayOpV2 { .. }

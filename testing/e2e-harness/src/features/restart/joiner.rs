@@ -50,7 +50,7 @@ fn joiner_completes_dkg_before_activation(world: &mut World) {
     world.state.joiner_addr = Some(addr.clone());
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(idx));
-    let stake = world.rpc.stake(&key, 1000).expect("stake joiner");
+    let stake = world.rpc.topup(&key, 1000).expect("stake joiner");
     pending_finalize_transaction(&world.rpc, &stake, &ports)
         .expect("joiner stake must be canonically finalized");
     let ready = world.rpc.confirm_ready(&key).expect("confirm joiner ready");
@@ -632,7 +632,7 @@ fn restart_joiner_during_dkg(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     world.state.joiner_addr = Some(world.rpc.address_of(&key).expect("joiner identity"));
     restart_capture_incarnations(world, idx).expect("arm owned pre-ceremony intervals");
-    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.topup(&key, 1000).expect("stake joiner");
     world.rpc.confirm_ready(&key).expect("confirm joiner ready");
     let mut ceremony_started = false;
     for _ in 0..1_800 {

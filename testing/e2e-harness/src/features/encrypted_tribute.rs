@@ -102,13 +102,35 @@ fn survivors_finalize_encrypted_tribute(world: &mut World) {
 #[when("validator 3 enclave is restored from its sealed state")]
 fn restore_enclave_after_offer(world: &mut World) {
     if !world.localnet.validator_running(3) {
+        let tx = world
+            .state
+            .tribute_tx_hash
+            .clone()
+            .expect("encrypted offer transaction");
+        let primary = world.validators.primary_port();
+        let receipt = eth::raw_json_result(
+            &world.rpc.url(primary),
+            "eth_getTransactionReceipt",
+            serde_json::json!([&tx]),
+        )
+        .expect("encrypted offer receipt");
+        let outcome = crate::world::rpc::TxOutcome {
+            transaction_hash: tx.clone(),
+            success: true,
+            receipt,
+        };
+        let ports = [0, 1, 2].map(|index| world.validators.http_port(index));
+        world
+            .rpc
+            .finalize_outcome(&outcome, &ports, 90)
+            .expect("encrypted offer receipt matches surviving quorum");
         world.state.expected_tee_sidecar_outage = Some((
             3,
-            world
-                .state
-                .tribute_tx_hash
-                .clone()
-                .expect("encrypted offer transaction"),
+            tx,
+            outcome
+                .block_number()
+                .expect("encrypted offer block height"),
+            outcome.block_hash().expect("encrypted offer block hash"),
         ));
     }
     world

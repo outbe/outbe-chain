@@ -14,7 +14,7 @@ use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::execute::BlockBuilder;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
-use reth_revm::cancelled::CancelOnDrop;
+use reth_tasks::CancelOnDrop;
 use reth_transaction_pool::{
     error::{Eip4844PoolTransactionError, InvalidPoolTransactionError},
     BestTransactions, PoolTransaction, TransactionPool, ValidPoolTransaction,
@@ -225,7 +225,9 @@ where
                 error, ..
             })) => {
                 trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
-                if !error.is_nonce_too_low() {
+                if !error.is_nonce_too_low()
+                    && !outbe_evm::is_sponsored_block_budget_deferral(error.as_ref())
+                {
                     self.best_txs.mark_invalid(
                         pool_tx,
                         InvalidPoolTransactionError::Other(Box::new(PreservedInvalidUserTx {

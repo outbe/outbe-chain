@@ -253,9 +253,7 @@ fn create_and_approve_stablecoin(world: &mut World) {
         );
     }
     let deadline = wait_for_proposal_votes(world, STABLECOIN_PROPOSAL_ID, 3);
-    world
-        .rpc
-        .wait_block_gt(world.validators.primary_port(), deadline, 80)
+    super::common::wait_past_consensus_height(world, world.validators.primary_port(), deadline)
         .unwrap_or_else(|error| {
             panic!("did not pass stablecoin proposal deadline {deadline}: {error:#}")
         });
@@ -283,13 +281,9 @@ fn create_and_approve_stablecoin(world: &mut World) {
     )
     .expect("proposal bond");
     assert_eq!(bond.amount, STABLECOIN_CREATE_BOND);
-    assert_eq!(bond.settlement, IVote::BondSettlement::Refunded);
+    assert_eq!(bond.state, IVote::BondState::Refunded);
     assert_eq!(
-        eth::read_call(
-            &url,
-            addresses::VOTE_ADDR,
-            &IVote::unsettledBondLiabilitiesCall {},
-        ),
+        eth::read_call(&url, addresses::VOTE_ADDR, &IVote::escrowedBondTotalCall {},),
         Some(U256::ZERO)
     );
 
@@ -894,7 +888,7 @@ fn duplicate_ticker_preserves_state(world: &mut World) {
             eth::read_call_at_result(
                 &url,
                 addresses::VOTE_ADDR,
-                &IVote::unsettledBondLiabilitiesCall {},
+                &IVote::escrowedBondTotalCall {},
                 checkpoint.height
             )
             .expect("bond liabilities after duplicate"),

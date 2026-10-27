@@ -1,4 +1,4 @@
-//! NodFactory runtime: issuance, settlement, PoW-gated exercise, event emission.
+//! NodFactory runtime: issuance, settlement, PoW-gated mining, event emission.
 //!
 //! All persistent Nod state lives in the entity store at
 //! [`outbe_primitives::addresses::NOD_ADDRESS`]. NodFactory mutates that
@@ -15,7 +15,7 @@ use outbe_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
 use outbe_nod::schema::{CallTerms, NodItemState};
-use outbe_primitives::nod_encryption::EncryptedNodV2;
+use outbe_primitives::nod_encryption::EncryptedNodV1;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::{date_step_error, NodFactoryError};
@@ -23,13 +23,13 @@ use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
-pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
+pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
     issue_nod_with_cost(storage, encrypted, issued_at, None, None)
@@ -52,7 +52,7 @@ pub fn issue_lysis_nod(
 /// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
 pub fn issue_tribute_nod(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     gratis_load_minor: U256,
 ) -> Result<WwdEntityId> {
     let cost =
@@ -72,7 +72,7 @@ pub fn issue_tribute_nod(
 /// `gratis_load_minor` is read through the enclave when the caller does not know it.
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV2,
+    encrypted: &EncryptedNodV1,
     issued_at: u64,
     verified_cost: Option<U256>,
     gratis_load_minor: Option<U256>,
@@ -139,7 +139,7 @@ fn issue_nod_with_cost(
     Ok(nod_id)
 }
 
-/// Exercise of one paid Nod. Any caller may submit. The owner's Gratis
+/// Mining of one paid Nod. Any caller may submit. The owner's Gratis
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
@@ -262,7 +262,7 @@ pub fn call_terms(
     }))
 }
 
-/// Exercises a paid entitlement without payment or a deadline. Mint failure
+/// Mines a paid entitlement without payment or a deadline. Mint failure
 /// rolls back the removal, preserving the paid Nod for retry.
 pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> Result<Bytes> {
     let MineGratisRequest {
@@ -284,7 +284,7 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
         outbe_gratisfactory::api::mint_encrypted_nod(storage.clone(), &encrypted, auth)?;
         emit_event(
             storage,
-            INodFactory::NodExercised {
+            INodFactory::NodMined {
                 owner,
                 nodId: nod_id.to_u256(),
                 encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
@@ -341,7 +341,7 @@ pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<(
         pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
     .map_err(|e| NodFactoryError::from(e).into())
@@ -354,7 +354,7 @@ pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8;
         pow::MiningDomain::Nod,
         nod_id.to_u256(),
         owner,
-        pow::SINGLE_EXERCISE_SEQUENCE,
+        pow::SINGLE_MINING_SEQUENCE,
         nonce,
     )
 }

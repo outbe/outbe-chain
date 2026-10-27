@@ -113,7 +113,7 @@ fn confirm_joiner_after_freeze(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let address = world.rpc.address_of(&key).expect("joiner address");
     world.state.joiner_addr = Some(address.clone());
-    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.topup(&key, 1000).expect("stake joiner");
     assert_eq!(
         world.rpc.validator_status(primary, &address),
         Some(1),
@@ -360,7 +360,7 @@ fn joiner_activates_in_scheduled_window(world: &mut World) {
     panic!("joiner never became ACTIVE in the scheduled DKG window");
 }
 
-// ---- S-01: readiness cannot survive PENDING -> REGISTERED -> PENDING --------
+// ---- S-01: a rejected subminimum withdrawal preserves readiness -----------
 
 #[given("a staked PENDING joiner has confirmed readiness")]
 fn confirmed_pending_joiner(world: &mut World) {
@@ -382,7 +382,7 @@ fn confirmed_pending_joiner(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let address = world.rpc.address_of(&key).expect("joiner address");
     world.state.joiner_addr = Some(address.clone());
-    world.rpc.stake(&key, 1000).expect("stake joiner");
+    world.rpc.topup(&key, 1000).expect("stake joiner");
     let ready = world
         .rpc
         .confirm_ready_outcome(&key)
@@ -402,93 +402,60 @@ fn confirmed_pending_joiner(world: &mut World) {
 
 #[when("it unstakes below minimum before activation")]
 fn pending_joiner_unstakes_below_minimum(world: &mut World) {
-    let key = world.validators.joiner().evm_key().expect("joiner key");
-    let outcome = world.rpc.unstake(&key, 1).expect("unstake below minimum");
-    assert!(outcome.success, "pending unstake reverted");
-}
-
-#[then("it is REGISTERED with readiness cleared")]
-fn pending_joiner_returns_to_registered(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let address = world.state.joiner_addr.clone().expect("joiner address");
-    assert_eq!(
-        world.rpc.validator_status(primary, &address),
-        Some(0),
-        "below-minimum PENDING joiner did not return to REGISTERED"
-    );
-    assert_eq!(
-        world.rpc.has_share(primary, &address),
-        Some(false),
-        "REGISTERED joiner retained a share"
-    );
-    assert!(
-        !world
-            .rpc
-            .is_participant(primary, &address)
-            .expect("observe consensus participation"),
-        "REGISTERED joiner remained a participant"
-    );
-}
-
-#[when("it stakes again without another readiness confirmation")]
-fn restake_without_readiness(world: &mut World) {
-    let primary = world.validators.primary_port();
-    let key = world.validators.joiner().evm_key().expect("joiner key");
-    let address = world.state.joiner_addr.clone().expect("joiner address");
-    world.rpc.stake(&key, 1).expect("restore minimum stake");
-    assert_eq!(
-        world.rpc.validator_status(primary, &address),
-        Some(1),
-        "restaked joiner did not return to PENDING"
-    );
-
-    let current_activation = planned_activation(world);
-    let freeze = current_activation.saturating_sub(PREPARE_BLOCKS);
-    let head = world.rpc.head(primary).expect("head after restake");
-    let relevant_activation = if head.saturating_add(3) < freeze {
-        current_activation
-    } else {
-        wait_for_schedule_advance(world, current_activation)
+    use crate::features::negative_assertions::{assert_mined_revert, NegativeTx};
+    use crate::internal::{
+        addresses::STK_ADDR,
+        eth::{IStaking, IValidatorSet},
     };
-    world.state.activation_height = Some(relevant_activation);
+    use alloy_sol_types::SolError;
+
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let address = world.state.joiner_addr.clone().expect("joiner address");
+    let stake = world
+        .rpc
+        .stake_on(world.validators.primary_port(), &address)
+        .expect("pending bond");
+    let minimum = world.rpc.registration_amount().expect("minimum bond");
+    let remaining = minimum - alloy_primitives::U256::ONE;
+    world.state.slash_stake_before = Some(stake);
+    assert_mined_revert(
+        world,
+        NegativeTx {
+            to: STK_ADDR,
+            key: &key,
+            call: &IStaking::unstakeCall {
+                amount: stake - remaining,
+            },
+        },
+        alloy_primitives::U256::ZERO,
+        &IValidatorSet::BondedStakeBelowMinimum {
+            bonded: remaining,
+            minimum,
+        }
+        .abi_encode(),
+    );
 }
 
-#[then("it remains PENDING and excluded after the next scheduled reshare")]
-fn restaked_joiner_stays_excluded(world: &mut World) {
+#[then("the subminimum unstake is rejected without changing its bond")]
+fn pending_joiner_preserves_bond(world: &mut World) {
     let primary = world.validators.primary_port();
     let address = world.state.joiner_addr.clone().expect("joiner address");
-    let activation = world
-        .state
-        .activation_height
-        .expect("relevant activation height");
-    let observation_height = activation.saturating_add(2);
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, observation_height, 120),
-        "chain did not finalize across the scheduled reshare at {activation}"
+    assert_eq!(
+        world.rpc.stake_on(primary, &address),
+        world.state.slash_stake_before
     );
+}
 
-    assert_eq!(
-        world.rpc.validator_status(primary, &address),
-        Some(1),
-        "stale readiness promoted the restaked joiner"
-    );
-    assert_eq!(
-        world.rpc.has_share(primary, &address),
-        Some(false),
-        "restaked joiner received a share without reconfirmation"
-    );
-    assert!(
-        !world
-            .rpc
-            .is_participant(primary, &address)
-            .expect("observe consensus participation"),
-        "restaked joiner participates without reconfirmation"
-    );
-    assert_eq!(
-        world.rpc.active_count(primary),
-        Some(4),
-        "unconfirmed restake changed the ACTIVE set"
-    );
+#[then("it activates after the next scheduled reshare without another confirmation")]
+fn confirmed_joiner_activates_after_rejected_unstake(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let address = world.state.joiner_addr.clone().expect("joiner address");
+    assert!(world
+        .rpc
+        .wait_participant(primary, &address, 120)
+        .expect("observe preserved readiness"));
+    for port in world.validators.committee_ports() {
+        assert_eq!(world.rpc.validator_status(port, &address), Some(2));
+        assert_eq!(world.rpc.has_share(port, &address), Some(true));
+    }
 }

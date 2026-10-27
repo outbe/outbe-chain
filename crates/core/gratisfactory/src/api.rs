@@ -26,7 +26,7 @@ pub use crate::runtime::{
 /// Mint the exact encrypted NOD entitlement and acquire its Fidelity cohort.
 pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
 ) -> Result<()> {
     storage.with_checkpoint(|| {

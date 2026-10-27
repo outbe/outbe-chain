@@ -691,33 +691,29 @@ fn full_node_parity(world: &mut World) {
     .expect("all five owned peers share fresh finalized hash/root and supply");
 }
 
-#[when("the synced full node restarts as a registered shareless validator")]
+#[when("the synced full node stakes and restarts as a shareless PENDING validator")]
 fn full_node_restarts_as_shareless_validator(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
         let before_offer_key = world.localnet.node_offer_public(4)?;
-        // Parent-owned adapter retains the two actual admission receipts.
-        let outcomes = world
+        let outcome = world
             .localnet
             .provision_existing_node_as_joiner_observed(4)?;
-        ensure!(
-            outcomes.len() == 2,
-            "admission must retain registration and P2P outcomes"
-        );
         world.state.joiner_addr = Some(format!("{:#x}", address(world, 4)?));
-        for (phase, outcome) in ["lifecycle_registration", "lifecycle_p2p"]
-            .into_iter()
-            .zip(&outcomes)
-        {
-            finalize(world, phase, outcome, true, 60)?;
-        }
+        finalize(
+            world,
+            "lifecycle_registration_stake_p2p",
+            &outcome,
+            true,
+            60,
+        )?;
         let (before, state) = fresh(world, "lifecycle_admission", 0, 60)?;
         let registered = account(&state)?;
         ensure!(
-            registered.status == 0
+            registered.status == 1
                 && !registered.participant
                 && !registered.has_share
-                && registered.stake.is_zero()
+                && registered.stake >= world.rpc.registration_amount()?
                 && registered.consensus_public_key.len() == 48
                 && registered.p2p_version == 1
                 && registered.p2p_encoded.as_ref() == hex::decode("00047f00000176c4")?,
@@ -801,22 +797,22 @@ fn full_node_restarts_as_shareless_validator(world: &mut World) {
     .expect("finalized admission and owned same-datadir role switch");
 }
 
-#[then("it keeps finalizing without stake, a share, or consensus participation")]
-fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
+#[then("it keeps finalizing with its bond but without a share or consensus participation")]
+fn shareless_validator_keeps_finalizing_before_readiness(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
-        let (_, state) = fresh(world, "lifecycle_shareless_before_stake", 0, 30)?;
+        let (_, state) = fresh(world, "lifecycle_shareless_before_readiness", 0, 30)?;
         let registered = account(&state)?;
         ensure!(
-            registered.status == 0
-                && registered.stake.is_zero()
+            registered.status == 1
+                && registered.stake >= world.rpc.registration_amount()?
                 && !registered.participant
                 && !registered.has_share,
-            "REGISTERED verifier acquired stake, share or voting role"
+            "PENDING verifier lost its bond or acquired a share or voting role"
         );
         ensure!(
             !world.localnet.has_share_file_result(4)?,
-            "REGISTERED verifier has a share"
+            "PENDING verifier has a share"
         );
         exact_members(&state.consensus, &members(world, 4)?)?;
         Ok(())
@@ -824,12 +820,12 @@ fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
     .expect("all five owned peers finalize while joiner is genuinely shareless");
 }
 
-#[when("the shareless validator stakes and confirms readiness")]
-fn shareless_validator_stakes_confirms(world: &mut World) {
+#[when("the shareless validator tops up and confirms readiness")]
+fn shareless_validator_tops_up_confirms(world: &mut World) {
     (|| -> Result<()> {
         joined(world)?;
         let key = world.validators.joiner().evm_key()?;
-        let tx = world.rpc.stake(&key, 1000)?;
+        let tx = world.rpc.topup(&key, 1000)?;
         let (before, state) = finalized_tx(world, "lifecycle_stake", &tx, 30)?;
         ensure!(
             account(&state)?.status == 1 && !account(&state)?.participant,

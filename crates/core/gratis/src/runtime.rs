@@ -328,7 +328,7 @@ pub(crate) fn burn_pledged(
 
 pub(crate) fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
-    nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
@@ -338,7 +338,7 @@ pub(crate) fn mint_encrypted_nod(
     let gratis = Gratis::new(storage.clone());
     let op_nonce = auth.op_nonce;
     check_op_nonce(&gratis, nod.terms.owner, op_nonce)?;
-    let request = outbe_tee::nod_mine::MineEncryptedNodRequestV2 {
+    let request = outbe_tee::nod_mine::MineEncryptedNodRequestV1 {
         nod: nod.clone(),
         current_balance: crate::state::account(&gratis, nod.terms.owner).balance_ct()?,
         modify_auth: auth,

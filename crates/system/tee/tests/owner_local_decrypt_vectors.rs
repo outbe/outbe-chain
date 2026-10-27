@@ -3,7 +3,7 @@
 
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV2, NodTermsV2},
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2, TributeContextV2},
     wwd_entity_id::WwdEntityId,
@@ -33,10 +33,10 @@ fn enclave_public() -> [u8; 32] {
     hex::decode(ENCLAVE_PUBLIC).unwrap().try_into().unwrap()
 }
 
-fn fixed_nod() -> EncryptedNodV2 {
+fn fixed_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20_260_824);
-    let nod = EncryptedNodV2 {
-        terms: NodTermsV2 {
+    let nod = EncryptedNodV1 {
+        terms: NodTermsV1 {
             chain_id: 31_337,
             nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xab)),
             owner: Address::repeat_byte(0x42),
@@ -204,7 +204,7 @@ struct MalformedCiphertextCase<T> {
     decryption_failed: &'static str,
 }
 
-impl MalformedCiphertextCase<EncryptedNodV2> {
+impl MalformedCiphertextCase<EncryptedNodV1> {
     fn nod() -> Self {
         Self {
             amount_blob: |value| &mut value.encrypted_gratis_amount,

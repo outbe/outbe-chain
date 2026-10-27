@@ -21,24 +21,153 @@ const FOLLOWER1_SLOT: usize = 14;
 const FOLLOWER2_SLOT: usize = 15;
 const ENCLAVE_LESS_FOLLOWER: &str = "enclave-less-follower";
 
+fn promotion_wait_budget(world: &World) -> Duration {
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed promotion scenario genesis");
+    let genesis = serde_json::from_slice(&genesis).expect("decode promotion scenario genesis");
+    reshare_wait_budget(&genesis).expect("promotion budget from executed genesis")
+}
+
+fn promotion_prepare_window(world: &World, port: u16) -> u64 {
+    let schedule: outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1 = serde_json::from_value(
+        crate::internal::eth::raw_json_result(
+            &world.rpc.url(port),
+            "outbe_teeRenewalScheduleV1",
+            serde_json::json!([]),
+        )
+        .expect("normalized executed DKG parameters"),
+    )
+    .expect("decode normalized DKG parameters");
+    let schedule = schedule
+        .validate()
+        .expect("validate normalized DKG parameters");
+    assert_eq!(
+        world
+            .rpc
+            .checkpoint_at(port, schedule.finalized_height)
+            .expect("schedule finalized checkpoint")
+            .block_hash,
+        schedule.finalized_hash
+    );
+    let prepare = schedule
+        .dkg_prepare_window_blocks
+        .min(u64::from(schedule.epoch_length_blocks));
+    assert!(
+        prepare >= 4,
+        "promotion fixture needs a post-freeze readiness window"
+    );
+    prepare
+}
+
+fn promotion_consensus_plan(rpc: &Rpc, port: u16) -> (u64, u64, u64) {
+    let status = crate::internal::eth::raw_json_result(
+        &rpc.url(port),
+        "outbe_consensusStatus",
+        serde_json::json!([]),
+    )
+    .expect("coherent consensus DKG plan snapshot");
+    let field = |name: &str| {
+        let value = &status[name];
+        value
+            .as_u64()
+            .or_else(|| value.as_str()?.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("invalid consensus plan field {name}: {value}"))
+    };
+    (
+        field("vrfMaterialVersion"),
+        field("lastDkgActivationHeight"),
+        field("nextPlannedActivationHeight"),
+    )
+}
+
+fn eligible_promotion_activation(
+    excluded: u64,
+    previous_version: u64,
+    (version, last, next): (u64, u64, u64),
+    readiness: u64,
+    prepare: u64,
+) -> eyre::Result<Option<u64>> {
+    if version == previous_version {
+        eyre::ensure!(last < excluded && next == excluded,
+            "current frozen plan changed before rollover: excluded {excluded}, last {last}, next {next}");
+        return Ok(None);
+    }
+    let expected_version = previous_version
+        .checked_add(1)
+        .ok_or_else(|| eyre::eyre!("promotion material version overflow"))?;
+    eyre::ensure!(
+        version == expected_version,
+        "missed excluded rotation: expected version {expected_version}, observed {version}"
+    );
+    eyre::ensure!(
+        last >= excluded && next > last,
+        "invalid promotion plans: excluded {excluded}, observed activation {last}, next {next}"
+    );
+    let freeze = next
+        .checked_sub(prepare)
+        .ok_or_else(|| eyre::eyre!("promotion freeze underflow"))?;
+    eyre::ensure!(
+        readiness < freeze,
+        "readiness receipt {readiness} did not precede eligible freeze {freeze}"
+    );
+    Ok(Some(next))
+}
+
+fn promotion_participation_observed(
+    previous_version: u64,
+    (version, last): (u64, u64),
+    head: u64,
+    activation: u64,
+    participant: bool,
+) -> eyre::Result<bool> {
+    let expected = previous_version
+        .checked_add(2)
+        .ok_or_else(|| eyre::eyre!("promotion material version overflow"))?;
+    eyre::ensure!(version > previous_version && version <= expected,
+        "eligible rotation skipped or regressed: previous {previous_version}, expected {expected}, observed {version}");
+    if participant {
+        eyre::ensure!(head >= activation && version == expected,
+            "premature or later-cycle participation: head {head}, activation {activation}, version {version}, expected {expected}");
+        return Ok(true);
+    }
+    let applied = last
+        .checked_add(2)
+        .ok_or_else(|| eyre::eyre!("promotion checkpoint overflow"))?;
+    eyre::ensure!(
+        version != expected || head < applied,
+        "first eligible rotation activated at {last} without joiner participation by {head}"
+    );
+    Ok(false)
+}
+
 /// Hold readiness until the current DKG target has already been frozen, while
 /// leaving enough blocks for the readiness transaction to finalize before the
 /// activation boundary. This makes warm promotion exercise the share-less
 /// verifier's boundary transition instead of racing into the current ceremony.
-fn wait_for_post_freeze_readiness_window(rpc: &Rpc, port: u16) -> bool {
-    for _ in 0..120 {
+fn wait_for_post_freeze_readiness_window(
+    rpc: &Rpc,
+    port: u16,
+    timeout: Duration,
+    prepare: u64,
+) -> Option<(u64, u64)> {
+    let deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .expect("readiness deadline fits the monotonic clock");
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
         let activation = rpc
             .consensus_status_field(port, "nextPlannedActivationHeight")
             .and_then(|value| value.parse::<u64>().ok());
         if let (Some(head), Some(activation)) = (rpc.head(port), activation) {
-            let readiness_floor = activation.saturating_sub(12);
-            if head >= readiness_floor && head.saturating_add(2) < activation {
-                return true;
+            let freeze = activation.saturating_sub(prepare);
+            if head > freeze && head.saturating_add(2) < activation {
+                return Some((activation, freeze));
             }
         }
         sleep(Duration::from_secs(2));
     }
-    false
 }
 
 /// Follower within 4 blocks of the committee (script's `lockstep`).
@@ -364,7 +493,7 @@ fn warm_promotion(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");
     world.state.joiner_addr = Some(addr.clone());
-    world.rpc.stake(&key, 1000).expect("stake");
+    world.rpc.topup(&key, 1000).expect("stake");
     world
         .localnet
         .launch_joiner(idx, &[])
@@ -373,15 +502,15 @@ fn warm_promotion(world: &mut World) {
         wait_lockstep(&world.rpc, primary, joiner_port, 30),
         "warm-restarted joiner did not sync"
     );
-    assert!(
-        wait_for_post_freeze_readiness_window(&world.rpc, primary),
-        "no post-freeze readiness window observed for late warm promotion"
+    let timeout = promotion_wait_budget(world);
+    let prepare = promotion_prepare_window(world, primary);
+    let (activation, freeze) =
+        wait_for_post_freeze_readiness_window(&world.rpc, primary, timeout, prepare)
+            .expect("post-freeze readiness window before excluded activation");
+    world.state.marker_count = Some(
+        usize::try_from(promotion_consensus_plan(&world.rpc, primary).0)
+            .expect("DKG material version fits the scenario marker"),
     );
-    let activation = world
-        .rpc
-        .consensus_status_field(primary, "nextPlannedActivationHeight")
-        .and_then(|value| value.parse::<u64>().ok())
-        .expect("planned activation height before readiness");
     let head = world.rpc.head(primary).expect("head before readiness");
     assert!(
         head < activation,
@@ -395,7 +524,29 @@ fn warm_promotion(world: &mut World) {
         "warm joiner participated before readiness and activation boundary"
     );
     world.state.activation_height = Some(activation);
-    world.rpc.confirm_ready(&key).expect("confirm ready");
+    let transaction_hash = world.rpc.confirm_ready(&key).expect("confirm ready");
+    let receipt = world
+        .rpc
+        .transaction_receipt(&transaction_hash, primary)
+        .expect("readiness receipt");
+    let outcome = crate::world::rpc::TxOutcome {
+        transaction_hash,
+        success: true,
+        receipt,
+    };
+    let mut ports = world.validators.committee_ports();
+    ports.push(joiner_port);
+    world
+        .rpc
+        .finalize_outcome(&outcome, &ports, 90)
+        .expect("readiness receipt finalized with cohort parity");
+    let readiness = outcome.block_number().expect("readiness receipt height");
+    assert!(readiness > freeze && readiness < activation,
+        "readiness {readiness} must follow freeze {freeze} and precede excluded boundary {activation}");
+    world.state.marker_height = Some(readiness);
+    eprintln!(
+        "WARM_PROMOTION_READINESS freeze={freeze} excluded={activation} receipt_height={readiness}"
+    );
 }
 
 #[when("readiness is resubmitted before the warm promotion restart")]
@@ -411,14 +562,24 @@ fn resubmit_promotion_readiness(world: &mut World) {
         .rpc
         .confirm_ready(&key)
         .expect("duplicate confirm-ready must be idempotent");
-    assert_eq!(
+    let previous_version = u64::try_from(
         world
-            .rpc
-            .consensus_status_field(primary, "nextPlannedActivationHeight")
-            .and_then(|value| value.parse::<u64>().ok()),
-        Some(planned),
-        "duplicate readiness changed the planned promotion boundary"
-    );
+            .state
+            .marker_count
+            .expect("captured excluded DKG version"),
+    )
+    .expect("scenario DKG version fits u64");
+    let readiness = world.state.marker_height.expect("readiness receipt height");
+    let prepare = promotion_prepare_window(world, primary);
+    let (version, last, next) = promotion_consensus_plan(&world.rpc, primary);
+    eligible_promotion_activation(
+        planned,
+        previous_version,
+        (version, last, next),
+        readiness,
+        prepare,
+    )
+    .expect("duplicate readiness preserves the frozen plan or its normal rollover");
     assert_eq!(
         world.rpc.validator_status(primary, &addr),
         Some(1),
@@ -471,23 +632,117 @@ fn promotion_boundary_and_recovery(world: &mut World) {
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
     let addr = world.state.joiner_addr.clone().expect("joiner addr");
-    let activation = world
+    let excluded = world
         .state
         .activation_height
-        .expect("captured promotion activation height");
-
-    for _ in 0..120 {
+        .expect("captured excluded boundary");
+    let readiness = world
+        .state
+        .marker_height
+        .expect("finalized readiness receipt height");
+    let previous_version = u64::try_from(
+        world
+            .state
+            .marker_count
+            .expect("captured excluded DKG version"),
+    )
+    .expect("scenario DKG version fits u64");
+    let prepare = promotion_prepare_window(world, primary);
+    let timeout = promotion_wait_budget(world);
+    let excluded_deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .expect("excluded rotation deadline fits the monotonic clock");
+    let mut parity_ports = world.validators.committee_ports();
+    let founders = u64::try_from(parity_ports.len()).expect("founder count fits u64");
+    parity_ports.push(joiner_port);
+    let activation = loop {
+        assert!(
+            std::time::Instant::now() < excluded_deadline,
+            "excluded rotation {excluded} never completed after readiness receipt {readiness}"
+        );
+        let (version, last, next) = promotion_consensus_plan(&world.rpc, primary);
+        if let Some(next) = eligible_promotion_activation(
+            excluded,
+            previous_version,
+            (version, last, next),
+            readiness,
+            prepare,
+        )
+        .expect("readiness belongs to the first eligible future frozen target")
+        {
+            let checkpoint = world
+                .rpc
+                .wait_finalized_checkpoint(
+                    &parity_ports,
+                    last.checked_add(2).expect("excluded checkpoint height"),
+                    90,
+                )
+                .expect("all nodes finalize the excluded shareless boundary");
+            for &port in &parity_ports {
+                assert_eq!(
+                    world
+                        .rpc
+                        .checkpoint_at(port, checkpoint.height)
+                        .expect("excluded boundary checkpoint"),
+                    checkpoint
+                );
+                assert_eq!(
+                    world.rpc.validator_status(port, &addr),
+                    Some(1),
+                    "joiner must stay PENDING across excluded boundary on {port}"
+                );
+                assert_eq!(
+                    world.rpc.has_share(port, &addr),
+                    Some(false),
+                    "joiner must stay shareless across excluded boundary on {port}"
+                );
+                assert!(!world
+                    .rpc
+                    .is_participant(port, &addr)
+                    .expect("excluded-boundary participation"));
+                assert_eq!(world.rpc.active_count(port), Some(founders));
+                assert_eq!(world.rpc.consensus_count(port), Some(founders));
+            }
+            eprintln!("WARM_PROMOTION_EXCLUDED planned={excluded} observed={last} readiness={readiness} eligible_freeze={} eligible_activation={next}", next - prepare);
+            break next;
+        }
+        assert!(!world
+            .rpc
+            .is_participant(primary, &addr)
+            .expect("participation before excluded rotation"));
+        sleep(Duration::from_secs(2));
+    };
+    world.state.activation_height = Some(activation);
+    let activation_deadline = std::time::Instant::now()
+        .checked_add(timeout)
+        .expect("eligible promotion deadline fits the monotonic clock");
+    loop {
+        assert!(std::time::Instant::now() < activation_deadline,
+            "eligible promotion timed out: excluded {excluded}, readiness {readiness}, eligible freeze {}, activation {activation}, status {:?}",
+            activation - prepare, world.rpc.validator_status(primary, &addr));
         let head = world.rpc.head(primary).expect("committee head");
+        let (version, last, _) = promotion_consensus_plan(&world.rpc, primary);
         let participant = world
             .rpc
             .is_participant(primary, &addr)
             .expect("observe consensus participation");
-        if head < activation {
-            assert!(
-                !participant,
-                "warm joiner participated at {head} before activation {activation}"
-            );
-        } else if participant {
+        if world
+            .rpc
+            .head(primary)
+            .expect("recheck participation observation head")
+            != head
+        {
+            continue;
+        }
+        if promotion_participation_observed(
+            previous_version,
+            (version, last),
+            head,
+            activation,
+            participant,
+        )
+        .expect("joiner participates in the first eligible rotation only")
+        {
             break;
         }
         sleep(Duration::from_secs(2));
@@ -519,8 +774,16 @@ fn promotion_boundary_and_recovery(world: &mut World) {
         .rpc
         .consensus_count(primary)
         .expect("primary consensus count");
-    let mut parity_ports = world.validators.committee_ports();
-    parity_ports.push(joiner_port);
+    assert_eq!(
+        expected_active,
+        founders + 1,
+        "eligible promotion must retain founders and add joiner"
+    );
+    assert_eq!(
+        expected_consensus,
+        founders + 1,
+        "eligible consensus cohort must include joiner"
+    );
     for port in parity_ports {
         assert!(
             wait_lockstep(&world.rpc, primary, port, 20),
@@ -614,6 +877,48 @@ fn promoted_activates(world: &mut World) {
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn late_readiness_uses_first_plan_after_excluded_rotation() {
+        assert_eq!(
+            eligible_promotion_activation(120, 1, (1, 60, 120), 109, 15).unwrap(),
+            None
+        );
+        assert_eq!(
+            eligible_promotion_activation(120, 1, (2, 120, 180), 109, 15).unwrap(),
+            Some(180)
+        );
+        assert_eq!(
+            eligible_promotion_activation(120, 1, (2, 123, 183), 109, 15).unwrap(),
+            Some(183)
+        );
+        for (version, last, next, readiness) in [
+            (1, 60, 180, 109),
+            (2, 120, 120, 109),
+            (2, 119, 180, 109),
+            (2, 120, 180, 165),
+            (3, 180, 240, 109),
+        ] {
+            assert!(
+                eligible_promotion_activation(120, 1, (version, last, next), readiness, 15)
+                    .is_err()
+            );
+        }
+        assert!(!promotion_participation_observed(1, (2, 120), 179, 180, false).unwrap());
+        assert!(!promotion_participation_observed(1, (3, 180), 181, 180, false).unwrap());
+        assert!(!promotion_participation_observed(1, (3, 183), 184, 180, false).unwrap());
+        assert!(promotion_participation_observed(1, (3, 183), 185, 180, true).unwrap());
+        for (version, last, head, participant) in [
+            (2, 120, 179, true),
+            (3, 180, 182, false),
+            (4, 240, 242, true),
+        ] {
+            assert!(
+                promotion_participation_observed(1, (version, last), head, 180, participant)
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn reshare_wait_covers_executed_epoch_and_grace_and_rejects_overflow() {

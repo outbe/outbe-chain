@@ -3,6 +3,9 @@ use outbe_macros::contract;
 use outbe_primitives::addresses::VALIDATOR_SET_ADDRESS;
 use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 
+/// Slot of `Staking.config_min_stake` at `STAKING_ADDRESS`.
+pub(crate) const AUTHORITATIVE_MIN_STAKE_SLOT: u64 = 0;
+
 /// Base slot of `Staking.stake_amount` at `STAKING_ADDRESS`.
 /// Amounts are native COEN base units: one whole COEN is 10^18 base units.
 pub(crate) const AUTHORITATIVE_BONDED_BASE_SLOT: u64 = 3;

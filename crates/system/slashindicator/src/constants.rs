@@ -32,8 +32,9 @@ pub const DEFAULT_VOTER_FELONY_THRESHOLD: u64 = 512;
 /// Percentage of stake slashed for one felony.
 pub const DEFAULT_SLASH_AMOUNT_PERCENT: u64 = 8;
 
-/// Percentage of the slashed amount paid to a valid evidence submitter.
-pub const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 100;
+/// Default percent of the slashed amount paid to a valid evidence submitter.
+/// The default is 0%.
+pub const DEFAULT_EVIDENCE_REWARD_PERCENT: u64 = 0;
 
 /// Storage slot of `config_slash_amount_percent`.
 pub const SLASH_AMOUNT_PERCENT_SLOT: u64 = 3;

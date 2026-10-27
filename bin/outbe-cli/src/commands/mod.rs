@@ -7,6 +7,7 @@ pub mod radicle;
 pub mod rewards;
 pub mod slash;
 pub mod stablecoin;
+pub mod stake_identity;
 pub mod staking;
 pub mod tee;
 pub mod tribute;

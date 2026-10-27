@@ -7,7 +7,7 @@ use outbe_lysis::program_v1::{
     execute_with_amounts, LysisArithmeticErrorV1, ObservationValueV1, ObservedTributeV1,
     ProgramErrorV1, ProgramInputV1, TributeInputV1,
 };
-use outbe_primitives::{nod_encryption::NodTermsV2, wwd_entity_id::derive_poseidon_entity_id};
+use outbe_primitives::{nod_encryption::NodTermsV1, wwd_entity_id::derive_poseidon_entity_id};
 use outbe_tee::lysis::{LysisNod, LysisRequest, LysisResult};
 
 use crate::errors::{Result, TeeError};
@@ -112,7 +112,7 @@ pub fn execute(
         let nod = crate::nod_encryption::encrypt_nod_for_tribute(
             secret,
             tribute,
-            NodTermsV2 {
+            NodTermsV1 {
                 chain_id: request.chain_id,
                 nod_id: action.nod_id,
                 owner: action.owner,

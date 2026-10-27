@@ -296,32 +296,10 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
 }
 
 #[test]
-fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
-    // 899 is inside the three-digit range but is not an assigned ISO 4217 code.
-    // Gem no longer refuses it. Nothing prices against it, and no settlement
-    // asset can ever report it. So it is inert, exactly as it is for a bid.
+fn issue_rejects_an_issuance_code_that_is_not_an_iso_code() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = issue_at_live_rate(
-            storage,
-            ALICE,
-            U256::from(10u64) * six_decimal_unit(),
-            899,
-            840,
-        )
-        .unwrap();
-        assert_eq!(
-            admitted_at_quote(storage, gem_id, SETTLEMENT_ASSET),
-            (840, U256::from(20u64) * six_decimal_unit())
-        );
-    });
-}
-
-#[test]
-fn issue_rejects_an_issuance_code_outside_the_three_digit_range() {
-    let rate = U256::from(2u64) * six_decimal_unit();
-    with_storage(Some(rate), |storage| {
-        for iso in [0u16, 1000u16] {
+        for iso in [0u16, 899, 1000] {
             let res = issue_at_live_rate(storage, ALICE, six_decimal_unit(), iso, 840);
             assert_eq!(
                 res.unwrap_err().to_string(),
@@ -350,8 +328,8 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
                 issued_at: T_NOW as u32,
                 issuance_currency: 840,
-                // 978 is never pushed into the reference registry here.
-                reference_currency: 978,
+                // 756 (CHF) is not a reference currency.
+                reference_currency: 756,
             },
         )
         .unwrap();
@@ -360,7 +338,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
         assert_eq!(
             res.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 978 }
+                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 756 }
             )
             .to_string()
         );

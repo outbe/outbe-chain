@@ -60,7 +60,6 @@ fn canonical(status: u8, share: bool, confirmed: bool, jailed_at: u64) -> Valida
 #[test]
 fn raw_statuses_decode_to_every_canonical_state() {
     let cases = [
-        (REGISTERED, false, false, 0, "waiting-for-stake"),
         (PENDING, false, false, 0, "waiting-for-readiness"),
         (PENDING, false, true, 0, "joining"),
         (ACTIVE, true, false, 0, "active"),
@@ -75,7 +74,6 @@ fn raw_statuses_decode_to_every_canonical_state() {
         let state = canonical(status, share, confirmed, jailed_at);
         let actual = match state.lifecycle() {
             ValidatorLifecycle::Absent => "absent",
-            ValidatorLifecycle::WaitingForStake(_) => "waiting-for-stake",
             ValidatorLifecycle::WaitingForReadiness(_) => "waiting-for-readiness",
             ValidatorLifecycle::Joining(_) => "joining",
             ValidatorLifecycle::Active(_) => "active",
@@ -95,7 +93,7 @@ fn raw_statuses_decode_to_every_canonical_state() {
 
 #[test]
 fn unknown_statuses_fail_closed() {
-    for status in 7..=u8::MAX {
+    for status in std::iter::once(REGISTERED).chain(7..=u8::MAX) {
         let raw = RawColumns {
             stake: StakeProjection::zero(),
             ..RawColumns::registered(status, false, false, 0)
@@ -107,6 +105,7 @@ fn unknown_statuses_fail_closed() {
 #[test]
 fn every_noncanonical_coupled_field_combination_fails_closed() {
     let invalid = [
+        (REGISTERED, false, false, 0),
         (REGISTERED, true, false, 0),
         (REGISTERED, false, true, 0),
         (PENDING, true, false, 0),
@@ -188,7 +187,7 @@ fn registered_identity_requires_a_nonzero_consensus_key() {
             registry_index: 1,
             consensus_pubkey: [0; 48],
             stake: StakeProjection::zero(),
-            stored_status: REGISTERED,
+            stored_status: PENDING,
             p2p_version: 0,
             p2p_payload: Vec::new(),
             history: history(),
@@ -210,7 +209,7 @@ fn p2p_version_and_payload_decode_atomically() {
             registry_index: 1,
             consensus_pubkey: KEY,
             stake: StakeProjection::zero(),
-            stored_status: REGISTERED,
+            stored_status: PENDING,
             p2p_version: P2P_ADDRESS_VERSION_V1,
             p2p_payload: encoded.clone(),
             history: history(),
@@ -232,7 +231,7 @@ fn p2p_version_and_payload_decode_atomically() {
             registry_index: 1,
             consensus_pubkey: KEY,
             stake: StakeProjection::zero(),
-            stored_status: REGISTERED,
+            stored_status: PENDING,
             p2p_version: P2P_ADDRESS_VERSION_V1,
             p2p_payload: Vec::new(),
             history: history(),
@@ -250,7 +249,7 @@ fn p2p_version_and_payload_decode_atomically() {
             registry_index: 1,
             consensus_pubkey: KEY,
             stake: StakeProjection::zero(),
-            stored_status: REGISTERED,
+            stored_status: PENDING,
             p2p_version: 99,
             p2p_payload: opaque_payload.clone(),
             history: history(),
@@ -286,16 +285,20 @@ fn predicates_follow_effective_states_not_raw_status_groups() {
 #[test]
 fn join_path_consumes_each_source_state() {
     let absent = ValidatorState::absent(ADDRESS);
-    let registered = register(absent, std::num::NonZeroU64::new(1).unwrap(), KEY, 10).unwrap();
-    let ValidatorLifecycle::WaitingForStake(registered) = registered.into_lifecycle() else {
-        panic!("expected WaitingForStake");
-    };
-    let pending = reach_minimum(
-        registered,
-        StakeProjection::new(U256::from(1_000), None),
-        U256::from(1_000),
+    let registered = register(
+        absent,
+        std::num::NonZeroU64::new(1).unwrap(),
+        (KEY, P2pInfo::Unset),
+        (
+            StakeProjection::new(U256::from(1_000), None),
+            U256::from(1_000),
+        ),
+        10,
     )
     .unwrap();
+    let ValidatorLifecycle::WaitingForReadiness(pending) = registered.into_lifecycle() else {
+        panic!("expected WaitingForReadiness");
+    };
     let joining = confirm_ready(pending);
     let active = activate_at_boundary(joining);
 
@@ -309,7 +312,7 @@ fn pending_demotion_consumes_readiness() {
     else {
         panic!("expected Joining");
     };
-    let registered = demote_joining(
+    let waiting = demote_joining(
         joining,
         StakeProjection::new(U256::from(900), Some(40)),
         U256::from(1_000),
@@ -317,7 +320,7 @@ fn pending_demotion_consumes_readiness() {
     )
     .unwrap();
     let state =
-        ValidatorState::from_lifecycle(ADDRESS, ValidatorLifecycle::WaitingForStake(registered))
+        ValidatorState::from_lifecycle(ADDRESS, ValidatorLifecycle::WaitingForReadiness(waiting))
             .unwrap();
     assert!(!state.join_confirmed());
     assert!(!state.has_bls_share());
@@ -441,11 +444,18 @@ fn inactive_reregistration_resets_lifecycle_information() {
         panic!("expected Inactive");
     };
     let index = inactive.registry_index;
-    let registered = reregister(inactive, [9; 48], 100).unwrap();
+    let stake = StakeProjection::new(U256::from(1_000), None);
+    let registered = reregister(
+        inactive,
+        ([9; 48], P2pInfo::Unset),
+        (stake, U256::from(1_000)),
+        100,
+    )
+    .unwrap();
     assert_eq!(registered.registry_index, index);
     assert_eq!(registered.consensus_pubkey, [9; 48]);
     assert_eq!(registered.p2p, P2pInfo::Unset);
-    assert_eq!(registered.stake, StakeProjection::zero());
+    assert_eq!(registered.stake, stake);
     assert_eq!(registered.history, ValidatorHistory::fresh(100));
 }
 
@@ -494,19 +504,17 @@ fn jail_and_retained_jail_exit_reject_invalid_transition_inputs() {
 }
 
 #[test]
-fn waiting_for_readiness_demotion_and_active_retention_are_explicit() {
+fn waiting_for_readiness_unbonding_and_active_retention_are_explicit() {
     let ValidatorLifecycle::WaitingForReadiness(waiting) =
         canonical(PENDING, false, false, 0).into_lifecycle()
     else {
         panic!("expected WaitingForReadiness");
     };
-    let registered = demote_waiting_for_readiness(
-        waiting,
-        StakeProjection::new(U256::from(999), Some(70)),
-        U256::from(1_000),
-    )
-    .unwrap();
-    assert_eq!(registered.stake.bonded(), U256::from(999));
+    let unbonding =
+        unbond_waiting_for_readiness(waiting, StakeProjection::new(U256::ZERO, Some(70)), 33)
+            .unwrap();
+    assert_eq!(unbonding.stake.bonded(), U256::ZERO);
+    assert_eq!(unbonding.history.last_deactivated_at_height(), Some(33));
 
     let ValidatorLifecycle::Active(active) = canonical(ACTIVE, true, false, 0).into_lifecycle()
     else {
@@ -984,12 +992,8 @@ fn history_updates_keep_exact_errors_and_precedence() {
         );
     }
 
-    let updated = with_history(
-        lifecycle(REGISTERED, false, false, 0),
-        deactivated(Some(40)),
-    )
-    .unwrap();
-    let ValidatorLifecycle::WaitingForStake(waiting) = updated else {
+    let updated = with_history(lifecycle(PENDING, false, false, 0), deactivated(Some(40))).unwrap();
+    let ValidatorLifecycle::WaitingForReadiness(waiting) = updated else {
         panic!("history update changed the lifecycle variant");
     };
     assert_eq!(waiting.history, deactivated(Some(40)));
@@ -1013,7 +1017,7 @@ fn stake_and_p2p_updates_keep_exact_errors_and_precedence() {
     );
     assert_eq!(
         revert_data(with_stake(ValidatorLifecycle::Absent, stake)),
-        crate::precompile::IValidatorSet::CannotStakeBeforeRegistration {}.abi_encode()
+        crate::precompile::IValidatorSet::ValidatorNotRegistered {}.abi_encode()
     );
     assert_eq!(
         revert_data(with_stake(inactive.clone(), stake)),
@@ -1032,19 +1036,39 @@ fn stake_and_p2p_updates_keep_exact_errors_and_precedence() {
 
 #[test]
 fn demoted_joiner_exit_requires_a_nonzero_height() {
-    let ValidatorLifecycle::WaitingForStake(waiting) =
-        canonical(REGISTERED, false, false, 0).into_lifecycle()
+    let ValidatorLifecycle::Unbonding(unbonding) =
+        canonical(UNBONDING, false, false, 0).into_lifecycle()
     else {
-        panic!("REGISTERED did not decode to WaitingForStake");
+        panic!("UNBONDING did not decode to Unbonding");
     };
     assert_eq!(
-        revert_data(exit_waiting_for_stake_at_boundary(waiting.clone(), 0)),
+        revert_data(exit_unbonding_at_boundary(unbonding.clone(), 0)),
         crate::precompile::IValidatorSet::ValidatorDeactivationHeightZero {}.abi_encode()
     );
-    let exiting = exit_waiting_for_stake_at_boundary(waiting.clone(), 77).unwrap();
+    let exiting = exit_unbonding_at_boundary(unbonding.clone(), 77).unwrap();
     assert_eq!(exiting.history.last_deactivated_at_height, Some(77));
-    assert_eq!(exiting.stake, waiting.stake);
-    assert_eq!(exiting.registry_index, waiting.registry_index);
+    assert_eq!(exiting.stake, unbonding.stake);
+    assert_eq!(exiting.registry_index, unbonding.registry_index);
+
+    let ValidatorLifecycle::Inactive(inactive) =
+        canonical(INACTIVE, false, false, 0).into_lifecycle()
+    else {
+        panic!("INACTIVE did not decode to Inactive");
+    };
+    assert_eq!(
+        revert_data(exit_inactive_at_boundary(inactive.clone(), 0)),
+        crate::precompile::IValidatorSet::ValidatorDeactivationHeightZero {}.abi_encode()
+    );
+    let exiting_from_inactive = exit_inactive_at_boundary(inactive.clone(), 77).unwrap();
+    assert_eq!(
+        exiting_from_inactive.history.last_deactivated_at_height,
+        Some(77)
+    );
+    assert_eq!(exiting_from_inactive.stake, StakeProjection::zero());
+    assert_eq!(
+        exiting_from_inactive.registry_index,
+        inactive.registry_index
+    );
 }
 
 #[test]

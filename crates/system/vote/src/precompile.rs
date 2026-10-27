@@ -10,12 +10,12 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{
-    get_proposal, get_proposal_bond, get_proposal_voters, list_proposals, list_proposals_by_status,
-    unsettled_bond_liabilities,
+    escrowed_bond_total, get_proposal, get_proposal_bond, get_proposal_voters, list_proposals,
+    list_proposals_by_status,
 };
 use crate::errors::VoteError;
 use crate::handlers::VoteTargetRegistry;
-use crate::schema::{BondSettlement, Vote};
+use crate::schema::{BondState, Vote};
 use crate::state::{ProposalInfo, ProposalStatus, ProposalSubmission, VoteTally};
 
 pub use crate::abi::IVote;
@@ -97,10 +97,10 @@ fn dispatch_vote_call(
             let bond = get_proposal_bond(storage.clone(), c.proposalId)?;
             Ok(IVote::getProposalBondReturn {
                 amount: bond.amount,
-                settlement: bond_settlement_to_abi(bond.settlement),
+                state: bond_state_to_abi(bond.state),
             })
         }),
-        unsettledBondLiabilities(c) => view(c, |_| unsettled_bond_liabilities(storage.clone())),
+        escrowedBondTotal(c) => view(c, |_| escrowed_bond_total(storage.clone())),
     }
 }
 
@@ -146,11 +146,11 @@ fn proposal_status_from_abi(status: IVote::ProposalStatus) -> ProposalStatus {
     }
 }
 
-fn bond_settlement_to_abi(settlement: BondSettlement) -> IVote::BondSettlement {
-    match settlement {
-        BondSettlement::NoBond => IVote::BondSettlement::NoBond,
-        BondSettlement::Unsettled => IVote::BondSettlement::Unsettled,
-        BondSettlement::Refunded => IVote::BondSettlement::Refunded,
-        BondSettlement::Burned => IVote::BondSettlement::Burned,
+fn bond_state_to_abi(state: BondState) -> IVote::BondState {
+    match state {
+        BondState::NoBond => IVote::BondState::NoBond,
+        BondState::Escrowed => IVote::BondState::Escrowed,
+        BondState::Refunded => IVote::BondState::Refunded,
+        BondState::Burned => IVote::BondState::Burned,
     }
 }

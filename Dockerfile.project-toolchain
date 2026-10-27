@@ -17,7 +17,7 @@ ENV CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup
 
 COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
-COPY scripts/release/verify_project_toolchain.py /opt/outbe/toolchain/verify_project_toolchain.py
+COPY release/scripts/verify-toolchain-in-container.sh /opt/outbe/toolchain/verify-toolchain-in-container.sh
 
 # Freeze the Ubuntu archive at one snapshot instant so the resolved package
 # closure is reproducible; the base image points at the live archive, where the
@@ -40,8 +40,8 @@ RUN apt-get update && \
       libssl-dev=3.0.13-0ubuntu3.12 \
       libstdc++6=14.2.0-4ubuntu2~24.04.1 \
       pkg-config=1.8.1-2build1 && \
-    python3 /opt/outbe/toolchain/verify_project_toolchain.py \
-      --verify-apt-inputs \
+    /opt/outbe/toolchain/verify-toolchain-in-container.sh \
+      verify-apt-inputs \
       --pin /opt/outbe/toolchain/project-toolchain-v1.json \
       --apt-root / \
       --deb-dir /var/cache/apt/archives && \
@@ -71,11 +71,11 @@ RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
     test "$(bb --version | head -n 1)" = "5.0.0-nightly.20260522"
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
-COPY scripts/release/verify_dcap_native_qvl.py /opt/outbe/toolchain/verify_dcap_native_qvl.py
 
 RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
     test "$(dpkg-query -W -f='${Version}' gramine)" = "1.9" && \
-    python3 /opt/outbe/toolchain/verify_dcap_native_qvl.py \
+    /opt/outbe/toolchain/verify-toolchain-in-container.sh \
+      verify-qvl \
       --manifest /opt/outbe/toolchain/dcap-native-qvl-v1.json \
       --root /
 
@@ -91,7 +91,7 @@ ENTRYPOINT []
 # they are the same layers. Nothing here may modify that inherited surface -
 # this stage only adds.
 #
-# Never use this stage for a release build. `scripts/release/reproducible-build.sh`
+# Never use this stage for a release build. `release/scripts/reproducible-build.sh`
 # targets `artifacts`, which descends from `toolchain` directly.
 FROM toolchain AS ci
 
@@ -215,7 +215,7 @@ ENV CFLAGS=${REPRODUCIBLE_CFLAGS} \
     VERGEN_GIT_SHA=${SOURCE_COMMIT} \
     ZERO_AR_DATE=1
 
-RUN scripts/release/build-elfs-in-container.sh
+RUN release/scripts/build-elfs-in-container.sh
 
 FROM scratch AS artifacts
 COPY --from=builder /out/ /

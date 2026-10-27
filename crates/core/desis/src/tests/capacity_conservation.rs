@@ -51,7 +51,6 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             .unwrap();
         let pair = api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(840).unwrap();
         for offset in 0..5 {
             let day = previous_date_key(timestamp_to_date_key(NOW + offset * SECONDS_PER_DAY))
                 .expect("date step");
@@ -222,7 +221,9 @@ fn full_sale_returns_only_the_dust_once() {
     assert!(p
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
-        .all(|e| outbe_intex::precompile::IIntex::IntexGroupExpired::decode_log_data(e).is_err()));
+        .all(
+            |e| outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).is_err()
+        ));
 }
 
 #[test]

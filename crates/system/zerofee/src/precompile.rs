@@ -34,9 +34,9 @@ sol!(
 ///
 /// Two view methods, both anchored to the current block's UTC day so a
 /// caller never has to supply or reconcile the day themselves:
-///   - [`authorizeSponsorship`] - the bool "can this signer send a free
+///   - `authorizeSponsorship` - the bool "can this signer send a free
 ///     tx right now" predicate.
-///   - [`getCounter`] - the effective `(day, count)` for today, with the
+///   - `getCounter` - the effective `(day, count)` for today, with the
 ///     lazy day-reset already applied.
 ///
 /// The raw packed slot (`date_key << 32 | count`) is still readable via
@@ -92,6 +92,10 @@ impl ZeroFeeContract<'_> {
     /// Current UTC day key derived from the block timestamp. Shared by
     /// the two view methods so both apply the lazy reset against the
     /// same day the executor would use.
+    ///
+    /// The block proposer supplies the timestamp. See
+    /// [`crate::authorize_sponsorship`] for the parent-relative drift bound,
+    /// its genesis exception, and the block-validation assumptions.
     fn current_day(&self) -> Result<u32> {
         let now_secs = self.storage.now_secs()?;
         Ok(timestamp_to_date_key(now_secs))

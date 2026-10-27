@@ -90,6 +90,10 @@ pub(crate) use boundary::{apply_boundary_outcome, prepare_boundary_epoch_counter
 
 pub(crate) use system_execution::execute::system_tx_failure_code_for_result;
 
+pub use zero_fee::{
+    is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
+    SPONSORED_BLOCK_BUDGET_EXCEEDED,
+};
 pub(crate) use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
 
 #[cfg(test)]

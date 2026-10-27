@@ -65,7 +65,7 @@ impl Rpc {
     pub(crate) fn private_nod_read(
         &self,
         index: usize,
-        nod: &outbe_primitives::nod_encryption::EncryptedNodV2,
+        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
     ) -> Result<U256> {
         use outbe_tee::{
             nod_mine,
@@ -78,8 +78,8 @@ impl Rpc {
         )?;
         let expected = nod_mine::nod_read_hash(nod)?;
         let key = session.attestation_pub();
-        let response = session.request(&EnclaveRequest::ReadNodAmountV2 { nod: nod.clone() })?;
-        let EnclaveResponse::NodAmountReadV2 {
+        let response = session.request(&EnclaveRequest::ReadNodAmountV1 { nod: nod.clone() })?;
+        let EnclaveResponse::NodAmountReadV1 {
             amount,
             inputs_canonical_hash,
             attestation_tag,

@@ -22,11 +22,11 @@ pub struct HarnessRefreshOptions<'a> {
 pub(super) const GENESIS_TOOLING_INPUTS: [(&str, &str); 2] = [
     (
         "genesis_validator_seeder_source",
-        "scripts/genesis_seed_validators.py",
+        "bin/outbe-genesis-cli/src/seed_validators.rs",
     ),
     (
         "genesis_validator_seeder_layout_test",
-        "scripts/test_seed_genesis_protocol_constants.py",
+        "bin/outbe-genesis-cli/tests/protocol_constants.rs",
     ),
 ];
 

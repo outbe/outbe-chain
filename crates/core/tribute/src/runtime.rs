@@ -210,7 +210,7 @@ impl TributeContract<'_> {
     }
 
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        require_day_seal_lease(&self.storage_handle())?;
+        require_day_seal_lease(&self.storage_handle(), day)?;
         self.set_day_sealed(day, true)?;
         self.emit(ITribute::TributeWorldwideDaySealed {
             worldwideDay: day.into(),
@@ -377,8 +377,12 @@ impl TributeContract<'_> {
                 currency: record.reference_currency,
             })?;
 
-            let encrypted_nod = outbe_primitives::nod_encryption::encode_v1_nod(
-                outbe_primitives::nod_encryption::NodTermsV2 {
+            let encrypted_tribute = record
+                .encrypted()
+                .ok_or(TributeError::InvalidEncryptedEncoding)?;
+            let encrypted_nod = crate::enclave_client::encrypt_nod_for_tribute(
+                encrypted_tribute,
+                outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: storage.chain_id()?,
                     nod_id: tribute_id,
                     owner: record.owner,
@@ -389,7 +393,8 @@ impl TributeContract<'_> {
                     entry_price_minor: gratis_day_price,
                 },
                 gratis_load_minor,
-            );
+            )
+            .map_err(TributeError::private_amount_read_failed)?;
             outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
 
             // Atomically burn the Tribute upon Nod creation, keeping partition accounting consistent.
@@ -418,7 +423,7 @@ impl TributeContract<'_> {
 #[derive(Clone, Copy)]
 enum DayLease {
     InitGenesis,
-    CycleAllocation,
+    CycleAllocation(WorldwideDay),
     ProcessReady,
     AdvanceDue,
 }
@@ -426,7 +431,9 @@ enum DayLease {
 fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()> {
     match lease {
         DayLease::InitGenesis => storage.require_metadosis_init_genesis(),
-        DayLease::CycleAllocation => storage.require_metadosis_cycle_allocation(),
+        DayLease::CycleAllocation(day) => {
+            storage.require_metadosis_cycle_allocation(day.to_timestamp_utc())
+        }
         DayLease::ProcessReady => storage.require_metadosis_process_ready(),
         DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
     }
@@ -455,12 +462,15 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
 }
 
 /// Init-genesis, cycle allocation, and process-ready create worldwide days.
-pub(crate) fn require_worldwide_day_creation_lease(storage: &StorageHandle<'_>) -> Result<()> {
+pub(crate) fn require_worldwide_day_creation_lease(
+    storage: &StorageHandle<'_>,
+    day: WorldwideDay,
+) -> Result<()> {
     accept_day_lease(
         storage,
         &[
             DayLease::InitGenesis,
-            DayLease::CycleAllocation,
+            DayLease::CycleAllocation(day),
             DayLease::ProcessReady,
         ],
     )
@@ -472,12 +482,12 @@ pub(crate) fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -
 }
 
 /// Creation, offering sync, failure, and settlement each seal under their own binding.
-pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<()> {
     accept_day_lease(
         storage,
         &[
             DayLease::InitGenesis,
-            DayLease::CycleAllocation,
+            DayLease::CycleAllocation(day),
             DayLease::ProcessReady,
             DayLease::AdvanceDue,
         ],

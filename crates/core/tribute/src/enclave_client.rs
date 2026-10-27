@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::{
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
     tribute_day_encryption::EncryptedTributeDayAmountV2,
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
 };
@@ -44,6 +45,25 @@ pub(crate) fn read_amounts(
         .into_iter()
         .next()
         .ok_or(TransportError::UnexpectedResponse)
+}
+
+pub(crate) fn encrypt_nod_for_tribute(
+    tribute: &EncryptedTributeV2,
+    terms: NodTermsV1,
+    amount: U256,
+) -> Result<EncryptedNodV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::nod_encryption::encrypt_nod_for_tribute(
+            key,
+            tribute,
+            terms.clone(),
+            amount,
+        )
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::nod_mine::encrypt_nod_for_tribute(tribute, terms, amount)
 }
 
 /// Explicit test seam using the real cryptographic engines, without transport.

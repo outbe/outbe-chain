@@ -1,4 +1,4 @@
-//! Dedicated production-chain acceptance for private NOD creation and exercise.
+//! Dedicated production-chain acceptance for private NOD creation and mining.
 use super::entity_lifecycle::chain::settlement_read;
 use crate::internal::{addresses, eth, nod_keys};
 use crate::world::{rpc::FinalizedCheckpoint, World};
@@ -93,7 +93,7 @@ fn verify_encrypted_nod(world: &mut World) {
 fn assert_nod_state(
     world: &World,
     validator: (usize, u16),
-    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV1,
     checkpoint: FinalizedCheckpoint,
 ) -> Vec<u8> {
     let (index, peer) = validator;
@@ -106,7 +106,7 @@ fn assert_nod_state(
         .expect("encrypted Nod is present");
     assert_eq!(&item.encrypted, encrypted);
     let body_bytes =
-        outbe_primitives::entity_codec::encode_nod_item_v2(&outbe_nod::canonical_item(&item))
+        outbe_primitives::entity_codec::encode_nod_item_v1(&outbe_nod::canonical_item(&item))
             .expect("canonical encrypted Nod");
     let view = world
         .rpc
@@ -126,7 +126,7 @@ fn assert_nod_state(
 
 fn assert_encrypted_metadata(
     url: &str,
-    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV1,
 ) {
     let uri: String = eth::read_call_result(
         url,
@@ -166,8 +166,8 @@ fn assert_encrypted_metadata(
     );
 }
 
-#[when("the encrypted NOD is paid and exercised through a relayer across restarts")]
-fn exercise(world: &mut World) {
+#[when("the encrypted NOD is paid and mined through a relayer across restarts")]
+fn pay_and_mine(world: &mut World) {
     // A fresh settlement asset/vault is installed through the same public fixture as B12.
     super::settlement::deploy_settlement_fixture(world);
     let day = world
@@ -177,7 +177,7 @@ fn exercise(world: &mut World) {
         .expect("native Lysis day")
         .parse()
         .expect("numeric WWD");
-    super::settlement::exercise_encrypted_nod(world, day);
+    super::settlement::mine_encrypted_nod(world, day);
 }
 
 #[then("the removed Gratis supply selector rejects calls on every validator")]
@@ -202,7 +202,7 @@ fn supply_removed(world: &mut World) {
 
 fn assert_native_issuance(
     world: &World,
-    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV2,
+    encrypted: &outbe_primitives::nod_encryption::EncryptedNodV1,
     height: u64,
 ) {
     let url = world.rpc.url(world.validators.primary_port());

@@ -15,9 +15,9 @@ use cucumber::then;
 use cucumber::when;
 
 /// Restart at the earliest durable join checkpoint: registration, P2P identity
-/// and enclave join are committed. No stake/readiness or DKG side effect is
-/// committed.
-#[when("a registered joining node and enclave restart before staking")]
+/// and enclave join commit with the initial bond. Readiness and DKG
+/// state remain unchanged.
+#[when("a staked PENDING node and enclave restart before readiness")]
 fn restart_registered_joiner_before_staking(world: &mut World) {
     let idx = world.validators.joiner_index();
     world
@@ -32,12 +32,12 @@ fn restart_registered_joiner_before_staking(world: &mut World) {
     let key = world.validators.joiner().evm_key().expect("joiner key");
     world.state.joiner_addr = Some(world.rpc.address_of(&key).expect("joiner identity"));
     restart_capture_incarnations(world, idx).expect("capture registered identity and owners");
-    restart_pin_before(world, 0, idx).expect("canonical zero-stake REGISTERED checkpoint");
+    restart_pin_before(world, 1, idx).expect("canonical bonded PENDING checkpoint");
     restart_joiner_pair(world, idx, false).expect("restart exact registered node and enclave");
 }
 
 /// The restart must preserve exactly the registered pre-state. Only subsequent
-/// stake/readiness may create one pending target and one activation.
+/// topup/readiness may create one confirmed target and one activation.
 #[then("registration survives and the join can activate once")]
 fn registered_restart_then_join_activates(world: &mut World) {
     let idx = world.validators.joiner_index();
@@ -46,12 +46,12 @@ fn registered_restart_then_join_activates(world: &mut World) {
         .expect("registered restart makes all-five fresh finality");
     let state = restart_snapshot(world, checkpoint, &addr, "registered_restart_before_stake")
         .expect("pinned registered restart state");
-    restart_require_membership(world, &state, 0)
-        .expect("restart preserves registration and zero stake");
+    restart_require_membership(world, &state, 1)
+        .expect("restart preserves registration and bonded stake");
     restart_check_logs(world, idx, true, false)
         .expect("registered enclave recovered its sealed identity");
     let key = world.validators.joiner().evm_key().expect("joiner key");
-    let stake = world.rpc.stake(&key, 1000).expect("stake after restart");
+    let stake = world.rpc.topup(&key, 1000).expect("stake after restart");
     let staked = restart_finalize_hash(world, &stake).expect("finalized stake on all five nodes");
     let state = restart_snapshot(world, staked, &addr, "registered_restart_staked")
         .expect("pinned pending stake");

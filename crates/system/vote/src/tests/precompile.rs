@@ -7,7 +7,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::precompile::{dispatch_with_handlers, IVote};
-use crate::schema::{BondSettlement, Vote};
+use crate::schema::{BondState, Vote};
 
 use super::{
     assert_reverts_with, create_proposal_test, create_update_proposal, empty_update_payload,
@@ -245,10 +245,7 @@ fn custom_window_preserves_target_bond_rules() {
     let id = IVote::createProposalWithVotingWindowCall::abi_decode_returns(&ret).unwrap();
     let vote = Vote::new(storage);
     assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123));
-    assert_eq!(
-        vote.proposal_bond(id).unwrap().settlement,
-        BondSettlement::Unsettled
-    );
+    assert_eq!(vote.proposal_bond(id).unwrap().state, BondState::Escrowed);
     assert_eq!(
         vote.proposals
             .get(id)
@@ -300,8 +297,8 @@ fn dispatch_create_proposal_accepts_exact_public_bond_only() {
         let proposal_id = IVote::createProposalCall::abi_decode_returns(&output).unwrap();
         let vote = Vote::new(storage);
         assert_eq!(
-            vote.proposal_bond(proposal_id).unwrap().settlement,
-            BondSettlement::Unsettled
+            vote.proposal_bond(proposal_id).unwrap().state,
+            BondState::Escrowed
         );
         assert_eq!(vote.bond_liabilities().unwrap(), U256::from(123u64));
     }
@@ -344,7 +341,7 @@ fn dispatch_rejects_non_zero_value() {
 }
 
 #[test]
-fn bond_views_return_legacy_no_bond_and_recorded_liability() {
+fn bond_views_return_legacy_no_bond_and_the_escrowed_bond_total() {
     with_vote_provider(100, |storage| {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
@@ -357,14 +354,16 @@ fn bond_views_return_legacy_no_bond_and_recorded_liability() {
         )
         .unwrap();
         assert_eq!(bond.amount, U256::ZERO);
-        assert_eq!(bond.settlement, IVote::BondSettlement::NoBond);
+        assert_eq!(bond.state, IVote::BondState::NoBond);
 
-        let liability_data = IVote::unsettledBondLiabilitiesCall {}.abi_encode();
-        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
-            &dispatch(storage.clone(), &liability_data, PROPOSER, U256::ZERO).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(liabilities, U256::ZERO);
+        let total_data = IVote::escrowedBondTotalCall {}.abi_encode();
+        let escrowed_total = || {
+            IVote::escrowedBondTotalCall::abi_decode_returns(
+                &dispatch(storage.clone(), &total_data, PROPOSER, U256::ZERO).unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(escrowed_total(), U256::ZERO);
 
         vote.record_proposal_bond(proposal_id, U256::from(123u64))
             .unwrap();
@@ -373,12 +372,24 @@ fn bond_views_return_legacy_no_bond_and_recorded_liability() {
         )
         .unwrap();
         assert_eq!(bond.amount, U256::from(123u64));
-        assert_eq!(bond.settlement, IVote::BondSettlement::Unsettled);
-        let liabilities = IVote::unsettledBondLiabilitiesCall::abi_decode_returns(
-            &dispatch(storage, &liability_data, PROPOSER, U256::ZERO).unwrap(),
+        assert_eq!(bond.state, IVote::BondState::Escrowed);
+        assert_eq!(escrowed_total(), U256::from(123u64));
+
+        // The total is the sum of the escrowed bonds only.
+        let second_id = create_update_proposal(&mut vote, VOTER_A, 100).unwrap();
+        vote.record_proposal_bond(second_id, U256::from(77u64))
+            .unwrap();
+        assert_eq!(escrowed_total(), U256::from(200u64));
+        vote.set_bond_state(proposal_id, BondState::Refunded)
+            .unwrap();
+        assert_eq!(escrowed_total(), U256::from(77u64));
+        let bond = IVote::getProposalBondCall::abi_decode_returns(
+            &dispatch(storage.clone(), &bond_data, PROPOSER, U256::ZERO).unwrap(),
         )
         .unwrap();
-        assert_eq!(liabilities, U256::from(123u64));
+        assert_eq!(bond.state, IVote::BondState::Refunded);
+        vote.set_bond_state(second_id, BondState::Burned).unwrap();
+        assert_eq!(escrowed_total(), U256::ZERO);
     });
 }
 

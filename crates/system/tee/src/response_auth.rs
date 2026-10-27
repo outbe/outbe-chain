@@ -89,7 +89,7 @@ impl NodRejectionKind {
 }
 
 const MINT_REJECTED: NodRejectionKind = NodRejectionKind::new(
-    b"outbe/nod/mint-rejected/v2",
+    b"outbe/nod/mint-rejected/v1",
     TransportError::NodMintRejected,
 );
 
@@ -114,7 +114,7 @@ impl NodOperation {
         let (kind, inputs_canonical_hash, rejection) = match (self, response) {
             (
                 Self::Mine,
-                EnclaveResponse::EncryptedNodMintRejectedV2 {
+                EnclaveResponse::EncryptedNodMintRejectedV1 {
                     reason,
                     inputs_canonical_hash,
                     attestation_tag,
@@ -148,7 +148,7 @@ mod rejection_tests {
     use ed25519_dalek::{Signer, SigningKey};
 
     const LYSIS: &[u8] = b"outbe/lysis/rejected";
-    const MINT: &[u8] = b"outbe/nod/mint-rejected/v2";
+    const MINT: &[u8] = b"outbe/nod/mint-rejected/v1";
 
     #[test]
     fn lysis_and_mint_rejection_tags_cannot_cross_domains() {
@@ -246,11 +246,11 @@ mod response_tests {
         for (hash, domain, wrong_hash, wrong_domain) in [
             (
                 expected,
-                b"outbe/nod/mint-rejected/v2".as_slice(),
+                b"outbe/nod/mint-rejected/v1".as_slice(),
                 false,
                 false,
             ),
-            (other, b"outbe/nod/mint-rejected/v2".as_slice(), true, false),
+            (other, b"outbe/nod/mint-rejected/v1".as_slice(), true, false),
             (expected, b"outbe/lysis/rejected".as_slice(), false, true),
         ] {
             let reason = "mint rejected".to_string();
@@ -260,7 +260,7 @@ mod response_tests {
             let result = NodOperation::Mine.reject_or_unexpected::<()>(
                 &key,
                 expected,
-                EnclaveResponse::EncryptedNodMintRejectedV2 {
+                EnclaveResponse::EncryptedNodMintRejectedV1 {
                     reason,
                     inputs_canonical_hash: hash,
                     attestation_tag: tag.to_vec(),
