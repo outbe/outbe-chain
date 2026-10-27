@@ -25,7 +25,8 @@ impl OracleContract<'_> {
     ///   rounds the window's blocks allowed.
     ///
     /// Hours that do not count contribute neither price nor volume. `None` when
-    /// the window fails a test, holds no observation, or has no positive price.
+    /// the window has no hour note, fails a test, holds no observation, or has
+    /// no positive price.
     pub fn finalized_window_vwap(
         &self,
         pair: AddressPair,
@@ -52,12 +53,12 @@ impl OracleContract<'_> {
         cutoff: u64,
         share: (u64, u64),
     ) -> Result<Option<U256>> {
-        let vwap = match self.window_block_bounds(start, cutoff)? {
-            Some(bounds) => self.covered_window_vwap(pair, start, &bounds, share)?,
-            // No block span to judge against (hours recorded before this
-            // rule, or a window off the hour grid): unjudged, as before.
-            None => self.try_calculate_vwap(pair, start, cutoff)?,
+        // No block span to judge against (no hour note, or a window off the
+        // hour grid): no VWAP.
+        let Some(bounds) = self.window_block_bounds(start, cutoff)? else {
+            return Ok(None);
         };
+        let vwap = self.covered_window_vwap(pair, start, &bounds, share)?;
         Ok(vwap.filter(|vwap| !vwap.is_zero()))
     }
 

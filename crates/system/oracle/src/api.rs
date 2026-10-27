@@ -16,7 +16,7 @@ pub use crate::window::{
 
 use alloy_primitives::{Address, U256};
 
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::{previous_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 /// Validates that `iso_code` is a reference currency.
@@ -327,27 +327,31 @@ pub fn get_worldwide_day_vwap_for_pair(
     oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
-/// Every reference currency the closed UTC day `utc_day` priced, ascending by
-/// currency. A currency is present when its `COEN/<iso>` pair is registered and
-/// the day left a non-zero VWAP for it. An unpriced currency is absent rather
-/// than zero. It never invokes calculation. A stored value is already finalized.
-pub fn priced_reference_currencies(
+/// Every reference currency priced for the emission day `day`, ascending by
+/// currency, with the VWAP of `day` as its entry price. A currency is priced
+/// when its `COEN/<iso>` pair is registered and both `day` and the day before
+/// left a non-zero VWAP for it. An unpriced currency is absent rather than
+/// zero. It never invokes calculation. A stored value is already finalized.
+pub fn priced_reference_currencies_of_day(
     storage: StorageHandle,
-    utc_day: u32,
+    day: u32,
 ) -> Result<Vec<(u16, U256)>> {
     let oracle = OracleContract::new(storage);
+    let day_before = previous_date_key(day).map_err(crate::errors::date_step_error)?;
+    let vwap_of = |day, index| -> Result<Option<U256>> {
+        Ok(oracle
+            .get_utc_day_vwap_for_pair(day, index)?
+            .filter(|value| !value.is_zero()))
+    };
     let mut priced = Vec::new();
     // The list is sorted, so the result is ascending by currency. The day-type
     // currency is one of them, priced from its own pair like every other.
     for iso_code in REFERENCE_CURRENCIES {
         let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
-        if index == 0 {
+        if index == 0 || vwap_of(day_before, index)?.is_none() {
             continue;
         }
-        if let Some(vwap) = oracle
-            .get_utc_day_vwap_for_pair(utc_day, index)?
-            .filter(|value| !value.is_zero())
-        {
+        if let Some(vwap) = vwap_of(day, index)? {
             priced.push((iso_code, vwap));
         }
     }

@@ -74,33 +74,21 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // below the threshold and fails the call.
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        let mut oracle = OracleContract::new(s.clone());
+        let oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
         let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
 
-        // Oldest-first: snapshot + finalize 21 closed days ending yesterday.
-        let mut days = [0u32; 21];
-        let mut d = last_closed_day;
-        for slot in days.iter_mut().rev() {
-            *slot = d;
-            d = previous_date_key(d).expect("date step");
-        }
-        for day in days {
-            let noon = date_key_to_utc_timestamp(day) + DAY / 2;
-            oracle
-                .write_snapshot(
-                    noon,
-                    &[(
-                        outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO),
-                        breach,
-                        U256::from(1),
-                    )],
-                )
-                .unwrap();
-            oracle.finalize_utc_day_vwap(day).unwrap();
+        // The finalized VWAP of the 21 closed days ending yesterday.
+        let index = oracle
+            .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO))
+            .unwrap();
+        let mut day = last_closed_day;
+        for _ in 0..21 {
+            oracle.record_utc_day_vwap(day, index, breach).unwrap();
+            day = previous_date_key(day).expect("date step");
         }
         // The begin-block hook advances the watermark after finalizing.
         oracle

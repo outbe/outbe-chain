@@ -181,14 +181,17 @@ fn register_pair(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
 }
 
-/// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads.
+/// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads,
+/// and into the day before it, which a priced currency also needs.
 fn seed_price(s: &StorageHandle, now: u64, iso_code: u16, pair_id: u32, rate: u128) {
     let oracle = OracleContract::new(s.clone());
     register_pair(&oracle, iso_code, pair_id);
     let day = price_day(now);
-    oracle
-        .record_utc_day_vwap(day, pair_id, U256::from(rate))
-        .unwrap();
+    for priced in [previous_date_key(day).expect("date step"), day] {
+        oracle
+            .record_utc_day_vwap(priced, pair_id, U256::from(rate))
+            .unwrap();
+    }
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
     }

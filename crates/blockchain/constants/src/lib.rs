@@ -191,10 +191,13 @@ impl GenesisProtocolParametersV1 {
             self.vwap_update_interval_seconds,
             DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
         )?;
-        if !SECONDS_PER_DAY.is_multiple_of(self.vwap_update_interval_seconds) {
+        // Whole hours keep every VWAP window on the hour grid of the coverage rule.
+        if !self.vwap_update_interval_seconds.is_multiple_of(3_600)
+            || !SECONDS_PER_DAY.is_multiple_of(self.vwap_update_interval_seconds)
+        {
             return Err(ProtocolConstantsError::InvalidValue {
                 field: "oracle.vwapUpdateIntervalSeconds",
-                requirement: "divide a UTC day",
+                requirement: "be a whole number of hours that divides a UTC day",
                 actual: self.vwap_update_interval_seconds,
             });
         }

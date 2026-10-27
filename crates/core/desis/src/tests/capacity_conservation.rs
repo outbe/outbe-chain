@@ -51,8 +51,10 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             .unwrap();
         let pair = api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        for offset in 0..5 {
+        // A priced day also needs the VWAP of the day before it.
+        for offset in 0..6 {
             let day = previous_date_key(timestamp_to_date_key(NOW + offset * SECONDS_PER_DAY))
+                .and_then(previous_date_key)
                 .expect("date step");
             oracle
                 .record_utc_day_vwap(day, pair, U256::from(2_000_000))
