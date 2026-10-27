@@ -580,9 +580,9 @@ fn retire_superseded_remote_sessions_v1<P>(
 where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    if !provider
+    if provider
         .finalized_block_num_hash()?
-        .is_some_and(|head| head.number > 0)
+        .is_none_or(|head| head.number == 0)
     {
         return Ok(());
     }

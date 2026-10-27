@@ -13,7 +13,7 @@
 //!    consensus channels (all in transport startup)
 //! 4. Obtain threshold material:
 //!    a. A key absent from the latest finalized boundary: shareless verifier
-//!       material from that on-chain boundary
+//!    material from that on-chain boundary
 //!    b. From saved or pending DKG state in the keys directory
 //!    c. Via interactive DKG ceremony during fresh genesis formation
 //! 5. Enter epoch loop:
