@@ -741,6 +741,20 @@ pub(crate) fn series_call_deadline(
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
+/// When a Called series stops taking arrivals and settlements: the deadline plus the transit
+/// margin. A scenario has to wait past this one to read Forfeited.
+pub(crate) fn series_transit_close(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u64> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
+        u64::from(data.calledAt)
+            + u64::from(data.callTrigger.callNoticePeriod)
+            + u64::from(data.callTrigger.transitMargin)
+    })
+}
+
 /// The prices the engine derived at issuance: entry and call.
 pub(crate) fn series_prices(
     url: &str,
