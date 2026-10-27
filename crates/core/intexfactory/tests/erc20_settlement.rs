@@ -4,10 +4,11 @@ mod settlement;
 
 use alloy_primitives::{Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
+use outbe_intex::precompile::IIntex;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_primitives::{
-    addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
+    addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
     storage::StorageHandle,
     time::WorldwideDay,
 };
@@ -110,10 +111,10 @@ impl Rail for Intex {
 
     fn assert_kept_by_owner(self, world: &mut World<Self>) {
         let settled = world.view(
-            INTEX_NFT1155_ADDRESS,
-            INftFixture::balanceOfCall {
+            INTEX_ADDRESS,
+            IIntex::balanceOfCall {
                 account: OWNER,
-                id: U256::from_be_slice(&SERIES) | (U256::ONE << 112),
+                id: U256::from_be_slice(&SERIES),
             },
         );
         assert_eq!(settled, U256::from(UNITS));

@@ -45,19 +45,6 @@ pub fn mine_promis(
     storage.clone().with_checkpoint(|| {
         factory.write_mine_seq(series_id, owner, next_seq)?;
 
-        // Burn Settled from owner on the NFT.
-        storage.call(
-            INTEX_NFT1155_ADDRESS,
-            U256::ZERO,
-            IIntexNFT1155::burnSettledCall {
-                owner,
-                seriesId: series_id.into(),
-                units,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-
         let mined = u32::try_from(units).map_err(|_| IntexFactoryError::MinedUnitsExceedSeries)?;
         outbe_intex::api::record_mined_units(storage, series_id, owner, mined)?;
         outbe_intex::api::release_if_spent(storage, series_id)?;

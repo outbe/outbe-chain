@@ -143,7 +143,7 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
     storage.set_timestamp(U256::from(NOW));
     // Stub OriginRouter: `targetsOf` returns the snapshot. The runtime ignores send* returns.
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(chains));
-    // Stub IntexNFT1155: createSeries/settle/burnSettled are void. balanceOf returns 0 (32 bytes).
+    // Stub IntexNFT1155: createSeries/burnIntex are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),

@@ -51,7 +51,7 @@
     },
     {
       "type": "function",
-      "name": "burnSettled",
+      "name": "burnIntex",
       "inputs": [
         {
           "name": "owner",
@@ -359,42 +359,6 @@
     },
     {
       "type": "function",
-      "name": "ownerBalances",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
-          "name": "owner",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "tuple",
-          "internalType": "struct IIntexNFT1155.OwnerBalances",
-          "components": [
-            {
-              "name": "issuedUnits",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
-              "name": "settledUnits",
-              "type": "uint32",
-              "internalType": "uint32"
-            }
-          ]
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "readData",
       "inputs": [
         {
@@ -564,35 +528,6 @@
     },
     {
       "type": "function",
-      "name": "sendToGemFactory",
-      "inputs": [
-        {
-          "name": "owner",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
-          "name": "units",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "seriesExists",
       "inputs": [
         {
@@ -678,67 +613,6 @@
     },
     {
       "type": "function",
-      "name": "settleIntex",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
-          "name": "owner",
-          "type": "address",
-          "internalType": "address"
-        },
-        {
-          "name": "units",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "settledTokenId",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "pure"
-    },
-    {
-      "type": "function",
-      "name": "statusOf",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint8",
-          "internalType": "enum IIntexNFT1155.IntexStatus"
-        }
-      ],
-      "stateMutability": "pure"
-    },
-    {
-      "type": "function",
       "name": "supportsInterface",
       "inputs": [
         {
@@ -768,30 +642,6 @@
         }
       ],
       "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "tokenIds",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "issued",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "settled",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "pure"
     },
     {
       "type": "function",
@@ -906,56 +756,6 @@
         },
         {
           "name": "to",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "units",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IntexMined",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "owner",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "units",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "IntexSentToGemFactory",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "owner",
           "type": "address",
           "indexed": true,
           "internalType": "address"
@@ -1152,17 +952,6 @@
     },
     {
       "type": "error",
-      "name": "BridgeOnSettledForbidden",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "CalledAtInvalid",
       "inputs": [
         {
@@ -1223,33 +1012,6 @@
     {
       "type": "error",
       "name": "NonexistentToken",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SettleAfterDeadline",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "deadline",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SoulboundSettled",
       "inputs": [
         {
           "name": "tokenId",

@@ -65,7 +65,7 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     }
 }
 
-/// Units the stubbed `sendToGemFactory` reports as burned (its `uint256` return).
+/// Units a merchant sends into a position.
 const SENT_UNITS: u64 = 100;
 
 fn word(value: u64) -> alloy_primitives::Bytes {
@@ -95,10 +95,10 @@ fn stub_settlement_asset(
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
-    // Stub IntexNFT1155: `sendToGemFactory` returns SENT_UNITS (32-byte uint256).
+    // Stub IntexNFT1155: `burnIntex` succeeds and returns nothing.
     storage.stub_sub_call_at(
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(U256::from(SENT_UNITS).to_be_bytes::<32>().to_vec()),
+        alloy_primitives::Bytes::new(),
     );
     // Answered per selector, so the settlement path can tell USD from EUR.
     stub_settlement_asset(&mut storage, SETTLEMENT_ASSET, 840, 6);
@@ -274,8 +274,8 @@ fn six_decimal_u128() -> u128 {
     1_000_000
 }
 
-/// Whole-position capacity for a series with `promis_load` per unit: the stubbed
-/// `sendToGemFactory` burns `SENT_UNITS`, so capacity = `promis_load x SENT_UNITS`.
+/// Whole-position capacity for a series with `promis_load` per unit: the merchant
+/// sends `SENT_UNITS`, so capacity = `promis_load x SENT_UNITS`.
 fn sent_capacity(promis_load: u128) -> U256 {
     U256::from(promis_load) * U256::from(SENT_UNITS)
 }

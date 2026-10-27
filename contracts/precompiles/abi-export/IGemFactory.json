@@ -757,17 +757,6 @@
   },
   {
     "type": "error",
-    "name": "UndecodableReturn",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ZeroPromisLoad",
     "inputs": []
   }

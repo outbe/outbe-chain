@@ -262,9 +262,9 @@ pub fn settle_intex(
         storage.call(
             INTEX_NFT1155_ADDRESS,
             U256::ZERO,
-            IIntexNFT1155::settleIntexCall {
-                seriesId: series_id.into(),
+            IIntexNFT1155::burnIntexCall {
                 owner,
+                seriesId: series_id.into(),
                 units,
             }
             .abi_encode()

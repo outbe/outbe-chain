@@ -7,15 +7,14 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {Test} from "forge-std/Test.sol";
 
-/// @title - issued supply, burnSettled state gate, and the paginated owners getter.
+/// @title - issued supply, burnIntex, and the paginated owners getter.
 /// @notice Every test here exercises a behavior introduced by the lifecycle/DoS hardening pass.
 contract IntexNFT1155SupplyTest is Test {
     IntexNFT1155 nft;
 
     address admin = address(0xA11CE);
     address bridger = address(0xB81DE);
-    address settler = address(0x5E771E);
-    address promis = address(0x7307);
+    address burner = address(0xB0B);
     address ownerA = address(0xA);
     address ownerB = address(0xB);
 
@@ -28,8 +27,7 @@ contract IntexNFT1155SupplyTest is Test {
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
         vm.startPrank(admin);
-        nft.grantRole(nft.SETTLEMENT_ROLE(), settler);
-        nft.grantRole(nft.PROMIS_ROLE(), promis);
+        nft.grantRole(nft.BURNER_ROLE(), burner);
         vm.stopPrank();
     }
 
@@ -106,55 +104,43 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.totalSupply(TOKEN_ID), type(uint32).max);
     }
 
-    // --- burnSettled: open in every state once a settle minted the balance ---
+    // --- burnIntex: the precompiles own the series state, so the burn checks none ---
 
-    function _issueAndSettle(uint32 issuedUnits, uint256 mintAmount, uint256 settleAmount, bool callBeforeSettle)
-        internal
-    {
-        _createSeries(issuedUnits);
-        vm.prank(bridger);
-        nft.issueIntex(ownerA, mintAmount, SERIES_ID);
-        if (callBeforeSettle) {
-            vm.prank(bridger);
-            nft.markCalled(SERIES_ID, uint32(block.timestamp));
-        }
-        vm.prank(settler);
-        nft.settleIntex(SERIES_ID, ownerA, settleAmount);
-    }
-
-    function test_BurnSettled_OnIssuedState_Succeeds() public {
-        _issueAndSettle({issuedUnits: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
-        // Series is in Issued, owner has 4 Settled.
-        vm.prank(promis);
-        nft.burnSettled(ownerA, SERIES_ID, 3);
-        assertEq(nft.balanceOf(ownerA, nft.settledTokenId(SERIES_ID)), 1);
-    }
-
-    function test_BurnSettled_OnCalledState_Succeeds() public {
-        _issueAndSettle({issuedUnits: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: true});
-        // Series is in Called, owner has 4 Settled.
-        vm.prank(promis);
-        nft.burnSettled(ownerA, SERIES_ID, 4);
-        assertEq(nft.balanceOf(ownerA, nft.settledTokenId(SERIES_ID)), 0);
-    }
-
-    // --- ZeroUnits: split out of the former overloaded EmptyArray (one error = one failure) ---
-
-    function test_Settle_ZeroUnits_Reverts() public {
+    function _issue(uint256 units, bool called) internal {
         _createSeries(10);
-        vm.prank(bridger);
-        nft.issueIntex(ownerA, 5, SERIES_ID);
-        // The contract rejects units == 0 before any series-state work.
-        vm.prank(settler);
-        vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
-        nft.settleIntex(SERIES_ID, ownerA, 0);
+        vm.startPrank(bridger);
+        nft.issueIntex(ownerA, units, SERIES_ID);
+        if (called) nft.markCalled(SERIES_ID, uint32(block.timestamp));
+        vm.stopPrank();
     }
 
-    function test_BurnSettled_ZeroUnits_Reverts() public {
-        _issueAndSettle({issuedUnits: 10, mintAmount: 6, settleAmount: 4, callBeforeSettle: false});
-        vm.prank(promis);
+    function test_BurnIntex_BurnsTheOwnersUnitsInAnyState() public {
+        _issue(6, true);
+        vm.prank(burner);
+        nft.burnIntex(ownerA, SERIES_ID, 4);
+        assertEq(nft.balanceOf(ownerA, TOKEN_ID), 2);
+        assertEq(nft.totalSupply(TOKEN_ID), 2);
+    }
+
+    function test_BurnIntex_ZeroUnits_Reverts() public {
+        _issue(6, false);
+        vm.prank(burner);
         vm.expectRevert(IIntexNFT1155.ZeroUnits.selector);
-        nft.burnSettled(ownerA, SERIES_ID, 0);
+        nft.burnIntex(ownerA, SERIES_ID, 0);
+    }
+
+    function test_BurnIntex_UnknownSeries_Reverts() public {
+        vm.prank(burner);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID));
+        nft.burnIntex(ownerA, SERIES_ID, 1);
+    }
+
+    function test_BurnIntex_WithoutTheRole_Reverts() public {
+        _issue(6, false);
+        bytes32 role = nft.BURNER_ROLE();
+        vm.prank(ownerA);
+        vm.expectRevert(abi.encodeWithSignature("AccessControlUnauthorizedAccount(address,bytes32)", ownerA, role));
+        nft.burnIntex(ownerA, SERIES_ID, 1);
     }
 
     // --- Live supply ---
@@ -221,9 +207,9 @@ contract IntexNFT1155SupplyTest is Test {
         assertEq(nft.readData(SERIES_ID).totalSupply, 7);
         vm.stopPrank();
 
-        vm.prank(settler);
-        nft.settleIntex(SERIES_ID, ownerA, 2);
-        assertEq(nft.totalSupply(TOKEN_ID), 5, "settle burns Issued (totalSupply 7 - 2)");
+        vm.prank(burner);
+        nft.burnIntex(ownerA, SERIES_ID, 2);
+        assertEq(nft.totalSupply(TOKEN_ID), 5, "burnIntex burns Issued (totalSupply 7 - 2)");
         assertEq(nft.readData(SERIES_ID).totalSupply, 5, "SeriesData mirror tracks live Issued supply");
     }
 }

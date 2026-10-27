@@ -175,16 +175,14 @@ pub fn issue_gem_position(
 
     let issued_at = storage.now_secs()?;
 
-    // Burn `units` of the merchant's Intex. `sendToGemFactory` returns the
-    // burned count (and reverts on a state that may not be sent, or zero units).
-    let burned = burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
+    burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
     let capacity = series
         .promis_load_minor
-        .checked_mul(burned)
+        .checked_mul(units)
         .ok_or(GemFactoryError::Overflow)?;
 
     // Their load moved into the position, so the source series cannot forfeit them.
-    let gem_factory_units = u32::try_from(burned).map_err(|_| GemFactoryError::Overflow)?;
+    let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(
         storage,
         source_intex_id,
@@ -234,19 +232,18 @@ pub fn issue_gem_position(
     Ok(position_id)
 }
 
-/// Burn `units` of the merchant's Issued Intex via `sendToGemFactory`
-/// (GEM_ROLE) and return the burned count. Reverts if the series is in a
-/// non-sendable (non-Issued) state or `units` is zero.
+/// Burn `units` of the merchant's Issued Intex (BURNER_ROLE). Reverts on zero units
+/// or more than the merchant holds.
 fn burn_intex_into_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
     series_id: SeriesId,
     units: U256,
-) -> Result<U256> {
-    let ret = storage.call(
+) -> Result<()> {
+    storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
-        IIntexNFT1155::sendToGemFactoryCall {
+        IIntexNFT1155::burnIntexCall {
             owner,
             seriesId: series_id.into(),
             units,
@@ -254,8 +251,7 @@ fn burn_intex_into_gem_factory(
         .abi_encode()
         .into(),
     )?;
-    IIntexNFT1155::sendToGemFactoryCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::UndecodableReturn("sendToGemFactory return").into())
+    Ok(())
 }
 
 /// Issue one Merchant gem to a customer, draining the position's capacity.
