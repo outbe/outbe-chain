@@ -95,21 +95,27 @@ mod tests {
     fn test_function_selectors_pinned() {
         use alloy_sol_types::SolCall;
 
-        // 4-byte selectors must not silently change
-        let register = IValidatorSet::registerValidatorCall::SELECTOR;
         let stake = IStaking::stakeCall::SELECTOR;
+        let topup = IStaking::topupCall::SELECTOR;
         let submit_double = ISlashIndicator::submitDoubleProposalEvidenceCall::SELECTOR;
+        let stake_selector = selector("stake(address,uint256,bytes,bytes32,bytes,uint8,bytes)");
+        let topup_selector = selector("topup(address,uint256)");
 
-        // The signature determines each selector. Just assert that the selectors are stable.
-        assert_eq!(register.len(), 4);
         assert_eq!(stake.len(), 4);
+        assert_eq!(topup.len(), 4);
         assert_eq!(submit_double.len(), 4);
+        assert_eq!(stake, stake_selector);
+        assert_eq!(topup, topup_selector);
+        assert_ne!(stake, selector("stake(address,uint256)"));
+    }
 
-        // Pin specific known values (computed from keccak256 of signatures)
-        assert_eq!(
-            hex::encode(register),
-            hex::encode(IValidatorSet::registerValidatorCall::SELECTOR)
-        );
+    fn selector(signature: &str) -> [u8; 4] {
+        use alloy_primitives::keccak256;
+
+        let hash = keccak256(signature.as_bytes());
+        let mut selector = [0_u8; 4];
+        selector.copy_from_slice(&hash[..4]);
+        selector
     }
 
     // Pin representative event topic hashes used by receipt/log tooling.

@@ -91,12 +91,12 @@ fn test_consensus_set() {
     with_vs_configured(10, |vs| {
         register_validators(vs, &[(val1, 0xC1), (val2, 0xC2), (val3, 0xC3)]).unwrap();
 
-        // All start as REGISTERED
-        assert_eq!(vs.val_status.read(&val1).unwrap(), status::REGISTERED);
-        assert_eq!(vs.val_status.read(&val2).unwrap(), status::REGISTERED);
+        // All start as PENDING
+        assert_eq!(vs.val_status.read(&val1).unwrap(), status::PENDING);
+        assert_eq!(vs.val_status.read(&val2).unwrap(), status::PENDING);
 
         // Stake/readiness fixtures make val1 and val2 eligible for boundary
-        // inclusion. val3 deliberately remains WaitingForStake.
+        // inclusion. val3 deliberately remains unconfirmed PENDING.
         activate_for_test(vs, val1);
         activate_for_test(vs, val2);
 
@@ -109,8 +109,8 @@ fn test_consensus_set() {
         assert!(vs.val_has_bls_share.read(&val1).unwrap());
         assert!(vs.val_has_bls_share.read(&val2).unwrap());
 
-        // val3 remains REGISTERED, no BLS share
-        assert_eq!(vs.val_status.read(&val3).unwrap(), status::REGISTERED);
+        // val3 remains PENDING, no BLS share
+        assert_eq!(vs.val_status.read(&val3).unwrap(), status::PENDING);
         assert!(!vs.val_has_bls_share.read(&val3).unwrap());
 
         // Consensus set contains only val1 and val2
@@ -118,13 +118,19 @@ fn test_consensus_set() {
         assert_eq!(consensus_set.len(), 2);
         assert_eq!(vs.active_consensus_count().unwrap(), 2);
 
-        // pending_set_change should be cleared
-        assert!(!vs.pending_set_change.read().unwrap());
+        // pending_set_change stays true while val3 is still WaitingForReadiness (PENDING)
+        assert!(vs.pending_set_change.read().unwrap());
 
         // is_consensus_participant checks
         assert!(vs.is_consensus_participant(val1).unwrap());
         assert!(vs.is_consensus_participant(val2).unwrap());
         assert!(!vs.is_consensus_participant(val3).unwrap());
+
+        // Once val3 activates in the boundary, pending_set_change clears.
+        activate_for_test(vs, val3);
+        vs.activate_reshared_set(&[val1, val2, val3], group_key)
+            .unwrap();
+        assert!(!vs.pending_set_change.read().unwrap());
     });
 }
 
@@ -456,11 +462,25 @@ fn assert_demoted_joiner_retained_then_excluded(
 #[test]
 fn post_freeze_joiner_unstake_is_retained_then_excluded_at_a_later_boundary() {
     with_frozen_target_joiner(|vs, survivor, joiner| {
-        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+        vs.record_unstake(joiner, U256::ZERO, U256::from(1_000u64), 0)
             .unwrap();
         assert!(matches!(
             vs.validator_lifecycle(joiner).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::Unbonding(_)
+        ));
+        assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
+    });
+}
+
+#[test]
+fn post_freeze_joiner_inactive_is_retained_then_excluded_at_a_later_boundary() {
+    with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.record_unstake(joiner, U256::ZERO, U256::from(1_000u64), 0)
+            .unwrap();
+        vs.complete_unbonding(joiner).unwrap();
+        assert!(matches!(
+            vs.validator_lifecycle(joiner).unwrap(),
+            ValidatorLifecycle::Inactive(_)
         ));
         assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
     });
@@ -473,7 +493,7 @@ fn post_freeze_joiner_slash_is_retained_then_excluded_at_a_later_boundary() {
             .unwrap();
         assert!(matches!(
             vs.validator_lifecycle(joiner).unwrap(),
-            ValidatorLifecycle::WaitingForStake(_)
+            ValidatorLifecycle::WaitingForReadiness(_)
         ));
         assert_demoted_joiner_retained_then_excluded(vs, survivor, joiner);
     });
@@ -483,7 +503,7 @@ fn post_freeze_joiner_slash_is_retained_then_excluded_at_a_later_boundary() {
 fn post_freeze_joiner_restake_without_ready_is_retained_then_excluded() {
     with_frozen_target_joiner(|vs, survivor, joiner| {
         let minimum = U256::from(1_000u64);
-        vs.record_unstake(joiner, U256::from(1u64), minimum, 0)
+        vs.record_stake_slash(joiner, U256::from(1u64), minimum, None)
             .unwrap();
         vs.record_stake_increase(joiner, minimum, minimum).unwrap();
         assert!(matches!(
@@ -495,9 +515,9 @@ fn post_freeze_joiner_restake_without_ready_is_retained_then_excluded() {
 }
 
 #[test]
-fn included_waiting_for_stake_at_or_before_freeze_still_fatals() {
+fn included_demoted_joiner_at_or_before_freeze_still_fatals() {
     with_frozen_target_joiner(|vs, survivor, joiner| {
-        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+        vs.record_stake_slash(joiner, U256::from(1u64), U256::from(1_000u64), None)
             .unwrap();
         let survivor_before = vs.validator_lifecycle(survivor).unwrap();
         let joiner_before = vs.validator_lifecycle(joiner).unwrap();
@@ -527,7 +547,7 @@ fn included_waiting_for_stake_at_or_before_freeze_still_fatals() {
 #[test]
 fn included_demoted_joiner_without_height_is_retained_for_upgrade() {
     with_frozen_target_joiner(|vs, survivor, joiner| {
-        vs.record_unstake(joiner, U256::from(1u64), U256::from(1_000u64), 0)
+        vs.record_stake_slash(joiner, U256::from(1u64), U256::from(1_000u64), None)
             .unwrap();
         // Old demotions finalized before the height stamp existed.
         vs.val_deactivated_at_height.write(&joiner, 0).unwrap();

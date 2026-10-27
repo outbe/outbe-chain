@@ -121,6 +121,7 @@ fn test_set_overwrites_previous() {
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_contract(|c| {
         assert_eq!(c.promis_limit.slot(), alloy_primitives::U256::ZERO);
+        assert_eq!(c.native_rest.slot(), alloy_primitives::U256::ONE);
     });
 }
 
@@ -145,4 +146,128 @@ fn checked_credit_rejects_overflow() {
 
         assert_eq!(c.promis_limit().unwrap(), near_max);
     });
+}
+
+#[test]
+fn burn_native_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on_overflow() {
+    use alloy_primitives::Address;
+    use alloy_sol_types::{SolCall, SolEvent, SolValue};
+    use outbe_primitives::{
+        addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS},
+        units::NATIVE_UNITS_PER_PROTOCOL_UNIT,
+    };
+
+    use crate::{
+        precompile::{dispatch, IPromisLimit},
+        runtime::NativeBurnSource,
+    };
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let one_and_half =
+        NATIVE_UNITS_PER_PROTOCOL_UNIT + (NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64));
+    storage.set_balance(STAKING_ADDRESS, one_and_half * U256::from(2u64));
+    storage.set_balance(VOTE_ADDRESS, NATIVE_UNITS_PER_PROTOCOL_UNIT);
+
+    StorageHandle::enter(&mut storage, |handle| {
+        let mut contract = PromisLimitContract::new(handle.clone());
+
+        // Zero burn is a no-op and emits nothing.
+        assert_eq!(
+            contract
+                .burn_native_to_promis_limit(STAKING_ADDRESS, U256::ZERO, NativeBurnSource::Slash)
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(contract.promis_limit().unwrap(), U256::ZERO);
+        assert_eq!(contract.native_rest().unwrap(), U256::ZERO);
+
+        // First 1.5 protocol-unit slash: credits 1 unit, stores 0.5 in native_rest.
+        let credited_first = contract
+            .burn_native_to_promis_limit(STAKING_ADDRESS, one_and_half, NativeBurnSource::Slash)
+            .unwrap();
+        assert_eq!(credited_first, U256::ONE);
+        assert_eq!(contract.promis_limit().unwrap(), U256::ONE);
+        assert_eq!(
+            contract.native_rest().unwrap(),
+            NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64)
+        );
+        assert_eq!(handle.balance(STAKING_ADDRESS).unwrap(), one_and_half);
+        assert_eq!(handle.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
+
+        // Second 1.5 protocol-unit slash: credits 2 units, leaves native_rest == 0.
+        let credited_second = contract
+            .burn_native_to_promis_limit(STAKING_ADDRESS, one_and_half, NativeBurnSource::Slash)
+            .unwrap();
+        assert_eq!(credited_second, U256::from(2u64));
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(3u64));
+        assert_eq!(contract.native_rest().unwrap(), U256::ZERO);
+        assert_eq!(handle.balance(STAKING_ADDRESS).unwrap(), U256::ZERO);
+
+        // Sub-unit proposal bond burn (0.4) followed by sub-unit slash (0.6) shares native_rest.
+        let point_four = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(4u64) / U256::from(10u64);
+        let point_six = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(6u64) / U256::from(10u64);
+        handle.set_balance(STAKING_ADDRESS, point_six).unwrap();
+
+        assert_eq!(
+            contract
+                .burn_native_to_promis_limit(
+                    VOTE_ADDRESS,
+                    point_four,
+                    NativeBurnSource::ProposalBond,
+                )
+                .unwrap(),
+            U256::ZERO
+        );
+        let rest_bytes = dispatch(
+            handle.clone(),
+            &IPromisLimit::nativeRestCall {}.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(U256::abi_decode(&rest_bytes).unwrap(), point_four);
+
+        assert_eq!(
+            contract
+                .burn_native_to_promis_limit(STAKING_ADDRESS, point_six, NativeBurnSource::Slash)
+                .unwrap(),
+            U256::ONE
+        );
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(4u64));
+        assert_eq!(contract.native_rest().unwrap(), U256::ZERO);
+
+        // Overflow on promis_limit leaves escrow balance and native_rest untouched.
+        contract.set_promis_limit(U256::MAX).unwrap();
+        let rest_before = NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(5u64);
+        contract.native_rest.write(rest_before).unwrap();
+        let vote_balance_before = handle.balance(VOTE_ADDRESS).unwrap();
+        let err = contract
+            .burn_native_to_promis_limit(
+                VOTE_ADDRESS,
+                NATIVE_UNITS_PER_PROTOCOL_UNIT,
+                NativeBurnSource::ProposalBond,
+            )
+            .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::PromisLimitError::Overflow
+            )
+            .to_string()
+        );
+        assert_eq!(contract.promis_limit().unwrap(), U256::MAX);
+        assert_eq!(contract.native_rest().unwrap(), rest_before);
+        assert_eq!(handle.balance(VOTE_ADDRESS).unwrap(), vote_balance_before);
+    });
+
+    let logs = storage.get_events(PROMIS_LIMIT_ADDRESS);
+    assert_eq!(logs.len(), 4);
+    let first_log = &logs[0];
+    let decoded = IPromisLimit::NativeBurnedToPromisLimit::decode_raw_log(
+        first_log.topics(),
+        &first_log.data,
+    )
+    .unwrap();
+    assert_eq!(decoded.source, NativeBurnSource::Slash as u8);
+    assert_eq!(decoded.burnedUnit, one_and_half);
 }

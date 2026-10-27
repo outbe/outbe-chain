@@ -55,15 +55,14 @@ fn joining(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     Ok(())
 }
 
-fn waiting_for_stake(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
+fn unbonding_joiner(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     joining(vs, validator)?;
-    vs.record_unstake(validator, U256::from(1u64), U256::from(MINIMUM), 0)
+    vs.record_unstake(validator, U256::ZERO, U256::from(MINIMUM), 0)
 }
 
 fn waiting_for_readiness(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
-    waiting_for_stake(vs, validator)?;
-    let minimum = U256::from(MINIMUM);
-    vs.record_stake_increase(validator, minimum, minimum)
+    joining(vs, validator)?;
+    vs.record_stake_slash(validator, U256::from(1u64), U256::from(MINIMUM), None)
 }
 
 fn exiting(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
@@ -196,7 +195,7 @@ fn assert_included_ineligible(
 
 #[test]
 fn included_demoted_joiner_at_or_before_freeze_is_rejected_with_its_status() -> Result<()> {
-    assert_included_ineligible(|vs| waiting_for_stake(vs, A), status::REGISTERED)?;
+    assert_included_ineligible(|vs| unbonding_joiner(vs, A), status::UNBONDING)?;
     assert_included_ineligible(|vs| waiting_for_readiness(vs, A), status::PENDING)
 }
 
@@ -204,7 +203,7 @@ fn included_demoted_joiner_at_or_before_freeze_is_rejected_with_its_status() -> 
 fn included_demoted_joiner_without_height_at_the_last_freeze_is_rejected() -> Result<()> {
     assert_rejected_before_writes(
         |vs| {
-            waiting_for_stake(vs, A)?;
+            waiting_for_readiness(vs, A)?;
             vs.val_deactivated_at_height.write(&A, 0)
         },
         |vs| vs.activate_reshared_set(&[A], HASH),
@@ -412,7 +411,12 @@ fn mixed_boundary_storage() -> (HashMapStorageProvider, Result<()>) {
     // The demotion of E lands after the height-11 freeze.
     storage.set_block_number(12);
     let demotion = storage.enter(|storage| {
-        ValidatorSet::new(storage).record_unstake(E, U256::from(1u64), U256::from(MINIMUM), 0)
+        ValidatorSet::new(storage).record_stake_slash(
+            E,
+            U256::from(1u64),
+            U256::from(MINIMUM),
+            None,
+        )
     });
     (storage, setup.and(demotion))
 }

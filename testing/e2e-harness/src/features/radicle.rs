@@ -775,7 +775,7 @@ fn activate_joiner(world: &mut World) {
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let address = world.rpc.address_of(&key).expect("joiner address");
-    world.rpc.stake(&key, 1_000).expect("stake joiner");
+    world.rpc.topup(&key, 1_000).expect("stake joiner");
     let confirm_ready_tx = world.rpc.confirm_ready(&key).expect("confirm joiner ready");
     let primary = world.validators.primary_port();
     let confirm_ready_height = world

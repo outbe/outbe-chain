@@ -23,6 +23,9 @@ interface IStaking {
     error MissingValidatorHistory();
     error ValidatorRegistryExceedsConsensusBound(uint32 count, uint32 bound);
     error SweepCountOverflow(string value);
+    error TooManyUnbondingEntries(address validator, uint32 maxEntries);
+    error UnbondingIndexOverflow();
+    error ClaimableAmountOverflow();
 
     /// `amount` is the deposit. `bonded` is that validator's stake after the credit.
     event Staked(address indexed validator, uint256 amount, uint256 bonded);
@@ -40,11 +43,21 @@ interface IStaking {
     /// Amounts actually deducted from bonded stake and from the unbonding queue.
     event Slashed(address indexed validator, uint256 bondedSlashed, uint256 unbondingSlashed);
 
-    /// Bond `amount` to `validatorAddress`. The caller must be the validator.
-    /// The implementation rejects third-party delegation. The call must carry
-    /// `msg.value == amount`. The EVM moves the stake into the precompile account,
-    /// and the implementation credits that transfer instead of making a second one.
-    function stake(address validatorAddress, uint256 amount) external payable;
+    /// Register `validatorAddress` (or re-register an `INACTIVE` validator) and bond
+    /// `amount` in a single atomic transaction. The caller must be the validator.
+    /// The call must carry `msg.value == amount` and `amount >= getMinStake()`.
+    function stake(
+        address validatorAddress,
+        uint256 amount,
+        bytes calldata consensusPubkey,
+        bytes32 radicleNodeId,
+        bytes calldata blsRegistrationSignature,
+        uint8 p2pVersion,
+        bytes calldata p2pEncoded
+    ) external payable;
+    /// Add `amount` to an already-registered validator's bonded stake.
+    /// The caller must be `validatorAddress` and `msg.value == amount`.
+    function topup(address validatorAddress, uint256 amount) external payable;
     function unstake(uint256 amount) external;
     function claimUnbonded() external;
     /// Unjail a JAILED validator. The caller must be that validator, and the

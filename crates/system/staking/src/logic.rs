@@ -1,8 +1,10 @@
-use alloy_primitives::{Address, U256, U512};
+use alloy_primitives::{Address, B256, U256, U512};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_validatorset::contract::ValidatorSet;
+use outbe_validatorset::errors::ValidatorSetError;
+use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
 use crate::errors::StakingError;
@@ -31,31 +33,96 @@ impl Staking<'_> {
             .emit_event(STAKING_ADDRESS, event.encode_log_data())
     }
 
-    /// Stakes `amount` on behalf of `validator`.
-    ///
-    /// - Adds amount to stake_amount[validator] and total_staked.
-    /// - If the validator is registered and the new stake meets min_stake,
-    ///   moves it to PENDING (`WaitingForReadiness`).
-    ///   ACTIVE comes later, from reshare activation.
-    /// - Enforces max_stake_percent if configured.
-    /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
-    pub fn stake(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
+    /// Atomically registers `validator` (or re-registers an `INACTIVE`
+    /// validator) and bonds `amount >= min_stake`, transitioning directly to
+    /// `WaitingForReadiness` (`PENDING`).
+    pub fn stake(
+        &mut self,
+        caller: Address,
+        validator: Address,
+        amount: U256,
+        (consensus_pubkey, radicle_node_id, bls_signature): (&[u8; 48], B256, &[u8; 96]),
+        (p2p_version, p2p_encoded): (u8, &[u8]),
+    ) -> Result<()> {
         if amount.is_zero() {
             return Err(StakingError::AmountZero.into());
         }
+        if caller != validator {
+            return Err(StakingError::ThirdPartyStakingNotSupported.into());
+        }
+        let min_stake = self.config_min_stake.read()?;
+        if amount < min_stake {
+            return Err(ValidatorSetError::BondedStakeBelowMinimum {
+                bonded: amount,
+                minimum: min_stake,
+            }
+            .into());
+        }
 
-        // Enforce self-stake only. Third-party delegation is not allowed.
-        // Without full delegation accounting, a delegator's funds would be
-        // locked with no protocol-level withdrawal mechanism.
+        let (new_stake, new_total) = self.checked_stake_credit(validator, amount)?;
+
+        // Register in ValidatorSet before writing `stake_amount` so that
+        // `ValidatorSet::validator_state(validator)` decodes `Absent` or
+        // `Inactive` with zero prior bonded stake.
+        let guard = self.storage.checkpoint_guard();
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.register_with_initial_stake(
+            caller,
+            validator,
+            (consensus_pubkey, radicle_node_id, Some(bls_signature)),
+            (p2p_version, p2p_encoded),
+            (new_stake, min_stake),
+        )?;
+        self.stake_amount.write(&validator, new_stake)?;
+        self.total_staked.write(new_total)?;
+        self.emit_staking_event(IStaking::Staked {
+            validator,
+            amount,
+            bonded: new_stake,
+        })?;
+        guard.commit();
+
+        Ok(())
+    }
+
+    /// Adds `amount` to an already-registered validator's bonded stake.
+    pub fn topup(&mut self, caller: Address, validator: Address, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Err(StakingError::AmountZero.into());
+        }
         if caller != validator {
             return Err(StakingError::ThirdPartyStakingNotSupported.into());
         }
 
-        // Do NOT call transfer_balance here. For payable precompile calls,
-        // the EVM already transfers msg.value from caller to STAKING_ADDRESS
-        // via CallValue::Transfer. A second transfer would double-charge the caller.
+        let (new_stake, new_total) = self.checked_stake_credit(validator, amount)?;
+        let min_stake = self.config_min_stake.read()?;
 
-        // Update staking contract state
+        let guard = self.storage.checkpoint_guard();
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.record_stake_increase(validator, new_stake, min_stake)?;
+        self.stake_amount.write(&validator, new_stake)?;
+        self.total_staked.write(new_total)?;
+        self.emit_staking_event(IStaking::Staked {
+            validator,
+            amount,
+            bonded: new_stake,
+        })?;
+        guard.commit();
+
+        Ok(())
+    }
+
+    fn checked_stake_credit(&self, validator: Address, amount: U256) -> Result<(U256, U256)> {
+        let open_entries = self.per_val_unbonding_len.read(&validator)?;
+        let max_partial = crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1;
+        if open_entries >= max_partial {
+            return Err(StakingError::TooManyUnbondingEntries {
+                validator,
+                max_entries: max_partial,
+            }
+            .into());
+        }
+
         let current = self.stake_amount.read(&validator)?;
         let new_stake = current
             .checked_add(amount)
@@ -65,54 +132,68 @@ impl Staking<'_> {
             .checked_add(amount)
             .ok_or(StakingError::TotalStakeAccountingOverflow)?;
 
-        // Enforce max_stake_percent if configured
         let max_pct = self.config_max_stake_percent.read()?;
-        if max_pct > 0 && max_pct < 100 && !total.is_zero() {
-            // Check: new_stake / new_total <= max_pct / 100
-            // Equivalent to: new_stake * 100 <= max_pct * new_total
-            // Each product of a U256 value and a percentage <= 100 fits in U512.
-            // The comparison does not narrow either product.
-            if U512::from(new_stake) * U512::from(100u64)
+        // When `total` is zero, the first staker holds 100% of `new_total`.
+        // Skip the concentration check on an empty pool so the first validator can bond.
+        if max_pct > 0
+            && max_pct < 100
+            && !total.is_zero()
+            && U512::from(new_stake) * U512::from(100u64)
                 > U512::from(max_pct) * U512::from(new_total)
-            {
-                return Err(StakingError::StakeExceedsMaxStakePercent.into());
-            }
+        {
+            return Err(StakingError::StakeExceedsMaxStakePercent.into());
         }
+        Ok((new_stake, new_total))
+    }
 
-        self.stake_amount.write(&validator, new_stake)?;
+    fn ensure_zero_unstake_allowed(&self, caller: Address, current: U256) -> Result<()> {
+        if !current.is_zero() {
+            return Err(StakingError::AmountZero.into());
+        }
+        let val_set = ValidatorSet::new(self.storage.clone());
+        match val_set.validator_lifecycle(caller)? {
+            ValidatorLifecycle::Absent => Err(ValidatorSetError::ValidatorNotRegistered.into()),
+            ValidatorLifecycle::Inactive(_) => Err(ValidatorSetError::ValidatorIsInactive.into()),
+            ValidatorLifecycle::WaitingForReadiness(_)
+            | ValidatorLifecycle::Joining(_)
+            | ValidatorLifecycle::JailRetained(_)
+            | ValidatorLifecycle::Jail(_) => Ok(()),
+            ValidatorLifecycle::Active(_)
+            | ValidatorLifecycle::Exiting(_)
+            | ValidatorLifecycle::Unbonding(_) => Err(StakingError::AmountZero.into()),
+        }
+    }
 
-        self.total_staked.write(new_total)?;
-
-        // PoS staking: when a REGISTERED validator reaches min_stake it becomes
-        // PENDING (`WaitingForReadiness`). It is admitted, not yet voting.
-        // A later reshare activation promotes PENDING to ACTIVE.
-        // The ValidatorSet facade mirrors the bonded value and raises
-        // pending_set_change when the stake crosses the threshold.
-        let min_stake = self.config_min_stake.read()?;
-        let mut val_set = ValidatorSet::new(self.storage.clone());
-        val_set.record_stake_increase(validator, new_stake, min_stake)?;
-        self.emit_staking_event(IStaking::Staked {
-            validator,
-            amount,
-            bonded: new_stake,
-        })?;
-
+    fn ensure_unbonding_capacity(&self, validator: Address, full_exit: bool) -> Result<()> {
+        let open_entries = self.per_val_unbonding_len.read(&validator)?;
+        let max_entries = if full_exit {
+            crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR
+        } else {
+            crate::contract::MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1
+        };
+        if open_entries >= max_entries {
+            return Err(StakingError::TooManyUnbondingEntries {
+                validator,
+                max_entries,
+            }
+            .into());
+        }
         Ok(())
     }
 
     /// Unstakes `amount` from the caller (self-unstake only).
     ///
     /// - Reduces stake_amount[caller] and total_staked by amount.
-    /// - If stake falls below min_stake and validator is ACTIVE, transitions
-    ///   to EXITING (awaiting DKG reshare to exclude from consensus set).
-    /// - Enqueues an unbonding entry with complete_time = now + unbonding_period.
-    /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
+    /// - Requires the remaining bonded stake to be either `0` or `>= min_stake`
+    ///   (and requires full unstake for jailed validators).
+    /// - Allows `unstake(0)` when `current == 0` in `WaitingForReadiness`,
+    ///   `Joining`, `JailRetained`, or `Jail` so a 100%-slashed validator can
+    ///   voluntarily exit without creating a zero-amount queue entry.
     pub fn unstake(&mut self, caller: Address, amount: U256) -> Result<()> {
-        if amount.is_zero() {
-            return Err(StakingError::AmountZero.into());
-        }
-
         let current = self.stake_amount.read(&caller)?;
+        if amount.is_zero() {
+            self.ensure_zero_unstake_allowed(caller, current)?;
+        }
         if amount > current {
             return Err(StakingError::InsufficientStakedAmount.into());
         }
@@ -128,15 +209,26 @@ impl Staking<'_> {
         let new_total = total
             .checked_sub(amount)
             .ok_or(StakingError::StakeAccountingUnderflow { validator: caller })?;
-        self.stake_amount.write(&caller, new_stake)?;
-        self.total_staked.write(new_total)?;
 
-        // Staking owns the accounting and queue. The ValidatorSet facade records
-        // the complete projection only after those authoritative writes succeed.
-        // The outer call-frame checkpoint keeps the sequence atomic on failure.
+        if !amount.is_zero() {
+            self.ensure_unbonding_capacity(caller, new_stake.is_zero())?;
+        }
+
+        let guard = self.storage.checkpoint_guard();
+        if !amount.is_zero() {
+            self.stake_amount.write(&caller, new_stake)?;
+            self.total_staked.write(new_total)?;
+        }
+
         let started = self.enqueue_unbonding(caller, amount, complete_time)?;
+        let hint = if started.is_some() || self.has_pending_unbonding(caller)? {
+            complete_time
+        } else {
+            0
+        };
         let mut val_set = ValidatorSet::new(self.storage.clone());
-        val_set.record_unstake(caller, new_stake, min_stake, complete_time)?;
+        val_set.record_unstake(caller, new_stake, min_stake, hint)?;
+        self.finalize_inactive_if_complete(&mut val_set, caller)?;
         if let Some(index) = started {
             self.emit_staking_event(IStaking::UnbondingStarted {
                 validator: caller,
@@ -146,13 +238,14 @@ impl Staking<'_> {
                 automatic: false,
             })?;
         }
+        guard.commit();
 
         Ok(())
     }
 
     /// Unjails the caller's JAILED validator back to PENDING. Requires the
     /// caller's bonded stake to be >= min_stake. If a felony slash dropped it
-    /// below, top up via `stake` first. ValidatorSet (`unjail_after_stake_check`)
+    /// below, top up via `topup` first. ValidatorSet (`unjail_after_stake_check`)
     /// holds these steps:
     /// - the JAILED->PENDING transition
     /// - the unjail cooldown
@@ -242,13 +335,14 @@ impl Staking<'_> {
     /// - Passes the post-write amount to ValidatorSet for the lifecycle transition.
     /// - Returns the total slashed amount (for evidence reward calculation).
     /// - Can change lifecycle when the remaining stake falls below the minimum.
-    ///   PENDING moves to `WaitingForStake`. ACTIVE moves to EXITING.
+    ///   `Joining` moves to `WaitingForReadiness`. `Active` moves to `Exiting`.
     ///   SlashIndicator felony paths jail the validator. They do not force-exit it.
     pub fn slash_stake(&mut self, validator: Address, percent: u64) -> Result<U256> {
         if percent > 100 {
             return Err(StakingError::InvalidSlashPercent.into());
         }
 
+        let guard = self.storage.checkpoint_guard();
         let current = self.stake_amount.read(&validator)?;
         let timestamp = self.storage.now_secs()?;
         let mut total_slashed = U256::ZERO;
@@ -297,11 +391,14 @@ impl Staking<'_> {
             current_stored = self.unbonding_next.read(&idx)?;
         }
 
-        // Burn slashed tokens from STAKING_ADDRESS so native balance stays
-        // in sync with accounting. Without this, slashed amounts become orphaned.
+        // Burn slashed units from STAKING_ADDRESS and credit the Promis Limit.
         if !total_slashed.is_zero() {
-            self.storage
-                .decrease_balance(STAKING_ADDRESS, total_slashed)?;
+            outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+                .burn_native_to_promis_limit(
+                    STAKING_ADDRESS,
+                    total_slashed,
+                    outbe_promislimit::NativeBurnSource::Slash,
+                )?;
         }
 
         // Cross-call: pass the post-write amount after stake, claim, and burn
@@ -322,6 +419,7 @@ impl Staking<'_> {
                 unbondingSlashed: unbonding_slashed,
             })?;
         }
+        guard.commit();
 
         Ok(total_slashed)
     }

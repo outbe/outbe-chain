@@ -382,7 +382,7 @@ fn freeze_target(world: &mut World) {
         capture_dkg_owner(world, index).expect("capture DKG process identity before readiness");
     }
     let key = world.validators.joiner().evm_key().expect("joiner key");
-    let stake = world.rpc.stake(&key, 1000).expect("stake");
+    let stake = world.rpc.topup(&key, 1000).expect("stake");
     sleep(Duration::from_secs(6));
     let ready = world.rpc.confirm_ready(&key).expect("confirm ready");
     // Retain receipts now. Finalize them on survivors after the existing fault,

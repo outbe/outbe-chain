@@ -2,19 +2,13 @@ use super::{registered_status, status};
 use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
-use crate::state_machine::{self, ValidatorLifecycle};
+use crate::state_machine::{self, P2pInfo, ValidatorLifecycle};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
-    /// Registers a new validator.
-    ///
-    /// The caller must be either the config owner or the validator address itself.
-    /// The address must not already be registered, and the count must be below max.
-    /// Initial state is `WaitingForStake` (`REGISTERED`). Reaching the minimum,
-    /// confirming readiness, and boundary activation are separate transitions.
-    ///
-    /// `consensus_pubkey` is a 48-byte BLS12-381 MinPk public key.
+    /// Registers a new validator in test fixtures directly into
+    /// `WaitingForReadiness` (`PENDING`).
     #[cfg(any(test, feature = "test-utils"))]
     pub fn register_validator(
         &mut self,
@@ -23,44 +17,28 @@ impl ValidatorSet<'_> {
         consensus_pubkey: &[u8; 48],
     ) -> Result<()> {
         let radicle_node_id = keccak256(validator_addr.as_slice());
+        let bonded = self.read_authoritative_bonded(&validator_addr)?;
         self.register_validator_inner(&super::registration::RegistrationRequest {
             caller,
             validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
             bls_signature: None,
+            p2p: P2pInfo::Unset,
+            bonded,
+            minimum: U256::ZERO,
             allow_bootstrap_without_pop: true,
         })
     }
 
-    /// Test-only compatibility helper for moving `WaitingForStake` to
-    /// `WaitingForReadiness`. Production Staking uses [`Self::record_stake_increase`]
-    /// with the authoritative minimum.
+    /// Test-only compatibility helper ensuring the validator is in
+    /// `WaitingForReadiness` (`PENDING`).
     #[cfg(any(test, feature = "test-utils"))]
     pub fn mark_pending(&mut self, addr: Address) -> Result<()> {
         let before = self.validator_state(addr)?;
-        let waiting = match before.lifecycle().clone() {
-            ValidatorLifecycle::WaitingForStake(waiting) => waiting,
-            ValidatorLifecycle::Absent => {
-                return Err(ValidatorSetError::ValidatorNotRegistered.into());
-            }
-            _ => return Ok(()),
-        };
-        let stake = *before
-            .stake()
-            .ok_or(ValidatorSetError::RegisteredValidatorMissingStakeProjection)?;
-        let lifecycle = ValidatorLifecycle::WaitingForReadiness(state_machine::reach_minimum(
-            waiting,
-            stake,
-            U256::ZERO,
-        )?);
-        let after = before.clone().with_lifecycle(lifecycle)?;
-        // Signal consensus to include this validator in the next reshare target.
-        self.commit_transition(&before, &after, true)?;
-
-        crate::metrics::record_validator_status(addr, status::PENDING);
-        crate::metrics::record_pending_set_change(true);
-
+        if matches!(before.lifecycle(), ValidatorLifecycle::Absent) {
+            return Err(ValidatorSetError::ValidatorNotRegistered.into());
+        }
         Ok(())
     }
 
@@ -74,13 +52,6 @@ impl ValidatorSet<'_> {
             ValidatorLifecycle::Joining(joining) => state_machine::activate_at_boundary(joining),
             ValidatorLifecycle::WaitingForReadiness(waiting) => {
                 state_machine::activate_at_boundary(state_machine::confirm_ready(waiting))
-            }
-            ValidatorLifecycle::WaitingForStake(waiting) => {
-                let stake = *before
-                    .stake()
-                    .ok_or(ValidatorSetError::RegisteredValidatorMissingStakeProjection)?;
-                let ready = state_machine::reach_minimum(waiting, stake, U256::ZERO)?;
-                state_machine::activate_at_boundary(state_machine::confirm_ready(ready))
             }
             ValidatorLifecycle::Absent => {
                 return Err(ValidatorSetError::ValidatorNotRegistered.into());

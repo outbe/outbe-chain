@@ -545,12 +545,6 @@ pub enum ValidatorSetError {
     #[error("validator registration requires BLS proof-of-possession signature")]
     RegistrationRequiresBlsPop,
 
-    /// Unstaked self-registered validators reached the protocol cap.
-    #[error(
-        "self-registration limit reached: too many unstaked REGISTERED validators (owner may register directly)"
-    )]
-    SelfRegistrationLimitReached,
-
     /// Another validator already registered this BLS consensus public key.
     #[error("BLS consensus pubkey already registered by another validator")]
     ConsensusPubkeyAlreadyRegistered,
@@ -623,10 +617,6 @@ pub enum ValidatorSetError {
     /// Attempted to complete unbonding while bonded stake or a live-claim hint remains.
     #[error("cannot complete unbonding while bonded value or a live-claim hint remains")]
     CannotCompleteUnbondingWithRemainingStakeOrClaim,
-
-    /// Attempted to stake for an unregistered validator.
-    #[error("cannot stake before validator registration")]
-    CannotStakeBeforeRegistration,
 
     /// Attempted to stake for an inactive validator before re-registration.
     #[error("inactive validator must re-register before staking")]
@@ -1210,9 +1200,6 @@ impl From<ValidatorSetError> for PrecompileError {
             ValidatorSetError::RegistrationRequiresBlsPop => PrecompileError::RevertBytes(
                 Bytes::from(IValidatorSet::RegistrationRequiresBlsPop {}.abi_encode()),
             ),
-            ValidatorSetError::SelfRegistrationLimitReached => PrecompileError::RevertBytes(
-                Bytes::from(IValidatorSet::SelfRegistrationLimitReached {}.abi_encode()),
-            ),
             ValidatorSetError::ConsensusPubkeyAlreadyRegistered => PrecompileError::RevertBytes(
                 Bytes::from(IValidatorSet::ConsensusPubkeyAlreadyRegistered {}.abi_encode()),
             ),
@@ -1283,9 +1270,6 @@ impl From<ValidatorSetError> for PrecompileError {
                     IValidatorSet::CannotCompleteUnbondingWithRemainingStakeOrClaim {}.abi_encode(),
                 ))
             }
-            ValidatorSetError::CannotStakeBeforeRegistration => PrecompileError::RevertBytes(
-                Bytes::from(IValidatorSet::CannotStakeBeforeRegistration {}.abi_encode()),
-            ),
             ValidatorSetError::InactiveValidatorMustReregisterBeforeStaking => {
                 PrecompileError::RevertBytes(Bytes::from(
                     IValidatorSet::InactiveValidatorMustReregisterBeforeStaking {}.abi_encode(),

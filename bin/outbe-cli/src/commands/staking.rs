@@ -1,22 +1,30 @@
 //! Staking commands.
 
-use alloy_primitives::{Address, U256};
+use std::net::SocketAddr;
+use std::path::PathBuf;
+
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use eyre::Result;
+use outbe_primitives::consensus_p2p::{encode_v1, P2P_ADDRESS_VERSION_V1};
 
 use super::parse_amount;
+use super::stake_identity::{resolve_stake_identity, StakeIdentityInput};
+use super::validator::build_p2p_address;
 use crate::abi::{self, IStaking, IValidatorSet};
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
 pub enum StakingCmd {
-    /// Stake tokens to a validator
-    Stake {
+    /// Register a validator and bond its initial stake.
+    Stake(Box<StakeRequest>),
+    /// Add stake to an already registered validator.
+    Topup {
         /// Validator address
         #[arg(long)]
         validator: Address,
-        /// Amount in unit (base denomination)
+        /// Amount in unit (base denomination). Sent as the transaction value.
         #[arg(long)]
         amount: String,
     },
@@ -42,8 +50,9 @@ pub enum StakingCmd {
 impl StakingCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
-            Self::Stake { validator, amount } => {
-                stake(client, private_key, validator, amount).await
+            Self::Stake(request) => stake(client, private_key, *request).await,
+            Self::Topup { validator, amount } => {
+                topup(client, private_key, validator, amount).await
             }
             Self::Unstake { amount } => unstake(client, private_key, amount).await,
             Self::Claim => claim(client, private_key).await,
@@ -54,7 +63,80 @@ impl StakingCmd {
     }
 }
 
+#[derive(Args)]
+pub struct StakeRequest {
+    /// Validator address. With `--keys-dir`, this must match `evm-key.hex`.
+    #[arg(long)]
+    validator: Address,
+    /// Amount in unit (base denomination). Sent as the transaction value.
+    #[arg(long)]
+    amount: String,
+    /// Key directory written by `outbe-keygen validator`.
+    #[arg(long)]
+    keys_dir: Option<PathBuf>,
+    /// BLS consensus public key (hex).
+    #[arg(long)]
+    consensus_pubkey: Option<String>,
+    /// Radicle Ed25519 node id (32-byte hex).
+    #[arg(long)]
+    radicle_node_id: Option<B256>,
+    /// BLS registration signature (hex).
+    #[arg(long)]
+    bls_registration_signature: Option<String>,
+    /// Symmetric socket address, for example 10.0.0.1:30400.
+    #[arg(long)]
+    symmetric: Option<SocketAddr>,
+    /// Asymmetric socket ingress address.
+    #[arg(long)]
+    ingress_socket: Option<SocketAddr>,
+    /// Asymmetric DNS ingress host.
+    #[arg(long)]
+    ingress_dns_host: Option<String>,
+    /// Asymmetric DNS ingress port.
+    #[arg(long)]
+    ingress_dns_port: Option<u16>,
+    /// Asymmetric egress socket address.
+    #[arg(long)]
+    egress: Option<SocketAddr>,
+}
+
 async fn stake(
+    client: &(impl Rpc + Sync),
+    private_key: Option<&str>,
+    request: StakeRequest,
+) -> Result<()> {
+    let signer = super::require_signer(private_key)?;
+    let amount = parse_amount(&request.amount)?;
+    let identity = resolve_stake_identity(
+        client,
+        request.validator,
+        StakeIdentityInput {
+            keys_dir: request.keys_dir.as_deref(),
+            consensus_pubkey: request.consensus_pubkey.as_deref(),
+            radicle_node_id: request.radicle_node_id,
+            bls_registration_signature: request.bls_registration_signature.as_deref(),
+        },
+    )
+    .await?;
+    let (p2p_version, p2p_encoded) = optional_p2p(&request)?;
+
+    let call = IStaking::stakeCall {
+        validatorAddress: request.validator,
+        amount,
+        consensusPubkey: identity.consensus_pubkey.into(),
+        radicleNodeId: identity.radicle_node_id,
+        blsRegistrationSignature: identity.bls_registration_signature.into(),
+        p2pVersion: p2p_version,
+        p2pEncoded: p2p_encoded.into(),
+    };
+    let tx_hash = signer
+        .send_tx(client, abi::STAKING_ADDR, call.abi_encode(), amount)
+        .await?;
+    println!("Transaction sent: {tx_hash}");
+    Ok(())
+}
+
+async fn topup(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
     validator: Address,
@@ -62,8 +144,7 @@ async fn stake(
 ) -> Result<()> {
     let signer = super::require_signer(private_key)?;
     let amount = parse_amount(&amount)?;
-
-    let call = IStaking::stakeCall {
+    let call = IStaking::topupCall {
         validatorAddress: validator,
         amount,
     };
@@ -72,6 +153,32 @@ async fn stake(
         .await?;
     println!("Transaction sent: {tx_hash}");
     Ok(())
+}
+
+fn p2p_flags_omitted(request: &StakeRequest) -> bool {
+    [
+        request.symmetric.is_none(),
+        request.ingress_socket.is_none(),
+        request.ingress_dns_host.is_none(),
+        request.ingress_dns_port.is_none(),
+        request.egress.is_none(),
+    ]
+    .into_iter()
+    .all(std::convert::identity)
+}
+
+fn optional_p2p(request: &StakeRequest) -> Result<(u8, Vec<u8>)> {
+    if p2p_flags_omitted(request) {
+        return Ok((0, Vec::new()));
+    }
+    let address = build_p2p_address(
+        request.symmetric,
+        request.ingress_socket,
+        request.ingress_dns_host.clone(),
+        request.ingress_dns_port,
+        request.egress,
+    )?;
+    Ok((P2P_ADDRESS_VERSION_V1, encode_v1(&address)))
 }
 
 async fn unstake(
@@ -252,7 +359,10 @@ mod tests {
     // --- Mock RPC tests with real ABI verification ---
 
     use super::*;
-    use crate::rpc::mock::{abi_u256, abi_u64, call_map, recording_send_tx_rpc, MockRpc};
+    use crate::rpc::mock::{
+        abi_u256, abi_u64, call_map, recording_send_tx_rpc, recording_send_tx_rpc_after,
+        ExpectedRpcCall, MockRpc, RecordedRpcCall, RecordedRpcResponse,
+    };
     use alloy_sol_types::SolCall;
     use std::collections::HashMap;
 
@@ -363,6 +473,40 @@ mod tests {
             .unwrap()
     }
 
+    fn explicit_request(validator: Address, amount: &str) -> StakeRequest {
+        StakeRequest {
+            validator,
+            amount: amount.to_string(),
+            keys_dir: None,
+            consensus_pubkey: Some("0xaabbcc".to_string()),
+            radicle_node_id: Some(B256::repeat_byte(0x44)),
+            bls_registration_signature: Some("0x112233".to_string()),
+            symmetric: None,
+            ingress_socket: None,
+            ingress_dns_host: None,
+            ingress_dns_port: None,
+            egress: None,
+        }
+    }
+
+    fn explicit_stake_call(
+        validator: Address,
+        amount: U256,
+        p2p_version: u8,
+        p2p: Vec<u8>,
+    ) -> Vec<u8> {
+        IStaking::stakeCall {
+            validatorAddress: validator,
+            amount,
+            consensusPubkey: vec![0xaa, 0xbb, 0xcc].into(),
+            radicleNodeId: B256::repeat_byte(0x44),
+            blsRegistrationSignature: vec![0x11, 0x22, 0x33].into(),
+            p2pVersion: p2p_version,
+            p2pEncoded: p2p.into(),
+        }
+        .abi_encode()
+    }
+
     fn invalid_amount_cases() -> [(&'static str, &'static str); 8] {
         [
             ("not_a_number", "invalid amount"),
@@ -396,14 +540,10 @@ mod tests {
     async fn test_stake_sends_tx() {
         let validator = validator_addr();
         let amount = U256::from(1000u64);
-        let data = IStaking::stakeCall {
-            validatorAddress: validator,
-            amount,
-        }
-        .abi_encode();
+        let data = explicit_stake_call(validator, amount, 0, Vec::new());
         let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, amount).unwrap();
 
-        stake(&mock, Some(TEST_KEY), validator, "1000".to_string())
+        stake(&mock, Some(TEST_KEY), explicit_request(validator, "1000"))
             .await
             .unwrap();
         mock.assert_done();
@@ -413,24 +553,40 @@ mod tests {
     async fn test_stake_max_u256_amount_sends_tx() {
         let validator = validator_addr();
         let amount = U256::MAX;
-        let data = IStaking::stakeCall {
-            validatorAddress: validator,
-            amount,
-        }
-        .abi_encode();
+        let data = explicit_stake_call(validator, amount, 0, Vec::new());
         let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, amount).unwrap();
 
-        stake(&mock, Some(TEST_KEY), validator, amount.to_string())
-            .await
-            .unwrap();
+        stake(
+            &mock,
+            Some(TEST_KEY),
+            explicit_request(validator, &amount.to_string()),
+        )
+        .await
+        .unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_stake_symmetric_p2p_is_version_one() {
+        let validator = validator_addr();
+        let amount = U256::from(1000u64);
+        let socket: std::net::SocketAddr = "10.0.0.1:30400".parse().unwrap();
+        let encoded = encode_v1(&outbe_primitives::consensus_p2p::P2pAddress::Symmetric(
+            socket,
+        ));
+        let data = explicit_stake_call(validator, amount, P2P_ADDRESS_VERSION_V1, encoded);
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, amount).unwrap();
+        let mut request = explicit_request(validator, "1000");
+        request.symmetric = Some(socket);
+
+        stake(&mock, Some(TEST_KEY), request).await.unwrap();
         mock.assert_done();
     }
 
     #[tokio::test]
     async fn test_stake_no_private_key_errors() {
         let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
-        let validator = validator_addr();
-        let err = stake(&mock, None, validator, "1000".to_string())
+        let err = stake(&mock, None, explicit_request(validator_addr(), "1000"))
             .await
             .unwrap_err();
         assert!(
@@ -448,9 +604,13 @@ mod tests {
         for (amount, expected) in invalid_amount_cases() {
             let mock =
                 recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
-            let err = stake(&mock, Some(TEST_KEY), validator_addr(), amount.to_string())
-                .await
-                .unwrap_err();
+            let err = stake(
+                &mock,
+                Some(TEST_KEY),
+                explicit_request(validator_addr(), amount),
+            )
+            .await
+            .unwrap_err();
             assert!(
                 err.to_string().contains(expected),
                 "amount={amount:?}: expected {expected:?}, got {err}"
@@ -460,6 +620,202 @@ mod tests {
                 "invalid stake amount {amount:?} must not call RPC"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_stake_invalid_pubkey_does_not_call_rpc() {
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+        let mut request = explicit_request(validator_addr(), "1000");
+        request.consensus_pubkey = Some("not_hex".to_string());
+        let err = stake(&mock, Some(TEST_KEY), request).await.unwrap_err();
+        assert!(
+            err.to_string().contains("--consensus-pubkey"),
+            "expected hex error, got: {err}"
+        );
+        assert!(mock.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stake_identity_flags_are_exclusive() {
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+        let mut request = explicit_request(validator_addr(), "1000");
+        request.keys_dir = Some(std::path::PathBuf::from("/tmp/unused-keys"));
+        let err = stake(&mock, Some(TEST_KEY), request).await.unwrap_err();
+        assert!(err.to_string().contains("--keys-dir"), "{err}");
+        assert!(mock.recorded_calls().is_empty());
+
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+        let mut request = explicit_request(validator_addr(), "1000");
+        request.consensus_pubkey = None;
+        let err = stake(&mock, Some(TEST_KEY), request).await.unwrap_err();
+        assert!(err.to_string().contains("--consensus-pubkey"), "{err}");
+        assert!(mock.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_topup_sends_tx() {
+        let validator = validator_addr();
+        let amount = U256::from(1000u64);
+        let data = IStaking::topupCall {
+            validatorAddress: validator,
+            amount,
+        }
+        .abi_encode();
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, amount).unwrap();
+
+        topup(&mock, Some(TEST_KEY), validator, "1000".to_string())
+            .await
+            .unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_topup_no_private_key_errors() {
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+        let err = topup(&mock, None, validator_addr(), "1000".to_string())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("--private-key required"), "{err}");
+        assert!(mock.recorded_calls().is_empty());
+    }
+
+    fn write_keys_dir(dir: &std::path::Path, evm_key_hex: &str) -> (Vec<u8>, B256) {
+        use commonware_codec::Encode as _;
+        use commonware_cryptography::{bls12381, Signer as _};
+        use commonware_math::algebra::Random as _;
+        use outbe_consensus::bls::{self, KeyBackend};
+
+        let bls_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
+            rand_commonware::rngs::SysRng,
+        ));
+        let pubkey = bls_key.public_key().encode().as_ref().to_vec();
+        bls::save_individual_key(
+            &dir.join("signing-key.hex"),
+            &bls_key,
+            &KeyBackend::Plaintext,
+        )
+        .unwrap();
+        std::fs::write(dir.join("evm-key.hex"), evm_key_hex).unwrap();
+        let keystore = radicle_crypto::ssh::Keystore::new(&dir.join("radicle/keys"));
+        let public = keystore
+            .init(
+                "outbe-cli-test",
+                None,
+                radicle_crypto::Seed::new([7_u8; 32]),
+            )
+            .unwrap();
+        (pubkey, B256::from(public.into_inner()))
+    }
+
+    fn reference_registration_signature(
+        dir: &std::path::Path,
+        chain_id: u64,
+        validator: Address,
+        node_id: B256,
+    ) -> Vec<u8> {
+        use commonware_codec::Encode as _;
+        use commonware_cryptography::Signer as _;
+        use outbe_consensus::bls::{self, KeyBackend};
+        use outbe_primitives::validators::{
+            validator_registration_message, VALIDATOR_REGISTRATION_DST,
+        };
+
+        let key =
+            bls::load_individual_key(&dir.join("signing-key.hex"), &KeyBackend::Plaintext).unwrap();
+        let encoded = key.encode();
+        let blst_key = blst::min_pk::SecretKey::from_bytes(encoded.as_ref()).unwrap();
+        let message = validator_registration_message(chain_id, validator, node_id);
+        let signature = blst_key.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
+        let pubkey =
+            blst::min_pk::PublicKey::from_bytes(key.public_key().encode().as_ref()).unwrap();
+        assert_eq!(
+            signature.verify(
+                true,
+                &message,
+                VALIDATOR_REGISTRATION_DST,
+                &[],
+                &pubkey,
+                true
+            ),
+            blst::BLST_ERROR::BLST_SUCCESS
+        );
+        signature.to_bytes().to_vec()
+    }
+
+    fn keys_dir_request(dir: &std::path::Path, validator: Address, amount: &str) -> StakeRequest {
+        StakeRequest {
+            validator,
+            amount: amount.to_string(),
+            keys_dir: Some(dir.to_path_buf()),
+            consensus_pubkey: None,
+            radicle_node_id: None,
+            bls_registration_signature: None,
+            symmetric: None,
+            ingress_socket: None,
+            ingress_dns_host: None,
+            ingress_dns_port: None,
+            egress: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stake_keys_dir_signs_registration_and_sends_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let (pubkey, node_id) = write_keys_dir(dir.path(), TEST_KEY);
+        let validator = crate::tx::TxSigner::new(TEST_KEY).unwrap().address();
+        let amount = U256::from(1000u64);
+        let signature = reference_registration_signature(dir.path(), 1337, validator, node_id);
+        let data = IStaking::stakeCall {
+            validatorAddress: validator,
+            amount,
+            consensusPubkey: pubkey.into(),
+            radicleNodeId: node_id,
+            blsRegistrationSignature: signature.into(),
+            p2pVersion: 0,
+            p2pEncoded: Vec::<u8>::new().into(),
+        }
+        .abi_encode();
+        let mock = recording_send_tx_rpc_after(
+            TEST_KEY,
+            abi::STAKING_ADDR,
+            data,
+            amount,
+            [ExpectedRpcCall::ok(
+                RecordedRpcCall::EthChainId,
+                RecordedRpcResponse::U64(1337),
+            )],
+        )
+        .unwrap();
+
+        stake(
+            &mock,
+            Some(TEST_KEY),
+            keys_dir_request(dir.path(), validator, "1000"),
+        )
+        .await
+        .unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_stake_keys_dir_rejects_validator_mismatch_before_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("evm-key.hex"),
+            "0000000000000000000000000000000000000000000000000000000000000002",
+        )
+        .unwrap();
+        let validator = crate::tx::TxSigner::new(TEST_KEY).unwrap().address();
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+        let err = stake(
+            &mock,
+            Some(TEST_KEY),
+            keys_dir_request(dir.path(), validator, "1000"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("derives"), "{err}");
+        assert!(mock.recorded_calls().is_empty());
     }
 
     #[tokio::test]

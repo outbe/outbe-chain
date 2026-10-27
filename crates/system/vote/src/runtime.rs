@@ -480,7 +480,12 @@ impl Vote<'_> {
                 self.notify_proposal_bond_refunded(proposal_id, owner, bond.amount)
             }
             ProposalStatus::Expired => {
-                self.storage.decrease_balance(VOTE_ADDRESS, bond.amount)?;
+                outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+                    .burn_native_to_promis_limit(
+                        VOTE_ADDRESS,
+                        bond.amount,
+                        outbe_promislimit::NativeBurnSource::ProposalBond,
+                    )?;
                 self.set_bond_state(proposal_id, BondState::Burned)?;
                 self.notify_proposal_bond_burned(proposal_id, owner, bond.amount)
             }

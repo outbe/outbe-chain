@@ -19,19 +19,26 @@ pub(super) fn assert_registration_revert(
     signature: &[u8],
     expected: &[u8],
 ) -> crate::world::rpc::TxOutcome {
+    let amount = world
+        .rpc
+        .registration_amount()
+        .expect("minimum registration bond");
     assert_mined_revert(
         world,
         NegativeTx {
-            to: crate::internal::addresses::VS_ADDR,
+            to: crate::internal::addresses::STK_ADDR,
             key,
-            call: &eth::IValidatorSet::registerValidatorCall {
+            call: &eth::IStaking::stakeCall {
                 validatorAddress: identity.address(),
+                amount,
                 consensusPubkey: Bytes::copy_from_slice(identity.bls_public_key()),
                 radicleNodeId: identity.radicle_node_id(),
                 blsRegistrationSignature: Bytes::copy_from_slice(signature),
+                p2pVersion: 0,
+                p2pEncoded: Bytes::new(),
             },
         },
-        U256::ZERO,
+        amount,
         expected,
     )
     .into()

@@ -154,6 +154,61 @@ pub(crate) enum TributeError {
     InvalidHex32Length { flag: String, actual: usize },
 }
 
+/// Errors for the `staking` subcommand.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StakingError {
+    /// The command combines `--keys-dir` with explicit registration flags.
+    #[error(
+        "pass either --keys-dir or --consensus-pubkey, --radicle-node-id, and --bls-registration-signature"
+    )]
+    IdentitySourceConflict,
+    /// The command requires either `--keys-dir` or all three registration flags.
+    #[error(
+        "pass --keys-dir, or all of --consensus-pubkey, --radicle-node-id, and --bls-registration-signature"
+    )]
+    IdentityFlagsIncomplete,
+    /// A hex registration flag could not be decoded.
+    #[error("invalid hex for {flag}: {source}")]
+    InvalidHexFlag {
+        flag: &'static str,
+        source: hex::FromHexError,
+    },
+    /// The consensus signing key file could not be loaded.
+    #[error("failed to load consensus key at {path}: {source}")]
+    ConsensusKeyLoad { path: PathBuf, source: eyre::Report },
+    /// The loaded consensus public key is not a 48-byte G1 point.
+    #[error("consensus public key must be 48 bytes, got {actual}")]
+    ConsensusPubkeyLength { actual: usize },
+    /// The Radicle public key file could not be read.
+    #[error("failed to read Radicle node id at {path}: {source}")]
+    RadicleNodeId {
+        path: PathBuf,
+        source: radicle_crypto::ssh::keystore::Error,
+    },
+    /// The key directory has no Radicle public key.
+    #[error("Radicle public key is missing at {path}")]
+    RadicleNodeIdMissing { path: PathBuf },
+    /// `blst` rejected the consensus secret scalar.
+    #[error("failed to create blst SecretKey: {0:?}")]
+    BlstSecretKey(blst::BLST_ERROR),
+    /// The EVM key file could not be read.
+    #[error("failed to read EVM key at {path}: {source}")]
+    EvmKeyRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// The EVM key file is not a secp256k1 scalar.
+    #[error("invalid EVM key at {path}: {source}")]
+    InvalidEvmKey { path: PathBuf, source: eyre::Report },
+    /// `--validator` does not match the address derived from `evm-key.hex`.
+    #[error("evm key at {path} derives {derived}, not validator {validator}")]
+    ValidatorKeyMismatch {
+        validator: Address,
+        derived: Address,
+        path: PathBuf,
+    },
+}
+
 /// Errors for the `validator` subcommand.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ValidatorError {

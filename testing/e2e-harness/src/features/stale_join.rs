@@ -42,7 +42,7 @@ fn staked_joiner_unconfirmed(world: &mut World) {
         &world.rpc.url(world.validators.primary_port()),
         addresses::STK_ADDR,
         &key,
-        &eth::IStaking::stakeCall {
+        &eth::IStaking::topupCall {
             validatorAddress: addr,
             amount,
         },
@@ -82,7 +82,12 @@ fn staked_joiner_unconfirmed(world: &mut World) {
         )
         .expect("pinned pending stake");
         assert_eq!(
-            stake, amount,
+            stake,
+            amount
+                + world
+                    .rpc
+                    .registration_amount()
+                    .expect("initial registration bond"),
             "readiness fixture stake differs across peers"
         );
     }

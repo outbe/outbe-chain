@@ -8,7 +8,7 @@ pub(crate) use adapter::StoredValidatorFields;
 pub use state::{
     Active, ConsensusPubkey, Exiting, HistoryCounters, Inactive, Jail, JailRetained, Joining,
     P2pInfo, StakeProjection, Unbonding, ValidatorHistory, ValidatorLifecycle, ValidatorState,
-    WaitingForReadiness, WaitingForStake,
+    WaitingForReadiness,
 };
 
 use std::num::NonZeroU64;
@@ -22,7 +22,8 @@ use crate::errors::ValidatorSetError;
 pub(crate) fn register(
     state: ValidatorState,
     registry_index: NonZeroU64,
-    consensus_pubkey: ConsensusPubkey,
+    (consensus_pubkey, p2p): (ConsensusPubkey, P2pInfo),
+    (stake, minimum): (StakeProjection, U256),
     joined_at_height: u64,
 ) -> Result<ValidatorState> {
     if !matches!(state.lifecycle, ValidatorLifecycle::Absent) {
@@ -31,48 +32,36 @@ pub(crate) fn register(
     if consensus_pubkey == [0; 48] {
         return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
     }
-    state.with_lifecycle(ValidatorLifecycle::WaitingForStake(WaitingForStake {
-        registry_index,
-        consensus_pubkey,
-        p2p: P2pInfo::Unset,
-        stake: StakeProjection::zero(),
-        history: ValidatorHistory::fresh(joined_at_height),
-    }))
+    require_at_least_minimum(stake, minimum)?;
+    state.with_lifecycle(ValidatorLifecycle::WaitingForReadiness(
+        WaitingForReadiness {
+            registry_index,
+            consensus_pubkey,
+            p2p,
+            stake,
+            history: ValidatorHistory::fresh(joined_at_height),
+        },
+    ))
 }
 
 /// Re-registers an inactive record in-place, retaining its dense index while
 /// replacing identity material and clearing lifecycle-owned residue.
 pub fn reregister(
     state: Inactive,
-    consensus_pubkey: ConsensusPubkey,
+    (consensus_pubkey, p2p): (ConsensusPubkey, P2pInfo),
+    (stake, minimum): (StakeProjection, U256),
     joined_at_height: u64,
-) -> Result<WaitingForStake> {
+) -> Result<WaitingForReadiness> {
     if consensus_pubkey == [0; 48] {
         return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
     }
-    Ok(WaitingForStake {
-        registry_index: state.registry_index,
-        consensus_pubkey,
-        p2p: P2pInfo::Unset,
-        stake: StakeProjection::zero(),
-        history: ValidatorHistory::fresh(joined_at_height),
-    })
-}
-
-/// Moves a registered validator into the readiness path after Staking reports
-/// an authoritative bonded amount at or above the minimum.
-pub fn reach_minimum(
-    state: WaitingForStake,
-    stake: StakeProjection,
-    minimum: U256,
-) -> Result<WaitingForReadiness> {
     require_at_least_minimum(stake, minimum)?;
     Ok(WaitingForReadiness {
         registry_index: state.registry_index,
-        consensus_pubkey: state.consensus_pubkey,
-        p2p: state.p2p,
+        consensus_pubkey,
+        p2p,
         stake,
-        history: state.history,
+        history: ValidatorHistory::fresh(joined_at_height),
     })
 }
 
@@ -87,24 +76,41 @@ pub fn confirm_ready(state: WaitingForReadiness) -> Joining {
     }
 }
 
-/// Demotes an unconfirmed pending validator after its bonded stake falls below
-/// the minimum.
-pub fn demote_waiting_for_readiness(
+fn deactivate_history(history: ValidatorHistory, height: u64) -> Result<ValidatorHistory> {
+    if height == 0 {
+        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
+    }
+    Ok(history.with_last_deactivated_at_height(Some(height)))
+}
+
+/// Full voluntary exit from `WaitingForReadiness` (`bonded == 0`).
+pub fn unbond_waiting_for_readiness(
     state: WaitingForReadiness,
     stake: StakeProjection,
-    minimum: U256,
-) -> Result<WaitingForStake> {
-    require_below_minimum(stake, minimum)?;
-    Ok(WaitingForStake {
+    deactivated_at_height: u64,
+) -> Result<Unbonding> {
+    require_fully_unstaked(stake)?;
+    let history = deactivate_history(state.history, deactivated_at_height)?;
+    Ok(Unbonding {
         registry_index: state.registry_index,
         consensus_pubkey: state.consensus_pubkey,
         p2p: state.p2p,
         stake,
-        history: state.history,
+        history,
     })
 }
 
-/// Demotes a ready joiner and consumes its readiness confirmation.
+/// Full voluntary exit from `Joining` (`bonded == 0`).
+pub fn unbond_joining(
+    state: Joining,
+    stake: StakeProjection,
+    deactivated_at_height: u64,
+) -> Result<Unbonding> {
+    unbond_waiting_for_readiness(expire_joining_tee(state), stake, deactivated_at_height)
+}
+
+/// Demotes a ready joiner after a slash drops its bonded stake below the
+/// minimum and consumes its readiness confirmation.
 ///
 /// `deactivated_at_height` is the block that dropped the bond below the
 /// minimum. The boundary planner uses it to keep a joiner who was already
@@ -114,19 +120,15 @@ pub fn demote_joining(
     stake: StakeProjection,
     minimum: U256,
     deactivated_at_height: u64,
-) -> Result<WaitingForStake> {
+) -> Result<WaitingForReadiness> {
     require_below_minimum(stake, minimum)?;
-    if deactivated_at_height == 0 {
-        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
-    }
-    Ok(WaitingForStake {
+    let history = deactivate_history(state.history, deactivated_at_height)?;
+    Ok(WaitingForReadiness {
         registry_index: state.registry_index,
         consensus_pubkey: state.consensus_pubkey,
         p2p: state.p2p,
         stake,
-        history: state
-            .history
-            .with_last_deactivated_at_height(Some(deactivated_at_height)),
+        history,
     })
 }
 
@@ -134,17 +136,13 @@ pub fn demote_joining(
 /// certified committee until the next boundary can drop them.
 fn exit_demoted_joiner(joiner: JoinerPayload, deactivated_at_height: u64) -> Result<Exiting> {
     require_canonical_stake(joiner.stake)?;
-    if deactivated_at_height == 0 {
-        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
-    }
+    let history = deactivate_history(joiner.history, deactivated_at_height)?;
     Ok(Exiting {
         registry_index: joiner.registry_index,
         consensus_pubkey: joiner.consensus_pubkey,
         p2p: joiner.p2p,
         stake: joiner.stake,
-        history: joiner
-            .history
-            .with_last_deactivated_at_height(Some(deactivated_at_height)),
+        history,
     })
 }
 
@@ -157,11 +155,8 @@ struct JoinerPayload {
     history: ValidatorHistory,
 }
 
-/// Boundary retain for a frozen joiner now persisted as `WaitingForStake`.
-pub fn exit_waiting_for_stake_at_boundary(
-    state: WaitingForStake,
-    deactivated_at_height: u64,
-) -> Result<Exiting> {
+/// Boundary retain for a frozen joiner now persisted as `Unbonding`.
+pub fn exit_unbonding_at_boundary(state: Unbonding, deactivated_at_height: u64) -> Result<Exiting> {
     exit_demoted_joiner(
         JoinerPayload {
             registry_index: state.registry_index,
@@ -174,8 +169,22 @@ pub fn exit_waiting_for_stake_at_boundary(
     )
 }
 
-/// Boundary retain for a frozen joiner who topped stake back up without
-/// confirming readiness again.
+/// Boundary retain for a frozen joiner now persisted as `Inactive`.
+pub fn exit_inactive_at_boundary(state: Inactive, deactivated_at_height: u64) -> Result<Exiting> {
+    exit_demoted_joiner(
+        JoinerPayload {
+            registry_index: state.registry_index,
+            consensus_pubkey: state.consensus_pubkey,
+            p2p: state.p2p,
+            stake: StakeProjection::zero(),
+            history: state.history,
+        },
+        deactivated_at_height,
+    )
+}
+
+/// Boundary retain for a frozen joiner who remained in `WaitingForReadiness`
+/// without confirming readiness again.
 pub fn exit_waiting_for_readiness_at_boundary(
     state: WaitingForReadiness,
     deactivated_at_height: u64,
@@ -239,19 +248,16 @@ pub fn begin_exit(
     stake: StakeProjection,
     deactivated_at_height: u64,
 ) -> Result<Exiting> {
-    require_canonical_stake(stake)?;
-    if deactivated_at_height == 0 {
-        return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
-    }
-    Ok(Exiting {
-        registry_index: state.registry_index,
-        consensus_pubkey: state.consensus_pubkey,
-        p2p: state.p2p,
-        stake,
-        history: state
-            .history
-            .with_last_deactivated_at_height(Some(deactivated_at_height)),
-    })
+    exit_demoted_joiner(
+        JoinerPayload {
+            registry_index: state.registry_index,
+            consensus_pubkey: state.consensus_pubkey,
+            p2p: state.p2p,
+            stake,
+            history: state.history,
+        },
+        deactivated_at_height,
+    )
 }
 
 /// Jails an active validator without clearing the old committee share.
@@ -387,7 +393,6 @@ pub(crate) fn with_stake(
         return Err(rejection);
     }
     match &mut lifecycle {
-        ValidatorLifecycle::WaitingForStake(state) => state.stake = stake,
         ValidatorLifecycle::WaitingForReadiness(state) => state.stake = stake,
         ValidatorLifecycle::Joining(state) => state.stake = stake,
         ValidatorLifecycle::Active(state) => state.stake = stake,
@@ -404,7 +409,7 @@ pub(crate) fn with_stake(
 /// an absent address or an inactive registry entry.
 pub(crate) fn stake_target_rejection(lifecycle: &ValidatorLifecycle) -> Option<PrecompileError> {
     match lifecycle {
-        ValidatorLifecycle::Absent => Some(ValidatorSetError::CannotStakeBeforeRegistration.into()),
+        ValidatorLifecycle::Absent => Some(ValidatorSetError::ValidatorNotRegistered.into()),
         ValidatorLifecycle::Inactive(_) => {
             Some(ValidatorSetError::InactiveValidatorMustReregisterBeforeStaking.into())
         }
@@ -424,7 +429,6 @@ pub(crate) fn with_p2p(
     p2p: P2pInfo,
 ) -> Result<ValidatorLifecycle> {
     match &mut lifecycle {
-        ValidatorLifecycle::WaitingForStake(state) => state.p2p = p2p,
         ValidatorLifecycle::WaitingForReadiness(state) => state.p2p = p2p,
         ValidatorLifecycle::Joining(state) => state.p2p = p2p,
         ValidatorLifecycle::Active(state) => state.p2p = p2p,
@@ -491,7 +495,6 @@ fn history_rejection(
 fn history_mut(lifecycle: &mut ValidatorLifecycle) -> Option<&mut ValidatorHistory> {
     match lifecycle {
         ValidatorLifecycle::Absent => None,
-        ValidatorLifecycle::WaitingForStake(state) => Some(&mut state.history),
         ValidatorLifecycle::WaitingForReadiness(state) => Some(&mut state.history),
         ValidatorLifecycle::Joining(state) => Some(&mut state.history),
         ValidatorLifecycle::Active(state) => Some(&mut state.history),

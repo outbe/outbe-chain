@@ -195,25 +195,6 @@ fn wrong_proof_of_possession_is_rejected_before_key_reuse() -> Result<()> {
 }
 
 #[test]
-fn self_registration_cap_is_checked_before_key_reuse() -> Result<()> {
-    assert_rejected_first(
-        40,
-        |vs| {
-            for seed in 0..crate::runtime::MAX_SELF_REGISTERED_UNSTAKED {
-                let mut bytes = [0x5a; 20];
-                bytes[16..].copy_from_slice(&seed.to_be_bytes());
-                let mut key = [0x5a; 48];
-                key[44..].copy_from_slice(&seed.to_be_bytes());
-                vs.register_validator(OWNER, Address::from(bytes), &key)?;
-            }
-            other_registered(vs)
-        },
-        |vs| vs.register_validator(VALIDATOR, VALIDATOR, &dummy_consensus_pubkey(0xD2)),
-        &super::typed_revert(I::SelfRegistrationLimitReached {}.abi_encode()),
-    )
-}
-
-#[test]
 fn key_reuse_is_rejected_before_registry_state_checks() -> Result<()> {
     assert_rejected_first(
         40,
@@ -373,22 +354,22 @@ fn first_registration_writes_its_registry_bundle_atomically() -> Result<()> {
         address_at_index: VALIDATOR,
         count: 2,
         key_halves: (B256::from(lo), B256::ZERO),
-        status: status::REGISTERED,
+        status: status::PENDING,
         history: [0, 0, 0, 0, 1, 0],
         node: node_id(VALIDATOR),
         node_owner: VALIDATOR,
         key_owners: vec![VALIDATOR],
         pending_set_change: true,
     };
-    // index and reverse index, key low and high halves, status (a write of
-    // REGISTERED = 0 over the absent row), join height, key owner, node id,
-    // node owner, count, set-change flag, and ValidatorRegistered.
+    // index and reverse index, key low and high halves, status (PENDING = 1),
+    // join height, key owner, node id, node owner, count, set-change flag,
+    // ValidatorRegistered, and ValidatorPending.
     assert_eq!(
         views,
         MutationPrefixViews {
-            before_mutation: vec![initial; 12],
+            before_mutation: vec![initial; 13],
             complete: Ok(expected),
-            mutations: 12,
+            mutations: 13,
         }
     );
     Ok(())
@@ -420,7 +401,7 @@ fn reregistration_writes_its_registry_bundle_atomically() -> Result<()> {
     };
     assert_eq!(after.index, 1);
     assert_eq!(after.count, 1);
-    assert_eq!(after.status, status::REGISTERED);
+    assert_eq!(after.status, status::PENDING);
     assert_eq!(after.key_owners, vec![Address::ZERO, VALIDATOR]);
     assert_eq!(after.history, [0, 0, 0, 0, 1, 0]);
     assert!(after.pending_set_change);
@@ -445,13 +426,13 @@ fn reregistration_writes_its_registry_bundle_atomically() -> Result<()> {
             .zip(&after.key_owners)
             .filter(|(before, after)| before != after)
             .count();
-    // The changed columns, plus ValidatorRegistered.
+    // The changed columns, plus ValidatorRegistered and ValidatorPending.
     assert_eq!(
         views,
         MutationPrefixViews {
-            before_mutation: vec![initial.clone(); changed + 1],
+            before_mutation: vec![initial.clone(); changed + 2],
             complete: views.complete.clone(),
-            mutations: changed + 1,
+            mutations: changed + 2,
         }
     );
     Ok(())

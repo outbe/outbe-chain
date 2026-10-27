@@ -1,11 +1,14 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_primitives::{
-    addresses::{UPDATE_ADDRESS, VOTE_ADDRESS},
+    addresses::{PROMIS_LIMIT_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS},
     error::{PrecompileError, Result},
     stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::StorageHandle,
+    units::NATIVE_UNITS_PER_PROTOCOL_UNIT,
 };
+
+use outbe_promislimit::{precompile::IPromisLimit, NativeBurnSource, PromisLimitContract};
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
@@ -429,49 +432,75 @@ fn approved_public_bond_refunds_once_and_preserves_forced_surplus() {
 
 #[test]
 fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
-    let owner = Address::repeat_byte(0x99);
-    let forced_surplus = U256::from(7u64);
-    let mut provider = super::test_provider();
-    provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
-    let proposal_id;
-    {
-        let (storage, mut vote) = validator_vote(&mut provider);
-        proposal_id = vote
-            .create_proposal_with_value(
-                ProposalSubmission {
-                    proposer: owner,
-                    target_module: UPDATE_ADDRESS,
-                    payload: RAW_PAYLOAD,
-                    created_height: 10,
-                    attached_value: U256::from(123u64),
-                },
-                &PUBLIC_BONDED_REGISTRY,
-            )
-            .unwrap();
+    for (initial_rest, expected_limit, expected_rest) in [
+        (U256::ZERO, U256::ZERO, U256::from(123u64)),
+        (
+            NATIVE_UNITS_PER_PROTOCOL_UNIT - U256::from(100u64),
+            U256::ONE,
+            U256::from(23u64),
+        ),
+    ] {
+        let owner = Address::repeat_byte(0x99);
+        let forced_surplus = U256::from(7u64);
+        let mut provider = super::test_provider();
+        provider.set_balance(VOTE_ADDRESS, U256::from(123u64) + forced_surplus);
+        let proposal_id;
+        provider.set_balance(owner, initial_rest);
+        provider.enter(|storage| {
+            PromisLimitContract::new(storage)
+                .burn_native_to_promis_limit(owner, initial_rest, NativeBurnSource::Slash)
+                .unwrap();
+        });
+        {
+            let (storage, mut vote) = validator_vote(&mut provider);
+            proposal_id = vote
+                .create_proposal_with_value(
+                    ProposalSubmission {
+                        proposer: owner,
+                        target_module: UPDATE_ADDRESS,
+                        payload: RAW_PAYLOAD,
+                        created_height: 10,
+                        attached_value: U256::from(123u64),
+                    },
+                    &PUBLIC_BONDED_REGISTRY,
+                )
+                .unwrap();
 
-        let deadline = 10 + VOTING_WINDOW_BLOCKS;
-        vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
-            .unwrap();
-        assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
-        assert_bond_closed(&vote, proposal_id, BondState::Burned);
-        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
-        assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
+            let deadline = 10 + VOTING_WINDOW_BLOCKS;
+            vote.begin_block_with(deadline + 1, &PUBLIC_BONDED_REGISTRY)
+                .unwrap();
+            assert_eq!(proposal_status(&vote, proposal_id), ProposalStatus::Expired);
+            assert_bond_closed(&vote, proposal_id, BondState::Burned);
+            assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
+            let limit = PromisLimitContract::new(storage.clone());
+            assert_eq!(limit.promis_limit().unwrap(), expected_limit);
+            assert_eq!(limit.native_rest().unwrap(), expected_rest);
 
-        vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
-            .unwrap();
-        assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+            vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
+                .unwrap();
+            assert_eq!(storage.balance(VOTE_ADDRESS).unwrap(), forced_surplus);
+        }
+
+        let burns = provider
+            .get_events(VOTE_ADDRESS)
+            .iter()
+            .filter(|log| log.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH))
+            .collect::<Vec<_>>();
+        assert_eq!(burns.len(), 1);
+        let burn = IVote::ProposalBondBurned::decode_log_data(burns[0]).unwrap();
+        assert_eq!(burn.proposalId, proposal_id);
+        assert_eq!(burn.owner, owner);
+        assert_eq!(burn.amount, U256::from(123u64));
+        let logs = provider.get_events(PROMIS_LIMIT_ADDRESS);
+        let burns = logs
+            .iter()
+            .filter_map(|log| IPromisLimit::NativeBurnedToPromisLimit::decode_log_data(log).ok())
+            .filter(|event| event.source == NativeBurnSource::ProposalBond as u8)
+            .collect::<Vec<_>>();
+        assert_eq!(burns.len(), 1);
+        assert_eq!(burns[0].burnedUnit, U256::from(123u64));
     }
-
-    let burns = provider
-        .get_events(VOTE_ADDRESS)
-        .iter()
-        .filter(|log| log.topics().first() == Some(&IVote::ProposalBondBurned::SIGNATURE_HASH))
-        .collect::<Vec<_>>();
-    assert_eq!(burns.len(), 1);
-    let burn = IVote::ProposalBondBurned::decode_log_data(burns[0]).unwrap();
-    assert_eq!(burn.proposalId, proposal_id);
-    assert_eq!(burn.owner, owner);
-    assert_eq!(burn.amount, U256::from(123u64));
 }
 
 #[test]

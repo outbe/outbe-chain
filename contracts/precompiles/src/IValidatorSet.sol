@@ -90,7 +90,6 @@ interface IValidatorSet {
     error ZeroRadicleNodeId();
     error RadicleNodeIdAlreadyRegistered();
     error RegistrationRequiresBlsPop();
-    error SelfRegistrationLimitReached();
     error ConsensusPubkeyAlreadyRegistered();
     error ValidatorAlreadyRegistered();
     error InactiveValidatorMustKeepRadicleNodeId();
@@ -108,7 +107,6 @@ interface IValidatorSet {
     error UnjailCooldownHeightOverflow();
     error UnjailCooldownNotElapsed(uint64 ready_at, uint64 current_height);
     error CannotCompleteUnbondingWithRemainingStakeOrClaim();
-    error CannotStakeBeforeRegistration();
     error InactiveValidatorMustReregisterBeforeStaking();
     error DeactivationHeightZeroSentinel();
     error ActiveHistoryHasDeactivationHeight();
@@ -143,8 +141,8 @@ interface IValidatorSet {
     /// PENDING (then ACTIVE via the next reshare).
     event ValidatorUnjailed(address indexed validator, uint64 atHeight);
 
-    /// Emitted when stake moves a validator from WaitingForStake to
-    /// WaitingForReadiness. `validator` is that account.
+    /// Emitted when a validator enters `WaitingForReadiness` (`PENDING`).
+    /// `validator` is that account.
     event ValidatorPending(address indexed validator);
 
     /// Emitted when readiness confirmation moves a validator from
@@ -222,12 +220,6 @@ interface IValidatorSet {
     function revokeDelegate(uint8 role) external;
     function getDelegate(address validator, uint8 role) external view returns (address);
     function resolveValidator(uint8 role, address signer) external view returns (address);
-    function registerValidator(
-        address validatorAddress,
-        bytes calldata consensusPubkey,
-        bytes32 radicleNodeId,
-        bytes calldata blsRegistrationSignature
-    ) external;
     function getRadicleNodeId(address validator) external view returns (bytes32);
     function validatorByRadicleNodeId(bytes32 nodeId) external view returns (address);
     function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
