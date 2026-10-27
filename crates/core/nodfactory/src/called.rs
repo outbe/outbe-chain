@@ -6,7 +6,7 @@
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
 //! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
-//! (`expired::sweep_expired`).
+//! (`forfeited::sweep_expired`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
@@ -101,7 +101,7 @@ impl<'storage> CallPass<'storage> for NodCallPass<'storage> {
         let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
-        crate::expired::sweep_through(ctx, through_day, budget)
+        crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 
     type Bins<'a>

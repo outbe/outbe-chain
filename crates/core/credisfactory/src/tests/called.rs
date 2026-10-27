@@ -1106,7 +1106,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
             storage.clone(),
         );
-        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
+        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         outbe_gratis::enclave_client::test_enclave::uninstall();
         assert!(matches!(
             crate::cleanup::sweep_cleanup(&ctx),
@@ -1249,7 +1249,7 @@ fn forfeit_block(
         storage.clone(),
     );
     storage.with_checkpoint(|| {
-        let forfeited = crate::expired::sweep_expired(&ctx)?;
+        let forfeited = crate::forfeited::sweep_expired(&ctx)?;
         crate::cleanup::sweep_cleanup(&ctx)?;
         Ok(forfeited)
     })

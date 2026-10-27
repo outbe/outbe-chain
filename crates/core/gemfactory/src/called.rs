@@ -83,8 +83,8 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
         match phase {
-            1 => crate::expired::sweep_through(ctx, through_day, budget),
-            2 => crate::positions_expired::sweep_through(ctx, through_day, budget),
+            1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
+            2 => crate::positions_expired::expire_through(ctx, through_day, budget),
             _ => Err(PrecompileError::revert("invalid Gem daily phase")),
         }
     }

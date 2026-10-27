@@ -19,7 +19,7 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(cleanup.deleted)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,

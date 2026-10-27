@@ -137,7 +137,7 @@ fn due(deadline: u64) -> u64 {
 
 fn sweep_at(s: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, now, CHAIN_ID), s.clone());
-    crate::expired::sweep_expired(&ctx).unwrap();
+    crate::forfeited::sweep_expired(&ctx).unwrap();
 }
 
 fn unallocated(s: &StorageHandle<'_>) -> U256 {

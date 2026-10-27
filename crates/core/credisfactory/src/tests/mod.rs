@@ -366,7 +366,7 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
         BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
         storage.clone(),
     );
-    let forfeited = crate::expired::sweep_expired(&ctx).unwrap();
+    let forfeited = crate::forfeited::sweep_expired(&ctx).unwrap();
     crate::cleanup::sweep_cleanup(&ctx).unwrap();
     forfeited
 }

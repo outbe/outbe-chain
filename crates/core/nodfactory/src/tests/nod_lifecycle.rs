@@ -218,7 +218,7 @@ fn forfeit_block(
 ) -> outbe_primitives::error::Result<u32> {
     let ctx = block_at(storage, timestamp);
     storage.with_checkpoint(|| {
-        let forfeited = crate::expired::sweep_expired(&ctx)?;
+        let forfeited = crate::forfeited::sweep_expired(&ctx)?;
         crate::cleanup::sweep_cleanup(&ctx)?;
         Ok(forfeited)
     })
@@ -1170,7 +1170,7 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
         register(&storage, ISO);
         let (group_key, items) = arm_lapsed(&storage, &[(0x61, 5, false), (0x62, 7, false)]);
         let ctx = block_at(&storage, past);
-        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
+        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         assert_eq!(reserve(&storage), U256::from(12u64));
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.total_supply().unwrap(), 2);
@@ -1270,7 +1270,7 @@ fn failing_members_do_not_hold_the_cleanup() {
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
-        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
+        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         assert_eq!(crate::cleanup::sweep_cleanup(&ctx).unwrap(), 3);
         assert_eq!(reserve(storage), U256::from(25u64));
         let (day, _) = outbe_primitives::deadline_queue::unpack_slot(
@@ -1291,7 +1291,7 @@ fn a_forfeit_does_not_need_the_enclave() {
         let ctx = block_at(storage, START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY);
 
         outbe_nod::test_support::uninstall();
-        let forfeited = crate::expired::sweep_expired(&ctx);
+        let forfeited = crate::forfeited::sweep_expired(&ctx);
         let deleted = crate::cleanup::sweep_cleanup(&ctx);
         outbe_nod::test_support::install();
         assert_eq!(forfeited.unwrap(), 1);
@@ -1861,7 +1861,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
-        crate::expired::sweep_expired(&block_at(&storage, past))
+        crate::forfeited::sweep_expired(&block_at(&storage, past))
     });
     provider.clear_mutation_failure();
     assert!(matches!(

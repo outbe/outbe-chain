@@ -1,4 +1,4 @@
-//! Expiry sweep: closes a called group's settlement window, returns the Promis load of
+//! Forfeit pass: closes a called group's settlement window, returns the Promis load of
 //! everything left unrealized to the Promis Limit, and hands the group to the
 //! cleanup.
 
@@ -17,17 +17,17 @@ use outbe_intex::{ForfeitQueue, IntexContract};
 use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
 
-/// This function expires every group after its settlement window closes, earliest day first.
-/// It returns the number of expired groups.
+/// This function forfeits every group after its settlement window closes, earliest day first.
+/// It returns the number of forfeited groups.
 #[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
-    let mut expiry = IntexExpiry::new(ctx);
+    let mut expiry = IntexForfeit::new(ctx);
     deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
@@ -38,17 +38,17 @@ pub(crate) fn sweep_through(
         ctx,
         through_day,
         budget,
-        &mut IntexExpiry::new(ctx),
+        &mut IntexForfeit::new(ctx),
     )
 }
 
-struct IntexExpiry<'a, 'storage> {
+struct IntexForfeit<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
     expired: u32,
 }
 
-impl<'a, 's> IntexExpiry<'a, 's> {
+impl<'a, 's> IntexForfeit<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -58,8 +58,8 @@ impl<'a, 's> IntexExpiry<'a, 's> {
     }
 }
 
-/// A called group expires as one: it is its own and only member.
-impl DeadlineHandler<B256> for IntexExpiry<'_, '_> {
+/// A called group forfeits as one: it is its own and only member.
+impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {

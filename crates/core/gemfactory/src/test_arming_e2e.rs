@@ -79,7 +79,7 @@ fn requeue_position_hour(
     if now < position.expires_at {
         return Err(GemFactoryError::PositionNotExpired.into());
     }
-    let days = crate::state::PositionExpiryDays(&factory);
+    let days = crate::state::PositionExpiryQueue(&factory);
     let entry = crate::state::position_queue_entry(position.expiry_hour())?;
     deadline_queue::remove(&days, entry)?;
     deadline_queue::push(&days, entry, deadline)?;

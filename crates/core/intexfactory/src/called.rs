@@ -87,7 +87,7 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
-        crate::expired::sweep_through(ctx, through_day, budget)
+        crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 
     type Bins<'a>

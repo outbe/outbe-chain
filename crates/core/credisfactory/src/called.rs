@@ -94,8 +94,8 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
         match phase {
-            1 => crate::expired::sweep_through(ctx, through_day, budget),
-            _ => crate::cleanup::sweep_through(ctx, through_day, budget),
+            1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
+            _ => crate::cleanup::cleanup_through(ctx, through_day, budget),
         }
     }
 

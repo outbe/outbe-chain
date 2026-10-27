@@ -414,7 +414,7 @@ fn a_corrupt_record_read_fails_the_forfeit_sweep() {
     use outbe_primitives::deadline_queue::DeadlineHandler;
     with_storage(|storage| {
         let ctx = block_ctx(storage);
-        let expiry = crate::expired::GemExpiry::new(&ctx);
+        let expiry = crate::forfeited::GemForfeit::new(&ctx);
         assert_eq!(
             expiry.classify(&PrecompileError::BodyReadCorruption("x".into())),
             PassFailure::Propagate

@@ -19,12 +19,12 @@ use crate::precompile::ICredisFactory::ExpiryDeferred;
 #[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut expiry = CredisExpiry::new(ctx);
+    let mut expiry = CredisForfeit::new(ctx);
     deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
@@ -35,17 +35,17 @@ pub(crate) fn sweep_through(
         ctx,
         through_day,
         budget,
-        &mut CredisExpiry::new(ctx),
+        &mut CredisForfeit::new(ctx),
     )
 }
 
-struct CredisExpiry<'a, 'storage> {
+struct CredisForfeit<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
     forfeited: u32,
 }
 
-impl<'a, 's> CredisExpiry<'a, 's> {
+impl<'a, 's> CredisForfeit<'a, 's> {
     fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             ctx,
@@ -56,7 +56,7 @@ impl<'a, 's> CredisExpiry<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for CredisExpiry<'_, '_> {
+impl DeadlineHandler<B256> for CredisForfeit<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {

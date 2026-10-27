@@ -12,7 +12,7 @@ use outbe_primitives::{
 use crate::errors::GemFactoryError;
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
-use crate::state::{PositionCleanupDays, PositionExpiryDays};
+use crate::state::{PositionCleanupQueue, PositionExpiryQueue};
 use alloy_primitives::U256;
 
 /// Returns the unissued capacity of the hours whose positions expired. Returns the
@@ -21,18 +21,18 @@ use alloy_primitives::U256;
 pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut expiry = PositionExpiry::new(ctx);
-    deadline_queue::process_block(&PositionExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&PositionExpiryQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn expire_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
     budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &PositionExpiryDays(&queue),
+        &PositionExpiryQueue(&queue),
         ctx,
         through_day,
         budget,
@@ -48,7 +48,7 @@ pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
         deleted: 0,
     };
     deadline_queue::process_cleanup(
-        &PositionCleanupDays(&queue),
+        &PositionCleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
         &mut cleanup,

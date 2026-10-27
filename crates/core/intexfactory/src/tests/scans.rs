@@ -417,7 +417,7 @@ fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 
 fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
     let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-    crate::expired::sweep_expired(&ctx).unwrap();
+    crate::forfeited::sweep_expired(&ctx).unwrap();
 }
 
 #[test]
@@ -474,7 +474,7 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s);
-        crate::expired::sweep_expired(&ctx)
+        crate::forfeited::sweep_expired(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -513,7 +513,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
             BlockContext::empty_for_tests(1, IntexContract::day_end(day), CHAIN_ID),
             s,
         );
-        crate::expired::sweep_expired(&ctx)
+        crate::forfeited::sweep_expired(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
