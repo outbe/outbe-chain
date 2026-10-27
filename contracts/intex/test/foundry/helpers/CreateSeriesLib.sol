@@ -32,7 +32,7 @@ library CreateSeriesLib {
             entryPriceMinor: 1e6,
             callPriceMinor: 200,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
-                callWindow: 0, callThreshold: 0, callNoticePeriod: callNoticePeriod
+                callWindow: 0, callThreshold: 0, callNoticePeriod: callNoticePeriod, transitMargin: 1 hours
             })
         });
     }

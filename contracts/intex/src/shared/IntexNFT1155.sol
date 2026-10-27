@@ -142,7 +142,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 callWindow: params.callTrigger.callWindow,
                 callThreshold: params.callTrigger.callThreshold,
-                callNoticePeriod: params.callTrigger.callNoticePeriod
+                callNoticePeriod: params.callTrigger.callNoticePeriod,
+                transitMargin: params.callTrigger.transitMargin
             }),
             issuedAt: params.issuedAt,
             calledAt: 0,

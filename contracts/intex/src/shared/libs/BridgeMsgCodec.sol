@@ -41,8 +41,8 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
     /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. A wider day spans several messages.
-    /// @dev A series encodes to 384 bytes, so the 10_000-byte send cap fits 25. This keeps headroom.
-    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 24;
+    /// @dev A series encodes to 416 bytes, so the 10_000-byte send cap fits 23.
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 23;
 
     /// @notice Series one MARK_CALLED message may carry. A batch is one day's series called
     ///         together.
@@ -80,11 +80,11 @@ library BridgeMsgCodec {
     //     4 static head words + 2 dynamic head offsets + 2 empty length words = 8x32 = 256
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16):
     //     7 static head words + 1 dynamic offset + 1 empty length word = 9x32 = 288
-    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a 12-field static struct):
-    //     3 head words + array offset(32) + array length(32) + one element(12x32) = 17x32 = 544
+    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a 13-field static struct):
+    //     3 head words + array offset(32) + array length(32) + one element(13x32) = 18x32 = 576
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 256;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 576;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -366,6 +366,8 @@ library BridgeMsgCodec {
         uint32 callWindow;
         uint32 callThreshold;
         uint64 callPriceMinor;
+        /// @notice Seconds past the settlement deadline a Called unit may still arrive and settle.
+        uint32 transitMargin;
     }
 
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
@@ -730,7 +732,7 @@ library BridgeMsgCodec {
         }
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
-        // function's stack. This keeps the 12-field payload within bounds under via_ir.
+        // function's stack. This keeps the 13-field payload within bounds under via_ir.
         (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
         _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);

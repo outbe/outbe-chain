@@ -184,7 +184,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             referenceCurrency: REFERENCE_CURRENCY,
             callWindow: 30,
             callThreshold: 5,
-            callPriceMinor: 25e6
+            callPriceMinor: 25e6,
+            transitMargin: 1 hours
         });
         bytes memory packet =
             BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
@@ -212,7 +213,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
                     referenceCurrency: REFERENCE_CURRENCY,
                     callWindow: 30,
                     callThreshold: 5,
-                    callPriceMinor: 25e6
+                    callPriceMinor: 25e6,
+                    transitMargin: 1 hours
                 })
             )
         );

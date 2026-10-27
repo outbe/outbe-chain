@@ -173,6 +173,7 @@ fn prod_trigger() -> outbe_intex::IntexCallTrigger {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
+        transit_margin_seconds: 3_600,
     }
 }
 

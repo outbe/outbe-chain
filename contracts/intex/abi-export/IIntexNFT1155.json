@@ -158,6 +158,11 @@
                   "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
+                },
+                {
+                  "name": "transitMargin",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 }
               ]
             }
@@ -456,6 +461,11 @@
                 },
                 {
                   "name": "callNoticePeriod",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "transitMargin",
                   "type": "uint32",
                   "internalType": "uint32"
                 }

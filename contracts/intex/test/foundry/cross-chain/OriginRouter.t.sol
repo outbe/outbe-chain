@@ -124,7 +124,8 @@ contract OriginRouterTest is CrossChainTest {
             referenceCurrency: 840,
             callWindow: 30,
             callThreshold: 5,
-            callPriceMinor: 25e6
+            callPriceMinor: 25e6,
+            transitMargin: 1 hours
         });
     }
 

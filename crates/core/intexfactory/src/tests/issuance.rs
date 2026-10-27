@@ -69,6 +69,7 @@ fn issue_creates_series_in_registry() {
                 call_window_seconds: 28 * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                transit_margin_seconds: 3_600,
             }
         );
         // Born Issued. `issued_at` is the block timestamp.
@@ -104,6 +105,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
                 call_window_seconds: dev.call_window_seconds,
                 call_threshold_seconds: dev.call_threshold_seconds,
                 call_notice_period_seconds: dev.call_notice_period_seconds,
+                transit_margin_seconds: dev.transit_margin_seconds,
             }
         );
     });
@@ -244,6 +246,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
         callWindow: 0,
         callThreshold: 0,
         callPriceMinor: 0,
+        transitMargin: 0,
     };
     runtime::IssuanceLeg { chain_id, payload }
 }

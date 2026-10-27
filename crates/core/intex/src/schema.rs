@@ -40,6 +40,8 @@ pub struct IntexCallTrigger {
     pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
     pub call_notice_period_seconds: u32,
+    /// Seconds past the settlement deadline a Called unit may still arrive and settle.
+    pub transit_margin_seconds: u32,
 }
 
 /// When a series' group was called and the last second it may still settle. Both are
@@ -243,6 +245,9 @@ pub struct SeriesRecord {
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
     #[attribute(order = 10, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
+
+    #[attribute(order = 11)]
+    pub transit_margin_seconds: u32,
 }
 
 impl SeriesRecord {
@@ -261,6 +266,7 @@ impl SeriesRecord {
             call_window_seconds: self.call_window_seconds,
             call_threshold_seconds: self.call_threshold_seconds,
             call_notice_period_seconds: self.call_notice_period_seconds,
+            transit_margin_seconds: self.transit_margin_seconds,
         }
     }
 }
@@ -437,6 +443,8 @@ pub struct IntexContract {
     pub call_group_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 72)]
     pub call_group_notice_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 77)]
+    pub call_group_transit_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {

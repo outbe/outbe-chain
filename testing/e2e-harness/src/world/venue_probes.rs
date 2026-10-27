@@ -543,6 +543,7 @@ sol! {
         uint32 callWindow;
         uint32 callThreshold;
         uint32 callNoticePeriod;
+        uint32 transitMargin;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

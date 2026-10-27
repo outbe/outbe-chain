@@ -39,6 +39,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         call_price_minor: params.call_price_minor,
         issued_at: params.issued_at,
         call_notice_period_seconds: params.call_trigger.call_notice_period_seconds,
+        transit_margin_seconds: params.call_trigger.transit_margin_seconds,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         worldwide_day: params.worldwide_day,

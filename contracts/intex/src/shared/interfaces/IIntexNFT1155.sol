@@ -61,6 +61,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         /// @notice Called->deadline window in seconds. It is stored verbatim. The issuer must
         ///         supply a non-zero value.
         uint32 callNoticePeriod;
+        /// @notice Seconds past the settlement deadline a Called unit may still arrive and settle.
+        uint32 transitMargin;
     }
 
     /// @notice Series-level data, stored once per series under its Issued token id.

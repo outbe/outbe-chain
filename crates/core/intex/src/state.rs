@@ -97,6 +97,8 @@ impl IntexContract<'_> {
                 .write(&group, record.call_threshold_seconds)?;
             self.call_group_notice_seconds
                 .write(&group, record.call_notice_period_seconds)?;
+            self.call_group_transit_seconds
+                .write(&group, record.transit_margin_seconds)?;
             let bin = call_bins::price_to_bin(record.call_price_minor)?;
             call_bins::insert(&CallBins(&*self, iso), group, bin)?;
         }
@@ -122,6 +124,7 @@ impl IntexContract<'_> {
         self.call_group_window_seconds.clear(&group)?;
         self.call_group_threshold_seconds.clear(&group)?;
         self.call_group_notice_seconds.clear(&group)?;
+        self.call_group_transit_seconds.clear(&group)?;
         self.call_group_called_at.clear(&group)
     }
 

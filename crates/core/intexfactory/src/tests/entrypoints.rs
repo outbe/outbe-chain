@@ -85,6 +85,7 @@ fn config_dev_profile_drives_issuance() {
                 call_window_seconds: dev.call_window_seconds,
                 call_threshold_seconds: dev.call_threshold_seconds,
                 call_notice_period_seconds: dev.call_notice_period_seconds,
+                transit_margin_seconds: dev.transit_margin_seconds,
             }
         );
     });

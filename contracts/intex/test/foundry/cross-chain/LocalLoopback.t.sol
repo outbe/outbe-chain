@@ -340,7 +340,8 @@ contract LocalLoopbackTest is Test {
             referenceCurrency: 840,
             callWindow: 30,
             callThreshold: 21,
-            callPriceMinor: 200
+            callPriceMinor: 200,
+            transitMargin: 1 hours
         });
         vm.prank(address(factory));
         origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);

@@ -22,6 +22,7 @@ pub fn call_terms(storage: &StorageHandle<'_>) -> Result<IntexCallTerms> {
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,
             call_notice_period_seconds: profile.call_notice_period_seconds,
+            transit_margin_seconds: profile.transit_margin_seconds,
         },
     })
 }
