@@ -11,8 +11,6 @@ use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::precompile::IGemFactory::ExpiryDeferred;
-use crate::runtime::emit_event;
 
 /// Forfeits the called groups whose notice period closed, one credit per group.
 /// Returns the groups forfeited.
@@ -101,13 +99,7 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "expiry sweep: group deferred");
-        emit_event(
-            &self.gem.storage,
-            ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            },
-        )
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }

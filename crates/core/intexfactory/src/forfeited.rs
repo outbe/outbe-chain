@@ -15,7 +15,6 @@ use outbe_intex::precompile::IIntex;
 use outbe_intex::{ForfeitQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
-use crate::runtime::emit_event;
 
 /// This function forfeits every group after its settlement window closes, earliest day first.
 /// It returns the number of forfeited groups.
@@ -106,13 +105,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "expiry sweep: group deferred");
-        emit_event(
-            self.storage,
-            crate::precompile::IIntexFactory::ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            },
-        )
+        tracing::warn!(target: "outbe::intexfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }

@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::{sol, SolError, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
@@ -307,7 +307,6 @@ fn burned(world: &mut World) {
             credis: 1,
         },
     );
-    assert_no_event::<ICredisFactory::ExpiryDeferred>(&url, CREDIS_FACTORY_ADDRESS, from, height);
     let state = snapshot(world);
     assert!(state.record.is_none(), "the cleanup deletes the Credis");
     assert_eq!(state.pledged, U256::ZERO);
@@ -428,19 +427,6 @@ fn forfeit_block(url: &str, credis_id: U256) -> Option<u64> {
     .expect("Credis forfeit logs");
     let block = logs.as_array()?.first()?["blockNumber"].as_str()?;
     u64::from_str_radix(block.trim_start_matches("0x"), 16).ok()
-}
-
-fn assert_no_event<E: SolEvent>(url: &str, address: Address, from: u64, to: u64) {
-    let logs = eth::raw_json_result(
-        url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "address": address, "fromBlock": format!("0x{from:x}"), "toBlock": format!("0x{to:x}"),
-            "topics": [E::SIGNATURE_HASH],
-        }]),
-    )
-    .expect("finalized forfeit events");
-    assert_eq!(logs, serde_json::json!([]), "unexpected {}", E::SIGNATURE);
 }
 
 fn latest(world: &World) -> ICredis::Credis {

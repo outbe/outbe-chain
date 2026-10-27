@@ -4,7 +4,7 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
+use outbe_primitives::addresses::{GEM_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::SECONDS_PER_DAY;
@@ -209,13 +209,10 @@ fn a_group_that_outlives_its_day_is_retired_rather_than_left_in_front() {
     });
 }
 
-/// This helper calls a mature gem and causes its first forfeit to fail.
-/// It checks that the group moves to the next day and that the gem burns there with its credit.
-/// It returns the provider for access to its events.
-fn forfeit_fails_once() -> (
-    outbe_primitives::storage::hashmap::HashMapStorageProvider,
-    U256,
-) {
+/// A gem whose forfeit fails remains in its group. The group moves to the next day,
+/// when the gem burns with its credit.
+#[test]
+fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
     let mut provider = provider_at(T_NOW);
     let (gem_id, load, retry) = StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
@@ -250,20 +247,6 @@ fn forfeit_fails_once() -> (
         assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
     });
-    (provider, gem_id)
-}
-
-/// A gem whose forfeit fails remains in its group.
-/// The group moves to the next day, when the gem burns.
-#[test]
-fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
-    let (provider, _) = forfeit_fails_once();
-    let deferred = provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).is_ok())
-        .count();
-    assert_eq!(deferred, 1);
 }
 
 /// A group whose credit fails is deferred whole: none of its gems is credited or
@@ -316,10 +299,6 @@ fn a_broken_group_index_holds_back_only_the_cleanup() {
             .unwrap()
             .is_some());
     });
-    assert!(provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .all(|log| crate::precompile::IGemFactory::ExpiryDeferred::decode_log_data(log).is_err()));
 }
 
 /// A called group wider than one block's budget is credited at once, and its gems are

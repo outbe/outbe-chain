@@ -492,8 +492,6 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
 
 #[test]
 fn a_node_local_failure_while_deferring_fails_the_sweep() {
-    use alloy_sol_types::SolEvent;
-
     let mut provider = factory_provider();
     let now = ISSUED_AT as u64;
     let day = IntexContract::deadline_day(now + DAY);
@@ -526,10 +524,6 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
         assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 1);
         assert_eq!(f.first_expiry_day().unwrap(), Some(day));
     });
-    assert!(provider
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .all(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).is_err()));
 }
 
 #[test]
@@ -568,7 +562,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     let now = ISSUED_AT as u64;
     let day = IntexContract::deadline_day(now + DAY);
     let later = IntexContract::deadline_day(now + 3 * DAY);
-    let group = StorageHandle::enter(&mut provider, |s| {
+    StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
         let f = IntexContract::new(s.clone());
         let member = called_series(&s, 20260101, now + DAY);
@@ -592,17 +586,8 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
 
         sweep_expiry(&s, IntexContract::day_end(later) + DAY);
         assert_eq!(unallocated(), U256::from(PROMIS_LOAD_MINOR));
-        group
     });
 
-    let deferred: Vec<_> = provider
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| IIntexFactory::ExpiryDeferred::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(deferred.len(), 1);
-    assert_eq!(deferred[0].groupKey, group);
-    assert_eq!(deferred[0].retryAt, IntexContract::day_end(later));
     let forfeited = provider
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
@@ -730,15 +715,13 @@ fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeCont
     )
 }
 
-/// The Called sweep reports a currency it cannot price: the day's window price is out
+/// The call pass marks a currency it cannot price: the day's window price is out
 /// of the bin ladder, so the currency waits a day.
 #[test]
-fn an_unindexable_window_price_is_reported_once() {
-    use alloy_sol_types::SolEvent;
-
+fn an_unindexable_window_price_marks_the_currency_for_the_day() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT as u64));
-    let day = StorageHandle::enter(&mut storage, |s| {
+    StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         seed_issued(&s, 7);
         let oracle = OracleContract::new(s.clone());
@@ -751,15 +734,13 @@ fn an_unindexable_window_price_is_reported_once() {
             0
         );
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
-        day
+        assert_eq!(
+            IntexContract::new(s.clone())
+                .call_scan_failed_day
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            day,
+            "the currency is marked for the day it failed on"
+        );
     });
-
-    let events: Vec<_> = storage
-        .get_events(INTEX_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| IIntexFactory::CallScanSkipped::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].referenceCurrency, REFERENCE_ISO);
-    assert_eq!(events[0].utcDay, day);
 }

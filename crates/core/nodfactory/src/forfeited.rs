@@ -10,8 +10,6 @@ use outbe_primitives::{
     pass_budget::PassBudget,
 };
 
-use crate::precompile::INodFactory;
-use crate::runtime::emit_event;
 use outbe_nod::state::ForfeitQueue;
 use outbe_nod::{precompile::INod, schema::NodContract};
 
@@ -102,13 +100,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit sweep: group deferred");
-        emit_event(
-            self.storage,
-            INodFactory::ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            },
-        )
+        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }

@@ -133,15 +133,6 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
                         params.call_threshold_seconds,
                     )
                 },
-                skipped: |iso_code| {
-                    crate::runtime::emit_event(
-                        &ctx.storage,
-                        crate::precompile::IIntexFactory::CallScanSkipped {
-                            referenceCurrency: iso_code,
-                            utcDay: pinned_day,
-                        },
-                    )
-                },
             },
             |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;

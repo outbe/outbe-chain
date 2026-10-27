@@ -235,35 +235,32 @@ fn run_phases<'s, S: CallPass<'s>>(
 }
 
 /// How a day's walk reads one right's call index. `scan_terms` names the widest terms a
-/// currency's entries were sealed with, and `skipped` reports a currency whose window
-/// price fits no bin.
-pub struct CallIndex<'c, 's, Bins, Terms, Skipped> {
+/// currency's entries were sealed with. A currency whose window price fits no bin is
+/// logged and passed by for the day.
+pub struct CallIndex<'c, 's, Bins, Terms> {
     pub currency_cursor: &'c Value<'s, u32>,
     pub bins: Bins,
     pub scan_terms: Terms,
-    pub skipped: Skipped,
 }
 
 /// One block's slice of the pinned day: every currency from the cursor, each walked by
 /// `walk` up to the highest bin its window can have breached. Returns whether the day ended.
-pub fn walk_day<'s, B, Bins, Terms, Skipped>(
+pub fn walk_day<'s, B, Bins, Terms>(
     ctx: &BlockRuntimeContext,
     pinned_day: u32,
     budget: &mut PassBudget,
-    index: CallIndex<'_, 's, Bins, Terms, Skipped>,
+    index: CallIndex<'_, 's, Bins, Terms>,
     mut walk: impl FnMut(u16, &CallWindow, u32, &mut PassBudget) -> Result<bool>,
 ) -> Result<bool>
 where
     B: CallBinStore<'s>,
     Bins: Fn(u16) -> B,
     Terms: FnMut(u16) -> Result<ScanTerms>,
-    Skipped: FnMut(u16) -> Result<()>,
 {
     let CallIndex {
         currency_cursor,
         bins,
         mut scan_terms,
-        mut skipped,
     } = index;
     let currencies = REFERENCE_CURRENCIES;
     let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
@@ -276,7 +273,6 @@ where
                 &bins(reference_currency),
                 &mut windows,
                 || scan_terms(reference_currency),
-                || skipped(reference_currency),
             )?
             else {
                 return Ok(true);
@@ -288,13 +284,12 @@ where
 
 /// The currency's window and the highest bin a breached entry can sit in. `None`
 /// when the currency is settled for the pinned day: nothing left past its cursor, too
-/// few priced days, or a price no bin covers. The last marks the day failed and calls
-/// `skipped` once, so later slices pass the currency by.
+/// few priced days, or a price no bin covers. The last marks the day failed, so later
+/// slices pass the currency by.
 pub fn currency_ceiling<'w, 's, S: CallBinStore<'s>>(
     bins: &S,
     windows: &'w mut CallWindows<'_>,
     terms: impl FnOnce() -> Result<ScanTerms>,
-    skipped: impl FnOnce() -> Result<()>,
 ) -> Result<Option<(&'w CallWindow, u32)>> {
     let (reference_currency, pinned_day) = (bins.currency(), windows.last_day());
     if bins.failed_day().read(&reference_currency)? == pinned_day || !call_bins::pending(bins)? {
@@ -307,9 +302,8 @@ pub fn currency_ceiling<'w, 's, S: CallBinStore<'s>>(
     match call_bins::price_to_bin(ceiling) {
         Ok(bin) => Ok(Some((window, bin))),
         Err(error) => {
-            tracing::warn!(target: "outbe::oracle", reference_currency, error = ?error, "call sweep: window price out of range, skipping currency for the day");
+            tracing::warn!(target: "outbe::oracle", reference_currency, error = ?error, "call pass: window price out of range, skipping currency for the day");
             bins.failed_day().write(&reference_currency, pinned_day)?;
-            skipped()?;
             Ok(None)
         }
     }

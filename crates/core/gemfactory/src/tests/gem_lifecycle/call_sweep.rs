@@ -4,7 +4,7 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
+use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::SECONDS_PER_DAY;
@@ -352,9 +352,9 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
 }
 
 #[test]
-fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
+fn an_unindexable_price_skips_its_currency_for_the_day() {
     let mut provider = provider_at(T_NOW);
-    let pinned_day = StorageHandle::enter(&mut provider, |storage| {
+    StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
         // A price no bin can hold, on enough days to be the window's ceiling. A
         // begin-block error would fail the whole block.
@@ -388,19 +388,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
         // Another slice of the same pass skips it instead of re-reading the window.
         gem.call_sweep_day.write(last_closed_day).unwrap();
         assert_eq!(run_call_slice(&ctx).unwrap(), 0);
-        last_closed_day
     });
-
-    let skipped: Vec<_> = provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::IGemFactory::CallScanSkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(skipped.len(), 1, "one event for the day, not one per slice");
-    assert_eq!(skipped[0].referenceCurrency, USD);
-    assert_eq!(skipped[0].utcDay, pinned_day);
 }
 
 /// Gem ids carry no order, so a slice refreshes the whole range once, however many

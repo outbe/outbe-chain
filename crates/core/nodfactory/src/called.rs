@@ -35,8 +35,6 @@ use outbe_primitives::{
 use outbe_nod::state::CallBins;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
-use crate::precompile::INodFactory;
-use crate::runtime::emit_event;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
@@ -173,15 +171,6 @@ fn call_slice(
             currency_cursor: &nod.call_currency_cursor,
             bins: |iso_code| CallBins(nod, iso_code),
             scan_terms: |iso_code| scan_terms(nod, iso_code, &params),
-            skipped: |iso_code| {
-                emit_event(
-                    &ctx.storage,
-                    INodFactory::CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    },
-                )
-            },
         },
         |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {

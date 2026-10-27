@@ -33,7 +33,6 @@ use outbe_primitives::{
     pass_budget::PassBudget,
 };
 
-use crate::precompile::ICredisFactory::CallScanSkipped;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -137,15 +136,6 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
                 currency_cursor: &index.call_currency_cursor,
                 bins: |iso_code| CallBins(index, iso_code),
                 scan_terms: |iso_code| scan_terms(index, iso_code, &live),
-                skipped: |iso_code| {
-                    emit(
-                        &ctx.storage,
-                        &CallScanSkipped {
-                            referenceCurrency: iso_code,
-                            utcDay: pinned_day,
-                        },
-                    )
-                },
             },
             |iso_code, window, ceiling, budget| {
                 call_bins::walk(

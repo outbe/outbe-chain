@@ -2,18 +2,15 @@
 //! and hands their Credis to the cleanup.
 
 use alloy_primitives::B256;
-use alloy_sol_types::SolEvent;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
-    addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
     deadline_queue::{self, Due, DeadlineHandler},
     pass_budget::PassBudget,
 };
 
-use crate::precompile::ICredisFactory::ExpiryDeferred;
 
 /// Runs from CycleTick every block. Returns the groups forfeited.
 #[cfg(test)]
@@ -39,16 +36,14 @@ pub(crate) fn forfeit_through(
     )
 }
 
-struct CredisForfeit<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
+struct CredisForfeit<'storage> {
     credis: CredisContract<'storage>,
     forfeited: u32,
 }
 
-impl<'a, 's> CredisForfeit<'a, 's> {
-    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+impl<'s> CredisForfeit<'s> {
+    fn new(ctx: &BlockRuntimeContext<'s>) -> Self {
         Self {
-            ctx,
             credis: CredisContract::new(ctx.storage.clone()),
             forfeited: 0,
         }
@@ -56,7 +51,7 @@ impl<'a, 's> CredisForfeit<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl DeadlineHandler<B256> for CredisForfeit<'_, '_> {
+impl DeadlineHandler<B256> for CredisForfeit<'_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
@@ -91,13 +86,7 @@ impl DeadlineHandler<B256> for CredisForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "expiry sweep: forfeit deferred");
-        self.ctx.storage.emit_event(
-            CREDIS_FACTORY_ADDRESS,
-            SolEvent::encode_log_data(&ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            }),
-        )
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }
