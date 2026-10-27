@@ -61,6 +61,42 @@ impl FollowerEpocher {
         Self::from_anchor(length, activation_grace, Epoch::new(0), Height::new(1))
     }
 
+    /// Replace the anchor on an epocher that is already shared with a marshal
+    /// actor. `Marshal::init` reads `last_index()` and does not call
+    /// `containing()`, so this is safe after init returns the last finalized
+    /// height. Earlier observations are dropped.
+    pub fn reset_from_anchor(&self, anchor_epoch: Epoch, anchor_first_height: Height) {
+        assert!(
+            anchor_first_height.get() > 0,
+            "follower anchor must be a block"
+        );
+        let mut inner = self.write();
+        inner.activations = BTreeMap::from([(anchor_epoch.get(), anchor_first_height.get())]);
+    }
+
+    /// Height to hint when a backup vote names an epoch above `current_epoch`.
+    ///
+    /// A closed epoch, one whose next boundary is already in
+    /// `ObservedBoundaries`, hints [`Epocher::last`]. An open epoch hints the
+    /// earliest height of [`Self::next_boundary_window`]: `activation_height +
+    /// epoch_length`.
+    pub fn backup_vote_hint_height(&self, current_epoch: Epoch) -> Option<Height> {
+        let next = current_epoch.get().checked_add(1)?;
+        let closed = {
+            let inner = self.read();
+            if !inner.activations.contains_key(&current_epoch.get()) {
+                return None;
+            }
+            inner.activations.contains_key(&next)
+        };
+        if closed {
+            self.last(current_epoch)
+        } else {
+            self.next_boundary_window(current_epoch)
+                .map(|(earliest, _)| earliest)
+        }
+    }
+
     /// Start from a boundary already present in trusted, finalized local
     /// history. Earlier heights remain outside the epocher's known range.
     pub fn from_anchor(
@@ -343,5 +379,64 @@ mod tests {
         );
         assert_eq!(e.first(Epoch::new(1)), Some(Height::new(63)));
         assert_eq!(e.first(Epoch::new(2)), None);
+    }
+
+    #[test]
+    fn reset_from_anchor_replaces_history_visible_through_clone() {
+        let epocher = FollowerEpocher::new(60, 10);
+        epocher
+            .observe_boundary(Epoch::new(1), Height::new(63))
+            .unwrap();
+        let shared = epocher.clone();
+        epocher.reset_from_anchor(Epoch::new(621), Height::new(745_205));
+
+        assert_eq!(shared.activation_height(Epoch::new(0)), None);
+        assert_eq!(shared.activation_height(Epoch::new(1)), None);
+        assert_eq!(
+            shared.activation_height(Epoch::new(621)),
+            Some(Height::new(745_205))
+        );
+        assert!(shared.containing(Height::new(745_204)).is_none());
+        assert_eq!(
+            shared.containing(Height::new(745_205)).unwrap().epoch(),
+            Epoch::new(621)
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(621)),
+            Some(Height::new(745_265))
+        );
+        shared
+            .observe_boundary(Epoch::new(622), Height::new(745_268))
+            .unwrap();
+        assert_eq!(
+            epocher.activation_height(Epoch::new(622)),
+            Some(Height::new(745_268))
+        );
+    }
+
+    #[test]
+    fn backup_vote_hint_uses_last_when_closed_and_earliest_boundary_when_open() {
+        let epocher = FollowerEpocher::new(60, 10);
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            Some(Height::new(61))
+        );
+        assert_eq!(epocher.backup_vote_hint_height(Epoch::new(1)), None);
+
+        epocher
+            .observe_boundary(Epoch::new(1), Height::new(63))
+            .unwrap();
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            Some(Height::new(62))
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            epocher.last(Epoch::new(0))
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(1)),
+            Some(Height::new(123))
+        );
     }
 }

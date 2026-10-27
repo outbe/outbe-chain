@@ -222,6 +222,12 @@ where
                 .with_attribute("epoch", self.state.current_epoch),
             simplex_cfg,
         );
+        self.bridge
+            .set_operating_mode(if self.state.signing_share.is_some() {
+                outbe_primitives::consensus::ConsensusOperatingMode::Signer
+            } else {
+                outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+            });
         let engine_handle_task = engine.start(vote, cert, res);
 
         info!(epoch = %self.state.current_epoch, "simplex engine started - blocks can now be produced");

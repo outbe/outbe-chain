@@ -83,9 +83,12 @@ where
     // The node entrypoint installed the mandatory enclave client before Reth
     // launch. This gate prevents threshold work and consensus startup from
     // treating the pre-DKG onboarding recipient as a permanent offer key.
-    let verifier_join = args.signing_share.is_none()
-        && args.public_polynomial.is_some()
-        && args.dkg_output.is_some();
+    let recovered_shareless_output = recovered_boundary
+        .as_ref()
+        .map(|(_height, boundary)| decode_boundary_output(boundary))
+        .transpose()?
+        .filter(|output| output.players().position(&local_consensus_key).is_none());
+    let verifier_join = recovered_shareless_output.is_some();
     let local_key_in_current_consensus_set = validator_set
         .public_keys
         .iter()
@@ -117,11 +120,6 @@ where
         .await
         .map_err(crate::errors::StackEpochError::register_initial_dkg_subchannel)?;
 
-    let recovered_shareless_output = recovered_boundary
-        .as_ref()
-        .map(|(_height, boundary)| decode_boundary_output(boundary))
-        .transpose()?
-        .filter(|output| output.players().position(&local_consensus_key).is_none());
     let threshold_material = if let Some(output) = recovered_shareless_output {
         info!(
         target: "outbe_engine::stack",

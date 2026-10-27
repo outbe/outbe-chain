@@ -8,7 +8,7 @@ use commonware_consensus::{
         types::{Activity, Finalization, Finalize, Proposal, Subject},
         Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardPolicy,
     },
-    types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
+    types::{Epoch, Height, Round, View, ViewDelta},
     Reporter,
 };
 use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};

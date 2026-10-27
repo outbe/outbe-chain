@@ -3,7 +3,6 @@
 //! `e2e_provision_joiner` / `e2e_launch_joiner`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use alloy_primitives::{hex, Address, Bytes, B256};
@@ -103,14 +102,6 @@ fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1
     } else {
         ManualRenewalCliOutcomeV1::Unexpected
     }
-}
-
-fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
-    let active_keys = run_dir.join("validator-0/data/keys");
-    (
-        active_keys.join("dkg_polynomial.hex"),
-        active_keys.join("dkg_output.hex"),
-    )
 }
 
 fn full_node_joiner_role_args(
@@ -539,7 +530,7 @@ impl Localnet {
         registration_outcome(&self.cfg.rpc0, &transaction)
     }
 
-    /// Launch the joiner node (validator-mode, verifier-join args), passing any
+    /// Launch the joiner node (validator-mode with in-process upstream bootstrap), passing any
     /// extra node args (e.g. `--consensus.keys-dir ...`). Port of `e2e_launch_joiner`.
     pub fn launch_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
         let argv = self.joiner_validator_args(index, extra)?;
@@ -560,10 +551,11 @@ impl Localnet {
         // File-based flag: the key must never appear in argv (`ps` leak).
         let secret_file = proc::normalized_secret_file(&vd.join("reth-p2p-secret.hex"))?;
 
-        let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
         a.extend(args![
             "--validator",
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(0)),
             "--bootnodes",
             self.bootnodes().unwrap_or_default(),
             "--p2p-secret-key",
@@ -585,10 +577,6 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--consensus.public-polynomial",
-            public_polynomial.display(),
-            "--consensus.dkg-output",
-            dkg_output.display(),
         ]);
         self.extend_real_sgx_startup_timeout(&mut a);
         if let Some(offset) = self.start_opts.unix_time_offset_secs {

@@ -12,6 +12,8 @@ pub struct ConsensusStackServices {
     pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
     pub(super) follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     pub(super) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    pub(super) finalization_notify: Arc<tokio::sync::Notify>,
+    pub(super) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
     pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     pub(super) radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
@@ -24,6 +26,10 @@ pub struct ConsensusStackServices {
 pub struct ConsensusExecutionServices {
     /// Proves native durable execution before acknowledging finality.
     pub finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    /// Wakes lease admission on canonical finalized progress.
+    pub finalization_notify: Arc<tokio::sync::Notify>,
+    /// True only after local validator TEE admission is ready.
+    pub tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Shutdown barriers shared with the node runtime owner.
@@ -55,6 +61,8 @@ impl ConsensusStackServices {
     ) -> Self {
         let ConsensusExecutionServices {
             finalized_execution_barrier,
+            finalization_notify,
+            tee_lease_armed_rx,
         } = execution;
         let ConsensusShutdownServices {
             application_drain,
@@ -76,6 +84,8 @@ impl ConsensusStackServices {
             application_drain,
             follower_shutdown,
             finalized_execution_barrier,
+            finalization_notify,
+            tee_lease_armed_rx,
             radicle_status,
             radicle_endpoint,
         }
@@ -86,6 +96,10 @@ impl ConsensusStackServices {
 pub(in crate::stack) struct FollowerStackServices {
     pub(in crate::stack) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
     pub(in crate::stack) follower_shutdown: crate::follower_shutdown::FollowerDrain,
+    pub(in crate::stack) parent_cert_store:
+        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    pub(in crate::stack) bootstrap: Option<super::follower::ValidatorBootstrap>,
+    pub(in crate::stack) finalization_notify: Arc<tokio::sync::Notify>,
 }
 
 /// The execution node and the transport selected for its follower stack.

@@ -205,6 +205,22 @@ where
                     if let EventAction::Outcome(outcome) = self.schedule_rotation(&ctx, current_height).await? { return Ok(outcome); }
                 },
 
+                backup_vote = self.vote_backup_rx.recv() => {
+                    let Some((their_epoch, (from, _))) = backup_vote else {
+                        continue;
+                    };
+                    if Epoch::new(their_epoch) > self.state.current_epoch {
+                        if let Some(hint_height) =
+                            self.epocher.backup_vote_hint_height(self.state.current_epoch)
+                        {
+                            self.marshal_mailbox.hint_finalized(
+                                hint_height,
+                                commonware_utils::vec::NonEmptyVec::new(from),
+                            );
+                        }
+                    }
+                },
+
                 // Component exits -> fatal.
                 result = &mut self.actors.executor_handle_task => {
                     info!("executor actor exited");

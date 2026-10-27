@@ -223,6 +223,15 @@ fn cold_joiner_follower_preserves_provisioned_paths_and_protocol_options() {
         let argv = localnet
             .joiner_validator_args(4, &["--consensus.keys-dir", "/exact/custom-keys"])
             .unwrap();
+        assert!(argv.iter().any(|arg| arg == "--validator"));
+        assert!(argv.windows(2).any(|pair| pair
+            == [
+                "--upstream".to_owned(),
+                format!("http://127.0.0.1:{}", localnet.cfg.http_port(0)),
+            ]));
+        for removed in ["--consensus.public-polynomial", "--consensus.dkg-output"] {
+            assert!(!argv.iter().any(|arg| arg == removed));
+        }
         let inherited = argv
             .iter()
             .filter(|arg| arg.starts_with("--testnet.unix-time-offset-secs"))
@@ -403,18 +412,6 @@ fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
     assert!(args
         .windows(2)
         .any(|pair| pair == ["--consensus.listen-addr", "127.0.0.1:36000"]));
-}
-
-#[test]
-fn verifier_join_uses_active_committee_material_not_bootstrap_fixture() {
-    let root = Path::new("/run/scenario-1");
-    let (polynomial, output) = verifier_material_paths(root);
-
-    assert_eq!(
-        polynomial,
-        root.join("validator-0/data/keys/dkg_polynomial.hex")
-    );
-    assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
 }
 
 #[test]

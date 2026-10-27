@@ -249,6 +249,12 @@ pub enum StackEpochError {
     #[error("peer_manager closed during recovery admission")]
     PeerManagerClosedDuringRecoveryAdmission,
 
+    /// Indicates that validator bootstrap requires `--upstream` to sync to its admission height.
+    #[error(
+        "validator is not yet bootstrap-ready in the local canonical chain; pass --upstream <URL> to run UpstreamBootstrap first"
+    )]
+    ValidatorBootstrapRequiresUpstream,
+
     /// Indicates that the follower pre-stop handshake is not installed.
     #[error("follower pre-stop handshake is not installed")]
     FollowerPreStopHandshakeNotInstalled,

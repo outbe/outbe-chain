@@ -121,34 +121,27 @@ pub(super) async fn prepare(
         "mandatory TEE enclave sidecar connected before execution launch",
     );
 
-    let tee_admission_anchor = if args.is_validator {
-        if expected_enclave_id.is_some() {
-            outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
-                .wrap_err("load durable validator join admission anchor")?
-                .map(|durable| {
-                    validator_admission_anchor_from_durable_v1(
-                        durable,
-                        config.chain.chain().id(),
-                        config.chain.genesis_hash(),
-                        local_tee_identity,
-                    )
-                })
-                .transpose()?
-        } else {
-            None
-        }
+    let durable_anchor = if args.is_validator && expected_enclave_id.is_some() {
+        outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
+            .wrap_err("load durable validator join admission anchor")?
+            .map(|durable| {
+                validator_admission_anchor_from_durable_v1(
+                    durable,
+                    config.chain.chain().id(),
+                    config.chain.genesis_hash(),
+                    local_tee_identity,
+                )
+            })
+            .transpose()?
     } else {
-        // A follower re-executes every protected transaction and therefore must
-        // already hold the exact permanent offer key committed by the running
-        // chain. Prove that invariant before Reth opens networking, RPC, sync or
-        // execution. Losing the key is terminal for this node identity: startup
-        // never invokes recovery, replacement or another bootstrap path.
-        let upstream = args
-            .upstream
-            .as_deref()
-            .ok_or(LaunchError::FullNodeRequiresUpstreamForOfferKey)?;
-        let admission_anchor =
-            require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
+        None
+    };
+    let tee_admission_anchor = if let Some(upstream) = args.upstream.as_deref() {
+        let anchor = require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
+        if let Some(durable) = durable_anchor {
+            crate::launch::admission::validate_upstream_join_anchor(upstream, durable, anchor)
+                .await?;
+        }
         let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
             .await
             .wrap_err("failed to read mandatory offer key from the selected upstream")?;
@@ -160,18 +153,19 @@ pub(super) async fn prepare(
         if resident_offer != expected_offer {
             return Err(LaunchError::LocalEnclaveOfferKeyMismatch.into());
         }
-        info!(
-            offer_public_key = %resident_offer,
-            %upstream,
-            "full-node resident offer key matched upstream before execution launch"
-        );
-        Some(admission_anchor)
+        Some(anchor)
+    } else if args.is_validator {
+        durable_anchor
+    } else {
+        return Err(LaunchError::FullNodeRequiresUpstreamForOfferKey.into());
     };
 
     Ok((evm_signer, local_tee_identity, tee_admission_anchor))
 }
 
 pub(super) struct TeeRuntimeWorkers {
+    pub(super) finalization_notify: Arc<tokio::sync::Notify>,
+    pub(super) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
     pub(super) tee_lease_exit_rx: tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>,
     pub(super) tee_lease_guard_handle: tokio::task::JoinHandle<()>,
     pub(super) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
@@ -193,8 +187,50 @@ pub(super) fn start_runtime_workers(
         outbe_node::shutdown::NodeShutdown,
     ),
 ) -> eyre::Result<TeeRuntimeWorkers> {
-    let validator_has_recovery_anchor = args.is_validator && tee_admission_anchor.is_some();
     let mut tee_lease_guard_gate = TeeLeaseGuardGateV1::new(tee_admission_anchor);
+    if args.upstream.is_none() && tee_admission_anchor.is_none() && args.is_validator {
+        let finalized_height = node
+            .provider
+            .finalized_block_num_hash()?
+            .map_or(0, |head| head.number);
+        let ready = if finalized_height == 0 {
+            let key_path = args
+                .signing_key
+                .as_ref()
+                .ok_or(outbe_engine::errors::StackEpochError::SigningKeyRequired)?;
+            let key = outbe_engine::validators::load_signing_key(key_path, &args.key_backend()?)?;
+            use commonware_cryptography::Signer as _;
+            outbe_engine::validators::read_consensus_validators_at_block(
+                &node.provider,
+                genesis_hash,
+            )?
+            .public_keys
+            .contains(&key.public_key())
+        } else {
+            let admission = crate::launch::admission::read_finalized_local_tee_admission(
+                &node.provider,
+                proof_chain_id,
+                genesis_hash,
+                local_tee_identity,
+            )?;
+            let finalized = node
+                .provider
+                .finalized_block_num_hash()?
+                .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?;
+            let state = node.provider.state_by_block_hash(finalized.hash)?;
+            let on_chain_offer =
+                outbe_engine::validators::read_tee_offer_public_from_state(&state)?;
+            let resident_offer = outbe_tee::resident_offer_public_key_state_v1()?;
+            matches!(
+                admission,
+                Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })
+            ) && !on_chain_offer.is_zero()
+                && resident_offer == Some(on_chain_offer)
+        };
+        if ready {
+            tee_lease_guard_gate = TeeLeaseGuardGateV1::Armed;
+        }
+    }
     if let Some(admission) = read_gated_finalized_local_tee_admission(
         &node.provider,
         proof_chain_id,
@@ -202,20 +238,20 @@ pub(super) fn start_runtime_workers(
         local_tee_identity,
         &mut tee_lease_guard_gate,
     )? {
-        let rejection = if validator_has_recovery_anchor {
-            validator_recovery_startup_admission_rejection(admission)
-        } else {
-            tee_lease_admission_rejection(admission)
-        };
-        if let Some(reason) = rejection {
+        if let Some(reason) = tee_lease_admission_rejection(admission) {
             return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
         }
     }
-    require_validator_tee_recovery_complete_v1(
-        args.is_validator,
-        tee_lease_guard_gate,
-        node_data_dir,
-    )?;
+    if args.upstream.is_none() {
+        require_validator_tee_recovery_complete_v1(
+            args.is_validator,
+            tee_lease_guard_gate,
+            node_data_dir,
+        )?;
+    }
+    let finalization_notify = Arc::new(tokio::sync::Notify::new());
+    let (tee_lease_armed_tx, tee_lease_armed_rx) =
+        tokio::sync::watch::channel(tee_lease_guard_gate.is_armed());
     let (tee_lease_exit_tx, tee_lease_exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let lease_check = run_tee_lease_guard_v1(
         node.provider.clone(),
@@ -228,6 +264,8 @@ pub(super) fn start_runtime_workers(
             gate: tee_lease_guard_gate,
         },
         shutdown_token.clone(),
+        finalization_notify.clone(),
+        tee_lease_armed_tx,
     );
     let lease_outcome = shutdown.clone();
     let tee_lease_guard_handle = tokio::spawn(shutdown.track_task("TEE lease guard", async move {
@@ -285,6 +323,8 @@ pub(super) fn start_runtime_workers(
     };
 
     Ok(TeeRuntimeWorkers {
+        finalization_notify,
+        tee_lease_armed_rx,
         tee_lease_exit_rx,
         tee_lease_guard_handle,
         tee_canary_handle,

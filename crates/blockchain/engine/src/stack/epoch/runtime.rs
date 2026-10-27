@@ -98,4 +98,6 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) execution_finalized_height_tx: tokio::sync::mpsc::UnboundedSender<u64>,
     pub(super) consensus_tip_rx:
         tokio::sync::watch::Receiver<Option<crate::marshal_update_reporter::ConsensusTip>>,
+    pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
+    pub(super) vote_backup_rx: super::transport::VoteBackupRx,
 }

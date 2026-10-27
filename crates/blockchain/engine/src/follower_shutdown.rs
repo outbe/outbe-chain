@@ -13,10 +13,27 @@ use eyre::Result;
 use outbe_consensus::{executor::Mailbox, marshal_types::MarshalUpdate};
 use tokio::sync::oneshot;
 
+/// Result of a fully drained follower phase.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FollowStackExit {
+    /// The node is shutting down.
+    Shutdown,
+    /// Certified sync has yielded local validator authority.
+    PromoteToValidator { finalized_height: u64 },
+}
+
+#[derive(Clone, Copy)]
+enum FollowerQuiesceReason {
+    Shutdown,
+    PromoteToValidator { finalized_height: u64 },
+}
+
 #[derive(Default)]
 struct Ingress {
     installed: bool,
     quiescing: bool,
+    reason: Option<FollowerQuiesceReason>,
+    completed: bool,
     executor: Option<Mailbox>,
     // The executor did not accept these deliveries. Do not acknowledge
     // or cancel them while Marshal is alive. Its existing max_pending_acks
@@ -59,7 +76,18 @@ impl FollowerDrainControl {
                 .ingress
                 .lock()
                 .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?;
+            if ingress.completed
+                && matches!(
+                    ingress.reason,
+                    Some(FollowerQuiesceReason::PromoteToValidator { .. })
+                )
+            {
+                return Ok(());
+            }
             ingress.quiescing = true;
+            ingress
+                .reason
+                .get_or_insert(FollowerQuiesceReason::Shutdown);
             // Dropping the sole sender closes ingress. The executor drains its
             // already accepted queue and closes its height notification stream.
             ingress.executor.take();
@@ -100,19 +128,31 @@ impl FollowerDrain {
         self,
         executor: impl std::future::Future<Output = Result<()>>,
         observer: impl std::future::Future<Output = Result<()>>,
-    ) -> Result<()> {
+    ) -> Result<FollowStackExit> {
         futures::try_join!(executor, observer)?;
-        if !self
-            .ingress
-            .lock()
-            .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?
-            .quiescing
-        {
-            return Err(crate::errors::FollowerShutdownError::DrainedWithoutShutdownRequest.into());
-        }
+        let exit = {
+            let mut ingress = self
+                .ingress
+                .lock()
+                .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?;
+            let exit = match ingress.reason {
+                Some(FollowerQuiesceReason::Shutdown) => FollowStackExit::Shutdown,
+                Some(FollowerQuiesceReason::PromoteToValidator { finalized_height }) => {
+                    FollowStackExit::PromoteToValidator { finalized_height }
+                }
+                None => {
+                    return Err(
+                        crate::errors::FollowerShutdownError::DrainedWithoutShutdownRequest.into(),
+                    )
+                }
+            };
+            ingress.completed = true;
+            exit
+        };
         self.completion
             .send(())
-            .map_err(|_| crate::errors::FollowerShutdownError::DrainOwnerDisappeared.into())
+            .map_err(|_| crate::errors::FollowerShutdownError::DrainOwnerDisappeared)?;
+        Ok(exit)
     }
 }
 
@@ -143,6 +183,26 @@ mod tests {
         proof_tx.send(Ok(())).unwrap();
         finish.await.unwrap();
         wait.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn promotion_drains_execution_and_makes_later_shutdown_a_noop() {
+        let (control, drain) = follower_drain_pair();
+        let (tx, mut rx) = mpsc::unbounded();
+        let reporter = drain.install(Mailbox::from_sender(tx)).unwrap().unwrap();
+        reporter.initiate_promotion(17).unwrap();
+        assert!(reporter.is_quiescing().unwrap());
+        assert!(rx.next().await.is_none());
+        assert_eq!(
+            drain
+                .finish(async { Ok(()) }, async { Ok(()) })
+                .await
+                .unwrap(),
+            FollowStackExit::PromoteToValidator {
+                finalized_height: 17
+            }
+        );
+        control.drain(Duration::ZERO).await.unwrap();
     }
 
     #[tokio::test]
@@ -238,6 +298,19 @@ pub(crate) struct FollowerReporter {
 }
 
 impl FollowerReporter {
+    pub(crate) fn initiate_promotion(&self, finalized_height: u64) -> Result<()> {
+        let mut ingress = self
+            .ingress
+            .lock()
+            .map_err(|_| crate::errors::FollowerShutdownError::IngressLockPoisoned)?;
+        if !ingress.quiescing {
+            ingress.reason = Some(FollowerQuiesceReason::PromoteToValidator { finalized_height });
+            ingress.quiescing = true;
+            ingress.executor.take();
+        }
+        Ok(())
+    }
+
     pub(crate) fn is_quiescing(&self) -> Result<bool> {
         Ok(self
             .ingress

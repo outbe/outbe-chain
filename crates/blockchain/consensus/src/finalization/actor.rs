@@ -39,7 +39,12 @@ use crate::finalization::util::{
     classify_finalization, extract_header_artifact_from_block, retry_with_backoff,
     ReplayClassification,
 };
-use commonware_consensus::{marshal::core::DigestFallback, types::Round};
+use commonware_consensus::{
+    marshal::core::DigestFallback,
+    types::{Epoch, Height, Round},
+};
+use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
+use std::sync::Arc;
 
 /// Bound on consensus-owned exact-parent certificate handoff retention.
 ///
@@ -96,6 +101,8 @@ pub struct FinalizationActorDeps {
 pub struct FinalizationActor {
     rx: mpsc::UnboundedReceiver<Message>,
     deps: FinalizationActorDeps,
+    epocher: Option<crate::follow::FollowerEpocher>,
+    finalization_notify: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl FinalizationActor {
@@ -105,7 +112,29 @@ impl FinalizationActor {
     pub fn new(deps: FinalizationActorDeps) -> (Self, Mailbox) {
         let (tx, rx) = mpsc::unbounded::<Message>();
         let mailbox = Mailbox::from_sender(tx);
-        (Self { rx, deps }, mailbox)
+        (
+            Self {
+                rx,
+                deps,
+                epocher: None,
+                finalization_notify: None,
+            },
+            mailbox,
+        )
+    }
+
+    /// Share the validator marshal epocher so a finalized boundary updates it.
+    #[must_use]
+    pub fn with_epocher(mut self, epocher: crate::follow::FollowerEpocher) -> Self {
+        self.epocher = Some(epocher);
+        self
+    }
+
+    /// Wake waiters after each finalized block.
+    #[must_use]
+    pub fn with_finalization_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.finalization_notify = Some(notify);
+        self
     }
 
     /// Run the actor's event loop. Returns `Err` on a fatal
@@ -484,6 +513,10 @@ impl FinalizationActor {
 
         self.publish_consensus_status(&finalized, &consensus_data, block_number);
         self.note_finalized_dkg_artifact(&block, digest, block_number);
+        self.observe_finalized_boundary(&block, block_number);
+        if let Some(notify) = &self.finalization_notify {
+            notify.notify_waiters();
+        }
         self.evict_finalized_block_cache();
 
         Ok(())
@@ -667,6 +700,34 @@ impl FinalizationActor {
         }
     }
 
+    /// Record an authenticated `BoundaryOutcome` on the shared epocher.
+    /// A missing artifact is normal. A malformed artifact is logged by
+    /// [`Self::note_finalized_dkg_artifact`]. An observation conflict is logged
+    /// and does not fail finalization.
+    fn observe_finalized_boundary(&self, block: &ConsensusBlock, height: u64) {
+        let Some(epocher) = &self.epocher else {
+            return;
+        };
+        let Ok(Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary))) =
+            extract_header_artifact_from_block(block)
+        else {
+            return;
+        };
+        if boundary.epoch == 0 {
+            return;
+        }
+        if let Err(error) =
+            epocher.observe_boundary(Epoch::new(boundary.epoch), Height::new(height))
+        {
+            warn!(
+                %error,
+                height,
+                epoch = boundary.epoch,
+                "failed to observe finalized epoch boundary"
+            );
+        }
+    }
+
     /// Record the finalized block's DKG header artifact (if present) with the
     /// DKG manager. A malformed artifact is logged and skipped, never fatal.
     fn note_finalized_dkg_artifact(
@@ -699,6 +760,29 @@ impl FinalizationActor {
     fn evict_finalized_block_cache(&self) {
         let finalized_num = self.deps.view.read().last_finalized_number;
         self.deps.block_cache.evict_at_or_below(finalized_num);
+    }
+}
+
+/// Builder methods on the `(actor, mailbox)` pair from [`FinalizationActor::new`].
+///
+/// `new` stays a tuple so existing `let (actor, mailbox) = FinalizationActor::new(deps)`
+/// callers keep compiling. The epoch stack chains these methods on that tuple.
+pub trait FinalizationActorBuilder {
+    #[must_use]
+    fn with_epocher(self, epocher: crate::follow::FollowerEpocher) -> Self;
+    #[must_use]
+    fn with_finalization_notify(self, notify: Arc<tokio::sync::Notify>) -> Self;
+}
+
+impl FinalizationActorBuilder for (FinalizationActor, Mailbox) {
+    fn with_epocher(mut self, epocher: crate::follow::FollowerEpocher) -> Self {
+        self.0 = self.0.with_epocher(epocher);
+        self
+    }
+
+    fn with_finalization_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
+        self.0 = self.0.with_finalization_notify(notify);
+        self
     }
 }
 

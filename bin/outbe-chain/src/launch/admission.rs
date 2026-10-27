@@ -16,25 +16,32 @@ pub(crate) struct LocalTeeAdmissionAnchorV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct TeeLeaseGuardGateV1 {
-    pending_anchor: Option<LocalTeeAdmissionAnchorV1>,
+pub(crate) enum TeeLeaseGuardGateV1 {
+    AwaitingAnchor,
+    Pending(LocalTeeAdmissionAnchorV1),
+    Armed,
 }
 
 impl TeeLeaseGuardGateV1 {
     pub(crate) const fn new(pending_anchor: Option<LocalTeeAdmissionAnchorV1>) -> Self {
-        Self { pending_anchor }
+        match pending_anchor {
+            Some(anchor) => Self::Pending(anchor),
+            None => Self::AwaitingAnchor,
+        }
     }
 
     pub(crate) const fn is_armed(self) -> bool {
-        self.pending_anchor.is_none()
+        matches!(self, Self::Armed)
     }
 
     pub(crate) const fn anchor_to_validate(
         self,
         local_finalized_height: u64,
     ) -> Option<LocalTeeAdmissionAnchorV1> {
-        match self.pending_anchor {
-            Some(anchor) if local_finalized_height >= anchor.finalized_height => Some(anchor),
+        match self {
+            Self::Pending(anchor) if local_finalized_height >= anchor.finalized_height => {
+                Some(anchor)
+            }
             _ => None,
         }
     }
@@ -44,7 +51,7 @@ impl TeeLeaseGuardGateV1 {
         observed_hash: alloy_primitives::B256,
         admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
     ) -> eyre::Result<()> {
-        let Some(anchor) = self.pending_anchor else {
+        let Self::Pending(anchor) = *self else {
             return Ok(());
         };
         if observed_hash != anchor.finalized_hash {
@@ -57,7 +64,7 @@ impl TeeLeaseGuardGateV1 {
         }
         match admission {
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => {
-                self.pending_anchor = None;
+                *self = Self::Armed;
                 Ok(())
             }
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
@@ -82,8 +89,10 @@ pub(crate) fn require_validator_tee_recovery_complete_v1(
         return Ok(());
     }
 
-    let Some(anchor) = gate.pending_anchor else {
-        return Ok(());
+    let TeeLeaseGuardGateV1::Pending(anchor) = gate else {
+        return Err(
+            outbe_engine::errors::StackEpochError::ValidatorBootstrapRequiresUpstream.into(),
+        );
     };
     Err(LaunchError::ValidatorRecoveryCatchUpRequired {
         height: anchor.finalized_height,
@@ -247,7 +256,7 @@ where
     Ok(Some((finalized, header_hash, admission)))
 }
 
-fn read_finalized_local_tee_admission<P>(
+pub(crate) fn read_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
@@ -292,6 +301,63 @@ where
         })
 }
 
+fn authenticate_pending_gate_anchor<P>(
+    provider: &P,
+    chain: RegistryChainIdentity,
+    fullnode_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    gate: TeeLeaseGuardGateV1,
+    finalized_number: u64,
+) -> eyre::Result<bool>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(anchor) = gate.anchor_to_validate(finalized_number) else {
+        return Ok(!matches!(gate, TeeLeaseGuardGateV1::Pending(_)));
+    };
+    let (mut hash, mut admission) = read_local_tee_admission_at_height(
+        provider,
+        chain.chain_id,
+        chain.genesis_hash,
+        fullnode_identity,
+        anchor.finalized_height,
+    )?;
+    if hash != anchor.finalized_hash {
+        (hash, admission) = read_local_tee_admission_at_height(
+            provider,
+            chain.chain_id,
+            chain.genesis_hash,
+            fullnode_identity,
+            anchor.finalized_height,
+        )?;
+    }
+    // Authenticate the checkpoint without granting validator authority yet.
+    let mut authenticated = TeeLeaseGuardGateV1::Pending(anchor);
+    authenticated.validate_and_arm(hash, admission)?;
+    Ok(true)
+}
+
+fn resident_offer_matches_finalized_state<P>(
+    provider: &P,
+    finalized_hash: alloy_primitives::B256,
+    has_validator_identity: bool,
+) -> eyre::Result<bool>
+where
+    P: StateProviderFactory,
+{
+    if !has_validator_identity {
+        return Ok(true);
+    }
+    let state = provider.state_by_block_hash(finalized_hash)?;
+    let on_chain_offer = outbe_engine::validators::read_tee_offer_public_from_state(&state)?;
+    if on_chain_offer.is_zero() {
+        return Ok(false);
+    }
+    if outbe_tee::resident_offer_public_key_state_v1()? != Some(on_chain_offer) {
+        return Err(LaunchError::LocalEnclaveOfferKeyMismatch.into());
+    }
+    Ok(true)
+}
+
 pub(crate) fn read_gated_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
@@ -305,47 +371,52 @@ where
     let Some(finalized) = provider
         .finalized_block_num_hash()
         .wrap_err("read finalized head for gated TEE lease admission")?
+        .filter(|finalized| finalized.number != 0)
     else {
         return Ok(None);
     };
-    if finalized.number == 0 {
-        return Ok(None);
+    if gate.is_armed() {
+        return read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity);
     }
-    let Some(anchor) = gate.anchor_to_validate(finalized.number) else {
-        return if gate.is_armed() {
-            read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
-        } else {
-            Ok(None)
-        };
+    // Replay checks the NodeHost lease before validator stake/binding exists.
+    let fullnode_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+        validator: None,
+        ..identity
     };
-
-    let (mut anchor_hash, mut anchor_admission) = read_local_tee_admission_at_height(
+    if !authenticate_pending_gate_anchor(
         provider,
-        chain_id,
-        genesis_hash,
-        identity,
-        anchor.finalized_height,
-    )?;
-    if anchor_hash != anchor.finalized_hash {
-        (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
-            provider,
+        RegistryChainIdentity {
             chain_id,
             genesis_hash,
-            identity,
-            anchor.finalized_height,
-        )?;
+        },
+        fullnode_identity,
+        *gate,
+        finalized.number,
+    )? {
+        return Ok(None);
     }
-    gate.validate_and_arm(anchor_hash, anchor_admission)?;
-    info!(
-        anchor_height = anchor.finalized_height,
-        anchor_hash = %anchor.finalized_hash,
-        local_finalized_height = finalized.number,
-        "local TEE lease guard armed at authenticated catch-up anchor"
-    );
-    if finalized.number == anchor.finalized_height {
-        return Ok(Some(anchor_admission));
+    let fullnode =
+        read_finalized_local_tee_admission(provider, chain_id, genesis_hash, fullnode_identity)?;
+    let validator = read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)?;
+    if matches!(
+        (&fullnode, &validator),
+        (
+            Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. }),
+            Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. }),
+        )
+    ) && resident_offer_matches_finalized_state(
+        provider,
+        finalized.hash,
+        identity.validator.is_some(),
+    )? {
+        *gate = TeeLeaseGuardGateV1::Armed;
+        info!(
+            local_finalized_height = finalized.number,
+            "local TEE lease guard armed at authenticated catch-up anchor"
+        );
+        return Ok(validator);
     }
-    read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+    Ok(fullnode)
 }
 
 pub(crate) async fn require_upstream_fullnode_tee_admission(
@@ -378,16 +449,93 @@ pub(crate) async fn require_upstream_fullnode_tee_admission(
     })
 }
 
+#[derive(Debug, thiserror::Error)]
+enum UpstreamJoinAnchorError {
+    #[error("durable join anchor at {durable} is ahead of upstream finalized height {upstream}")]
+    Ahead { durable: u64, upstream: u64 },
+    #[error("upstream canonical block at durable join height has no hash")]
+    MissingHash,
+}
+
+pub(crate) async fn validate_upstream_join_anchor(
+    upstream: &str,
+    durable: LocalTeeAdmissionAnchorV1,
+    anchor: LocalTeeAdmissionAnchorV1,
+) -> eyre::Result<()> {
+    use outbe_operator::rpc::FinalityRpc as _;
+    if durable.finalized_height > anchor.finalized_height {
+        return Err(UpstreamJoinAnchorError::Ahead {
+            durable: durable.finalized_height,
+            upstream: anchor.finalized_height,
+        }
+        .into());
+    }
+    let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream)?;
+    let block = rpc.block_by_number(durable.finalized_height).await?;
+    let hash: alloy_primitives::B256 = serde_json::from_value(
+        block
+            .get("hash")
+            .cloned()
+            .ok_or(UpstreamJoinAnchorError::MissingHash)?,
+    )?;
+    if hash != durable.finalized_hash {
+        return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+            height: durable.finalized_height,
+            expected: durable.finalized_hash,
+            local: hash,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) struct TeeLeaseGuardConfigV1 {
     pub(crate) chain: RegistryChainIdentity,
     pub(crate) identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
     pub(crate) gate: TeeLeaseGuardGateV1,
 }
 
+fn maybe_retire_remote_sessions<P>(
+    provider: &P,
+    chain: RegistryChainIdentity,
+    gate: TeeLeaseGuardGateV1,
+    retired_at: &mut u64,
+) -> eyre::Result<()>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    if !gate.is_armed()
+        || !provider
+            .finalized_block_num_hash()?
+            .is_some_and(|head| head.number > 0)
+    {
+        return Ok(());
+    }
+    let status = inspect_local_finalized_successor_status_v1(provider, chain)?;
+    if status.retirement_height <= *retired_at {
+        return Ok(());
+    }
+    let activation_height = status.retirement_height;
+    let response = outbe_tee::try_with_enclave(|session| {
+        session.request(
+            &outbe_tee::protocol::EnclaveRequest::RetireRemoteSessionsV1 { activation_height },
+        )
+    })
+    .ok_or(LaunchError::TeeClientUnavailableDuringRetirement)??;
+    if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
+    {
+        return Err(LaunchError::EnclaveDidNotAckSessionRetirement.into());
+    }
+    *retired_at = activation_height;
+    Ok(())
+}
+
 pub(crate) async fn run_tee_lease_guard_v1<P>(
     provider: P,
     config: TeeLeaseGuardConfigV1,
     shutdown: tokio_util::sync::CancellationToken,
+    finalization_notify: Arc<tokio::sync::Notify>,
+    tee_lease_armed_tx: tokio::sync::watch::Sender<bool>,
 ) -> eyre::Result<Option<String>>
 where
     P: BlockIdReader
@@ -412,46 +560,24 @@ where
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return Ok(None),
-            _ = interval.tick() => {}
+            _ = interval.tick() => {},
+            _ = finalization_notify.notified() => {}
         }
-        if gate.is_armed()
-            && provider
-                .finalized_block_num_hash()?
-                .is_some_and(|head| head.number > 0)
-        {
-            let status = inspect_local_finalized_successor_status_v1(&provider, chain)?;
-            if status.retirement_height > retired_at {
-                let activation_height = status.retirement_height;
-                let response = outbe_tee::try_with_enclave(|session| {
-                    session.request(
-                        &outbe_tee::protocol::EnclaveRequest::RetireRemoteSessionsV1 {
-                            activation_height,
-                        },
-                    )
-                })
-                .ok_or(LaunchError::TeeClientUnavailableDuringRetirement)??;
-                if !matches!(response, outbe_tee::protocol::EnclaveResponse::RemoteSessionsRetiredV1 { activation_height: echoed } if echoed == activation_height)
-                {
-                    return Err(LaunchError::EnclaveDidNotAckSessionRetirement.into());
-                }
-                retired_at = activation_height;
-            }
-        }
-        match read_gated_finalized_local_tee_admission(
+        maybe_retire_remote_sessions(&provider, chain, gate, &mut retired_at)?;
+        let admission = read_gated_finalized_local_tee_admission(
             &provider,
             chain_id,
             genesis_hash,
             identity,
             &mut gate,
-        ) {
-            Ok(None) => {}
-            Ok(Some(admission)) => {
-                if let Some(reason) = tee_lease_admission_rejection(admission) {
-                    return Ok(Some(reason));
-                }
+        )
+        .wrap_err("finalized TEE lease admission failed closed")?;
+        if let Some(admission) = admission {
+            if gate.is_armed() {
+                tee_lease_armed_tx.send_replace(true);
             }
-            Err(error) => {
-                return Err(error.wrap_err("finalized TEE lease admission failed closed"));
+            if let Some(reason) = tee_lease_admission_rejection(admission) {
+                return Ok(Some(reason));
             }
         }
     }

@@ -23,6 +23,8 @@ async fn pending_lease_guard_cancellation_is_a_clean_stop() {
                 gate: super::TeeLeaseGuardGateV1::new(Some(full_node_admission_anchor())),
             },
             shutdown,
+            std::sync::Arc::new(tokio::sync::Notify::new()),
+            tokio::sync::watch::channel(false).0,
         ),
     )
     .await
@@ -103,7 +105,10 @@ fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
 fn validators_start_armed_and_later_rejections_remain_terminal() {
     use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
-    let gate = super::TeeLeaseGuardGateV1::new(None);
+    let awaiting = super::TeeLeaseGuardGateV1::new(None);
+    assert!(!awaiting.is_armed());
+    assert_eq!(awaiting.anchor_to_validate(u64::MAX), None);
+    let gate = super::TeeLeaseGuardGateV1::Armed;
     assert!(gate.is_armed());
     assert_eq!(gate.anchor_to_validate(u64::MAX), None);
 
@@ -182,10 +187,10 @@ fn validator_below_durable_join_anchor_fails_with_certified_follower_recovery() 
         .expect("a FullNode keeps its existing asynchronous gate");
     super::require_validator_tee_recovery_complete_v1(
         true,
-        super::TeeLeaseGuardGateV1::new(None),
+        super::TeeLeaseGuardGateV1::Armed,
         data_dir,
     )
-    .expect("a legacy validator without recovery state remains compatible");
+    .expect("a validator proven ready in local canonical state can restart directly");
 
     recovery
         .validate_and_arm(
