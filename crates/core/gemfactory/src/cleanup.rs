@@ -13,7 +13,7 @@ use outbe_primitives::{
 use crate::errors::GemFactoryError;
 
 /// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut cleanup = GemCleanup::new(ctx);
     deadline_queue::process_cleanup(

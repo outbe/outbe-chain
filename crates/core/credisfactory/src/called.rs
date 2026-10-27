@@ -35,7 +35,7 @@ use outbe_primitives::{
 
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut CredisCallPass::new(ctx))
 }
 
@@ -52,7 +52,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
 /// The return value counts called groups, not forfeited groups or deleted members.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 

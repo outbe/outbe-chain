@@ -119,7 +119,7 @@ fn the_parked_sweep_is_a_no_op_without_a_router() {
             BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
             s.clone(),
         );
-        crate::parked::drain(&ctx).expect("a silent router is not a failed block");
+        crate::parked::resend_parked_messages(&ctx).expect("a silent router is not a failed block");
 
         let factory = IntexFactoryContract::new(s.clone());
         assert_eq!(factory.parked_message_cursor.read().unwrap(), 0);
@@ -144,7 +144,7 @@ fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::erro
             BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
             s,
         );
-        crate::parked::drain(&ctx)
+        crate::parked::resend_parked_messages(&ctx)
     })
 }
 
@@ -228,7 +228,7 @@ fn send_notices_in_block(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::send_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_call_notices(&ctx))
     })
 }
 

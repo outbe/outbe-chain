@@ -68,7 +68,7 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
 /// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
-pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
     let tail = factory.notify_tail.read()?;

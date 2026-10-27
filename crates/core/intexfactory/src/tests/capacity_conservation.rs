@@ -71,7 +71,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
         crate::hooks::sweep_forfeits(&ctx)?;
-        crate::notify::send_notices(&ctx)
+        crate::notify::send_call_notices(&ctx)
     })
 }
 

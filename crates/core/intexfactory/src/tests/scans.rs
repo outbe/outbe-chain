@@ -170,7 +170,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID), s);
-        called::run_call_slice(&ctx)
+        called::process_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -691,7 +691,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::hooks::sweep_cleanup(&ctx).unwrap();
+        crate::hooks::cleanup(&ctx).unwrap();
 
         let f = IntexContract::new(s.clone());
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());

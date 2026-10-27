@@ -118,7 +118,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                     BlockContext::empty_for_tests(at * 32 + block, at, 1),
                     s.clone(),
                 );
-                called::run_call_slice(&ctx)?;
+                called::process_call_pass(&ctx)?;
                 if GemContract::new(s.clone()).call_sweep_day.read()? == 0 {
                     break;
                 }
@@ -127,7 +127,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 BlockContext::empty_for_tests(at * 32 + 16, at, 1),
                 s.clone(),
             );
-            hooks::sweep_cleanup(&ctx)?;
+            hooks::cleanup(&ctx)?;
             Ok(())
         })
     })

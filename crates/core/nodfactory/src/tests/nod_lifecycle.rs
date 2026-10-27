@@ -219,7 +219,7 @@ fn forfeit_block(
     let ctx = block_at(storage, timestamp);
     storage.with_checkpoint(|| {
         let forfeited = crate::forfeited::sweep_expired(&ctx)?;
-        crate::cleanup::sweep_cleanup(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
         Ok(forfeited)
     })
 }
@@ -1150,8 +1150,8 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
         .map(|item| item.group_key)
         .collect();
     let ctx = block_at(storage, timestamp);
-    let called = crate::called::run_call_slice(&ctx).unwrap();
-    crate::cleanup::sweep_cleanup(&ctx).unwrap();
+    let called = crate::called::process_call_pass(&ctx).unwrap();
+    crate::cleanup::cleanup(&ctx).unwrap();
     called
         + groups
             .into_iter()
@@ -1187,7 +1187,7 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
             );
         }
 
-        assert_eq!(crate::cleanup::sweep_cleanup(&ctx).unwrap(), 2);
+        assert_eq!(crate::cleanup::cleanup(&ctx).unwrap(), 2);
         assert_eq!(
             reserve(&storage),
             U256::from(12u64),
@@ -1229,7 +1229,7 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
             BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID),
             storage.clone(),
         );
-        assert_eq!(crate::cleanup::sweep_cleanup(&same_height).unwrap(), 0);
+        assert_eq!(crate::cleanup::cleanup(&same_height).unwrap(), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         let after = outbe_primitives::pass_budget::BlockAllowance::unpack(
             nod.cleanup_budget.read().unwrap(),
@@ -1271,7 +1271,7 @@ fn failing_members_do_not_hold_the_cleanup() {
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
         assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
-        assert_eq!(crate::cleanup::sweep_cleanup(&ctx).unwrap(), 3);
+        assert_eq!(crate::cleanup::cleanup(&ctx).unwrap(), 3);
         assert_eq!(reserve(storage), U256::from(25u64));
         let (day, _) = outbe_primitives::deadline_queue::unpack_slot(
             nod.cleanup_group_slot.read(&group_key).unwrap(),
@@ -1292,7 +1292,7 @@ fn a_forfeit_does_not_need_the_enclave() {
 
         outbe_nod::test_support::uninstall();
         let forfeited = crate::forfeited::sweep_expired(&ctx);
-        let deleted = crate::cleanup::sweep_cleanup(&ctx);
+        let deleted = crate::cleanup::cleanup(&ctx);
         outbe_nod::test_support::install();
         assert_eq!(forfeited.unwrap(), 1);
         assert_eq!(deleted.unwrap(), 1);
@@ -1336,7 +1336,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             .unwrap();
 
         let ctx = block_at(storage, past);
-        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
@@ -1348,7 +1348,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             "forfeits wait for all calls in the pinned day"
         );
         let allowance = nod.daily_budget.read().unwrap();
-        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             nod.daily_budget.read().unwrap(),
             allowance,
@@ -1572,7 +1572,7 @@ fn a_running_call_sweep_keeps_its_day() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::run_call_slice(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx).unwrap();
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
@@ -1596,8 +1596,8 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::called::run_call_slice(&ctx).unwrap();
-        crate::hooks::sweep_cleanup(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx).unwrap();
+        crate::hooks::cleanup(&ctx).unwrap();
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert!(!is_queued(storage, group_key));
         assert_eq!(reserve(storage), U256::from(3u64));
@@ -1635,7 +1635,7 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::run_call_slice(&ctx)
+        crate::called::process_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -1669,7 +1669,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
         // Only the newest day's trigger fires.
-        crate::called::run_daily(&block_at(storage, at + 2 * DAY)).unwrap();
+        crate::called::schedule_call_pass(&block_at(storage, at + 2 * DAY)).unwrap();
         assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
         assert_eq!(nod.call_latest_day.read().unwrap(), closed[2]);
         assert_eq!(

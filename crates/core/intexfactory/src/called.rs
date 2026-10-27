@@ -29,7 +29,7 @@ pub(crate) mod group;
 pub(crate) use group::{call_if_breached, GroupCall};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut IntexCallPass::new(ctx))
 }
 
@@ -45,7 +45,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function resumes the coupled daily pass with the same observation day and shared block allowance.
 /// It returns the number of called series.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut IntexCallPass::new(ctx))
 }
 

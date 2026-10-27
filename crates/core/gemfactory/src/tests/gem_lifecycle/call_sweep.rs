@@ -124,7 +124,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
 
         // A gem that breaches just as hard is left alone: no sweep is open.
         let second_id = callable_gem_of(storage, USD, 1, issued_at, U256::from(100_000u64));
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
         assert_eq!(gem_state(storage, second_id), GemState::Issued as u8);
     });
 }
@@ -387,7 +387,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day() {
 
         // Another slice of the same pass skips it instead of re-reading the window.
         gem.call_sweep_day.write(last_closed_day).unwrap();
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
     });
 }
 
@@ -450,7 +450,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let next_day = previous_date_key(timestamp_to_date_key(next_ts)).expect("date step");
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
-        run_daily(&next).unwrap();
+        schedule_call_pass(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
         assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
@@ -460,7 +460,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         );
 
         // The next slice finishes the old day and hands the sweep to the queued one.
-        run_call_slice(&next).unwrap();
+        process_call_pass(&next).unwrap();
         assert_eq!(gem_state(storage, above), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
         assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
@@ -492,7 +492,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             let ctx = block_ctx_at(storage, ts);
             match offset {
                 0 => scan_and_call(&ctx).map(drop),
-                _ => run_daily(&ctx),
+                _ => schedule_call_pass(&ctx),
             }
             .unwrap();
             closed.push(day);
@@ -507,7 +507,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
                 break;
             }
             let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY + block);
-            run_call_slice(&ctx).unwrap();
+            process_call_pass(&ctx).unwrap();
             let day = gem.call_sweep_day.read().unwrap();
             if walked.last() != Some(&day) {
                 walked.push(day);
@@ -544,7 +544,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
         let ctx = block_ctx_at(storage, T_NOW);
         scan_and_call(&ctx).unwrap();
         for block in 1..=3 {
-            run_call_slice(&block_ctx_at(storage, T_NOW + block)).unwrap();
+            process_call_pass(&block_ctx_at(storage, T_NOW + block)).unwrap();
         }
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0, "the sweep closed");
     });
@@ -600,7 +600,7 @@ fn only_a_slice_that_calls_groups_emits_a_batch_metadata_update() {
         let ctx = block_ctx_at(&storage, T_NOW);
 
         assert_eq!(scan_and_call(&ctx).unwrap(), 1);
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
     });
 
     let updates: Vec<_> = provider

@@ -42,7 +42,7 @@ use outbe_nod::{api, precompile::INod, schema::NodContract};
 /// a handler error out of the `CycleTick` system transaction, which fails the
 /// block. An unregistered pair, an unpriced currency or an unfinalized day
 /// therefore each degrade to "no transition" instead.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut NodCallPass::new(ctx))
 }
 
@@ -59,7 +59,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
 /// The return value counts called groups, not forfeited groups.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }
 

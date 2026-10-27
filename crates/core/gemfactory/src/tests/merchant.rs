@@ -108,7 +108,7 @@ fn an_expired_position_returns_its_remainder() {
         let ctx = block_ctx(storage, day_closed(expires));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), capacity);
-        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
+        assert_eq!(positions_expired::cleanup_positions(&ctx).unwrap(), 1);
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.positions.get(id).unwrap().is_none());
@@ -163,7 +163,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
         let ctx = block_ctx(storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert_eq!(positions_expired::sweep_position_cleanup(&ctx).unwrap(), 1);
+        assert_eq!(positions_expired::cleanup_positions(&ctx).unwrap(), 1);
         assert!(GemFactoryContract::new(storage.clone())
             .positions
             .get(id)

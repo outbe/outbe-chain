@@ -12,7 +12,7 @@ use outbe_primitives::{
 
 /// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
 #[cfg(test)]
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut cleanup = CredisCleanup::new(ctx);
     deadline_queue::process_block(&CleanupQueue(&queue), ctx, &mut cleanup)?;

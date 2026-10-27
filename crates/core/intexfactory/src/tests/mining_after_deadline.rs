@@ -185,7 +185,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::hooks::sweep_cleanup(&ctx).unwrap();
+        crate::hooks::cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .promis_limit()
@@ -234,7 +234,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         crate::hooks::sweep_forfeits(&later).unwrap();
-        crate::hooks::sweep_cleanup(&later).unwrap();
+        crate::hooks::cleanup(&later).unwrap();
         assert_eq!(reserve(), forfeited);
     });
     let forfeited_groups: Vec<_> = storage

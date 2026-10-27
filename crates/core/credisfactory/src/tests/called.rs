@@ -1109,7 +1109,7 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
         assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         outbe_gratis::enclave_client::test_enclave::uninstall();
         assert!(matches!(
-            crate::cleanup::sweep_cleanup(&ctx),
+            crate::cleanup::cleanup(&ctx),
             Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
         ));
         assert!(!is_deleted(&storage, ids[0]));
@@ -1191,7 +1191,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         };
         let before = reserve();
 
-        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             credis.daily_phase.read().unwrap(),
             2,
@@ -1210,7 +1210,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
             pledge_cost() * U256::from(2)
         );
         let saved = credis.daily_budget.read().unwrap();
-        assert_eq!(crate::called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
         let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
         let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
@@ -1226,14 +1226,14 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         );
 
         let next = block_at(&storage, at);
-        assert_eq!(crate::called::run_call_slice(&next).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
         assert_eq!(credis.call_sweep_day.read().unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         for id in &ids {
             assert!(is_deleted(&storage, *id));
         }
-        assert_eq!(crate::called::run_call_slice(&next).unwrap(), 0);
+        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
     });
     teardown();
@@ -1250,7 +1250,7 @@ fn forfeit_block(
     );
     storage.with_checkpoint(|| {
         let forfeited = crate::forfeited::sweep_expired(&ctx)?;
-        crate::cleanup::sweep_cleanup(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
         Ok(forfeited)
     })
 }

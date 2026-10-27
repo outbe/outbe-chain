@@ -15,7 +15,7 @@ use outbe_primitives::{
 use crate::errors::NodFactoryError;
 
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup::new(ctx);
     deadline_queue::process_cleanup(

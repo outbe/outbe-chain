@@ -37,16 +37,16 @@ mod called {
         crate::called::scan_and_call(ctx)
     }
 
-    pub(super) fn run_call_slice(
+    pub(super) fn process_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<u32> {
         prepare(ctx);
-        crate::called::run_call_slice(ctx)
+        crate::called::process_call_pass(ctx)
     }
 
-    pub(super) fn run_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    pub(super) fn schedule_call_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
         prepare(ctx);
-        crate::called::run_daily(ctx)
+        crate::called::schedule_call_pass(ctx)
     }
 }
 use crate::constants::MAX_SERIES_PER_MESSAGE;

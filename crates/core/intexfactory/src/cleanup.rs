@@ -12,7 +12,7 @@ use outbe_primitives::{
 
 /// Walks the expired groups and deletes each series nothing is left in. Returns the
 /// series deleted.
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup::new(ctx);
     deadline_queue::process_cleanup(

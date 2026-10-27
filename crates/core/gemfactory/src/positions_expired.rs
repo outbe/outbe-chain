@@ -41,7 +41,7 @@ pub(crate) fn expire_through(
 }
 
 /// Deletes the positions of the expired hours. Returns the positions deleted.
-pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut cleanup = PositionCleanup {
         factory: GemFactoryContract::new(ctx.storage.clone()),

@@ -15,7 +15,7 @@ use crate::sol_ext::IOriginRouter;
 use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 
 /// Cycle-trigger entry: push what the router parked, newest queues last.
-pub fn drain(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn resend_parked_messages(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let mut budget = MAX_PARKED_CALLS_PER_FIRING;
     drain_queue::<ParkedMessages>(&storage, &mut budget)?;

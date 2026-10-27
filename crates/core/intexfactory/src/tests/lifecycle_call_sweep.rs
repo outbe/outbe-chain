@@ -391,7 +391,7 @@ fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
-        called::run_call_slice(&at_height(&ctx, 2)).unwrap();
+        called::process_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
             0
@@ -444,11 +444,11 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         // The next block's slice finishes it and closes the sweep.
         assert_eq!(
-            called::run_call_slice(&ctx).unwrap(),
+            called::process_call_pass(&ctx).unwrap(),
             0,
             "same-height entry retains the spent allowance"
         );
-        let second = called::run_call_slice(&at_height(&ctx, 2)).unwrap();
+        let second = called::process_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(first + second, groups);
         assert_eq!(called_count(&s, days), groups);
         assert_eq!(
@@ -503,7 +503,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             BlockContext::empty_for_tests(2, scan_ts + DAY, CHAIN_ID),
             s.clone(),
         );
-        assert_eq!(called::run_call_slice(&next_day).unwrap(), 1);
+        assert_eq!(called::process_call_pass(&next_day).unwrap(), 1);
         assert_eq!(called_count(&s, days), groups);
     });
 }
@@ -550,9 +550,9 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
             s.clone(),
         );
         // Every block retries scheduling, independently of daily trigger success.
-        assert_eq!(called::run_call_slice(&ctx).unwrap(), 1);
+        assert_eq!(called::process_call_pass(&ctx).unwrap(), 1);
         assert_eq!(called_count(&s, 20260101..20260102), 1);
-        assert_eq!(called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(called::process_call_pass(&ctx).unwrap(), 0);
     });
 }
 
@@ -616,7 +616,7 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
 
         // The next slices must reach the end of the range and close the sweep.
         for height in 2..=5 {
-            called::run_call_slice(&at_height(&ctx, height)).unwrap();
+            called::process_call_pass(&at_height(&ctx, height)).unwrap();
         }
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -708,7 +708,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
             if factory.call_sweep_day.read().unwrap() == 0 {
                 break;
             }
-            called::run_call_slice(&at_height(&later, height)).unwrap();
+            called::process_call_pass(&at_height(&later, height)).unwrap();
         }
         assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 
