@@ -7,7 +7,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
-use outbe_primitives::sweep_budget::{SweepBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -197,7 +197,7 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     // This loop simulates catch-up blocks. It never refills a pending day's allowance within one block.
     loop {
         decided += slice(storage, timestamp);
-        let selected = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+        let selected = outbe_primitives::pass_budget::BlockAllowance::unpack(
             nod.daily_budget.read().unwrap(),
         )
         .unwrap()
@@ -237,7 +237,7 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
         nod.cleanup_budget.read().unwrap(),
     ]
     .into_iter()
-    .filter_map(|packed| outbe_primitives::sweep_budget::BlockAllowance::unpack(packed).unwrap())
+    .filter_map(|packed| outbe_primitives::pass_budget::BlockAllowance::unpack(packed).unwrap())
     .map(|previous| previous.height + 1)
     .max()
     .unwrap_or(BLOCK_NUMBER);
@@ -1077,7 +1077,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         let mut nod = NodContract::new(storage.clone());
 
         // Two visits: the young group on top, then the middle one, which is called.
-        let mut visits = SweepBudget::new(2, u32::MAX);
+        let mut visits = PassBudget::new(2, u32::MAX);
         assert_eq!(
             crate::called::call_currency(
                 &ctx,
@@ -1092,7 +1092,7 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             .unwrap(),
             (1, false)
         );
-        let mut visits = SweepBudget::new(SWEEP_VISITS_PER_BLOCK, u32::MAX);
+        let mut visits = PassBudget::new(SWEEP_VISITS_PER_BLOCK, u32::MAX);
         assert_eq!(
             crate::called::call_currency(
                 &ctx,
@@ -1220,7 +1220,7 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
         assert_eq!(reserve(storage), U256::from(specs.len()));
-        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+        let allowance = outbe_primitives::pass_budget::BlockAllowance::unpack(
             nod.cleanup_budget.read().unwrap(),
         )
         .unwrap()
@@ -1231,7 +1231,7 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         );
         assert_eq!(crate::cleanup::sweep_cleanup(&same_height).unwrap(), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 1);
-        let after = outbe_primitives::sweep_budget::BlockAllowance::unpack(
+        let after = outbe_primitives::pass_budget::BlockAllowance::unpack(
             nod.cleanup_budget.read().unwrap(),
         )
         .unwrap()

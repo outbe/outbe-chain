@@ -336,7 +336,7 @@ fn block_at<'storage>(
             .unwrap();
     }
     let height =
-        outbe_primitives::sweep_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
+        outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
             .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(

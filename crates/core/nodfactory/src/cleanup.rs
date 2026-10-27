@@ -7,7 +7,7 @@ use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::{PrecompileError, Result, PassFailure},
     deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
@@ -64,8 +64,8 @@ impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
             .read(&outbe_nod::index_keys::group_nod_key(group, index))
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     fn process_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {

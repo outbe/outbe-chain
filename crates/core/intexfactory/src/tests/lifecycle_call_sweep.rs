@@ -16,7 +16,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use crate::tests::called;
 use crate::tests::owner;
 use outbe_intex::IntexContract;
-use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 
 pub(super) const CHAIN_ID: u64 = 1;
 pub(super) const REFERENCE_ISO: u16 = 840;

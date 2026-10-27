@@ -5,9 +5,9 @@ use alloy_primitives::{B256, U256};
 use outbe_credis::{CleanupDays, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::{PrecompileError, Result, PassFailure},
     deadline_queue::{self, Due, DeadlineHandler},
-    sweep_budget::SweepBudget,
+    pass_budget::PassBudget,
 };
 
 /// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
@@ -22,7 +22,7 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::process_day(
@@ -69,8 +69,8 @@ impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
         self.credis.group_member(group, index)
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {

@@ -5,7 +5,7 @@ use alloy_primitives::{B256, U256};
 use outbe_gem::{api as gem_api, CleanupDays, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::{PrecompileError, Result, PassFailure},
     deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
@@ -62,8 +62,8 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
             .read(&GemContract::group_member_key(group, index))
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     fn process_member(&mut self, group_key: B256, gem_id: U256) -> Result<()> {

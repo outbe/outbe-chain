@@ -5,14 +5,14 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-use crate::daily_sweep::currency_position;
+use crate::day_pass::currency_position;
 use crate::error::{CallBinError, Result};
 use crate::deadline_queue::QueueEntry;
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};
 use crate::storage::dsl::{Map, Value};
-use crate::sweep_budget::SweepBudget;
+use crate::pass_budget::PassBudget;
 
 /// Bin step of the call-price ladder, in basis points.
 pub const BIN_STEP_BP: u16 = 25;
@@ -179,12 +179,12 @@ pub enum Visit {
 pub fn walk<'s, S, F>(
     store: &S,
     ceiling: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     mut visit: F,
 ) -> Result<bool>
 where
     S: CallBinStore<'s>,
-    F: FnMut(S::Entry, &mut SweepBudget) -> Result<Visit>,
+    F: FnMut(S::Entry, &mut PassBudget) -> Result<Visit>,
 {
     let iso = store.currency();
     let (mut from_bin, mut remaining) = unpack_cursor(store.scan_cursor().read(&iso)?);
@@ -216,12 +216,12 @@ fn walk_bin<'s, S, F>(
     store: &S,
     bin: u32,
     mut remaining: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     visit: &mut F,
 ) -> Result<Option<u32>>
 where
     S: CallBinStore<'s>,
-    F: FnMut(S::Entry, &mut SweepBudget) -> Result<Visit>,
+    F: FnMut(S::Entry, &mut PassBudget) -> Result<Visit>,
 {
     while remaining > 0 {
         if budget.spent() || !budget.visit() {
@@ -240,11 +240,11 @@ where
 pub fn walk_currencies<F>(
     currencies: &[u16],
     cursor: &Value<'_, u32>,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     mut per_currency: F,
 ) -> Result<bool>
 where
-    F: FnMut(u16, &mut SweepBudget) -> Result<bool>,
+    F: FnMut(u16, &mut PassBudget) -> Result<bool>,
 {
     let start = currency_position(currencies, cursor.read()?);
     for &iso in currencies.iter().skip(start) {
@@ -395,7 +395,7 @@ mod tests {
             let mut visited = Vec::new();
 
             // First pass with 2 visits stops after visiting bin 10 (101, 102), before bin 20.
-            let mut budget = SweepBudget::new(2, 10);
+            let mut budget = PassBudget::new(2, 10);
             let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
                 let adapter = TestAdapter(&contract, iso);
                 walk(&adapter, 30, b, |entry, _| {
@@ -408,7 +408,7 @@ mod tests {
             assert_eq!(visited, vec![(840, 101), (840, 102)]);
 
             // Second pass resumes at USD bin 20, skips bin 50 (> ceiling 30), then walks EUR bin 5.
-            let mut budget = SweepBudget::new(10, 10);
+            let mut budget = PassBudget::new(10, 10);
             let done = walk_currencies(&[840, 978], &currency_cursor, &mut budget, |iso, b| {
                 let adapter = TestAdapter(&contract, iso);
                 walk(&adapter, 30, b, |entry, _| {

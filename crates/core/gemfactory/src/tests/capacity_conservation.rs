@@ -89,7 +89,7 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
 fn daily_pass_shares_series_and_position_allowance_across_reentry() {
     use alloy_primitives::B256;
     use outbe_gem::GemContract;
-    use outbe_primitives::{sweep_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
+    use outbe_primitives::{pass_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
     let mut p = world();
     StorageHandle::enter(&mut p, |s| {
         let genesis =

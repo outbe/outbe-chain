@@ -7,13 +7,13 @@ use super::{
 use crate::error::{decide, Decided, PrecompileError, Result};
 use crate::math::constants::MAX_BIN_ID;
 use crate::storage::StorageHandle;
-use crate::sweep_budget::SweepBudget;
+use crate::pass_budget::PassBudget;
 
 /// This structure stores the actual block time and the selected cutoff day for scheduling.
 /// Processing missed days must not use the cutoff as the clock for retries.
 /// The cutoff must not change as block time advances.
 #[derive(Debug, Clone, Copy)]
-pub struct SweepTime {
+pub struct PassTime {
     pub now: u64,
     pub through_day: u32,
 }
@@ -24,8 +24,8 @@ pub struct SweepTime {
 pub fn process_through<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
-    time: SweepTime,
-    budget: &mut SweepBudget,
+    time: PassTime,
+    budget: &mut PassBudget,
     handler: &mut H,
 ) -> Result<Progress>
 where
@@ -68,7 +68,7 @@ struct Walk<'w, 's, Q, H> {
     queue: &'w Q,
     storage: &'w StorageHandle<'s>,
     now: u64,
-    budget: &'w mut SweepBudget,
+    budget: &'w mut PassBudget,
     handler: &'w mut H,
 }
 

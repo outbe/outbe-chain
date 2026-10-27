@@ -4,7 +4,7 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 

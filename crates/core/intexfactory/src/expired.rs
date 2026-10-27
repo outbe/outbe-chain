@@ -8,7 +8,7 @@ use outbe_primitives::{
     error::Result,
     deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
+    pass_budget::PassBudget,
 };
 
 use outbe_intex::precompile::IIntex;
@@ -30,7 +30,7 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = IntexContract::new(ctx.storage.clone());
     deadline_queue::process_day(

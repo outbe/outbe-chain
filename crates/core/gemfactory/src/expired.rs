@@ -1,9 +1,9 @@
 use alloy_primitives::B256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{Result, SweepFailure},
+    error::{Result, PassFailure},
     deadline_queue::{self, Due, DeadlineHandler},
-    sweep_budget::SweepBudget,
+    pass_budget::PassBudget,
 };
 
 use outbe_gem::precompile::IGem::GemGroupForfeited;
@@ -27,7 +27,7 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
     deadline_queue::process_day(
@@ -77,8 +77,8 @@ impl DeadlineHandler<B256> for GemExpiry<'_, '_> {
         Ok(group)
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     /// Returns the load of the group's unpaid gems in one credit and hands the gems to

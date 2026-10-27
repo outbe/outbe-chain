@@ -6,7 +6,7 @@ use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    block::BlockRuntimeContext, error::Result, storage::StorageHandle, sweep_budget::SweepBudget,
+    block::BlockRuntimeContext, error::Result, storage::StorageHandle, pass_budget::PassBudget,
 };
 
 use crate::constants::{
@@ -80,7 +80,7 @@ pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         storage: &ctx.storage,
         now: ctx.block.timestamp,
         stop: tail,
-        budget: SweepBudget::per_block(),
+        budget: PassBudget::per_block(),
     };
     let mut index = head;
     let mut refused_runs: u32 = 0;
@@ -109,7 +109,7 @@ struct NoticeSend<'a, 'storage> {
     now: u64,
     /// End of this block's window. Entries requeued behind it wait for a later block.
     stop: u32,
-    budget: SweepBudget,
+    budget: PassBudget,
 }
 
 impl NoticeSend<'_, '_> {

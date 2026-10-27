@@ -1048,7 +1048,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
+    let budget = outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
@@ -1172,7 +1172,7 @@ fn lapsed_group_of_three() -> (
 
 #[test]
 fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
-    use outbe_primitives::sweep_budget::BlockAllowance;
+    use outbe_primitives::pass_budget::BlockAllowance;
 
     let (mut provider, ids) = lapsed_group_of_three();
     StorageHandle::enter(&mut provider, |storage| {

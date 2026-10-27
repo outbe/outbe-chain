@@ -829,12 +829,12 @@ impl PrecompileError {
     }
 }
 
-/// Action that a system sweep takes for one item error.
+/// Action that a system pass takes for one item error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SweepFailure {
-    /// Roll the item back on every node and continue the sweep.
+pub enum PassFailure {
+    /// Roll the item back on every node and continue the pass.
     Skip,
-    /// End the sweep when gas runs out and resume in the next block.
+    /// End the pass when gas runs out and resume in the next block.
     Stop,
     /// Fail the block when the error is local to this node.
     Propagate,
@@ -862,27 +862,27 @@ impl PrecompileError {
         }
     }
 
-    pub fn sweep_failure(&self) -> SweepFailure {
+    pub fn pass_failure(&self) -> PassFailure {
         match self {
-            error if error.is_node_local() => SweepFailure::Propagate,
-            Self::FatalWithCause(_) => SweepFailure::Propagate,
-            Self::OutOfGas => SweepFailure::Stop,
-            _ => SweepFailure::Skip,
+            error if error.is_node_local() => PassFailure::Propagate,
+            Self::FatalWithCause(_) => PassFailure::Propagate,
+            Self::OutOfGas => PassFailure::Stop,
+            _ => PassFailure::Skip,
         }
     }
 
-    /// As [`Self::sweep_failure`], for a sweep over stored records. The right's own
-    /// index checks revert, so a [`Self::BodyReadCorruption`] reaching the sweep is this
+    /// As [`Self::pass_failure`], for a pass over stored records. The right's own
+    /// index checks revert, so a [`Self::BodyReadCorruption`] reaching the pass is this
     /// node's store.
-    pub fn record_sweep_failure(&self) -> SweepFailure {
+    pub fn record_pass_failure(&self) -> PassFailure {
         match self {
-            Self::BodyReadCorruption(_) => SweepFailure::Propagate,
-            other => other.sweep_failure(),
+            Self::BodyReadCorruption(_) => PassFailure::Propagate,
+            other => other.pass_failure(),
         }
     }
 }
 
-/// Outcome for one sweep item.
+/// Outcome for one pass item.
 pub enum Decided<T> {
     Done(T),
     /// Deterministic failure that rolled back the item.
@@ -891,105 +891,105 @@ pub enum Decided<T> {
     Stopped,
 }
 
-/// Classify a sweep item error and propagate node-local failures.
+/// Classify a pass item error and propagate node-local failures.
 pub fn decide<T>(
     outcome: Result<T>,
-    classify: impl Fn(&PrecompileError) -> SweepFailure,
+    classify: impl Fn(&PrecompileError) -> PassFailure,
 ) -> Result<Decided<T>> {
     match outcome {
         Ok(value) => Ok(Decided::Done(value)),
         Err(error) => match classify(&error) {
-            SweepFailure::Propagate => Err(error),
-            SweepFailure::Stop => Ok(Decided::Stopped),
-            SweepFailure::Skip => Ok(Decided::Skipped(error)),
+            PassFailure::Propagate => Err(error),
+            PassFailure::Stop => Ok(Decided::Stopped),
+            PassFailure::Skip => Ok(Decided::Skipped(error)),
         },
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PrecompileError, SweepFailure};
+    use super::{PrecompileError, PassFailure};
     use crate::storage::SubCallError;
 
     #[test]
     fn sweep_failures_follow_where_the_error_comes_from() {
         let table = [
-            (PrecompileError::OutOfGas, false, SweepFailure::Stop),
+            (PrecompileError::OutOfGas, false, PassFailure::Stop),
             (
                 PrecompileError::Storage("x".into()),
                 true,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
             (
                 PrecompileError::BodyReadUnavailable("x".into()),
                 true,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
             (
                 PrecompileError::BodyReadRequestDeadline,
                 true,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
             (
                 PrecompileError::BodyReadCorruption("x".into()),
                 false,
-                SweepFailure::Skip,
+                PassFailure::Skip,
             ),
-            (PrecompileError::WriteProtection, false, SweepFailure::Skip),
+            (PrecompileError::WriteProtection, false, PassFailure::Skip),
             (
                 PrecompileError::Revert("x".into()),
                 false,
-                SweepFailure::Skip,
+                PassFailure::Skip,
             ),
             (
                 PrecompileError::RevertBytes(Default::default()),
                 false,
-                SweepFailure::Skip,
+                PassFailure::Skip,
             ),
             (
                 PrecompileError::SubCall(SubCallError::OutOfGas),
                 false,
-                SweepFailure::Skip,
+                PassFailure::Skip,
             ),
             (
                 PrecompileError::SubCall(SubCallError::DatabaseError("x".into())),
                 true,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
-            (PrecompileError::Unsupported, false, SweepFailure::Skip),
+            (PrecompileError::Unsupported, false, PassFailure::Skip),
             (
                 PrecompileError::Fatal("x".into()),
                 false,
-                SweepFailure::Skip,
+                PassFailure::Skip,
             ),
             (
                 PrecompileError::FatalWithCause(Box::new(super::TimestampOverflow)),
                 false,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
             (
                 PrecompileError::EnclaveUnavailable("x".into()),
                 true,
-                SweepFailure::Propagate,
+                PassFailure::Propagate,
             ),
         ];
         for (error, node_local, failure) in table {
             assert_eq!(error.is_node_local(), node_local, "{error}");
-            assert_eq!(error.sweep_failure(), failure, "{error}");
+            assert_eq!(error.pass_failure(), failure, "{error}");
         }
     }
 
     #[test]
     fn a_record_sweep_fails_the_block_on_read_corruption() {
         let corrupt = PrecompileError::BodyReadCorruption("x".into());
-        assert_eq!(corrupt.record_sweep_failure(), SweepFailure::Propagate);
+        assert_eq!(corrupt.record_pass_failure(), PassFailure::Propagate);
         assert_eq!(
-            PrecompileError::Revert("x".into()).record_sweep_failure(),
-            SweepFailure::Skip
+            PrecompileError::Revert("x".into()).record_pass_failure(),
+            PassFailure::Skip
         );
         assert_eq!(
-            PrecompileError::OutOfGas.record_sweep_failure(),
-            SweepFailure::Stop
+            PrecompileError::OutOfGas.record_pass_failure(),
+            PassFailure::Stop
         );
     }
 }

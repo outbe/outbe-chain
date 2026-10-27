@@ -5,7 +5,7 @@ use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
+    error::{PrecompileError, Result, PassFailure},
     storage::{dsl::Value, StorageHandle},
 };
 
@@ -193,7 +193,7 @@ fn push_entry<Q: ParkedQueue>(storage: &StorageHandle<'_>, cursor: &mut Cursor) 
     });
     match pushed {
         Ok(()) => cursor.resolved(),
-        Err(error) if error.sweep_failure() == SweepFailure::Propagate => {
+        Err(error) if error.pass_failure() == PassFailure::Propagate => {
             return Err(error);
         }
         Err(error) => {
@@ -207,9 +207,9 @@ fn push_entry<Q: ParkedQueue>(storage: &StorageHandle<'_>, cursor: &mut Cursor) 
 /// A failure every node meets leaves the entry for a later pass. A node-local failure fails the
 /// block.
 fn skip_unless_node_local(error: PrecompileError) -> Result<()> {
-    match error.sweep_failure() {
-        SweepFailure::Propagate => Err(error),
-        SweepFailure::Skip | SweepFailure::Stop => Ok(()),
+    match error.pass_failure() {
+        PassFailure::Propagate => Err(error),
+        PassFailure::Skip | PassFailure::Stop => Ok(()),
     }
 }
 

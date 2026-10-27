@@ -6,7 +6,7 @@ use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::{SweepBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
@@ -38,7 +38,7 @@ fn walk(
     budget: u32,
 ) -> (u32, bool) {
     let ctx = block_ctx(storage);
-    let mut budget = SweepBudget::new(budget, u32::MAX);
+    let mut budget = PassBudget::new(budget, u32::MAX);
     crate::called::call_currency(
         &ctx,
         USD,
@@ -295,7 +295,7 @@ fn call_skips_below_threshold() {
 
 #[test]
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
-    use outbe_primitives::daily_sweep::currency_position;
+    use outbe_primitives::day_pass::currency_position;
     let currencies = [USD, EUR];
     assert_eq!(
         currency_position(&currencies, u32::from(EUR)),
@@ -643,12 +643,12 @@ fn idle_daily_scans_emit_nothing() {
 /// A corrupt gem record read is this node's store: the call sweep fails the block.
 #[test]
 fn a_corrupt_record_read_fails_the_call_sweep() {
-    use outbe_oracle::call_sweep::CallSweep;
-    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    use outbe_oracle::call_pass::CallPass;
+    use outbe_primitives::error::{PrecompileError, PassFailure};
     assert_eq!(
-        <crate::called::GemCallSweep as CallSweep>::classify(&PrecompileError::BodyReadCorruption(
+        <crate::called::GemCallPass as CallPass>::classify(&PrecompileError::BodyReadCorruption(
             "x".into()
         )),
-        SweepFailure::Propagate
+        PassFailure::Propagate
     );
 }

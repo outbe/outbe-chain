@@ -7,18 +7,18 @@
 
 use alloy_primitives::{keccak256, B256, U256};
 
-pub use crate::daily_sweep::Progress;
-use crate::error::{PrecompileError, Result, SweepFailure};
+pub use crate::day_pass::Progress;
+use crate::error::{PrecompileError, Result, PassFailure};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::tree_math::{self, BinTreeStorage};
 use crate::storage::dsl::{Map, Value};
 use crate::storage::types::{Storable, StorageKey};
 use crate::storage::StorageHandle;
-use crate::sweep_budget::{BlockAllowance, SweepBudget};
+use crate::pass_budget::{BlockAllowance, PassBudget};
 use crate::time::SECONDS_PER_DAY;
 
 mod walk;
-pub use walk::{process_through, SweepTime};
+pub use walk::{process_through, PassTime};
 
 /// A queue entry cannot use zero because zero marks a vacant slot.
 pub trait QueueEntry: Copy + PartialEq + Storable + StorageKey {
@@ -234,8 +234,8 @@ pub trait DeadlineHandler<E> {
     fn member_at(&self, entry: E, index: u32) -> Result<Self::Member>;
     /// Expires `member` and takes it out of the entry.
     fn process_member(&mut self, entry: E, member: Self::Member) -> Result<()>;
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.pass_failure()
     }
     /// Reports that the entry waits until `retry_at`.
     fn deferred(&mut self, entry: E, retry_at: u64) -> Result<()>;
@@ -255,7 +255,7 @@ where
         queue,
         &ctx.storage,
         ctx.block.timestamp,
-        &mut SweepBudget::per_block(),
+        &mut PassBudget::per_block(),
         handler,
     )
 }
@@ -265,7 +265,7 @@ pub fn process_day<'s, Q, H>(
     queue: &Q,
     ctx: &crate::block::BlockRuntimeContext<'s>,
     through_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     handler: &mut H,
 ) -> Result<Progress>
 where
@@ -275,7 +275,7 @@ where
     process_through(
         queue,
         &ctx.storage,
-        SweepTime {
+        PassTime {
             now: ctx.block.timestamp,
             through_day,
         },
@@ -316,7 +316,7 @@ pub fn process<'s, Q, H>(
     queue: &Q,
     storage: &StorageHandle<'s>,
     now: u64,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     handler: &mut H,
 ) -> Result<Progress>
 where
@@ -329,7 +329,7 @@ where
     process_through(
         queue,
         storage,
-        SweepTime {
+        PassTime {
             now,
             through_day: deadline_day(closed_timestamp)?,
         },
@@ -493,7 +493,7 @@ mod tests {
         queue: &Queue<'_, 's>,
         storage: &StorageHandle<'s>,
         now: u64,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
         handler: &mut Recorder,
     ) -> Progress {
         process(queue, storage, now, budget, handler).unwrap()
@@ -525,7 +525,7 @@ mod tests {
             push(queue, id(1), deadline).unwrap();
             push(queue, id(2), 11 * DAY).unwrap();
             let mut handler = recorder();
-            let mut budget = SweepBudget::new(10, 10);
+            let mut budget = PassBudget::new(10, 10);
             for now in [deadline, deadline + 1, deadline + 3_600, 11 * DAY - 1] {
                 assert_eq!(
                     run(queue, storage, now, &mut budget, &mut handler),
@@ -551,12 +551,12 @@ mod tests {
                 push(queue, id(day), day * DAY).unwrap();
             }
             let mut handler = recorder();
-            let mut budget = SweepBudget::new(10, 10);
+            let mut budget = PassBudget::new(10, 10);
             assert_eq!(
                 process_through(
                     queue,
                     storage,
-                    SweepTime {
+                    PassTime {
                         now: 20 * DAY,
                         through_day: 11
                     },
@@ -573,7 +573,7 @@ mod tests {
                 process_through(
                     queue,
                     storage,
-                    SweepTime {
+                    PassTime {
                         now: 12 * DAY,
                         through_day: 12
                     },
@@ -598,14 +598,14 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(1, 10),
+                    &mut PassBudget::new(1, 10),
                     &mut handler
                 ),
                 Progress::Pending
             );
             assert_eq!(queue.sweep_cursor().read().unwrap(), pack_cursor(1, 0));
             handler.out_of_gas_on.push(id(2));
-            let mut stopped_budget = SweepBudget::new(10, 10);
+            let mut stopped_budget = PassBudget::new(10, 10);
             assert_eq!(
                 run(queue, storage, 11 * DAY, &mut stopped_budget, &mut handler),
                 Progress::Pending
@@ -627,7 +627,7 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(2, 10),
+                    &mut PassBudget::new(2, 10),
                     &mut handler
                 ),
                 Progress::Complete
@@ -648,7 +648,7 @@ mod tests {
                     queue,
                     storage,
                     12 * DAY + 30,
-                    &mut SweepBudget::new(10, 10),
+                    &mut PassBudget::new(10, 10),
                     &mut handler
                 ),
                 Progress::Complete
@@ -661,7 +661,7 @@ mod tests {
                 queue,
                 storage,
                 13 * DAY - 1,
-                &mut SweepBudget::new(10, 10),
+                &mut PassBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(handler.deferred.len(), 1);
@@ -670,7 +670,7 @@ mod tests {
                 queue,
                 storage,
                 13 * DAY,
-                &mut SweepBudget::new(10, 10),
+                &mut PassBudget::new(10, 10),
                 &mut handler,
             );
             assert_eq!(handler.expired, vec![id(2), id(1)]);
@@ -688,7 +688,7 @@ mod tests {
             }
             queue.entry_deadline().write(&id(4), 20 * DAY).unwrap();
             let mut handler = recorder();
-            let mut budget = SweepBudget::new(3, 10);
+            let mut budget = PassBudget::new(3, 10);
             assert_eq!(
                 run(queue, storage, 11 * DAY, &mut budget, &mut handler),
                 Progress::Pending
@@ -701,7 +701,7 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(1, 10),
+                    &mut PassBudget::new(1, 10),
                     &mut handler
                 ),
                 Progress::Pending
@@ -714,7 +714,7 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(1, 10),
+                    &mut PassBudget::new(1, 10),
                     &mut handler
                 ),
                 Progress::Complete
@@ -734,7 +734,7 @@ mod tests {
                 queue,
                 storage,
                 11 * DAY,
-                &mut SweepBudget::new(10, 0),
+                &mut PassBudget::new(10, 0),
                 &mut handler,
             );
             assert_eq!(queue.entry_slot().read(&id(1)).unwrap(), 0);
@@ -744,7 +744,7 @@ mod tests {
                 queue,
                 storage,
                 11 * DAY,
-                &mut SweepBudget::new(10, 0),
+                &mut PassBudget::new(10, 0),
                 &mut handler,
             );
             assert_eq!(handler.deferred, vec![(id(2), 12 * DAY)]);
@@ -778,7 +778,7 @@ mod tests {
                     queue,
                     storage,
                     DAY,
-                    &mut SweepBudget::new(1, 1),
+                    &mut PassBudget::new(1, 1),
                     &mut handler
                 ),
                 Progress::Complete
@@ -790,7 +790,7 @@ mod tests {
                     queue,
                     storage,
                     day_end(MAX_BIN_ID),
-                    &mut SweepBudget::new(1, 1),
+                    &mut PassBudget::new(1, 1),
                     &mut handler
                 ),
                 Progress::Complete
@@ -854,7 +854,7 @@ mod tests {
     fn cleanup_persists_its_allowance_and_rolls_back_a_failed_continuation() {
         with_queue(|queue, storage| {
             use crate::block::{BlockContext, BlockRuntimeContext};
-            use crate::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+            use crate::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 
             push(queue, id(1), 10 * DAY).unwrap();
             push(queue, id(2), 10 * DAY).unwrap();
@@ -864,7 +864,7 @@ mod tests {
                     BlockAllowance {
                         height: 4,
                         day: 0,
-                        budget: SweepBudget::new(SWEEP_VISITS_PER_BLOCK, 1),
+                        budget: PassBudget::new(SWEEP_VISITS_PER_BLOCK, 1),
                     }
                     .pack(),
                 )
@@ -936,7 +936,7 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(1, 1),
+                    &mut PassBudget::new(1, 1),
                     &mut handler
                 )
                 .unwrap(),
@@ -952,7 +952,7 @@ mod tests {
                     queue,
                     storage,
                     12 * DAY,
-                    &mut SweepBudget::new(1, 1),
+                    &mut PassBudget::new(1, 1),
                     &mut handler
                 ),
                 Err(PrecompileError::Storage(_))
@@ -967,7 +967,7 @@ mod tests {
                     queue,
                     storage,
                     12 * DAY,
-                    &mut SweepBudget::new(1, 1),
+                    &mut PassBudget::new(1, 1),
                     &mut handler
                 ),
                 Err(PrecompileError::Storage(_))
@@ -1037,7 +1037,7 @@ mod tests {
                         queue,
                         storage,
                         11 * DAY,
-                        &mut SweepBudget::new(10, 2),
+                        &mut PassBudget::new(10, 2),
                         &mut handler
                     )
                     .unwrap(),
@@ -1051,7 +1051,7 @@ mod tests {
                     queue,
                     storage,
                     11 * DAY,
-                    &mut SweepBudget::new(10, 2),
+                    &mut PassBudget::new(10, 2),
                     &mut handler
                 )
                 .unwrap(),

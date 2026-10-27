@@ -10,7 +10,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
     deadline_queue::{self, Due, DeadlineHandler},
-    sweep_budget::SweepBudget,
+    pass_budget::PassBudget,
 };
 
 use crate::precompile::ICredisFactory::ExpiryDeferred;
@@ -27,7 +27,7 @@ pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
 pub(crate) fn sweep_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::process_day(

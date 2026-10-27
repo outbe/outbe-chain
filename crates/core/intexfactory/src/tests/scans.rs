@@ -621,7 +621,7 @@ fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
         let deadline = now + DAY;
         let day = IntexContract::deadline_day(deadline);
 
-        let queued = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK + 44;
+        let queued = outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK + 44;
         for index in 0..queued {
             called_series(&s, 20260101 + index, deadline);
         }

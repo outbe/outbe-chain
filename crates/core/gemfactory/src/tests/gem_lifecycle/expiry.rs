@@ -6,7 +6,7 @@ use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
+use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -410,14 +410,14 @@ fn config_dev_profile_terms_a_new_group() {
 /// A corrupt gem record read is this node's store: the forfeit sweep fails the block.
 #[test]
 fn a_corrupt_record_read_fails_the_forfeit_sweep() {
-    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    use outbe_primitives::error::{PrecompileError, PassFailure};
     use outbe_primitives::deadline_queue::DeadlineHandler;
     with_storage(|storage| {
         let ctx = block_ctx(storage);
         let expiry = crate::expired::GemExpiry::new(&ctx);
         assert_eq!(
             expiry.classify(&PrecompileError::BodyReadCorruption("x".into())),
-            SweepFailure::Propagate
+            PassFailure::Propagate
         );
     });
 }

@@ -11,7 +11,7 @@ use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
+use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
