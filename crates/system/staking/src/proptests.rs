@@ -54,7 +54,10 @@ fn partial_unstake_is_capped_at_63_and_reserves_64th_slot_for_full_or_automatic_
         for _ in 0..max_partial {
             s.unstake(validator, U256::ONE).unwrap();
         }
-        assert_eq!(s.per_val_unbonding_len.read(&validator).unwrap(), max_partial);
+        assert_eq!(
+            s.per_val_unbonding_len.read(&validator).unwrap(),
+            max_partial
+        );
         assert_eq!(physical_unbonding_len(s, validator), max_partial);
 
         // Staking rejects the 64th partial unstake.
@@ -64,7 +67,9 @@ fn partial_unstake_is_capped_at_63_and_reserves_64th_slot_for_full_or_automatic_
         }
         .abi_encode();
         let err = s.unstake(validator, U256::ONE).unwrap_err();
-        assert!(matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected_err));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected_err)
+        );
 
         // Staking also rejects `topup` while 63 entries remain unclaimed.
         let topup_err = s.topup(validator, validator, U256::ONE).unwrap_err();
@@ -96,8 +101,12 @@ fn partial_unstake_is_capped_at_63_and_reserves_64th_slot_for_full_or_automatic_
         stake_registered(storage.clone(), s, survivor, initial_stake).unwrap();
         stake_registered(storage.clone(), s, validator, initial_stake).unwrap();
         let mut val_set = ValidatorSet::new(storage.clone());
-        val_set.promote_pending_validator_for_test(survivor).unwrap();
-        val_set.promote_pending_validator_for_test(validator).unwrap();
+        val_set
+            .promote_pending_validator_for_test(survivor)
+            .unwrap();
+        val_set
+            .promote_pending_validator_for_test(validator)
+            .unwrap();
         assert!(matches!(
             val_set.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::Active(_)
@@ -107,7 +116,10 @@ fn partial_unstake_is_capped_at_63_and_reserves_64th_slot_for_full_or_automatic_
             s.unstake(validator, U256::ONE).unwrap();
         }
         assert_eq!(s.get_stake(validator).unwrap(), U256::from(1_000u64));
-        assert_eq!(s.per_val_unbonding_len.read(&validator).unwrap(), max_partial);
+        assert_eq!(
+            s.per_val_unbonding_len.read(&validator).unwrap(),
+            max_partial
+        );
 
         // Slash 10%: remaining stake becomes 900 < min_stake (1000), moving Active -> Exiting.
         s.slash_stake(validator, 10).unwrap();
@@ -161,7 +173,8 @@ fn claim_unbonded_decrements_counter_for_zero_amount_slashed_entries_and_unblock
         // 100% slash zeroes all 64 unbonding entries and transitions validator to Inactive.
         s.slash_stake(validator, 100).unwrap();
         let mut val_set = ValidatorSet::new(storage.clone());
-        s.finalize_inactive_if_complete(&mut val_set, validator).unwrap();
+        s.finalize_inactive_if_complete(&mut val_set, validator)
+            .unwrap();
         assert!(matches!(
             val_set.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::Inactive(_)
@@ -178,7 +191,9 @@ fn claim_unbonded_decrements_counter_for_zero_amount_slashed_entries_and_unblock
         let err = s
             .topup(validator, validator, U256::from(1_000u64))
             .unwrap_err();
-        assert!(matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected_err));
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected_err)
+        );
 
         // Claiming unlinks all 64 zero-amount matured nodes and resets `per_val_unbonding_len` to 0.
         s.claim_unbonded(validator).unwrap();
@@ -247,18 +262,12 @@ enum StakingOp {
 
 fn op_strategy() -> impl Strategy<Value = StakingOp> {
     prop_oneof![
-        (0..3usize, 1_000u64..=50_000u64).prop_map(|(val_idx, units)| StakingOp::Topup {
-            val_idx,
-            units
-        }),
-        (0..3usize, 100u64..=20_000u64).prop_map(|(val_idx, units)| StakingOp::Unstake {
-            val_idx,
-            units
-        }),
-        (0..3usize, 1u64..=50u64).prop_map(|(val_idx, percent)| StakingOp::Slash {
-            val_idx,
-            percent
-        }),
+        (0..3usize, 1_000u64..=50_000u64)
+            .prop_map(|(val_idx, units)| StakingOp::Topup { val_idx, units }),
+        (0..3usize, 100u64..=20_000u64)
+            .prop_map(|(val_idx, units)| StakingOp::Unstake { val_idx, units }),
+        (0..3usize, 1u64..=50u64)
+            .prop_map(|(val_idx, percent)| StakingOp::Slash { val_idx, percent }),
         (0..3usize).prop_map(|val_idx| StakingOp::Claim { val_idx }),
         (600u64..=4_000u64).prop_map(|delta_secs| StakingOp::AdvanceTime { delta_secs }),
     ]

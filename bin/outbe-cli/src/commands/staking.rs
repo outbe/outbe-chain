@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use eyre::Result;
 use outbe_primitives::consensus_p2p::{encode_v1, P2P_ADDRESS_VERSION_V1};
 
@@ -18,41 +18,7 @@ use crate::rpc::Rpc;
 #[derive(Subcommand)]
 pub enum StakingCmd {
     /// Register a validator and bond its initial stake.
-    Stake {
-        /// Validator address. With `--keys-dir`, this must match `evm-key.hex`.
-        #[arg(long)]
-        validator: Address,
-        /// Amount in unit (base denomination). Sent as the transaction value.
-        #[arg(long)]
-        amount: String,
-        /// Key directory written by `outbe-keygen validator`.
-        #[arg(long)]
-        keys_dir: Option<PathBuf>,
-        /// BLS consensus public key (hex).
-        #[arg(long)]
-        consensus_pubkey: Option<String>,
-        /// Radicle Ed25519 node id (32-byte hex).
-        #[arg(long)]
-        radicle_node_id: Option<B256>,
-        /// BLS registration signature (hex).
-        #[arg(long)]
-        bls_registration_signature: Option<String>,
-        /// Symmetric socket address, for example 10.0.0.1:30400.
-        #[arg(long)]
-        symmetric: Option<SocketAddr>,
-        /// Asymmetric socket ingress address.
-        #[arg(long)]
-        ingress_socket: Option<SocketAddr>,
-        /// Asymmetric DNS ingress host.
-        #[arg(long)]
-        ingress_dns_host: Option<String>,
-        /// Asymmetric DNS ingress port.
-        #[arg(long)]
-        ingress_dns_port: Option<u16>,
-        /// Asymmetric egress socket address.
-        #[arg(long)]
-        egress: Option<SocketAddr>,
-    },
+    Stake(Box<StakeRequest>),
     /// Add stake to an already registered validator.
     Topup {
         /// Validator address
@@ -84,38 +50,7 @@ pub enum StakingCmd {
 impl StakingCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
-            Self::Stake {
-                validator,
-                amount,
-                keys_dir,
-                consensus_pubkey,
-                radicle_node_id,
-                bls_registration_signature,
-                symmetric,
-                ingress_socket,
-                ingress_dns_host,
-                ingress_dns_port,
-                egress,
-            } => {
-                stake(
-                    client,
-                    private_key,
-                    StakeRequest {
-                        validator,
-                        amount,
-                        keys_dir,
-                        consensus_pubkey,
-                        radicle_node_id,
-                        bls_registration_signature,
-                        symmetric,
-                        ingress_socket,
-                        ingress_dns_host,
-                        ingress_dns_port,
-                        egress,
-                    },
-                )
-                .await
-            }
+            Self::Stake(request) => stake(client, private_key, *request).await,
             Self::Topup { validator, amount } => {
                 topup(client, private_key, validator, amount).await
             }
@@ -128,17 +63,40 @@ impl StakingCmd {
     }
 }
 
-struct StakeRequest {
+#[derive(Args)]
+pub struct StakeRequest {
+    /// Validator address. With `--keys-dir`, this must match `evm-key.hex`.
+    #[arg(long)]
     validator: Address,
+    /// Amount in unit (base denomination). Sent as the transaction value.
+    #[arg(long)]
     amount: String,
+    /// Key directory written by `outbe-keygen validator`.
+    #[arg(long)]
     keys_dir: Option<PathBuf>,
+    /// BLS consensus public key (hex).
+    #[arg(long)]
     consensus_pubkey: Option<String>,
+    /// Radicle Ed25519 node id (32-byte hex).
+    #[arg(long)]
     radicle_node_id: Option<B256>,
+    /// BLS registration signature (hex).
+    #[arg(long)]
     bls_registration_signature: Option<String>,
+    /// Symmetric socket address, for example 10.0.0.1:30400.
+    #[arg(long)]
     symmetric: Option<SocketAddr>,
+    /// Asymmetric socket ingress address.
+    #[arg(long)]
     ingress_socket: Option<SocketAddr>,
+    /// Asymmetric DNS ingress host.
+    #[arg(long)]
     ingress_dns_host: Option<String>,
+    /// Asymmetric DNS ingress port.
+    #[arg(long)]
     ingress_dns_port: Option<u16>,
+    /// Asymmetric egress socket address.
+    #[arg(long)]
     egress: Option<SocketAddr>,
 }
 

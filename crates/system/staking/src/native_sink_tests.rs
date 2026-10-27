@@ -83,12 +83,8 @@ fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
     with_staking(|storage, staking| {
         register_validator(storage.clone(), VALIDATOR);
         let initial_stake = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(15u64);
-        storage
-            .set_balance(STAKING_ADDRESS, initial_stake)
-            .unwrap();
-        staking
-            .topup(VALIDATOR, VALIDATOR, initial_stake)
-            .unwrap();
+        storage.set_balance(STAKING_ADDRESS, initial_stake).unwrap();
+        staking.topup(VALIDATOR, VALIDATOR, initial_stake).unwrap();
 
         let promis_limit = PromisLimitContract::new(storage.clone());
         let one_and_half =
@@ -102,18 +98,11 @@ fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
             promis_limit.native_rest().unwrap(),
             NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64)
         );
-        assert_eq!(
-            storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(),
-            U256::ZERO
-        );
+        assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 
         // Top up back to 15 protocol units and slash 10% again (another 1.5 units).
-        storage
-            .set_balance(STAKING_ADDRESS, initial_stake)
-            .unwrap();
-        staking
-            .topup(VALIDATOR, VALIDATOR, first_slash)
-            .unwrap();
+        storage.set_balance(STAKING_ADDRESS, initial_stake).unwrap();
+        staking.topup(VALIDATOR, VALIDATOR, first_slash).unwrap();
         let second_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
         assert_eq!(second_slash, one_and_half);
         assert_eq!(promis_limit.promis_limit().unwrap(), U256::from(3u64));

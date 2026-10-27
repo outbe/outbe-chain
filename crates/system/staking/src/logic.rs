@@ -135,12 +135,13 @@ impl Staking<'_> {
         let max_pct = self.config_max_stake_percent.read()?;
         // When `total` is zero, the first staker holds 100% of `new_total`.
         // Skip the concentration check on an empty pool so the first validator can bond.
-        if max_pct > 0 && max_pct < 100 && !total.is_zero() {
-            if U512::from(new_stake) * U512::from(100u64)
+        if max_pct > 0
+            && max_pct < 100
+            && !total.is_zero()
+            && U512::from(new_stake) * U512::from(100u64)
                 > U512::from(max_pct) * U512::from(new_total)
-            {
-                return Err(StakingError::StakeExceedsMaxStakePercent.into());
-            }
+        {
+            return Err(StakingError::StakeExceedsMaxStakePercent.into());
         }
         Ok((new_stake, new_total))
     }

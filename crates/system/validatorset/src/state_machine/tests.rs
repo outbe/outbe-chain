@@ -319,11 +319,9 @@ fn pending_demotion_consumes_readiness() {
         11,
     )
     .unwrap();
-    let state = ValidatorState::from_lifecycle(
-        ADDRESS,
-        ValidatorLifecycle::WaitingForReadiness(waiting),
-    )
-    .unwrap();
+    let state =
+        ValidatorState::from_lifecycle(ADDRESS, ValidatorLifecycle::WaitingForReadiness(waiting))
+            .unwrap();
     assert!(!state.join_confirmed());
     assert!(!state.has_bls_share());
     assert_eq!(
@@ -512,12 +510,9 @@ fn waiting_for_readiness_unbonding_and_active_retention_are_explicit() {
     else {
         panic!("expected WaitingForReadiness");
     };
-    let unbonding = unbond_waiting_for_readiness(
-        waiting,
-        StakeProjection::new(U256::ZERO, Some(70)),
-        33,
-    )
-    .unwrap();
+    let unbonding =
+        unbond_waiting_for_readiness(waiting, StakeProjection::new(U256::ZERO, Some(70)), 33)
+            .unwrap();
     assert_eq!(unbonding.stake.bonded(), U256::ZERO);
     assert_eq!(unbonding.history.last_deactivated_at_height(), Some(33));
 
@@ -997,11 +992,7 @@ fn history_updates_keep_exact_errors_and_precedence() {
         );
     }
 
-    let updated = with_history(
-        lifecycle(PENDING, false, false, 0),
-        deactivated(Some(40)),
-    )
-    .unwrap();
+    let updated = with_history(lifecycle(PENDING, false, false, 0), deactivated(Some(40))).unwrap();
     let ValidatorLifecycle::WaitingForReadiness(waiting) = updated else {
         panic!("history update changed the lifecycle variant");
     };
@@ -1069,9 +1060,15 @@ fn demoted_joiner_exit_requires_a_nonzero_height() {
         crate::precompile::IValidatorSet::ValidatorDeactivationHeightZero {}.abi_encode()
     );
     let exiting_from_inactive = exit_inactive_at_boundary(inactive.clone(), 77).unwrap();
-    assert_eq!(exiting_from_inactive.history.last_deactivated_at_height, Some(77));
+    assert_eq!(
+        exiting_from_inactive.history.last_deactivated_at_height,
+        Some(77)
+    );
     assert_eq!(exiting_from_inactive.stake, StakeProjection::zero());
-    assert_eq!(exiting_from_inactive.registry_index, inactive.registry_index);
+    assert_eq!(
+        exiting_from_inactive.registry_index,
+        inactive.registry_index
+    );
 }
 
 #[test]

@@ -325,7 +325,9 @@ pub(crate) fn register_validator(storage: StorageHandle, validator: Address) {
 
 fn test_bls_registration_material(validator: Address, seed: u8) -> ([u8; 48], B256, [u8; 96]) {
     use blst::min_pk::SecretKey;
-    use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
+    use outbe_primitives::validators::{
+        validator_registration_message, VALIDATOR_REGISTRATION_DST,
+    };
 
     let mut ikm = [seed; 32];
     ikm[..20].copy_from_slice(validator.as_slice());
@@ -395,14 +397,8 @@ fn test_stake_with_eighteen_decimal_native_coen_fixture() {
             .unwrap();
         s.config_min_stake.write(amount).unwrap();
         seed_staking_balance_u256(storage.clone(), amount);
-        s.stake(
-            validator,
-            validator,
-            amount,
-            (&pk, node_id, &sig),
-            (0, &[]),
-        )
-        .unwrap();
+        s.stake(validator, validator, amount, (&pk, node_id, &sig), (0, &[]))
+            .unwrap();
 
         assert_eq!(s.get_stake(validator).unwrap(), amount);
         assert_eq!(s.get_total_staked().unwrap(), amount);
@@ -2063,7 +2059,13 @@ fn stake_registers_with_optional_or_v1_p2p_and_rejects_below_min_stake() {
 
         // 3. Empty p2p_encoded registers with P2pInfo::Unset (even if p2p_version is 0).
         staking
-            .stake(v1, v1, U256::from(MIN_STAKE), (&pk1, node1, &sig1), (0, &[]))
+            .stake(
+                v1,
+                v1,
+                U256::from(MIN_STAKE),
+                (&pk1, node1, &sig1),
+                (0, &[]),
+            )
             .unwrap();
         assert_eq!(
             ValidatorSet::new(storage.clone())
@@ -2084,9 +2086,7 @@ fn stake_registers_with_optional_or_v1_p2p_and_rejects_below_min_stake() {
             )
             .unwrap();
         assert_eq!(
-            ValidatorSet::new(storage)
-                .get_p2p_address(v2)
-                .unwrap(),
+            ValidatorSet::new(storage).get_p2p_address(v2).unwrap(),
             Some((P2P_ADDRESS_VERSION_V1, p2p_bytes.clone()))
         );
     });

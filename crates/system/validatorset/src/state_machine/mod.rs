@@ -156,10 +156,7 @@ struct JoinerPayload {
 }
 
 /// Boundary retain for a frozen joiner now persisted as `Unbonding`.
-pub fn exit_unbonding_at_boundary(
-    state: Unbonding,
-    deactivated_at_height: u64,
-) -> Result<Exiting> {
+pub fn exit_unbonding_at_boundary(state: Unbonding, deactivated_at_height: u64) -> Result<Exiting> {
     exit_demoted_joiner(
         JoinerPayload {
             registry_index: state.registry_index,
@@ -173,10 +170,7 @@ pub fn exit_unbonding_at_boundary(
 }
 
 /// Boundary retain for a frozen joiner now persisted as `Inactive`.
-pub fn exit_inactive_at_boundary(
-    state: Inactive,
-    deactivated_at_height: u64,
-) -> Result<Exiting> {
+pub fn exit_inactive_at_boundary(state: Inactive, deactivated_at_height: u64) -> Result<Exiting> {
     exit_demoted_joiner(
         JoinerPayload {
             registry_index: state.registry_index,

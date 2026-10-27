@@ -45,10 +45,11 @@ pub fn dispatch(
                     if val != c.amount {
                         return Err(crate::errors::StakingError::MsgValueMismatch.into());
                     }
-                    let (pubkey, sig) = outbe_validatorset::logic::decode_registration_key_and_proof(
-                        &c.consensusPubkey,
-                        &c.blsRegistrationSignature,
-                    )?;
+                    let (pubkey, sig) =
+                        outbe_validatorset::logic::decode_registration_key_and_proof(
+                            &c.consensusPubkey,
+                            &c.blsRegistrationSignature,
+                        )?;
                     staking.stake(
                         sender,
                         c.validatorAddress,

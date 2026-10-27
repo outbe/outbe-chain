@@ -150,9 +150,9 @@ impl Staking<'_> {
             .write(&caller, new_head_stored)?;
         if unlinked_count > 0 {
             let prev_len = self.per_val_unbonding_len.read(&caller)?;
-            let new_len = prev_len.checked_sub(unlinked_count).ok_or(
-                StakingError::UnbondingLengthUnderflow { validator: caller },
-            )?;
+            let new_len = prev_len
+                .checked_sub(unlinked_count)
+                .ok_or(StakingError::UnbondingLengthUnderflow { validator: caller })?;
             self.per_val_unbonding_len.write(&caller, new_len)?;
         }
 

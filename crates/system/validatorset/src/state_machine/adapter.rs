@@ -421,10 +421,7 @@ impl ValidatorLifecycle {
     pub const fn is_secondary_admission(&self) -> bool {
         matches!(
             self,
-            Self::WaitingForReadiness(_)
-                | Self::Joining(_)
-                | Self::JailRetained(_)
-                | Self::Jail(_)
+            Self::WaitingForReadiness(_) | Self::Joining(_) | Self::JailRetained(_) | Self::Jail(_)
         )
     }
 

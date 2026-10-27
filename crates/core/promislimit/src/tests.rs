@@ -163,7 +163,8 @@ fn burn_native_to_promis_limit_accumulates_rest_across_sources_and_rolls_back_on
     };
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    let one_and_half = NATIVE_UNITS_PER_PROTOCOL_UNIT + (NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64));
+    let one_and_half =
+        NATIVE_UNITS_PER_PROTOCOL_UNIT + (NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64));
     storage.set_balance(STAKING_ADDRESS, one_and_half * U256::from(2u64));
     storage.set_balance(VOTE_ADDRESS, NATIVE_UNITS_PER_PROTOCOL_UNIT);
 
