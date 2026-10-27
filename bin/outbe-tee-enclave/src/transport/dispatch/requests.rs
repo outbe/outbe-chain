@@ -57,14 +57,15 @@ pub(in crate::transport) fn dispatch_with_initialization(
         initialization: context,
     };
     match req {
-        req @ (EnclaveRequest::CreateNodForTestV2 { .. }
+        req @ (EnclaveRequest::CreateNodForTestV1 { .. }
         | EnclaveRequest::ExecuteLysis { .. }
-        | EnclaveRequest::MineEncryptedNodV2 { .. }
-        | EnclaveRequest::ReadNodAmountV2 { .. }
-        | EnclaveRequest::NodTransferChunkV2 { .. }
-        | EnclaveRequest::ExecuteNodTransferV2 { .. }
-        | EnclaveRequest::ReadNodTransferV2 { .. }
-        | EnclaveRequest::DiscardNodTransferV2 { .. }) => super::nod_requests::dispatch(req, resident),
+        | EnclaveRequest::MineEncryptedNodV1 { .. }
+        | EnclaveRequest::ReadNodAmountV1 { .. }
+        | EnclaveRequest::EncryptNodForTributeV1 { .. }
+        | EnclaveRequest::NodTransferChunkV1 { .. }
+        | EnclaveRequest::ExecuteNodTransferV1 { .. }
+        | EnclaveRequest::ReadNodTransferV1 { .. }
+        | EnclaveRequest::DiscardNodTransferV1 { .. }) => super::nod_requests::dispatch(req, resident),
         req @ (EnclaveRequest::ApplyTributeDayOpV2 { .. }
         | EnclaveRequest::ReadTributeDayAmountV2 { .. }
         | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }

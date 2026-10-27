@@ -2,7 +2,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    nod_encryption::EncryptedNodV2, time::WorldwideDay, tribute_encryption::EncryptedTributeV2,
+    nod_encryption::EncryptedNodV1, time::WorldwideDay, tribute_encryption::EncryptedTributeV2,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ pub struct LysisRequest {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LysisNod {
-    pub nod: EncryptedNodV2,
+    pub nod: EncryptedNodV1,
     pub settlement_cost_minor: U256,
 }
 
@@ -40,7 +40,7 @@ pub struct LysisResult {
 pub struct VerifiedLysisNod(LysisNod);
 
 impl VerifiedLysisNod {
-    pub fn nod(&self) -> &EncryptedNodV2 {
+    pub fn nod(&self) -> &EncryptedNodV1 {
         &self.0.nod
     }
 
@@ -80,7 +80,7 @@ pub fn rejection_preimage(inputs: B256) -> Vec<u8> {
 
 fn matches_tribute_terms(
     request: &LysisRequest,
-    terms: &outbe_primitives::nod_encryption::NodTermsV2,
+    terms: &outbe_primitives::nod_encryption::NodTermsV1,
     context: &outbe_primitives::tribute_encryption::TributeContextV2,
 ) -> bool {
     let basic_match =

@@ -3,14 +3,14 @@ use crate::internal::{eth, tribute_keys};
 use crate::world::World;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV2, NodTermsV2},
+    nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
     wwd_entity_id::WwdEntityId,
 };
 
-pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV2 {
-    EncryptedNodV2 {
-        terms: NodTermsV2 {
+pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
+    EncryptedNodV1 {
+        terms: NodTermsV1 {
             chain_id: data.chainId,
             nod_id: WwdEntityId::from(data.nodId),
             owner: data.owner,

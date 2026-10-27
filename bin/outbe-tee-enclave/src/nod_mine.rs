@@ -2,15 +2,15 @@
 use crate::errors::{NodMineRejectReason, Result, TeeError};
 use alloy_primitives::{B256, U256};
 use outbe_tee::{
-    nod_mine::{MineEncryptedNodRequestV2, MineEncryptedNodResultV2},
+    nod_mine::{MineEncryptedNodRequestV1, MineEncryptedNodResultV1},
     protocol::{FidelityCohortOp, GratisOp, GratisOpRequest, GratisOpStatus},
 };
 pub fn apply(
     network_secret: &[u8; 32],
     gratis_key: &[u8; 32],
     fidelity_key: &[u8; 32],
-    request: &MineEncryptedNodRequestV2,
-) -> Result<MineEncryptedNodResultV2> {
+    request: &MineEncryptedNodRequestV1,
+) -> Result<MineEncryptedNodResultV1> {
     if request.fidelity.op != FidelityCohortOp::In {
         return Err(TeeError::DecryptFailed);
     }
@@ -37,7 +37,7 @@ pub fn apply(
         &request.fidelity,
     )
     .map_err(NodMineRejectReason::FidelitySectionFailed)?;
-    Ok(MineEncryptedNodResultV2 {
+    Ok(MineEncryptedNodResultV1 {
         new_balance: result.new_balance,
         next_op_nonce: result.next_op_nonce,
         fidelity,

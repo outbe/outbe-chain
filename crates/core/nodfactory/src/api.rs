@@ -1,7 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_primitives::nod_encryption::EncryptedNodV2;
+use outbe_primitives::nod_encryption::EncryptedNodV1;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_vaultrouter::settlement::SettlementPayment;
@@ -10,7 +10,7 @@ use crate::runtime;
 
 pub use crate::runtime::{issue_lysis_nod, issue_tribute_nod, MineGratisRequest};
 
-pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV2) -> Result<WwdEntityId> {
+pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
     runtime::issue_nod(storage, encrypted)
 }
 
