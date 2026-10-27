@@ -2,7 +2,7 @@
 //! the forfeit already returned their load.
 
 use alloy_primitives::B256;
-use outbe_nod::state::CleanupDays;
+use outbe_nod::state::CleanupQueue;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
@@ -19,7 +19,7 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup::new(ctx);
     deadline_queue::process_cleanup(
-        &CleanupDays(&queue),
+        &CleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
         &mut cleanup,

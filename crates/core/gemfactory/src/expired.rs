@@ -7,7 +7,7 @@ use outbe_primitives::{
 };
 
 use outbe_gem::precompile::IGem::GemGroupForfeited;
-use outbe_gem::{ExpiryDays, GemContract};
+use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
@@ -20,7 +20,7 @@ use crate::runtime::emit_event;
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
     let mut expiry = GemExpiry::new(ctx);
-    deadline_queue::process_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
@@ -31,7 +31,7 @@ pub(crate) fn sweep_through(
 ) -> Result<deadline_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &ExpiryDays(&queue),
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,

@@ -227,25 +227,25 @@ pub struct CredisContract {
 
     // The queue orders called groups by the UTC day that contains their settlement deadline.
     #[attribute(order = 9)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 11)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 12)]
-    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 13)]
-    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 15)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 16)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 17)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest `call_threshold_seconds` of at least a day ever opened in a reference
     /// currency. With the widest window it bounds the call prices the scan visits.
@@ -269,15 +269,15 @@ pub struct CredisContract {
     /// `(bin << 32) | groups of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 26)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
-    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// UTC day the call pass could not price a reference currency on. The rest of that
     /// day's pass passes it by.
     #[attribute(order = 27)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// ISO 4217 code of the currency the call sweep resumes at.
+    /// ISO 4217 code of the currency the call pass resumes at.
     #[attribute(order = 28)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    /// UTC day the unfinished call sweep is pinned to. 0 = none in flight.
+    /// UTC day the unfinished call pass is pinned to. 0 = none in flight.
     #[attribute(order = 29)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     /// Newest closed day scheduled. Every day up to it is walked in order.

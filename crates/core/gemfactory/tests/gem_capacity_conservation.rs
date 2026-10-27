@@ -199,7 +199,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         assert_eq!(
-            GemContract::new(s).expiry_tree_root.read().unwrap(),
+            GemContract::new(s).forfeit_tree_root.read().unwrap(),
             U256::ZERO
         );
     });
@@ -281,7 +281,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         assert_eq!(gem.group_gem_count.read(&group_key).unwrap(), 0);
         assert_eq!(gem.group_unpaid_load.read(&group_key).unwrap(), U256::ZERO);
         assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
-        assert_eq!(gem.expiry_tree_root.read().unwrap(), U256::ZERO);
+        assert_eq!(gem.forfeit_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
@@ -336,7 +336,7 @@ fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once(
             StorageHandle::enter(&mut p, |s| {
                 assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
                 assert_eq!(
-                    GemContract::new(s).expiry_tree_root.read().unwrap(),
+                    GemContract::new(s).forfeit_tree_root.read().unwrap(),
                     U256::ZERO
                 );
             });

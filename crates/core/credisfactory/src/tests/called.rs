@@ -1033,7 +1033,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         assert_eq!(expire(&storage, lapsed), 0);
         assert_eq!(
             CredisContract::new(storage.clone())
-                .expiry_tree_root
+                .forfeit_tree_root
                 .read()
                 .unwrap(),
             U256::ZERO,

@@ -325,7 +325,7 @@ pub struct IntexContract {
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // `(bin << 32) | groups of that bin still to visit` where each currency's call scan
-    // resumes. 0 = fresh sweep.
+    // resumes. 0 = fresh pass.
     #[attribute(order = 38)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
@@ -340,7 +340,7 @@ pub struct IntexContract {
     #[attribute(order = 41)]
     pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // UTC day an unfinished call sweep is pinned to, so its later slices decide
+    // UTC day an unfinished call pass is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 42)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
@@ -351,11 +351,11 @@ pub struct IntexContract {
 
     // This queue schedules called groups by the day when their settlement window closes.
     #[attribute(order = 44)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 45)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// Group key -> when the group's settlement window closes.
     #[attribute(order = 47)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -369,24 +369,24 @@ pub struct IntexContract {
     /// This value counts all slots ever used in a day.
     /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 50)]
-    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
-    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// This map associates `keccak256(day_be32 ++ slot_be32)` with the group key.
     #[attribute(order = 52)]
-    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// This map associates a group key with `((day + 1) << 32) | slot`.
     /// Zero means that the group is not queued.
     #[attribute(order = 53)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 55)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
     pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// UTC day the call pass could not price a reference currency on. The rest of that
     /// day's pass passes it by.
     #[attribute(order = 57)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
@@ -398,7 +398,7 @@ pub struct IntexContract {
     pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // This queue stores expired groups whose spent series await deletion.
-    // It schedules groups by day, like the expiry queue.
+    // It schedules groups by day, like the forfeit queue.
     #[attribute(order = 60)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 61)]

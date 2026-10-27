@@ -4,7 +4,7 @@
 use alloy_primitives::B256;
 use alloy_sol_types::SolEvent;
 use outbe_credis::precompile::ICredis;
-use outbe_credis::{CredisContract, ExpiryDays};
+use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
@@ -20,7 +20,7 @@ use crate::precompile::ICredisFactory::ExpiryDeferred;
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut expiry = CredisExpiry::new(ctx);
-    deadline_queue::process_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
@@ -31,7 +31,7 @@ pub(crate) fn sweep_through(
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &ExpiryDays(&queue),
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,

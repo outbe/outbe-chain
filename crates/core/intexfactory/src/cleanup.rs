@@ -2,7 +2,7 @@
 //! the expiry already returned what the groups forfeited.
 
 use alloy_primitives::B256;
-use outbe_intex::{CleanupDays, IntexContract, SeriesId};
+use outbe_intex::{CleanupQueue, IntexContract, SeriesId};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -16,7 +16,7 @@ pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut cleanup = IntexCleanup::new(ctx);
     deadline_queue::process_cleanup(
-        &CleanupDays(&queue),
+        &CleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
         &mut cleanup,

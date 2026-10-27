@@ -191,8 +191,8 @@ impl<'storage> CredisContract<'storage> {
     fn close_group(&mut self, group: B256) -> Result<()> {
         let currency = self.group_currency.read(&group)?;
         call_bins::remove(&CallBins(self, currency), group)?;
-        deadline_queue::remove(&ExpiryDays(self), group)?;
-        deadline_queue::remove(&CleanupDays(self), group)?;
+        deadline_queue::remove(&ForfeitQueue(self), group)?;
+        deadline_queue::remove(&CleanupQueue(self), group)?;
         self.group_currency.clear(&group)?;
         self.group_full_day.clear(&group)?;
         self.group_call_price_minor.clear(&group)?;
@@ -213,7 +213,7 @@ impl<'storage> CredisContract<'storage> {
             .ok_or_else(|| CredisError::IndexOutOfBounds.into())
     }
 
-    /// Calls every member at once: the group leaves its bin for the expiry queue, where
+    /// Calls every member at once: the group leaves its bin for the forfeit queue, where
     /// it waits on its settlement deadline as one entry. Returns the deadline.
     pub fn record_group_called(&mut self, group: B256, now: u64) -> Result<u64> {
         let currency = self.group_currency.read(&group)?;
@@ -223,24 +223,24 @@ impl<'storage> CredisContract<'storage> {
             now,
             self.group_call_notice_period_seconds.read(&group)?,
         );
-        deadline_queue::push(&ExpiryDays(self), group, deadline)?;
+        deadline_queue::push(&ForfeitQueue(self), group, deadline)?;
         Ok(deadline)
     }
 
-    /// Moves a forfeited group from the expiry queue to the cleanup, which deletes its
+    /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its
     /// Credis.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group)?;
-        deadline_queue::remove(&ExpiryDays(self), group)?;
-        deadline_queue::push(&CleanupDays(self), group, deadline)
+        deadline_queue::remove(&ForfeitQueue(self), group)?;
+        deadline_queue::push(&CleanupQueue(self), group, deadline)
     }
 
     pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
-        deadline_queue::push(&ExpiryDays(self), group, deadline)
+        deadline_queue::push(&ForfeitQueue(self), group, deadline)
     }
 
     pub fn remove_called(&mut self, group: B256) -> Result<()> {
-        deadline_queue::remove(&ExpiryDays(self), group)
+        deadline_queue::remove(&ForfeitQueue(self), group)
     }
 }
 
@@ -261,25 +261,25 @@ fn take_from(sums: &Map<'_, Address, U256>, owner: Address, amount: U256) -> Res
 }
 
 /// This queue orders called groups by the UTC day that contains their settlement deadline.
-pub struct ExpiryDays<'a, 'storage>(pub &'a CredisContract<'storage>);
+pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_primitives::impl_deadline_queue!(ExpiryDays<B256> {
-    root: expiry_tree_root,
-    mid: expiry_tree_mid,
-    leaf: expiry_tree_leaf,
-    len: expiry_day_len,
-    live: expiry_day_live,
-    at: expiry_day_at,
+outbe_primitives::impl_deadline_queue!(ForfeitQueue<B256> {
+    root: forfeit_tree_root,
+    mid: forfeit_tree_mid,
+    leaf: forfeit_tree_leaf,
+    len: forfeit_day_len,
+    live: forfeit_day_live,
+    at: forfeit_day_at,
     slot: called_group_slot,
     deadline: called_deadline,
-    sweep_day: expiry_sweep_day,
-    cursor: expiry_cursor,
+    sweep_day: forfeit_pass_day,
+    cursor: forfeit_cursor,
 });
 
 /// Forfeited groups whose Credis wait to be deleted.
-pub struct CleanupDays<'a, 'storage>(pub &'a CredisContract<'storage>);
+pub struct CleanupQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_primitives::impl_deadline_queue!(CleanupDays<B256> {
+outbe_primitives::impl_deadline_queue!(CleanupQueue<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

@@ -433,12 +433,12 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
         let near_day = IntexContract::deadline_day(now + DAY);
         let far_day = IntexContract::deadline_day(now + 10 * DAY);
         assert_eq!(
-            f.expiry_day_live.read(&near_day).unwrap(),
+            f.forfeit_day_live.read(&near_day).unwrap(),
             0,
             "the group whose window closed leaves its day"
         );
         assert_eq!(
-            f.expiry_day_live.read(&far_day).unwrap(),
+            f.forfeit_day_live.read(&far_day).unwrap(),
             1,
             "the one still inside its window stays"
         );
@@ -523,7 +523,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
     StorageHandle::enter(&mut provider, |s| {
         assert!(queued(&s, member));
         let f = IntexContract::new(s);
-        assert_eq!(f.expiry_day_live.read(&day).unwrap(), 1);
+        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 1);
         assert_eq!(f.first_expiry_day().unwrap(), Some(day));
     });
     assert!(provider
@@ -546,7 +546,7 @@ fn a_day_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
         sweep_expiry(&s, IntexContract::day_end(day));
 
         let later = IntexContract::deadline_day(now + 400 * DAY);
-        assert_eq!(f.expiry_day_live.read(&day).unwrap(), 0);
+        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 0);
         assert_eq!(
             f.first_expiry_day().unwrap(),
             Some(later),
@@ -556,7 +556,7 @@ fn a_day_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
             queued(&s, member),
             "and its group waits in the day its deadline falls in"
         );
-        assert_eq!(f.expiry_day_live.read(&later).unwrap(), 1);
+        assert_eq!(f.forfeit_day_live.read(&later).unwrap(), 1);
     });
 }
 
@@ -625,34 +625,34 @@ fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
         for index in 0..queued {
             called_series(&s, 20260101 + index, deadline);
         }
-        assert_eq!(f.expiry_day_live.read(&day).unwrap(), queued);
+        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), queued);
 
         let due = IntexContract::day_end(day);
         sweep_expiry(&s, due);
-        let left = f.expiry_day_live.read(&day).unwrap();
+        let left = f.forfeit_day_live.read(&day).unwrap();
         assert!(
             left > 0 && left < queued,
             "one block takes what it is budgeted for and no more, got {left} of {queued}"
         );
         assert_eq!(
-            f.expiry_sweep_day.read().unwrap(),
+            f.forfeit_pass_day.read().unwrap(),
             day,
             "the unfinished day is remembered"
         );
         assert!(
-            f.expiry_cursor.read().unwrap() > 0,
+            f.forfeit_cursor.read().unwrap() > 0,
             "along with the slot it stopped at"
         );
 
         sweep_expiry(&s, due + 1);
         assert_eq!(
-            f.expiry_day_live.read(&day).unwrap(),
+            f.forfeit_day_live.read(&day).unwrap(),
             0,
             "the next block finishes the tail rather than re-walking the head"
         );
         assert_eq!(f.first_expiry_day().unwrap(), None);
         assert_eq!(
-            f.expiry_cursor.read().unwrap(),
+            f.forfeit_cursor.read().unwrap(),
             0,
             "and the cursor is released with the day"
         );

@@ -190,8 +190,8 @@ pub struct NodContract {
     #[attribute(order = 49)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Frozen-day call sweep: 0 = idle. Every closed day up to the newest scheduled is walked.
-    /// UTC day an unfinished call sweep is pinned to.
+    // Frozen-day call pass: 0 = idle. Every closed day up to the newest scheduled is walked.
+    /// UTC day an unfinished call pass is pinned to.
     #[attribute(order = 59)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 60)]
@@ -215,12 +215,12 @@ pub struct NodContract {
     // The queue orders called groups by the UTC day when their notice period closes.
     // The trie occupies these columns. The group columns follow `config_profile`, whose slot genesis fixes.
     #[attribute(order = 67)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 68)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 69)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// ISO the call sweep resumes at.
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// ISO the call pass resumes at.
     #[attribute(order = 70)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
     /// `(bin << 32) | entries left`. 0 left walks the bin from the top.
@@ -232,26 +232,26 @@ pub struct NodContract {
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
     #[attribute(order = 74)]
-    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 75)]
-    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 76)]
-    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 77)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 78)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 79)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 80)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     /// Lowest sealed `call_threshold_seconds` of at least a day per reference currency.
     /// With the widest window it bounds the call prices the scan visits.
     #[attribute(order = 81)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// UTC day the call pass could not price a reference currency on. The rest of that
     /// day's pass passes it by.
     #[attribute(order = 82)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,

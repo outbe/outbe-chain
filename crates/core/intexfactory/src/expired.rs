@@ -12,7 +12,7 @@ use outbe_primitives::{
 };
 
 use outbe_intex::precompile::IIntex;
-use outbe_intex::{ExpiryDays, IntexContract};
+use outbe_intex::{ForfeitQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
 use crate::runtime::emit_event;
@@ -23,7 +23,7 @@ use crate::runtime::emit_event;
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = IntexContract::new(ctx.storage.clone());
     let mut expiry = IntexExpiry::new(ctx);
-    deadline_queue::process_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 
@@ -34,7 +34,7 @@ pub(crate) fn sweep_through(
 ) -> Result<deadline_queue::Progress> {
     let queue = IntexContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &ExpiryDays(&queue),
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,

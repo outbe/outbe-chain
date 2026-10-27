@@ -2,7 +2,7 @@
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::{B256, U256};
-use outbe_credis::{CleanupDays, CredisContract};
+use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result, PassFailure},
@@ -15,7 +15,7 @@ use outbe_primitives::{
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut cleanup = CredisCleanup::new(ctx);
-    deadline_queue::process_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
+    deadline_queue::process_block(&CleanupQueue(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 
@@ -26,7 +26,7 @@ pub(crate) fn sweep_through(
 ) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &CleanupDays(&queue),
+        &CleanupQueue(&queue),
         ctx,
         through_day,
         budget,
