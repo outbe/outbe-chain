@@ -9,9 +9,12 @@
 use alloy_primitives::{Address, Bytes, B256};
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 use crate::reshare_artifact::ExecutionSummaryArtifact;
 
@@ -336,6 +339,53 @@ pub struct CachedExecutionSummary {
     pub state_root: Option<B256>,
 }
 
+/// Process-local consensus role of this node.
+///
+/// A validator starts in `UpstreamBootstrap` when its local chain is not yet
+/// ready for the validator stack. It changes to `Verifier` or `Signer` in the
+/// same process. This value is never consensus state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConsensusOperatingMode {
+    /// Pure certified follower node (`--upstream` without `--validator`).
+    #[default]
+    Follower,
+    /// Validator node in Phase 1: syncing via `--upstream` until `ValidatorBootstrapReady`.
+    UpstreamBootstrap,
+    /// Validator node in Phase 2: running `EpochSupervisor` with `HybridScheme::verifier` (`share = None`).
+    Verifier,
+    /// Validator node in Phase 3: running `EpochSupervisor` with `HybridScheme::signer` (`share = Some`).
+    Signer,
+}
+
+impl ConsensusOperatingMode {
+    /// Returns true for every validator phase.
+    pub const fn is_validator(self) -> bool {
+        matches!(
+            self,
+            Self::UpstreamBootstrap | Self::Verifier | Self::Signer
+        )
+    }
+
+    const fn to_u8(self) -> u8 {
+        match self {
+            Self::Follower => 0,
+            Self::UpstreamBootstrap => 1,
+            Self::Verifier => 2,
+            Self::Signer => 3,
+        }
+    }
+
+    const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::UpstreamBootstrap,
+            2 => Self::Verifier,
+            3 => Self::Signer,
+            _ => Self::Follower,
+        }
+    }
+}
+
 /// VRF/DKG safety state visible to operators and RPC clients.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -422,6 +472,10 @@ impl ConsensusStatus {
 pub struct ConsensusExecutionBridge {
     inner: Arc<Mutex<BridgeState>>,
     repository_publication: crate::radicle_publication::RepositoryPublicationMailbox,
+    /// Encoded [`ConsensusOperatingMode`]. RPC reads it without the state lock.
+    operating_mode: Arc<AtomicU8>,
+    /// Signalled on every local finalization. Process-local wake-up only.
+    finalization_notify: Arc<Notify>,
 }
 
 #[derive(Default)]
@@ -485,7 +539,30 @@ impl ConsensusExecutionBridge {
         Self {
             inner: Arc::new(Mutex::new(BridgeState::default())),
             repository_publication: Default::default(),
+            operating_mode: Arc::new(AtomicU8::new(ConsensusOperatingMode::default().to_u8())),
+            finalization_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Returns the current process-local consensus role.
+    pub fn operating_mode(&self) -> ConsensusOperatingMode {
+        ConsensusOperatingMode::from_u8(self.operating_mode.load(Ordering::Acquire))
+    }
+
+    /// Publishes the current process-local consensus role.
+    pub fn set_operating_mode(&self, mode: ConsensusOperatingMode) {
+        self.operating_mode.store(mode.to_u8(), Ordering::Release);
+    }
+
+    /// Returns the wake-up handle that local finalization signals.
+    pub fn finalization_notify(&self) -> Arc<Notify> {
+        Arc::clone(&self.finalization_notify)
+    }
+
+    /// Wakes one waiter after a local finalization. A missed wake-up stores
+    /// one permit, so the next waiter does not block.
+    pub fn notify_finalization(&self) {
+        self.finalization_notify.notify_one();
     }
 
     pub fn repository_publication_mailbox(
@@ -744,6 +821,41 @@ mod tests {
             assert_eq!(status.is_consensus_active(), expected_active, "{status:?}");
             assert_eq!(status.has_threshold_shares(), expected_shares, "{status:?}");
         }
+    }
+
+    #[test]
+    fn operating_mode_round_trips_through_bridge_and_serde() {
+        let bridge = ConsensusExecutionBridge::new();
+        assert_eq!(bridge.operating_mode(), ConsensusOperatingMode::Follower);
+        for (mode, json, is_validator) in [
+            (ConsensusOperatingMode::Follower, "\"follower\"", false),
+            (
+                ConsensusOperatingMode::UpstreamBootstrap,
+                "\"upstreamBootstrap\"",
+                true,
+            ),
+            (ConsensusOperatingMode::Verifier, "\"verifier\"", true),
+            (ConsensusOperatingMode::Signer, "\"signer\"", true),
+        ] {
+            bridge.clone().set_operating_mode(mode);
+            assert_eq!(bridge.operating_mode(), mode);
+            assert_eq!(mode.is_validator(), is_validator);
+            assert_eq!(serde_json::to_string(&mode).unwrap(), json);
+            assert_eq!(
+                serde_json::from_str::<ConsensusOperatingMode>(json).unwrap(),
+                mode
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn finalization_notify_keeps_one_permit_for_a_late_waiter() {
+        let bridge = ConsensusExecutionBridge::new();
+        let notify = bridge.finalization_notify();
+        bridge.notify_finalization();
+        tokio::time::timeout(std::time::Duration::from_secs(1), notify.notified())
+            .await
+            .expect("stored permit wakes the waiter");
     }
 
     #[test]

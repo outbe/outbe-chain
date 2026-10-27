@@ -4,7 +4,6 @@ use super::super::*;
 use super::transport::ChannelMux;
 
 pub(super) struct RecoveredThreshold {
-    pub(super) local_consensus_key: bls12381::PublicKey,
     pub(super) last_execution_height: u64,
     pub(super) last_execution_hash: B256,
     pub(super) recovered_boundary: Option<(u64, DkgBoundaryArtifact)>,
@@ -79,13 +78,20 @@ where
     let recovered_pending_boundary = startup_snapshot.pending_boundary;
     let startup_dkg_context = startup_snapshot.context;
 
+    // A local key that is absent from the latest finalized DKG boundary is a
+    // shareless verifier. It takes its public material from that on-chain
+    // boundary and never enters local or interactive threshold selection.
+    let recovered_shareless_output = recovered_boundary
+        .as_ref()
+        .map(|(_height, boundary)| decode_boundary_output(boundary))
+        .transpose()?
+        .filter(|output| output.players().position(&local_consensus_key).is_none());
+
     // Determine founding versus existing identity before any DKG/live-join path.
     // The node entrypoint installed the mandatory enclave client before Reth
     // launch. This gate prevents threshold work and consensus startup from
     // treating the pre-DKG onboarding recipient as a permanent offer key.
-    let verifier_join = args.signing_share.is_none()
-        && args.public_polynomial.is_some()
-        && args.dkg_output.is_some();
+    let verifier_join = recovered_shareless_output.is_some();
     let local_key_in_current_consensus_set = validator_set
         .public_keys
         .iter()
@@ -117,11 +123,6 @@ where
         .await
         .map_err(crate::errors::StackEpochError::register_initial_dkg_subchannel)?;
 
-    let recovered_shareless_output = recovered_boundary
-        .as_ref()
-        .map(|(_height, boundary)| decode_boundary_output(boundary))
-        .transpose()?
-        .filter(|output| output.players().position(&local_consensus_key).is_none());
     let threshold_material = if let Some(output) = recovered_shareless_output {
         info!(
         target: "outbe_engine::stack",
@@ -165,14 +166,13 @@ where
                 last_dkg_output,
             } => (None, polynomial, last_dkg_output, false),
         };
-    // Threshold material, not CLI file presence, owns consensus authority. A
-    // recovered validator excluded from the current boundary is VerifierOnly even
-    // when its original signing-share path is still configured on disk.
+    // Threshold material owns consensus authority. A recovered validator that
+    // the current boundary excludes is VerifierOnly even when its keys
+    // directory still holds an older share.
     let shareless_verifier = signing_share.is_none();
 
-    // Verifier-join supplies public threshold material without a signing share.
-    // Its local database can still be at height zero while it joins an already
-    // running chain, so local height alone must never reproduce genesis DKG/OST3.
+    // A shareless verifier has public threshold material without a signing
+    // share. Local height alone must never reproduce genesis DKG/OST3.
     let coordinate_genesis_bootstrap = should_coordinate_genesis_tee_bootstrap(
         startup_dkg_context,
         local_key_in_current_consensus_set,
@@ -241,7 +241,6 @@ where
     )?;
 
     Ok(RecoveredThreshold {
-        local_consensus_key,
         last_execution_height,
         last_execution_hash,
         recovered_boundary,

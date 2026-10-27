@@ -27,16 +27,30 @@ pub struct BootstrapResult {
     pub count: u32,
 }
 
+/// Per-validator subdirectory that is a complete `--consensus.keys-dir`.
+pub const VALIDATOR_KEYS_DIR: &str = "dkg-keys";
+/// Root file of the shared BLS public polynomial.
+pub const ROOT_POLYNOMIAL_FILE: &str = "polynomial.hex";
+/// Keys-directory file of the BLS threshold signing share.
+pub const KEYS_DIR_SHARE_FILE: &str = "dkg_share.hex";
+/// Keys-directory file of the BLS public polynomial.
+pub const KEYS_DIR_POLYNOMIAL_FILE: &str = "dkg_polynomial.hex";
+/// Keys-directory file of the full DKG output artifact.
+pub const KEYS_DIR_OUTPUT_FILE: &str = "dkg_output.hex";
+
 /// Bootstrap DKG material and BLS individual keys for `n` validators.
 ///
 /// Creates the following directory structure under `output_dir`:
 /// ```text
 /// output_dir/
 ///   polynomial.hex          - shared BLS public polynomial
-///   dkg-output.hex          - full DKG output artifact bound to validator public keys
+///   dkg_output.hex          - full DKG output artifact bound to validator public keys
 ///   validator-0/
 ///     signing-key.hex       - BLS individual private key (MinPk)
-///     signing-share.hex     - BLS threshold signing share
+///     dkg-keys/             - ready `--consensus.keys-dir` for this validator
+///       dkg_share.hex       - BLS threshold signing share
+///       dkg_polynomial.hex  - shared BLS public polynomial
+///       dkg_output.hex      - full DKG output artifact
 ///   validator-1/
 ///     ...
 /// ```
@@ -78,12 +92,12 @@ pub fn bootstrap_and_save(
     let dkg = bls::bootstrap_dkg_for_participants(participants).wrap_err("BLS DKG failed")?;
 
     // 3. Save shared polynomial and full DKG output artifact.
-    let poly_path = output_dir.join("polynomial.hex");
+    let poly_path = output_dir.join(ROOT_POLYNOMIAL_FILE);
     bls::save_public_polynomial(&poly_path, &dkg.polynomial, backend)
         .wrap_err("failed to save polynomial")?;
     info!(path = %poly_path.display(), "saved public polynomial");
 
-    let output_path = output_dir.join("dkg-output.hex");
+    let output_path = output_dir.join(KEYS_DIR_OUTPUT_FILE);
     bls::save_dkg_output(&output_path, &dkg.output, backend)
         .wrap_err("failed to save DKG output")?;
     info!(path = %output_path.display(), "saved DKG output");
@@ -100,10 +114,21 @@ pub fn bootstrap_and_save(
         bls::save_individual_key(&key_path, bls_key, backend)
             .wrap_err("failed to save signing key")?;
 
-        // BLS signing share - share[i] goes to the key at sorted position i.
-        let share_path = dir.join("signing-share.hex");
+        // Ready keys directory: share[i] goes to the key at sorted position i.
+        let keys_dir = dir.join(VALIDATOR_KEYS_DIR);
+        std::fs::create_dir_all(&keys_dir)
+            .wrap_err_with(|| format!("failed to create keys dir: {}", keys_dir.display()))?;
+        let share_path = keys_dir.join(KEYS_DIR_SHARE_FILE);
         bls::save_signing_share(&share_path, share, backend)
             .wrap_err("failed to save signing share")?;
+        bls::save_public_polynomial(
+            &keys_dir.join(KEYS_DIR_POLYNOMIAL_FILE),
+            &dkg.polynomial,
+            backend,
+        )
+        .wrap_err("failed to save validator polynomial")?;
+        bls::save_dkg_output(&keys_dir.join(KEYS_DIR_OUTPUT_FILE), &dkg.output, backend)
+            .wrap_err("failed to save validator DKG output")?;
 
         info!(
             validator = i,
@@ -138,8 +163,9 @@ mod tests {
 
         // Verify polynomial and DKG output files exist and are loadable.
         let poly =
-            bls::load_public_polynomial(&tmp.path().join("polynomial.hex"), &backend).unwrap();
-        let output = bls::load_dkg_output(&tmp.path().join("dkg-output.hex"), &backend).unwrap();
+            bls::load_public_polynomial(&tmp.path().join(ROOT_POLYNOMIAL_FILE), &backend).unwrap();
+        let output =
+            bls::load_dkg_output(&tmp.path().join(KEYS_DIR_OUTPUT_FILE), &backend).unwrap();
         assert_eq!(output.public(), &poly);
 
         // Verify each validator's files.
@@ -152,12 +178,22 @@ mod tests {
             assert!(pk.verify(b"test", b"msg", &sig));
 
             // Load and validate signing share.
-            let share = bls::load_signing_share(&dir.join("signing-share.hex"), &backend).unwrap();
+            let keys = dir.join(VALIDATOR_KEYS_DIR);
+            let share = bls::load_signing_share(&keys.join(KEYS_DIR_SHARE_FILE), &backend).unwrap();
             assert!(
                 bls::validate_share(&share, &poly).unwrap(),
                 "share {i} should validate against polynomial"
             );
             bls::validate_dkg_triplet(&share, &poly, &output).unwrap();
+            assert_eq!(
+                bls::load_public_polynomial(&keys.join(KEYS_DIR_POLYNOMIAL_FILE), &backend)
+                    .unwrap(),
+                poly
+            );
+            assert_eq!(
+                bls::load_dkg_output(&keys.join(KEYS_DIR_OUTPUT_FILE), &backend).unwrap(),
+                output
+            );
         }
     }
 
@@ -179,7 +215,8 @@ mod tests {
 
         let participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
             keys.iter().map(|k| k.public_key()).try_collect().unwrap();
-        let output = bls::load_dkg_output(&tmp.path().join("dkg-output.hex"), &backend).unwrap();
+        let output =
+            bls::load_dkg_output(&tmp.path().join(KEYS_DIR_OUTPUT_FILE), &backend).unwrap();
         assert_eq!(output.players(), &participants);
         assert_eq!(output.dealers(), &participants);
 
@@ -197,9 +234,10 @@ mod tests {
 
         // Verify shares also match: share[i].index should work with participant at position i
         let poly =
-            bls::load_public_polynomial(&tmp.path().join("polynomial.hex"), &backend).unwrap();
+            bls::load_public_polynomial(&tmp.path().join(ROOT_POLYNOMIAL_FILE), &backend).unwrap();
         for (i, dir) in result.validator_dirs.iter().enumerate() {
-            let share = bls::load_signing_share(&dir.join("signing-share.hex"), &backend).unwrap();
+            let keys = dir.join(VALIDATOR_KEYS_DIR);
+            let share = bls::load_signing_share(&keys.join(KEYS_DIR_SHARE_FILE), &backend).unwrap();
             assert!(
                 bls::validate_share(&share, &poly).unwrap(),
                 "share {i} should validate against polynomial"

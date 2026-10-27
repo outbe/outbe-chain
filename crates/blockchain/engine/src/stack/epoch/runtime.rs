@@ -1,6 +1,6 @@
 //! Epoch state, DKG lifecycle, routed channels and supervised actor ownership.
 use super::super::*;
-use super::transport::{ChannelMux, EpochSubchannels};
+use super::transport::{ChannelMux, EpochSubchannels, VoteBackup};
 /// Active authority and the rotation schedule anchored by its last activation.
 pub(super) struct EpochState {
     pub(super) current_epoch: Epoch,
@@ -30,6 +30,9 @@ pub(super) struct DkgRotation<E: Clock> {
 /// Keep same-epoch replacement routes separate from a future DKG epoch.
 pub(super) struct EpochChannels<E: Clock> {
     pub(super) vote_mux: ChannelMux<E>,
+    /// Votes for unregistered epochs. A future-epoch vote shows that peers
+    /// are ahead of this node.
+    pub(super) vote_backup_rx: VoteBackup,
     pub(super) cert_mux: ChannelMux<E>,
     pub(super) res_mux: ChannelMux<E>,
     pub(super) next_epoch_subchannels: Option<EpochSubchannels<E>>,
@@ -78,6 +81,9 @@ pub(super) struct EpochSupervisor<E: Clock> {
     pub(super) bootnode_map: BTreeMap<Vec<u8>, SocketAddr>,
     pub(super) oracle: lookup::Oracle<bls12381::PublicKey>,
     pub(super) recovered_boundary_artifact: Option<DkgBoundaryArtifact>,
+    /// The epocher of the validator marshal. Activation records each new
+    /// epoch boundary in it.
+    pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
     pub(super) reporter_continuity: ReporterContinuity,
     pub(super) genesis_hash: B256,
     pub(super) bt: super::super::startup::BlockTiming,

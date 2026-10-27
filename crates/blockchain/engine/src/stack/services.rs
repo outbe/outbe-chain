@@ -12,6 +12,7 @@ pub struct ConsensusStackServices {
     pub(super) application_drain: crate::application_shutdown::ApplicationDrain,
     pub(super) follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
     pub(super) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    pub(super) tee_lease_armed: tokio::sync::watch::Receiver<bool>,
     pub(super) radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     pub(super) radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
@@ -24,6 +25,9 @@ pub struct ConsensusStackServices {
 pub struct ConsensusExecutionServices {
     /// Proves native durable execution before acknowledging finality.
     pub finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
+    /// True once the node's `TeeLeaseGuardGateV1` is `Armed`. A validator
+    /// requires it for `ValidatorBootstrapReady` above height zero.
+    pub tee_lease_armed: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Shutdown barriers shared with the node runtime owner.
@@ -55,6 +59,7 @@ impl ConsensusStackServices {
     ) -> Self {
         let ConsensusExecutionServices {
             finalized_execution_barrier,
+            tee_lease_armed,
         } = execution;
         let ConsensusShutdownServices {
             application_drain,
@@ -76,6 +81,7 @@ impl ConsensusStackServices {
             application_drain,
             follower_shutdown,
             finalized_execution_barrier,
+            tee_lease_armed,
             radicle_status,
             radicle_endpoint,
         }
@@ -86,6 +92,9 @@ impl ConsensusStackServices {
 pub(in crate::stack) struct FollowerStackServices {
     pub(in crate::stack) finalized_execution_barrier: Arc<dyn FinalizedExecutionBarrier>,
     pub(in crate::stack) follower_shutdown: crate::follower_shutdown::FollowerDrain,
+    /// `Some` only in `UpstreamBootstrap`: the follower drains itself when
+    /// the probe reports `ValidatorBootstrapReady`.
+    pub(in crate::stack) promotion: Option<super::epoch::bootstrap::PromotionProbe>,
 }
 
 /// The execution node and the transport selected for its follower stack.

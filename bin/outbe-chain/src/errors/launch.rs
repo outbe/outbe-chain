@@ -28,17 +28,27 @@ pub(crate) enum LaunchError {
         /// Rejection reason.
         reason: String,
     },
-    /// Indicates that validator recovery requires certified follower catch-up first.
+    /// Indicates that a validator without `--upstream` has an unarmed TEE lease guard.
     #[error(
-        "validator recovery requires certified follower catch-up before authority startup: local finalized state has not reached the durable TEE join anchor at height {height} ({hash}) in {datadir}. Stop this process; start the same outbe-chain binary with this same datadir and the same network/TEE options, omit --validator and every validator signing/Radicle authority flag, and add --upstream <healthy-certified-rpc> (do not use --upstream.nocertify). Wait for `local TEE lease guard armed at authenticated catch-up anchor`, stop the follower, then restart the original validator command. Submit readiness only after the validator is caught up; signing authority returns only after a fresh DKG installs current private material"
+        "validator recovery requires UpstreamBootstrap before authority startup: the local TEE lease guard has no validated admission anchor in the local finalized state (pending anchor height {height}, hash {hash}) in {datadir}. Restart the same validator command with this same datadir and add --upstream <healthy-certified-rpc>. Do not use --upstream.nocertify. The node then syncs through the upstream and starts the validator stack in the same process after the local TEE lease guard is armed. Submit readiness only after the validator is caught up. Signing authority returns only after a fresh DKG installs current private material"
     )]
     ValidatorRecoveryCatchUpRequired {
-        /// Durable join anchor height.
+        /// Pending anchor height, or zero without an anchor.
         height: u64,
-        /// Durable join anchor block hash.
+        /// Pending anchor block hash, or zero without an anchor.
         hash: B256,
         /// Node data directory display string.
         datadir: String,
+    },
+    /// Indicates that the durable TEE join anchor is above the upstream anchor.
+    #[error(
+        "durable TEE join anchor at height {durable} is above the upstream finalized admission anchor at height {upstream}. UpstreamBootstrap stops"
+    )]
+    TeeJoinAnchorAboveUpstreamAnchor {
+        /// Durable join anchor height.
+        durable: u64,
+        /// Upstream admission anchor height.
+        upstream: u64,
     },
     /// Indicates that deriving the local NodeHost identity failed.
     #[error("derive local NodeHost identity: {details}")]

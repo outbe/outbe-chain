@@ -32,7 +32,7 @@ pub(super) fn load_local_material(
         return Err(error)
             .wrap_err("saved DKG state failed to load and pending state could not be promoted");
     }
-    validate_local_fallback(args, startup_dkg_context)?;
+    validate_local_fallback(startup_dkg_context)?;
     Ok(None)
 }
 
@@ -155,24 +155,17 @@ fn promote_recovered_pending_material(
     Ok(())
 }
 
-fn validate_local_fallback(
-    args: &ConsensusArgs,
-    startup_dkg_context: StartupDkgContext,
-) -> Result<()> {
-    if startup_dkg_context.has_chain_finalized_dkg_boundary()
-        && !startup_dkg_context.recovered_boundary_finalized
-    {
+/// Fail closed when a chain-finalized boundary exists but no local material
+/// matches it. A shareless verifier never reaches this check: it recovers its
+/// public material from the finalized boundary before threshold selection.
+fn validate_local_fallback(startup_dkg_context: StartupDkgContext) -> Result<()> {
+    if !startup_dkg_context.has_chain_finalized_dkg_boundary() {
+        return Ok(());
+    }
+    if !startup_dkg_context.recovered_boundary_finalized {
         return Err(crate::errors::StackDkgError::PendingBoundarySnapshotMissingMaterial.into());
     }
-
-    if startup_dkg_context.has_chain_finalized_dkg_boundary()
-        && !(args.signing_share.is_none()
-            && args.public_polynomial.is_some()
-            && args.dkg_output.is_some())
-    {
-        return Err(missing_current_threshold_material_error(
-            "saved and pending DKG material do not match the latest finalized boundary",
-        ));
-    }
-    Ok(())
+    Err(missing_current_threshold_material_error(
+        "saved and pending DKG material do not match the latest finalized boundary",
+    ))
 }

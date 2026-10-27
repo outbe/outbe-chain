@@ -52,8 +52,9 @@ where
 {
     let ConsensusStackServices {
         application_drain,
-        follower_shutdown,
+        mut follower_shutdown,
         finalized_execution_barrier,
+        tee_lease_armed,
         radicle_status,
         mut radicle_endpoint,
     } = services;
@@ -92,20 +93,12 @@ where
     // Follower mode: cold-sync finalized blocks from an upstream node and verify
     // them against the trusted network identity, WITHOUT running the consensus
     // engine. Short-circuits before this function loads any validator material.
-    if let Some(upstream) = args.upstream.clone() {
-        return run_follow_stack(
+    if !args.is_validator {
+        return super::bootstrap::run_plain_follower(
             ctx,
             args,
-            services::FollowerConnection {
-                node,
-                bridge,
-                upstream,
-            },
-            services::FollowerStackServices {
-                finalized_execution_barrier,
-                follower_shutdown: follower_shutdown
-                    .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
-            },
+            (node, bridge),
+            (finalized_execution_barrier, follower_shutdown),
         )
         .await;
     }
@@ -118,6 +111,26 @@ where
     let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
     let signing_key = validators::load_signing_key(signing_key_path, &key_backend)
         .wrap_err("failed to load signing key")?;
+
+    // -- 1b. Validator lifecycle: UpstreamBootstrap -> Verifier -> Signer --
+    let local_consensus_key = signing_key.public_key();
+    let validator_stack_ready = super::bootstrap::UpstreamBootstrap {
+        args: &args,
+        node: &node,
+        bridge: &bridge,
+        local_consensus_key: &local_consensus_key,
+        tee_lease_armed: &tee_lease_armed,
+        finalized_execution_barrier: &finalized_execution_barrier,
+        follower_shutdown: &mut follower_shutdown,
+    }
+    .run_until_ready(&ctx)
+    .await?;
+    if !validator_stack_ready {
+        // The host stopped the node during UpstreamBootstrap.
+        return Ok(());
+    }
+    // Threshold recovery below publishes Verifier or Signer. Each epoch engine
+    // start refines it from the scheme it builds.
 
     // -- 2. Load validator set -------------------------------------------
     // Chain state is the only runtime source of validator membership. For a
@@ -163,6 +176,7 @@ where
         broadcast_channel,
         marshal_channel,
         vote_mux,
+        vote_backup_rx,
         cert_mux,
         res_mux,
         mut dkg_mux,
@@ -199,17 +213,17 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        epocher: marshal_epocher,
     } = super::marshal_recovery::recover_marshal(
         &ctx,
         &page_cache,
-        epoch_length_blocks,
+        dkg_rotation_params,
         &node,
         &certificate_scheme_provider,
     )
     .await?;
 
     let super::threshold_recovery::RecoveredThreshold {
-        local_consensus_key,
         last_execution_height,
         last_execution_hash,
         recovered_boundary,
@@ -237,6 +251,7 @@ where
     )
     .await?;
     let shareless_verifier = signing_share.is_none();
+    publish_threshold_role(&bridge, shareless_verifier);
     super::tee_bootstrap::prepare_tee(
         &ctx,
         super::tee_bootstrap::TeeStartup {
@@ -470,74 +485,17 @@ where
     // can backfill + verify finalized blocks from this validator.
 
     let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
-        match recover_application_finalized_round(
-            ctx.child("recover_application_finalized_round"),
+        recover_certified_execution_head(
+            &ctx,
             marshal_mailbox.clone(),
-            last_execution_height,
+            ExecutionHeadRecovery {
+                last_execution: (last_execution_height, last_execution_hash),
+                durable_anchor: (recovery_anchor_height, recovery_anchor_hash),
+                last_consensus_finalized,
+                trust_el_head: args.trust_el_head,
+            },
         )
-        .await
-        {
-            Ok(recovered) => reconcile_recovered_execution_head(
-                last_execution_height,
-                last_execution_hash,
-                recovered,
-            )?,
-            Err(error) if args.trust_el_head => {
-                warn!(
-                    %error,
-                    last_execution_height,
-                    "marshal archive lacks finalized-round history; trusting the execution boundary"
-                );
-                (recovery_anchor_height, recovery_anchor_hash, None)
-            }
-            Err(head_error) => {
-                // reth's canonical head can lead consensus finalization by the
-                // in-flight block. That is a block this node proposed and applied
-                // as its head but had not finalized when it stopped. In steady
-                // state, head_height = finalized_height + 1. On a plain restart in that
-                // window, the head's finalization legitimately does not exist yet.
-                // This is a normal unfinalized head, NOT archive corruption.
-                // 1. Confirm the marshal still holds its own finalized tip's record
-                //    (a gap *there* is genuine corruption).
-                // 2. Confirm the head leads by a bounded amount.
-                // 3. Continue from marshal's durable finalized boundary.
-                // The speculative Reth head remains available locally, but neither
-                // ExecutorActor nor FinalizationView may call it finalized. The
-                // network re-finalizes forward. If a different block wins the first
-                // unfinalized height, Reth reorgs via forkchoice.
-                let finalized_tip = last_consensus_finalized.get();
-                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
-                    return Err(head_error);
-                }
-                let Ok(recovered_finalization) = recover_application_finalized_round(
-                    ctx.child("recover_application_finalized_tip"),
-                    marshal_mailbox.clone(),
-                    finalized_tip,
-                )
-                .await
-                else {
-                    return Err(head_error);
-                };
-                let (certified_height, certified_hash, recovered_round) =
-                    reconcile_recovered_execution_head(
-                        finalized_tip,
-                        recovery_anchor_hash,
-                        recovered_finalization,
-                    )
-                    .wrap_err(
-                        "marshal finalized-tip record disagrees with canonical execution history",
-                    )?;
-                warn!(
-                    last_execution_height,
-                    finalized_tip,
-                    head_lead = last_execution_height.saturating_sub(finalized_tip),
-                    recovery_anchor_hash = %recovery_anchor_hash,
-                    "execution head leads the marshal finalized tip on restart; anchoring \
-                     recovery at certified finality (unfinalized head re-finalized forward)"
-                );
-                (certified_height, certified_hash, recovered_round)
-            }
-        };
+        .await?;
 
     finalized_execution_barrier
         .verify_checkpoint(ProjectionCheckpoint {
@@ -625,11 +583,12 @@ where
         );
     }
 
-    spawn_finalization_drainer(
+    let _finalization_drainer = spawn_finalization_drainer(
         &ctx,
         marshal_mailbox.clone(),
         bridge.clone(),
         finalized_parent_cert_store.clone(),
+        None,
     );
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -722,6 +681,7 @@ where
             parent_cert_store: finalized_parent_cert_store.clone(),
             certificate_scheme_provider: certificate_scheme_provider.clone(),
             late_sig_store: late_sig_store.clone(),
+            epocher: Some(marshal_epocher.clone()),
         });
     let finalization_handle = ctx
         .child("finalization")
@@ -788,6 +748,7 @@ where
         },
         channels: EpochChannels {
             vote_mux,
+            vote_backup_rx,
             cert_mux,
             res_mux,
             next_epoch_subchannels: None,
@@ -819,6 +780,7 @@ where
         bootnode_map,
         oracle,
         recovered_boundary_artifact: recovered_boundary_artifact.cloned(),
+        epocher: marshal_epocher,
         reporter_continuity: ReporterContinuity::default(),
         genesis_hash,
         bt,
@@ -838,6 +800,108 @@ where
     }
     .run(ctx, recovered_pending_boundary, recovery_anchor_height)
     .await
+}
+
+/// Inputs that pick the certified execution head on restart.
+struct ExecutionHeadRecovery {
+    last_execution: (u64, B256),
+    /// Highest height that both Reth and marshal confirm, with its hash.
+    durable_anchor: (u64, B256),
+    last_consensus_finalized: Height,
+    trust_el_head: bool,
+}
+
+/// Reconcile the Reth execution head with the marshal finalized history.
+async fn recover_certified_execution_head<E: Clock + Metrics>(
+    ctx: &E,
+    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
+    input: ExecutionHeadRecovery,
+) -> Result<(u64, B256, Option<Round>)> {
+    let ExecutionHeadRecovery {
+        last_execution: (last_execution_height, last_execution_hash),
+        durable_anchor: (recovery_anchor_height, recovery_anchor_hash),
+        last_consensus_finalized,
+        trust_el_head,
+    } = input;
+    Ok(
+        match recover_application_finalized_round(
+            ctx.child("recover_application_finalized_round"),
+            marshal_mailbox.clone(),
+            last_execution_height,
+        )
+        .await
+        {
+            Ok(recovered) => reconcile_recovered_execution_head(
+                last_execution_height,
+                last_execution_hash,
+                recovered,
+            )?,
+            Err(error) if trust_el_head => {
+                warn!(
+                    %error,
+                    last_execution_height,
+                    "marshal archive lacks finalized-round history; trusting the execution boundary"
+                );
+                (recovery_anchor_height, recovery_anchor_hash, None)
+            }
+            Err(head_error) => {
+                // reth's canonical head can lead consensus finalization by the
+                // in-flight block. That is a block this node proposed and applied
+                // as its head but had not finalized when it stopped. In steady
+                // state, head_height = finalized_height + 1. On a plain restart in that
+                // window, the head's finalization legitimately does not exist yet.
+                // This is a normal unfinalized head, NOT archive corruption.
+                // 1. Confirm the marshal still holds its own finalized tip's record
+                //    (a gap *there* is genuine corruption).
+                // 2. Confirm the head leads by a bounded amount.
+                // 3. Continue from marshal's durable finalized boundary.
+                // The speculative Reth head remains available locally, but neither
+                // ExecutorActor nor FinalizationView may call it finalized. The
+                // network re-finalizes forward. If a different block wins the first
+                // unfinalized height, Reth reorgs via forkchoice.
+                let finalized_tip = last_consensus_finalized.get();
+                if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
+                    return Err(head_error);
+                }
+                let Ok(recovered_finalization) = recover_application_finalized_round(
+                    ctx.child("recover_application_finalized_tip"),
+                    marshal_mailbox.clone(),
+                    finalized_tip,
+                )
+                .await
+                else {
+                    return Err(head_error);
+                };
+                let (certified_height, certified_hash, recovered_round) =
+                    reconcile_recovered_execution_head(
+                        finalized_tip,
+                        recovery_anchor_hash,
+                        recovered_finalization,
+                    )
+                    .wrap_err(
+                        "marshal finalized-tip record disagrees with canonical execution history",
+                    )?;
+                warn!(
+                    last_execution_height,
+                    finalized_tip,
+                    head_lead = last_execution_height.saturating_sub(finalized_tip),
+                    recovery_anchor_hash = %recovery_anchor_hash,
+                    "execution head leads the marshal finalized tip on restart; anchoring \
+                     recovery at certified finality (unfinalized head re-finalized forward)"
+                );
+                (certified_height, certified_hash, recovered_round)
+            }
+        },
+    )
+}
+
+/// Publish the role that the recovered threshold material gives this node.
+fn publish_threshold_role(bridge: &ConsensusExecutionBridge, shareless_verifier: bool) {
+    bridge.set_operating_mode(if shareless_verifier {
+        ConsensusOperatingMode::Verifier
+    } else {
+        ConsensusOperatingMode::Signer
+    });
 }
 
 fn startup_ancestry_readiness(
@@ -942,13 +1006,8 @@ fn reconcile_recovered_vrf_material(
     // These strict checks (saved polynomial / DKG output must equal the recovered
     // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
     // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
-    // set (not its polynomial). So its CLI `--public-polynomial`/`--dkg-output` may be
-    // off without affecting sync. Examples: a TEE chain's runtime-derived genesis
-    // consensus polynomial differs from the bootstrap file, or the chain rotated past
-    // it. Only its local VRF/leader view degrades (process-local, non-fatal, same as
-    // the post-rotation verifier-follower case). Enforcing these checks on a restarted
-    // verifier would fatally crash an otherwise-healthy follower. So gate them to
-    // signers. The verifier syncs, and the running epoch loop advances it.
+    // set (not its polynomial). So gate the checks to signers. The verifier syncs,
+    // and the running epoch loop advances it.
     if has_signing_share {
         validate_recovered_vrf_material(polynomial, recovered_boundary_artifact)?;
         if let (Some(output), Some(boundary)) =
@@ -959,14 +1018,13 @@ fn reconcile_recovered_vrf_material(
             dkg_manager::assert_canonical_output(output, &canonical_output, "restart recovery")?;
         }
     } else if let Some(boundary) = recovered_boundary_artifact {
-        // Verifier-follower with a recovered on-chain DKG boundary (e.g. a restart, or
-        // a TEE chain whose runtime genesis consensus output differs from the bootstrap
-        // CLI files): adopt the chain's CURRENT canonical DKG output as both the
+        // Verifier with a recovered on-chain DKG boundary: adopt the chain's CURRENT
+        // canonical DKG output as both the
         // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
         // FULL previous output into its `info_hash` (not just the group key). So if the
         // verifier later becomes a frozen-target player, it MUST present the committee's
-        // current output as prev_output. Otherwise its stale `--consensus.dkg-output`
-        // would cause this sequence:
+        // current output as prev_output. Otherwise a stale output would cause this
+        // sequence:
         // 1. it yields a divergent `info_hash`.
         // 2. the dealers' bundles get dropped.
         // 3. the ceremony times out (the node never gets a share).

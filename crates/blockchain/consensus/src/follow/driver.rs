@@ -69,6 +69,9 @@ pub(super) struct Config<T> {
     pub(super) tip: T,
     /// Height->epoch strategy (shared with the marshal).
     pub(super) epocher: FollowerEpocher,
+    /// Cancelled when the follower phase ends without a runtime stop (promotion
+    /// to the validator stack). The driver then drops its marshal mailbox.
+    pub(super) phase_cancel: tokio_util::sync::CancellationToken,
 }
 
 /// The follow driver actor.
@@ -96,9 +99,11 @@ where
         // Cancellation covers pending upstream and marshal queries as well as
         // the polling sleep. A stopped marshal must never be polled for work.
         let stopped = self.context.stopped();
+        let phase_cancel = self.config.phase_cancel.clone();
         tokio::select! {
             biased;
             _ = stopped => info!("follow driver stopped"),
+            _ = phase_cancel.cancelled() => info!("follow driver stopped at the end of the follower phase"),
             _ = self.drive() => {},
         }
     }

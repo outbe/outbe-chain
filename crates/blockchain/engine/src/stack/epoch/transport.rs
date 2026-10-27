@@ -25,6 +25,12 @@ pub(in crate::stack) fn radicle_channel_config() -> (u64, u32) {
     )
 }
 
+/// Vote messages for sub-channels that are not registered: `(epoch, (peer, payload))`.
+pub(super) type VoteBackup = tokio::sync::mpsc::Receiver<(
+    commonware_p2p::Channel,
+    commonware_p2p::Message<bls12381::PublicKey>,
+)>;
+
 /// Muxer mailbox size for sub-channel buffering.
 const MUXER_MAILBOX: usize = 1024;
 
@@ -36,6 +42,7 @@ pub(super) struct StartupTransport<E: Clock> {
     pub(super) broadcast_channel: Channel<E>,
     pub(super) marshal_channel: Channel<E>,
     pub(super) vote_mux: ChannelMux<E>,
+    pub(super) vote_backup_rx: VoteBackup,
     pub(super) cert_mux: ChannelMux<E>,
     pub(super) res_mux: ChannelMux<E>,
     pub(super) dkg_mux: ChannelMux<E>,
@@ -201,7 +208,13 @@ where
     // -- 5. Create Muxers from physical channels ------------------------
     // The Muxers split consensus channels by epoch. Each engine restart
     // gets fresh sub-channels, which prevents message interference.
-    let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX);
+    // The vote muxer keeps a backup channel: a vote for an epoch that is not
+    // registered yet tells the supervisor that peers are ahead, so it hints
+    // marshal to fetch the missing finalized blocks.
+    let (vote_muxer, vote_mux, vote_backup_rx) =
+        Muxer::builder(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX)
+            .with_backup()
+            .build();
     vote_muxer.start();
 
     let (cert_muxer, cert_mux) = Muxer::new(
@@ -273,6 +286,7 @@ where
         broadcast_channel,
         marshal_channel,
         vote_mux,
+        vote_backup_rx,
         cert_mux,
         res_mux,
         dkg_mux,

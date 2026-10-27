@@ -117,6 +117,12 @@ where
                     if let EventAction::Outcome(outcome) = self.complete_dkg(dkg_result).await? { return Ok(outcome); }
                 },
 
+                // A vote for an epoch that this node has not reached yet:
+                // peers are ahead, so ask marshal to fetch finalized blocks.
+                Some((their_epoch, (from, _))) = self.channels.vote_backup_rx.recv() => {
+                    self.hint_future_epoch_vote(their_epoch, from);
+                },
+
                 Some(progress) = self.rotation.dkg_progress_rx.recv() => {
                     match progress {
                         dkg_actor::DkgProgress::LocalDealerLog(bytes) => {
@@ -343,6 +349,40 @@ where
         Ok(current_subchannels)
     }
 
+    /// Hint marshal when a vote arrives for an epoch after the current one.
+    pub(super) fn hint_future_epoch_vote(&self, their_epoch: u64, from: bls12381::PublicKey) {
+        let Some(height) = future_epoch_hint_height(
+            &self.epocher,
+            self.state.current_epoch,
+            Epoch::new(their_epoch),
+            self.dkg_rotation_params.epoch_length_blocks,
+        ) else {
+            return;
+        };
+        debug!(
+            current_epoch = %self.state.current_epoch,
+            their_epoch,
+            height = height.get(),
+            "vote from a future epoch; hinting marshal"
+        );
+        self.marshal_mailbox
+            .hint_finalized(height, commonware_utils::vec::NonEmptyVec::new(from));
+    }
+
+    /// Record the carrier of a newly active epoch in the marshal epocher.
+    /// `activation_anchor` is the last height of the previous epoch.
+    pub(super) fn observe_activated_boundary(&self, epoch: Epoch, activation_anchor: u64) {
+        let carrier = Height::new(activation_anchor.saturating_add(1));
+        if let Err(error) = self.epocher.observe_boundary(epoch, carrier) {
+            warn!(
+                %error,
+                %epoch,
+                carrier = carrier.get(),
+                "activated boundary does not fit the marshal epocher"
+            );
+        }
+    }
+
     pub(super) async fn promote_boundary(
         &mut self,
         scope: RetireScope,
@@ -370,4 +410,25 @@ where
         )
         .await
     }
+}
+
+/// Height to hint for a vote from `their_epoch` while this node is in
+/// `current_epoch`: the earliest possible boundary of the current epoch,
+/// `activation_height(current_epoch) + epoch_length`. Marshal repair fetches
+/// the rest. Returns `None` when the vote is not from a later epoch or the
+/// epocher does not know the current epoch.
+pub(in crate::stack) fn future_epoch_hint_height(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    current_epoch: Epoch,
+    their_epoch: Epoch,
+    epoch_length_blocks: u64,
+) -> Option<Height> {
+    if their_epoch <= current_epoch {
+        return None;
+    }
+    epocher
+        .activation_height(current_epoch)?
+        .get()
+        .checked_add(epoch_length_blocks)
+        .map(Height::new)
 }

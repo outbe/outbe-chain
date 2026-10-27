@@ -217,6 +217,7 @@ where
                     self.application_epoch_fence.advance_epoch(next_epoch);
                     engine.abort();
                     self.state.current_epoch = next_epoch;
+                    self.observe_activated_boundary(next_epoch, epoch_boundary_height);
                     self.publish_repository_material();
                     info!(
                         epoch = %self.state.current_epoch,
@@ -511,6 +512,7 @@ where
                     self.application_epoch_fence.advance_epoch(next_epoch);
                     engine.abort();
                     self.state.current_epoch = next_epoch;
+                    self.observe_activated_boundary(next_epoch, activation_height);
                     self.publish_repository_material();
                     // Anchor wait (mirror the verifier activation): the restarted
                     // verifier engine's floor needs the activation block finalized

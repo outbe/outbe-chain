@@ -20,7 +20,12 @@ async fn pending_lease_guard_cancellation_is_a_clean_stop() {
                     expected_enclave_id: None,
                     validator: None,
                 },
-                gate: super::TeeLeaseGuardGateV1::new(Some(full_node_admission_anchor())),
+                anchors: crate::launch::admission::TeeLeaseGuardAnchorsV1 {
+                    gate: super::TeeLeaseGuardGateV1::Pending(full_node_admission_anchor()),
+                    durable: None,
+                },
+                finalization_notify: std::sync::Arc::new(tokio::sync::Notify::new()),
+                armed: tokio::sync::watch::channel(false).0,
             },
             shutdown,
         ),
@@ -34,7 +39,7 @@ async fn pending_lease_guard_cancellation_is_a_clean_stop() {
 #[test]
 fn full_node_lease_guard_waits_strictly_below_authenticated_anchor() {
     let anchor = full_node_admission_anchor();
-    let gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+    let gate = super::TeeLeaseGuardGateV1::Pending(anchor);
 
     assert!(!gate.is_armed());
     assert_eq!(gate.anchor_to_validate(0), None);
@@ -46,7 +51,7 @@ fn full_node_lease_guard_waits_strictly_below_authenticated_anchor() {
 #[test]
 fn full_node_lease_guard_arms_only_on_exact_ready_anchor() {
     let anchor = full_node_admission_anchor();
-    let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+    let mut gate = super::TeeLeaseGuardGateV1::Pending(anchor);
 
     gate.validate_and_arm(
         anchor.finalized_hash,
@@ -63,7 +68,7 @@ fn full_node_lease_guard_arms_only_on_exact_ready_anchor() {
 #[test]
 fn full_node_lease_guard_fails_closed_on_anchor_hash_mismatch() {
     let anchor = full_node_admission_anchor();
-    let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+    let mut gate = super::TeeLeaseGuardGateV1::Pending(anchor);
 
     let error = gate
         .validate_and_arm(
@@ -91,7 +96,7 @@ fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
         }),
     ] {
         let anchor = full_node_admission_anchor();
-        let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+        let mut gate = super::TeeLeaseGuardGateV1::Pending(anchor);
         assert!(gate
             .validate_and_arm(anchor.finalized_hash, admission)
             .is_err());
@@ -100,10 +105,10 @@ fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
 }
 
 #[test]
-fn validators_start_armed_and_later_rejections_remain_terminal() {
+fn armed_gate_has_no_anchor_and_later_rejections_remain_terminal() {
     use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
 
-    let gate = super::TeeLeaseGuardGateV1::new(None);
+    let gate = super::TeeLeaseGuardGateV1::Armed;
     assert!(gate.is_armed());
     assert_eq!(gate.anchor_to_validate(u64::MAX), None);
 
@@ -135,7 +140,7 @@ fn full_node_restart_revalidates_the_new_upstream_anchor() {
     use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
 
     let old_anchor = full_node_admission_anchor();
-    let mut before_restart = super::TeeLeaseGuardGateV1::new(Some(old_anchor));
+    let mut before_restart = super::TeeLeaseGuardGateV1::Pending(old_anchor);
     before_restart
         .validate_and_arm(
             old_anchor.finalized_hash,
@@ -148,7 +153,7 @@ fn full_node_restart_revalidates_the_new_upstream_anchor() {
         finalized_height: 12,
         finalized_hash: alloy_primitives::B256::repeat_byte(0x12),
     };
-    let mut after_restart = super::TeeLeaseGuardGateV1::new(Some(new_anchor));
+    let mut after_restart = super::TeeLeaseGuardGateV1::Pending(new_anchor);
     assert!(!after_restart.is_armed());
     assert_eq!(after_restart.anchor_to_validate(11), None);
     assert_eq!(after_restart.anchor_to_validate(12), Some(new_anchor));
@@ -162,30 +167,40 @@ fn full_node_restart_revalidates_the_new_upstream_anchor() {
 }
 
 #[test]
-fn validator_below_durable_join_anchor_fails_with_certified_follower_recovery() {
+fn validator_below_durable_join_anchor_without_upstream_requires_upstream_bootstrap() {
     let anchor = full_node_admission_anchor();
-    let mut recovery = super::TeeLeaseGuardGateV1::new(Some(anchor));
+    let mut recovery = super::TeeLeaseGuardGateV1::Pending(anchor);
     let data_dir = std::path::Path::new("/srv/outbe/validator-3");
 
-    let error = super::require_validator_tee_recovery_complete_v1(true, recovery, data_dir)
+    let error = super::require_validator_tee_recovery_complete_v1(true, false, recovery, data_dir)
         .expect_err("a stale validator must not start authority services");
+    assert!(matches!(
+        error.downcast_ref::<crate::errors::LaunchError>(),
+        Some(crate::errors::LaunchError::ValidatorRecoveryCatchUpRequired { height: 7, .. })
+    ));
     let message = error.to_string();
-    assert!(message.contains("certified follower"));
+    assert!(message.contains("UpstreamBootstrap"));
     assert!(message.contains("/srv/outbe/validator-3"));
-    assert!(message.contains("omit --validator"));
     assert!(message.contains("--upstream <healthy-certified-rpc>"));
-    assert!(message.contains("do not use --upstream.nocertify"));
-    assert!(message.contains("stop the follower"));
+    assert!(message.contains("Do not use --upstream.nocertify"));
+    assert!(message.contains("same process"));
     assert!(message.contains("fresh DKG"));
 
-    super::require_validator_tee_recovery_complete_v1(false, recovery, data_dir)
+    super::require_validator_tee_recovery_complete_v1(false, false, recovery, data_dir)
         .expect("a FullNode keeps its existing asynchronous gate");
-    super::require_validator_tee_recovery_complete_v1(
+    super::require_validator_tee_recovery_complete_v1(true, true, recovery, data_dir)
+        .expect("--validator --upstream bootstraps through the upstream");
+    let error = super::require_validator_tee_recovery_complete_v1(
         true,
-        super::TeeLeaseGuardGateV1::new(None),
+        false,
+        super::TeeLeaseGuardGateV1::AwaitingAnchor,
         data_dir,
     )
-    .expect("a legacy validator without recovery state remains compatible");
+    .expect_err("a validator without any validated anchor must not start");
+    assert!(matches!(
+        error.downcast_ref::<crate::errors::LaunchError>(),
+        Some(crate::errors::LaunchError::ValidatorRecoveryCatchUpRequired { height: 0, .. })
+    ));
 
     recovery
         .validate_and_arm(
@@ -193,8 +208,153 @@ fn validator_below_durable_join_anchor_fails_with_certified_follower_recovery() 
             outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
         )
         .unwrap();
-    super::require_validator_tee_recovery_complete_v1(true, recovery, data_dir)
+    super::require_validator_tee_recovery_complete_v1(true, false, recovery, data_dir)
         .expect("an exact Ready anchor permits ordinary validator startup");
+}
+
+#[test]
+fn three_state_gate_arms_only_from_a_validated_pending_anchor() {
+    use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+
+    let mut awaiting = super::TeeLeaseGuardGateV1::AwaitingAnchor;
+    assert!(!awaiting.is_armed());
+    assert_eq!(awaiting.pending_anchor(), None);
+    assert_eq!(awaiting.anchor_to_validate(u64::MAX), None);
+    // Nothing to validate: AwaitingAnchor never arms vacuously.
+    awaiting
+        .validate_and_arm(
+            alloy_primitives::B256::ZERO,
+            LocalTeeRuntimeAdmissionV1::Ready { valid_until: 1 },
+        )
+        .unwrap();
+    assert_eq!(awaiting, super::TeeLeaseGuardGateV1::AwaitingAnchor);
+
+    let anchor = full_node_admission_anchor();
+    let mut pending = super::TeeLeaseGuardGateV1::Pending(anchor);
+    assert!(!pending.is_armed());
+    assert_eq!(pending.pending_anchor(), Some(anchor));
+    pending
+        .validate_and_arm(
+            anchor.finalized_hash,
+            LocalTeeRuntimeAdmissionV1::Ready { valid_until: 1 },
+        )
+        .unwrap();
+    assert_eq!(pending, super::TeeLeaseGuardGateV1::Armed);
+}
+
+#[test]
+fn local_validator_gate_uses_local_facts_before_any_upstream() {
+    use super::TeeLeaseGuardGateV1 as Gate;
+    let durable = full_node_admission_anchor();
+
+    // Restart at or above the durable join anchor validates locally, even
+    // with --upstream: the restart needs no upstream.
+    for has_upstream in [false, true] {
+        assert_eq!(
+            super::local_validator_tee_gate_v1(Some(durable), 7, false, has_upstream),
+            Some(Gate::Pending(durable))
+        );
+    }
+    // Below the durable anchor: the upstream path decides, or the startup
+    // check reports the catch-up error.
+    assert_eq!(
+        super::local_validator_tee_gate_v1(Some(durable), 6, false, true),
+        None
+    );
+    assert_eq!(
+        super::local_validator_tee_gate_v1(Some(durable), 6, false, false),
+        Some(Gate::Pending(durable))
+    );
+    // No durable anchor at H >= 1: Ready local admission with the matching
+    // offer key starts armed (founders and nodes without an enclave identity).
+    for has_upstream in [false, true] {
+        assert_eq!(
+            super::local_validator_tee_gate_v1(None, 9, true, has_upstream),
+            Some(Gate::Armed)
+        );
+    }
+    assert_eq!(
+        super::local_validator_tee_gate_v1(None, 9, false, true),
+        None
+    );
+    assert_eq!(
+        super::local_validator_tee_gate_v1(None, 9, false, false),
+        Some(Gate::AwaitingAnchor)
+    );
+    // Genesis founder at H == 0 without an upstream.
+    assert_eq!(
+        super::local_validator_tee_gate_v1(None, 0, false, false),
+        Some(Gate::Armed)
+    );
+    assert_eq!(
+        super::local_validator_tee_gate_v1(None, 0, false, true),
+        None
+    );
+}
+
+#[test]
+fn upstream_and_durable_anchors_both_fail_closed() {
+    use super::TeeLeaseGuardGateV1 as Gate;
+    let durable = full_node_admission_anchor();
+    let upstream = super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 40,
+        finalized_hash: alloy_primitives::B256::repeat_byte(0x40),
+    };
+
+    let anchors = super::select_validator_upstream_anchor_v1(None, upstream, None).unwrap();
+    assert_eq!(anchors.gate, Gate::Pending(upstream));
+    assert_eq!(anchors.durable, None);
+
+    let anchors = super::select_validator_upstream_anchor_v1(
+        Some(durable),
+        upstream,
+        Some(durable.finalized_hash),
+    )
+    .unwrap();
+    assert_eq!(
+        anchors.gate,
+        Gate::Pending(upstream),
+        "max(durable, upstream)"
+    );
+    assert_eq!(anchors.durable, Some(durable));
+
+    let same = super::select_validator_upstream_anchor_v1(
+        Some(durable),
+        durable,
+        Some(durable.finalized_hash),
+    )
+    .unwrap();
+    assert_eq!(same.gate, Gate::Pending(durable));
+    assert_eq!(same.durable, None);
+
+    for observed in [Some(alloy_primitives::B256::repeat_byte(0x66)), None] {
+        let error = super::select_validator_upstream_anchor_v1(Some(durable), upstream, observed)
+            .unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<crate::errors::LaunchError>(),
+            Some(crate::errors::LaunchError::TeeAdmissionAnchorHashMismatch { height: 7, .. })
+        ));
+    }
+
+    let lower_upstream = super::LocalTeeAdmissionAnchorV1 {
+        finalized_height: 3,
+        finalized_hash: alloy_primitives::B256::repeat_byte(0x03),
+    };
+    let error = super::select_validator_upstream_anchor_v1(
+        Some(durable),
+        lower_upstream,
+        Some(durable.finalized_hash),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<crate::errors::LaunchError>(),
+        Some(
+            crate::errors::LaunchError::TeeJoinAnchorAboveUpstreamAnchor {
+                durable: 7,
+                upstream: 3
+            }
+        )
+    ));
 }
 
 #[test]

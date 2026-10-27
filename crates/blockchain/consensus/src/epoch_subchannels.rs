@@ -6,10 +6,11 @@
 //! (vote, cert, resolver). Without pre-registration, sub-channel
 //! registration on the *receiver side* happens only when the new
 //! epoch's `'epoch_loop` iteration starts. That start can lag a faster
-//! peer's broadcast for the same epoch. Because production uses
-//! `Muxer::new(...)` (no `.with_backup()`), any vote/cert message
-//! arriving on an unregistered sub-channel is **dropped silently**
-//! and never replayed.
+//! peer's broadcast for the same epoch. A vote/cert message that
+//! arrives on an unregistered sub-channel never reaches the engine.
+//! The vote Muxer has a backup channel, but the supervisor only uses
+//! it to detect peers in a later epoch and hint marshal. It never
+//! replays the message.
 //!
 //! This helper closes the cross-node race: at DKG completion (well
 //! before any peer fires its activation handler), every honest node

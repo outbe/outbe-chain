@@ -9,7 +9,6 @@
 
 use commonware_consensus::marshal;
 use commonware_consensus::simplex::types::Finalization as SimplexFinalization;
-use commonware_consensus::types::FixedEpocher;
 use commonware_cryptography::bls12381::{self, primitives::variant::MinSig};
 use commonware_parallel::Sequential;
 use commonware_utils::acknowledgement::Exact;
@@ -31,27 +30,15 @@ pub type MarshalMailbox = marshal::core::Mailbox<CertScheme, Variant>;
 /// Finalization type stored in the certificates archive.
 pub type Finalization = SimplexFinalization<CertScheme, Digest>;
 
-/// Marshal actor with immutable archive storage (validator path -
-/// [`FixedEpocher`]).
-pub type MarshalActor<E> = marshal::core::Actor<
-    E,
-    Variant,
-    HybridSchemeProvider<MinSig>,
-    commonware_storage::archive::immutable::Archive<E, Digest, Finalization>,
-    commonware_storage::archive::immutable::Archive<E, Digest, ConsensusBlock>,
-    FixedEpocher,
-    Sequential,
-    Exact,
->;
-
-/// Follower marshal actor. It is identical to [`MarshalActor`] but keyed by
-/// [`FollowerEpocher`](crate::follow::FollowerEpocher), whose epoch boundaries
+/// Marshal actor with immutable archive storage, keyed by
+/// [`FollowerEpocher`](crate::follow::FollowerEpocher). Its epoch boundaries
 /// match outbe's on-chain committee-epoch boundaries. The epocher takes these
-/// bounds from observed activation heights, not from a fixed formula. A
-/// follower verifies EVERY block through the marshal's resolver-delivery path,
-/// which asserts `finalization.epoch() == epocher.containing(height)`. Only the
-/// follower epocher makes that hold at boundary blocks (see `follow::epocher`).
-pub type FollowMarshalActor<E> = marshal::core::Actor<
+/// bounds from observed activation carriers, not from a fixed formula. Marshal
+/// asserts `finalization.epoch() == epocher.containing(height)` on every
+/// resolver delivery. Only this epocher makes that hold at boundary blocks and
+/// after a grace-delayed activation (see `follow::epocher`). The validator and
+/// the follower use the same actor type.
+pub type MarshalActor<E> = marshal::core::Actor<
     E,
     Variant,
     HybridSchemeProvider<MinSig>,
@@ -61,6 +48,9 @@ pub type FollowMarshalActor<E> = marshal::core::Actor<
     Sequential,
     Exact,
 >;
+
+/// Follower marshal actor. It is the same type as [`MarshalActor`].
+pub type FollowMarshalActor<E> = MarshalActor<E>;
 
 /// Broadcast engine for block dissemination.
 pub type BroadcastEngine<E, D> =

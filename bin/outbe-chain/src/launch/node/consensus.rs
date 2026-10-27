@@ -3,7 +3,10 @@ use super::*;
 pub(super) type ConsensusLaunch = (
     OutbeFullNode,
     ConsensusArgs,
-    Arc<dyn FinalizedExecutionBarrier>,
+    (
+        Arc<dyn FinalizedExecutionBarrier>,
+        tokio::sync::watch::Receiver<bool>,
+    ),
     Option<(
         outbe_radicle::integration::EndpointNetworkService,
         outbe_radicle::integration::LocalEndpointIdentityHandle,
@@ -20,7 +23,7 @@ pub(super) fn run(
     radicle_shutdown_for_consensus: tokio_util::sync::CancellationToken,
     bridge_for_consensus: ConsensusExecutionBridge,
 ) -> eyre::Result<()> {
-    let (node, mut args, finalized_execution_barrier, radicle, radicle_drained) =
+    let (node, mut args, (finalized_execution_barrier, tee_lease_armed), radicle, radicle_drained) =
         match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -128,6 +131,7 @@ pub(super) fn run(
                         outbe_engine::ConsensusStackServices::new(
                             outbe_engine::ConsensusExecutionServices {
                                 finalized_execution_barrier,
+                                tee_lease_armed,
                             },
                             outbe_engine::ConsensusShutdownServices {
                                 application_drain: stack_application_drain,

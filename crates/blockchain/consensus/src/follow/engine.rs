@@ -66,6 +66,9 @@ where
     pub marshal_actor: FollowMarshalActor<E>,
     /// The marshal mailbox (for the driver's `hint_finalized`).
     pub marshal_mailbox: MarshalMailbox,
+    /// Cancelled when the follower phase ends for promotion to the validator
+    /// stack. The driver stops, and a later marshal exit is a clean exit.
+    pub phase_cancel: tokio_util::sync::CancellationToken,
     /// Exact durable height recovered by `marshal::Actor::init`.
     ///
     /// The caller supplies this value because the marshal actor is not
@@ -120,6 +123,7 @@ where
     let FollowEngineConfig {
         marshal_actor,
         marshal_mailbox,
+        phase_cancel,
         recovered_height,
         executor_reporter,
         upstream,
@@ -169,17 +173,22 @@ where
             marshal: marshal_mailbox,
             tip,
             epocher,
+            phase_cancel: phase_cancel.clone(),
         },
     );
     let _driver_handle = driver.start();
 
     info!("follower engine started; syncing from upstream");
 
-    await_marshal_exit(context.stopped(), marshal_handle).await
+    await_marshal_exit(context.stopped(), &phase_cancel, marshal_handle).await
 }
 
-async fn await_marshal_exit(
+/// Await the marshal task. Its exit is clean after a runtime stop, or after
+/// the follower phase was cancelled for promotion: then every mailbox holder
+/// dropped its sender, and marshal closed its archives.
+pub(crate) async fn await_marshal_exit(
     stopped: commonware_runtime::signal::Signal,
+    phase_cancel: &tokio_util::sync::CancellationToken,
     marshal: impl std::future::Future<Output = std::result::Result<(), commonware_runtime::Error>>,
 ) -> Result<()> {
     // Await the actual task outcome even during shutdown. A stop request is
@@ -188,6 +197,7 @@ async fn await_marshal_exit(
     match stopped.now_or_never() {
         Some(Ok(_)) => Ok(()),
         Some(Err(error)) => Err(FollowError::shutdown_signal_failed(error).into()),
+        None if phase_cancel.is_cancelled() => Ok(()),
         None => Err(FollowError::MarshalExitedUnexpectedly.into()),
     }
 }
@@ -581,12 +591,14 @@ mod shutdown_tests {
     use super::await_marshal_exit;
     use commonware_runtime::{signal::Signaler, Error};
     use futures::FutureExt as _;
+    use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
     async fn requested_stop_waits_for_actual_marshal_completion() {
         let (signaler, signal) = Signaler::new();
         let (done, completed) = tokio::sync::oneshot::channel();
-        let drain = await_marshal_exit(signal, async { completed.await.unwrap() });
+        let phase_cancel = CancellationToken::new();
+        let drain = await_marshal_exit(signal, &phase_cancel, async { completed.await.unwrap() });
         tokio::pin!(drain);
         assert!(drain.as_mut().now_or_never().is_none());
         let stopped = signaler.signal(0);
@@ -599,9 +611,13 @@ mod shutdown_tests {
     #[tokio::test]
     async fn clean_marshal_completion_without_stop_is_an_error() {
         let (_signaler, signal) = Signaler::new();
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
+        let error = await_marshal_exit(
+            signal,
+            &CancellationToken::new(),
+            std::future::ready(Ok(())),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("marshal exited unexpectedly"));
     }
 
@@ -611,9 +627,13 @@ mod shutdown_tests {
             let (signaler, signal) = Signaler::new();
             let stopped = signaler.signal(0);
             let expected = format!("{failure:?}");
-            let error = await_marshal_exit(signal, std::future::ready(Err(failure)))
-                .await
-                .unwrap_err();
+            let error = await_marshal_exit(
+                signal,
+                &CancellationToken::new(),
+                std::future::ready(Err(failure)),
+            )
+            .await
+            .unwrap_err();
             assert!(error.to_string().contains(&expected));
             stopped.await.unwrap();
         }
@@ -623,9 +643,42 @@ mod shutdown_tests {
     async fn lost_shutdown_sender_is_not_a_requested_stop() {
         let (signaler, signal) = Signaler::new();
         drop(signaler);
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
+        let error = await_marshal_exit(
+            signal,
+            &CancellationToken::new(),
+            std::future::ready(Ok(())),
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("shutdown signal failed"));
+    }
+
+    #[tokio::test]
+    async fn marshal_exit_after_follower_phase_cancel_is_clean() {
+        let (_signaler, signal) = Signaler::new();
+        let phase_cancel = CancellationToken::new();
+        let (done, completed) = tokio::sync::oneshot::channel();
+        let drain = await_marshal_exit(signal, &phase_cancel, async { completed.await.unwrap() });
+        tokio::pin!(drain);
+        phase_cancel.cancel();
+        // Cancellation alone does not end the wait: marshal must close first.
+        assert!(drain.as_mut().now_or_never().is_none());
+        done.send(Ok(())).unwrap();
+        drain.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn follower_phase_cancel_never_hides_a_marshal_failure() {
+        let (_signaler, signal) = Signaler::new();
+        let phase_cancel = CancellationToken::new();
+        phase_cancel.cancel();
+        let error = await_marshal_exit(
+            signal,
+            &phase_cancel,
+            std::future::ready(Err(Error::Closed)),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("Closed"));
     }
 }

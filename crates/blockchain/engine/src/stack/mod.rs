@@ -4,13 +4,17 @@
 //! runtime thread in `main.rs`.
 //!
 //! Startup flow:
+//! 0. Route by operating mode: a follower runs the certified follower stack.
+//!    A validator that is not bootstrap-ready runs the same follower stack in
+//!    `UpstreamBootstrap` mode, then continues below in the same process.
 //! 1. Load signing key and validator set
 //! 2. Configure P2P network (register ALL channels including DKG)
 //! 3. Start P2P network, register peers, and create Muxers for epoch-scoped
 //!    consensus channels (all in transport startup)
 //! 4. Obtain threshold material:
-//!    a. From saved DKG state on disk (restart precedence)
-//!    b. From CLI args (`--consensus.signing-share` + `--consensus.public-polynomial`)
+//!    a. A key absent from the latest finalized boundary: shareless verifier
+//!       material from that on-chain boundary
+//!    b. From saved or pending DKG state in the keys directory
 //!    c. Via interactive DKG ceremony during fresh genesis formation
 //! 5. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
@@ -34,8 +38,9 @@ use commonware_cryptography::{
     Signer as _,
 };
 use commonware_p2p::{
-    authenticated::lookup, utils::mux::Muxer, Address, AddressableManager, Receiver as P2pReceiver,
-    Sender as P2pSender,
+    authenticated::lookup,
+    utils::mux::{Builder as _, Muxer},
+    Address, AddressableManager, Receiver as P2pReceiver, Sender as P2pSender,
 };
 use commonware_runtime::{
     buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
@@ -90,7 +95,7 @@ use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
 
 use outbe_node::OutbeFullNode;
 use outbe_primitives::{
-    consensus::{ConsensusExecutionBridge, DkgBoundaryArtifact},
+    consensus::{ConsensusExecutionBridge, ConsensusOperatingMode, DkgBoundaryArtifact},
     projection::ProjectionCheckpoint,
     reshare_artifact::{
         decode_boundary_artifact, decode_outbe_block_artifacts, encode_boundary_artifact,

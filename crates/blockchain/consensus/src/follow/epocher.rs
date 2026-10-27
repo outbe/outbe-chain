@@ -3,8 +3,8 @@
 //!
 //! Validator activation can be delayed inside the configured grace window, and
 //! every subsequent plan is measured from that actual activation. Therefore
-//! neither `FixedEpocher` nor `(height-1)/L` is authoritative after the first
-//! delayed rotation. [`FollowerEpocher`] records exact, authenticated
+//! no fixed-length formula such as `(height-1)/L` is authoritative after the
+//! first delayed rotation. [`FollowerEpocher`] records exact, authenticated
 //! `BoundaryOutcome` carrier heights and derives every completed interval from
 //! adjacent observations. Length and activation grace only bound discovery of
 //! the next boundary. They never select the active committee.
@@ -47,8 +47,8 @@ struct ObservedBoundaries {
     activations: BTreeMap<u64, u64>,
 }
 
-/// Shared observed-boundary epocher for the follower marshal, resolver, and
-/// driver. Epoch zero also owns genesis height zero as the local trust anchor.
+/// Shared observed-boundary epocher for the marshal (validator and follower),
+/// the follower resolver, and the follower driver. Epoch zero also owns genesis height zero as the local trust anchor.
 #[derive(Clone, Debug)]
 pub struct FollowerEpocher {
     inner: Arc<RwLock<ObservedBoundaries>>,

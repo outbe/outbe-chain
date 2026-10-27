@@ -3,7 +3,6 @@
 //! `e2e_provision_joiner` / `e2e_launch_joiner`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use alloy_primitives::{hex, Address, Bytes, B256};
@@ -105,12 +104,10 @@ fn classify_manual_renewal_cli_output(output: &str) -> ManualRenewalCliOutcomeV1
     }
 }
 
-fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
-    let active_keys = run_dir.join("validator-0/data/keys");
-    (
-        active_keys.join("dkg_polynomial.hex"),
-        active_keys.join("dkg_output.hex"),
-    )
+/// Upstream used by a validator joiner for its `UpstreamBootstrap` phase. A
+/// bootstrap-ready validator ignores it, so restarts reuse the same command.
+fn validator_bootstrap_upstream(http_port: u16) -> String {
+    format!("http://127.0.0.1:{http_port}")
 }
 
 fn full_node_joiner_role_args(
@@ -539,8 +536,11 @@ impl Localnet {
         registration_outcome(&self.cfg.rpc0, &transaction)
     }
 
-    /// Launch the joiner node (validator-mode, verifier-join args), passing any
-    /// extra node args (e.g. `--consensus.keys-dir ...`). Port of `e2e_launch_joiner`.
+    /// Launch the joiner node with one validator command (`--validator
+    /// --upstream`), passing any extra node args (e.g. `--consensus.keys-dir
+    /// ...`). The node bootstraps through the upstream until it is ready and
+    /// then starts the validator stack in the same process. Port of
+    /// `e2e_launch_joiner`.
     pub fn launch_joiner(&mut self, index: usize, extra: &[&str]) -> Result<()> {
         let argv = self.joiner_validator_args(index, extra)?;
         self.spawn_joiner_with_args(index, argv)
@@ -560,7 +560,6 @@ impl Localnet {
         // File-based flag: the key must never appear in argv (`ps` leak).
         let secret_file = proc::normalized_secret_file(&vd.join("reth-p2p-secret.hex"))?;
 
-        let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
         a.extend(args![
             "--validator",
@@ -585,10 +584,8 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--consensus.public-polynomial",
-            public_polynomial.display(),
-            "--consensus.dkg-output",
-            dkg_output.display(),
+            "--upstream",
+            validator_bootstrap_upstream(self.cfg.http_port(0)),
         ]);
         self.extend_real_sgx_startup_timeout(&mut a);
         if let Some(offset) = self.start_opts.unix_time_offset_secs {
@@ -608,6 +605,11 @@ impl Localnet {
         self.validator_argv.insert(index, a);
         self.validators.insert(index, guard);
         Ok(())
+    }
+
+    /// Exact argv of the last validator launch in `index`.
+    pub fn validator_argv(&self, index: usize) -> Option<Vec<String>> {
+        self.validator_argv.get(&index).cloned()
     }
 
     /// Stop the joiner node (drop its owned handle -> kill + reap). Port of

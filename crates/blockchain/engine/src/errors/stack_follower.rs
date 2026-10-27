@@ -195,6 +195,9 @@ pub enum FollowerStackError {
     /// Indicates that Marshal lost a finalized follower block before proof drain.
     #[error("marshal lost finalized follower block {0} before proof drain")]
     MarshalLostFinalizedBlockBeforeDrain(u64),
+    /// Indicates that the follower-phase finalization drainer failed.
+    #[error("follower finalization drainer failed during promotion: {0}")]
+    FinalizationDrainerFailed(String),
     /// Indicates that the finality observer stopped before ingress quiesced.
     #[error("certified FullNode finality observer stopped before ingress quiesced")]
     FinalityObserverStoppedBeforeQuiesce,

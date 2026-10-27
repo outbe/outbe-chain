@@ -406,15 +406,8 @@ fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
 }
 
 #[test]
-fn verifier_join_uses_active_committee_material_not_bootstrap_fixture() {
-    let root = Path::new("/run/scenario-1");
-    let (polynomial, output) = verifier_material_paths(root);
-
-    assert_eq!(
-        polynomial,
-        root.join("validator-0/data/keys/dkg_polynomial.hex")
-    );
-    assert_eq!(output, root.join("validator-0/data/keys/dkg_output.hex"));
+fn validator_joiner_bootstraps_through_the_selected_http_upstream() {
+    assert_eq!(validator_bootstrap_upstream(8545), "http://127.0.0.1:8545");
 }
 
 #[test]

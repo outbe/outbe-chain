@@ -28,9 +28,9 @@ use std::sync::Arc;
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
-    OutbeApiServer, ParticipationInfo, Phase1VerificationMode, RadiclePeerInfo,
-    RadiclePhaseErrorInfo, RadiclePhaseInfo, RadicleRepositoryInfo, RadicleRepositoryStateInfo,
-    RadicleStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+    OutbeApiServer, ParticipationInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
+    RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
+    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
 };
 use outbe_radicle::integration::{
     RadicleRepositoryState, RadicleStatusHandle, RadicleStatusSnapshot, RadicleVotingGate,
@@ -70,13 +70,9 @@ impl StorageReader for RethStateReader<'_> {
 pub struct OutbeApiHandler<P> {
     provider: Arc<P>,
     chain_identity: Option<(u64, B256)>,
+    /// Consensus bridge of a validator or follower node. Its live operating
+    /// mode, not this field, drives the validator-status fields.
     bridge: Option<ConsensusExecutionBridge>,
-    /// Whether this node runs consensus as a VALIDATOR. A `--upstream` follower
-    /// also holds a bridge, to serve `outbe_getFinalization` to downstream
-    /// followers. But the follower must report itself as a non-validator /
-    /// TrustedFinality node. This flag, NOT `bridge.is_some()`, drives
-    /// validator-status fields.
-    is_validator: bool,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     radicle_status: RadicleStatusHandle,
     tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel,
@@ -92,7 +88,7 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("OutbeApiHandler")
-            .field("is_validator", &self.is_validator)
+            .field("has_bridge", &self.bridge.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -105,29 +101,56 @@ impl<P> OutbeApiHandler<P> {
             provider,
             chain_identity: None,
             bridge: None,
-            is_validator: false,
             tee_renewal_schedule: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
     }
 
-    /// Create a validator handler with full access to the consensus bridge.
+    /// Create a handler for a node that runs a consensus stack (validator or
+    /// follower). The bridge reports the live operating mode.
     pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
         let mut handler = Self::new(provider);
         handler.bridge = Some(bridge);
-        handler.is_validator = true;
         handler
     }
 
-    /// Create a `--upstream` follower handler. It holds the bridge so it can
-    /// serve `outbe_getFinalization` (chaining followers). But it reports itself
-    /// as a non-validator (TrustedFinality) node, not a validator.
-    pub fn with_follower_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
-        let mut handler = Self::new(provider);
-        handler.bridge = Some(bridge);
-        handler.is_validator = false;
-        handler
+    /// Builds the `outbe_consensusStatus` response from the live bridge state.
+    /// `is_validator` follows the operating mode at the time of the call.
+    pub(crate) fn consensus_status_info(&self) -> ConsensusStatusInfo {
+        let (status, has_threshold_shares) = self
+            .bridge
+            .as_ref()
+            .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
+            .unwrap_or_default();
+        let mode = self
+            .bridge
+            .as_ref()
+            .map(ConsensusExecutionBridge::operating_mode)
+            .unwrap_or_default();
+
+        ConsensusStatusInfo {
+            current_view: status.current_view,
+            connected_peers: status.connected_peers,
+            is_active: status.is_active(),
+            has_threshold_shares,
+            last_finalized_block: status.last_finalized_block,
+            last_vrf_seed: status.last_vrf_seed,
+            randomness_status: status.randomness_status,
+            vrf_material_version: status.vrf_material_version,
+            last_dkg_activation_height: status.last_dkg_activation_height,
+            next_planned_activation_height: status.next_planned_activation_height,
+            vrf_expiry_height: status.vrf_expiry_height,
+            mode,
+            is_validator: mode.is_validator(),
+            enclave: enclave_health_info(
+                &self.tee_enclave_health.snapshot(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+                    .unwrap_or(0),
+            ),
+        }
     }
 
     #[must_use]
@@ -641,39 +664,7 @@ where
     }
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
-        let is_validator = self.is_validator;
-        let (status, has_threshold_shares) = self
-            .bridge
-            .as_ref()
-            .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
-            .unwrap_or_default();
-
-        Ok(ConsensusStatusInfo {
-            current_view: status.current_view,
-            connected_peers: status.connected_peers,
-            is_active: status.is_active(),
-            has_threshold_shares,
-            last_finalized_block: status.last_finalized_block,
-            last_vrf_seed: status.last_vrf_seed,
-            randomness_status: status.randomness_status,
-            vrf_material_version: status.vrf_material_version,
-            last_dkg_activation_height: status.last_dkg_activation_height,
-            next_planned_activation_height: status.next_planned_activation_height,
-            vrf_expiry_height: status.vrf_expiry_height,
-            is_validator,
-            phase1_verification_mode: if is_validator {
-                Phase1VerificationMode::ValidatorEnforced
-            } else {
-                Phase1VerificationMode::TrustedFinality
-            },
-            enclave: enclave_health_info(
-                &self.tee_enclave_health.snapshot(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
-                    .unwrap_or(0),
-            ),
-        })
+        Ok(self.consensus_status_info())
     }
 
     async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
@@ -843,17 +834,35 @@ mod tests {
     };
 
     #[test]
-    fn a_follower_bridge_does_not_make_the_handler_a_validator() {
-        use outbe_primitives::consensus::ConsensusExecutionBridge;
+    fn consensus_status_follows_the_live_operating_mode() {
+        use outbe_primitives::consensus::{ConsensusExecutionBridge, ConsensusOperatingMode};
         let provider = std::sync::Arc::new(());
         let plain = super::OutbeApiHandler::new(provider.clone());
-        let validator =
-            super::OutbeApiHandler::with_bridge(provider.clone(), ConsensusExecutionBridge::new());
-        let follower =
-            super::OutbeApiHandler::with_follower_bridge(provider, ConsensusExecutionBridge::new());
-        assert!(!plain.is_validator && plain.bridge.is_none());
-        assert!(validator.is_validator && validator.bridge.is_some());
-        assert!(!follower.is_validator && follower.bridge.is_some());
+        let status = plain.consensus_status_info();
+        assert_eq!(status.mode, ConsensusOperatingMode::Follower);
+        assert!(!status.is_validator);
+
+        let bridge = ConsensusExecutionBridge::new();
+        let handler = super::OutbeApiHandler::with_bridge(provider, bridge.clone());
+        for (mode, json, is_validator) in [
+            (ConsensusOperatingMode::Follower, "follower", false),
+            (
+                ConsensusOperatingMode::UpstreamBootstrap,
+                "upstreamBootstrap",
+                true,
+            ),
+            (ConsensusOperatingMode::Verifier, "verifier", true),
+            (ConsensusOperatingMode::Signer, "signer", true),
+        ] {
+            bridge.set_operating_mode(mode);
+            let status = handler.consensus_status_info();
+            assert_eq!(status.mode, mode);
+            assert_eq!(status.is_validator, is_validator);
+            let value = serde_json::to_value(&status).unwrap();
+            assert_eq!(value["mode"], json);
+            assert_eq!(value["isValidator"], is_validator);
+            assert!(value.get("phase1VerificationMode").is_none());
+        }
     }
 
     #[test]

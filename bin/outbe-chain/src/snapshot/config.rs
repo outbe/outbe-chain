@@ -95,9 +95,6 @@ pub(crate) fn resolve_requested_layout(inputs: &NodeInputs) -> eyre::Result<Requ
     protected.extend(
         [
             args.signing_key.clone(),
-            args.signing_share.clone(),
-            args.public_polynomial.clone(),
-            args.dkg_output.clone(),
             args.validator_evm_key.clone(),
             args.effective_validator_evm_key()?,
         ]

@@ -321,3 +321,31 @@ fn lifecycle_rejection_requires_a_real_matching_reverted_receipt() {
     partial.receipt["logs"] = json!([{}]);
     assert!(receipt_identity(&partial, false).is_err());
 }
+
+#[test]
+fn single_command_mode_progression_only_moves_forward() {
+    use super::single_command::mode_progression_is_monotonic;
+    let modes = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert!(mode_progression_is_monotonic(&modes(&[
+        "follower",
+        "upstreamBootstrap",
+        "verifier",
+        "signer"
+    ])));
+    assert!(mode_progression_is_monotonic(&modes(&[
+        "follower", "signer"
+    ])));
+    assert!(!mode_progression_is_monotonic(&modes(&[
+        "verifier",
+        "upstreamBootstrap"
+    ])));
+    assert!(!mode_progression_is_monotonic(&modes(&[
+        "signer", "verifier"
+    ])));
+    assert!(!mode_progression_is_monotonic(&modes(&["unknown"])));
+}

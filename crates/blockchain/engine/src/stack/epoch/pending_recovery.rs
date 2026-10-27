@@ -237,6 +237,7 @@ where
             .arm_activation_boundary(previous_epoch, activation_anchor);
         self.application_epoch_fence.advance_epoch(active_epoch);
         self.state.current_epoch = active_epoch;
+        self.observe_activated_boundary(active_epoch, activation_anchor);
         self.publish_repository_material();
         self.rotation.frozen_dkg_target = None;
         self.rotation.pending_dkg_activation = None;

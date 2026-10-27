@@ -105,6 +105,7 @@ fn shutdown_cancels_pending_tip_or_marshal_and_polling_sleep() {
                         calls: Arc::clone(&calls),
                     },
                     epocher: FollowerEpocher::new(100, 10),
+                    phase_cancel: tokio_util::sync::CancellationToken::new(),
                 },
             );
             let run = driver.run();

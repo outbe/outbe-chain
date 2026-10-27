@@ -146,8 +146,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             })
             .extend_rpc_modules({
                 let bridge = bridge.clone();
-                let is_validator = args.is_validator;
-                let is_follower = args.upstream.is_some();
+                let runs_consensus = args.is_validator || args.upstream.is_some();
                 let radicle_status = radicle_status_for_rpc.clone();
                 let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
@@ -164,7 +163,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                     let outbe_api = create_outbe_rpc_handler(
                         Arc::clone(&provider),
                         bridge,
-                        (is_validator, is_follower),
+                        runs_consensus,
                     )
                     .with_chain_identity(proof_chain_id, genesis_hash)
                     .with_tee_renewal_schedule(
@@ -188,17 +187,19 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         shutdown.observe_engine_exit(&node.task_executor, node_exit_future)?;
 
         let tee::TeeRuntimeWorkers {
+            tee_lease_armed,
             mut tee_lease_exit_rx,
             tee_lease_guard_handle,
             tee_canary_handle,
             upgrade_promotion,
             upgrade_handle,
         } = tee::start_runtime_workers(
-            (&node, &args),
+            (&node, &args, &bridge),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
             (tee_canary_status.clone(), shutdown_token.clone(), shutdown.clone()),
-        )?;
+        )
+        .await?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,
@@ -241,7 +242,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             let _ = node_tx.send((
                 node,
                 args,
-                finalized_execution_barrier,
+                (finalized_execution_barrier, tee_lease_armed),
                 radicle_consensus,
                 radicle_drained,
             ));
@@ -323,15 +324,15 @@ fn build_outbe_node(
     outbe_node.with_shutdown(shutdown)
 }
 
+/// The bridge reports the live operating mode (`follower`,
+/// `upstreamBootstrap`, `verifier` or `signer`) to `outbe_consensusStatus`.
 fn create_outbe_rpc_handler<P>(
     provider: Arc<P>,
     bridge: ConsensusExecutionBridge,
-    (is_validator, is_follower): (bool, bool),
+    runs_consensus: bool,
 ) -> outbe_rpc::OutbeApiHandler<P> {
-    if is_validator {
+    if runs_consensus {
         outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
-    } else if is_follower {
-        outbe_rpc::OutbeApiHandler::with_follower_bridge(provider, bridge)
     } else {
         outbe_rpc::OutbeApiHandler::new(provider)
     }
@@ -358,7 +359,12 @@ fn install_selected_reth_identity(
 }
 
 fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {
-    if has_upstream {
+    if is_validator && has_upstream {
+        info!(
+            "outbe node launched in VALIDATOR mode with an UpstreamBootstrap source (--upstream)"
+        );
+        true
+    } else if has_upstream {
         info!("outbe node launched in FOLLOWER mode (--upstream)");
         true
     } else if is_validator {

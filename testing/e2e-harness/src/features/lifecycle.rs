@@ -19,6 +19,7 @@ use crate::world::World;
 
 mod boundary;
 mod rejection;
+mod single_command;
 #[cfg(test)]
 mod tests;
 

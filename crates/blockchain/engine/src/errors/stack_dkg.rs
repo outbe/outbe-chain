@@ -450,7 +450,7 @@ pub enum StackDkgError {
 
     /// Indicates that startup cannot recover threshold material before sync starts.
     #[error(
-        "startup cannot recover threshold material before sync starts: {reason}. Restart with the current --consensus.public-polynomial and --consensus.dkg-output without --consensus.signing-share so the node can sync as VerifierOnly and acquire a share through the running reshare path"
+        "startup cannot recover threshold material before sync starts: {reason}. The local key is a player of the latest finalized DKG boundary. Restore the matching saved DKG state in --consensus.keys-dir"
     )]
     MissingCurrentThresholdMaterial {
         /// Failure reason.

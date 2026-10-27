@@ -68,7 +68,7 @@ where
             self.state.signing_share.is_some(),
         )?;
         let scheme = if radicle_signer {
-            HybridScheme::<MinSig>::signer_with_vrf_provider(
+            let scheme = HybridScheme::<MinSig>::signer_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 self.state.participants.clone(),
                 self.signing_key.clone(),
@@ -78,7 +78,10 @@ where
                 crate::errors::StackEpochError::InvalidSignerSchemeForEpoch {
                     epoch: self.state.current_epoch,
                 },
-            )?
+            )?;
+            self.bridge
+                .set_operating_mode(ConsensusOperatingMode::Signer);
+            scheme
         } else {
             // Verifier mode (no threshold share this epoch): the engine follows and
             // verifies finalized blocks, which drives its execution layer to sync. It
@@ -90,7 +93,7 @@ where
                            epoch = %self.state.current_epoch,
                            "no threshold share for this epoch - running consensus engine in VERIFIER mode"
                        );
-            HybridScheme::<MinSig>::verifier_with_vrf_provider(
+            let scheme = HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 self.state.participants.clone(),
                 self.vrf_materials.clone(),
@@ -101,7 +104,10 @@ where
                     polynomial_total: self.vrf_materials.active_polynomial_total().unwrap_or(0),
                     participant_count: self.state.participants.len(),
                 }
-            })?
+            })?;
+            self.bridge
+                .set_operating_mode(ConsensusOperatingMode::Verifier);
+            scheme
         };
 
         // -- c. Create reporter for this epoch ---------------------------

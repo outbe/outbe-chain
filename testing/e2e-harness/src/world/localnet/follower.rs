@@ -28,6 +28,9 @@ const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
 
 const VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS: &[(&str, bool)] = &[
     ("--validator", false),
+    // A validator command keeps its UpstreamBootstrap source. The follower
+    // replaces it with the selected certified upstream.
+    ("--upstream", true),
     ("--consensus.signing-key", true),
     ("--validator.evm-key", true),
     ("--radicle.control-socket", true),
@@ -64,10 +67,7 @@ pub(super) fn derive_validator_recovery_follower_args(
     let mut follower = Vec::with_capacity(original.len() + 2);
     let mut remaining = original.iter();
     while let Some(arg) = remaining.next() {
-        if ["--upstream", "--upstream.nocertify"]
-            .iter()
-            .any(|option| is_option(arg, option))
-        {
+        if is_option(arg, "--upstream.nocertify") {
             bail!("validator argv unexpectedly contains follower option {arg}");
         }
         match VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS

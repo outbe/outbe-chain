@@ -18,6 +18,16 @@ Feature: Validator admission, membership, recovery, and removal
     Then it exits, the committee reshares down, and the node demotes to a follower
     And its unbonded stake can be claimed with exact accounting
 
+  @pfs-006-09 @oip-00337
+  Scenario: One validator command bootstraps through the upstream and becomes a signer without restart
+    Given a fresh lifecycle localnet with a 6-block voting window
+    When a registered joiner starts once with --validator and --upstream
+    Then it reports upstreamBootstrap and then verifier in the same node and enclave processes
+    When the single-command joiner tops up and confirms readiness
+    Then it reports signer in the same node and enclave processes and signs blocks
+    When the joiner restarts with the same validator command
+    Then it boots straight into signer without UpstreamBootstrap
+
   @pfs-006-09
   Scenario: Restarted ACTIVE validator resumes signing from its persisted share
     Given a fresh localnet with a bounded Tribute offering and a 6-block voting window

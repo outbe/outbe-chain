@@ -69,11 +69,11 @@ pub fn execute_dkg_bootstrap(
     println!("  output dir:     {}", output_dir.display());
     println!(
         "  polynomial:     {}",
-        output_dir.join("polynomial.hex").display()
+        output_dir.join(dkg::ROOT_POLYNOMIAL_FILE).display()
     );
     println!(
         "  dkg output:     {}",
-        output_dir.join("dkg-output.hex").display()
+        output_dir.join(dkg::KEYS_DIR_OUTPUT_FILE).display()
     );
     print_validator_identity_outputs(&output_dir, &result.validator_dirs, &entries);
 

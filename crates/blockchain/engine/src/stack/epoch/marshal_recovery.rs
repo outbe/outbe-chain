@@ -3,7 +3,10 @@ use super::super::*;
 use commonware_consensus::marshal;
 use commonware_cryptography::certificate::Verifier as _;
 use commonware_storage::archive::immutable;
-use outbe_consensus::marshal_types::{MarshalActor, MarshalMailbox};
+use outbe_consensus::{
+    follow::FollowerEpocher,
+    marshal_types::{MarshalActor, MarshalMailbox},
+};
 
 pub(super) struct RecoveredMarshal<
     E: BufferPooler + Clock + CryptoRng + Spawner + Storage + Metrics,
@@ -11,12 +14,42 @@ pub(super) struct RecoveredMarshal<
     pub(super) actor: MarshalActor<E>,
     pub(super) mailbox: MarshalMailbox,
     pub(super) processed_height: Height,
+    /// Shared with the epoch supervisor and the finalization actor. Both
+    /// record later boundaries in it.
+    pub(super) epocher: FollowerEpocher,
+}
+
+/// Build the validator marshal epocher from the latest finalized
+/// `BoundaryOutcome` in the local canonical chain.
+///
+/// `latest_boundary` is `(carrier_height, epoch)`: the height of the block
+/// that carries the artifact and the epoch that the artifact activates. An
+/// epoch above zero anchors the epocher at its carrier. Heights below that
+/// anchor stay unknown to the epocher. Epoch zero (or no boundary) anchors
+/// epoch zero at height one.
+pub(in crate::stack) fn validator_marshal_epocher(
+    latest_boundary: Option<(u64, u64)>,
+    dkg_rotation_params: DkgRotationParams,
+) -> FollowerEpocher {
+    let length = dkg_rotation_params.epoch_length_blocks;
+    let grace = dkg_rotation_params.activation_grace_blocks;
+    match latest_boundary {
+        Some((carrier_height, epoch)) if epoch > 0 && carrier_height > 0 => {
+            FollowerEpocher::from_anchor(
+                length,
+                grace,
+                Epoch::new(epoch),
+                Height::new(carrier_height),
+            )
+        }
+        _ => FollowerEpocher::new(length, grace),
+    }
 }
 
 pub(super) async fn recover_marshal<E>(
     ctx: &E,
     page_cache: &CacheRef,
-    epoch_length_blocks: u32,
+    dkg_rotation_params: DkgRotationParams,
     node: &OutbeFullNode,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
 ) -> Result<RecoveredMarshal<E>>
@@ -49,10 +82,22 @@ where
     .await
     .wrap_err("failed to initialize blocks archive")?;
 
-    let epocher = commonware_consensus::types::FixedEpocher::new(nonzero_u64(
-        u64::from(epoch_length_blocks),
-        "epochLengthBlocks",
-    )?);
+    let last_execution_height = node
+        .provider
+        .last_block_number()
+        .wrap_err("failed to read execution height for the marshal epocher")?;
+    let latest_boundary = recover_latest_boundary_artifact(
+        &node.provider,
+        last_execution_height,
+        dkg_rotation_params,
+    )
+    .wrap_err("failed to recover the latest boundary for the marshal epocher")?
+    .map(|(carrier_height, artifact)| (carrier_height, artifact.epoch));
+    let epocher = validator_marshal_epocher(latest_boundary, dkg_rotation_params);
+    info!(
+        ?latest_boundary,
+        "validator marshal epocher anchored on the latest finalized boundary"
+    );
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or(crate::errors::StackEpochError::ViewRetentionTimeoutOverflow)?;
@@ -66,7 +111,7 @@ where
             marshal_archive::marshal_config(
                 certificate_scheme_provider.clone(),
                 marshal_archive::MarshalStart {
-                    epocher,
+                    epocher: epocher.clone(),
                     genesis: marshal_genesis_anchor,
                 },
                 marshal_archive::MarshalSettings {
@@ -93,5 +138,6 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        epocher,
     })
 }

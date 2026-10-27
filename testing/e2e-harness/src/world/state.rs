@@ -293,6 +293,9 @@ pub struct FixtureState {
     /// OS process id captured when a synced FullNode first enters validator mode.
     /// A later activation step uses it to prove DKG did not require a node restart.
     pub promoted_validator_pid: Option<u32>,
+    /// `(node_pid, enclave_pid)` of a joiner launched once with
+    /// `--validator --upstream`. Its lifecycle must keep both processes.
+    pub single_command_pids: Option<(u32, u32)>,
     /// The chain's worldwide-day key used for tribute offers.
     pub wwd: Option<String>,
     pub lysis_completion_height: Option<u64>,
@@ -484,6 +487,7 @@ impl Default for FixtureState {
             expected_tee_lease_guard_shutdown_full_node: None,
             joiner_addr: None,
             promoted_validator_pid: None,
+            single_command_pids: None,
             wwd: None,
             lysis_completion_height: None,
             nod_creation_height: None,

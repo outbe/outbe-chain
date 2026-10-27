@@ -23,19 +23,33 @@ use super::*;
 /// block is missing locally. The RPC maps `None` to a "not available" error.
 /// When it finds no certificate, it answers `Some` with an empty
 /// `finalization` field.
+///
+/// `phase_cancel` ends the drainer at the end of a follower phase (promotion
+/// to the validator stack). The drainer then drops its marshal mailbox.
 pub(in crate::stack) fn spawn_finalization_drainer<E>(
     ctx: &E,
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     bridge: ConsensusExecutionBridge,
     parent_store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-) where
+    phase_cancel: Option<tokio_util::sync::CancellationToken>,
+) -> commonware_runtime::Handle<()>
+where
     E: Spawner + Metrics,
 {
     let rx = bridge.set_finalization_fetcher();
+    let phase_cancel = phase_cancel.unwrap_or_default();
     ctx.child("finalization_drainer")
         .spawn(move |_| async move {
             let mut rx = rx;
-            while let Some((height, reply)) = rx.recv().await {
+            loop {
+                let request = tokio::select! {
+                    biased;
+                    _ = phase_cancel.cancelled() => break,
+                    request = rx.recv() => request,
+                };
+                let Some((height, reply)) = request else {
+                    break;
+                };
                 let answer = finalization_bytes_for_height(
                     &marshal_mailbox,
                     &parent_store,
@@ -45,7 +59,7 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
                 // The receiver may have gone away (RPC client disconnected). Ignore it.
                 let _ = reply.send(answer);
             }
-        });
+        })
 }
 
 /// Run the follower stack. It does these steps WITHOUT running the consensus engine:
@@ -54,13 +68,17 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
 ///    the `follow` module).
 /// 3. Drive the EL via the existing executor.
 ///
-/// The `--upstream` flag selects this stack.
+/// A follower (`--upstream` without `--validator`) runs it until shutdown. A
+/// validator in `UpstreamBootstrap` runs it with a promotion probe. The stack
+/// then returns [`FollowStackExit::PromoteToValidator`] after it drained.
+///
+/// [`FollowStackExit::PromoteToValidator`]: crate::follower_shutdown::FollowStackExit::PromoteToValidator
 pub(in crate::stack) async fn run_follow_stack<E>(
     ctx: E,
     args: ConsensusArgs,
     connection: services::FollowerConnection,
     services: services::FollowerStackServices,
-) -> Result<()>
+) -> Result<crate::follower_shutdown::FollowStackExit>
 where
     E: BufferPooler
         + Clock

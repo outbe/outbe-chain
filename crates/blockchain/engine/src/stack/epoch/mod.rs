@@ -8,6 +8,7 @@
 //! callers continue to use `run_consensus_stack`.
 
 pub(super) mod activation;
+pub(super) mod bootstrap;
 pub(super) mod ceremony;
 pub(super) mod completion;
 pub(super) mod continuity;

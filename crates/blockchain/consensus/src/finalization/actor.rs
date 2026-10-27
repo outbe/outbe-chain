@@ -87,6 +87,11 @@ pub struct FinalizationActorDeps {
     /// handler reads it to pack the proposer artifact. Best-effort and
     /// process-local. It is never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+    /// Marshal epocher shared with the validator marshal. The actor records
+    /// each finalized `BoundaryOutcome` carrier in it, so a later delivery
+    /// from a peer ahead of this node routes to the correct epoch. `None`
+    /// only in unit tests that do not run marshal.
+    pub epocher: Option<crate::follow::FollowerEpocher>,
 }
 
 /// FinalizationActor itself. Owns the receiver end of an unbounded
@@ -485,6 +490,9 @@ impl FinalizationActor {
         self.publish_consensus_status(&finalized, &consensus_data, block_number);
         self.note_finalized_dkg_artifact(&block, digest, block_number);
         self.evict_finalized_block_cache();
+        if let Some(ref bridge) = self.deps.bridge {
+            bridge.notify_finalization();
+        }
 
         Ok(())
     }
@@ -677,6 +685,7 @@ impl FinalizationActor {
     ) {
         match extract_header_artifact_from_block(block) {
             Ok(artifact) => {
+                self.observe_finalized_boundary(artifact.as_ref(), block_number);
                 self.deps.dkg_manager.note_finalized_header_artifact_at(
                     block_number,
                     digest.0,
@@ -690,6 +699,37 @@ impl FinalizationActor {
                     "finalized block carries invalid DKG header artifact"
                 );
             }
+        }
+    }
+
+    /// Record a finalized `BoundaryOutcome` carrier in the marshal epocher.
+    /// The carrier is the first block of the epoch that the artifact
+    /// activates. A replay of a known boundary is idempotent. A conflict is
+    /// logged and does not stop finalization.
+    fn observe_finalized_boundary(
+        &self,
+        artifact: Option<&outbe_primitives::reshare_artifact::ConsensusHeaderArtifact>,
+        block_number: u64,
+    ) {
+        let (
+            Some(epocher),
+            Some(outbe_primitives::reshare_artifact::ConsensusHeaderArtifact::BoundaryOutcome(
+                boundary,
+            )),
+        ) = (self.deps.epocher.as_ref(), artifact)
+        else {
+            return;
+        };
+        let epoch = commonware_consensus::types::Epoch::new(boundary.epoch);
+        let carrier = commonware_consensus::types::Height::new(block_number);
+        if let Err(error) = epocher.observe_boundary(epoch, carrier) {
+            warn!(
+                target: "outbe::finalization",
+                %error,
+                epoch = boundary.epoch,
+                carrier = block_number,
+                "finalized boundary does not fit the marshal epocher"
+            );
         }
     }
 
@@ -804,6 +844,7 @@ mod tests {
             parent_cert_store: FinalizedParentCertStore::new(),
             certificate_scheme_provider: HybridSchemeProvider::default(),
             late_sig_store: store.clone(),
+            epocher: None,
         };
         let (actor, _mailbox) = FinalizationActor::new(deps);
 

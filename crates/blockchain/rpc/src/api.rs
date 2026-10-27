@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::proc_macros::rpc;
+pub use outbe_primitives::consensus::ConsensusOperatingMode;
 use outbe_primitives::consensus::RandomnessStatus;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 
@@ -59,9 +60,11 @@ pub struct ConsensusStatusInfo {
     pub last_dkg_activation_height: u64,
     pub next_planned_activation_height: u64,
     pub vrf_expiry_height: u64,
+    /// Process-local consensus role: `follower`, `upstreamBootstrap`,
+    /// `verifier` or `signer`.
+    pub mode: ConsensusOperatingMode,
+    /// True when `mode` is `upstreamBootstrap`, `verifier` or `signer`.
     pub is_validator: bool,
-    /// Phase-1 finalized-parent certificate verification policy for this node.
-    pub phase1_verification_mode: Phase1VerificationMode,
     /// Local TEE-enclave health that the canary observes. This is local health,
     /// not consensus data. The value is `disabled` when the canary worker is off.
     pub enclave: EnclaveHealthInfo,
@@ -117,19 +120,6 @@ impl Default for EnclaveHealthInfo {
             health_probe_supported: None,
         }
     }
-}
-
-/// Operator-visible Phase-1 finalized-parent verification boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Phase1VerificationMode {
-    /// Validator-mode node: the consensus layer validates the exact parent
-    /// certificate before it accepts the certificate into payload attributes /
-    /// proposals.
-    ValidatorEnforced,
-    /// Full-node mode: the node loads no consensus bridge or private BLS material.
-    /// The node imports already-finalized EL blocks under trusted-finality semantics.
-    TrustedFinality,
 }
 
 /// Response type for reward emission parameters.
@@ -507,8 +497,8 @@ mod tests {
             last_dkg_activation_height: 21,
             next_planned_activation_height: 21021,
             vrf_expiry_height: 21621,
+            mode: ConsensusOperatingMode::Signer,
             is_validator: true,
-            phase1_verification_mode: Phase1VerificationMode::ValidatorEnforced,
             enclave: EnclaveHealthInfo::default(),
         };
 
@@ -527,8 +517,7 @@ mod tests {
             "\"nextPlannedActivationHeight\"",
             "\"vrfExpiryHeight\"",
             "\"isValidator\"",
-            "\"phase1VerificationMode\"",
-            "\"validatorEnforced\"",
+            "\"mode\":\"signer\"",
         ] {
             assert!(
                 json.contains(expected_field),
@@ -550,8 +539,8 @@ mod tests {
             last_dkg_activation_height: 100,
             next_planned_activation_height: 21100,
             vrf_expiry_height: 21700,
+            mode: ConsensusOperatingMode::Follower,
             is_validator: false,
-            phase1_verification_mode: Phase1VerificationMode::TrustedFinality,
             enclave: EnclaveHealthInfo::default(),
         };
 
@@ -570,10 +559,8 @@ mod tests {
         assert_eq!(deserialized.next_planned_activation_height, 21100);
         assert_eq!(deserialized.vrf_expiry_height, 21700);
         assert!(!deserialized.is_validator);
-        assert_eq!(
-            deserialized.phase1_verification_mode,
-            Phase1VerificationMode::TrustedFinality
-        );
+        assert_eq!(deserialized.mode, ConsensusOperatingMode::Follower);
+        assert!(!follower_json.contains("phase1VerificationMode"));
     }
 
     #[test]
@@ -595,7 +582,7 @@ mod tests {
         // Bridge-backed node before first finalization (inactive consensus): is_syncing = true, consensus_active = false.
         let inactive_bridge = ConsensusExecutionBridge::new();
         let syncing_node =
-            crate::server::OutbeApiHandler::with_follower_bridge(Arc::new(()), inactive_bridge);
+            crate::server::OutbeApiHandler::with_bridge(Arc::new(()), inactive_bridge);
         let syncing_status = syncing_node.sync_status_info();
         assert!(syncing_status.is_syncing);
         assert!(!syncing_status.consensus_active);

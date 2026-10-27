@@ -257,6 +257,24 @@ pub enum StackEpochError {
     #[error("--consensus.signing-key is required")]
     SigningKeyRequired,
 
+    /// Indicates that a validator is not bootstrap-ready and has no upstream.
+    #[error(
+        "validator is not bootstrap-ready at its local finalized height. Start it with --upstream <URL> so that UpstreamBootstrap syncs the chain"
+    )]
+    ValidatorBootstrapRequiresUpstream,
+
+    /// Indicates that a non-validator node has no upstream to follow.
+    #[error("a node without --validator requires --upstream <URL>")]
+    FollowerRequiresUpstream,
+
+    /// Indicates that the upstream finalized tip is unavailable at bootstrap start.
+    #[error("the upstream did not report a finalized tip for UpstreamBootstrap")]
+    UpstreamBootstrapTipUnavailable,
+
+    /// Indicates that a plain follower stack asked for promotion.
+    #[error("follower stack without a promotion probe returned a promotion")]
+    UnexpectedFollowerPromotion,
+
     /// Indicates that the startup P2P admission block hash is missing.
     #[error("startup P2P admission block is missing")]
     StartupP2pAdmissionBlockMissing,
