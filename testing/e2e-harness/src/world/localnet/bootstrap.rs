@@ -31,8 +31,8 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^18`) as hex - the per-validator liquid balance.
-const VALIDATOR_BALANCE_HEX: &str = "0x21e19e0c9bab2400000";
+/// 100000000 COEN (`100_000_000 * 10^18`) as hex - the per-validator liquid balance.
+const VALIDATOR_BALANCE_HEX: &str = "0x52b7d2dcc80cd2e4000000";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch. It must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;

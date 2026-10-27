@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use outbe_genesis_cli::create_genesis::{run_create_genesis, run_seed_cli, SeedCliArgs};
+use outbe_genesis_cli::create_genesis::{
+    run_create_genesis_with_min_stake, run_seed_cli_with_min_stake, SeedCliArgs,
+};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -22,6 +24,10 @@ struct Cli {
     /// Output genesis path when invoked directly with `<CONFIG>`.
     #[arg(long)]
     output: Option<PathBuf>,
+
+    /// Minimum stake in COEN base units (`unit`, default: `10000000000000000000000000` / `10_000_000` COEN).
+    #[arg(long)]
+    min_stake: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -33,6 +39,9 @@ enum Commands {
         /// Output genesis path (default: `output` from the yaml, else `./genesis.json`).
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Minimum stake in COEN base units (`unit`, default: `10000000000000000000000000` / `10_000_000` COEN).
+        #[arg(long)]
+        min_stake: Option<String>,
     },
     /// Seed `genesis.json` with precompile storage entries from a JSON seed profile.
     Seed {
@@ -60,15 +69,21 @@ enum Commands {
         /// Do not seed an already-OFFERING WorldwideDay.
         #[arg(long)]
         fresh_metadosis: bool,
+        /// Minimum stake in COEN base units (`unit`, default: `10000000000000000000000000` / `10_000_000` COEN).
+        #[arg(long)]
+        min_stake: Option<String>,
     },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Some(Commands::Create { config, output }) => {
-            run_create_genesis(&config, output.as_deref()).map(|_| ())
-        }
+        Some(Commands::Create {
+            config,
+            output,
+            min_stake,
+        }) => run_create_genesis_with_min_stake(&config, output.as_deref(), min_stake.as_deref())
+            .map(|_| ()),
         Some(Commands::Seed {
             genesis,
             seed,
@@ -78,19 +93,28 @@ fn main() -> ExitCode {
             canon_dir,
             worldwide_day,
             fresh_metadosis,
-        }) => run_seed_cli(&SeedCliArgs {
-            genesis,
-            seed,
-            validators,
-            output,
-            contracts_dir,
-            canon_dir,
-            worldwide_day,
-            fresh_metadosis,
-        }),
+            min_stake,
+        }) => run_seed_cli_with_min_stake(
+            &SeedCliArgs {
+                genesis,
+                seed,
+                validators,
+                output,
+                contracts_dir,
+                canon_dir,
+                worldwide_day,
+                fresh_metadosis,
+            },
+            min_stake.as_deref(),
+        ),
         None => {
             match cli.config {
-                Some(config) => run_create_genesis(&config, cli.output.as_deref()).map(|_| ()),
+                Some(config) => run_create_genesis_with_min_stake(
+                    &config,
+                    cli.output.as_deref(),
+                    cli.min_stake.as_deref(),
+                )
+                .map(|_| ()),
                 None => {
                     eprintln!("error: provide a subcommand (`create` or `seed`) or a path to `network.yaml`");
                     return ExitCode::from(2);

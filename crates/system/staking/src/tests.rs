@@ -1927,6 +1927,22 @@ fn term_getters_return_configured_units_and_effective_delay() {
             IStaking::getMinStakeCall::abi_decode_returns(&min).unwrap(),
             U256::from(MIN_STAKE)
         );
+        staking.config_min_stake.write(U256::ZERO).unwrap();
+        let default_min = dispatch(
+            storage.clone(),
+            &IStaking::getMinStakeCall {}.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IStaking::getMinStakeCall::abi_decode_returns(&default_min).unwrap(),
+            crate::contract::DEFAULT_MIN_STAKE
+        );
+        staking
+            .config_min_stake
+            .write(U256::from(MIN_STAKE))
+            .unwrap();
         let period = dispatch(
             storage.clone(),
             &IStaking::getUnbondingPeriodCall {}.abi_encode(),

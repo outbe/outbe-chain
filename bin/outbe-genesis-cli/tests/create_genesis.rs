@@ -325,6 +325,9 @@ fn seed_merge_and_baseline_profile_checks() {
         base["staking"]["unbonding_period"]
     );
 
+    let top_min_stake_seed = build_seed(&json!({"min_stake": "42"})).expect("top min_stake");
+    assert_eq!(top_min_stake_seed["staking"]["min_stake"], json!("42"));
+
     let pairs = json!([{"base": "COEN", "quote": "978", "initial_rate": "2"}]);
     let seed2 = build_seed(&json!({"oracle": {"pairs": pairs}})).expect("build_seed pairs");
     assert_eq!(seed2["oracle"]["pairs"], pairs);
@@ -412,6 +415,10 @@ fn example_file_parses_validates_and_matches_baseline() {
     assert_eq!(
         parse_u256(&uncommented["prefund_coen_units"]).expect("prefund"),
         U256::from(DEFAULT_PREFUND_COEN_UNITS)
+    );
+    assert_eq!(
+        parse_u256(&uncommented["min_stake"]).expect("min_stake"),
+        U256::from(outbe_genesis_cli::seed_codec::MIN_STAKE)
     );
     assert_eq!(
         uncommented["consensus_p2p_port"],
