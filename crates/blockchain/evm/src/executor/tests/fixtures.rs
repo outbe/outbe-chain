@@ -240,10 +240,6 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(outbe_oracle::api::DAY_TYPE_ISO)
-            .unwrap();
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,
@@ -647,10 +643,6 @@ pub(super) fn seed_registered_active_validator(
     // 840 also goes on the reference currency list, matching genesis: the
     // scans read their ISO from there.
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(outbe_oracle::api::DAY_TYPE_ISO)
-        .unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage,
         Address::ZERO,

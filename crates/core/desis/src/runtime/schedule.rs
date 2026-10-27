@@ -158,7 +158,6 @@ fn start_auction(
             })
             .collect();
     let promis_load_minor = step_promis_load(contract, worldwide_day, &rows)?;
-    let rows = choose_reference_prices(contract, worldwide_day, rows)?;
     let mut config = AuctionConfig::from_reference_prices(rows, promis_load_minor);
     fold_profile(storage, contract, &mut config)?;
     fix_call_terms(storage, &mut config)?;

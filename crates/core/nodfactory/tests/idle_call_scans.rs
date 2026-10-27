@@ -25,7 +25,6 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
         oracle
             .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();

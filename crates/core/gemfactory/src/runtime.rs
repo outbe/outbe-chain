@@ -44,7 +44,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         }
         .into());
     }
-    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    outbe_oracle::api::check_reference_currency(reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
@@ -168,10 +168,7 @@ pub fn issue_gem_position(
     }
 
     // The daily call scan walks only listed reference currencies.
-    outbe_oracle::api::check_reference_currency_with_storage(
-        storage.clone(),
-        series.reference_currency,
-    )?;
+    outbe_oracle::api::check_reference_currency(series.reference_currency)?;
 
     let issued_at = storage.now_secs()?;
 

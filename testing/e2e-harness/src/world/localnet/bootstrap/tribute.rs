@@ -93,11 +93,6 @@ impl Localnet {
                     index => index,
                 };
                 oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-                if !oracle.reference_currencies.read_all()?.contains(&978) {
-                    return Err(outbe_primitives::error::PrecompileError::Fatal(
-                        "cross-currency fixture requires EUR in the reference registry".into(),
-                    ));
-                }
                 oracle
                     .worldwide_day_vwap_exists
                     .write(&worldwide_day, true)?;

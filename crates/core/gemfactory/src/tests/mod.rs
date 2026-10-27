@@ -126,7 +126,6 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.
         let oracle = OracleContract::new(handle.clone());
-        oracle.reference_currencies.push(840u16).unwrap();
         oracle
             .config_lookback_duration
             .write(SECONDS_PER_DAY)
@@ -240,10 +239,6 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
         },
     )
     .unwrap();
-    OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(iso)
-        .unwrap();
     seed_day_vwap(storage, iso, rate);
 }
 

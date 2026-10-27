@@ -37,10 +37,6 @@ fn cross_currency_settlement_rejects_a_leg_the_window_never_priced() {
             },
         )
         .unwrap();
-        OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(978)
-            .unwrap();
         seed_day_vwap(storage, 840, rate);
         let gem_id = issue_at_live_rate(
             storage,
