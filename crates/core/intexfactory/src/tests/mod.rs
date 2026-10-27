@@ -72,6 +72,7 @@ const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+const TRANSIT_MARGIN: u32 = 3_600;
 
 fn at_height<'s>(ctx: &BlockRuntimeContext<'s>, height: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
@@ -173,7 +174,7 @@ fn prod_trigger() -> outbe_intex::IntexCallTrigger {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
-        transit_margin_seconds: 3_600,
+        transit_margin_seconds: TRANSIT_MARGIN,
     }
 }
 
@@ -213,7 +214,7 @@ impl SeedCalledGroup for IntexContract<'_> {
         self.record_group_called(
             record.group_key().expect("date step"),
             called_at as u32,
-            deadline,
+            deadline + u64::from(record.transit_margin_seconds),
         )
     }
 }

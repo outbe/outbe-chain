@@ -343,8 +343,8 @@ pub fn call_group_of(
         .load_series(series_id)?
         .group_key()
         .map_err(date_step_error)?;
-    let deadline = registry.group_stamp(group, called_at)?.deadline;
-    registry.record_group_called(group, called_at, deadline)
+    let close_at = registry.group_stamp(group, called_at)?.close_at;
+    registry.record_group_called(group, called_at, close_at)
 }
 
 /// Read a series record; errors if the series does not exist.

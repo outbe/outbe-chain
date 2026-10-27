@@ -29,8 +29,8 @@ sol! {
     }
 }
 
-/// This function moves the called group of `series_id` to `deadline` and into that deadline's day.
-/// A notice that lapsed minutes ago would otherwise wait for midnight.
+/// This function moves the called group of `series_id` to the settlement `deadline` and queues it
+/// on the transit close past it. A notice that lapsed minutes ago would otherwise wait for midnight.
 fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 
@@ -46,8 +46,9 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
     let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
-    intex.requeue_called(group, deadline)?;
-    reopen_day(storage, deadline)
+    let close_at = intex.group_stamp(group, called_at)?.close_at;
+    intex.requeue_called(group, close_at)?;
+    reopen_day(storage, close_at)
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {

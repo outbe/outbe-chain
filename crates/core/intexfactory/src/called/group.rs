@@ -48,8 +48,8 @@ pub(crate) fn call_if_breached(
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
     let called_at =
         u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
-    let settlement_deadline = intex.group_stamp(group, called_at)?.deadline;
-    intex.record_group_called(group, called_at, settlement_deadline)?;
+    let stamp = intex.group_stamp(group, called_at)?;
+    intex.record_group_called(group, called_at, stamp.close_at)?;
 
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
@@ -63,7 +63,7 @@ pub(crate) fn call_if_breached(
         groupKey: group,
         seriesIds: members.iter().map(|id| (*id).into()).collect(),
         calledAt: called_at,
-        settlementDeadline: settlement_deadline,
+        settlementDeadline: stamp.deadline,
     })?;
     Ok(members.len() as u32)
 }

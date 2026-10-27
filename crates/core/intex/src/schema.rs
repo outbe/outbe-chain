@@ -44,19 +44,20 @@ pub struct IntexCallTrigger {
     pub transit_margin_seconds: u32,
 }
 
-/// When a series' group was called and the last second it may still settle. Both are
-/// zero while the group is uncalled.
+/// When a series' group was called, its settlement deadline, and the last second a Called
+/// unit may still land and settle. All are zero while the group is uncalled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CallStamp {
     pub called_at: u32,
     pub deadline: u64,
+    pub close_at: u64,
 }
 
 impl CallStamp {
-    /// The state as of `now`: derived, because no transaction arrives at the deadline
+    /// The state as of `now`: derived, because no transaction arrives at the transit close
     /// to write it.
     pub const fn state(&self, now: u64) -> IntexState {
-        match (self.called_at, now > self.deadline) {
+        match (self.called_at, now > self.close_at) {
             (0, _) => IntexState::Issued,
             (_, false) => IntexState::Called,
             (_, true) => IntexState::Forfeited,
@@ -362,7 +363,7 @@ pub struct IntexContract {
     pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
     pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Group key -> when the group's settlement window closes.
+    /// Group key -> when the group's transit margin past its settlement deadline ends.
     #[attribute(order = 47)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     // Widest terms ever issued in a currency. Both only move outwards, so the range

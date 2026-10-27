@@ -633,7 +633,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
-fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
+fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
@@ -654,18 +654,18 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
     });
     let quoted = quote(&mut storage);
-    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+    let close_at = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
         .cutoff()
         + 3_600;
     StorageHandle::enter(&mut storage, |s| {
-        let notice = outbe_intex::api::read_series(&s, sid(7))
-            .unwrap()
-            .call_notice_period_seconds;
-        outbe_intex::api::call_group_of(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let terms =
+            u64::from(series.call_notice_period_seconds) + u64::from(series.transit_margin_seconds);
+        outbe_intex::api::call_group_of(&s, sid(7), (close_at - terms) as u32).unwrap();
     });
 
-    storage.set_timestamp(U256::from(deadline));
+    storage.set_timestamp(U256::from(close_at));
     let required = quote(&mut storage);
     assert_eq!(
         settle_series_7(&mut storage, quoted),
@@ -678,7 +678,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         .to_string()
     );
 
-    storage.set_timestamp(U256::from(deadline + 1));
+    storage.set_timestamp(U256::from(close_at + 1));
     assert_eq!(
         settle_series_7(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(

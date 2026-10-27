@@ -452,6 +452,31 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     });
 }
 
+/// A deadline in the last hour of a day moves the forfeit to the day the transit margin ends in.
+#[test]
+fn a_group_waits_for_its_transit_close_before_it_forfeits() {
+    with_factory(|s| {
+        let deadline_day = IntexContract::deadline_day(ISSUED_AT as u64 + DAY);
+        let deadline = IntexContract::day_end(deadline_day) - 1_800;
+        let member = called_series(&s, 20260101, deadline);
+
+        sweep_expiry(&s, IntexContract::day_end(deadline_day));
+        assert!(
+            queued(&s, member),
+            "the deadline day closed inside the margin"
+        );
+        let f = IntexContract::new(s.clone());
+        assert!(!f.group_forfeited(group_of(&s, member)).unwrap());
+
+        sweep_expiry(&s, IntexContract::day_end(deadline_day + 1));
+        assert!(
+            !queued(&s, member),
+            "forfeited once the transit close passed"
+        );
+        assert!(f.group_forfeited(group_of(&s, member)).unwrap());
+    });
+}
+
 #[test]
 fn an_uncalled_group_never_enters_the_expiry_queue() {
     with_factory(|s| {
