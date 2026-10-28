@@ -178,15 +178,15 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                     let mut factory = TributeFactoryContract::new(storage.clone());
                     let mut tribute = TributeContract::new(storage.clone());
                     let metadosis = MetadosisContract::new(storage.clone());
-                    metadosis.emission_days().create(
-                        &crate::schema::EmissionDay::new_with_limit(
-                            DAY,
-                            WWD,
-                            50,
-                            u128::from(limit),
-                            emission_day_state::NONE,
-                        ),
-                    )?;
+                    let mut ed = crate::schema::EmissionDay::new_with_limit(
+                        DAY,
+                        WWD,
+                        50,
+                        u128::from(limit),
+                        emission_day_state::NONE,
+                    );
+                    ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
+                    metadosis.emission_days().create(&ed)?;
                     for (index, amount) in amounts.iter().enumerate() {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);

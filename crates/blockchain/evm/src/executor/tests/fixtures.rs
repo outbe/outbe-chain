@@ -7,13 +7,6 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
 pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
-    let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
-    cycle
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(
-            TEST_BLOCK_TIMESTAMP_BASE,
-        ))
-        .unwrap();
     // These fixtures use an established parent state. This state includes the factory watermark.
     // The lifecycle needs this watermark to resume processing for the first closed day of that parent state.
     let ctx = BlockRuntimeContext::new(
@@ -938,9 +931,6 @@ pub(super) fn seed_cycle_tick_genesis(
     );
     outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
     let cycle = outbe_cycle::schema::Cycle::new(storage);
-    cycle
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(genesis_ts))?;
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
     Ok(())

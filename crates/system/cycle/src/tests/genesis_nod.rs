@@ -35,12 +35,9 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         run_cycle_lifecycle(&ctx_fire).unwrap();
 
         assert!(
-            outbe_metadosis::api::worldwide_day(
-                ctx_fire.storage.clone(),
-                outbe_primitives::time::WorldwideDay::new(20_240_101),
-            )
-            .unwrap()
-            .is_some(),
+            outbe_metadosis::api::emission_day(ctx_fire.storage.clone(), 20_240_101)
+                .unwrap()
+                .is_some(),
             "the first UTC midnight must create the explicitly settled previous UTC day"
         );
         assert!(
@@ -50,13 +47,10 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             "the first UTC midnight must retain the canonical genesis WWD"
         );
 
-        let rewards = ctx_fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
         let genesis_day = outbe_rewards::runtime::genesis_utc_day(&ctx_fire).unwrap();
         assert_eq!(genesis_day, 20_240_101, "genesis_utc_day = day D");
         assert!(
-            rewards.daily_settled.read(&genesis_day).unwrap(),
+            is_day_settled(&ctx_fire, genesis_day),
             "CycleTick must settle genesis day (day_number=0)"
         );
     });

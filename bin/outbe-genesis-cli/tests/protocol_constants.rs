@@ -8,10 +8,10 @@ use outbe_genesis_cli::inputs::{StakeSeedTerms, ValidatorSeedTerms};
 use outbe_genesis_cli::network::{profiles_dir, repo_root};
 use outbe_genesis_cli::seed_alloc::seed_protocol_constants;
 use outbe_genesis_cli::seed_codec::{
-    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key,
-    parse_header_timestamp, u32_bytes, StorageBuilder,
+    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key, u32_bytes,
+    StorageBuilder,
 };
-use outbe_genesis_cli::seed_economy::{clear_seeded_metadosis_days, seed_cycle};
+use outbe_genesis_cli::seed_economy::clear_seeded_metadosis_days;
 use outbe_genesis_cli::seed_oracle::{seed_oracle, DEFAULT_POLICY_RATES, REFERENCE_CURRENCIES};
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
@@ -217,7 +217,7 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
 }
 
 #[test]
-fn fresh_metadosis_and_cycle_active_day_work_as_expected() {
+fn fresh_metadosis_clears_seeded_days_as_expected() {
     let mut seed = json!({
         "metadosis": {"worldwide_days": [{"wwd": 20260807}], "other": 7},
         "oracle": {"scurve_seeds": [{"peak_day": 20260807}]}
@@ -229,15 +229,6 @@ fn fresh_metadosis_and_cycle_active_day_work_as_expected() {
         seed["oracle"]["scurve_seeds"],
         json!([{"peak_day": 20260807}])
     );
-
-    let genesis = json!({
-        "timestamp": format!("0x{:x}", 1_704_103_200_u64),
-        "config": {"genesisTime": "2099-12-31T23:59:59Z"}
-    });
-    let mut storage = StorageBuilder::new();
-    let ts = parse_header_timestamp(&genesis).expect("header ts");
-    seed_cycle(&mut storage, ts);
-    assert_eq!(storage.entries[&hex32(2u64)], hex32(20240101u64));
 }
 
 #[test]

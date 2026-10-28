@@ -111,12 +111,12 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
             account_parent(&ctx, height);
             dispatch_triggers(&ctx).unwrap();
             let cycle = ctx.storage.contract::<Cycle>();
-            assert_eq!(cycle.active_utc_day.read().unwrap(), 20240101);
+            assert_eq!(active_utc_day(&ctx), 20240101);
             assert_eq!(
                 cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
                 GENESIS_TS + 60
             );
-            assert!(!outbe_rewards::api::is_day_settled(&ctx, 20240101).unwrap());
+            assert!(!is_day_settled(&ctx, 20240101));
             if height == 13 {
                 // Real phase order: Cycle first, then final-slot credit and GC.
                 outbe_rewards::late_settlement::record_late_credit(&ctx, hash, late, 3).unwrap();
@@ -127,9 +127,9 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
-        assert!(outbe_rewards::api::is_day_settled(&ctx, 20240101).unwrap());
+        assert!(is_day_settled(&ctx, 20240101));
         let cycle = ctx.storage.contract::<Cycle>();
-        assert_eq!(cycle.active_utc_day.read().unwrap(), 20240102);
+        assert_eq!(active_utc_day(&ctx), 20240102);
         assert_eq!(
             cycle
                 .last_executed_block_number
@@ -152,105 +152,6 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
 }
 
 #[test]
-fn retention_reclaims_settled_details_without_changing_agentreward_or_forfeited_day() {
-    let mut storage = cycle_storage();
-    let hash = B256::repeat_byte(0x78);
-    let early = Address::repeat_byte(0xB0);
-    let late = Address::repeat_byte(0xB1);
-    let claimable = |ctx: &BlockRuntimeContext<'_>, voter| {
-        outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-            .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
-            .unwrap()
-    };
-    storage.enter(|handle| {
-        anchor_with(handle.clone(), GENESIS_TS + 60, seed_fresh_reward_oracle);
-    });
-    storage.set_block_number(11);
-    storage.enter(|handle| {
-        let ctx = runtime_context(block_ctx(11, GENESIS_TS + SECONDS_PER_DAY), handle.clone());
-        record_parent_with_late_voter(&ctx, hash, early, late);
-    });
-    storage.set_block_number(13);
-    storage.enter(|handle| {
-        let close = runtime_context(
-            block_ctx(13, GENESIS_TS + SECONDS_PER_DAY + 2),
-            handle.clone(),
-        );
-        outbe_rewards::late_settlement::record_late_credit(&close, hash, late, 3).unwrap();
-        outbe_rewards::late_settlement::settle_matured(&close, 13, 3).unwrap();
-    });
-    storage.set_block_number(14);
-    let balances = storage.enter(|handle| {
-        let settled = dispatch_at(handle.clone(), 14, GENESIS_TS + SECONDS_PER_DAY + 3);
-        assert!(outbe_rewards::api::is_day_settled(&settled, 20240101).unwrap());
-        assert_eq!(
-            outbe_rewards::api::read_voters_for_day(&settled, 20240101).unwrap(),
-            vec![(early, 1), (late, 1)]
-        );
-        let balances = [claimable(&settled, early), claimable(&settled, late)];
-        assert!(balances[0] > U256::ZERO);
-
-        // Jan 2 is active but will be forfeited by the real missed-day calendar path.
-        // It must not be enqueued just to let retention advance.
-        seed_daily_voters(&settled, 20240102, &[(early, 7)]);
-        settled
-            .storage
-            .contract::<outbe_rewards::schema::Rewards>()
-            .daily_fee_sum_raw
-            .write(&20240102, U256::from(77))
-            .unwrap();
-        balances
-    });
-    storage.set_block_number(20);
-    storage.enter(|handle| {
-        let expired = runtime_context(block_ctx(20, GENESIS_TS + 9 * SECONDS_PER_DAY), handle);
-        account_parent(&expired, 20);
-        run_cycle_lifecycle(&expired).unwrap();
-        assert_eq!(
-            expired
-                .storage
-                .contract::<Cycle>()
-                .active_utc_day
-                .read()
-                .unwrap(),
-            20240110
-        );
-        assert!(outbe_rewards::api::read_voters_for_day(&expired, 20240101)
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            outbe_rewards::api::read_daily_fee_sum_raw(&expired, 20240101).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            outbe_rewards::api::read_voters_for_day(&expired, 20240102).unwrap(),
-            vec![(early, 7)]
-        );
-        assert_eq!(
-            outbe_rewards::api::read_daily_fee_sum_raw(&expired, 20240102).unwrap(),
-            U256::from(77)
-        );
-        assert!(!outbe_rewards::api::is_day_settled(&expired, 20240102).unwrap());
-        assert!(!expired
-            .storage
-            .contract::<outbe_rewards::schema::Rewards>()
-            .daily_participation_closed
-            .read(&20240102)
-            .unwrap());
-        crate::handler::settle_emission_day(&expired, 20240101).unwrap();
-        assert_eq!(
-            [claimable(&expired, early), claimable(&expired, late)],
-            balances
-        );
-        let rewards = expired.storage.contract::<outbe_rewards::schema::Rewards>();
-        assert!(rewards.daily_settled.read(&20240101).unwrap());
-        assert!(rewards.daily_participation_closed.read(&20240101).unwrap());
-        assert_eq!(rewards.settled_day_cleanup_head.read().unwrap(), 1);
-        assert_eq!(rewards.settled_day_cleanup_tail.read().unwrap(), 1);
-    });
-}
-
-#[test]
 fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     with_anchored_cycle(|handle| {
         // Step 1: anchor at chain start.
@@ -260,13 +161,8 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
 
-        // Rewards.daily_settled[20240101] = true (sealed against late
-        // finalized metadata for the previous UTC day).
-        let rewards = ctx_fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
         assert!(
-            rewards.daily_settled.read(&20_240_101).unwrap(),
+            is_day_settled(&ctx_fire, 20_240_101),
             "Cycle handler must seal prev_day"
         );
 
@@ -452,8 +348,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
 
         run_emission_limit_daily(&ctx).unwrap();
 
-        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert!(is_day_settled(&ctx, 20_240_101));
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
         for voter in voters {
             assert_eq!(
@@ -563,10 +458,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
     assert_eq!(independent.scheduledAt, recorded_at);
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        let rewards = fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
+        assert!(!is_day_settled(&fire, 20_240_101));
         assert_eq!(
             topup_voters_claimable(&fire),
             U256::ZERO,
@@ -597,7 +489,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         ] {
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), recorded_at);
         }
-        assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_101);
+        assert_eq!(active_utc_day(&fire), 20_240_101);
     });
 }
 
@@ -609,10 +501,7 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         let same_window = runtime_context(block_ctx(3, TOPUP_FIRE_TS), handle);
         account_parent(&same_window, 3);
         dispatch_triggers(&same_window).unwrap();
-        let rewards = same_window
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
+        assert!(!is_day_settled(&same_window, 20_240_101));
         assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
@@ -625,10 +514,7 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         account_parent(&retry, 4);
         dispatch_triggers(&retry).unwrap();
 
-        let rewards = retry
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert!(is_day_settled(&retry, 20_240_101));
 
         let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
         let expected_promis_load = validator_amount / U256::from(TOPUP_VOTERS.len());
@@ -710,13 +596,11 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         anchor_at(handle.clone(), GENESIS_TS + 60);
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
+        let fire = runtime_context(
+            block_ctx(2, TOPUP_FIRE_TS).with_genesis_timestamp(0),
+            handle,
+        );
         account_parent(&fire, 2);
-        fire.storage
-            .contract::<Cycle<'_>>()
-            .active_utc_day
-            .write(0)
-            .unwrap();
         let err = dispatch_triggers(&fire).expect_err("invalid day must fail the block");
         assert!(matches!(err, PrecompileError::Fatal(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
@@ -733,12 +617,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
         let err = dispatch_triggers(&fire).expect_err("storage failure must fail the block");
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
-        assert!(!fire
-            .storage
-            .contract::<outbe_rewards::schema::Rewards<'_>>()
-            .daily_settled
-            .read(&20_240_101)
-            .unwrap());
+        assert!(!is_day_settled(&fire, 20_240_101));
     });
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
 }
@@ -794,9 +673,8 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
 
         // First settlement of prev_day = 20240101: credits the pools + seals.
         run_emission_limit_daily(&ctx).unwrap();
-        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
         assert!(
-            rewards.daily_settled.read(&20_240_101).unwrap(),
+            is_day_settled(&ctx, 20_240_101),
             "first fire must seal prev_day"
         );
         let cca_claimable = || {

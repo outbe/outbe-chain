@@ -275,10 +275,11 @@ impl DispatchCall<'_> {
         if admission.protocol_cycle_call {
             let active_utc_day = {
                 let storage = StorageHandle::new(provider);
-                storage
-                    .contract::<outbe_cycle::schema::Cycle<'_>>()
-                    .active_utc_day
-                    .read()?
+                outbe_cycle::handler::derive_active_utc_day(
+                    storage,
+                    runtime.genesis_timestamp,
+                    self.timestamp,
+                )?
             };
             provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
                 self.mutation_call(admission, Some(active_utc_day)),

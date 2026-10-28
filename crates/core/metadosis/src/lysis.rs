@@ -81,7 +81,7 @@ fn finalize_lysis_settlement(
     let split = apply_lysis_limit(
         storage.clone(),
         LysisLimitInput {
-            base_limit: emission_day.emission_limit_minor(),
+            base_limit: emission_day.metadosis_limit_minor(),
             lysis_limit_minor: calculation.lysis_limit_minor,
             nominal_total: completion.total_nominal_minor,
         },
@@ -98,7 +98,21 @@ fn finalize_lysis_settlement(
         return Err(mismatch());
     }
     apply_auction_brief(storage, wwd, &split, ctx.block.timestamp)?;
-    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
+    let promis_limit_added = emission_day
+        .metadosis_limit_minor()
+        .checked_sub(completion.used)
+        .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
+    let updated = outbe_emission::api::record_metadosis_completed(
+        metadosis.storage.clone(),
+        emission_day.day,
+        outbe_emission::api::MetadosisCompletedAmounts {
+            lysis_limit: calculation.lysis_limit_minor,
+            desis_limit: split.desis_limit_minor,
+            nods: completion.used,
+            promis_limit_added,
+        },
+    )?;
+    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),
         tributeNominalTotalMinor: completion.total_nominal_minor,

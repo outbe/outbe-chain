@@ -72,31 +72,9 @@ pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Re
     Ok(last_close == 0 || ctx.block.block_number > last_close)
 }
 
-/// Atomically marks `day` settled and enqueues its details for retention cleanup.
-/// Requires closed participation and completed known inclusion windows. Replay
-/// performs no writes. Closure, not settlement alone, rejects new metadata.
-pub fn mark_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
-    crate::state::mark_day_settled(ctx, day)
-}
-
-/// Reclaims at most 256 voters from one settled, closed day starting at D+8 UTC.
-/// Preserves permanent settled/closed tombstones and all per-block state.
-pub fn prune_settled_days(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::runtime::prune_settled_days(ctx)
-}
-
 /// Freezes the participation of `day` once its validator pool is credited.
 /// A later participant of `day` is refused.
 pub fn close_day_participation(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_participation_closed.write(&day, true)
-}
-
-/// Whether the daily Cycle orchestrator already settled `day` fully
-/// (counterpart to [`mark_day_settled`]). The orchestrator reads
-/// this before it mints anything. Thus a re-fire for an already-settled day is a
-/// no-op, not a double-mint (idempotency).
-pub fn is_day_settled(ctx: &BlockRuntimeContext, day: u32) -> Result<bool> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    rewards.daily_settled.read(&day)
 }

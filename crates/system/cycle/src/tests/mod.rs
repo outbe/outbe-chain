@@ -43,11 +43,6 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             handle,
         );
         initialize_daily_passes(&ctx);
-        ctx.storage
-            .contract::<Cycle<'_>>()
-            .active_utc_day
-            .write(20_240_101)
-            .unwrap();
         let owner = Address::repeat_byte(0xA0);
         let founder = Address::repeat_byte(0xB0);
         let consensus_key = [0x30; 48];
@@ -266,6 +261,24 @@ pub(super) fn last_executed_at(ctx: &BlockRuntimeContext<'_>) -> u64 {
         .last_executed_at
         .read(&EMISSION_LIMIT_1_ID)
         .unwrap()
+}
+
+pub(super) fn active_utc_day(ctx: &BlockRuntimeContext<'_>) -> u32 {
+    crate::handler::derive_active_utc_day(
+        ctx.storage.clone(),
+        ctx.block.genesis_timestamp,
+        ctx.block.timestamp,
+    )
+    .unwrap()
+}
+
+pub(super) fn is_day_settled(ctx: &BlockRuntimeContext<'_>, day: u32) -> bool {
+    outbe_emission::api::get_emission_day_record(ctx.storage.clone(), day)
+        .unwrap()
+        .is_some_and(|rec| {
+            rec.state == outbe_emission::schema::emission_day_state::PROCESSING
+                || rec.state == outbe_emission::schema::emission_day_state::COMPLETED
+        })
 }
 
 /// Block 1 at `timestamp` after the Rewards genesis anchor.

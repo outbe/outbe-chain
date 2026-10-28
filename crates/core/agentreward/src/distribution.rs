@@ -30,6 +30,16 @@ pub enum PoolKind {
     Validator,
 }
 
+/// Detailed per-pool allocation and undistributed excess returned by [`distribute_daily_detailed`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DailyPoolDistribution {
+    pub validators_distributed: U256,
+    pub waa_allocated: U256,
+    pub sra_allocated: U256,
+    pub cca_distributed: U256,
+    pub total_excess: U256,
+}
+
 /// Daily orchestrator entrypoint called by the EmissionLimit Cycle
 /// handler. Dispatches each `(PoolKind, amount)` pair into
 /// the correct sub-routine and returns the sum of pool excesses that
@@ -45,16 +55,74 @@ pub fn distribute_daily(
     prev_day: WorldwideDay,
     pools: &[(PoolKind, U256)],
 ) -> PrecompileResult<U256> {
+    Ok(distribute_daily_detailed(ctx, prev_day, pools)?.total_excess)
+}
+
+/// Dispatches each `(PoolKind, amount)` pair and returns the exact per-pool
+/// distributed/allocated amounts alongside the undistributed excess.
+pub fn distribute_daily_detailed(
+    ctx: &outbe_primitives::block::BlockRuntimeContext,
+    prev_day: WorldwideDay,
+    pools: &[(PoolKind, U256)],
+) -> PrecompileResult<DailyPoolDistribution> {
     ctx.storage.with_checkpoint(|| {
-        let mut total_excess = U256::ZERO;
-        for (kind, amount) in pools {
-            let excess = distribute_pool(ctx, prev_day, *kind, *amount)?;
-            total_excess = total_excess
+        let mut out = DailyPoolDistribution::default();
+        for &(kind, amount) in pools {
+            let excess = distribute_pool(ctx, prev_day, kind, amount)?;
+            let allocated = amount
+                .checked_sub(excess)
+                .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+            match kind {
+                PoolKind::Validator => {
+                    out.validators_distributed = out
+                        .validators_distributed
+                        .checked_add(allocated)
+                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+                }
+                PoolKind::Waa => {
+                    out.waa_allocated = out
+                        .waa_allocated
+                        .checked_add(allocated)
+                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+                }
+                PoolKind::Sra => {
+                    out.sra_allocated = out
+                        .sra_allocated
+                        .checked_add(allocated)
+                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+                }
+                PoolKind::Cca => {
+                    out.cca_distributed = out
+                        .cca_distributed
+                        .checked_add(allocated)
+                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+                }
+            }
+            out.total_excess = out
+                .total_excess
                 .checked_add(excess)
                 .ok_or(AgentRewardError::DistributeDailyOverflow)?;
         }
-        Ok(total_excess)
+        Ok(out)
     })
+}
+
+/// Returns `true` if any queued WAA or SRA [`AccrualJob`] for `day` is still pending.
+pub fn has_pending_accruals_for_day(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    day: u32,
+) -> PrecompileResult<bool> {
+    let contract = AgentRewardContract::new(storage.clone());
+    let head = contract.accrual_head.read()?;
+    let tail = contract.accrual_tail.read()?;
+    for seq in head..tail {
+        if let Some(job) = contract.accrual_jobs.get(seq)? {
+            if job.day == day {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Allocates one agent pool proportionally to its weights.
@@ -183,9 +251,35 @@ pub fn advance_accruals(
             release_pending(&mut contract, pool, released)?;
             contract.accrual_jobs.delete(head)?;
             contract.accrual_head.write(head + 1)?;
+            record_finished_accrual_on_emission_day(&ctx.storage, job.day, pool, job_residue)?;
         }
         Ok(residue)
     })
+}
+
+fn record_finished_accrual_on_emission_day(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    day: u32,
+    pool: RewardPool,
+    job_residue: U256,
+) -> PrecompileResult<()> {
+    let is_waa = match pool {
+        RewardPool::Waa => true,
+        RewardPool::Sra => false,
+        RewardPool::Cca | RewardPool::Validator => return Ok(()),
+    };
+    let Some(record) =
+        outbe_emission::api::record_reward_pool_residue(storage.clone(), day, is_waa, job_residue)?
+    else {
+        return Ok(());
+    };
+    if record.state == outbe_emission::schema::emission_day_state::PROCESSING
+        && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING
+        && !has_pending_accruals_for_day(storage, day)?
+    {
+        outbe_emission::api::complete_emission_day(storage.clone(), day)?;
+    }
+    Ok(())
 }
 
 fn release_pending(

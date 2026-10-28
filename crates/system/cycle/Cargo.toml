@@ -21,6 +21,8 @@ outbe-desis.workspace = true
 outbe-gemfactory.workspace = true
 outbe-credisfactory.workspace = true
 outbe-nodfactory.workspace = true
+outbe-promislimit.workspace = true
+outbe-tributefactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -33,7 +35,6 @@ outbe-ccaregistry.workspace = true
 proptest.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-oracle.workspace = true
-outbe-promislimit.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]

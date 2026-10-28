@@ -388,10 +388,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
             cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
                 .last_executed_at
                 .write(&emission_trigger, GENESIS_TS + 60)
                 .unwrap();
@@ -464,8 +460,12 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
-        let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        assert!(rewards.daily_settled.read(&prev_day)?);
+        let day_record = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
+            .expect("settled EmissionDay must exist");
+        assert!(
+            day_record.state == outbe_emission::schema::emission_day_state::PROCESSING
+                || day_record.state == outbe_emission::schema::emission_day_state::COMPLETED
+        );
         let gem = outbe_gem::GemContract::new(storage);
         assert_eq!(gem.total_supply()?, 0);
         Ok::<_, outbe_primitives::error::PrecompileError>(())

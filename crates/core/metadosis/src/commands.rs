@@ -97,3 +97,10 @@ pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()
         crate::runtime::advance_active_worldwide_days(ctx)
     })
 }
+
+pub fn find_due_emission_day(
+    ctx: &BlockRuntimeContext<'_>,
+) -> Result<Option<crate::schema::EmissionDay>> {
+    let metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
+    crate::lifecycle::find_due_emission_day(&metadosis, ctx)
+}

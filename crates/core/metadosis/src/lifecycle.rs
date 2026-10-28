@@ -14,9 +14,7 @@ use outbe_primitives::{
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::{
-    worldwideday::{
-        create_worldwide_day, remove_active_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
-    },
+    worldwideday::{remove_active_worldwide_day, ValidatedWwdAggregate},
     TributeFactoryContract,
 };
 
@@ -60,42 +58,38 @@ pub(crate) fn create_lookahead_days(
     outbe_tributefactory::worldwideday::create_lookahead_days(ctx, timestamp)
 }
 
-pub(crate) fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> {
-    outbe_tributefactory::worldwideday::compute_wwd_schedule(wwd)
-}
-
 pub(crate) fn ensure_emission_day_with_limit(
     metadosis: &mut MetadosisContract,
     _ctx: &BlockRuntimeContext,
     day: u32,
     emission_limit_minor: U256,
 ) -> Result<()> {
-    let limit = u128::try_from(emission_limit_minor)
-        .map_err(|_| outbe_emission::errors::EmissionError::AmountOverflow)?;
+    let limit = outbe_emission::api::to_u128_checked(emission_limit_minor)?;
     let emission_days = metadosis.emission_days();
     if let Some(mut existing) = emission_days.get(day)? {
-        existing.emission_limit = limit;
+        existing.emission_limit = existing.emission_limit.max(limit);
         existing.metadosis_limit = limit;
+        if existing.state == outbe_emission::schema::emission_day_state::PENDING
+            || existing.state == outbe_emission::schema::emission_day_state::SEALED
+        {
+            existing.state = outbe_emission::schema::emission_day_state::PROCESSING;
+        }
         emission_days.update(&existing)?;
         return Ok(());
     }
-    let wwd = WorldwideDay::new(day);
-    let (schedule, _) = compute_wwd_schedule(wwd)?;
     let next_day = next_date_key(day).map_err(date_step_error)?;
     let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
-    emission_days.create(&EmissionDay::new_with_limit(
+    let mut record = EmissionDay::new_with_limit(
         day,
-        wwd,
+        WorldwideDay::new(0),
         metadosis_start,
         limit,
         emission_day_state::NONE,
-    ))?;
-    let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
-    if factory.worldwide_days.get(wwd)?.is_none() {
-        create_worldwide_day(&mut factory, wwd, NewWwdSchedule { day, ..schedule })?;
-    }
+    );
+    record.state = outbe_emission::schema::emission_day_state::PROCESSING;
+    emission_days.create(&record)?;
     Ok(())
 }
 
@@ -116,7 +110,10 @@ pub(crate) fn find_due_emission_day(
             continue;
         };
         verify_record_wwd_backlink(&factory, &record)?;
-        if record.metadosis_state == emission_day_state::NONE && now >= record.metadosis_start {
+        if record.state == outbe_emission::schema::emission_day_state::PROCESSING
+            && record.metadosis_state == emission_day_state::NONE
+            && now >= record.metadosis_start
+        {
             return Ok(Some(record));
         }
     }
@@ -195,14 +192,25 @@ pub(crate) fn complete_emission_day(
     emission_day: &EmissionDay,
     state: u8,
 ) -> Result<()> {
-    let mut updated = *emission_day;
-    updated.metadosis_state = state;
     if state == emission_day_state::SUCCEEDED {
-        updated.state = outbe_emission::schema::emission_day_state::COMPLETED;
+        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
+            &metadosis.storage,
+            emission_day.day,
+        )? {
+            outbe_emission::api::complete_emission_day(
+                metadosis.storage.clone(),
+                emission_day.day,
+            )?;
+        }
+    } else {
+        let mut updated = *emission_day;
+        updated.metadosis_state = state;
+        metadosis.emission_days().update(&updated)?;
     }
-    metadosis.emission_days().update(&updated)?;
-    let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
-    remove_active_worldwide_day(&mut factory, emission_day.wwd)?;
+    if emission_day.wwd.value() != 0 {
+        let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
+        remove_active_worldwide_day(&mut factory, emission_day.wwd)?;
+    }
     Ok(())
 }
 
@@ -213,25 +221,29 @@ pub(crate) fn fail_emission_day(
     wwd: WorldwideDay,
     reason: &str,
 ) -> Result<()> {
-    let mut tribute = TributeContract::new(metadosis.storage.clone());
-    if !tribute.get_day_totals(wwd)?.is_sealed {
-        tribute.seal_day(wwd)?;
+    if wwd.value() != 0 {
+        let mut tribute = TributeContract::new(metadosis.storage.clone());
+        if !tribute.get_day_totals(wwd)?.is_sealed {
+            tribute.seal_day(wwd)?;
+        }
     }
-    let emission_days = metadosis.emission_days();
-    if let Some(mut record) = emission_days.get(day)? {
-        let limit_minor = record.emission_limit_minor();
+    if metadosis.emission_days().get(day)?.is_some() {
+        let (record, limit_minor) =
+            outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone()).checked_credit(limit_minor)?;
-            record.promis_limit = record
-                .promis_limit
-                .checked_add(record.metadosis_limit)
-                .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
         }
-        record.metadosis_state = emission_day_state::FAILED;
-        emission_days.update(&record)?;
+        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
+            &metadosis.storage,
+            record.day,
+        )? {
+            outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
+        }
     }
-    let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
-    remove_active_worldwide_day(&mut factory, wwd)?;
+    if wwd.value() != 0 {
+        let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
+        remove_active_worldwide_day(&mut factory, wwd)?;
+    }
     metadosis.emit(IMetadosis::MetadosisSkipped {
         worldwideDay: wwd.into(),
         reason: reason.into(),

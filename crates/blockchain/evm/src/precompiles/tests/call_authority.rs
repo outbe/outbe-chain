@@ -5,9 +5,10 @@ use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::LateFinalizeCreditsArtifact,
     storage::{
-        metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
-        metadosis_late_settlement_binding, metadosis_process_ready_binding,
-        MetadosisMutationEntitlements, MetadosisMutationPurposeTag as Purpose,
+        metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        metadosis_process_ready_binding, MetadosisMutationEntitlements,
+        MetadosisMutationPurposeTag as Purpose,
     },
     system_tx::SystemTxInputV2,
 };
@@ -74,6 +75,10 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
     )
     .union(MetadosisMutationEntitlements::exact(
         Purpose::CycleLifecycle,
+        metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+    ))
+    .union(MetadosisMutationEntitlements::exact(
+        Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
     .union(MetadosisMutationEntitlements::exact(
@@ -129,7 +134,7 @@ fn exact_production_causes_receive_only_their_purpose() {
 }
 
 #[test]
-fn protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt() {
+fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
     let block_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
     let mut active_day = block_day;
     for _ in 0..6 {
@@ -148,7 +153,15 @@ fn protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt() {
         cycle_active_utc_day: Some(active_day),
     });
 
-    let mut day = active_day;
+    assert!(entitlements.expects(
+        Purpose::CycleLifecycle,
+        metadosis_cycle_allocation_binding(
+            TEST_CHAIN_ID,
+            TEST_BLOCK_NUMBER,
+            outbe_primitives::time::date_key_to_utc_timestamp(active_day),
+        ),
+    ));
+    let mut day = outbe_primitives::time::next_date_key(active_day).expect("date step");
     while day < block_day {
         assert!(!entitlements.expects(
             Purpose::CycleLifecycle,

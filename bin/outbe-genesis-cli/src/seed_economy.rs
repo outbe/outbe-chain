@@ -9,16 +9,10 @@ use crate::error::GenesisError;
 use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, parse_u32, parse_u64,
-    timestamp_to_utc_date_key, u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS,
-    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES,
-    VAULT_ROUTER_LIQUIDITY_TARGETS,
+    u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
-
-/// Seed Cycle slot 2 with the UTC day owned by the genesis block.
-pub fn seed_cycle(storage: &mut StorageBuilder, genesis_timestamp: u64) {
-    storage.set_slot(2u64, timestamp_to_utc_date_key(genesis_timestamp));
-}
 
 /// Seed native EVM token balances (`alloc[addr].balance`).
 pub fn seed_coen(

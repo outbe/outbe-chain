@@ -3,9 +3,10 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{
     addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS},
     storage::{
-        metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
-        metadosis_late_settlement_binding, metadosis_process_ready_binding,
-        MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
+        metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
+        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        metadosis_process_ready_binding, MetadosisMutationEntitlements,
+        MetadosisMutationPurposeTag,
     },
 };
 
@@ -81,10 +82,15 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
             ),
         ));
     }
-    entitlements.union(MetadosisMutationEntitlements::exact(
-        Purpose::CycleLifecycle,
-        metadosis_process_ready_binding(chain_id, block_number, timestamp),
-    ))
+    entitlements
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_advance_due_binding(chain_id, block_number, timestamp),
+        ))
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(chain_id, block_number, timestamp),
+        ))
 }
 
 /// The Cycle cursor prepares capabilities for a protocol command, not for any

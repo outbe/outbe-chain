@@ -105,6 +105,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         assert_eq!(ed_22.metadosis_start, expected_metadosis_start);
         assert_eq!(ed_22.emission_limit_minor, U256::ZERO);
 
+        // Nested process-ready checks recompute the lease from the provider clock
+        // and block. Allocate day 20260922 into Processing so find_due_emission_day selects it.
+        crate::commands::dispatch_terminal_remainder_at(
+            &ctx,
+            U256::from(1_000_000u64),
+            date_key_to_utc_timestamp(20260922),
+        )
+        .unwrap();
+
         let metadosis = MetadosisContract::new(storage.clone());
         let before_start = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(2, expected_metadosis_start - 1, CHAIN_ID),
@@ -140,14 +149,6 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         assert_eq!(due_after_halt.day, 20260922);
         assert_eq!(due_after_halt.wwd, wwd_sep_01);
 
-        // Nested process-ready checks recompute the lease from the provider clock
-        // and block. This restart must report the same values the command binds.
-        crate::commands::dispatch_terminal_remainder_at(
-            &ctx,
-            U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20260922),
-        )
-        .unwrap();
         storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
         let aligned = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(storage.block_number().unwrap(), restart_ts, CHAIN_ID),
