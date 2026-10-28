@@ -664,12 +664,16 @@ pub(crate) fn series_balances(
         &IIssuedSeries::balanceOfCall { account: owner, id },
     )?;
     // Settled units live only in the Outbe Intex precompile; a target chain has no code there.
-    let settled = eth::read_call(
-        url,
-        outbe_primitives::addresses::INTEX_ADDRESS,
-        &eth::IIntex::balanceOfCall { account: owner, id },
-    )
-    .unwrap_or_default();
+    let intex = outbe_primitives::addresses::INTEX_ADDRESS;
+    let settled = if eth::code(url, intex)?.is_empty() {
+        U256::ZERO
+    } else {
+        eth::read_call(
+            url,
+            intex,
+            &eth::IIntex::balanceOfCall { account: owner, id },
+        )?
+    };
     Some((issued.to::<u64>(), settled.to::<u64>()))
 }
 
