@@ -1023,7 +1023,7 @@ mod copied_genesis_validator_history {
         let public_key: [u8; 48] = encoded.as_ref().try_into().unwrap();
         StorageHandle::enter(provider, |storage| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-            let minimum = U256::from(1_000u64);
+            let minimum = alloy_primitives::U256::from(1_000u64);
             validators
                 .test_seed_authoritative_min_stake(minimum)
                 .unwrap();
