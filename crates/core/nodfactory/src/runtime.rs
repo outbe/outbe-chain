@@ -241,7 +241,7 @@ fn nod_cost(entry_price_minor: U256, gratis_load_minor: U256) -> SettlementCost 
 ///
 /// `None` when entry is zero: a zero call price would fire on the first scan. Every
 /// later check reads the group's sealed copy, so a retune cannot re-term an issued Nod.
-pub fn call_terms(
+pub(crate) fn call_terms(
     storage: &StorageHandle<'_>,
     entry_price_minor: U256,
     reference_currency: u16,

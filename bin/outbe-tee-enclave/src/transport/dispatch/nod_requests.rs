@@ -14,25 +14,6 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
         EnclaveRequest::ExecuteLysis { request } => {
             super::nod::execute_lysis(keys, offer_key, chain_id, &request)
         }
-        #[cfg(not(feature = "e2e-test"))]
-        EnclaveRequest::CreateNodForTestV1 { .. } => EnclaveResponse::Error {
-            message: "NOD fixture command disabled".into(),
-        },
-        #[cfg(feature = "e2e-test")]
-        EnclaveRequest::CreateNodForTestV1 {
-            terms,
-            creator_public,
-            amount,
-        } => super::nod::create_for_test(
-            keys,
-            offer_key,
-            chain_id,
-            super::nod::NodFixtureInput {
-                terms,
-                creator_public,
-                amount,
-            },
-        ),
         EnclaveRequest::MineEncryptedNodV1 { request } => {
             super::nod::mine(keys, offer_key, chain_id, &request)
         }

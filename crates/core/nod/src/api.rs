@@ -67,6 +67,14 @@ pub fn add_nod(
     crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
+/// Removes `load` from the group's unpaid total.
+///
+/// `remove_nod` leaves an unsettled Nod's load on the old group. A storage-only
+/// reissue calls this first, then removes the item and adds it to the new group.
+pub fn take_unpaid_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
+    NodContract::new(storage.clone()).take_unpaid_load(group_key, load)
+}
+
 /// Removes a loaded Nod item and decrements membership, deleting the group only if empty.
 pub fn remove_nod(
     storage: &StorageHandle<'_>,

@@ -65,13 +65,22 @@ where
         block_number: u64,
         proposer: Address,
     ) -> Result<Option<[u8; 32]>, BlockExecutionError> {
-        if let Some(pub_bytes) = self.registry_attestation_pub(block_number, proposer)? {
+        if let Some(pub_bytes) = self
+            .block_one_bootstrap_attestation(block_number, proposer)
+            .filter(|key| *key != [0u8; 32])
+        {
             return Ok(Some(pub_bytes));
         }
-        if let Some(pub_bytes) = self.block_one_bootstrap_attestation(block_number, proposer) {
+        if let Some(pub_bytes) = self
+            .registry_attestation_pub(block_number, proposer)?
+            .filter(|key| *key != [0u8; 32])
+        {
             return Ok(Some(pub_bytes));
         }
-        if let Some(pub_bytes) = self.canary_attestation_fallback() {
+        if let Some(pub_bytes) = self
+            .canary_attestation_fallback()
+            .filter(|key| *key != [0u8; 32])
+        {
             return Ok(Some(pub_bytes));
         }
         Ok(None)
@@ -91,6 +100,7 @@ where
             leader_attestation_pub,
             tape,
         ))));
+        self.inner.evm.set_witness_state(self.witness_state.clone());
         self.body_tx_index = 0;
         self.frozen_enclave_witness = None;
         Ok(())
@@ -157,10 +167,18 @@ where
     }
 
     fn canary_attestation_fallback(&self) -> Option<[u8; 32]> {
-        if witness_policy().is_some() || self.is_verifier_witness_mode() {
-            return None;
+        #[cfg(test)]
+        {
+            if witness_policy().is_some() || self.is_verifier_witness_mode() {
+                return None;
+            }
+            outbe_tee::client_global::canary_attestation_pub()
         }
-        outbe_tee::client_global::canary_attestation_pub()
+        #[cfg(not(test))]
+        {
+            let _ = self;
+            None
+        }
     }
 }
 

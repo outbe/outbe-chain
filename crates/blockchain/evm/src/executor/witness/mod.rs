@@ -7,12 +7,18 @@ use outbe_primitives::{
     reshare_artifact::{encode_outbe_block_artifacts, ENCLAVE_WITNESS_RESERVED_BYTES},
 };
 use outbe_tee::witness::{
-    compressed_witness_bound, BlockWitnessFault, CandidateRejection, EnclaveWitnessTapeV1,
-    TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
+    compressed_witness_bound, encode_witness_payload_v1, BlockWitnessFault, CandidateRejection,
+    EnclaveWitnessTapeV1, TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
 };
 use std::sync::{Arc, Mutex};
 
+mod evm_scope;
 mod init;
+
+pub(crate) use evm_scope::{
+    clear_detached_trace_witness, install_detached_trace_witness, with_evm_transact_witness_scope,
+    EvmTransactWitnessInput,
+};
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -249,6 +255,13 @@ fn require_frozen_proposer_witness(
             "proposer recorded enclave witness entries but final extra_data omitted enclave_witness",
         ));
     }
+    if block_artifacts.enclave_witness.is_some() {
+        guard.latch(BlockWitnessFault::TapeInvalid);
+        return Err(witness_fault_to_block_error(
+            BlockWitnessFault::TapeInvalid,
+            "proposer recorded no frozen enclave witness but final extra_data carries enclave_witness",
+        ));
+    }
     Ok(())
 }
 
@@ -291,6 +304,23 @@ pub(in crate::executor) fn witness_fault_to_block_error(
     BlockExecutionError::Internal(InternalBlockExecutionError::Other(Box::new(evm_error)))
 }
 
+fn payload_len_fits_extra_data(payload_len: usize, base_len: usize) -> bool {
+    payload_len <= u16::MAX as usize
+        && payload_len.saturating_add(3) <= ENCLAVE_WITNESS_RESERVED_BYTES
+        && base_len.saturating_add(3).saturating_add(payload_len) <= OUTBE_MAX_EXTRA_DATA_SIZE
+}
+
+fn worst_case_base_extra_len(base_extra_data: &[u8]) -> Option<usize> {
+    let mut artifacts = decode_outbe_block_artifacts(base_extra_data).ok()?;
+    artifacts.enclave_witness = None;
+    artifacts.execution_summary = Some(ExecutionSummaryArtifact {
+        validator_fee_sum: U256::MAX,
+    });
+    artifacts.timestamp_millis_part = 999;
+    let encoded_base = encode_outbe_block_artifacts(&artifacts).ok()?;
+    Some(encoded_base.len().max(7))
+}
+
 pub(in crate::executor) fn tape_fits_budget(
     tape: &EnclaveWitnessTapeV1,
     base_extra_data: &[u8],
@@ -301,23 +331,36 @@ pub(in crate::executor) fn tape_fits_budget(
     if raw.is_empty() || raw.len() > MAX_DECOMPRESSED_WITNESS_BYTES {
         return false;
     }
-    let bound = compressed_witness_bound(raw.len());
-    if bound > u16::MAX as usize || bound.saturating_add(3) > ENCLAVE_WITNESS_RESERVED_BYTES {
+    let Some(base_len) = worst_case_base_extra_len(base_extra_data) else {
         return false;
+    };
+    if payload_len_fits_extra_data(compressed_witness_bound(raw.len()), base_len) {
+        return true;
     }
-    let Ok(mut artifacts) = decode_outbe_block_artifacts(base_extra_data) else {
-        return false;
+    encode_witness_payload_v1(tape)
+        .map(|encoded| payload_len_fits_extra_data(encoded.len(), base_len))
+        .unwrap_or(false)
+}
+
+pub(in crate::executor) fn finalize_prefix_witness_with(
+    witness_state: Option<&Arc<Mutex<WitnessState>>>,
+    base_extra_data: &[u8],
+) -> Result<(), BlockExecutionError> {
+    let Some(state) = witness_state else {
+        return Ok(());
     };
-    artifacts.enclave_witness = None;
-    artifacts.execution_summary = Some(ExecutionSummaryArtifact {
-        validator_fee_sum: U256::MAX,
-    });
-    artifacts.timestamp_millis_part = 999;
-    let Ok(encoded_base) = encode_outbe_block_artifacts(&artifacts) else {
-        return false;
-    };
-    let base_len = encoded_base.len().max(7);
-    base_len.saturating_add(3).saturating_add(bound) <= OUTBE_MAX_EXTRA_DATA_SIZE
+    let mut guard = state.lock().map_err(|_| witness_lock_poisoned())?;
+    if let Some(fault) = guard.first_witness_fault {
+        guard.staged.clear();
+        return Err(witness_fault_to_block_error(
+            fault,
+            "witness fault during pre-execution prefix",
+        ));
+    }
+    apply_finalized_prefix(&mut guard, base_extra_data)?;
+    guard.tx_index = Some(0);
+    guard.replay_cursor = 0;
+    Ok(())
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -368,26 +411,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(Some(WitnessExecutionScope::enter(state.clone())))
     }
 
-    pub(in crate::executor) fn finalize_prefix_witness(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
-        let Some(state) = self.witness_state.clone() else {
-            return Ok(());
-        };
-        let mut guard = state.lock().map_err(|_| witness_lock_poisoned())?;
-        if let Some(fault) = guard.first_witness_fault {
-            guard.staged.clear();
-            return Err(witness_fault_to_block_error(
-                fault,
-                "witness fault during pre-execution prefix",
-            ));
-        }
-        apply_finalized_prefix(&mut guard, self.block_extra_data.as_ref())
-    }
-
     pub(in crate::executor) fn advance_preexecuted_phase1_witness_index(
         &mut self,
     ) -> Result<(), BlockExecutionError> {
+        let next_index = self.body_tx_index.saturating_add(1);
         if let Some(state) = self.witness_state.as_ref() {
             let mut guard = state.lock().map_err(|_| witness_lock_poisoned())?;
             if let Some(fault) = guard.first_witness_fault {
@@ -411,8 +438,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     "pre-executed phase 1 cannot carry a body tx witness segment",
                 ));
             }
+            guard.tx_index = Some(next_index);
+            guard.replay_cursor = 0;
         }
-        self.body_tx_index = self.body_tx_index.saturating_add(1);
+        self.body_tx_index = next_index;
         Ok(())
     }
 
@@ -510,6 +539,8 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                 self.block_extra_data.as_ref(),
             )?;
             self.body_tx_index = self.body_tx_index.saturating_add(1);
+            guard.tx_index = Some(self.body_tx_index);
+            guard.replay_cursor = 0;
         } else {
             clear_uncommitted_witness(&mut guard);
         }

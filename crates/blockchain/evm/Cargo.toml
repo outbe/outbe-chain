@@ -90,6 +90,7 @@ postcard.workspace = true
 outbe-genesis-cli.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-evm = { path = ".", features = ["test-utils"] }
+outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
 outbe-node.workspace = true

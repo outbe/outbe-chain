@@ -16,6 +16,8 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
+        self.inner.evm.set_executor_owned(true);
+        crate::executor::witness::clear_detached_trace_witness();
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
@@ -59,6 +61,13 @@ where
         if !self.execute_outbe_block_hooks {
             if block_number > 0 {
                 self.init_rpc_direct_witness_state();
+                self.inner.evm.set_witness_state(self.witness_state.clone());
+                crate::executor::witness::install_detached_trace_witness(
+                    self.inner.evm.chain_id(),
+                    block_number,
+                    timestamp,
+                    self.witness_state.clone(),
+                );
             }
             return Ok(());
         }
@@ -74,6 +83,11 @@ where
         if block_number > 0 {
             self.validate_proposer_identity(proposer, allow_boundary_proposer)?;
             self.init_block_witness_state(block_number, proposer, &block_artifacts)?;
+        } else if block_artifacts.enclave_witness.is_some() {
+            return Err(crate::executor::witness::witness_fault_to_block_error(
+                outbe_tee::witness::BlockWitnessFault::TapeInvalid,
+                "genesis block 0 must not carry enclave_witness",
+            ));
         }
 
         // Phase 1 `verify_v2_proof`
@@ -114,6 +128,8 @@ where
             // 5. Run Outbe block hooks. The provider flush commits through State,
             //    which notifies the parallel state root hook.
             let (_hook_changes, hook_events) = {
+                let witness_state = self.witness_state.clone();
+                let base_extra_data = self.block_extra_data.clone();
                 let db = self.inner.evm.db_mut();
                 let ctx = build_block_context(
                     db,
@@ -126,7 +142,7 @@ where
                         validators: Vec::new(),
                     },
                 )?;
-                run_atomic_storage_hooks(
+                hooks::run_atomic_storage_hooks_with_pre_flush(
                     db,
                     ctx,
                     |hook_ctx| -> outbe_primitives::error::Result<()> {
@@ -141,6 +157,12 @@ where
                         }
                         run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
                     },
+                    || {
+                        crate::executor::witness::finalize_prefix_witness_with(
+                            witness_state.as_ref(),
+                            base_extra_data.as_ref(),
+                        )
+                    },
                 )?
             };
             Ok(hook_events)
@@ -148,7 +170,12 @@ where
         drop(prefix_witness_scope);
         self.check_no_witness_fault()?;
         let hook_events = preexec_outcome?;
-        self.finalize_prefix_witness()?;
+        crate::executor::witness::install_detached_trace_witness(
+            chain_id,
+            block_number,
+            timestamp,
+            self.witness_state.clone(),
+        );
         // Provider dropped here - mutable DB borrow released.
 
         // Log hook events via tracing for operator observability.

@@ -261,19 +261,25 @@ where
         &mut self,
         tx: impl ExecutableTx<Self>,
     ) -> Result<Self::Result, BlockExecutionError> {
+        crate::executor::witness::clear_detached_trace_witness();
         outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
-        if self.has_active_consensus_witness_scope() {
-            return Err(
-                crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
-            );
-        }
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
             return Err(
                 crate::errors::ExecutorValidationError::ReservedSystemTxWithoutCommit.into(),
             );
         }
+        if self.has_active_consensus_witness_scope() {
+            return Err(
+                crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
+            );
+        }
+        if self.witness_state.is_none() {
+            self.init_rpc_direct_witness_state();
+            self.inner.evm.set_witness_state(self.witness_state.clone());
+        }
+        let _witness_scope = self.prepare_tx_witness_scope(false)?;
         self.inner
             .execute_transaction_without_commit(WithTxEnv {
                 tx: Arc::new(recovered),
@@ -287,6 +293,7 @@ where
         tx: impl ExecutableTx<Self>,
         f: impl FnOnce(&Self::Result) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        crate::executor::witness::clear_detached_trace_witness();
         outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
@@ -356,6 +363,7 @@ where
     }
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+        crate::executor::witness::clear_detached_trace_witness();
         let block_timestamp =
             outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
                 .map_err(crate::errors::ExecutorValidationError::from)?;

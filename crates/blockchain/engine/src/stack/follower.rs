@@ -8,15 +8,14 @@ use finalization::finalization_bytes_for_height;
 
 use super::*;
 
-/// Keyless replay has no enclave socket. Skip the resident probe when the
-/// process policy is `ReplayOnly` or no enclave session is installed.
-/// A configured socket keeps the resident-key check.
+/// Keyless replay has no enclave socket. Skip the resident probe only when the
+/// process policy is explicitly `ReplayOnly`. A configured socket keeps the
+/// resident-key check.
 pub(in crate::stack) fn follower_skips_resident_offer_probe(args: &ConsensusArgs) -> bool {
     if args.tee_enclave_socket.is_some() {
         return false;
     }
     outbe_tee::witness::witness_policy() == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly)
-        || outbe_tee::try_with_enclave(|_| ()).is_none()
 }
 
 /// Local chain and process facts that decide `ValidatorBootstrapReady`.
@@ -446,10 +445,7 @@ mod resident_probe_tests {
         assert!(args.tee_enclave_socket.is_none());
         let replay_only = outbe_tee::witness::witness_policy()
             == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly);
-        assert_eq!(
-            follower_skips_resident_offer_probe(&args),
-            replay_only || outbe_tee::try_with_enclave(|_| ()).is_none()
-        );
+        assert_eq!(follower_skips_resident_offer_probe(&args), replay_only);
         let mut with_socket = args;
         with_socket.tee_enclave_socket = Some(std::path::PathBuf::from("/tmp/tee.sock"));
         assert!(!follower_skips_resident_offer_probe(&with_socket));

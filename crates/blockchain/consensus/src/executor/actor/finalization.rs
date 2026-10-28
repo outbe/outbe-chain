@@ -288,6 +288,19 @@ where
             );
         } else {
             let status = self.engine.new_payload(execution_data).await.map_err(|e| {
+                if let Some(abort) =
+                    outbe_primitives::projection::NodeLocalExecutionAbort::find(&e)
+                {
+                    if let Some(witness_reason) = abort.witness_reason {
+                        error!(
+                            height = %height,
+                            digest = %digest,
+                            ?witness_reason,
+                            reason = %abort.reason,
+                            "CRITICAL: certified finalized block failed enclave witness verification"
+                        );
+                    }
+                }
                 crate::errors::ExecutorError::SendFinalizedBlockFailed {
                     height,
                     digest,

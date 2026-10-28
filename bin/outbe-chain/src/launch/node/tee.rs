@@ -69,6 +69,7 @@ pub(super) async fn prepare(
         .ok_or(LaunchError::MissingTeeEnclaveSocket {
             mode: initial_tee_policy.attestation_mode,
         })?;
+    install_enclave_backed_policy()?;
     let endpoint = socket
         .to_str()
         .ok_or(LaunchError::TeeEnclaveEndpointNotUtf8)?;
@@ -393,6 +394,32 @@ fn install_keyless_replay_policy() -> eyre::Result<()> {
     Ok(())
 }
 
+fn enclave_backed_policy_ok(
+    current: Option<outbe_tee::witness::WitnessPolicy>,
+) -> eyre::Result<bool> {
+    match current {
+        Some(outbe_tee::witness::WitnessPolicy::EnclaveBacked) => Ok(false),
+        None => Ok(true),
+        Some(policy) => Err(eyre::eyre!(
+            "enclave-backed node requires WitnessPolicy::EnclaveBacked, found {policy:?}"
+        )),
+    }
+}
+
+fn install_enclave_backed_policy() -> eyre::Result<()> {
+    if !enclave_backed_policy_ok(outbe_tee::witness::witness_policy())? {
+        return Ok(());
+    }
+    outbe_tee::witness::install_witness_policy(outbe_tee::witness::WitnessPolicy::EnclaveBacked)
+        .or_else(|_| enclave_backed_policy_ok(outbe_tee::witness::witness_policy()).map(|_| ()))?;
+    if outbe_tee::witness::witness_policy()
+        != Some(outbe_tee::witness::WitnessPolicy::EnclaveBacked)
+    {
+        eyre::bail!("enclave-backed node failed to install WitnessPolicy::EnclaveBacked");
+    }
+    Ok(())
+}
+
 fn keyless_runtime_workers() -> TeeRuntimeWorkers {
     let (tee_lease_armed_tx, tee_lease_armed_rx) = tokio::sync::watch::channel(false);
     TeeRuntimeWorkers {
@@ -609,6 +636,16 @@ mod tests {
         let err = keyless_replay_policy_ok(Some(WitnessPolicy::EnclaveBacked))
             .expect_err("enclave policy");
         assert!(err.to_string().contains("ReplayOnly"));
+    }
+
+    #[test]
+    fn enclave_backed_policy_accepts_only_enclave_backed() {
+        use outbe_tee::witness::WitnessPolicy;
+        assert!(enclave_backed_policy_ok(None).unwrap());
+        assert!(!enclave_backed_policy_ok(Some(WitnessPolicy::EnclaveBacked)).unwrap());
+        let err =
+            enclave_backed_policy_ok(Some(WitnessPolicy::ReplayOnly)).expect_err("replay policy");
+        assert!(err.to_string().contains("EnclaveBacked"));
     }
 
     #[test]

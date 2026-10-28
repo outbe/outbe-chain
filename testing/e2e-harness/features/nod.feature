@@ -1,8 +1,9 @@
 @tee @min-validators-4
 Feature: Nod from issuance to Gratis and COEN
-  # The Nod half of the shared lifecycle. Lysis over a certified generation is covered
-  # by the Lysis scenario; here the Nods are issued straight to five owners in one
-  # group, so the phases every entity shares run on one chain and directly in EVM state.
+  # The Nod half of the shared lifecycle. Five owners each submit one encrypted
+  # Tribute. Metadosis Lysis seals the Nods, each owner mints through
+  # ITribute::createNod, and the harness moves the group stamp so the phases every
+  # entity shares run on one chain.
   #
   # Every Nod is issued in MYR against a USD reference. Two are paid while issued
   # and two inside the call notice, one by its owner and one by a third party, in
@@ -16,7 +17,7 @@ Feature: Nod from issuance to Gratis and COEN
   # profile's, so it is waited out for real.
   @nod-lifecycle @myr-issuance
   Scenario: Five Nods in one group are paid by owners and third parties in both currencies, one forfeits, and the paid ones end in COEN
-    Given a fresh localnet with a 20-block voting window
+    Given a fresh Nod lifecycle localnet with a 20-block voting window
     And the deploy account is funded on the committee chain
     When the settlement currencies are registered on the committee chain
     Then owners may settle in each of them

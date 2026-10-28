@@ -1,13 +1,14 @@
-//! What a Nod supplies to the shared lifecycle. One group holds five Nods, issued straight
-//! to five owners. Two are paid while issued, two are inside the call notice, and one is
-//! forfeited.
+//! What a Nod supplies to the shared lifecycle. One group holds five Nods. Each owner
+//! submits one encrypted Tribute, Metadosis Lysis seals it, and the owner mints through
+//! `ITribute::createNod`. The harness then moves the group stamp. Two are paid while
+//! issued, two are inside the call notice, and one is forfeited.
 
 use outbe_primitives::time::SECONDS_PER_DAY;
 use std::time::Duration;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use cucumber::when;
+use cucumber::{given, when};
 use outbe_nod::config::NodParams;
 
 use crate::features::entity_lifecycle::chain::{
@@ -15,26 +16,19 @@ use crate::features::entity_lifecycle::chain::{
 };
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
+use crate::features::entity_lifecycle::markets::MYR_ISO;
 use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
 use crate::world::forge::DEPLOYER_KEY;
+use crate::world::rpc::TributeOfferParams;
 use crate::world::settlement_currency::USD_ISO;
 use crate::world::World;
 
 alloy_sol_types::sol! {
     interface INodFactoryTestArming {
-        function issueForTest(
-            address owner,
-            bytes32 creatorPublicKey,
-            uint32 worldwideDay,
-            uint256 gratisLoadMinor,
-            uint256 entryPriceMinor,
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint64 issuedAt
-        ) external;
+        function backdateNodForTest(uint256 nodId, uint64 issuedAt, uint256 gratisLoadMinor) external;
         function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
     }
 }
@@ -44,8 +38,6 @@ const HOLDER_SEED: u64 = 0x0e0d_0000;
 /// Shared with Gem and Intex, and low enough that the controlled COEN/USD quote clears
 /// the DEV call price.
 const ENTRY_PRICE_MINOR: u64 = 800_000;
-/// Not a whole unit, so the cost leaves a remainder to floor.
-const GRATIS_LOAD_MINOR: u64 = 5_000_003;
 /// `effectiveState` of `INod.NodData`.
 const ISSUED: u8 = 0;
 const CALLED: u8 = 1;
@@ -61,42 +53,103 @@ const EXPIRY_DAY_SECS: u64 = 86_400;
 
 pub(crate) struct NodLifecycle;
 
+#[given(expr = "a fresh Nod lifecycle localnet with a {int}-block voting window")]
+fn fresh_nod_lifecycle_localnet(world: &mut World, window: u64) {
+    super::common::bootstrap_localnet(
+        world,
+        window,
+        &[("TESTNET_METADOSIS_OFFERING_SECONDS", "3600".to_owned())],
+    );
+    let day = world
+        .localnet
+        .prepare_nod_lifecycle_fixture(ENTRY_PRICE_MINOR)
+        .expect("Nod lifecycle Offering and Lysis fixture");
+    world.state.wwd = Some(day.to_string());
+    super::common::start_bootstrapped_localnet(
+        world,
+        &crate::world::localnet::StartOpts::with_voting_window(window),
+    );
+}
+
 #[when("five owners are issued Nods in one group")]
 fn issue_five_nods(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
     let issuance_currency = world
         .state
         .issuance_market
         .expect("the Nod scenario prices an issuance market");
-    let now = head_time(world);
-    let day = outbe_primitives::time::worldwide_day_from_timestamp(now);
+    assert_eq!(issuance_currency, MYR_ISO);
+    holders::fund(world, HOLDER_SEED);
+    let keys: Vec<String> = (0..HOLDERS).map(owner_key).collect();
+    super::l2_registration::ensure_tribute_offer_operators(world, &keys);
+    let wwd = world.state.wwd.clone().expect("Nod offering day");
+    super::tribute_projection::wait_for_offering(world, &wwd);
+    for key in &keys {
+        let tx_hash = world
+            .rpc
+            .tribute_cross_currency_offer(
+                key,
+                TributeOfferParams {
+                    wwd: &wwd,
+                    amounts: ("1", "0"),
+                    currency: issuance_currency,
+                },
+                USD_ISO,
+            )
+            .expect("submit encrypted Tribute");
+        assert!(
+            world.rpc.wait_successful_receipt(&tx_hash, 240),
+            "encrypted Tribute did not mine"
+        );
+    }
+    super::lysis::reach_native_lysis_processing_time(world);
+    super::lysis::wait_for_native_lysis(world);
+
+    let url = world.rpc.url(world.validators.primary_port());
+    let day = wwd.parse::<u32>().expect("numeric offering day");
+    let worldwide_day = outbe_primitives::time::WorldwideDay::new(day);
     // The call counts only days after the group's stamp: stamp it behind every day
     // the scenario seeds.
-    let issued_at = now.saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
-    holders::fund(world, HOLDER_SEED);
+    let issued_at =
+        head_time(world).saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
     let mut nods = Vec::with_capacity(HOLDERS);
-    for index in 0..HOLDERS {
+    let mut shared_load = None;
+    for (index, key) in keys.iter().enumerate().take(HOLDERS) {
         let owner = owner_address(index);
-        let issue = INodFactoryTestArming::issueForTestCall {
-            owner,
-            creatorPublicKey: crate::internal::nod_keys::public(owner),
-            worldwideDay: day,
-            gratisLoadMinor: U256::from(GRATIS_LOAD_MINOR),
-            entryPriceMinor: U256::from(ENTRY_PRICE_MINOR),
-            issuanceCurrency: issuance_currency,
-            referenceCurrency: USD_ISO,
-            issuedAt: issued_at,
-        };
+        let tribute_id =
+            outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, worldwide_day)
+                .expect("tribute id")
+                .to_u256();
+        let outcome = eth::send_call_outcome(
+            &url,
+            addresses::TRIBUTE_ADDR,
+            key,
+            &eth::ITribute::createNodCall {
+                tributeId: tribute_id,
+            },
+            Some(U256::ZERO),
+        )
+        .expect("submit ITribute::createNod");
+        assert_mined_success(&outcome, "ITribute::createNod");
+        let nod_id = nod_of(&url, owner);
+        let load = sealed_load(world, nod_id);
+        match shared_load {
+            None => shared_load = Some(load),
+            Some(expected) => assert_eq!(load, expected, "the five Nods must share one load"),
+        }
         let outcome = eth::send_call_outcome(
             &url,
             addresses::NOD_FACTORY_ADDR,
             DEPLOYER_KEY,
-            &issue,
+            &INodFactoryTestArming::backdateNodForTestCall {
+                nodId: nod_id,
+                issuedAt: issued_at,
+                gratisLoadMinor: load,
+            },
             None,
         )
-        .expect("submit test Nod issuance");
-        assert_mined_success(&outcome, "test Nod issuance");
-        nods.push(nod_of(&url, owner));
+        .expect("submit backdateNodForTest");
+        assert_mined_success(&outcome, "backdateNodForTest");
+        nods.push(nod_id);
     }
     world.state.lifecycle_nods = nods;
 }
@@ -155,13 +208,16 @@ impl Lifecycle for NodLifecycle {
                 (issuance_currency, USD_ISO)
             );
             assert_eq!(data.entryPriceMinor, entry);
+            let load = crate::internal::nod_keys::decrypt(world, &data);
+            assert!(!load.is_zero(), "Lysis sealed a zero Nod load");
             assert_eq!(
-                crate::internal::nod_keys::decrypt(world, &data),
-                U256::from(GRATIS_LOAD_MINOR)
+                load,
+                crate::internal::nod_keys::decrypt(world, &first),
+                "the five Nods must share one load"
             );
             assert_eq!(
                 data.settlementCostMinor,
-                entry * U256::from(GRATIS_LOAD_MINOR) / U256::from(1_000_000)
+                entry * load / U256::from(1_000_000)
             );
             let dev = NodParams::DEV;
             assert_eq!(
@@ -253,6 +309,7 @@ impl Lifecycle for NodLifecycle {
         let url = world.rpc.url(world.validators.primary_port());
         let owner = owner_address(FORFEITED);
         let id = nod(world, FORFEITED);
+        let load = forfeited_load(world, id);
         assert_burned(world, owner, id, FORFEIT_TIMEOUT);
         let (from, before) = world
             .state
@@ -266,7 +323,6 @@ impl Lifecycle for NodLifecycle {
             .nod_before_forfeit
             .expect("the Nod group captured before the notice lapsed");
         assert_eq!((captured_height, captured_id), (from, id));
-        let load = U256::from(GRATIS_LOAD_MINOR);
         assert_single_event(
             &url,
             addresses::NOD_ADDR,
@@ -292,7 +348,7 @@ impl Lifecycle for NodLifecycle {
 
     fn mine_paid(&self, world: &World) -> Vec<Mined> {
         let url = world.rpc.url(world.validators.primary_port());
-        let load = U256::from(GRATIS_LOAD_MINOR);
+        let load = sealed_load(world, nod(world, 0));
         holders::paid()
             .map(|index| {
                 let key = owner_key(index);
@@ -332,6 +388,29 @@ fn owner_address(index: usize) -> Address {
 
 fn nod(world: &World, index: usize) -> U256 {
     world.state.lifecycle_nods[index]
+}
+
+fn sealed_load(world: &World, id: U256) -> U256 {
+    let load = crate::internal::nod_keys::decrypt(world, &read_nod(world, id));
+    assert!(!load.is_zero(), "Lysis sealed a zero Nod load");
+    load
+}
+
+/// The forfeited Nod's load, read before the sweep deletes its body.
+/// A block between the arming transaction and this step may already have burned it;
+/// the other four Nods carry the same load.
+fn forfeited_load(world: &World, id: U256) -> U256 {
+    let url = world.rpc.url(world.validators.primary_port());
+    let load = match eth::read_call(
+        &url,
+        addresses::NOD_ADDR,
+        &eth::INod::getNodCall { nodId: id },
+    ) {
+        Some(data) => crate::internal::nod_keys::decrypt(world, &data),
+        None => sealed_load(world, nod(world, 0)),
+    };
+    assert!(!load.is_zero(), "Lysis sealed a zero Nod load");
+    load
 }
 
 fn target(world: &World, index: usize) -> Target {

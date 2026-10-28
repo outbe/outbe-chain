@@ -131,6 +131,8 @@ fn unsigned_failure(state: &Arc<Mutex<WitnessState>>) -> Result<(), TransportErr
         state
             .candidate_rejection
             .get_or_insert(CandidateRejection::UnsignedEnclaveError);
+    } else if state.mode == WitnessExecutionMode::VerifierWithEnclave {
+        state.latch(BlockWitnessFault::LocalUnavailable);
     } else {
         state.latch(BlockWitnessFault::TapeInvalid);
     }
@@ -177,7 +179,7 @@ fn prepare_consensus_call(
         return Err(fault_error(fault));
     }
     if state.candidate_rejection.is_some() {
-        return Err(TransportError::Unavailable(
+        return Err(TransportError::EnclaveError(
             "witness candidate already rejected".into(),
         ));
     }

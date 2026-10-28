@@ -245,4 +245,30 @@ fn unsigned_system_body_and_local_transport_outage_are_sticky() {
         s.lock().unwrap().first_witness_fault,
         Some(BlockWitnessFault::LocalUnavailable)
     );
+    drop(_scope);
+    let leader = ed25519_dalek::SigningKey::from_bytes(&[4; 32]);
+    let s = Arc::new(Mutex::new(WitnessState::new(
+        WitnessExecutionMode::VerifierWithEnclave,
+        Some(leader.verifying_key().to_bytes()),
+        EnclaveWitnessTapeV1 {
+            prefix: vec![EnclaveWitnessEntryV1::try_from(signed_response(&leader, 7)).unwrap()],
+            txs: Vec::new(),
+        },
+    )));
+    let _scope = WitnessExecutionScope::enter(s.clone());
+    assert!(consensus_call(
+        "ReadNodAmountV1",
+        || Ok((
+            [9; 32],
+            EnclaveResponse::Error {
+                message: "local enclave busy".into()
+            }
+        )),
+        verify_signed
+    )
+    .is_err());
+    assert_eq!(
+        s.lock().unwrap().first_witness_fault,
+        Some(BlockWitnessFault::LocalUnavailable)
+    );
 }

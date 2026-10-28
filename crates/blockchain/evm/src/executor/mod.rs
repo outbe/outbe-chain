@@ -70,7 +70,7 @@ mod receipts;
 mod system_execution;
 #[cfg(test)]
 mod tests;
-mod witness;
+pub(crate) mod witness;
 mod zero_fee;
 
 pub use accounting::{AccountedParentArtifact, AccountedParentArtifactProvider};
@@ -103,6 +103,7 @@ pub(crate) use tests::harness::with_phase1_verify_disabled;
 
 use context::{build_block_context, validate_genesis_state};
 
+#[cfg(test)]
 use hooks::run_atomic_storage_hooks;
 
 use receipts::{validator_fee_for_gas, SystemFailureReceiptInput};

@@ -42,7 +42,17 @@ fn verify_nod_read(
 
 #[test]
 fn reuses_prewarm_results_is_pinned_false() {
-    let config = crate::config::OutbeEvmConfig::new(Arc::new(ChainSpec::default()));
+    let existing_chain_id = outbe_consensus::proof::consensus_chain_id();
+    let chain_id = if existing_chain_id == 0 {
+        424242
+    } else {
+        existing_chain_id
+    };
+    let spec = ChainSpec {
+        chain: reth_ethereum::chainspec::Chain::from_id(chain_id),
+        ..Default::default()
+    };
+    let config = crate::config::OutbeEvmConfig::new(Arc::new(spec));
     assert!(
         !config.reuses_prewarm_results(),
         "OutbeEvmConfig must never reuse speculative prewarm results without witness commit conditions"
@@ -68,26 +78,27 @@ fn block_one_and_mandatory_prefix_worst_case_fixture_fits_budget() {
         tape.prefix
             .push(EnclaveWitnessEntryV1::try_from(resp).unwrap());
     }
-    let mut bootstrap_entries = Vec::new();
-    for idx in 0..16u8 {
-        let request_hash = B256::repeat_byte(0x80 | idx);
-        let outcome = vec![0xAA; 96];
-        let onboarding_artifact = vec![0xBB; 320];
-        let preimage = outbe_tee::dcap_protocol::dcap_onboarding_attestation_preimage(
+    let mut bootstrap_entries = Vec::with_capacity(140);
+    for idx in 0..140u16 {
+        let request_hash = keccak256(idx.to_be_bytes());
+        let mut outcome = Vec::with_capacity(280);
+        outcome.extend_from_slice(&[0xAA; 96]);
+        outcome.extend_from_slice(
+            b"INTEL-SA-00334,INTEL-SA-00615,INTEL-SA-00657,INTEL-SA-00828,INTEL-SA-01045",
+        );
+        outcome.extend_from_slice(&idx.to_le_bytes());
+        outcome.resize(280, 0x5A);
+        let preimage = outbe_tee::dcap_protocol::dcap_verification_attestation_preimage(
             request_hash,
             &outcome,
-            &onboarding_artifact,
         )
         .unwrap();
         let sig = leader_sk.sign(&preimage);
-        bootstrap_entries.push(
-            EnclaveWitnessEntryV1::DcapOnboardingVerificationFinishedV1 {
-                request_hash,
-                outcome,
-                onboarding_artifact,
-                attestation_tag: sig.to_bytes().to_vec(),
-            },
-        );
+        bootstrap_entries.push(EnclaveWitnessEntryV1::DcapVerificationFinishedV1 {
+            request_hash,
+            outcome,
+            attestation_tag: sig.to_bytes().to_vec(),
+        });
     }
     tape.txs.push(TxWitnessV1 {
         tx_index: 0,
@@ -369,4 +380,146 @@ fn witness_fault_to_block_error_preserves_typed_witness_abort_reason() {
         assert_eq!(found.witness_reason, Some(expected));
         assert_eq!(found.reason, "test detail");
     }
+}
+
+#[test]
+fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
+    let leader_sk = SigningKey::from_bytes(&[0x71; 32]);
+    let leader_pk = leader_sk.verifying_key().to_bytes();
+    let hash0 = B256::repeat_byte(0x72);
+    let hash2 = B256::repeat_byte(0x73);
+    let entry0 =
+        EnclaveWitnessEntryV1::try_from(sign_nod_read(&leader_sk, hash0, U256::from(11))).unwrap();
+    let entry2 =
+        EnclaveWitnessEntryV1::try_from(sign_nod_read(&leader_sk, hash2, U256::from(22))).unwrap();
+
+    outbe_tee::witness::set_witness_policy_for_test(Some(
+        outbe_tee::witness::WitnessPolicy::ReplayOnly,
+    ));
+
+    // 1. Prewarm (precompiles_mut_called = true) leaves current_witness_state() as None and fails closed.
+    super::clear_detached_trace_witness();
+    super::with_evm_transact_witness_scope(
+        super::EvmTransactWitnessInput {
+            attached_state: None,
+            owned_by_executor: false,
+            precompiles_mut_called: true,
+            chain_id: 424242,
+            block_number: 5,
+            block_timestamp: 1000,
+        },
+        || {
+            assert!(outbe_tee::call_context::current_witness_state().is_none());
+            let err = consensus_call(
+                "prewarm_call",
+                || panic!("prewarm must not reach transport"),
+                |pk, r| verify_nod_read(pk, hash0, r),
+            )
+            .unwrap_err();
+            assert!(err.is_node_local());
+        },
+    );
+
+    // 2. Direct RPC (owned_by_executor = false, precompiles_mut_called = false) enters RpcDirect.
+    super::with_evm_transact_witness_scope(
+        super::EvmTransactWitnessInput {
+            attached_state: None,
+            owned_by_executor: false,
+            precompiles_mut_called: false,
+            chain_id: 424242,
+            block_number: 5,
+            block_timestamp: 1000,
+        },
+        || {
+            let state = outbe_tee::call_context::current_witness_state()
+                .expect("direct RPC must enter RpcDirect scope");
+            assert_eq!(state.lock().unwrap().mode, WitnessExecutionMode::RpcDirect);
+            let err = consensus_call(
+                "rpc_direct_keyless",
+                || panic!("keyless RpcDirect must not reach transport"),
+                |pk, r| verify_nod_read(pk, hash0, r),
+            )
+            .unwrap_err();
+            assert!(err.to_string().contains("PrivateExecutionUnavailable"));
+        },
+    );
+
+    // 3. Detached historical trace witness replays tx_index=0, skips non-enclave tx_index=1, and replays tx_index=2.
+    let trace_state = Arc::new(Mutex::new(WitnessState::new(
+        WitnessExecutionMode::VerifierReplay,
+        Some(leader_pk),
+        EnclaveWitnessTapeV1 {
+            prefix: Vec::new(),
+            txs: vec![
+                TxWitnessV1 {
+                    tx_index: 0,
+                    entries: vec![entry0],
+                },
+                TxWitnessV1 {
+                    tx_index: 2,
+                    entries: vec![entry2],
+                },
+            ],
+        },
+    )));
+    super::install_detached_trace_witness(424242, 5, 1000, Some(trace_state.clone()));
+
+    let rpc_input = super::EvmTransactWitnessInput {
+        attached_state: None,
+        owned_by_executor: false,
+        precompiles_mut_called: false,
+        chain_id: 424242,
+        block_number: 5,
+        block_timestamp: 1000,
+    };
+    // tx_index = 0
+    super::with_evm_transact_witness_scope(rpc_input, || {
+        let (_, resp) = consensus_call(
+            "trace_tx0",
+            || panic!("VerifierReplay must not reach transport"),
+            |pk, r| verify_nod_read(pk, hash0, r),
+        )
+        .unwrap();
+        assert!(
+            matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(11))
+        );
+    });
+    // tx_index = 1 (no enclave calls)
+    super::with_evm_transact_witness_scope(
+        super::EvmTransactWitnessInput {
+            attached_state: None,
+            owned_by_executor: false,
+            precompiles_mut_called: false,
+            chain_id: 424242,
+            block_number: 5,
+            block_timestamp: 1000,
+        },
+        || {},
+    );
+    // tx_index = 2
+    super::with_evm_transact_witness_scope(
+        super::EvmTransactWitnessInput {
+            attached_state: None,
+            owned_by_executor: false,
+            precompiles_mut_called: false,
+            chain_id: 424242,
+            block_number: 5,
+            block_timestamp: 1000,
+        },
+        || {
+            let (_, resp) = consensus_call(
+                "trace_tx2",
+                || panic!("VerifierReplay must not reach transport"),
+                |pk, r| verify_nod_read(pk, hash2, r),
+            )
+            .unwrap();
+            assert!(
+                matches!(resp, EnclaveResponse::NodAmountReadV1 { amount, .. } if amount == U256::from(22))
+            );
+        },
+    );
+    assert_eq!(trace_state.lock().unwrap().tx_cursor, 2);
+
+    super::clear_detached_trace_witness();
+    outbe_tee::witness::set_witness_policy_for_test(None);
 }

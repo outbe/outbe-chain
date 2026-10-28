@@ -402,11 +402,6 @@ pub enum EnclaveResponse {
         request_hash: B256,
         artifact: Vec<u8>,
     },
-    NodCreatedForTestV1 {
-        nod: outbe_primitives::nod_encryption::EncryptedNodV1,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
     NodEncryptedForTributeV1 {
         nod: outbe_primitives::nod_encryption::EncryptedNodV1,
         inputs_canonical_hash: B256,
@@ -701,8 +696,8 @@ mod wire_compat_tests {
             reason: String::new(),
             attestation_tag: Vec::new(),
         };
-        assert_eq!(postcard::to_allocvec(&old_tail).unwrap()[0], 53);
-        assert_eq!(postcard::to_allocvec(&prepared).unwrap()[0], 54);
-        assert_eq!(postcard::to_allocvec(&rejected).unwrap()[0], 55);
+        assert_eq!(postcard::to_allocvec(&old_tail).unwrap()[0], 52);
+        assert_eq!(postcard::to_allocvec(&prepared).unwrap()[0], 53);
+        assert_eq!(postcard::to_allocvec(&rejected).unwrap()[0], 54);
     }
 }

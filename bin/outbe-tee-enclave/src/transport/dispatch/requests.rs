@@ -57,8 +57,7 @@ pub(in crate::transport) fn dispatch_with_initialization(
         initialization: context,
     };
     match req {
-        req @ (EnclaveRequest::CreateNodForTestV1 { .. }
-        | EnclaveRequest::ExecuteLysis { .. }
+        req @ (EnclaveRequest::ExecuteLysis { .. }
         | EnclaveRequest::MineEncryptedNodV1 { .. }
         | EnclaveRequest::ReadNodAmountV1 { .. }
         | EnclaveRequest::EncryptNodForTributeV1 { .. }

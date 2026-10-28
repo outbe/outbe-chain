@@ -116,6 +116,9 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     >,
     inspect: bool,
     abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    owned_by_executor: bool,
+    precompiles_mut_called: bool,
+    witness_state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
 }
 
 /// Creates a new Outbe EVM instance.
@@ -133,10 +136,23 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
         inner: evm,
         inspect,
         abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
+        owned_by_executor: false,
+        precompiles_mut_called: false,
+        witness_state: None,
     }
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
+    pub(crate) fn set_owned_by_executor(&mut self, owned: bool) {
+        self.owned_by_executor = owned;
+    }
+
+    pub(crate) fn set_attached_witness_state(
+        &mut self,
+        state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+        self.witness_state = state;
+    }
     /// Consumes self and returns the inner revm instance.
     pub fn into_inner(
         self,
@@ -208,16 +224,35 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        let call = self.abort_bridge.begin_call();
-        self.inner.ctx.set_tx(tx);
-        let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
-        let output = if self.inspect {
-            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
-        } else {
-            handler.run(&mut NativeDelegationEvm(&mut self.inner))
-        };
-        let state = self.inner.finalize();
-        Ok(ResultAndState::new(call.finish(output)?, state))
+        let attached_state = self.witness_state.clone();
+        let owned_by_executor = self.owned_by_executor;
+        let precompiles_mut_called = self.precompiles_mut_called;
+        let chain_id = self.chain_id();
+        let block_number = self.block().number.saturating_to::<u64>();
+        let block_timestamp = self.block().timestamp.saturating_to::<u64>();
+        crate::executor::witness::with_evm_transact_witness_scope(
+            crate::executor::witness::EvmTransactWitnessInput {
+                attached_state: attached_state.as_ref(),
+                owned_by_executor,
+                precompiles_mut_called,
+                chain_id,
+                block_number,
+                block_timestamp,
+            },
+            || {
+                let call = self.abort_bridge.begin_call();
+                self.inner.ctx.set_tx(tx);
+                let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> =
+                    Default::default();
+                let output = if self.inspect {
+                    handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
+                } else {
+                    handler.run(&mut NativeDelegationEvm(&mut self.inner))
+                };
+                let state = self.inner.finalize();
+                Ok(ResultAndState::new(call.finish(output)?, state))
+            },
+        )
     }
 
     fn transact_system_call(
@@ -312,6 +347,9 @@ where
     }
 
     fn components_mut(&mut self) -> (&mut Self::DB, &mut Self::Inspector, &mut Self::Precompiles) {
+        if !self.owned_by_executor {
+            self.precompiles_mut_called = true;
+        }
         (
             &mut self.inner.ctx.journaled_state.database,
             &mut self.inner.inspector,
@@ -406,8 +444,14 @@ impl EvmFactory for OutbeEvmFactory {
         let evm = self.create_evm(db, input);
 
         let abort_bridge = evm.abort_bridge.clone();
+        let owned_by_executor = evm.owned_by_executor;
+        let precompiles_mut_called = evm.precompiles_mut_called;
+        let witness_state = evm.witness_state.clone();
         let mut evm = outbe_evm(evm.into_inner().with_inspector(inspector), true);
         evm.abort_bridge = abort_bridge;
+        evm.owned_by_executor = owned_by_executor;
+        evm.precompiles_mut_called = precompiles_mut_called;
+        evm.witness_state = witness_state;
         evm
     }
 }

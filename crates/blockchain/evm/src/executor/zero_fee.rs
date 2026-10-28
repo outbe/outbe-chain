@@ -53,6 +53,12 @@ pub(crate) struct ZeroFeeCfgSnapshot {
 pub(crate) trait ZeroFeeCfgAccess {
     fn enable_zero_fee_overrides(&mut self) -> ZeroFeeCfgSnapshot;
     fn restore_zero_fee_overrides(&mut self, snapshot: ZeroFeeCfgSnapshot);
+    fn set_executor_owned(&mut self, _owned: bool) {}
+    fn set_witness_state(
+        &mut self,
+        _state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+    }
 }
 
 impl<DB, I, P> ZeroFeeCfgAccess for OutbeEvm<DB, I, P>
@@ -77,6 +83,17 @@ where
         cfg.disable_balance_check = snapshot.disable_balance_check;
         cfg.disable_base_fee = snapshot.disable_base_fee;
         cfg.disable_fee_charge = snapshot.disable_fee_charge;
+    }
+
+    fn set_executor_owned(&mut self, owned: bool) {
+        self.set_owned_by_executor(owned);
+    }
+
+    fn set_witness_state(
+        &mut self,
+        state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+        self.set_attached_witness_state(state);
     }
 }
 

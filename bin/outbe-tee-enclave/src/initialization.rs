@@ -523,10 +523,6 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
-        #[cfg(feature = "e2e-test")]
-        EnclaveRequest::CreateNodForTestV1 { .. } => CommandClass::Ready,
-        #[cfg(not(feature = "e2e-test"))]
-        EnclaveRequest::CreateNodForTestV1 { .. } => CommandClass::Never,
         EnclaveRequest::ProcessTributeOfferBatch { .. }
         | EnclaveRequest::ExecuteLysis { .. }
         | EnclaveRequest::MineEncryptedNodV1 { .. }

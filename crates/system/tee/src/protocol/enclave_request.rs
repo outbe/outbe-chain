@@ -341,11 +341,6 @@ pub enum EnclaveRequest {
         anchor_outcome: Vec<u8>,
         export: bool,
     },
-    CreateNodForTestV1 {
-        terms: outbe_primitives::nod_encryption::NodTermsV1,
-        creator_public: [u8; 32],
-        amount: U256,
-    },
     MineEncryptedNodV1 {
         request: Box<crate::nod_mine::MineEncryptedNodRequestV1>,
     },
@@ -428,7 +423,6 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::CreateNodForTestV1 { .. } => "create_nod_for_test_v1",
             Self::ExecuteLysis { .. } => "execute_lysis",
             Self::MineEncryptedNodV1 { .. } => "mine_encrypted_nod_v1",
             Self::ReadNodAmountV1 { .. } => "read_nod_amount_v1",
@@ -511,7 +505,6 @@ impl EnclaveRequest {
     /// choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
-            Self::CreateNodForTestV1 { .. } => true,
             Self::GetQuote { .. }
             | Self::ExecuteLysis { .. }
             | Self::MineEncryptedNodV1 { .. }
@@ -623,7 +616,6 @@ impl EnclaveRequest {
             | Self::RetireRemoteSessionsV1 { .. }
             | Self::AuthorizeRemoteSessionV2 { .. }
             | Self::BeginUpgradeKeyTransferV1 { .. }
-            | Self::CreateNodForTestV1 { .. }
             | Self::NodTransferChunkV1 { .. }
             | Self::ExecuteNodTransferV1 { .. }
             | Self::ReadNodTransferV1 { .. }
@@ -664,7 +656,7 @@ mod tests {
             context: onboarding_context(),
         };
         assert_eq!(postcard::to_allocvec(&legacy).unwrap()[0], 35);
-        assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 54);
+        assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 53);
         let encoded = postcard::to_allocvec(&appended).unwrap();
         assert_eq!(
             postcard::from_bytes::<EnclaveRequest>(&encoded).unwrap(),
