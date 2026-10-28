@@ -193,6 +193,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
                 call_window_seconds: 30 * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                transit_margin_seconds: 3_600,
             },
             issued_at,
             issuance_currency: 840,
@@ -376,6 +377,7 @@ fn series_in(s: &StorageHandle<'_>, worldwide_day: u32, group_day: u32) -> Serie
                 call_window_seconds: (28 * DAY) as u32,
                 call_threshold_seconds: (21 * DAY) as u32,
                 call_notice_period_seconds: (7 * DAY) as u32,
+                transit_margin_seconds: 3_600,
             },
             issued_at: ISSUED_AT - (group_day % 1000) * SECONDS_PER_DAY_U32,
             issuance_currency: 840,
@@ -435,6 +437,30 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
             Some(far_day),
             "only the day still waiting is left in the tree"
         );
+    });
+}
+
+#[test]
+fn a_group_waits_for_its_transit_close_before_it_forfeits() {
+    with_factory(|s| {
+        let deadline_day = IntexContract::deadline_day(ISSUED_AT as u64 + DAY);
+        let deadline = IntexContract::day_end(deadline_day) - 1_800;
+        let member = called_series(&s, 20260101, deadline);
+
+        sweep_expiry(&s, IntexContract::day_end(deadline_day));
+        assert!(
+            queued(&s, member),
+            "the deadline day closed inside the margin"
+        );
+        let f = IntexContract::new(s.clone());
+        assert!(!f.group_forfeited(group_of(&s, member)).unwrap());
+
+        sweep_expiry(&s, IntexContract::day_end(deadline_day + 1));
+        assert!(
+            !queued(&s, member),
+            "forfeited once the transit close passed"
+        );
+        assert!(f.group_forfeited(group_of(&s, member)).unwrap());
     });
 }
 

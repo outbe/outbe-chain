@@ -97,6 +97,8 @@ impl IntexContract<'_> {
                 .write(&group, record.call_threshold_seconds)?;
             self.call_group_notice_seconds
                 .write(&group, record.call_notice_period_seconds)?;
+            self.call_group_transit_seconds
+                .write(&group, record.transit_margin_seconds)?;
             let bin = call_bins::price_to_bin(record.call_price_minor)?;
             call_bins::insert(&CallBins(&*self, iso), group, bin)?;
         }
@@ -122,6 +124,7 @@ impl IntexContract<'_> {
         self.call_group_window_seconds.clear(&group)?;
         self.call_group_threshold_seconds.clear(&group)?;
         self.call_group_notice_seconds.clear(&group)?;
+        self.call_group_transit_seconds.clear(&group)?;
         self.call_group_called_at.clear(&group)
     }
 
@@ -150,18 +153,21 @@ impl IntexContract<'_> {
         self.group_stamp(group, self.call_group_called_at.read(&group)?)
     }
 
-    /// The group's call at `called_at`, on the notice period it sealed.
+    /// The group's call at `called_at`, on the notice period and transit margin it sealed.
     pub fn group_stamp(&self, group: B256, called_at: u32) -> Result<CallStamp> {
-        let deadline = match called_at {
-            0 => 0,
-            _ => outbe_primitives::settlement::settlement_deadline_of(
-                u64::from(called_at),
-                self.call_group_notice_seconds.read(&group)?,
-            ),
-        };
+        if called_at == 0 {
+            return Ok(CallStamp::default());
+        }
+        let deadline = outbe_primitives::settlement::settlement_deadline_of(
+            u64::from(called_at),
+            self.call_group_notice_seconds.read(&group)?,
+        );
+        let close_at =
+            deadline.saturating_add(u64::from(self.call_group_transit_seconds.read(&group)?));
         Ok(CallStamp {
             called_at,
             deadline,
+            close_at,
         })
     }
 
@@ -171,12 +177,12 @@ impl IntexContract<'_> {
             && self.called_group_slot.read(&group)? == 0)
     }
 
-    /// Calls the group: it leaves its bin and waits on `deadline` in the expiry queue.
+    /// Calls the group: it leaves its bin and waits on `close_at` in the expiry queue.
     pub fn record_group_called(
         &mut self,
         group: B256,
         called_at: u32,
-        deadline: u64,
+        close_at: u64,
     ) -> Result<()> {
         // A second call would orphan the first slot and return the load twice.
         if self.call_group_called_at.read(&group)? != 0 {
@@ -185,15 +191,15 @@ impl IntexContract<'_> {
         let iso = self.call_group_currency.read(&group)?;
         call_bins::remove(&CallBins(&*self, iso), group)?;
         self.call_group_called_at.write(&group, called_at)?;
-        expiry_queue::push(&ExpiryDays(self), group, deadline)
+        expiry_queue::push(&ExpiryDays(self), group, close_at)
     }
 
     /// Moves an expired group from the expiry queue to the cleanup, which deletes its
     /// spent series. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
-        let deadline = self.called_deadline.read(&group)?;
+        let close_at = self.called_deadline.read(&group)?;
         expiry_queue::remove(&ExpiryDays(self), group)?;
-        expiry_queue::push(&CleanupDays(self), group, deadline)
+        expiry_queue::push(&CleanupDays(self), group, close_at)
     }
 
     /// Widen the currency's stored terms to cover a newly issued series.
@@ -262,11 +268,11 @@ impl IntexContract<'_> {
         expiry_queue::first_day(&CleanupDays(self))
     }
 
-    /// Moves a called group onto `deadline` in the expiry queue.
+    /// Moves a called group onto `close_at` in the expiry queue.
     #[cfg(feature = "e2e-test")]
-    pub fn requeue_called(&mut self, group: B256, deadline: u64) -> Result<()> {
+    pub fn requeue_called(&mut self, group: B256, close_at: u64) -> Result<()> {
         expiry_queue::remove(&ExpiryDays(self), group)?;
-        expiry_queue::push(&ExpiryDays(self), group, deadline)
+        expiry_queue::push(&ExpiryDays(self), group, close_at)
     }
 }
 

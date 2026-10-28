@@ -29,9 +29,9 @@ sol! {
     }
 }
 
-/// This function moves the called group of `series_id` to `deadline` and into that deadline's day.
-/// A notice that lapsed minutes ago would otherwise wait for midnight.
-fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
+/// This function moves the called group of `series_id` so its transit close falls at `close_at`, in
+/// that day. A notice that lapsed minutes ago would otherwise wait for midnight.
+fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, close_at: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 
     let mut intex = IntexContract::new(storage.clone());
@@ -42,12 +42,13 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u6
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
     // Members read the deadline from the call, so the call moves with the queue.
-    let notice = u64::from(intex.call_group_notice_seconds.read(&group)?);
-    let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
+    let terms = u64::from(intex.call_group_notice_seconds.read(&group)?)
+        + u64::from(intex.call_group_transit_seconds.read(&group)?);
+    let called_at = u32::try_from(close_at.saturating_sub(terms).max(1))
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
-    intex.requeue_called(group, deadline)?;
-    reopen_day(storage, deadline)
+    intex.requeue_called(group, close_at)?;
+    reopen_day(storage, close_at)
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {

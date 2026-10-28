@@ -7,7 +7,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
-/// @notice A called series past its notice period reads as `Forfeited`, while storage
+/// @notice A called series past its transit close reads as `Forfeited`, while storage
 ///         keeps `Called` so every freeze written against the stored field still bites.
 contract IntexNFT1155ForfeitedTest is Test {
     uint32 internal constant SERIES_ID_DAY = 20260622;
@@ -26,6 +26,7 @@ contract IntexNFT1155ForfeitedTest is Test {
     uint256 internal iTok;
     uint256 internal sTok;
     uint256 internal deadline;
+    uint256 internal closeAt;
 
     function setUp() public {
         token = DeployProxy.intexNFT1155(admin, relayer);
@@ -36,6 +37,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         vm.stopPrank();
         (iTok, sTok) = token.tokenIds(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
+        closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
     }
 
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
@@ -45,11 +47,14 @@ contract IntexNFT1155ForfeitedTest is Test {
         return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
     }
 
-    function test_ReadsCalledUpToTheDeadlineAndForfeitedAfterIt() public {
-        vm.warp(deadline);
+    function test_ReadsCalledUpToTheTransitCloseAndForfeitedAfterIt() public {
+        vm.warp(deadline + 1);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
 
-        vm.warp(deadline + 1);
+        vm.warp(closeAt);
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
+
+        vm.warp(closeAt + 1);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Forfeited));
     }
 
@@ -57,29 +62,28 @@ contract IntexNFT1155ForfeitedTest is Test {
     /// `crosschainBurn` and `crosschainMint` keep refusing a Forfeited series.
     function test_StorageStillHoldsCalled() public {
         assertEq(_storedState(), uint8(IIntexNFT1155.IntexState.Called), "before");
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         assertEq(_storedState(), uint8(IIntexNFT1155.IntexState.Called), "after");
     }
 
     function test_TransferStaysFrozenAfterExpiry() public {
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         vm.prank(user);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, iTok));
         token.safeTransferFrom(user, makeAddr("other"), iTok, 1, "");
     }
 
     function test_BridgeStaysClosedAfterExpiry() public {
-        vm.warp(deadline + 1);
-        uint32 cutoff = uint32(deadline - token.BRIDGE_CUTOFF());
+        vm.warp(closeAt + 1);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, iTok, cutoff));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
         token.crosschainBurn(user, user, iTok, 1);
     }
 
     /// `statusOf` answers which of the two token ids this is, not where the series
     /// stands, so expiry must leave it alone. A settled unit is paid for and alive.
     function test_StatusOfIsUntouched() public {
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         assertEq(uint8(token.statusOf(iTok)), uint8(IIntexNFT1155.IntexStatus.Issued));
         assertEq(uint8(token.statusOf(sTok)), uint8(IIntexNFT1155.IntexStatus.Settled));
     }

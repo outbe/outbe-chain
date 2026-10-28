@@ -87,6 +87,7 @@ pub fn issue_intex(
                 callWindow: trigger.call_window_seconds,
                 callThreshold: trigger.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
+                transitMargin: trigger.transit_margin_seconds,
             },
         })
         .collect();

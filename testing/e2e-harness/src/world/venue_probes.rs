@@ -543,6 +543,7 @@ sol! {
         uint32 callWindow;
         uint32 callThreshold;
         uint32 callNoticePeriod;
+        uint32 transitMargin;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -738,6 +739,19 @@ pub(crate) fn series_call_deadline(
 ) -> Option<u64> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
+}
+
+/// The deadline plus the transit margin: a scenario waits past it to read Forfeited.
+pub(crate) fn series_transit_close(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u64> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
+        u64::from(data.calledAt)
+            + u64::from(data.callTrigger.callNoticePeriod)
+            + u64::from(data.callTrigger.transitMargin)
+    })
 }
 
 /// The prices the engine derived at issuance: entry and call.

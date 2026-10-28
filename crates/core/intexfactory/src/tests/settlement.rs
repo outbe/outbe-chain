@@ -453,8 +453,8 @@ fn settle_rejects_missing_series() {
 
 #[test]
 fn settle_rejects_expired_deadline() {
-    // Late block timestamp so the Called deadline is already in the past.
-    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000;
+    // Late block timestamp so the transit close past the Called deadline is already in the past.
+    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
@@ -468,7 +468,7 @@ fn settle_rejects_expired_deadline() {
     );
     StorageHandle::enter(&mut storage, |s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        // deadline = ISSUED_AT + CALL_NOTICE_PERIOD < now
+        // ISSUED_AT + CALL_NOTICE_PERIOD + TRANSIT_MARGIN < now
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
             &s,
@@ -493,6 +493,39 @@ fn settle_rejects_expired_deadline() {
 }
 
 #[test]
+fn settle_stays_open_through_the_transit_margin() {
+    let mut storage = factory_provider();
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::issue_intex(&s, sample(7)).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
+    });
+    storage.set_timestamp(U256::from(
+        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 59 * 60,
+    ));
+    StorageHandle::enter(&mut storage, |s| {
+        let err = runtime::settle_intex(
+            &s,
+            sid(7),
+            owner(),
+            U256::from(1),
+            SettlementPayment {
+                payer: owner(),
+                asset: settlement_asset(),
+                snapshot_id: U256::ZERO,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::IntexFactoryError::ZeroBalance
+            )
+            .to_string()
+        );
+    });
+}
+
+#[test]
 fn a_series_called_past_its_deadline_stays_closed() {
     let mut storage = factory_provider();
     StorageHandle::enter(&mut storage, |s| {
@@ -500,7 +533,7 @@ fn a_series_called_past_its_deadline_stays_closed() {
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
-        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 1_000,
+        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000,
     ));
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
@@ -799,7 +832,7 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         IERC1155::balanceOfCall::SELECTOR,
         word(3),
     );
-    let deadline = StorageHandle::enter(&mut storage, |s| {
+    let stamp = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
@@ -812,10 +845,16 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         assert_eq!((live.minedUnits, live.gemFactoryUnits), (15, 10));
         assert_eq!(live.ownerUnits, 6);
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
-        outbe_intex::api::call_stamp(&s, &series).unwrap().deadline
+        outbe_intex::api::call_stamp(&s, &series).unwrap()
     });
 
-    storage.set_timestamp(U256::from(deadline + 1));
+    storage.set_timestamp(U256::from(stamp.deadline + 1));
+    StorageHandle::enter(&mut storage, |s| {
+        let in_transit = read(&s);
+        assert_eq!((in_transit.issuedUnits, in_transit.settledUnits), (3, 3));
+    });
+
+    storage.set_timestamp(U256::from(stamp.close_at + 1));
     StorageHandle::enter(&mut storage, |s| {
         let forfeited = read(&s);
         assert_eq!((forfeited.issuedUnits, forfeited.settledUnits), (0, 3));
