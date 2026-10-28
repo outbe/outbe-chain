@@ -171,9 +171,6 @@ tee:
 # writes its limit amount without the formation record the runtime requires,
 # so the day kills the ProtocolCycle the moment it reaches MissedOffering.
 
-# credis_profile:
-#   profile: dev
-
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
 
