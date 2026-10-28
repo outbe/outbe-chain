@@ -25,37 +25,16 @@ pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 1;
 /// Symbolic rate: 32% of tribute nominal -> gratis demand.
 pub const SYMBOLIC_RATE: u64 = 32;
 
-/// Bootstrap lookback delay: 0 hours.
-pub const BOOTSTRAP_LOOKBACK_DELAY_HOURS: u64 = 0;
-
-/// Bootstrap offering period: 50 hours.
-pub const BOOTSTRAP_OFFERING_PERIOD_HOURS: u64 = 50;
-
 const NORMAL_PIPELINE_HOURS: u64 = FORMING_PERIOD_HOURS
     + LOOKBACK_DELAY_HOURS
     + OFFERING_PERIOD_HOURS
     + METADOSIS_DELAY_AFTER_OFFERING_HOURS;
-const BOOTSTRAP_PIPELINE_HOURS: u64 = FORMING_PERIOD_HOURS
-    + BOOTSTRAP_LOOKBACK_DELAY_HOURS
-    + BOOTSTRAP_OFFERING_PERIOD_HOURS
-    + METADOSIS_DELAY_AFTER_OFFERING_HOURS;
 const NORMAL_PIPELINE_WWDS: usize =
     NORMAL_PIPELINE_HOURS.div_ceil(WWD_CREATION_CADENCE_HOURS) as usize;
-const BOOTSTRAP_PIPELINE_WWDS: usize =
-    BOOTSTRAP_PIPELINE_HOURS.div_ceil(WWD_CREATION_CADENCE_HOURS) as usize;
 
 /// Maximum pre-admission population implied by the production cadence and
-/// phase durations. The extra entry is the current day created on the first
-/// post-halt midnight before the reducer drains the bounded pre-halt pipeline.
-///
-/// Normal windows dominate: ceil((50 + 502 + 50 + 12) / 24) + 1 = 27.
-/// Hourly advancement drains a halt backlog faster than the one-per-day
-/// creation cadence.
-pub const MAX_PIPELINE_WWDS: usize = if NORMAL_PIPELINE_WWDS > BOOTSTRAP_PIPELINE_WWDS {
-    NORMAL_PIPELINE_WWDS + 1
-} else {
-    BOOTSTRAP_PIPELINE_WWDS + 1
-};
+/// phase durations: `ceil((50 + 430 + 50 + 12) / 24) + 1 = 24`.
+pub const MAX_PIPELINE_WWDS: usize = NORMAL_PIPELINE_WWDS + 1;
 
 /// Maximum WWD records kept in the canonical historical retention queue.
 pub const MAX_RECORDS_KEPT: usize = 365;

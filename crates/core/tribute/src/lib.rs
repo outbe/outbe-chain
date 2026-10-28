@@ -12,12 +12,10 @@ pub mod state;
 pub mod state_api;
 pub mod state_proof;
 pub mod storage_records;
-pub mod worldwideday;
 
 pub use record::{TributeMetadata, TributeRecord};
 pub use runtime::LoadedTribute;
 pub use schema::{DayTotals, TributeContract, TributeData};
-pub use worldwideday::{NewWwdSchedule, WwdProjection};
 
 #[cfg(test)]
 mod tests;

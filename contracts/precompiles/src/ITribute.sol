@@ -20,10 +20,6 @@ interface ITribute {
     error NodCreationBeforeCompletion();
     error CallerNotTributeOwner();
     error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
-    error FormingWindowOverflow();
-    error LookbackWindowOverflow();
-    error OfferingWindowOverflow();
-    error DurationOverflow(string label);
     error TributeStateChangedAfterLoading();
     error LysisArithmetic(string reason);
     error DateStep(uint8 kind, uint32 dateKey);
@@ -40,15 +36,6 @@ interface ITribute {
     event TributeBurned(uint256 tributeId, address owner, uint32 worldwideDay);
 
     event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
-
-    event WorldwideDayStarted(
-        uint32 indexed worldwideDay,
-        uint32 indexed day,
-        uint64 formingStart,
-        uint64 formingEnd,
-        uint64 offeringsStart,
-        uint64 offeringEnd
-    );
 
     /// @notice Canonical projection event for certified Lysis retirement and
     /// Metadosis terminal authorities.
@@ -74,11 +61,6 @@ interface ITribute {
         external
         view
         returns (uint32 tributeCount, bytes memory tributeNominalTotalMinor, bool isSealed);
-    function getWorldwideDay(uint32 wwd)
-        external
-        view
-        returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
-    function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
     function getTributesByOwner(address owner) external view returns (uint256[] memory tributeIds);
     function getLeague(uint256 tributeId) external view returns (uint16 league);
     function getDayLeagueFraction(uint32 worldwideDay, uint16 league) external view returns (uint64 fraction);

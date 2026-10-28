@@ -175,19 +175,8 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
             .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
                 binding,
                 || {
+                    let mut factory = TributeFactoryContract::new(storage.clone());
                     let mut tribute = TributeContract::new(storage.clone());
-                    outbe_tribute::worldwideday::create_worldwide_day(
-                        &mut tribute,
-                        WWD,
-                        outbe_tribute::worldwideday::NewWwdSchedule {
-                            day: DAY,
-                            forming_start,
-                            forming_end,
-                            offerings_start,
-                            offering_end,
-                        },
-                    )?;
-                    tribute.unseal_day(WWD)?;
                     let metadosis = MetadosisContract::new(storage.clone());
                     metadosis.emission_days().create(
                         &crate::schema::EmissionDay::new_with_limit(
@@ -212,7 +201,17 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
-                    tribute.seal_day(WWD)?;
+                    outbe_tributefactory::worldwideday::create_worldwide_day(
+                        &mut factory,
+                        WWD,
+                        outbe_tributefactory::worldwideday::NewWwdSchedule {
+                            day: DAY,
+                            forming_start,
+                            forming_end,
+                            offerings_start,
+                            offering_end,
+                        },
+                    )?;
                     Ok(())
                 },
             )

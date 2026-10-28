@@ -105,8 +105,7 @@ impl TributeContract<'_> {
     }
 
     pub(crate) fn ensure_day_accepts_tributes(&self, day: WorldwideDay) -> Result<()> {
-        let totals = self.day_totals.get(day)?;
-        if !totals.is_some_and(|totals| totals.initialized && !totals.is_sealed) {
+        if self.retired_days.read(&day)? || self.is_day_sealed(day)? {
             return Err(TributeError::WorldwideDaySealed.into());
         }
         Ok(())
@@ -153,7 +152,11 @@ impl TributeContract<'_> {
         context.extend_from_slice(&totals.tribute_count.to_be_bytes());
         context.push(u8::from(totals.is_sealed));
         self.apply_day_amount(day, operation, keccak256(context))?;
-        self.day_totals.update(&totals)
+        if self.day_totals.exists(day)? {
+            self.day_totals.update(&totals)
+        } else {
+            self.day_totals.create(&totals)
+        }
     }
 
     pub fn read_all_by_owner(&self, owner: Address) -> Result<Vec<TributeData>> {

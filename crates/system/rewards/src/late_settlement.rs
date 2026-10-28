@@ -20,7 +20,7 @@
 //! (escrow) and the `LateFinalizeCredits` phase (record + settle). At settle, the
 //! settlement logic burns the whole six-decimal units of residue plus carried dust from
 //! `REWARDS_ADDRESS` and recycles them into the Promis Limit via
-//! [`outbe_metadosis::commands::dispatch_late_settlement_residue_at`]. The native
+//! [`outbe_promislimit::PromisLimitContract`]. The native
 //! remainder below one unit stays on `REWARDS_ADDRESS` for the next window. Then
 //! `settle_window` frees the per-window state (`pending_fees`, `late_voter_*`, and
 //! the by-number lookups). The `fee_settled` tombstone stays until guard-ring eviction.
@@ -332,11 +332,19 @@ fn recycle_residue(
     rewards.late_residue_dust_native.write(dust)?;
     if !units.is_zero() {
         ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
-        outbe_metadosis::commands::dispatch_late_settlement_residue_at(
-            ctx,
-            units,
+        let binding = outbe_primitives::storage::metadosis_late_settlement_binding(
+            ctx.block.chain_id,
+            ctx.block.block_number,
             ctx.block.timestamp,
-        )?;
+        );
+        ctx.storage
+            .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCertifiedFinality, _>(
+                binding,
+                || {
+                    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+                        .checked_credit(units)
+                },
+            )?;
     }
     Ok((burned, dust))
 }
@@ -838,7 +846,7 @@ mod tests {
             assert_eq!(residue, expected_residue * unit);
             let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
             assert!(
-                outbe_metadosis::api::emission_day(ctx.storage.clone(), utc_day)
+                outbe_emission::api::emission_day(ctx.storage.clone(), utc_day)
                     .unwrap()
                     .is_none()
             );
@@ -857,11 +865,23 @@ mod tests {
                 handle,
             );
             let daily_base = U256::from(10_000);
-            outbe_metadosis::commands::dispatch_terminal_remainder_at(&ctx, daily_base, timestamp)
-                .unwrap();
-
             let utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
-            let emission_day = outbe_metadosis::api::emission_day(ctx.storage.clone(), utc_day)
+            outbe_emission::api::record_day_allocation(
+                ctx.storage.clone(),
+                utc_day,
+                outbe_emission::api::DayAllocationAmounts {
+                    emission_limit: daily_base,
+                    metadosis_limit: daily_base,
+                    validators: U256::ZERO,
+                    waa: U256::ZERO,
+                    sra: U256::ZERO,
+                    cca: U256::ZERO,
+                    promis_limit: U256::ZERO,
+                },
+            )
+            .unwrap();
+
+            let emission_day = outbe_emission::api::emission_day(ctx.storage.clone(), utc_day)
                 .unwrap()
                 .unwrap();
             assert_eq!(emission_day.emission_limit_minor, daily_base);

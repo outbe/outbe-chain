@@ -6,13 +6,16 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-bench-utils = ["outbe-tribute/test-enclave"]
+test-utils = ["outbe-tribute/test-utils"]
+bench-utils = ["outbe-tribute/test-enclave", "test-utils"]
 
 [dependencies]
+outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute.workspace = true
 outbe-agentreward.workspace = true
+outbe-emission.workspace = true
 outbe-oracle.workspace = true
 outbe-l2registry.workspace = true
 outbe-tee.workspace = true

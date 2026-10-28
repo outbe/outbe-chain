@@ -219,19 +219,6 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        require_day_unseal_lease(&self.storage_handle())?;
-        if self.retired_days.read(&day)? || self.day_amount_record(day, true)?.is_some() {
-            return Err(TributeError::WorldwideDaySealed.into());
-        }
-        self.set_day_sealed(day, false)?;
-        self.emit(ITribute::TributeWorldwideDaySealed {
-            worldwideDay: day.into(),
-            isSealed: false,
-        })?;
-        Ok(())
-    }
-
     /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
     pub fn record_metadosis_fractions(
         &mut self,
@@ -461,8 +448,8 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
         || message == "Metadosis mutation frame identity mismatch"
 }
 
-/// Init-genesis, cycle allocation, and process-ready create worldwide days.
-pub(crate) fn require_worldwide_day_creation_lease(
+/// Init-genesis, cycle allocation, advance-due, and process-ready create worldwide days.
+pub fn require_worldwide_day_creation_lease(
     storage: &StorageHandle<'_>,
     day: WorldwideDay,
 ) -> Result<()> {
@@ -472,12 +459,13 @@ pub(crate) fn require_worldwide_day_creation_lease(
             DayLease::InitGenesis,
             DayLease::CycleAllocation(day),
             DayLease::ProcessReady,
+            DayLease::AdvanceDue,
         ],
     )
 }
 
 /// Process-ready completion and advance-due failure remove the active day.
-pub(crate) fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+pub fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
     accept_day_lease(storage, &[DayLease::ProcessReady, DayLease::AdvanceDue])
 }
 
@@ -492,9 +480,4 @@ pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: Worldwide
             DayLease::AdvanceDue,
         ],
     )
-}
-
-/// Offering sync uses advance-due. Nested process-ready may unseal the same day.
-pub(crate) fn require_day_unseal_lease(storage: &StorageHandle<'_>) -> Result<()> {
-    accept_day_lease(storage, &[DayLease::AdvanceDue, DayLease::ProcessReady])
 }

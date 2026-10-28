@@ -56,8 +56,8 @@ impl Rpc {
     ) -> Option<MetadosisWorldwideDayStateV1> {
         let r = eth::read_call(
             &self.url(port),
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_FACTORY_ADDR,
+            &ITributeFactory::getWorldwideDayCall { wwd: day },
         )?;
         let emission = self.metadosis_emission_day_on(port, r.day);
         let now = eth::latest_block_timestamp(&self.url(port)).unwrap_or_default();
@@ -71,8 +71,8 @@ impl Rpc {
     ) -> Option<MetadosisWorldwideDayTerminalReceiptV1> {
         let wwd = eth::read_call(
             &self.url(port),
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_FACTORY_ADDR,
+            &ITributeFactory::getWorldwideDayCall { wwd: day },
         )?;
         let emission = self.metadosis_emission_day_on(port, wwd.day)?;
         if emission.state == 0 {
@@ -109,8 +109,8 @@ impl Rpc {
         let url = self.url(port);
         let r = eth::read_call_at(
             &url,
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getWorldwideDayCall { wwd: day },
+            addresses::TRIBUTE_FACTORY_ADDR,
+            &ITributeFactory::getWorldwideDayCall { wwd: day },
             block_number,
         )?;
         let emission = self.metadosis_emission_day_at(port, r.day, block_number);
@@ -132,7 +132,7 @@ impl Rpc {
             &rpc_url,
             "eth_getLogs",
             serde_json::json!([{
-                "address": format!("{:#x}", addresses::TRIBUTE_ADDR),
+                "address": format!("{:#x}", addresses::TRIBUTE_FACTORY_ADDR),
                 "fromBlock": "0x1",
                 "toBlock": format!("0x{finalized_height:x}"),
                 "topics": [format!("{topic0:#x}"), indexed_day]
@@ -213,7 +213,7 @@ fn block_timestamp_at(url: &str, block_number: u64) -> Option<u64> {
 }
 
 fn build_wwd_state(
-    r: &ITribute::getWorldwideDayReturn,
+    r: &ITributeFactory::getWorldwideDayReturn,
     emission: Option<&MetadosisEmissionDayStateV1>,
     timestamp: u64,
 ) -> MetadosisWorldwideDayStateV1 {

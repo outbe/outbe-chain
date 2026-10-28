@@ -10,8 +10,8 @@ outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
 outbe-consensus.workspace = true
-outbe-metadosis.workspace = true
 outbe-emission.workspace = true
+outbe-promislimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -23,7 +23,6 @@ ignored = ["alloy-sol-types"]
 
 [dev-dependencies]
 outbe-consensus = { workspace = true, features = ["test-utils"] }
-outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 outbe-promislimit.workspace = true
 tempfile.workspace = true

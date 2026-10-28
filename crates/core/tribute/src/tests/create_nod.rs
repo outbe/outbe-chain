@@ -47,7 +47,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
-        in_process_ready(&storage, || tc.unseal_day(day));
 
         // Stage 4: Issue Tributes in leagues 100 and 4000
         tc.issue_with_league(&t1, Some(100)).unwrap();
@@ -243,7 +242,6 @@ fn create_nod_reverts_without_a_completion_day_price() {
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
-        in_process_ready(&storage, || tc.unseal_day(day));
         tc.issue_with_league(&tribute, Some(100)).unwrap();
         in_process_ready(&storage, || tc.seal_day(day));
         let binding = metadosis_process_ready_binding(

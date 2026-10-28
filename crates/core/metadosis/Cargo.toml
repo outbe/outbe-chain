@@ -13,6 +13,7 @@ outbe-emission.workspace = true
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
 outbe-tribute.workspace = true
+outbe-tributefactory.workspace = true
 outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-promislimit.workspace = true
@@ -28,6 +29,7 @@ outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
+outbe-tributefactory = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
 num-bigint.workspace = true
 proptest.workspace = true
@@ -38,7 +40,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 [features]
 default = []
 bench-utils = []
-test-utils = ["outbe-tribute/test-enclave", "outbe-tribute/test-utils"]
+test-utils = ["outbe-tribute/test-enclave", "outbe-tribute/test-utils", "outbe-tributefactory/test-utils"]
 
 [lints]
 workspace = true

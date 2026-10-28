@@ -13,13 +13,11 @@ use outbe_primitives::storage::{
 };
 use outbe_primitives::time::date_key_to_utc_timestamp;
 use outbe_primitives::time::WorldwideDay;
-use outbe_tribute::{
-    worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
-    TributeContract,
-};
+use outbe_tribute::TributeContract;
 
 use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
+use crate::worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 
 const CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 
@@ -373,21 +371,6 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
             .store_worldwide_day_vwap_snapshot(*worldwide_day, start, start + 50 * 60 * 60)
             .unwrap();
     }
-
-    let binding = metadosis_process_ready_binding(
-        storage.chain_id().unwrap(),
-        storage.block_number().unwrap(),
-        storage.now_secs().unwrap(),
-    );
-    storage
-        .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
-            let mut tribute = TributeContract::new(storage.clone());
-            for worldwide_day in target_days {
-                tribute.unseal_day(*worldwide_day)?;
-            }
-            Ok(())
-        })
-        .unwrap();
 }
 
 #[test]
@@ -881,5 +864,84 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
             factory.used_su_hashes.base_slot(),
             alloy_primitives::U256::ZERO
         );
+    });
+}
+
+#[test]
+fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_close() {
+    use alloy_sol_types::SolError;
+    let wwd = WorldwideDay::new(20261001);
+    let err: PrecompileError =
+        crate::errors::TributeFactoryError::CurrencyPriceUnavailable { worldwide_day: wwd }.into();
+    let expected_bytes: Bytes = crate::precompile::ITributeFactory::CurrencyPriceUnavailable {
+        worldwideDay: wwd.value(),
+    }
+    .abi_encode()
+    .into();
+    assert!(matches!(err, PrecompileError::RevertBytes(bytes) if bytes == expected_bytes));
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 30);
+    StorageHandle::enter(&mut provider, |storage| {
+        let binding = metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                let mut factory = TributeFactoryContract::new(storage.clone());
+                let mut day_key = 20261001u32;
+                for _ in 0..crate::worldwideday::constants::MAX_PIPELINE_WWDS {
+                    let cur_wwd = WorldwideDay::new(day_key);
+                    let (schedule, _) = crate::worldwideday::compute_wwd_schedule(cur_wwd)?;
+                    assert!(crate::worldwideday::create_worldwide_day(
+                        &mut factory,
+                        cur_wwd,
+                        schedule
+                    )?);
+                    day_key = outbe_primitives::time::next_date_key(day_key).unwrap();
+                }
+                let overflow_wwd = WorldwideDay::new(day_key);
+                let (overflow_schedule, _) =
+                    crate::worldwideday::compute_wwd_schedule(overflow_wwd)?;
+                let cap_err = crate::worldwideday::create_worldwide_day(
+                    &mut factory,
+                    overflow_wwd,
+                    overflow_schedule,
+                )
+                .unwrap_err();
+                assert!(cap_err.to_string().contains("24"));
+                Ok(())
+            })
+            .unwrap();
+
+        // Historical catch-up (offering_end <= now) creates WWD in Closed state without touching pipeline_wwd.
+        let hist_wwd = WorldwideDay::new(20260901);
+        let (hist_schedule, _) = crate::worldwideday::compute_wwd_schedule(hist_wwd).unwrap();
+        storage
+            .set_block_timestamp(U256::from(hist_schedule.offering_end))
+            .unwrap();
+        let binding2 = metadosis_process_ready_binding(
+            storage.chain_id().unwrap(),
+            storage.block_number().unwrap(),
+            storage.now_secs().unwrap(),
+        );
+        storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding2, || {
+                let mut factory = TributeFactoryContract::new(storage.clone());
+                assert!(crate::worldwideday::create_worldwide_day(
+                    &mut factory,
+                    hist_wwd,
+                    hist_schedule
+                )?);
+                let rec = factory.worldwide_days.get(hist_wwd)?.unwrap();
+                assert_eq!(rec.state, crate::worldwideday::wwd_state::CLOSED);
+                assert!(!factory.pipeline_wwd.read_all()?.contains(&hist_wwd));
+                assert!(!factory.active_wwd.read_all()?.contains(&hist_wwd));
+                assert!(TributeContract::new(storage.clone()).is_day_sealed(hist_wwd)?);
+                Ok(())
+            })
+            .unwrap();
     });
 }

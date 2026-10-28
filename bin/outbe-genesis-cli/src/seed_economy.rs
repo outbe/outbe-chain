@@ -10,7 +10,8 @@ use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, parse_u32, parse_u64,
     timestamp_to_utc_date_key, u32_bytes, StorageBuilder, METADOSIS_ADDRESS, ORACLE_ADDRESS,
-    TRIBUTE_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES, VAULT_ROUTER_LIQUIDITY_TARGETS,
+    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VAULT_ROUTER_LIQUIDITY_SOURCES,
+    VAULT_ROUTER_LIQUIDITY_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
 
@@ -134,13 +135,15 @@ pub fn seed_tribute_day_totals(storage: &mut StorageBuilder, days: &[u32]) {
     }
 }
 
-/// Seed Tribute worldwide-day records (slots 27..31) and `active_wwd` set (slots 32..33).
+/// Seed TributeFactory worldwide-day records (slot 1), `active_wwd` set (slots 2..3),
+/// and `pipeline_wwd` set (slots 4..5).
 pub fn seed_tribute_worldwide_days(
     storage: &mut StorageBuilder,
     wwds: &[Value],
 ) -> Result<(), GenesisError> {
-    const WWD_BASE: u64 = 27;
-    const ACTIVE_WWD_BASE: u64 = 32;
+    const WWD_BASE: u64 = 1;
+    const ACTIVE_WWD_BASE: u64 = 2;
+    const PIPELINE_WWD_BASE: u64 = 4;
 
     for (idx, entry) in wwds.iter().enumerate() {
         let wwd = entry
@@ -149,11 +152,6 @@ pub fn seed_tribute_worldwide_days(
             .and_then(parse_u32)?;
         let wwd_key = u32_bytes(wwd);
         let day = entry.get("day").map(parse_u32).transpose()?.unwrap_or(wwd);
-        let forming_start = entry
-            .get("forming_start")
-            .map(parse_u64)
-            .transpose()?
-            .unwrap_or(0);
         let forming_end = entry
             .get("forming_end")
             .map(parse_u64)
@@ -169,17 +167,21 @@ pub fn seed_tribute_worldwide_days(
             .map(parse_u64)
             .transpose()?
             .unwrap_or(0);
+        let state = 1u8;
 
-        storage.set_mapping(WWD_BASE, &wwd_key, day);
-        storage.set_mapping(WWD_BASE + 1, &wwd_key, forming_start);
-        storage.set_mapping(WWD_BASE + 2, &wwd_key, forming_end);
-        storage.set_mapping(WWD_BASE + 3, &wwd_key, offerings_start);
-        storage.set_mapping(WWD_BASE + 4, &wwd_key, offering_end);
+        let packed_word = U256::from(day)
+            | (U256::from(offerings_start) << 32)
+            | (U256::from(offering_end) << 96)
+            | (U256::from(state) << 160);
+        storage.set_mapping(WWD_BASE, &wwd_key, packed_word);
 
         storage.set_slot(data_slot(ACTIVE_WWD_BASE) + U256::from(idx), wwd);
         storage.set_mapping(ACTIVE_WWD_BASE + 1, &wwd_key, idx + 1);
+        storage.set_slot(data_slot(PIPELINE_WWD_BASE) + U256::from(idx), wwd);
+        storage.set_mapping(PIPELINE_WWD_BASE + 1, &wwd_key, idx + 1);
     }
     storage.set_slot(ACTIVE_WWD_BASE, wwds.len());
+    storage.set_slot(PIPELINE_WWD_BASE, wwds.len());
     Ok(())
 }
 
@@ -309,7 +311,7 @@ fn seed_metadosis_section(
     if !wwds.is_empty() {
         let mut tribute_wwd_storage = StorageBuilder::new();
         seed_tribute_worldwide_days(&mut tribute_wwd_storage, wwds)?;
-        merge_storage_into_alloc(alloc, TRIBUTE_ADDRESS, &tribute_wwd_storage)?;
+        merge_storage_into_alloc(alloc, TRIBUTE_FACTORY_ADDRESS, &tribute_wwd_storage)?;
     }
     Ok(())
 }

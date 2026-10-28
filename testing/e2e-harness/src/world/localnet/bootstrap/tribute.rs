@@ -1,11 +1,14 @@
 use super::*;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
-    addresses::{EMISSION_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{
+        EMISSION_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS,
+        TRIBUTE_FACTORY_ADDRESS,
+    },
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
-use outbe_tribute::worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
+use outbe_tributefactory::worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use std::str::FromStr as _;
 
 struct OfferingPairs {
@@ -320,15 +323,16 @@ fn load_measurement_accounts(
         .get("alloc")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let mut keys = Vec::with_capacity(4);
+    let mut keys = Vec::with_capacity(5);
     for (address, label) in [
         (EMISSION_ADDRESS, "Emission"),
         (METADOSIS_ADDRESS, "Metadosis"),
         (ORACLE_ADDRESS, "Oracle"),
         (TRIBUTE_ADDRESS, "Tribute"),
+        (TRIBUTE_FACTORY_ADDRESS, "TributeFactory"),
     ] {
         let Some(account_key) = find_alloc_address_key(alloc, address)? else {
-            if address == EMISSION_ADDRESS {
+            if matches!(address, EMISSION_ADDRESS | TRIBUTE_FACTORY_ADDRESS) {
                 keys.push((address, format!("{address:#x}")));
                 continue;
             }
@@ -399,16 +403,7 @@ fn seed_public_measurement_day(
             offerings_start: day.genesis_timestamp,
             offering_end: day.offering_end,
         })
-        .apply(storage.clone())?;
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
-        storage.chain_id()?,
-        storage.block_number()?,
-        storage.now_secs()?,
-    );
-    storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-        binding,
-        || outbe_tribute::TributeContract::new(storage.clone()).unseal_day(worldwide_day),
-    )?;
+        .apply(storage)?;
     Ok(report.changed)
 }
 
@@ -419,7 +414,7 @@ fn seed_native_lysis_fixture(
     prices: &[(u16, U256)],
 ) -> Result<()> {
     let projection =
-        outbe_tribute::worldwideday::api::worldwide_day(storage.clone(), worldwide_day)?
+        outbe_tributefactory::worldwideday::api::worldwide_day(storage.clone(), worldwide_day)?
             .ok_or_else(|| eyre!("native Lysis fixture WorldwideDay is missing"))?;
     eyre::ensure!(
         projection.is_offering_at(timestamp),
@@ -760,7 +755,13 @@ mod tests {
             "timestamp": format!("0x{TIMESTAMP:x}"),
             "alloc": {}
         });
-        for address in [METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS] {
+        for address in [
+            EMISSION_ADDRESS,
+            METADOSIS_ADDRESS,
+            ORACLE_ADDRESS,
+            TRIBUTE_ADDRESS,
+            TRIBUTE_FACTORY_ADDRESS,
+        ] {
             genesis["alloc"][format!("{address:#x}")] =
                 serde_json::json!({"storage": {}, "balance": "0x0"});
         }
