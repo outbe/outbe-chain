@@ -276,7 +276,7 @@ mod enclave_responses {
         FidelityLeagueEntry, FidelityOpOutcome, FidelityQueryResult,
     };
 
-    use crate::enclave_client::{validate_answer, LeagueSnapshot};
+    use crate::enclave_client::{require_requested_owners, validate_answer, LeagueSnapshot};
 
     const HASH: B256 = B256::repeat_byte(7);
     const OTHER_HASH: B256 = B256::repeat_byte(8);
@@ -387,6 +387,27 @@ mod enclave_responses {
         );
         assert!(fatal(validate(HASH, query_response(query(false))))
             .starts_with("unexpected enclave response: "));
+    }
+
+    #[test]
+    fn snapshot_must_answer_each_requested_owner_in_order() {
+        let (a, b) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let entry = |owner| FidelityLeagueEntry {
+            owner,
+            league: 2,
+            rcfi: U256::ZERO,
+        };
+        assert!(require_requested_owners(&[a, b], vec![entry(a), entry(b)]).is_ok());
+        for leagues in [
+            vec![entry(b), entry(a)],
+            vec![entry(a)],
+            vec![entry(a), entry(a)],
+        ] {
+            assert_eq!(
+                fatal(require_requested_owners(&[a, b], leagues)),
+                "tee_fidelity_snapshot_unbound"
+            );
+        }
     }
 
     #[test]

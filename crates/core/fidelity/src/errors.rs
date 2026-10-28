@@ -81,6 +81,8 @@ pub enum FidelityFatalError {
     AttestationInvalid(String),
     #[error("fidelity snapshot returned no league")]
     SnapshotReturnedNoLeague,
+    #[error("tee_fidelity_snapshot_unbound")]
+    SnapshotUnbound,
 }
 
 impl FidelityFatalError {
@@ -112,9 +114,8 @@ impl From<FidelityFatalError> for PrecompileError {
             | FidelityFatalError::EnclaveOpError { .. }
             | FidelityFatalError::UnexpectedEnclaveResponse(_)
             | FidelityFatalError::EnclaveNondeterminism
-            | FidelityFatalError::AttestationInvalid(_) => {
-                PrecompileError::EnclaveUnavailable(message)
-            }
+            | FidelityFatalError::AttestationInvalid(_)
+            | FidelityFatalError::SnapshotUnbound => PrecompileError::EnclaveUnavailable(message),
             FidelityFatalError::SnapshotReturnedNoLeague => PrecompileError::Revert(message),
         }
     }
