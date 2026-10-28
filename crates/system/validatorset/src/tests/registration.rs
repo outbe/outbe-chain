@@ -119,9 +119,13 @@ fn test_get_active_validators() {
     let val3 = address!("0x00000000000000000000000000000000000000A3");
 
     with_vs_configured(10, |vs| {
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         register_validators(vs, &[(val1, 0xA1), (val2, 0xA2), (val3, 0xA3)]).unwrap();
 
         // Activate only val1 and val3
+        vs.test_seed_authoritative_bonded(val1, minimum).unwrap();
+        vs.test_seed_authoritative_bonded(val3, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(val1).unwrap();
         vs.activate_validator_via_boundary_for_test(val3).unwrap();
 
@@ -309,6 +313,59 @@ fn test_reregister_inactive_validator() {
         assert!(record.stake.is_zero());
         assert!(!vs.val_join_confirmed.read(&val_addr).unwrap());
         assert_eq!(vs.val_jailed_at_height.read(&val_addr).unwrap(), 0);
+    });
+}
+
+#[test]
+fn test_reregister_inactive_rejected_in_epoch_zero_even_when_block_cooldown_elapsed() {
+    use alloy_sol_types::SolError;
+    let val_addr = address!("0x1212121212121212121212121212121212121212");
+    let pk_old = dummy_consensus_pubkey(0x11);
+    let pk_new = dummy_consensus_pubkey(0x22);
+    let minimum = U256::from(1_000u64);
+
+    let mut storage = registry_storage(5, 10).unwrap();
+    at_height(&mut storage, 5, |vs| {
+        vs.register_validator(OWNER, val_addr, &pk_old).unwrap();
+        vs.record_stake_increase(val_addr, minimum, minimum)
+            .unwrap();
+        vs.record_unstake(val_addr, U256::ZERO, minimum, 10)
+            .unwrap();
+    });
+    at_height(&mut storage, 6, |vs| {
+        vs.complete_unbonding(val_addr).unwrap();
+        assert_eq!(vs.epoch_start_block.read().unwrap(), 0);
+        assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 0);
+
+        let err = vs.register_validator(OWNER, val_addr, &pk_new).unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                crate::precompile::IValidatorSet::ReregistrationCooldownNotExpired {}.abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
+        );
+    });
+    at_height(&mut storage, 10, |vs| {
+        vs.config_reregistration_cooldown.write(2).unwrap();
+        assert_eq!(vs.epoch_start_block.read().unwrap(), 0);
+
+        let err = vs.register_validator(OWNER, val_addr, &pk_new).unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                crate::precompile::IValidatorSet::ReregistrationCooldownNotExpired {}.abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
+        );
+
+        vs.epoch_start_block.write(5).unwrap();
+        vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
+        assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
     });
 }
 

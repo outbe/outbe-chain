@@ -251,6 +251,18 @@ fn reregistration_cooldown_rejects_before_any_write() -> Result<()> {
         },
         |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
         &super::typed_revert(I::ReregistrationCooldownNotExpired {}.abi_encode()),
+    )?;
+    assert_rejected_first(
+        40,
+        |vs| {
+            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            make_inactive_for_test(vs, VALIDATOR);
+            vs.val_deactivated_at_height.write(&VALIDATOR, u64::MAX)?;
+            vs.epoch_start_block.write(u64::MAX)?;
+            vs.config_reregistration_cooldown.write(1)
+        },
+        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
+        &super::typed_revert(I::ReregistrationCooldownHeightOverflow {}.abi_encode()),
     )
 }
 
@@ -455,6 +467,9 @@ fn role_signer_must_be_active_with_a_bls_share() -> Result<()> {
         vs.set_delegate(VALIDATOR, role, DELEGATE)?;
         assert_eq!(vs.resolve_validator_for_role(DELEGATE, role)?, None);
 
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum)?;
+        vs.test_seed_authoritative_bonded(VALIDATOR, minimum)?;
         vs.activate_validator_via_boundary_for_test(VALIDATOR)?;
         assert!(vs.val_has_bls_share.read(&VALIDATOR)?);
         assert_eq!(

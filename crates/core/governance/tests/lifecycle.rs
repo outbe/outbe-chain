@@ -38,7 +38,11 @@ fn governance_full_lifecycle_via_dispatch() {
             let mut vs = ValidatorSet::new(storage.clone());
             vs.config_owner.write(owner).unwrap();
             vs.set_config_max_validators(100).unwrap();
+            let minimum = U256::from(1_000u64);
+            vs.test_seed_authoritative_min_stake(minimum).unwrap();
             vs.register_validator(owner, AUTHORITY, &[1u8; 48]).unwrap();
+            vs.test_seed_authoritative_bonded(AUTHORITY, minimum)
+                .unwrap();
             vs.activate_validator_via_boundary_for_test(AUTHORITY)
                 .unwrap();
         }

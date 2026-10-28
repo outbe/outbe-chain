@@ -686,7 +686,11 @@ fn build_tee_admission_mock_provider(
         let encoded = key.public_key().encode();
         let mut pubkey = [0u8; 48];
         pubkey.copy_from_slice(&encoded[..48]);
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         vs.register_validator(owner, validator, &pubkey).unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
+            .unwrap();
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
         if state_cfg.validator_jailed {

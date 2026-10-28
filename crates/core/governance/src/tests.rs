@@ -22,9 +22,12 @@ fn activate_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage);
     vs.config_owner.write(owner).unwrap();
     vs.set_config_max_validators(100).unwrap();
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     let mut pk = [0u8; 48];
     pk[0] = seed;
     vs.register_validator(owner, addr, &pk).unwrap();
+    vs.test_seed_authoritative_bonded(addr, minimum).unwrap();
     vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }
 

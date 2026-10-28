@@ -5,9 +5,32 @@
 //! owns storage I/O. The engine module `outbe_engine::validators` reads
 //! ValidatorSet from Reth state and constructs it for the consensus stack.
 
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use commonware_cryptography::bls12381;
 use commonware_p2p::Address as CommonwareAddress;
+
+/// Default minimum stake required to be an active validator when
+/// `config_min_stake` (slot 0) is zero in genesis:
+/// `10_000_000` COEN (`10_000_000 * 10^18` base units `unit`).
+pub const DEFAULT_MIN_STAKE_UNITS: u128 = 10_000_000 * 1_000_000_000_000_000_000;
+
+/// Default minimum stake as a [`U256`] in COEN base units (`unit`).
+pub const DEFAULT_MIN_STAKE: U256 = U256::from_limbs([
+    DEFAULT_MIN_STAKE_UNITS as u64,
+    (DEFAULT_MIN_STAKE_UNITS >> 64) as u64,
+    0,
+    0,
+]);
+
+/// Resolves the raw `Staking` slot-0 configuration word into the effective
+/// minimum validator bond (`0` selects [`DEFAULT_MIN_STAKE`]).
+pub fn effective_min_stake(configured: U256) -> U256 {
+    if configured.is_zero() {
+        DEFAULT_MIN_STAKE
+    } else {
+        configured
+    }
+}
 
 /// Canonical registration proof version used by fresh Outbe networks.
 pub const VALIDATOR_REGISTRATION_VERSION: u8 = 2;
@@ -89,5 +112,18 @@ mod tests {
         let second = validator_registration_message(7, validator, B256::repeat_byte(0x12));
 
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn effective_min_stake_resolves_zero_to_ten_million_coen_base_units() {
+        assert_eq!(
+            DEFAULT_MIN_STAKE,
+            U256::from(10_000_000u64) * crate::units::ONE_COEN
+        );
+        assert_eq!(effective_min_stake(U256::ZERO), DEFAULT_MIN_STAKE);
+        assert_eq!(
+            effective_min_stake(U256::from(1_000u64)),
+            U256::from(1_000u64)
+        );
     }
 }

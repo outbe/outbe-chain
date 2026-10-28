@@ -8414,6 +8414,7 @@ dependencies = [
  "flate2",
  "hex",
  "k256 0.13.4",
+ "outbe-primitives",
  "rand_core 0.6.4",
  "serde",
  "serde_json",
@@ -9223,6 +9224,7 @@ dependencies = [
  "outbe-teeregistry",
  "outbe-validatorset",
  "proptest",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

@@ -36,8 +36,11 @@ fn test_record_participation() {
     let val3 = address!("0x0000000000000000000000000000000000000073");
 
     with_vs_configured(10, |vs| {
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         register_validators(vs, &[(val1, 71), (val2, 72), (val3, 73)]).unwrap();
         for val in [val1, val2, val3] {
+            vs.test_seed_authoritative_bonded(val, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(val).unwrap();
             vs.val_has_bls_share.write(&val, true).unwrap();
         }

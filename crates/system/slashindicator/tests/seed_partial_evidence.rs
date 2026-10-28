@@ -85,6 +85,7 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     epoch.number = U256::from(ROUND_EPOCH);
     vs.test_set_epoch_snapshot(epoch).unwrap();
 
+    vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
     vs.test_register_validator_without_pop(ACCUSED, accused_pubkey)
         .unwrap();
     let staking = Staking::new(storage.clone());
@@ -276,6 +277,7 @@ fn non_active_submitter_is_rejected() {
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();
+        vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
         vs.test_register_active_validator(ACCUSED, &pubkey, U256::from(1))
             .unwrap();
 

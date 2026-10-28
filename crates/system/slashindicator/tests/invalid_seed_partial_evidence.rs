@@ -84,6 +84,8 @@ fn setup(storage: StorageHandle) -> Fixture {
     vs.test_set_epoch_snapshot(epoch).unwrap();
 
     let mut committee = Vec::new();
+    vs.test_seed_authoritative_min_stake(U256::from(1_000u64))
+        .unwrap();
     for i in 0..N {
         let addr = validator_addr(i);
         vs.test_register_validator_without_pop(addr, &pubkeys[i as usize])

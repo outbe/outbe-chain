@@ -135,9 +135,12 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
         // contract of `record_finalized_participation` accepts them.
         {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let minimum = U256::from(1_000u64);
             vs.register_validator(OWNER, V0, &[0xB0; 48]).unwrap();
+            vs.test_seed_authoritative_bonded(V0, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(V0).unwrap();
             vs.register_validator(OWNER, V1, &[0xB1; 48]).unwrap();
+            vs.test_seed_authoritative_bonded(V1, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(V1).unwrap();
         }
 
@@ -220,9 +223,11 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
         provider.enter(|storage| {
             {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+                let minimum = U256::from(1_000u64);
                 for (i, a) in members.iter().enumerate() {
                     vs.test_register_validator_without_pop(*a, &[0xC0u8 + i as u8; 48])
                         .unwrap();
+                    vs.test_seed_authoritative_bonded(*a, minimum).unwrap();
                     vs.activate_validator_via_boundary_for_test(*a).unwrap();
                 }
             }
@@ -317,9 +322,12 @@ fn window_close_miss_survives_epoch_boundary_reset() {
     provider.enter(|storage| {
         {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let minimum = U256::from(1_000u64);
             vs.register_validator(OWNER, A, &[0xE0; 48]).unwrap();
+            vs.test_seed_authoritative_bonded(A, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(A).unwrap();
             vs.register_validator(OWNER, B, &[0xE1; 48]).unwrap();
+            vs.test_seed_authoritative_bonded(B, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(B).unwrap();
         }
         let snapshot = CommitteeSnapshot {
@@ -518,7 +526,7 @@ fn assert_auth_mismatch_fatal(
     });
 }
 
-/// BUG-2: spoofing `fb_number` (to shrink `k`) hits a wrong fb_hash binding.
+/// Spoofing `fb_number` (to shrink `k`) hits a wrong fb_hash binding.
 #[test]
 fn fb_number_mismatch_rejected() {
     // Real block (fb_hash 0xCD) is escrowed at 11; proposer claims fb_number
@@ -526,13 +534,13 @@ fn fb_number_mismatch_rejected() {
     assert_auth_mismatch_fatal(|c| c.fb_number = 12, "fb_hash mismatch");
 }
 
-/// BUG-5: wrong epoch is rejected.
+/// Wrong epoch is rejected.
 #[test]
 fn wrong_epoch_rejected() {
     assert_auth_mismatch_fatal(|c| c.epoch = 9, "epoch mismatch");
 }
 
-/// BUG-5: wrong committee_set_hash is rejected.
+/// Wrong committee_set_hash is rejected.
 #[test]
 fn wrong_committee_set_hash_rejected() {
     assert_auth_mismatch_fatal(

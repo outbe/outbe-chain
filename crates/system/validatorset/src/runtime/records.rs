@@ -67,14 +67,18 @@ impl ValidatorSet<'_> {
         .read(addr)
     }
 
-    /// Reads the configured minimum stake from `Staking.config_min_stake`.
+    /// Reads the effective minimum stake from `Staking.config_min_stake` (falling
+    /// back to [`outbe_primitives::validators::DEFAULT_MIN_STAKE`] when slot 0 is 0).
     pub(crate) fn read_authoritative_min_stake(&self) -> Result<U256> {
-        Slot::<U256>::new(
+        let configured = Slot::<U256>::new(
             U256::from(AUTHORITATIVE_MIN_STAKE_SLOT),
             STAKING_ADDRESS,
             self.storage.clone(),
         )
-        .read()
+        .read()?;
+        Ok(outbe_primitives::validators::effective_min_stake(
+            configured,
+        ))
     }
 
     /// Reads the raw validator columns in their storage order.

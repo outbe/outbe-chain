@@ -313,6 +313,13 @@ fn expired_jailed_validator_must_unjail_before_rejoin() {
             .with_verdict(expired.binding.accepted.clone()),
         |storage, mut registry| {
             let mut validators = ValidatorSet::new(storage.clone());
+            let minimum = U256::from(1_000u64);
+            validators
+                .test_seed_authoritative_min_stake(minimum)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(validator.node_signer.address(), minimum)
+                .unwrap();
             validators
                 .activate_validator_via_boundary_for_test(validator.node_signer.address())
                 .unwrap();

@@ -58,9 +58,16 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
         let mut validators = ValidatorSet::new(storage.clone());
         validators.config_owner.write(OWNER).unwrap();
         validators.set_config_max_validators(4).unwrap();
+        let minimum = U256::from(1_000u64);
+        validators
+            .test_seed_authoritative_min_stake(minimum)
+            .unwrap();
         for member in &committee.committee {
             validators
                 .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(member.address, minimum)
                 .unwrap();
             validators
                 .activate_validator_via_boundary_for_test(member.address)

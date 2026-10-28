@@ -30,6 +30,10 @@ fn test_activate_deactivate() {
         // Initially PENDING
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
 
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        vs.test_seed_authoritative_bonded(val_addr, minimum)
+            .unwrap();
         vs.activate_validator_via_boundary_for_test(val_addr)
             .unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::ACTIVE);

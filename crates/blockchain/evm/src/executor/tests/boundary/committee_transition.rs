@@ -271,6 +271,10 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
             .unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
+            .unwrap();
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
@@ -342,6 +346,10 @@ fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+            .unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
