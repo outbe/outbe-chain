@@ -8,10 +8,10 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
-    day_pass::{DayPassError, PinnedDay, Progress, Scheduled, PassDays},
-    error::{decide, Decided, PrecompileError, Result, PassFailure},
-    storage::{dsl::Value, StorageHandle},
+    day_pass::{DayPassError, PassDays, PinnedDay, Progress, Scheduled},
+    error::{decide, Decided, PassFailure, PrecompileError, Result},
     pass_budget::{BlockAllowance, PassBudget},
+    storage::{dsl::Value, StorageHandle},
     time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
 
@@ -269,11 +269,10 @@ where
         currency_cursor,
         budget,
         |reference_currency, budget| {
-            let Some((window, ceiling)) = currency_ceiling(
-                &bins(reference_currency),
-                &mut windows,
-                || scan_terms(reference_currency),
-            )?
+            let Some((window, ceiling)) =
+                currency_ceiling(&bins(reference_currency), &mut windows, || {
+                    scan_terms(reference_currency)
+                })?
             else {
                 return Ok(true);
             };

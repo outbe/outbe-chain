@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_primitives::call_bins;
-use outbe_primitives::error::Result;
 use outbe_primitives::deadline_queue;
+use outbe_primitives::error::Result;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::{

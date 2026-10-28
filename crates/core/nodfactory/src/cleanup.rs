@@ -7,8 +7,8 @@ use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, PassFailure},
-    deadline_queue::{self, Due, DeadlineHandler},
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, PrecompileError, Result},
     storage::StorageHandle,
 };
 

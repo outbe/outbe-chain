@@ -4,8 +4,8 @@
 
 use alloy_primitives::{Address, U256};
 use base64::Engine;
-use outbe_primitives::error::Result;
 use outbe_primitives::deadline_queue;
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::GemFactoryError;

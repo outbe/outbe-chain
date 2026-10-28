@@ -6,11 +6,10 @@ use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    deadline_queue::{self, DeadlineHandler, Due},
     error::Result,
-    deadline_queue::{self, Due, DeadlineHandler},
     pass_budget::PassBudget,
 };
-
 
 /// Runs from CycleTick every block. Returns the groups forfeited.
 #[cfg(test)]

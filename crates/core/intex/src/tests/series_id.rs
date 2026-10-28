@@ -10,4 +10,3 @@ fn the_day_key_still_hashes_to_the_slot_a_bare_u32_would() {
         20_260_212u32.key_bytes()
     );
 }
-

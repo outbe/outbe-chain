@@ -98,7 +98,9 @@ library IntexMetadata {
         uint256 len = 14;
         while (len > 0 && id[len - 1] == 0) --len;
         bytes memory out = new bytes(len);
-        for (uint256 i = 0; i < len; ++i) out[i] = id[i];
+        for (uint256 i = 0; i < len; ++i) {
+            out[i] = id[i];
+        }
         return string(out);
     }
 

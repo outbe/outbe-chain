@@ -68,11 +68,10 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         assert_eq!(nod.call_latest_day.read().unwrap(), 20260715);
-        let allowance = outbe_primitives::pass_budget::BlockAllowance::unpack(
-            nod.daily_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let allowance =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
+                .unwrap()
+                .unwrap();
         assert_eq!(allowance.height, 2);
         assert_eq!(allowance.day, 0);
         assert_eq!(

@@ -5,8 +5,8 @@ use alloy_primitives::{B256, U256};
 use outbe_gem::{api as gem_api, CleanupQueue, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, PassFailure},
-    deadline_queue::{self, Due, DeadlineHandler},
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, PrecompileError, Result},
     storage::StorageHandle,
 };
 

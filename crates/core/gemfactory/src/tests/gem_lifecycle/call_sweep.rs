@@ -5,8 +5,8 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
@@ -632,7 +632,7 @@ fn idle_daily_scans_emit_nothing() {
 #[test]
 fn a_corrupt_record_read_fails_the_call_sweep() {
     use outbe_oracle::call_pass::CallPass;
-    use outbe_primitives::error::{PrecompileError, PassFailure};
+    use outbe_primitives::error::{PassFailure, PrecompileError};
     assert_eq!(
         <crate::called::GemCallPass as CallPass>::classify(&PrecompileError::BodyReadCorruption(
             "x".into()

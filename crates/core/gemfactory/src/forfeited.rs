@@ -1,8 +1,8 @@
 use alloy_primitives::B256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{Result, PassFailure},
-    deadline_queue::{self, Due, DeadlineHandler},
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, Result},
     pass_budget::PassBudget,
 };
 
@@ -10,7 +10,6 @@ use outbe_gem::precompile::IGem::GemGroupForfeited;
 use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
-
 
 /// Forfeits the called groups whose notice period closed, one credit per group.
 /// Returns the groups forfeited.

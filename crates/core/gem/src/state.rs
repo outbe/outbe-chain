@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use outbe_primitives::call_bins;
-use outbe_primitives::error::Result;
 use outbe_primitives::deadline_queue;
+use outbe_primitives::error::Result;
 
 use crate::{
     constants::{TOKEN_NAME, TOKEN_SYMBOL},

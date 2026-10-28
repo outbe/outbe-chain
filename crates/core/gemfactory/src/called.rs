@@ -16,9 +16,9 @@ use outbe_primitives::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     day_pass::PinnedDay,
-    error::{PrecompileError, Result, PassFailure},
-    storage::dsl::Value,
+    error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
+    storage::dsl::Value,
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.

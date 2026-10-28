@@ -6,13 +6,13 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 use crate::day_pass::currency_position;
-use crate::error::{CallBinError, Result};
 use crate::deadline_queue::QueueEntry;
+use crate::error::{CallBinError, Result};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};
-use crate::storage::dsl::{Map, Value};
 use crate::pass_budget::PassBudget;
+use crate::storage::dsl::{Map, Value};
 
 /// Bin step of the call-price ladder, in basis points.
 pub const BIN_STEP_BP: u16 = 25;

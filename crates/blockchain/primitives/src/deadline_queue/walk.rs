@@ -1,13 +1,13 @@
 //! This module traverses the queue within its budget and expires members within checkpoints.
 
 use super::{
-    day_end, deadline_day, entry_at, first_day, pack_cursor, remove, retarget, unpack_cursor, Due,
-    DeadlineHandler, DeadlineQueueStore, Progress,
+    day_end, deadline_day, entry_at, first_day, pack_cursor, remove, retarget, unpack_cursor,
+    DeadlineHandler, DeadlineQueueStore, Due, Progress,
 };
 use crate::error::{decide, Decided, PrecompileError, Result};
 use crate::math::constants::MAX_BIN_ID;
-use crate::storage::StorageHandle;
 use crate::pass_budget::PassBudget;
+use crate::storage::StorageHandle;
 
 /// This structure stores the actual block time and the selected cutoff day for scheduling.
 /// Processing missed days must not use the cutoff as the clock for retries.

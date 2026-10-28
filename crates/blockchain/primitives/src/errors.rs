@@ -908,7 +908,7 @@ pub fn decide<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::{PrecompileError, PassFailure};
+    use super::{PassFailure, PrecompileError};
     use crate::storage::SubCallError;
 
     #[test]
@@ -957,11 +957,7 @@ mod tests {
                 PassFailure::Propagate,
             ),
             (PrecompileError::Unsupported, false, PassFailure::Skip),
-            (
-                PrecompileError::Fatal("x".into()),
-                false,
-                PassFailure::Skip,
-            ),
+            (PrecompileError::Fatal("x".into()), false, PassFailure::Skip),
             (
                 PrecompileError::FatalWithCause(Box::new(super::TimestampOverflow)),
                 false,

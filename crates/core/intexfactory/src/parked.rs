@@ -5,7 +5,7 @@ use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, PassFailure},
+    error::{PassFailure, PrecompileError, Result},
     storage::{dsl::Value, StorageHandle},
 };
 

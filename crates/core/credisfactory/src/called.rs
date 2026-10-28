@@ -29,10 +29,9 @@ use outbe_primitives::{
     call_breach::{BreachTerms, ScanTerms},
     day_pass::{PinnedDay, Progress},
     error::Result,
-    storage::{dsl::Value, StorageHandle},
     pass_budget::PassBudget,
+    storage::{dsl::Value, StorageHandle},
 };
-
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {

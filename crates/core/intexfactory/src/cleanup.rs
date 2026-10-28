@@ -5,8 +5,8 @@ use alloy_primitives::B256;
 use outbe_intex::{CleanupQueue, IntexContract, SeriesId};
 use outbe_primitives::{
     block::BlockRuntimeContext,
+    deadline_queue::{self, DeadlineHandler, Due},
     error::Result,
-    deadline_queue::{self, Due, DeadlineHandler},
     storage::StorageHandle,
 };
 

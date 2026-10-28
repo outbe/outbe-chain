@@ -95,7 +95,11 @@ const fn is_code_byte(byte: u8) -> bool {
 
 impl fmt::Display for SeriesId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let end = self.0.iter().rposition(|byte| *byte != 0).map_or(0, |at| at + 1);
+        let end = self
+            .0
+            .iter()
+            .rposition(|byte| *byte != 0)
+            .map_or(0, |at| at + 1);
         f.write_str(&String::from_utf8_lossy(&self.0[..end]))
     }
 }

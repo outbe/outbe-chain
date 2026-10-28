@@ -7,8 +7,8 @@
 use alloy_primitives::B256;
 use outbe_primitives::call_bins;
 use outbe_primitives::call_breach::{self, ScanTerms};
-use outbe_primitives::error::Result;
 use outbe_primitives::deadline_queue;
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::{date_step_error, IntexError};

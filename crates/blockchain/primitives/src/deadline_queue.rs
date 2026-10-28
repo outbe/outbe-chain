@@ -8,13 +8,13 @@
 use alloy_primitives::{keccak256, B256, U256};
 
 pub use crate::day_pass::Progress;
-use crate::error::{PrecompileError, Result, PassFailure};
+use crate::error::{PassFailure, PrecompileError, Result};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::tree_math::{self, BinTreeStorage};
+use crate::pass_budget::{BlockAllowance, PassBudget};
 use crate::storage::dsl::{Map, Value};
 use crate::storage::types::{Storable, StorageKey};
 use crate::storage::StorageHandle;
-use crate::pass_budget::{BlockAllowance, PassBudget};
 use crate::time::SECONDS_PER_DAY;
 
 mod walk;
@@ -134,7 +134,11 @@ fn place<'s, Q: DeadlineQueueStore<'s>>(queue: &Q, entry: Q::Entry, day: u32) ->
 }
 
 /// This function adds `entry` to its deadline day without changing the exact deadline.
-pub fn push<'s, Q: DeadlineQueueStore<'s>>(queue: &Q, entry: Q::Entry, deadline: u64) -> Result<()> {
+pub fn push<'s, Q: DeadlineQueueStore<'s>>(
+    queue: &Q,
+    entry: Q::Entry,
+    deadline: u64,
+) -> Result<()> {
     place(queue, entry, deadline_day(deadline)?)?;
     queue.entry_deadline().write(&entry, deadline)
 }

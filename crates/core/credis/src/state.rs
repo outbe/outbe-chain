@@ -7,8 +7,8 @@
 use alloy_primitives::{Address, B256, U256};
 
 use outbe_primitives::call_bins;
-use outbe_primitives::error::Result;
 use outbe_primitives::deadline_queue;
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 

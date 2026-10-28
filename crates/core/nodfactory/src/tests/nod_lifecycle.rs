@@ -197,12 +197,11 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     // This loop simulates catch-up blocks. It never refills a pending day's allowance within one block.
     loop {
         decided += slice(storage, timestamp);
-        let selected = outbe_primitives::pass_budget::BlockAllowance::unpack(
-            nod.daily_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap()
-        .day;
+        let selected =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
+                .unwrap()
+                .unwrap()
+                .day;
         let next = nod.call_sweep_day.read().unwrap();
         if next == 0 || next == selected {
             break;

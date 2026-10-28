@@ -27,14 +27,13 @@ use outbe_primitives::{
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
     day_pass::{PinnedDay, Progress},
-    error::{PrecompileError, Result, PassFailure},
-    storage::dsl::Value,
+    error::{PassFailure, PrecompileError, Result},
     pass_budget::PassBudget,
+    storage::dsl::Value,
 };
 
 use outbe_nod::state::CallBins;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
-
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///

@@ -95,10 +95,7 @@ impl PinnedDay<'_, '_> {
 
     /// Schedules `day` and stores the newest day scheduled. An opened day is stored by
     /// [`Self::open`].
-    pub fn schedule(
-        &self,
-        day: u32,
-    ) -> std::result::Result<(PassDays, Scheduled), DayPassError> {
+    pub fn schedule(&self, day: u32) -> std::result::Result<(PassDays, Scheduled), DayPassError> {
         let (next, scheduled) = self.days()?.schedule(day).map_err(DayPassError::Time)?;
         if scheduled == Scheduled::Queued {
             self.latest

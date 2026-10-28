@@ -44,7 +44,9 @@ mod called {
         crate::called::process_call_pass(ctx)
     }
 
-    pub(super) fn schedule_call_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    pub(super) fn schedule_call_pass(
+        ctx: &BlockRuntimeContext,
+    ) -> outbe_primitives::error::Result<()> {
         prepare(ctx);
         crate::called::schedule_call_pass(ctx)
     }
