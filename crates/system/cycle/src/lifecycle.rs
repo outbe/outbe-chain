@@ -62,17 +62,17 @@ impl BlockLifecycle for CycleLifecycle {
         crate::handler::credit_reward_slice(&ctx.runtime)?;
         // Each factory finishes calls before forfeits for its pinned closed day.
         // Gem includes position expiry. Credis includes collateral-return cleanup.
-        outbe_nodfactory::called::run_call_slice(&ctx.runtime)?;
-        outbe_gemfactory::called::run_call_slice(&ctx.runtime)?;
-        outbe_intexfactory::called::run_call_slice(&ctx.runtime)?;
-        outbe_credisfactory::called::run_call_slice(&ctx.runtime)?;
-        outbe_intexfactory::notify::send_notices(&ctx.runtime)?;
+        outbe_nodfactory::called::process_call_pass(&ctx.runtime)?;
+        outbe_gemfactory::called::process_call_pass(&ctx.runtime)?;
+        outbe_intexfactory::called::process_call_pass(&ctx.runtime)?;
+        outbe_credisfactory::called::process_call_pass(&ctx.runtime)?;
+        outbe_intexfactory::notify::send_call_notices(&ctx.runtime)?;
         // These final sweeps only delete state after value accounting completes.
         // Credis moves value during cleanup, so its coupled pass above performs that cleanup instead.
-        outbe_nodfactory::hooks::sweep_cleanup(&ctx.runtime)?;
-        outbe_gemfactory::hooks::sweep_cleanup(&ctx.runtime)?;
-        outbe_intexfactory::hooks::sweep_cleanup(&ctx.runtime)?;
-        outbe_gemfactory::hooks::sweep_position_cleanup(&ctx.runtime)?;
+        outbe_nodfactory::hooks::cleanup(&ctx.runtime)?;
+        outbe_gemfactory::hooks::cleanup(&ctx.runtime)?;
+        outbe_intexfactory::hooks::cleanup(&ctx.runtime)?;
+        outbe_gemfactory::hooks::cleanup_positions(&ctx.runtime)?;
         outbe_rewards::api::prune_settled_days(&ctx.runtime)?;
         Ok(())
     }

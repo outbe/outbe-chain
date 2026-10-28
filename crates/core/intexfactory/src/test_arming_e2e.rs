@@ -35,7 +35,7 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, close_at: u6
     use outbe_intex::IntexContract;
 
     let mut intex = IntexContract::new(storage.clone());
-    let group = outbe_intex::api::read_series(storage, series_id)?
+    let group = outbe_intex::api::get_series(storage, series_id)?
         .group_key()
         .expect("date step");
     if intex.called_deadline.read(&group)? == 0 {

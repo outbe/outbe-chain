@@ -138,12 +138,6 @@ interface IGemFactory {
     );
     /// @notice A settled gem right was mined: it burned to mine confidential Promis.
     event GemMined(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
-    /// @notice A lapsed group could not be forfeited. The expiry sweep comes back to it
-    ///         at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
-    /// @notice A reference currency was left out of one day's Call scan because its
-    ///         window price could not be indexed. The next daily pass tries it again.
-    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
     /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
     ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.
     event GemPositionGroupExpired(uint64 indexed expiryHour, uint32 positions, uint256 returnedCapacityMinor);

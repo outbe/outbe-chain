@@ -1,20 +1,20 @@
-//! Scheduling of a sweep that walks one closed UTC day at a time, every closed day in
+//! Scheduling of a pass that walks one closed UTC day at a time, every closed day in
 //! order.
 
 use crate::error::{PrecompileError, Result};
 use crate::storage::dsl::Value;
 use crate::time::{next_date_key, TimeError};
 
-/// A sweep step failed in storage or in the date helper.
+/// A pass step failed in storage or in the date helper.
 #[derive(Debug)]
-pub enum DailySweepError {
+pub enum DayPassError {
     Storage(PrecompileError),
     Time(TimeError),
 }
 
-/// The day a sweep is walking, 0 for none, and the newest closed day scheduled.
+/// The day a pass is walking, 0 for none, and the newest closed day scheduled.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SweepDays {
+pub struct PassDays {
     pub current: u32,
     pub latest: u32,
 }
@@ -37,10 +37,10 @@ pub enum Progress {
     Complete,
 }
 
-impl SweepDays {
-    /// This method schedules `day` without changing the active sweep.
-    /// The sweep processes each subsequent closed day in order, without skipping days.
-    /// The sweep cannot reopen completed days.
+impl PassDays {
+    /// This method schedules `day` without changing the active pass.
+    /// The pass processes each subsequent closed day in order, without skipping days.
+    /// The pass cannot reopen completed days.
     pub fn schedule(mut self, day: u32) -> std::result::Result<(Self, Scheduled), TimeError> {
         let idle = self.current == 0;
         let scheduled = if day <= self.latest || (!idle && day <= self.current) {
@@ -62,7 +62,7 @@ impl SweepDays {
         Ok((self, scheduled))
     }
 
-    /// The current day was walked to its end, so the next one starts, or the sweep idles.
+    /// The current day was walked to its end, so the next one starts, or the pass idles.
     pub fn finish(self) -> std::result::Result<Self, TimeError> {
         if self.current == 0 {
             return Ok(self);
@@ -79,36 +79,33 @@ impl SweepDays {
     }
 }
 
-/// The stored current and newest scheduled days of one sweep.
+/// The stored current and newest scheduled days of one pass.
 pub struct PinnedDay<'a, 'storage> {
     pub current: &'a Value<'storage, u32>,
     pub latest: &'a Value<'storage, u32>,
 }
 
 impl PinnedDay<'_, '_> {
-    fn days(&self) -> std::result::Result<SweepDays, DailySweepError> {
-        Ok(SweepDays {
-            current: self.current.read().map_err(DailySweepError::Storage)?,
-            latest: self.latest.read().map_err(DailySweepError::Storage)?,
+    fn days(&self) -> std::result::Result<PassDays, DayPassError> {
+        Ok(PassDays {
+            current: self.current.read().map_err(DayPassError::Storage)?,
+            latest: self.latest.read().map_err(DayPassError::Storage)?,
         })
     }
 
     /// Schedules `day` and stores the newest day scheduled. An opened day is stored by
     /// [`Self::open`].
-    pub fn schedule(
-        &self,
-        day: u32,
-    ) -> std::result::Result<(SweepDays, Scheduled), DailySweepError> {
-        let (next, scheduled) = self.days()?.schedule(day).map_err(DailySweepError::Time)?;
+    pub fn schedule(&self, day: u32) -> std::result::Result<(PassDays, Scheduled), DayPassError> {
+        let (next, scheduled) = self.days()?.schedule(day).map_err(DayPassError::Time)?;
         if scheduled == Scheduled::Queued {
             self.latest
                 .write(next.latest)
-                .map_err(DailySweepError::Storage)?;
+                .map_err(DayPassError::Storage)?;
         }
         Ok((next, scheduled))
     }
 
-    /// Marks `day` walked by an idle sweep with nothing to walk.
+    /// Marks `day` walked by an idle pass with nothing to walk.
     pub fn pass(&self, day: u32) -> Result<()> {
         if day > self.latest.read()? {
             self.latest.write(day)?;
@@ -116,22 +113,22 @@ impl PinnedDay<'_, '_> {
         Ok(())
     }
 
-    pub fn open(&self, days: SweepDays) -> Result<()> {
+    pub fn open(&self, days: PassDays) -> Result<()> {
         self.current.write(days.current)?;
         self.latest.write(days.latest)
     }
 
     /// Ends the walk of `pinned`. Returns the days to open next, or `None` once idle.
-    pub fn finish(&self, pinned: u32) -> std::result::Result<Option<SweepDays>, DailySweepError> {
+    pub fn finish(&self, pinned: u32) -> std::result::Result<Option<PassDays>, DayPassError> {
         let days = self.days()?;
         if pinned == 0 || days.current != pinned || days.latest < pinned {
-            return Err(DailySweepError::Storage(PrecompileError::revert(
+            return Err(DayPassError::Storage(PrecompileError::revert(
                 "invalid daily sweep completion",
             )));
         }
-        let next = days.finish().map_err(DailySweepError::Time)?;
+        let next = days.finish().map_err(DayPassError::Time)?;
         if next.current == 0 {
-            self.current.write(0).map_err(DailySweepError::Storage)?;
+            self.current.write(0).map_err(DayPassError::Storage)?;
             return Ok(None);
         }
         Ok(Some(next))
@@ -154,14 +151,14 @@ mod tests {
     const YESTERDAY: u32 = 20260101;
     const TODAY: u32 = 20260102;
 
-    fn days(current: u32, latest: u32) -> SweepDays {
-        SweepDays { current, latest }
+    fn days(current: u32, latest: u32) -> PassDays {
+        PassDays { current, latest }
     }
 
     #[test]
     fn a_closed_day_opens_an_idle_sweep_and_waits_behind_a_running_one() {
         assert_eq!(
-            SweepDays::default().schedule(TODAY).unwrap(),
+            PassDays::default().schedule(TODAY).unwrap(),
             (days(TODAY, TODAY), Scheduled::Opened)
         );
         assert_eq!(
@@ -215,7 +212,7 @@ mod tests {
             days(0, TODAY)
         );
 
-        // An idle sweep picks up after the newest day it scheduled.
+        // An idle pass picks up after the newest day it scheduled.
         assert_eq!(
             days(0, TWO_AGO).schedule(TODAY).unwrap(),
             (days(YESTERDAY, TODAY), Scheduled::Opened)

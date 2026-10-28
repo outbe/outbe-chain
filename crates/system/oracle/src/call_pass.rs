@@ -8,10 +8,10 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, CallBinStore, Visit},
     call_breach::ScanTerms,
-    daily_sweep::{DailySweepError, PinnedDay, Progress, Scheduled, SweepDays},
-    error::{decide, Decided, PrecompileError, Result, SweepFailure},
+    day_pass::{DayPassError, PassDays, PinnedDay, Progress, Scheduled},
+    error::{decide, Decided, PassFailure, PrecompileError, Result},
+    pass_budget::{BlockAllowance, PassBudget},
     storage::{dsl::Value, StorageHandle},
-    sweep_budget::{BlockAllowance, SweepBudget},
     time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
 
@@ -20,7 +20,7 @@ use crate::constants::REFERENCE_CURRENCIES;
 use crate::schema::OracleContract;
 
 /// This trait processes one factory's calls and forfeits in the stored phase order.
-pub trait CallSweep<'storage> {
+pub trait CallPass<'storage> {
     /// Names the right in the logs of a day the Oracle has not finalized.
     const CONSUMER: &'static str;
     /// This constant counts the required stages after calls: series forfeits, then optional position expiry or cleanup.
@@ -40,8 +40,8 @@ pub trait CallSweep<'storage> {
     fn currency_cursor(&self) -> &Value<'storage, u32>;
 
     /// Sorts a failed call. A node-local failure fails the block.
-    fn classify(error: &PrecompileError) -> SweepFailure {
-        error.sweep_failure()
+    fn classify(error: &PrecompileError) -> PassFailure {
+        error.pass_failure()
     }
 
     /// Points every cursor at the start of a freshly opened day.
@@ -60,7 +60,7 @@ pub trait CallSweep<'storage> {
         &mut self,
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<(u32, bool)>;
 
     /// The `phase` argument starts at one. The method reports completion explicitly rather than through counts.
@@ -69,13 +69,13 @@ pub trait CallSweep<'storage> {
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
         phase: u8,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<Progress>;
 }
 
 /// This function initializes the first eligible day when a new genesis activates, before any halt.
 /// Repeated initialization does not change the original boundary.
-pub fn initialize<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
+pub fn initialize<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
     if sweep.genesis_day().read()? == 0 {
         sweep
             .genesis_day()
@@ -86,7 +86,7 @@ pub fn initialize<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S
 
 /// Opens the first closed day not yet walked, or queues the one the Oracle has just
 /// finalized behind the day in flight.
-pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
+pub fn schedule<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
     let genesis_day = sweep.genesis_day().read()?;
     if genesis_day == 0 {
         return Err(PrecompileError::revert("daily sweep not initialized"));
@@ -106,7 +106,7 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
         return Ok(());
     }
     if sweep.days().current.read()? == 0 && sweep.days().latest.read()? == 0 {
-        sweep.days().open(SweepDays {
+        sweep.days().open(PassDays {
             current: genesis_day,
             latest: day,
         })?;
@@ -123,24 +123,24 @@ pub fn schedule<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
     }
 }
 
-fn sweep_error(err: DailySweepError) -> PrecompileError {
+fn sweep_error(err: DayPassError) -> PrecompileError {
     match err {
-        DailySweepError::Storage(err) => err,
-        DailySweepError::Time(time @ TimeError::PreGenesis { .. }) => {
+        DayPassError::Storage(err) => err,
+        DayPassError::Time(time @ TimeError::PreGenesis { .. }) => {
             PrecompileError::Fatal(time.to_string())
         }
-        DailySweepError::Time(err) => crate::errors::date_step_error(err),
+        DayPassError::Time(err) => crate::errors::date_step_error(err),
     }
 }
 
 /// This function runs calls and every required forfeit stage with one stored allowance for the block.
 /// Repeated calls may resume the selected day, but cannot select a second day at this block height.
 /// A local failure restores progress, economic state, and the allowance together.
-pub fn continue_day<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
+pub fn continue_day<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
     ctx.with_checkpoint(|| continue_pass(ctx, sweep))
 }
 
-fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
+fn continue_pass<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<u32> {
     schedule(ctx, sweep)?;
     let pinned_day = sweep.days().current.read()?;
     let mut allowance = BlockAllowance::for_block(
@@ -171,7 +171,7 @@ fn continue_pass<'s, S: CallSweep<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S)
     }
 }
 
-fn day_ready<'s, S: CallSweep<'s>>(
+fn day_ready<'s, S: CallPass<'s>>(
     ctx: &BlockRuntimeContext,
     sweep: &S,
     pinned_day: u32,
@@ -201,11 +201,11 @@ fn day_ready<'s, S: CallSweep<'s>>(
     Ok(finalized >= pinned_day)
 }
 
-fn run_phases<'s, S: CallSweep<'s>>(
+fn run_phases<'s, S: CallPass<'s>>(
     ctx: &BlockRuntimeContext,
     sweep: &mut S,
     pinned_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<(u32, Progress)> {
     let mut phase = sweep.phase().read()?;
     if S::FORFEIT_PHASES == 0 || S::FORFEIT_PHASES == u8::MAX || phase > S::FORFEIT_PHASES {
@@ -235,35 +235,32 @@ fn run_phases<'s, S: CallSweep<'s>>(
 }
 
 /// How a day's walk reads one right's call index. `scan_terms` names the widest terms a
-/// currency's entries were sealed with, and `skipped` reports a currency whose window
-/// price fits no bin.
-pub struct CallIndex<'c, 's, Bins, Terms, Skipped> {
+/// currency's entries were sealed with. A currency whose window price fits no bin is
+/// logged and passed by for the day.
+pub struct CallIndex<'c, 's, Bins, Terms> {
     pub currency_cursor: &'c Value<'s, u32>,
     pub bins: Bins,
     pub scan_terms: Terms,
-    pub skipped: Skipped,
 }
 
 /// One block's slice of the pinned day: every currency from the cursor, each walked by
 /// `walk` up to the highest bin its window can have breached. Returns whether the day ended.
-pub fn walk_day<'s, B, Bins, Terms, Skipped>(
+pub fn walk_day<'s, B, Bins, Terms>(
     ctx: &BlockRuntimeContext,
     pinned_day: u32,
-    budget: &mut SweepBudget,
-    index: CallIndex<'_, 's, Bins, Terms, Skipped>,
-    mut walk: impl FnMut(u16, &CallWindow, u32, &mut SweepBudget) -> Result<bool>,
+    budget: &mut PassBudget,
+    index: CallIndex<'_, 's, Bins, Terms>,
+    mut walk: impl FnMut(u16, &CallWindow, u32, &mut PassBudget) -> Result<bool>,
 ) -> Result<bool>
 where
     B: CallBinStore<'s>,
     Bins: Fn(u16) -> B,
     Terms: FnMut(u16) -> Result<ScanTerms>,
-    Skipped: FnMut(u16) -> Result<()>,
 {
     let CallIndex {
         currency_cursor,
         bins,
         mut scan_terms,
-        mut skipped,
     } = index;
     let currencies = REFERENCE_CURRENCIES;
     let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
@@ -272,12 +269,10 @@ where
         currency_cursor,
         budget,
         |reference_currency, budget| {
-            let Some((window, ceiling)) = currency_ceiling(
-                &bins(reference_currency),
-                &mut windows,
-                || scan_terms(reference_currency),
-                || skipped(reference_currency),
-            )?
+            let Some((window, ceiling)) =
+                currency_ceiling(&bins(reference_currency), &mut windows, || {
+                    scan_terms(reference_currency)
+                })?
             else {
                 return Ok(true);
             };
@@ -288,13 +283,12 @@ where
 
 /// The currency's window and the highest bin a breached entry can sit in. `None`
 /// when the currency is settled for the pinned day: nothing left past its cursor, too
-/// few priced days, or a price no bin covers. The last marks the day failed and calls
-/// `skipped` once, so later slices pass the currency by.
+/// few priced days, or a price no bin covers. The last marks the day failed, so later
+/// slices pass the currency by.
 pub fn currency_ceiling<'w, 's, S: CallBinStore<'s>>(
     bins: &S,
     windows: &'w mut CallWindows<'_>,
     terms: impl FnOnce() -> Result<ScanTerms>,
-    skipped: impl FnOnce() -> Result<()>,
 ) -> Result<Option<(&'w CallWindow, u32)>> {
     let (reference_currency, pinned_day) = (bins.currency(), windows.last_day());
     if bins.failed_day().read(&reference_currency)? == pinned_day || !call_bins::pending(bins)? {
@@ -307,9 +301,8 @@ pub fn currency_ceiling<'w, 's, S: CallBinStore<'s>>(
     match call_bins::price_to_bin(ceiling) {
         Ok(bin) => Ok(Some((window, bin))),
         Err(error) => {
-            tracing::warn!(target: "outbe::oracle", reference_currency, error = ?error, "call sweep: window price out of range, skipping currency for the day");
+            tracing::warn!(target: "outbe::oracle", reference_currency, error = ?error, "call pass: window price out of range, skipping currency for the day");
             bins.failed_day().write(&reference_currency, pinned_day)?;
-            skipped()?;
             Ok(None)
         }
     }
@@ -318,9 +311,9 @@ pub fn currency_ceiling<'w, 's, S: CallBinStore<'s>>(
 /// Calls one entry in its own checkpoint. `call` returns the writes it made, 0 when
 /// the entry was not called. A deterministic failure rolls back only this entry, and
 /// running out of gas resumes on it next block.
-pub fn call_entry<'s, S: CallSweep<'s>>(
+pub fn call_entry<'s, S: CallPass<'s>>(
     storage: &StorageHandle<'_>,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
     entry: impl Display,
     call: impl FnOnce() -> Result<u32>,
 ) -> Result<Visit> {
@@ -397,7 +390,7 @@ mod tests {
             }
         }
 
-        fn work(&self, phase: u8, budget: &mut SweepBudget) -> Result<(u32, bool)> {
+        fn work(&self, phase: u8, budget: &mut PassBudget) -> Result<(u32, bool)> {
             let mut remaining = self.remaining.read(&phase)?;
             let mut count = 0;
             while remaining != 0 && !budget.spent() {
@@ -412,7 +405,7 @@ mod tests {
         }
     }
 
-    impl<'s> CallSweep<'s> for TestSweep<'s> {
+    impl<'s> CallPass<'s> for TestSweep<'s> {
         const CONSUMER: &'static str = "test";
         const FORFEIT_PHASES: u8 = 2;
         type Bins<'a>
@@ -448,7 +441,7 @@ mod tests {
             &mut self,
             _ctx: &BlockRuntimeContext,
             _day: u32,
-            budget: &mut SweepBudget,
+            budget: &mut PassBudget,
         ) -> Result<(u32, bool)> {
             self.work(0, budget)
         }
@@ -457,7 +450,7 @@ mod tests {
             _ctx: &BlockRuntimeContext,
             _day: u32,
             phase: u8,
-            budget: &mut SweepBudget,
+            budget: &mut PassBudget,
         ) -> Result<Progress> {
             if self.fail_phase == Some(phase) {
                 return Err(PrecompileError::revert("injected stage failure"));

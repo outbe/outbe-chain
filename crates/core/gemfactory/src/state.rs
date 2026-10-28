@@ -4,8 +4,8 @@
 
 use alloy_primitives::{Address, U256};
 use base64::Engine;
+use outbe_primitives::deadline_queue;
 use outbe_primitives::error::Result;
-use outbe_primitives::expiry_queue;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::GemFactoryError;
@@ -49,8 +49,8 @@ impl<'s> GemFactoryContract<'s> {
         self.owner_index(pos.merchant).insert(pos.position_id)?;
         let hour = pos.expiry_hour();
         if self.hour_position_count(hour)? == 0 {
-            expiry_queue::push(
-                &PositionExpiryDays(self),
+            deadline_queue::push(
+                &PositionExpiryQueue(self),
                 position_queue_entry(hour)?,
                 pos.expires_at,
             )?;
@@ -90,8 +90,8 @@ impl<'s> GemFactoryContract<'s> {
     pub(crate) fn hand_hour_to_cleanup(&mut self, hour: u64) -> Result<()> {
         let entry = position_queue_entry(hour)?;
         let deadline = self.expiry_deadline.read(&entry)?;
-        expiry_queue::remove(&PositionExpiryDays(self), entry)?;
-        expiry_queue::push(&PositionCleanupDays(self), entry, deadline)
+        deadline_queue::remove(&PositionExpiryQueue(self), entry)?;
+        deadline_queue::push(&PositionCleanupQueue(self), entry, deadline)
     }
 
     /// Deletes an expired position, and forgets its hour with the last one.
@@ -104,8 +104,8 @@ impl<'s> GemFactoryContract<'s> {
         if self.hour_position_count(hour)? == 0 {
             self.hour_capacity_minor.clear(&hour)?;
             let entry = position_queue_entry(hour)?;
-            expiry_queue::remove(&PositionExpiryDays(self), entry)?;
-            expiry_queue::remove(&PositionCleanupDays(self), entry)?;
+            deadline_queue::remove(&PositionExpiryQueue(self), entry)?;
+            deadline_queue::remove(&PositionCleanupQueue(self), entry)?;
         }
         Ok(())
     }
@@ -164,9 +164,9 @@ impl<'s> GemFactoryContract<'s> {
 }
 
 /// Positions' expiry hours, each queued as one entry.
-pub struct PositionExpiryDays<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+pub struct PositionExpiryQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(PositionExpiryDays<u64> {
+outbe_primitives::impl_deadline_queue!(PositionExpiryQueue<u64> {
     root: expiry_tree_root,
     mid: expiry_tree_mid,
     leaf: expiry_tree_leaf,
@@ -180,9 +180,9 @@ outbe_primitives::impl_expiry_queue!(PositionExpiryDays<u64> {
 });
 
 /// Expired hours whose positions wait to be deleted.
-pub struct PositionCleanupDays<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
+pub struct PositionCleanupQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
-outbe_primitives::impl_expiry_queue!(PositionCleanupDays<u64> {
+outbe_primitives::impl_deadline_queue!(PositionCleanupQueue<u64> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,

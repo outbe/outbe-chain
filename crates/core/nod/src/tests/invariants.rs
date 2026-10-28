@@ -260,12 +260,12 @@ fn nod_contract_slot_layout_is_pinned() {
         assert_eq!(nod.call_bin_count.base_slot(), U256::from(17));
         assert_eq!(nod.call_bin_groups.base_slot(), U256::from(18));
         assert_eq!(nod.call_group_slot.base_slot(), U256::from(19));
-        assert_eq!(nod.expiry_tree_root.slot(), U256::from(20));
-        assert_eq!(nod.expiry_tree_leaf.base_slot(), U256::from(22));
+        assert_eq!(nod.forfeit_tree_root.slot(), U256::from(20));
+        assert_eq!(nod.forfeit_tree_leaf.base_slot(), U256::from(22));
         assert_eq!(nod.call_currency_cursor.slot(), U256::from(23));
         assert_eq!(nod.call_bin_cursor.base_slot(), U256::from(24));
         assert_eq!(nod.config_profile.slot(), U256::from(25));
-        assert_eq!(nod.expiry_day_len.base_slot(), U256::from(26));
-        assert_eq!(nod.expiry_cursor.slot(), U256::from(32));
+        assert_eq!(nod.forfeit_day_len.base_slot(), U256::from(26));
+        assert_eq!(nod.forfeit_cursor.slot(), U256::from(32));
     });
 }

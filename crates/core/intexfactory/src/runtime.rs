@@ -199,7 +199,7 @@ pub(crate) fn owner_balances(
     series_id: SeriesId,
     owner: Address,
 ) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
         0
     } else {
@@ -239,7 +239,7 @@ pub fn settle_intex(
         return Err(IntexFactoryError::ZeroUnits.into());
     }
 
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     require_settleable(storage, &series)?;
 
     let balance = nft_balance_of(storage, owner, series_id.token_id())?;

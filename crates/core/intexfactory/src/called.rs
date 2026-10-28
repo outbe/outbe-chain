@@ -7,16 +7,16 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::call_sweep::{self, CallSweep};
+use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
-use outbe_primitives::daily_sweep::PinnedDay;
+use outbe_primitives::day_pass::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, Visit},
-    error::{Result, SweepFailure},
+    error::{PassFailure, Result},
+    pass_budget::PassBudget,
     storage::{dsl::Value, StorageHandle},
-    sweep_budget::SweepBudget,
 };
 
 use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
@@ -29,31 +29,31 @@ pub(crate) mod group;
 pub(crate) use group::{call_if_breached, GroupCall};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::schedule(ctx, &mut IntexCallSweep::new(ctx))
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_pass::schedule(ctx, &mut IntexCallPass::new(ctx))
 }
 
 pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::initialize(ctx, &mut IntexCallSweep::new(ctx))
+    call_pass::initialize(ctx, &mut IntexCallPass::new(ctx))
 }
 
 /// This function runs the coupled daily pass, including series forfeits after calls.
 /// It returns the number of called series, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
+    call_pass::continue_day(ctx, &mut IntexCallPass::new(ctx))
 }
 
 /// This function resumes the coupled daily pass with the same observation day and shared block allowance.
 /// It returns the number of called series.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut IntexCallPass::new(ctx))
 }
 
-struct IntexCallSweep<'storage> {
+struct IntexCallPass<'storage> {
     intex: IntexContract<'storage>,
 }
 
-impl<'storage> IntexCallSweep<'storage> {
+impl<'storage> IntexCallPass<'storage> {
     fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
         Self {
             intex: IntexContract::new(ctx.storage.clone()),
@@ -61,7 +61,7 @@ impl<'storage> IntexCallSweep<'storage> {
     }
 }
 
-impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
+impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
     const CONSUMER: &'static str = "intex";
     const FORFEIT_PHASES: u8 = 1;
 
@@ -82,12 +82,12 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
         _phase: u8,
-        budget: &mut SweepBudget,
-    ) -> Result<outbe_primitives::daily_sweep::Progress> {
-        let through_day = outbe_primitives::expiry_queue::deadline_day(
+        budget: &mut PassBudget,
+    ) -> Result<outbe_primitives::day_pass::Progress> {
+        let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
-        crate::expired::sweep_through(ctx, through_day, budget)
+        crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 
     type Bins<'a>
@@ -114,16 +114,16 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
         &mut self,
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<(u32, bool)> {
         let params = outbe_intex::config::read(&ctx.storage)?;
         let index = &self.intex;
         let mut called: u32 = 0;
-        let finished = call_sweep::walk_day(
+        let finished = call_pass::walk_day(
             ctx,
             pinned_day,
             budget,
-            call_sweep::CallIndex {
+            call_pass::CallIndex {
                 currency_cursor: &index.call_currency_cursor,
                 bins: |iso_code| CallBins(index, iso_code),
                 scan_terms: |iso_code| {
@@ -131,15 +131,6 @@ impl<'storage> CallSweep<'storage> for IntexCallSweep<'storage> {
                         iso_code,
                         params.call_window_seconds,
                         params.call_threshold_seconds,
-                    )
-                },
-                skipped: |iso_code| {
-                    crate::runtime::emit_event(
-                        &ctx.storage,
-                        crate::precompile::IIntexFactory::CallScanSkipped {
-                            referenceCurrency: iso_code,
-                            utcDay: pinned_day,
-                        },
                     )
                 },
             },
@@ -160,7 +151,7 @@ fn call_currency(
     iso_code: u16,
     window: &CallWindow,
     ceiling: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<(u32, bool)> {
     let index = IntexContract::new(ctx.storage.clone());
     let mut intex = IntexContract::new(ctx.storage.clone());
@@ -174,7 +165,7 @@ fn call_currency(
             if !budget.fits_writes(intex.group_member_count(group)?) {
                 return Ok(Visit::Stop);
             }
-            call_sweep::call_entry::<IntexCallSweep>(&ctx.storage, budget, group, || {
+            call_pass::call_entry::<IntexCallPass>(&ctx.storage, budget, group, || {
                 let call = GroupCall {
                     storage: &ctx.storage,
                     intex: &mut intex,
@@ -218,7 +209,7 @@ pub(crate) fn notify_called(
         });
         match sent {
             Ok(()) => {}
-            Err(error) if error.sweep_failure() == SweepFailure::Propagate => return Err(error),
+            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::intexfactory",
@@ -226,7 +217,7 @@ pub(crate) fn notify_called(
                     called_at,
                     series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     error = ?error,
-                    "called notice: refused"
+                    "call notice: refused"
                 );
                 refused.extend_from_slice(chunk);
             }
@@ -236,4 +227,4 @@ pub(crate) fn notify_called(
 }
 
 #[cfg(test)]
-pub(crate) use outbe_primitives::daily_sweep::currency_position;
+pub(crate) use outbe_primitives::day_pass::currency_position;

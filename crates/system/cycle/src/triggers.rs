@@ -120,13 +120,13 @@ impl TriggerHandler {
     pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
         match self {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
-            Self::IntexCallDaily => outbe_intexfactory::called::run_daily(ctx),
+            Self::IntexCallDaily => outbe_intexfactory::called::schedule_call_pass(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemCallDaily => outbe_gemfactory::called::run_daily(ctx),
+            Self::GemCallDaily => outbe_gemfactory::called::schedule_call_pass(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
-            Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
+            Self::CredisCallDaily => outbe_credisfactory::called::schedule_call_pass(ctx),
+            Self::NodCallDaily => outbe_nodfactory::called::schedule_call_pass(ctx),
+            Self::IntexDrainParked => outbe_intexfactory::parked::resend_parked_messages(ctx),
         }
     }
 }

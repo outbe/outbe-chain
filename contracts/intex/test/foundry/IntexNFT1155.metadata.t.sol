@@ -75,6 +75,16 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(token.symbol(), "INTEX");
     }
 
+    function test_uri_ShortSeriesId_TrimsPadding() public {
+        bytes14 shortId = "20260623-USD";
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(20260623, CAP, CALL_PERIOD);
+        params.seriesId = shortId;
+        vm.prank(bridger);
+        token.createSeries(params);
+        uint256 issued = token.issuedTokenId(shortId);
+        _assertContains(_json(issued), "\"name\":\"Intex 20260623-USD\",");
+    }
+
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));

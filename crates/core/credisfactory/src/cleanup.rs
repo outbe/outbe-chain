@@ -2,31 +2,31 @@
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
 use alloy_primitives::{B256, U256};
-use outbe_credis::{CleanupDays, CredisContract};
+use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
-    sweep_budget::SweepBudget,
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, PrecompileError, Result},
+    pass_budget::PassBudget,
 };
 
 /// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
 #[cfg(test)]
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
     let mut cleanup = CredisCleanup::new(ctx);
-    expiry_queue::sweep_block(&CleanupDays(&queue), ctx, &mut cleanup)?;
+    deadline_queue::process_block(&CleanupQueue(&queue), ctx, &mut cleanup)?;
     Ok(cleanup.deleted)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+    budget: &mut PassBudget,
+) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
-        &CleanupDays(&queue),
+    deadline_queue::process_day(
+        &CleanupQueue(&queue),
         ctx,
         through_day,
         budget,
@@ -51,13 +51,13 @@ impl<'a, 's> CredisCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unsettled Credis.
-impl ExpiryHandler<B256> for CredisCleanup<'_, '_> {
+impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
     type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.credis.group_member_count(group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -69,11 +69,11 @@ impl ExpiryHandler<B256> for CredisCleanup<'_, '_> {
         self.credis.group_member(group, index)
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
-    fn expire_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
+    fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
         crate::runtime::delete_forfeited_credis(self.ctx.storage.clone(), credis_id)?;
         self.deleted = self.deleted.saturating_add(1);
         Ok(())

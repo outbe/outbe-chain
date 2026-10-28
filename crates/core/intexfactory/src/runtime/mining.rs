@@ -23,7 +23,7 @@ pub fn mine_promis(
         return Err(IntexFactoryError::ZeroUnits.into());
     }
 
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     let settled = outbe_intex::api::owner_settled_units(storage, series_id, owner)?;
     if U256::from(settled) < units {
         return Err(IntexFactoryError::InsufficientSettled.into());

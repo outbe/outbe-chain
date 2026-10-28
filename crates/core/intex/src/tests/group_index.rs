@@ -24,7 +24,7 @@ fn issue(s: &StorageHandle, day: u32, issued_at: u32, call_price: u64) -> Series
 }
 
 fn group_of(s: &StorageHandle, id: SeriesId) -> alloy_primitives::B256 {
-    api::read_series(s, id)
+    api::get_series(s, id)
         .unwrap()
         .group_key()
         .expect("date step")
@@ -90,7 +90,7 @@ fn a_called_group_leaves_its_bin_and_calls_every_member() {
 
         assert_eq!(bin_count(&f, call_bin(CALL_PRICE_MINOR)), 0);
         for id in [a, b] {
-            let record = api::read_series(&s, id).unwrap();
+            let record = api::get_series(&s, id).unwrap();
             assert_eq!(
                 api::call_stamp(&s, &record).unwrap().called_at,
                 ISSUED_AT + 10

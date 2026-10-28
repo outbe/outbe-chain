@@ -161,7 +161,7 @@ impl GemView {
         }
     }
 
-    /// Lifecycle state without waiting for the sweep: Settled stays Settled, a called
+    /// Lifecycle state without waiting for the pass: Settled stays Settled, a called
     /// gem past its deadline reads Forfeited.
     #[must_use]
     pub fn effective_state(&self, now: u64) -> u8 {
@@ -237,20 +237,20 @@ pub struct GemContract {
     // --- Called groups, queued by the hour their notice period closes in. Price
     // drives calling and only time drives expiry, so the two stages stay separate.
     #[attribute(order = 20)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// This value counts all slots ever used in a day.
     /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 23)]
-    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
-    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(hour_be32 ++ slot_be32)` -> a called group's key.
     #[attribute(order = 25)]
-    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Group key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 26)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -258,15 +258,15 @@ pub struct GemContract {
     #[attribute(order = 27)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 28)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 29)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     // --- Call sweep scheduling.
-    /// Currency the unfinished call sweep resumes at.
+    /// Currency the unfinished call pass resumes at.
     #[attribute(order = 30)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
-    /// UTC day an unfinished call sweep is pinned to, so its later slices decide
+    /// UTC day an unfinished call pass is pinned to, so its later slices decide
     /// against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 31)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
@@ -302,7 +302,7 @@ pub struct GemContract {
     pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- This queue stores forfeited groups whose unpaid gems await deletion.
-    // It schedules groups by day, like the expiry queue.
+    // It schedules groups by day, like the forfeit queue.
     #[attribute(order = 43)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]

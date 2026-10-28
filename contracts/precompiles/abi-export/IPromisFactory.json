@@ -91,7 +91,7 @@
     "name": "CoenMined",
     "inputs": [
       {
-        "name": "sender",
+        "name": "account",
         "type": "address",
         "indexed": true,
         "internalType": "address"

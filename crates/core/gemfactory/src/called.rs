@@ -6,49 +6,47 @@ use alloy_primitives::{B256, U256};
 use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
 
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::CallScanSkipped;
-use crate::runtime::emit_event;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
 use outbe_oracle::{
-    call_sweep::{self, CallSweep},
+    call_pass::{self, CallPass},
     call_window::CallWindow,
 };
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
-    daily_sweep::PinnedDay,
-    error::{PrecompileError, Result, SweepFailure},
+    day_pass::PinnedDay,
+    error::{PassFailure, PrecompileError, Result},
+    pass_budget::PassBudget,
     storage::dsl::Value,
-    sweep_budget::SweepBudget,
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::schedule(ctx, &mut GemCallSweep::new(ctx))
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_pass::schedule(ctx, &mut GemCallPass::new(ctx))
 }
 
 pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::initialize(ctx, &mut GemCallSweep::new(ctx))
+    call_pass::initialize(ctx, &mut GemCallPass::new(ctx))
 }
 
 /// This function runs the coupled daily pass, including forfeits and position expiry after calls.
 /// It returns the number of called groups, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
+    call_pass::continue_day(ctx, &mut GemCallPass::new(ctx))
 }
 
 /// This function resumes the coupled daily pass under this block height's shared allowance.
 /// It returns the number of called groups.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut GemCallSweep::new(ctx))
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut GemCallPass::new(ctx))
 }
 
-pub(crate) struct GemCallSweep<'storage> {
+pub(crate) struct GemCallPass<'storage> {
     gem: GemContract<'storage>,
 }
 
-impl<'storage> GemCallSweep<'storage> {
+impl<'storage> GemCallPass<'storage> {
     fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
         Self {
             gem: GemContract::new(ctx.storage.clone()),
@@ -56,7 +54,7 @@ impl<'storage> GemCallSweep<'storage> {
     }
 }
 
-impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
+impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
     const CONSUMER: &'static str = "gem";
     const FORFEIT_PHASES: u8 = 2;
 
@@ -77,14 +75,14 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
         phase: u8,
-        budget: &mut SweepBudget,
-    ) -> Result<outbe_primitives::daily_sweep::Progress> {
-        let through_day = outbe_primitives::expiry_queue::deadline_day(
+        budget: &mut PassBudget,
+    ) -> Result<outbe_primitives::day_pass::Progress> {
+        let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
         match phase {
-            1 => crate::expired::sweep_through(ctx, through_day, budget),
-            2 => crate::positions_expired::sweep_through(ctx, through_day, budget),
+            1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
+            2 => crate::positions_expired::expire_through(ctx, through_day, budget),
             _ => Err(PrecompileError::revert("invalid Gem daily phase")),
         }
     }
@@ -109,36 +107,27 @@ impl<'storage> CallSweep<'storage> for GemCallSweep<'storage> {
         &self.gem.call_currency_cursor
     }
 
-    fn classify(error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     fn slice(
         &mut self,
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<(u32, bool)> {
         let params = outbe_gem::config::read(&ctx.storage)?;
         let mut called: u32 = 0;
         let gem = &self.gem;
-        let finished = call_sweep::walk_day(
+        let finished = call_pass::walk_day(
             ctx,
             pinned_day,
             budget,
-            call_sweep::CallIndex {
+            call_pass::CallIndex {
                 currency_cursor: &gem.call_currency_cursor,
                 bins: |iso_code| CallBins(gem, iso_code),
                 scan_terms: |iso_code| scan_terms(gem, iso_code, &params),
-                skipped: |iso_code| {
-                    emit_event(
-                        &ctx.storage,
-                        CallScanSkipped {
-                            referenceCurrency: iso_code,
-                            utcDay: pinned_day,
-                        },
-                    )
-                },
             },
             |iso_code, window, ceiling, budget| {
                 let (calls, finished) = call_currency(ctx, iso_code, window, ceiling, budget)?;
@@ -175,7 +164,7 @@ pub(crate) fn call_currency(
     iso_code: u16,
     window: &CallWindow,
     ceiling: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<(u32, bool)> {
     let index = GemContract::new(ctx.storage.clone());
     let mut gem = GemContract::new(ctx.storage.clone());
@@ -185,7 +174,7 @@ pub(crate) fn call_currency(
         ceiling,
         budget,
         |group, budget| {
-            call_sweep::call_entry::<GemCallSweep>(&ctx.storage, budget, group, || {
+            call_pass::call_entry::<GemCallPass>(&ctx.storage, budget, group, || {
                 if retire_paid_group(&mut gem, group, ctx.block.timestamp)? {
                     return Ok(1);
                 }

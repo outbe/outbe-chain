@@ -40,7 +40,7 @@ fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
         storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
         runtime::issue_intex(&storage, sample(7)).unwrap();
         assert_eq!(
-            outbe_intex::api::read_series(&storage, sid(7))
+            outbe_intex::api::get_series(&storage, sid(7))
                 .unwrap()
                 .issued_at,
             u32::MAX
@@ -54,7 +54,7 @@ fn issue_creates_series_in_registry() {
         runtime::issue_intex(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.series_id, sid(7));
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
@@ -127,7 +127,7 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
         let params = sample(7);
         let legs = runtime::issue_intex(&s, params.clone()).unwrap();
 
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.promis_load_minor, U256::from(params.promis_load_minor));
         assert_eq!(r.entry_price_minor, params.entry_price_minor);
         assert_eq!(r.call_price_minor, params.call_price_minor);
@@ -659,7 +659,7 @@ fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
         .cutoff()
         + 3_600;
     StorageHandle::enter(&mut storage, |s| {
-        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         let terms =
             u64::from(series.call_notice_period_seconds) + u64::from(series.transit_margin_seconds);
         outbe_intex::api::call_group_of(&s, sid(7), (close_at - terms) as u32).unwrap();
