@@ -2,6 +2,15 @@
 pragma solidity ^0.8.30;
 
 interface ICredisFactory {
+    /// Permissionless daily maintenance. Cleanup follows completed group forfeiture.
+    function maintain(bool process_call, bool process_forfeit, bool process_cleanup) external;
+
+    /// Pending obligations, independent of this block's remaining allowance.
+    function hasMaintenanceWork()
+        external
+        view
+        returns (bool call_pending, bool forfeit_pending, bool cleanup_pending);
+
     error InvalidAmount();
     error CcaStakeMismatch();
     error ReservationNotFound();

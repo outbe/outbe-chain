@@ -14,16 +14,13 @@ use crate::errors::CycleError;
 /// the indexed `id` in [`crate::ICycle::CycleTriggerExecuted`] and
 /// [`crate::ICycle::CycleTriggerFailed`], and persists it in the
 /// [`crate::schema::Cycle`] mappings.
+/// Factory scheduler ids 1, 3, 5, and 6 are retired and must not be reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
     ProtocolCycle = 0,
-    IntexCallDaily = 1,
     AuctionAdvance = 2,
-    GemCallDaily = 3,
     AuctionClearing = 4,
-    CredisCallDaily = 5,
-    NodCallDaily = 6,
     IntexDrainParked = 8,
 }
 
@@ -74,12 +71,8 @@ pub struct TriggerSpec {
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
     ProtocolCycle,
-    IntexCallDaily,
     AuctionAdvance,
-    GemCallDaily,
     AuctionClearing,
-    CredisCallDaily,
-    NodCallDaily,
     IntexDrainParked,
 }
 
@@ -120,12 +113,8 @@ impl TriggerHandler {
     pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
         match self {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
-            Self::IntexCallDaily => outbe_intexfactory::called::run_daily(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
-            Self::GemCallDaily => outbe_gemfactory::called::run_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
-            Self::NodCallDaily => outbe_nodfactory::called::run_daily(ctx),
             Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
         }
     }
@@ -139,13 +128,6 @@ impl TriggerHandler {
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
-
-/// Every right's call sweep schedules a closed day, daily in production. An e2e run
-/// seeds the days it reads instead of living through them, so it recurs sooner.
-#[cfg(not(feature = "e2e-test"))]
-const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(feature = "e2e-test")]
-const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
 /// Cadence of the auction clearing poll, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
@@ -174,7 +156,7 @@ macro_rules! const_spec {
 /// Same-slot brief and auction order depends on that sequence.
 pub const fn active_triggers(
     metadosis_advance_interval_seconds: u64,
-) -> core::result::Result<[TriggerSpec; 8], CycleError> {
+) -> core::result::Result<[TriggerSpec; 4], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
@@ -191,22 +173,6 @@ pub const fn active_triggers(
                 TriggerHandler::ProtocolCycle,
             ));
             spec.requires_accounting_window = true;
-            spec.coalesces_backlog = true;
-            spec
-        },
-        // Reads finalized oracle VWAP history to call series. It has no
-        // dependency on the parent block's settlement accounting.
-        // The sweeps take their day from the block clock, so a missed slot
-        // would only walk the same day again.
-        {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::IntexCallDaily.as_u32(),
-                "intex_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
-                TriggerHandler::IntexCallDaily,
-            ));
-            spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
             spec
         },
@@ -228,22 +194,6 @@ pub const fn active_triggers(
             spec.depends_on = &[TriggerId::ProtocolCycle];
             spec
         },
-        // Reads finalized oracle VWAP history to force-call gems. It has
-        // no dependency on the parent block's settlement accounting.
-        // The sweeps take their day from the block clock, so a missed slot
-        // would only walk the same day again.
-        {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::GemCallDaily.as_u32(),
-                "gem_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
-                TriggerHandler::GemCallDaily,
-            ));
-            spec.requires_accounting_window = false;
-            spec.coalesces_backlog = true;
-            spec
-        },
         // Polls the fan-in gate `auction_advance` arms, so it runs far more
         // often than the stage schedule advances.
         // Clears from bids already ingested and the router's frozen target
@@ -260,37 +210,6 @@ pub const fn active_triggers(
             spec.requires_accounting_window = false;
             spec.coalesces_backlog = true;
             spec.depends_on = &[TriggerId::AuctionAdvance];
-            spec
-        },
-        // Reads finalized oracle VWAP history to call credis
-        // positions. It has no dependency on the parent block's settlement
-        // accounting.
-        // The sweep takes its day from the block clock, so a missed slot
-        // would only schedule the same day again.
-        {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::CredisCallDaily.as_u32(),
-                "credis_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
-                TriggerHandler::CredisCallDaily,
-            ));
-            spec.requires_accounting_window = false;
-            spec.coalesces_backlog = true;
-            spec
-        },
-        // Schedules the latest completed UTC day for the call sweep.
-        // Missed slots would schedule the same day against the current clock.
-        {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::NodCallDaily.as_u32(),
-                "nod_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
-                TriggerHandler::NodCallDaily,
-            ));
-            spec.requires_accounting_window = false;
-            spec.coalesces_backlog = true;
             spec
         },
         // Polls what the origin router parked, on the same cadence as the other outbound polls.
@@ -312,7 +231,7 @@ pub const fn active_triggers(
     ])
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 4] =
     match active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS) {
         Ok(specs) => specs,
         Err(_) => panic!("default metadosis interval is nonzero"),
@@ -384,45 +303,26 @@ pub const fn last_fire_at(
 #[cfg(test)]
 mod protocol_parameter_tests {
     use super::*;
-    use outbe_primitives::time::SECONDS_PER_DAY;
 
     #[test]
     fn protocol_cycle_uses_the_genesis_interval() {
-        // The call sweeps are daily in a release build; e2e shortens them.
-        #[cfg(not(feature = "e2e-test"))]
-        assert_eq!(CALL_SWEEP_PERIOD_SECONDS, SECONDS_PER_DAY);
         let configured = active_triggers(10).expect("interval 10");
         assert_eq!(configured[0].period_seconds(), 10);
         assert_eq!(configured[0].start_offset_seconds, 0);
-        assert_eq!(configured[1].period_seconds(), SECONDS_PER_DAY);
-        assert_eq!(configured[2].period_seconds(), 3_600);
-        assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
+        assert_eq!(
+            configured[1].period_seconds(),
+            AUCTION_ADVANCE_PERIOD_SECONDS
+        );
+        assert_eq!(configured[1].start_offset_seconds, 0);
+        assert_eq!(configured[2].period_seconds(), OUTBOUND_POLL_PERIOD_SECONDS);
         assert!(matches!(
-            configured[3].handler,
-            TriggerHandler::GemCallDaily
-        ));
-        assert_eq!(configured[4].period_seconds(), 600);
-        assert!(matches!(
-            configured[4].handler,
+            configured[2].handler,
             TriggerHandler::AuctionClearing
         ));
-        assert_eq!(configured[5].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
-        assert_eq!(configured[5].start_offset_seconds, 0);
+        assert_eq!(configured[3].period_seconds(), OUTBOUND_POLL_PERIOD_SECONDS);
+        assert_eq!(configured[3].id, TriggerId::IntexDrainParked.as_u32());
         assert!(matches!(
-            configured[5].handler,
-            TriggerHandler::CredisCallDaily
-        ));
-        assert_eq!(configured[6].period_seconds(), SECONDS_PER_DAY);
-        assert_eq!(configured[6].start_offset_seconds, 0);
-        assert!(matches!(
-            configured[6].handler,
-            TriggerHandler::NodCallDaily
-        ));
-        assert_eq!(configured[7].period_seconds(), OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[7].id, TriggerId::IntexDrainParked.as_u32());
-        assert!(matches!(
-            configured[7].handler,
+            configured[3].handler,
             TriggerHandler::IntexDrainParked
         ));
 

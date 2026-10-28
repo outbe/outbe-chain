@@ -39,6 +39,25 @@ pub fn dispatch(
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
+            maintain(c) => mutate_void(&storage, c, caller, |_sender, c| {
+                runtime::maintain(
+                    &storage,
+                    outbe_oracle::call_sweep::Selection {
+                        process_call: c.process_call,
+                        process_forfeit: c.process_forfeit,
+                        process_cleanup: c.process_cleanup,
+                    },
+                )
+            }),
+            hasMaintenanceWork(c) => view(c, |_| {
+                let (call_pending, forfeit_pending, cleanup_pending) =
+                    runtime::has_maintenance_work(&storage)?;
+                Ok(IGemFactory::hasMaintenanceWorkReturn {
+                    call_pending,
+                    forfeit_pending,
+                    cleanup_pending,
+                })
+            }),
             issueGemPosition(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_gem_position(
                     &storage,

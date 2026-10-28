@@ -34,14 +34,28 @@ mod called {
 
     pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
         prepare(ctx);
-        crate::called::scan_and_call(ctx)
+        crate::called::scan_and_call(
+            ctx,
+            outbe_oracle::call_sweep::Selection {
+                process_call: true,
+                process_forfeit: true,
+                process_cleanup: true,
+            },
+        )
     }
 
     pub(super) fn run_call_slice(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<u32> {
         prepare(ctx);
-        crate::called::run_call_slice(ctx)
+        crate::called::run_call_slice(
+            ctx,
+            outbe_oracle::call_sweep::Selection {
+                process_call: true,
+                process_forfeit: true,
+                process_cleanup: true,
+            },
+        )
     }
 
     pub(super) fn run_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {

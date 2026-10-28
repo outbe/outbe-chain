@@ -14,6 +14,11 @@ use outbe_primitives::{
 
 use crate::errors::NodFactoryError;
 
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<bool> {
+    let queue = NodContract::new(ctx.storage.clone());
+    expiry_queue::has_cleanup_work(&CleanupDays(&queue), ctx.block.timestamp)
+}
+
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
 pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());

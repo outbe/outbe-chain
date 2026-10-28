@@ -27,6 +27,120 @@ use crate::{
 use outbe_vaultrouter::api::IVaultRouter;
 use outbe_vaultrouter::settlement::SettlementError;
 
+const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+    process_call: true,
+    process_forfeit: true,
+    process_cleanup: true,
+};
+
+#[test]
+fn maintenance_noop_and_query_are_read_only_and_dispatch_is_guarded() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(1_700_000_000u64));
+    provider.set_block_number(77);
+    StorageHandle::enter(&mut provider, |storage| {
+        NodContract::new(storage)
+            .daily_genesis_day
+            .write(outbe_primitives::time::timestamp_to_date_key(1_700_000_000))
+            .unwrap();
+    });
+    let maintain = INodFactory::maintainCall {
+        process_call: false,
+        process_forfeit: false,
+        process_cleanup: false,
+    }
+    .abi_encode();
+    let query = INodFactory::hasMaintenanceWorkCall {}.abi_encode();
+    let before = provider.storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(crate::precompile::dispatch(
+            storage.clone(),
+            &maintain,
+            Address::repeat_byte(9),
+            U256::ZERO
+        )
+        .unwrap()
+        .is_empty());
+        assert!(crate::precompile::dispatch(
+            storage,
+            &maintain,
+            Address::repeat_byte(8),
+            U256::from(1)
+        )
+        .is_err());
+    });
+    assert_eq!(provider.storage, before);
+    assert!(provider.events.is_empty());
+    provider.set_static(true);
+    StorageHandle::enter(&mut provider, |storage| {
+        let result = crate::precompile::dispatch(
+            storage.clone(),
+            &query,
+            Address::repeat_byte(7),
+            U256::ZERO,
+        )
+        .unwrap();
+        let flags = INodFactory::hasMaintenanceWorkCall::abi_decode_returns(&result).unwrap();
+        assert!(!flags.call_pending && !flags.forfeit_pending && !flags.cleanup_pending);
+        assert!(matches!(
+            crate::precompile::dispatch(storage, &maintain, Address::repeat_byte(6), U256::ZERO),
+            Err(PrecompileError::WriteProtection)
+        ));
+    });
+    assert_eq!(provider.storage, before);
+    assert!(provider.events.is_empty());
+}
+
+#[test]
+fn cleanup_only_maintenance_inspects_eligible_queue_without_advancing_daily_calls() {
+    use outbe_primitives::{
+        expiry_queue,
+        time::{timestamp_to_date_key, SECONDS_PER_DAY},
+    };
+    let now = 1_700_000_000u64;
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(now));
+    provider.set_block_number(77);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage.clone());
+        let day = timestamp_to_date_key(now - SECONDS_PER_DAY);
+        nod.daily_genesis_day.write(day).unwrap();
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .utc_day_vwap_last_finalized
+            .write(day)
+            .unwrap();
+        let queue = outbe_nod::state::CleanupDays(&nod);
+        let future = B256::repeat_byte(1);
+        let eligible = B256::repeat_byte(2);
+        expiry_queue::push(&queue, future, now + SECONDS_PER_DAY).unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&storage).unwrap(),
+            (true, true, false)
+        );
+        expiry_queue::push(&queue, eligible, now - SECONDS_PER_DAY).unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&storage).unwrap(),
+            (true, true, true)
+        );
+        runtime::maintain(
+            &storage,
+            outbe_oracle::call_sweep::Selection {
+                process_call: false,
+                process_forfeit: false,
+                process_cleanup: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&storage).unwrap(),
+            (true, true, false)
+        );
+        assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
+        assert_eq!(nod.daily_budget.read().unwrap(), U256::ZERO);
+        assert_eq!(nod.daily_phase.read().unwrap(), 0);
+    });
+}
+
 fn dummy_auth() -> ModifyAuth {
     ModifyAuth {
         mac: [0; 32],

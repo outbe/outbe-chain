@@ -22,6 +22,46 @@ use crate::errors::{date_step_error, NodFactoryError};
 use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
+fn maintenance_context<'s>(
+    storage: &StorageHandle<'s>,
+) -> Result<outbe_primitives::block::BlockRuntimeContext<'s>> {
+    use outbe_primitives::block::{BlockContext, BlockContextInput, BlockRuntimeContext};
+    Ok(BlockRuntimeContext::new(
+        BlockContext::new_with_genesis_hash(BlockContextInput {
+            block_number: storage.block_number()?,
+            timestamp: storage.now_secs()?,
+            chain_id: storage.chain_id()?,
+            genesis_hash: storage.genesis_hash()?,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        }),
+        storage.clone(),
+    ))
+}
+
+pub fn maintain(
+    storage: &StorageHandle<'_>,
+    selection: outbe_oracle::call_sweep::Selection,
+) -> Result<()> {
+    outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
+    // TODO: Reward callers for maintenance work performed.
+    if !selection.process_call && !selection.process_forfeit && !selection.process_cleanup {
+        return Ok(());
+    }
+    let ctx = maintenance_context(storage)?;
+    crate::called::maintain(&ctx, selection)?;
+    if selection.process_cleanup {
+        crate::cleanup::sweep_cleanup(&ctx)?;
+    }
+    Ok(())
+}
+
+pub fn has_maintenance_work(storage: &StorageHandle<'_>) -> Result<(bool, bool, bool)> {
+    let ctx = maintenance_context(storage)?;
+    let (call, forfeit, _) = crate::called::pending_work(&ctx)?;
+    Ok((call, forfeit, crate::cleanup::pending_work(&ctx)?))
+}
+
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)

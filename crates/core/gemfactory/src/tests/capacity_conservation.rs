@@ -12,12 +12,53 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 
+use super::ALL_PHASES;
 use crate::{positions_expired, schema::GemPosition, GemFactoryContract};
 
 const EXPIRES: u64 = 1_704_153_600;
 /// `EXPIRES` is midnight, so its deadline day closes the following midnight.
 const DAY_CLOSED: u64 = EXPIRES + SECONDS_PER_DAY;
 const REMAINDER: u64 = 3_000_007;
+
+#[test]
+fn cleanup_only_maintenance_includes_position_backlog_when_calls_are_blocked() {
+    use outbe_gem::GemContract;
+    use outbe_primitives::time::timestamp_to_date_key;
+    let mut p = world();
+    p.set_timestamp(U256::from(DAY_CLOSED));
+    p.set_block_number(41);
+    StorageHandle::enter(&mut p, |s| {
+        let mut factory = GemFactoryContract::new(s.clone());
+        factory.hand_hour_to_cleanup(EXPIRES / 3_600).unwrap();
+        let gem = GemContract::new(s.clone());
+        let day = timestamp_to_date_key(EXPIRES);
+        gem.daily_genesis_day.write(day).unwrap();
+        outbe_oracle::schema::OracleContract::new(s.clone())
+            .utc_day_vwap_last_finalized
+            .write(day)
+            .unwrap();
+        assert_eq!(
+            crate::runtime::has_maintenance_work(&s).unwrap(),
+            (true, true, true)
+        );
+        crate::runtime::maintain(
+            &s,
+            outbe_oracle::call_sweep::Selection {
+                process_call: false,
+                process_forfeit: false,
+                process_cleanup: true,
+            },
+        )
+        .unwrap();
+        assert!(factory.positions.get(U256::from(1)).unwrap().is_none());
+        assert_eq!(
+            crate::runtime::has_maintenance_work(&s).unwrap(),
+            (true, true, false)
+        );
+        assert_eq!(gem.daily_budget.read().unwrap(), U256::ZERO);
+        assert_eq!(gem.call_sweep_day.read().unwrap(), 0);
+    });
+}
 
 #[test]
 fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
@@ -109,13 +150,13 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         }
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, DAY_CLOSED, 1), s.clone());
-        crate::called::run_call_slice(&ctx).unwrap();
+        crate::called::run_call_slice(&ctx, ALL_PHASES).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
         );
         assert_eq!(gem.daily_phase.read().unwrap(), 1);
-        crate::called::run_call_slice(&ctx).unwrap();
+        crate::called::run_call_slice(&ctx, ALL_PHASES).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
@@ -124,7 +165,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             BlockContext::empty_for_tests(2, DAY_CLOSED + 1, 1),
             s.clone(),
         );
-        crate::called::run_call_slice(&next).unwrap();
+        crate::called::run_call_slice(&next, ALL_PHASES).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)
@@ -137,7 +178,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
                 .unwrap(),
             U256::ZERO
         );
-        crate::called::run_call_slice(&next).unwrap();
+        crate::called::run_call_slice(&next, ALL_PHASES).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)

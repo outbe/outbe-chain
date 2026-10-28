@@ -25,6 +25,52 @@ use alloy_sol_types::SolCall;
 use outbe_vaultrouter::api::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
+const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+    process_call: true,
+    process_forfeit: true,
+    process_cleanup: true,
+};
+
+#[test]
+fn maintenance_noop_and_static_query_preserve_state_and_enforce_guards() {
+    use crate::precompile::IGemFactory;
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        GemContract::new(storage)
+            .daily_genesis_day
+            .write(timestamp_to_date_key(T_NOW))
+            .unwrap();
+    });
+    let maintain = IGemFactory::maintainCall {
+        process_call: false,
+        process_forfeit: false,
+        process_cleanup: false,
+    }
+    .abi_encode();
+    let query = IGemFactory::hasMaintenanceWorkCall {}.abi_encode();
+    let before = provider.storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(
+            crate::precompile::dispatch(storage.clone(), &maintain, ALICE, U256::ZERO)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(crate::precompile::dispatch(storage, &maintain, BOB, U256::from(1)).is_err());
+    });
+    provider.set_static(true);
+    StorageHandle::enter(&mut provider, |storage| {
+        let result = crate::precompile::dispatch(storage.clone(), &query, BOB, U256::ZERO).unwrap();
+        let flags = IGemFactory::hasMaintenanceWorkCall::abi_decode_returns(&result).unwrap();
+        assert!(!flags.call_pending && !flags.forfeit_pending && !flags.cleanup_pending);
+        assert!(matches!(
+            crate::precompile::dispatch(storage, &maintain, ALICE, U256::ZERO),
+            Err(outbe_primitives::error::PrecompileError::WriteProtection)
+        ));
+    });
+    assert_eq!(provider.storage, before);
+    assert!(provider.events.is_empty());
+}
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 /// Mock settlement stablecoin passed to `settle_gem` in tests. Its `isoCode()` is

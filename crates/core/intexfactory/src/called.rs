@@ -1,13 +1,13 @@
 //! Daily Called scan: force-calls a series once its COEN VWAP exceeded
 //! the call trigger on `call_threshold_seconds` of the last `call_window_seconds`. Candidates
 //! come from the call-trigger bin index. Each run recomputes the counts from the
-//! Oracle's finalized per-UTC-day VWAPs. The Cycle daily trigger schedules the closed
-//! day, and every CycleTick walks a slice of it.
+//! Oracle's finalized per-UTC-day VWAPs. Permissionless maintenance schedules the
+//! closed day and walks a slice of it.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
-use outbe_oracle::call_sweep::{self, CallSweep};
+use outbe_oracle::call_sweep::{self, CallSweep, Selection};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::daily_sweep::PinnedDay;
 use outbe_primitives::time::WorldwideDay;
@@ -28,7 +28,7 @@ pub(crate) mod group;
 
 pub(crate) use group::{call_if_breached, GroupCall};
 
-/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
+/// Schedules the day the Oracle has just finalized without executing its phases.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     call_sweep::schedule(ctx, &mut IntexCallSweep::new(ctx))
 }
@@ -39,14 +39,18 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// This function runs the coupled daily pass, including series forfeits after calls.
 /// It returns the number of called series, not the pass completion state.
-pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
+pub fn scan_and_call(ctx: &BlockRuntimeContext, selection: Selection) -> Result<u32> {
+    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx), selection)
 }
 
 /// This function resumes the coupled daily pass with the same observation day and shared block allowance.
 /// It returns the number of called series.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx))
+pub fn run_call_slice(ctx: &BlockRuntimeContext, selection: Selection) -> Result<u32> {
+    call_sweep::continue_day(ctx, &mut IntexCallSweep::new(ctx), selection)
+}
+
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<(bool, bool, bool)> {
+    call_sweep::pending_work(ctx, &IntexCallSweep::new(ctx))
 }
 
 struct IntexCallSweep<'storage> {

@@ -12,6 +12,12 @@ mod credis_records;
 mod e2e;
 mod settlement;
 
+const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+    process_call: true,
+    process_forfeit: true,
+    process_cleanup: true,
+};
+
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
@@ -355,12 +361,12 @@ pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap()
+    crate::called::scan_and_call(&block_at(storage, timestamp), ALL_PHASES).unwrap()
 }
 
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
+    crate::called::run_call_slice(&block_at(storage, timestamp), ALL_PHASES).unwrap()
 }
 
 /// One block's forfeit sweep over the lapsed called groups, then its cleanup. Returns
@@ -375,11 +381,11 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     forfeited
 }
 
-/// What CycleTick runs every block.
+/// Explicit maintenance of forfeits and the coupled daily pass in lifecycle fixtures.
 pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
     let ctx = block_at(storage, timestamp);
     crate::hooks::sweep_forfeits(&ctx).unwrap();
-    crate::called::run_call_slice(&ctx).unwrap();
+    crate::called::run_call_slice(&ctx, ALL_PHASES).unwrap();
     crate::hooks::sweep_cleanup(&ctx).unwrap();
 }
 

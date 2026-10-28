@@ -5,7 +5,8 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_payable, reject_value_unless_payable, view, PayableCallContext,
+    dispatch_call, mutate, mutate_payable, mutate_void, reject_value_unless_payable, view,
+    PayableCallContext,
 };
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
@@ -39,6 +40,25 @@ pub fn dispatch(
         |call| {
             use ICredisFactory::ICredisFactoryCalls::*;
             match call {
+                maintain(c) => mutate_void(&storage, c, caller, |_sender, c| {
+                    runtime::maintain(
+                        &storage,
+                        outbe_oracle::call_sweep::Selection {
+                            process_call: c.process_call,
+                            process_forfeit: c.process_forfeit,
+                            process_cleanup: c.process_cleanup,
+                        },
+                    )
+                }),
+                hasMaintenanceWork(c) => view(c, |_| {
+                    let (call_pending, forfeit_pending, cleanup_pending) =
+                        runtime::has_maintenance_work(&storage)?;
+                    Ok(ICredisFactory::hasMaintenanceWorkReturn {
+                        call_pending,
+                        forfeit_pending,
+                        cleanup_pending,
+                    })
+                }),
                 issueCredis(c) => mutate_payable(
                     &storage,
                     c,

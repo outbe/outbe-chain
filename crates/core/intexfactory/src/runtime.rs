@@ -20,6 +20,47 @@ use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
 use IOriginRouter::IssuanceInstructionsParams;
 
+fn maintenance_context<'s>(
+    storage: &StorageHandle<'s>,
+) -> Result<outbe_primitives::block::BlockRuntimeContext<'s>> {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    Ok(BlockRuntimeContext::new(
+        BlockContext {
+            block_number: storage.block_number()?,
+            timestamp: storage.now_secs()?,
+            chain_id: storage.chain_id()?,
+            genesis_hash: storage.genesis_hash()?,
+            ..Default::default()
+        },
+        storage.clone(),
+    ))
+}
+
+/// Run selected daily phases, then independent spent-series cleanup. Notices are only queued.
+pub fn maintain(
+    storage: &StorageHandle<'_>,
+    selection: outbe_oracle::call_sweep::Selection,
+) -> Result<()> {
+    outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
+    // TODO: Reward callers for maintenance work performed.
+    if selection == outbe_oracle::call_sweep::Selection::default() {
+        return Ok(());
+    }
+    let ctx = maintenance_context(storage)?;
+    crate::called::run_call_slice(&ctx, selection)?;
+    if selection.process_cleanup {
+        crate::cleanup::sweep_cleanup(&ctx)?;
+    }
+    Ok(())
+}
+
+/// Read daily obligations and eligible cleanup queue work without inspecting retained rights.
+pub fn has_maintenance_work(storage: &StorageHandle<'_>) -> Result<(bool, bool, bool)> {
+    let ctx = maintenance_context(storage)?;
+    let (call, forfeit, _) = crate::called::pending_work(&ctx)?;
+    Ok((call, forfeit, crate::cleanup::has_cleanup_work(&ctx)?))
+}
+
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
     storage.emit_event(INTEX_FACTORY_ADDRESS, event.encode_log_data())

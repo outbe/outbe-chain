@@ -135,7 +135,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     println!("block-one calibration: gross_phase_gas={gross_phase_gas:?}");
     // CycleTick, TeeBootstrap, OracleSlashWindow. HookEvents publishes a
     // synthetic receipt without an EVM call and contributes no internal work.
-    assert_eq!(gross_phase_gas, [588_000, 266_400, 300]);
+    assert_eq!(gross_phase_gas, [524_400, 266_400, 300]);
 
     assert_eq!(executor.receipts().len(), 4);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
@@ -461,7 +461,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     // Gross work includes settlement and the full 256-recipient accrual slice,
     // before refunds. This fixture alone does not calibrate every trigger or
     // bound non-trigger maintenance.
-    assert_eq!(gross_internal_gas, 8_889_900);
+    assert_eq!(gross_internal_gas, 8_826_300);
 
     let cycle_receipt = executor
         .receipts()

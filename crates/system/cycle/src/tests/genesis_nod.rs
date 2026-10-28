@@ -1,4 +1,4 @@
-//! Genesis-day first cycle and daily Nod calls.
+//! Genesis-day first cycle and explicitly requested Nod maintenance.
 
 use super::*;
 
@@ -63,7 +63,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
 }
 
 #[test]
-fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
+fn explicit_nod_maintenance_does_not_repeat_between_utc_days() {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
     let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
@@ -72,7 +72,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
         let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
         (|| {
             let cycle = Cycle::new(storage.clone());
-            let trigger = isolate_nod_call_schedule(&cycle, midnight)?;
+            defer_cycle_triggers(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
             let called_at = |group_key| {
                 outbe_nod::NodContract::new(storage.clone())
@@ -81,18 +81,17 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                     .unwrap()
             };
             let first = issue_nod(&storage, Address::repeat_byte(0x51), 13)?;
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             assert_eq!(called_at(first), 0);
 
             let ctx = BlockRuntimeContext::new(block_ctx(3, midnight), storage.clone());
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             assert_eq!(called_at(first), midnight);
-            assert_eq!(cycle.last_executed_at.read(&trigger)?, midnight);
 
             // New work created after the daily run waits for the next UTC slot.
             let second = issue_nod(&storage, Address::repeat_byte(0x52), 14)?;
             let ctx = BlockRuntimeContext::new(block_ctx(4, midnight + 1), storage.clone());
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             assert_eq!(called_at(second), 0);
 
             // A multi-day halt walks every day it missed, one per block, and then stops
@@ -109,23 +108,22 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
             }
             oracle.utc_day_vwap_last_finalized.write(previous)?;
             let ctx = BlockRuntimeContext::new(block_ctx(5, late), storage.clone());
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             let nod = outbe_nod::NodContract::new(storage.clone());
             for height in 6..14 {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                maintain_nod(&BlockRuntimeContext::new(
                     block_ctx(height, late),
                     storage.clone(),
                 ))?;
             }
             assert_eq!(nod.call_sweep_day.read()?, 0);
             assert_eq!(called_at(second), late);
-            assert_eq!(cycle.last_executed_at.read(&trigger)?, late);
             let third = issue_nod(&storage, Address::repeat_byte(0x53), 15)?;
             let ctx = BlockRuntimeContext::new(block_ctx(14, late + 1), storage.clone());
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             assert_eq!(called_at(third), 0);
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })()
@@ -145,7 +143,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
     StorageHandle::enter(&mut provider, |storage| {
         (|| {
             let cycle = Cycle::new(storage.clone());
-            isolate_nod_call_schedule(&cycle, midnight)?;
+            defer_cycle_triggers(&cycle, midnight)?;
             let (oracle, index) = seed_closed_day_prices(&storage, midnight)?;
             // The sealed DEV terms call on 2 breach days of a 3-day window; 1 never breaches.
             let back = |n: u32| (0..n).fold(d, |day, _| previous_date_key(day).expect("date step"));
@@ -156,7 +154,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
             let nod = outbe_nod::NodContract::new(storage.clone());
 
             // Day D: the window up to D-1 holds one breach day.
-            dispatch_and_call(&BlockRuntimeContext::new(
+            maintain_nod(&BlockRuntimeContext::new(
                 block_ctx(3, midnight),
                 storage.clone(),
             ))?;
@@ -171,12 +169,12 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
                 .utc_day_vwap_last_finalized
                 .write(next_date_key(d).expect("date step"))?;
             let ctx = BlockRuntimeContext::new(block_ctx(4, restart), storage.clone());
-            dispatch_and_call(&ctx)?;
+            maintain_nod(&ctx)?;
             for height in 5..13 {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                maintain_nod(&BlockRuntimeContext::new(
                     block_ctx(height, restart),
                     storage.clone(),
                 ))?;
@@ -209,7 +207,7 @@ fn a_halt_does_not_skip_the_day_that_calls_a_nod_group() {
 }
 
 #[test]
-fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
+fn cycle_leaves_forfeiture_to_explicit_maintenance_after_oracle_finalization() {
     use outbe_primitives::time::timestamp_to_date_key;
 
     let day_start = GENESIS_TS + 40 * SECONDS_PER_DAY;
@@ -217,8 +215,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let cycle = Cycle::new(storage.clone());
-        // No unrelated trigger is due. This test exercises the per-block lifecycle continuation.
-        // The test includes recovery after a daily scheduling attempt finds no finalized day.
+        // No unrelated trigger is due. Advancing blocks must not return factory capacity.
         for spec in ACTIVE_TRIGGERS {
             cycle
                 .last_executed_at
@@ -228,7 +225,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
         let (oracle, _) = seed_closed_day_prices(&storage, day_start).unwrap();
         let init = BlockRuntimeContext::new(block_ctx(2, deadline), storage.clone());
         outbe_nodfactory::called::initialize_daily(&init).unwrap();
+        maintain_nod(&init).unwrap();
         let mut nod = outbe_nod::NodContract::new(storage.clone());
+        let latest_before = nod.call_latest_day.read().unwrap();
+        let budget_before = nod.daily_budget.read().unwrap();
+        let cleanup_before = nod.cleanup_budget.read().unwrap();
         for (owner, entry, due) in [(0x61, 13, deadline), (0x62, 14, deadline + SECONDS_PER_DAY)] {
             let group = issue_nod(&storage, Address::repeat_byte(owner), entry).unwrap();
             let notice = u64::from(nod.group_call_notice_period_seconds.read(&group).unwrap());
@@ -266,6 +267,15 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .unwrap();
         let ready = BlockRuntimeContext::new(block_ctx(5, closed_at + 1), storage.clone());
         run_cycle_lifecycle(&ready).unwrap();
+        assert_eq!(reserve.promis_limit().unwrap(), before);
+        assert_eq!(nod.call_latest_day.read().unwrap(), latest_before);
+        assert_eq!(nod.daily_budget.read().unwrap(), budget_before);
+        assert_eq!(nod.cleanup_budget.read().unwrap(), cleanup_before);
+        for id in [1, 3, 5, 6] {
+            assert_eq!(cycle.last_executed_at.read(&id).unwrap(), 0);
+            assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), 0);
+        }
+        maintain_nod(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         run_cycle_lifecycle(&ready).unwrap();
@@ -276,29 +286,23 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .utc_day_vwap_last_finalized
             .write(timestamp_to_date_key(closed_at))
             .unwrap();
-        run_cycle_lifecycle(&BlockRuntimeContext::new(
-            block_ctx(6, closed_at + SECONDS_PER_DAY),
-            storage.clone(),
-        ))
-        .unwrap();
+        let next_day =
+            BlockRuntimeContext::new(block_ctx(6, closed_at + SECONDS_PER_DAY), storage.clone());
+        run_cycle_lifecycle(&next_day).unwrap();
+        assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
+        maintain_nod(&next_day).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(22));
     });
 }
 
-/// Isolates Nod's schedule. Unrelated triggers are not due, and the Nod daily
-/// call is due at `midnight`. Returns the Nod call trigger id.
-fn isolate_nod_call_schedule(
-    cycle: &Cycle<'_>,
-    midnight: u64,
-) -> outbe_primitives::error::Result<u32> {
+/// Keeps Cycle triggers idle while the test explicitly requests factory work.
+fn defer_cycle_triggers(cycle: &Cycle<'_>, midnight: u64) -> outbe_primitives::error::Result<()> {
     for spec in ACTIVE_TRIGGERS {
         cycle
             .last_executed_at
             .write(&spec.id, midnight + 10 * SECONDS_PER_DAY)?;
     }
-    let trigger = TriggerId::NodCallDaily.as_u32();
-    cycle.last_executed_at.write(&trigger, midnight - 1)?;
-    Ok(trigger)
+    Ok(())
 }
 
 /// Registers COEN/840 as the only reference currency and finalizes a VWAP of
@@ -368,9 +372,16 @@ fn issue_nod(
     Ok(body.group_key)
 }
 
-/// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
-fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx)?;
-    outbe_nodfactory::called::run_call_slice(ctx)?;
+/// Explicitly requests Nod daily scheduling and all daily maintenance phases.
+fn maintain_nod(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
+    outbe_nodfactory::called::run_daily(ctx)?;
+    outbe_nodfactory::called::run_call_slice(
+        ctx,
+        outbe_oracle::call_sweep::Selection {
+            process_call: true,
+            process_forfeit: true,
+            process_cleanup: true,
+        },
+    )?;
     Ok(())
 }

@@ -46,7 +46,7 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
         "test_gated",
         period_seconds,
         0,
-        TriggerHandler::IntexCallDaily,
+        TriggerHandler::IntexDrainParked,
     )
     .expect("test period is nonzero");
     spec.requires_accounting_window = true;
@@ -60,7 +60,7 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
         "test_ungated",
         period_seconds,
         0,
-        TriggerHandler::IntexCallDaily,
+        TriggerHandler::IntexDrainParked,
     )
     .expect("test period is nonzero");
     spec.requires_accounting_window = false;
@@ -551,7 +551,7 @@ proptest! {
             "proptest",
             period,
             offset,
-            TriggerHandler::IntexCallDaily,
+            TriggerHandler::IntexDrainParked,
         )
         .expect("period is at least 60");
         spec.requires_accounting_window = true;

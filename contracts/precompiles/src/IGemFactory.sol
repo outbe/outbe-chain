@@ -2,6 +2,15 @@
 pragma solidity ^0.8.30;
 
 interface IGemFactory {
+    /// @notice Run selected maintenance phases. Any caller may submit.
+    function maintain(bool process_call, bool process_forfeit, bool process_cleanup) external;
+
+    /// @notice Pending obligations, independent of readiness or this block's allowance.
+    function hasMaintenanceWork()
+        external
+        view
+        returns (bool call_pending, bool forfeit_pending, bool cleanup_pending);
+
     error GemNotFound();
     error GemAlreadySettled();
     error GemNotSettled();
