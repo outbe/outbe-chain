@@ -47,7 +47,7 @@ pub enum CandidateRejection {
 }
 
 /// Owned by one execution attempt. TLS only borrows its shared handle synchronously.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WitnessState {
     pub mode: WitnessExecutionMode,
     pub leader_attestation_pub: Option<[u8; 32]>,

@@ -271,17 +271,6 @@
   },
   {
     "type": "error",
-    "name": "CreateNodForTest",
-    "inputs": [
-      {
-        "name": "reason",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "DateStep",
     "inputs": [
       {

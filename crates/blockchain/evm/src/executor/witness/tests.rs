@@ -42,12 +42,8 @@ fn verify_nod_read(
 
 #[test]
 fn reuses_prewarm_results_is_pinned_false() {
-    let existing_chain_id = outbe_consensus::proof::consensus_chain_id();
-    let chain_id = if existing_chain_id == 0 {
-        424242
-    } else {
-        existing_chain_id
-    };
+    let _ = outbe_consensus::proof::init_consensus_chain_id(424242);
+    let chain_id = outbe_consensus::proof::consensus_chain_id();
     let spec = ChainSpec {
         chain: reth_ethereum::chainspec::Chain::from_id(chain_id),
         ..Default::default()
@@ -521,5 +517,241 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
     assert_eq!(trace_state.lock().unwrap().tx_cursor, 2);
 
     super::clear_detached_trace_witness();
+    outbe_tee::witness::set_witness_policy_for_test(None);
+}
+
+#[test]
+fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
+    use crate::config::OutbeEvmConfig;
+    use crate::executor::tests::fixtures::{
+        begin_system_txs_for_test, block_one_execution_ctx, dummy_pubkey, post_state_root,
+        state_with_active_validators_seeded, test_chain_spec, test_evm_env, test_evm_signer,
+        BeginBlockFixture, BootstrapFixture, CHAIN_ID,
+    };
+    use alloy_consensus::TxEip1559;
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+    use alloy_evm::{block::BlockExecutor, tracing::TxTracer, Evm as _};
+    use alloy_primitives::{Signature, TxKind};
+    use alloy_sol_types::SolCall;
+    use outbe_nod::precompile::INod;
+    use outbe_primitives::{
+        addresses::{NOD_ADDRESS, REWARDS_ADDRESS},
+        time::WorldwideDay,
+    };
+    use reth_evm::ConfigureEvm;
+    use reth_primitives_traits::SignedTransaction as _;
+    use revm::database::states::bundle_state::BundleRetention;
+
+    outbe_chain_constants::initialize(None).unwrap();
+    let _ = outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
+
+    let mut preimage = Vec::new();
+    preimage.extend_from_slice(b"outbe/test/gramine-direct/attestation");
+    preimage.extend_from_slice(&[1u8; 32]);
+    preimage.extend_from_slice(&0u64.to_be_bytes());
+    let leader_seed: [u8; 32] = alloy_primitives::keccak256(preimage).into();
+    let leader_sk = SigningKey::from_bytes(&leader_seed);
+    let leader_pk = leader_sk.verifying_key().to_bytes();
+    let validator_sk = SigningKey::from_bytes(&[0x82; 32]);
+    let validator_pk = validator_sk.verifying_key().to_bytes();
+    assert_ne!(leader_pk, validator_pk);
+
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let worldwide_day = WorldwideDay::new(20_241_220);
+    let entry_price_minor = U256::from(450_000_000u64);
+    let issued_at = outbe_primitives::time::date_key_to_utc_timestamp(20_200_101) + 1;
+    let group_key = outbe_nod::test_support::group_key_at(
+        &outbe_nod::config::NodParams::DEV,
+        issued_at,
+        entry_price_minor,
+        840,
+    );
+    let nod_id = outbe_nod::identity::generate_nod_id(proposer, worldwide_day).unwrap();
+    let nod_item = {
+        let _enclave = outbe_nod::test_support::scope();
+        outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id,
+                owner: proposer,
+                gratis_load_minor: U256::from(1_000_000u64),
+                worldwide_day,
+                league_id: 1,
+                group_key,
+                issuance_currency: 840,
+                reference_currency: 840,
+                issued_at,
+            },
+            entry_price_minor,
+        )
+    };
+    outbe_nod::test_support::uninstall();
+
+    let user_tx: reth_ethereum::TransactionSigned = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: 100_000,
+        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+        max_priority_fee_per_gas: 0,
+        to: TxKind::Call(NOD_ADDRESS),
+        value: U256::ZERO,
+        input: INod::getNodCall {
+            nodId: nod_id.to_u256(),
+        }
+        .abi_encode()
+        .into(),
+        access_list: Default::default(),
+    }
+    .into_signed(Signature::test_signature())
+    .into();
+    let user_tx = user_tx.try_into_recovered().unwrap();
+    let user_sender = Address(*user_tx.signer());
+
+    let build_seeded_state = || {
+        let mut state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let _enclave = outbe_nod::test_support::scope();
+                outbe_nod::test_support::add(&storage, &nod_item).unwrap();
+            });
+        outbe_nod::test_support::uninstall();
+        state.database.insert_account_info(
+            user_sender,
+            revm::state::AccountInfo {
+                balance: U256::from(10_000_000u64),
+                ..Default::default()
+            },
+        );
+        state
+    };
+
+    let make_enclave_hook = |sk: SigningKey| -> outbe_tee::tribute_client::TestLocalEnclaveHook {
+        let pk = sk.verifying_key().to_bytes();
+        Arc::new(move |req| match req {
+            outbe_tee::protocol::EnclaveRequest::ReadNodAmountV1 { nod } => {
+                let hash = outbe_tee::nod_mine::nod_read_hash(nod)
+                    .map_err(outbe_tee::TransportError::codec)?;
+                let resp = sign_nod_read(&sk, hash, U256::from(1_000_000u64));
+                Ok((pk, resp))
+            }
+            _ => Err(outbe_tee::TransportError::UnexpectedResponse),
+        })
+    };
+
+    let chain_spec = test_chain_spec();
+    let config = OutbeEvmConfig::new(chain_spec).with_evm_signer(signer);
+    let begin = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
+
+    let run_block_in_mode = |is_verifier: bool, extra_data: Bytes| {
+        let mut state = build_seeded_state();
+        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), extra_data);
+        ctx.proposer_evm_address = Some(proposer);
+        if is_verifier {
+            ctx.block_hash = Some(B256::repeat_byte(0x9A));
+            ctx.expected_begin_system_txs = begin.clone();
+        }
+        let mut executor = config.create_executor(evm, ctx);
+        executor.apply_pre_execution_changes().unwrap();
+        for tx in begin.clone() {
+            executor.execute_transaction(tx).unwrap();
+        }
+        executor.execute_transaction(user_tx.clone()).unwrap();
+        if !is_verifier {
+            executor.prepare_final_header_artifacts(0).unwrap();
+        }
+        let final_extra_data = executor.final_extra_data.clone();
+        let (evm, result) = executor.finish().unwrap();
+        drop(evm);
+        state.merge_transitions(BundleRetention::Reverts);
+        let root = post_state_root(&state.bundle_state);
+        (result.receipts, result.gas_used, final_extra_data, root)
+    };
+
+    // 1. ProposerRecord
+    outbe_tee::witness::set_witness_policy_for_test(Some(
+        outbe_tee::witness::WitnessPolicy::EnclaveBacked,
+    ));
+    outbe_tee::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
+        leader_sk.clone(),
+    )));
+    let proposer_out = run_block_in_mode(false, Bytes::new());
+    let decoded_artifacts = decode_outbe_block_artifacts(proposer_out.2.as_ref()).unwrap();
+    let witness_bytes = decoded_artifacts
+        .enclave_witness
+        .expect("proposer block must carry OART 0x0A enclave_witness");
+    let decoded_tape = decode_witness_payload_v1(&witness_bytes).unwrap();
+    assert_eq!(decoded_tape.txs.len(), 1);
+    assert_eq!(decoded_tape.txs[0].tx_index, begin.len() as u32);
+
+    // 2. VerifierWithEnclave (validator with distinct enclave key validator_sk)
+    outbe_tee::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(validator_sk)));
+    let verifier_enclave_out = run_block_in_mode(true, proposer_out.2.clone());
+    assert_eq!(proposer_out, verifier_enclave_out);
+
+    // 3. VerifierReplay (keyless fullnode: no local enclave hook installed)
+    outbe_tee::witness::set_witness_policy_for_test(Some(
+        outbe_tee::witness::WitnessPolicy::ReplayOnly,
+    ));
+    outbe_tee::tribute_client::set_test_local_enclave_hook(None);
+    let verifier_replay_out = run_block_in_mode(true, proposer_out.2.clone());
+    assert_eq!(proposer_out, verifier_replay_out);
+
+    // 4. Real TxTracer + transact_commit replay of begin-zone system txs + enclave user tx,
+    // followed by same-thread eth_call isolation check.
+    let mut trace_state = build_seeded_state();
+    {
+        let preexec_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), proposer_out.2.clone());
+        ctx.proposer_evm_address = Some(proposer);
+        ctx.block_hash = Some(B256::repeat_byte(0x9A));
+        ctx.expected_begin_system_txs = begin.clone();
+        let mut temp_executor = config.create_executor(preexec_evm, ctx);
+        temp_executor.apply_pre_execution_changes().unwrap();
+        // Dropped without finish(), mirroring Reth Trace::apply_pre_execution_changes.
+    }
+    {
+        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut tracer = TxTracer::new(trace_evm);
+        for tx in begin
+            .iter()
+            .cloned()
+            .chain(std::iter::once(user_tx.clone()))
+        {
+            let tx_env = config.tx_env(&tx);
+            let trace_out = tracer.trace(tx_env).expect("TxTracer replay must succeed");
+            assert!(
+                trace_out.result.is_success(),
+                "traced transaction must succeed under detached witness replay"
+            );
+        }
+    }
+    // Subsequent eth_call on the same thread and same block must NOT match stale detached trace
+    // witness (must enter RpcDirect and return PrivateExecutionUnavailable, not TapeInvalid).
+    {
+        let mut call_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut call_tx_env = config.tx_env(&user_tx);
+        call_tx_env.nonce = 1;
+        let err = call_evm
+            .transact_raw(call_tx_env)
+            .expect_err("keyless eth_call to private precompile must fail in RpcDirect");
+        assert!(
+            err.to_string().contains("PrivateExecutionUnavailable"),
+            "expected PrivateExecutionUnavailable, got: {err}"
+        );
+    }
+
+    super::clear_detached_trace_witness();
+    outbe_tee::tribute_client::set_test_local_enclave_hook(None);
     outbe_tee::witness::set_witness_policy_for_test(None);
 }

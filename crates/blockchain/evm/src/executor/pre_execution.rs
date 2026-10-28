@@ -62,11 +62,12 @@ where
             if block_number > 0 {
                 self.init_rpc_direct_witness_state();
                 self.inner.evm.set_witness_state(self.witness_state.clone());
-                crate::executor::witness::install_detached_trace_witness(
+                crate::executor::witness::install_detached_trace_witness_with_meta(
                     self.inner.evm.chain_id(),
                     block_number,
                     timestamp,
                     self.witness_state.clone(),
+                    crate::executor::witness::DetachedTraceExecutionMeta::default(),
                 );
             }
             return Ok(());
@@ -170,12 +171,6 @@ where
         drop(prefix_witness_scope);
         self.check_no_witness_fault()?;
         let hook_events = preexec_outcome?;
-        crate::executor::witness::install_detached_trace_witness(
-            chain_id,
-            block_number,
-            timestamp,
-            self.witness_state.clone(),
-        );
         // Provider dropped here - mutable DB borrow released.
 
         // Log hook events via tracing for operator observability.
@@ -193,6 +188,35 @@ where
 
         let (whitelisted_hook_logs, _tracing_only_hook_logs) = partition_hook_events(&hook_events);
         self.whitelisted_hook_event_logs = whitelisted_hook_logs;
+
+        let phase1_preexecuted = matches!(
+            self.system_tx_phase_cursor,
+            crate::system_tx::SystemTxPhase::Phase1Preexecuted { tx_hash, .. } if !tx_hash.is_zero()
+        );
+        crate::executor::witness::install_detached_trace_witness_with_meta(
+            chain_id,
+            block_number,
+            timestamp,
+            self.witness_state.clone(),
+            crate::executor::witness::DetachedTraceExecutionMeta {
+                expected_begin_inputs: self
+                    .expected_begin_system_txs
+                    .iter()
+                    .map(|tx| tx.tx().input().clone())
+                    .collect(),
+                expected_tx_count: self.inner.ctx.tx_count_hint,
+                phase1_preexecuted,
+                system_tx_context: Some(PreloadedSystemTxContext {
+                    proposer,
+                    finalized_summary: None,
+                    allow_boundary_proposer,
+                    canonical_vrf_proof_hash: self
+                        .verified_phase1_vrf_proof_hash
+                        .unwrap_or(B256::ZERO),
+                }),
+                hook_event_logs: self.whitelisted_hook_event_logs.clone(),
+            },
+        );
 
         // 6. Receipt-visible begin-zone system phases are real transactions in
         // the block body and execute in the normal tx loop before user txs.
