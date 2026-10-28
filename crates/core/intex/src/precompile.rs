@@ -71,9 +71,9 @@ pub fn dispatch(
                 })
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
-            totalSeries(_) => {
-                metadata::<IIntex::totalSeriesCall>(|| Ok(u64::from(registry.read_total_series()?)))
-            }
+            totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| {
+                Ok(U256::from(registry.read_total_series()?))
+            }),
             seriesAt(c) => view(c, |c| {
                 let index =
                     u32::try_from(c.index).map_err(|_| IntexError::SeriesIndexOutOfRange)?;

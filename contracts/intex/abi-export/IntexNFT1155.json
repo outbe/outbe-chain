@@ -303,19 +303,6 @@
     },
     {
       "type": "function",
-      "name": "getAllSeries",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "getRoleAdmin",
       "inputs": [
         {
@@ -329,35 +316,6 @@
           "name": "",
           "type": "bytes32",
           "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesPaginated",
-      "inputs": [
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "series",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "total",
-          "type": "uint256",
-          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -731,6 +689,25 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "seriesAt",
+      "inputs": [
+        {
+          "name": "index",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1508,6 +1485,11 @@
     {
       "type": "error",
       "name": "NotInitializing",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "SeriesIndexOutOfRange",
       "inputs": []
     },
     {

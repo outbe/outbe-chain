@@ -655,27 +655,24 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.totalSupply(TOKEN_ID_1), 10);
     }
 
-    // --- Tests for Enumerable Functions ---
+    // --- Series enumeration ---
 
-    function test_GetAllSeriesAndTotalSeries() public {
-        // Initially empty.
+    function test_SeriesAtListsSeriesInCreationOrder() public {
         assertEq(nft.totalSeries(), 0);
-        uint256[] memory initialSeries = nft.getAllSeries();
-        assertEq(initialSeries.length, 0);
 
-        // Create first series.
         _createSeries(SERIES_ID_1_DAY, 0);
-        assertEq(nft.totalSeries(), 1);
-
-        // Create second series.
         _createSeries(SERIES_ID_2_DAY, 0);
-        assertEq(nft.totalSeries(), 2);
 
-        // Get all series.
-        uint256[] memory allSeries = nft.getAllSeries();
-        assertEq(allSeries.length, 2);
-        assertEq(allSeries[0], TOKEN_ID_1);
-        assertEq(allSeries[1], TOKEN_ID_2);
+        assertEq(nft.totalSeries(), 2);
+        assertEq(nft.seriesAt(0), SERIES_ID_1);
+        assertEq(nft.seriesAt(1), SERIES_ID_2);
+    }
+
+    function test_SeriesAtPastTheEndReverts() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+
+        vm.expectRevert(IIntexNFT1155.SeriesIndexOutOfRange.selector);
+        nft.seriesAt(1);
     }
 
     /// @dev A batch that names one token id twice must move the whole amount. The hook walks the

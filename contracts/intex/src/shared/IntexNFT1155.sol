@@ -40,8 +40,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     struct IntexNFT1155Storage {
         /// @dev Series-level data, stored once per series under its token id.
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
-        /// @dev Array of all token IDs (series) that have been created.
-        uint256[] allSeries;
+        /// @dev Every series ever created on this chain, in creation order.
+        bytes14[] allSeries;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
         /// @dev The series a day's currency pair was created under.
@@ -142,7 +142,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // Series remain in allSeries permanently even after supply reaches 0. This
         // preserves the historical record and avoids O(n) removal.
-        $.allSeries.push(iTok);
+        $.allSeries.push(params.seriesId);
         $.seriesOfDay[params.worldwideDay].push(params.seriesId);
         $.seriesOfPair[params.worldwideDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
@@ -398,32 +398,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     // --- Series view functions ---
 
     /// @inheritdoc IIntexNFT1155
-    function getAllSeries() external view returns (uint256[] memory) {
-        return _s().allSeries;
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getSeriesPaginated(uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total)
-    {
-        uint256[] storage allSeries = _s().allSeries;
-        total = allSeries.length;
-        if (offset >= total) return (new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        series = new uint256[](end - offset);
-        for (uint256 i = offset; i < end; i++) {
-            series[i - offset] = allSeries[i];
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function totalSeries() external view returns (uint256) {
         return _s().allSeries.length;
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function seriesAt(uint256 index) external view returns (bytes14) {
+        bytes14[] storage allSeries = _s().allSeries;
+        if (index >= allSeries.length) revert SeriesIndexOutOfRange();
+        return allSeries[index];
     }
 
     /// @notice ERC-165 interface detection.

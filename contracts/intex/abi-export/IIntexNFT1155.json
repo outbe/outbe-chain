@@ -220,48 +220,6 @@
     },
     {
       "type": "function",
-      "name": "getAllSeries",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesPaginated",
-      "inputs": [
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "series",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "total",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "isApprovedForAll",
       "inputs": [
         {
@@ -525,6 +483,25 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "seriesAt",
+      "inputs": [
+        {
+          "name": "index",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1019,6 +996,11 @@
           "internalType": "uint256"
         }
       ]
+    },
+    {
+      "type": "error",
+      "name": "SeriesIndexOutOfRange",
+      "inputs": []
     },
     {
       "type": "error",

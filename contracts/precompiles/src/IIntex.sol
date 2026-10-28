@@ -77,10 +77,10 @@ interface IIntex {
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
     /// @notice Number of live series (dense-enumeration length).
-    function totalSeries() external view returns (uint64);
+    function totalSeries() external view returns (uint256);
 
     /// @notice The series id at a dense-enumeration index.
-    function seriesAt(uint64 index) external view returns (bytes14);
+    function seriesAt(uint256 index) external view returns (bytes14);
 
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);

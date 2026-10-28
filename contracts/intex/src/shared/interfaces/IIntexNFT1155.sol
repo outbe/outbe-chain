@@ -146,6 +146,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
+    /// @notice Series index past the end of the series list.
+    error SeriesIndexOutOfRange();
 
     // --- Writes ---
 
@@ -253,21 +255,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     // --- Series reads ---
 
-    /// @notice All series (token ids) that have been created.
-    /// @return The Issued token ids of every created series.
-    function getAllSeries() external view returns (uint256[] memory);
-
-    /// @notice Series with pagination.
-    /// @param offset Index into the full series array.
-    /// @param limit Maximum slice length to return.
-    /// @return series The requested slice of Issued token ids.
-    /// @return total Total number of series created.
-    function getSeriesPaginated(uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total);
-
-    /// @notice Total number of series created.
+    /// @notice Number of series ever created on this chain; a series stays listed after its supply reaches zero.
     /// @return The count of created series.
     function totalSeries() external view returns (uint256);
+
+    /// @notice The series id at an index of the creation-ordered series list.
+    /// @param index Position in the list, below `totalSeries()`.
+    /// @return The series id.
+    function seriesAt(uint256 index) external view returns (bytes14);
 }
