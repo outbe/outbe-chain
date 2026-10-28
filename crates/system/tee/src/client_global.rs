@@ -213,14 +213,35 @@ pub fn verify_dcap_evidence_v1(
     policy: &[u8],
     block_timestamp: u64,
 ) -> Result<DcapVerificationOutcomeV1, TransportError> {
-    let Some(result) = try_with_enclave(|session| {
-        session.verify_dcap_evidence_v1(evidence, policy, block_timestamp)
-    }) else {
-        return Err(TransportError::DcapVerification(
-            "production enclave client is not configured".into(),
-        ));
-    };
-    result
+    let expected =
+        crate::dcap_protocol::dcap_verification_request_hash(evidence, policy, block_timestamp)
+            .map_err(|code| {
+                crate::errors::TeeClientVerificationError::InvalidVerifierInputDimensions {
+                    code: code.code(),
+                }
+            })?;
+    let (key, response) = crate::witness::consensus_call(
+        "verify_dcap_evidence_v1",
+        || {
+            let (key, response) = try_with_enclave(|session| {
+                (
+                    session.attestation_pub(),
+                    session.verify_dcap_evidence_v1_raw(evidence, policy, block_timestamp),
+                )
+            })
+            .ok_or_else(|| {
+                TransportError::DcapVerification(
+                    "production enclave client is not configured".into(),
+                )
+            })?;
+            Ok((key, response?))
+        },
+        |key, response| {
+            crate::client::validate_dcap_verification_response(*key, expected, response.clone())
+                .map(|_| ())
+        },
+    )?;
+    crate::client::validate_dcap_verification_response(key, expected, response)
 }
 
 /// Generate one intent-bound quote through the already installed production
@@ -241,27 +262,56 @@ pub fn generate_dcap_quote_v1(
 pub fn verify_dcap_registration_and_seal_v1(
     request: RegistrationVerificationRequest<'_>,
 ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
-    let Some(result) =
-        try_with_enclave(|session| session.verify_dcap_registration_and_seal_v1(request))
-    else {
-        return Err(TransportError::DcapVerification(
-            "production enclave client is not configured".into(),
-        ));
-    };
-    result
+    let expected = crate::dcap_protocol::dcap_onboarding_request_hash(request).map_err(|code| {
+        crate::errors::TeeClientVerificationError::InvalidOnboardingVerifierInputDimensions {
+            code: code.code(),
+        }
+    })?;
+    let (key, response) = crate::witness::consensus_call(
+        "verify_dcap_registration_and_seal_v1",
+        || {
+            let (key, response) = try_with_enclave(|session| {
+                (
+                    session.attestation_pub(),
+                    session.verify_dcap_registration_and_seal_v1_raw(request),
+                )
+            })
+            .ok_or_else(|| {
+                TransportError::DcapVerification(
+                    "production enclave client is not configured".into(),
+                )
+            })?;
+            Ok((key, response?))
+        },
+        |key, response| {
+            crate::client::validate_dcap_onboarding_response(*key, expected, response.clone())
+                .map(|_| ())
+        },
+    )?;
+    crate::client::validate_dcap_onboarding_response(key, expected, response)
 }
 
 pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
     context: DcapOnboardingContextV1,
 ) -> Result<DcapOnboardingArtifactV1, TransportError> {
-    let Some(result) = try_with_enclave(|session| {
-        session.prepare_gramine_direct_dev_onboarding_artifact_v1(context)
-    }) else {
-        return Err(TransportError::EnclaveError(
-            "production enclave client is not configured".into(),
-        ));
-    };
-    result
+    let expected = context.context_hash();
+    let (key, response) = crate::witness::consensus_call(
+        "PrepareGramineDirectDevOnboardingArtifactV2",
+        || {
+            let (key, response) = try_with_enclave(|session| {
+                (
+                    session.attestation_pub(),
+                    session.prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context),
+                )
+            })
+            .ok_or_else(|| {
+                TransportError::Unavailable("production enclave client is not configured".into())
+            })?;
+            Ok((key, response?))
+        },
+        |key, response| validate_direct_dev_response(key, expected, context, response).map(|_| ()),
+    )?;
+    validate_direct_dev_response(&key, expected, context, &response)
 }
 
 /// Read whether the permanent tribute-offer key is ready in the mandatory local
@@ -309,4 +359,36 @@ fn decode_resident_offer_key_response(
         ));
     }
     Ok(Some(public))
+}
+
+fn validate_direct_dev_response(
+    key: &[u8; 32],
+    expected: B256,
+    context: DcapOnboardingContextV1,
+    response: &EnclaveResponse,
+) -> Result<DcapOnboardingArtifactV1, TransportError> {
+    let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+        request_hash,
+        onboarding_artifact,
+        attestation_tag,
+    } = response
+    else {
+        return Err(TransportError::UnexpectedResponse);
+    };
+    if *request_hash != expected {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    let preimage = crate::response_auth::attestation(
+        b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
+        expected,
+        onboarding_artifact,
+    )
+    .map_err(TransportError::codec)?;
+    crate::tribute_v2::verify_attestation(key, &preimage, attestation_tag)?;
+    let artifact = DcapOnboardingArtifactV1::decode_canonical(onboarding_artifact)
+        .map_err(|error| TransportError::Attestation(format!("{error:?}")))?;
+    if artifact.context != context {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    Ok(artifact)
 }

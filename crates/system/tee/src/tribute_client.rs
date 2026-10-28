@@ -39,11 +39,40 @@ pub fn read_tribute_amounts(
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+pub type TestLocalEnclaveHook = std::sync::Arc<
+    dyn Fn(&EnclaveRequest) -> Result<([u8; 32], EnclaveResponse), TransportError> + Send + Sync,
+>;
+
+#[cfg(any(test, feature = "test-utils"))]
+thread_local! {
+    static TEST_LOCAL_ENCLAVE_HOOK: std::cell::RefCell<Option<TestLocalEnclaveHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_test_local_enclave_hook(hook: Option<TestLocalEnclaveHook>) {
+    TEST_LOCAL_ENCLAVE_HOOK.with(|slot| {
+        *slot.borrow_mut() = hook;
+    });
+}
+
 pub(crate) fn request_local_enclave(
     request: EnclaveRequest,
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    let (key, response) =
-        crate::try_with_enclave(|session| (session.attestation_pub(), session.request(&request)))
+    crate::witness::consensus_call(
+        request.label(),
+        || {
+            #[cfg(any(test, feature = "test-utils"))]
+            if let Some(hook) = TEST_LOCAL_ENCLAVE_HOOK.with(|slot| slot.borrow().clone()) {
+                return hook(&request);
+            }
+            let (key, response) = crate::try_with_enclave(|session| {
+                (session.attestation_pub(), session.request(&request))
+            })
             .ok_or(crate::errors::TeeClientVerificationError::TeeSidecarNotConfigured)?;
-    Ok((key, response?))
+            Ok((key, response?))
+        },
+        |key, response| crate::witness::authenticate_request(&request, key, response),
+    )
 }

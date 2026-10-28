@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn validate_dcap_verification_response(
+pub(crate) fn validate_dcap_verification_response(
     attestation_pub: [u8; 32],
     expected_request_hash: B256,
     response: EnclaveResponse,
@@ -40,7 +40,7 @@ pub(super) fn validate_dcap_verification_response(
     Ok(canonical)
 }
 
-pub(super) fn validate_dcap_onboarding_response(
+pub(crate) fn validate_dcap_onboarding_response(
     attestation_pub: [u8; 32],
     expected_request_hash: B256,
     response: EnclaveResponse,

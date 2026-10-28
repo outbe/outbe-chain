@@ -169,7 +169,7 @@ pub(crate) async fn wait_for_launcher_exit(
     shutdown: &outbe_node::shutdown::NodeShutdown,
     consensus_dead_rx: Option<&mut oneshot::Receiver<()>>,
     upgrade_promotion: &tokio::sync::Notify,
-    tee_lease_exit_rx: &mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>,
+    tee_lease_exit_rx: Option<&mut tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
 ) -> LauncherExitCause {
     let has_consensus = consensus_dead_rx.is_some();
     let consensus_dead = async {
@@ -177,6 +177,14 @@ pub(crate) async fn wait_for_launcher_exit(
             Some(rx) => {
                 let _ = rx.await;
             }
+            None => std::future::pending().await,
+        }
+    };
+    // `None` is an absent lease guard, not a dropped sender. A dropped sender
+    // is `TeeLeaseGuardStoppedWithoutVerdict` and would shut the node down.
+    let tee_lease_exit = async {
+        match tee_lease_exit_rx {
+            Some(rx) => rx.recv().await,
             None => std::future::pending().await,
         }
     };
@@ -193,7 +201,7 @@ pub(crate) async fn wait_for_launcher_exit(
             info!("finalized enclave upgrade requested execution restart");
             LauncherExitCause::UpgradeRequested
         }
-        rejection = tee_lease_exit_rx.recv() => {
+        rejection = tee_lease_exit => {
             let reason = tee_lease_exit_reason(rejection, shutdown);
             if has_consensus {
                 tracing::error!(reason = %reason, "finalized TEE lease guard requested node shutdown");
@@ -228,7 +236,7 @@ pub(crate) fn join_consensus_thread(
 }
 
 pub(crate) struct LauncherDrainTasks {
-    pub(crate) tee_lease_guard_handle: tokio::task::JoinHandle<()>,
+    pub(crate) tee_lease_guard_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) radicle_observer: Option<tokio::task::JoinHandle<()>>,
     pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) txpool_maintenance_handle: tokio::task::JoinHandle<()>,
@@ -288,8 +296,10 @@ pub(crate) async fn drain_launcher_tasks(
     tasks: LauncherDrainTasks,
 ) {
     shutdown_token.cancel();
-    if let Err(error) = tasks.tee_lease_guard_handle.await {
-        shutdown.record_failure(eyre::Report::new(error).wrap_err("TEE lease guard panicked"));
+    if let Some(handle) = tasks.tee_lease_guard_handle {
+        if let Err(error) = handle.await {
+            shutdown.record_failure(eyre::Report::new(error).wrap_err("TEE lease guard panicked"));
+        }
     }
     if let Some(handle) = tasks.radicle_observer {
         drain_radicle_observer(handle, shutdown).await;
@@ -310,5 +320,105 @@ pub(crate) async fn drain_launcher_tasks(
     .await;
     if let Some(handle) = tasks.upgrade_handle {
         abort_and_record(handle, "enclave-upgrade watcher", shutdown).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    use std::time::Duration;
+
+    fn shutdown() -> outbe_node::shutdown::NodeShutdown {
+        outbe_node::shutdown::NodeShutdown::default()
+    }
+
+    #[tokio::test]
+    async fn absent_lease_receiver_waits_for_another_exit() {
+        let upgrade = Arc::new(tokio::sync::Notify::new());
+        let notify = Arc::clone(&upgrade);
+        let task =
+            tokio::spawn(
+                async move { wait_for_launcher_exit(&shutdown(), None, &notify, None).await },
+            );
+        tokio::task::yield_now().await;
+        assert!(
+            !task.is_finished(),
+            "absent lease receiver must not resolve as TeeLeaseRejected"
+        );
+        upgrade.notify_one();
+        let cause = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("upgrade notify")
+            .expect("join");
+        assert_eq!(cause, LauncherExitCause::UpgradeRequested);
+    }
+
+    #[tokio::test]
+    async fn closed_lease_receiver_is_tee_lease_rejected() {
+        let upgrade = tokio::sync::Notify::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(tx);
+        let cause = wait_for_launcher_exit(&shutdown(), None, &upgrade, Some(&mut rx)).await;
+        assert_eq!(cause, LauncherExitCause::TeeLeaseRejected);
+    }
+
+    #[tokio::test]
+    async fn drain_returns_without_a_lease_guard() {
+        let token = tokio_util::sync::CancellationToken::new();
+        drain_launcher_tasks(
+            &token,
+            &shutdown(),
+            LauncherDrainTasks {
+                tee_lease_guard_handle: None,
+                radicle_observer: None,
+                tee_canary_handle: None,
+                txpool_maintenance_handle: tokio::spawn(async {}),
+                upgrade_handle: None,
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn drain_awaits_a_present_lease_guard() {
+        let token = tokio_util::sync::CancellationToken::new();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let started = Arc::clone(&release);
+        let finished = Arc::new(AtomicBool::new(false));
+        let done = Arc::clone(&finished);
+        let handle = tokio::spawn(async move {
+            started.notified().await;
+            done.store(true, Ordering::SeqCst);
+        });
+        let drain_shutdown = shutdown();
+        let drain = tokio::spawn(async move {
+            drain_launcher_tasks(
+                &token,
+                &drain_shutdown,
+                LauncherDrainTasks {
+                    tee_lease_guard_handle: Some(handle),
+                    radicle_observer: None,
+                    tee_canary_handle: None,
+                    txpool_maintenance_handle: tokio::spawn(async {}),
+                    upgrade_handle: None,
+                },
+            )
+            .await;
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !drain.is_finished(),
+            "drain must wait for a Some lease guard"
+        );
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), drain)
+            .await
+            .expect("drain")
+            .expect("join");
+        assert!(finished.load(Ordering::SeqCst));
     }
 }

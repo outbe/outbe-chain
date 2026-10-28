@@ -204,6 +204,8 @@ pub enum ExecutorValidationError {
     BlockArtifacts(String),
     #[error("reserved system transaction cannot execute without commit")]
     ReservedSystemTxWithoutCommit,
+    #[error("consensus witness execution requires execute_transaction_with_commit_condition")]
+    WitnessRequiresCommitCondition,
     #[error("missing Outbe post-execution output")]
     MissingPostExecutionOutput,
     #[error("missing execution summary artifact in block extra_data")]

@@ -17,6 +17,7 @@ Feature: Confidential Lysis called by Metadosis
     And the encrypted NOD matches its canonical body, public views and native issuance event
     And the FullNode verifies the same encrypted Nod against finalized EVM state
     And the follower reaches the committee finalized checkpoint with matching hash and state root
+    And a keyless FullNode without an enclave replays the confidential Lysis blocks and rejects private eth_call
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
     When the offer execution UTC day reaches its next ProtocolCycle settlement
     Then every validator observes the same nonzero WAA and SRA AgentReward

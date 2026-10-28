@@ -84,7 +84,7 @@ mod accounting;
 mod begin_layout;
 mod block_artifacts;
 mod boundary;
-mod fixtures;
+pub(in crate::executor) mod fixtures;
 pub(super) mod harness;
 mod receipts_and_gas;
 mod sponsorship_quota;

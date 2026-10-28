@@ -668,6 +668,7 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(header_artifact)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("extra_data encodes");
 

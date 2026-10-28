@@ -383,6 +383,53 @@ pub(crate) fn complete_gramine_direct_dev_onboarding_response(
     }
 }
 
+pub(crate) fn complete_gramine_direct_dev_onboarding_response_v2(
+    context: DcapOnboardingContextV1,
+    resident_offer_key: Option<&DerivedTributeOfferKey>,
+    source_manifest: Option<&outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1>,
+    keys: &EnclaveKeys,
+) -> EnclaveResponse {
+    let request_hash = context.context_hash();
+    let artifact = match build_gramine_direct_dev_onboarding_artifact(
+        context,
+        resident_offer_key,
+        source_manifest,
+    ) {
+        Ok(artifact) => artifact,
+        Err(message) => {
+            return EnclaveResponse::Error {
+                message: message.to_string(),
+            };
+        }
+    };
+    let onboarding_artifact = match artifact.encode_canonical() {
+        Ok(artifact) => artifact,
+        Err(_) => {
+            return EnclaveResponse::Error {
+                message: "enclave produced a non-canonical GramineDirectDev onboarding artifact"
+                    .to_string(),
+            };
+        }
+    };
+    let preimage = match outbe_tee::response_auth::attestation(
+        b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
+        request_hash,
+        &onboarding_artifact,
+    ) {
+        Ok(preimage) => preimage,
+        Err(error) => {
+            return EnclaveResponse::Error {
+                message: error.to_string(),
+            }
+        }
+    };
+    EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+        request_hash,
+        onboarding_artifact,
+        attestation_tag: keys.sign_attestation(&preimage).to_vec(),
+    }
+}
+
 fn build_gramine_direct_dev_onboarding_artifact(
     context: DcapOnboardingContextV1,
     resident_offer_key: Option<&DerivedTributeOfferKey>,
@@ -800,6 +847,34 @@ mod tests {
         assert_eq!(artifact.context.policy_hash, intent.policy_hash);
         assert_eq!(artifact.context.intent_hash, intent_hash);
         assert_eq!(artifact.context.recipient_x25519, intent.recipient_x25519);
+
+        let response_v2 = complete_gramine_direct_dev_onboarding_response_v2(
+            context,
+            Some(&resident),
+            Some(&source_manifest),
+            &source_keys,
+        );
+        let EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+            request_hash: v2_hash,
+            onboarding_artifact: v2_artifact,
+            attestation_tag,
+        } = response_v2
+        else {
+            panic!("V2 DirectDev onboarding failed: {response_v2:?}");
+        };
+        assert_eq!(v2_hash, request_hash);
+        let preimage = outbe_tee::response_auth::attestation(
+            b"outbe/tee/gramine-direct-dev-onboarding-result/v2",
+            v2_hash,
+            &v2_artifact,
+        )
+        .unwrap();
+        outbe_tee::tribute_v2::verify_attestation(
+            &source_keys.attestation_pub(),
+            &preimage,
+            &attestation_tag,
+        )
+        .unwrap();
 
         let mut wrong_source_mode = source_manifest.clone();
         wrong_source_mode.attestation_mode = AttestationMode::DcapRequired;

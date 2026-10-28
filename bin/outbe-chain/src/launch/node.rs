@@ -200,6 +200,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             upgrade_handle,
             finalization_notify,
             tee_lease_armed_rx,
+            tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),
@@ -260,7 +261,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 &shutdown,
                 Some(&mut consensus_dead_rx),
                 &upgrade_promotion,
-                &mut tee_lease_exit_rx,
+                tee_lease_exit_rx.as_mut(),
             ).await;
 
             tracing::debug!(?exit_cause, "draining application before global execution shutdown");
@@ -270,7 +271,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 &shutdown,
                 None,
                 &upgrade_promotion,
-                &mut tee_lease_exit_rx,
+                tee_lease_exit_rx.as_mut(),
             ).await;
         }
 

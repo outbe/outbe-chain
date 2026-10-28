@@ -140,14 +140,24 @@ where
             has_tee_bootstrap,
             has_publication: block_artifacts.radicle_publication.is_some(),
         };
-        if !result.result.is_success() {
-            return self.commit_reserved_failure_receipt(tx, &result.result, receipt_context);
-        }
+        let is_success = result.result.is_success();
         let output = EthTxResult {
             result,
             blob_gas_used: 0,
             tx_type: tx.tx_type(),
         };
+        if !is_success {
+            if !f(&output).should_commit() {
+                self.check_no_witness_fault()?;
+                return Ok(None);
+            }
+            self.check_no_witness_fault()?;
+            return self.commit_reserved_failure_receipt(
+                tx,
+                &output.result.result,
+                receipt_context,
+            );
+        }
         self.commit_reserved_success_receipt(output, receipt_context, f)
     }
 

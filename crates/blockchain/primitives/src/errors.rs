@@ -347,6 +347,10 @@ pub enum ReshareArtifactError {
     DuplicateTimestampMillisPart,
     #[error("duplicate late finalize credits artifact")]
     DuplicateLateFinalizeCredits,
+    #[error("duplicate enclave witness artifact")]
+    DuplicateEnclaveWitness,
+    #[error("empty enclave witness payload")]
+    EmptyEnclaveWitnessPayload,
     #[error("unsupported block artifact tag: {tag}")]
     UnsupportedTag { tag: u8 },
 }

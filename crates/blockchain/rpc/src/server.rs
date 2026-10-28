@@ -220,7 +220,7 @@ impl<P> OutbeApiHandler<P> {
             requester_ephemeral_pubkey: ephemeral_pubkey.0,
             owner_sig: sig65.to_vec(),
         })
-        .ok_or_else(|| internal_err(crate::errors::RpcInternalError::TeeEnclaveNotConfigured))?
+        .ok_or_else(|| internal_err(tee::PrivateExecutionUnavailable))?
         .map_err(|e| {
             internal_err(crate::errors::RpcInternalError::enclave_derive_account_keys_failed(e))
         })?;

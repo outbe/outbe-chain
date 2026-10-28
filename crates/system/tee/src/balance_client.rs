@@ -35,13 +35,21 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
         }
         _ => return Err(BalanceClientError::NotConfidentialBalanceOperation.into()),
     };
-    let (attestation_pub, response) = crate::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&request);
-        (attestation_pub, response)
-    })
-    .ok_or(BalanceClientError::SidecarUnavailable)?;
-    let response = response.map_err(request_failure)?;
+    let (attestation_pub, response) = crate::witness::consensus_call(
+        operation.name(),
+        || {
+            let (key, response) = crate::try_with_enclave(|client| {
+                (client.attestation_pub(), client.request(&request))
+            })
+            .ok_or_else(|| TransportError::Unavailable("tee_sidecar_unavailable".into()))?;
+            Ok((key, response?))
+        },
+        |key, response| {
+            validate_response(operation, expected_hash, key, response)
+                .map_err(|error| TransportError::Attestation(error.to_string()))
+        },
+    )
+    .map_err(request_failure)?;
     validate_response(operation, expected_hash, &attestation_pub, &response)?;
     Ok(response)
 }

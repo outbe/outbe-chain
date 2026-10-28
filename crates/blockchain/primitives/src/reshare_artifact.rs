@@ -24,6 +24,10 @@ const VERSION: u8 = 1;
 const HEADER_LEN: usize = 7;
 const PUBLICATION_FLAG: u8 = 1;
 const RADICLE_PUBLICATION_TAG: u8 = 0x09;
+pub const ENCLAVE_WITNESS_TAG: u8 = 0x0A;
+/// Framed `extra_data` bytes (3-byte OART record header + compressed witness payload) reserved
+/// for `ENCLAVE_WITNESS_TAG` before selecting optional Radicle publication attestations.
+pub const ENCLAVE_WITNESS_RESERVED_BYTES: usize = 32_768;
 const TEE_EXPIRED_TARGET_EXCLUSIONS_DOMAIN: &[u8] = b"outbe/tee-expired-target-exclusions/v1";
 const EXECUTION_SUMMARY_TAG: u8 = 0x01;
 const BOUNDARY_TAG: u8 = 0x02;
@@ -76,6 +80,9 @@ pub struct OutbeBlockArtifacts {
     /// per-finalized-block late-finalize proofs the proposer gathered within the
     /// `K`-block inclusion window. `None`/empty when this block credits nothing.
     pub late_finalize_credits: Option<LateFinalizeCreditsArtifact>,
+    /// Opaque compressed consensus enclave witness tape (tag 0x0A). `None` when the block made
+    /// zero consensus enclave calls.
+    pub enclave_witness: Option<Bytes>,
 }
 
 /// A batch of late-finalize credits carried in `header.extra_data` (tag 0x06).
@@ -190,6 +197,12 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
         }
         records.push((RADICLE_PUBLICATION_TAG, batch.to_bytes()?));
     }
+    if let Some(witness) = &artifacts.enclave_witness {
+        if witness.is_empty() {
+            return Err(ReshareArtifactError::EmptyEnclaveWitnessPayload.into());
+        }
+        records.push((ENCLAVE_WITNESS_TAG, witness.to_vec()));
+    }
 
     if records.is_empty() && !artifacts.radicle_publication_enabled {
         return Ok(Bytes::new());
@@ -276,6 +289,7 @@ pub fn sanitize_prefinal_outbe_block_artifacts(extra_data: &[u8]) -> Result<Byte
     let mut artifacts = decode_outbe_block_artifacts(extra_data)?;
     artifacts.execution_summary = None;
     artifacts.timestamp_millis_part = 0;
+    artifacts.enclave_witness = None;
     let encoded = encode_outbe_block_artifacts(&artifacts)?;
     Ok(encoded)
 }
@@ -288,11 +302,14 @@ pub fn encode_proposal_block_artifacts(
     if artifacts.radicle_publication_enabled {
         let mut reserved = artifacts.clone();
         reserved.radicle_publication = None;
+        reserved.enclave_witness = None;
         reserved.execution_summary = Some(ExecutionSummaryArtifact {
             validator_fee_sum: alloy_primitives::U256::MAX,
         });
         reserved.timestamp_millis_part = 999;
-        let reserved_length = encode_outbe_block_artifacts(&reserved)?.len();
+        let reserved_length = encode_outbe_block_artifacts(&reserved)?
+            .len()
+            .saturating_add(ENCLAVE_WITNESS_RESERVED_BYTES);
         let payload_budget = OUTBE_MAX_EXTRA_DATA_SIZE
             .saturating_sub(reserved_length)
             .saturating_sub(3); // OART record tag and u16 length.
@@ -309,6 +326,7 @@ pub fn encode_consensus_header_artifact(artifact: &ConsensusHeaderArtifact) -> R
         consensus_header_artifact: Some(artifact.clone()),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })?;
     sanitize_prefinal_outbe_block_artifacts(&encoded)
 }

@@ -152,6 +152,7 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
         )),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("genesis boundary artifacts encode");
     (artifacts, committee_snapshot_hash)

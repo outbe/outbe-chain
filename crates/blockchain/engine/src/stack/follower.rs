@@ -8,6 +8,16 @@ use finalization::finalization_bytes_for_height;
 
 use super::*;
 
+/// Keyless replay has no enclave socket. Skip the resident probe only when the
+/// process policy is explicitly `ReplayOnly`. A configured socket keeps the
+/// resident-key check.
+pub(in crate::stack) fn follower_skips_resident_offer_probe(args: &ConsensusArgs) -> bool {
+    if args.tee_enclave_socket.is_some() {
+        return false;
+    }
+    outbe_tee::witness::witness_policy() == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly)
+}
+
 /// Local chain and process facts that decide `ValidatorBootstrapReady`.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::stack) struct BootstrapFacts {
@@ -197,9 +207,10 @@ where
             })?;
 
     // Defence in depth for callers that construct the engine stack outside the
-    // node binary. The binary already proves this equality before Reth launch.
-    // Repeat it here before certified sync, so that no alternate embedding can
-    // process a protected block with a missing or divergent permanent key.
+    // node binary. A TEE follower already proved resident-key equality before
+    // Reth launch. Repeat that local check here. A keyless follower has no
+    // socket and no session: keep the upstream non-zero check and skip the
+    // local probe. Do not skip it when a socket was configured.
     let tee_probe = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tee_offer_public = tee_probe
         .tribute_offer_public_key()
@@ -208,10 +219,12 @@ where
     if tee_offer_public.is_zero() {
         return Err(crate::errors::FollowerStackError::UpstreamMissingOst3OfferKey.into());
     }
-    let resident_offer = outbe_tee::resident_offer_public_key_v1()
-        .wrap_err("failed to read the mandatory local enclave offer key")?;
-    if resident_offer != tee_offer_public {
-        return Err(crate::errors::FollowerStackError::LocalEnclaveOfferKeyMismatch.into());
+    if !follower_skips_resident_offer_probe(&args) {
+        let resident_offer = outbe_tee::resident_offer_public_key_v1()
+            .wrap_err("failed to read the mandatory local enclave offer key")?;
+        if resident_offer != tee_offer_public {
+            return Err(crate::errors::FollowerStackError::LocalEnclaveOfferKeyMismatch.into());
+        }
     }
 
     info!(
@@ -411,4 +424,30 @@ impl FollowerProofPersistence<'_> {
 /// certificate.
 pub(in crate::stack) const fn follower_height_has_certified_finalization(height: u64) -> bool {
     height > 0
+}
+
+#[cfg(test)]
+mod resident_probe_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct ArgsCli {
+        #[command(flatten)]
+        consensus: ConsensusArgs,
+    }
+
+    #[test]
+    fn socket_keeps_the_resident_probe() {
+        let args = ArgsCli::try_parse_from(["test"])
+            .expect("default args")
+            .consensus;
+        assert!(args.tee_enclave_socket.is_none());
+        let replay_only = outbe_tee::witness::witness_policy()
+            == Some(outbe_tee::witness::WitnessPolicy::ReplayOnly);
+        assert_eq!(follower_skips_resident_offer_probe(&args), replay_only);
+        let mut with_socket = args;
+        with_socket.tee_enclave_socket = Some(std::path::PathBuf::from("/tmp/tee.sock"));
+        assert!(!follower_skips_resident_offer_probe(&with_socket));
+    }
 }

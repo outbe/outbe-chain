@@ -36,8 +36,9 @@ pub use config::{
     OutbeNextBlockEnvAttributes, RethAccountedParentArtifactProvider,
 };
 pub use executor::{
+    enclave_witness_budget_deferral, is_enclave_witness_budget_deferral,
     is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
-    SPONSORED_BLOCK_BUDGET_EXCEEDED,
+    ENCLAVE_WITNESS_BUDGET_EXCEEDED, SPONSORED_BLOCK_BUDGET_EXCEEDED,
 };
 pub use executor::{AccountedParentArtifact, AccountedParentArtifactProvider};
 pub use factory::OutbeEvmFactory;

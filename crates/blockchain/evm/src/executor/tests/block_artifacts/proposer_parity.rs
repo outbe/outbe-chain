@@ -456,6 +456,7 @@ fn signed_late_credit_artifact(
                 aggregate_signature,
             }],
         }),
+        enclave_witness: None,
     };
 
     Ok(artifact)

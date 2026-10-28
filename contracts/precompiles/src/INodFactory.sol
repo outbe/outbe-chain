@@ -12,7 +12,6 @@ interface INodFactory {
     error NodNotSettled();
     error InsufficientProofOfWork();
     error SettlementDeadlinePassed();
-    error CreateNodForTest(string reason);
     error EmptyGroupMemberSlotDuringCleanup(bytes32 groupKey);
     error MissingGroupMemberRecordDuringCleanup(bytes32 groupKey, uint256 nodId);
     error IneligibleGroupMember(bytes32 groupKey, uint256 nodId);
