@@ -53,6 +53,7 @@ pub struct HashMapStorageProvider {
     canonical_block_hashes: BTreeMap<u64, B256>,
     chain_id: u64,
     genesis_hash: B256,
+    genesis_timestamp: u64,
     timestamp: U256,
     beneficiary: Address,
     block_number: u64,
@@ -120,6 +121,7 @@ impl HashMapStorageProvider {
             canonical_block_hashes: BTreeMap::new(),
             chain_id,
             genesis_hash,
+            genesis_timestamp: 1,
             timestamp: U256::ZERO,
             beneficiary: Address::ZERO,
             block_number: 0,
@@ -275,6 +277,15 @@ impl HashMapStorageProvider {
             .get(&address)
             .map(|a| a.balance)
             .unwrap_or(U256::ZERO)
+    }
+
+    pub fn set_genesis_timestamp(&mut self, genesis_timestamp: u64) {
+        self.genesis_timestamp = genesis_timestamp;
+    }
+
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
     }
 
     pub fn set_timestamp(&mut self, timestamp: U256) {
@@ -515,6 +526,10 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn genesis_hash(&self) -> B256 {
         self.genesis_hash
+    }
+
+    fn genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp
     }
 
     fn timestamp(&self) -> U256 {

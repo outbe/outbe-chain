@@ -1,9 +1,9 @@
 use super::*;
 use alloy_sol_types::SolCall;
+use outbe_emission::precompile::{dispatch as emission_dispatch, IEmission};
 
 fn query<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
-    let output =
-        metadosis_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
+    let output = emission_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
     C::abi_decode_returns(&output).unwrap()
 }
 
@@ -15,9 +15,9 @@ fn query_tribute<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
 #[test]
 fn missing_emission_day_and_worldwide_day_revert_cleanly() {
     with_storage(|storage| {
-        let ed_err = metadosis_dispatch(
+        let ed_err = emission_dispatch(
             storage.clone(),
-            &IMetadosis::getEmissionDayCall { day: 20261014 }.abi_encode(),
+            &IEmission::getEmissionDayCall { day: 20261014 }.abi_encode(),
             Address::ZERO,
             U256::ZERO,
         )
@@ -57,12 +57,17 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             query_tribute(storage.clone(), ITribute::getActiveWorldwideDaysCall {});
         assert_eq!(active, vec![20260920]);
 
-        let ed = query(storage, IMetadosis::getEmissionDayCall { day: 20261014 });
-        assert_eq!(ed.emissionDay, 20261014);
-        assert_eq!(ed.emissionLimitMinor, U256::from(100));
+        let ed = query(storage, IEmission::getEmissionDayCall { day: 20261014 });
+        assert_eq!(ed.day, 20261014);
+        assert_eq!(ed.emissionLimit, 100);
+        assert_eq!(ed.metadosisLimit, 100);
         assert_eq!(ed.wwd, 20260920);
         assert_eq!(ed.metadosisStart, 50);
-        assert_eq!(ed.state, emission_day_state::NONE);
+        assert_eq!(
+            ed.state,
+            outbe_emission::schema::emission_day_state::PENDING
+        );
+        assert_eq!(ed.metadosisState, emission_day_state::NONE);
     });
 }
 
@@ -97,13 +102,13 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         .unwrap();
     let metadosis = MetadosisContract::new(storage);
     metadosis
-        .emission_days
-        .create(&crate::schema::EmissionDay {
+        .emission_days()
+        .create(&crate::schema::EmissionDay::new_with_limit(
             day,
-            emission_limit_minor: U256::from(100),
             wwd,
-            metadosis_start: 50,
-            state: emission_day_state::NONE,
-        })
+            50,
+            100,
+            emission_day_state::NONE,
+        ))
         .unwrap();
 }

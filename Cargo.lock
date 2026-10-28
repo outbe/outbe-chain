@@ -8048,7 +8048,7 @@ dependencies = [
  "outbe-chain-constants",
  "outbe-credisfactory",
  "outbe-desis",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-intexfactory",
@@ -8119,6 +8119,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-desis",
+ "outbe-emission",
  "outbe-evm",
  "outbe-gem",
  "outbe-genesis-cli",
@@ -8154,11 +8155,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-emissionlimit"
+name = "outbe-emission"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "outbe-metadosis",
+ "alloy-sol-types",
+ "outbe-macros",
  "outbe-primitives",
  "serde_json",
  "thiserror 2.0.18",
@@ -8252,6 +8254,7 @@ dependencies = [
  "outbe-credisfactory",
  "outbe-cycle",
  "outbe-desis",
+ "outbe-emission",
  "outbe-evm",
  "outbe-fidelity",
  "outbe-gem",
@@ -8657,6 +8660,7 @@ dependencies = [
  "num-bigint",
  "outbe-chain-constants",
  "outbe-desis",
+ "outbe-emission",
  "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
@@ -9088,7 +9092,7 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "outbe-consensus",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-macros",
  "outbe-metadosis",
  "outbe-oracle",
@@ -9112,7 +9116,7 @@ dependencies = [
  "eyre",
  "hex",
  "jsonrpsee",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-primitives",
  "outbe-radicle",
  "outbe-slashindicator",

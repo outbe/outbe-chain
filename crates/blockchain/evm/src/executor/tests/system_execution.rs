@@ -511,7 +511,8 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(block_timestamp);
-        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+            .with_evm_signer(signer.clone());
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {

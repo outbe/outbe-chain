@@ -191,21 +191,21 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
     let mut genesis = json!({"config": {"chainId": 1}, "alloc": {}});
     let profile = json!({
         "schemaVersion": 1,
-        "metadosis": {"formingPeriodSeconds": 60},
+        "metadosis": {"lookbackDelaySeconds": 22 * 3600, "advanceIntervalSeconds": 3600},
         "governance": {"votingWindowBlocks": 120}
     });
     seed_protocol_constants(&mut genesis, &json!({"protocol_constants": profile}))
         .expect("seed_protocol_constants");
     assert_eq!(genesis["config"]["outbeProtocol"], profile);
 
-    let existing = json!({"metadosis": {"formingPeriodSeconds": 60}});
+    let existing = json!({"metadosis": {"lookbackDelaySeconds": 22 * 3600}});
     let mut genesis2 = json!({"config": {"outbeProtocol": existing}, "alloc": {}});
     seed_protocol_constants(&mut genesis2, &json!({})).expect("preserve existing");
     assert_eq!(genesis2["config"]["outbeProtocol"], existing);
 
     let err = seed_protocol_constants(
         &mut genesis2,
-        &json!({"protocol_constants": {"metadosis": {"formingPeriodSeconds": 61}}}),
+        &json!({"protocol_constants": {"metadosis": {"lookbackDelaySeconds": 46 * 3600}}}),
     )
     .expect_err("conflict");
     assert!(err.to_string().contains("conflicts"));

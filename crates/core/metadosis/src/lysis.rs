@@ -81,7 +81,7 @@ fn finalize_lysis_settlement(
     let split = apply_lysis_limit(
         storage.clone(),
         LysisLimitInput {
-            base_limit: emission_day.emission_limit_minor,
+            base_limit: emission_day.emission_limit_minor(),
             lysis_limit_minor: calculation.lysis_limit_minor,
             nominal_total: completion.total_nominal_minor,
         },

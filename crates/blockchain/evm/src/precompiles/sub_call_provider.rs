@@ -32,6 +32,7 @@ pub(crate) struct OutbeSubCallPrecompiles<DB> {
     /// EVM spec id, forwarded to [`outbe_ctx_dispatch`].
     spec: SpecId,
     genesis_hash: B256,
+    genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
 
     abort_bridge: super::ExecutionAbortBridge,
@@ -47,6 +48,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
         let OutbePrecompileExecutionContext {
             spec,
             genesis_hash,
+            genesis_timestamp,
             tee_attestation_v1,
         } = execution_context;
         let OutbePrecompileRuntime { abort_bridge } = runtime;
@@ -54,6 +56,7 @@ impl<DB> OutbeSubCallPrecompiles<DB> {
             eth: EthPrecompiles::new(spec),
             spec,
             genesis_hash,
+            genesis_timestamp,
             tee_attestation_v1,
             abort_bridge,
             _db: PhantomData,
@@ -91,6 +94,7 @@ where
                 abort_bridge: &self.abort_bridge,
                 spec: self.spec,
                 genesis_hash: self.genesis_hash,
+                genesis_timestamp: self.genesis_timestamp,
                 tee_attestation_v1: &self.tee_attestation_v1,
             },
         )

@@ -1,14 +1,15 @@
 [package]
-name = "outbe-emissionlimit"
+name = "outbe-emission"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-macros.workspace = true
 outbe-primitives.workspace = true
-outbe-metadosis.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

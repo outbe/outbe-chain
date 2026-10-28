@@ -294,7 +294,8 @@ fn cycle_tick_utc_boundary_gas_usage() {
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
     let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
     evm_env.block_env.timestamp = U256::from(block_timestamp);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+    let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+        .with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut executor = config.create_executor(
         evm,
@@ -414,7 +415,8 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(block_ts);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+    let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+        .with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
 

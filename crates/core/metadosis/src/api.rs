@@ -3,7 +3,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_tribute::worldwideday::{ValidatedWwdAggregate, WwdProjection};
 
-use crate::schema::{EmissionDay, MetadosisContract};
+use crate::schema::{EmissionContract, EmissionDay};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EmissionDayProjection {
@@ -18,17 +18,17 @@ impl From<EmissionDay> for EmissionDayProjection {
     fn from(record: EmissionDay) -> Self {
         Self {
             day: record.day,
-            emission_limit_minor: record.emission_limit_minor,
+            emission_limit_minor: record.emission_limit_minor(),
             wwd: record.wwd,
             metadosis_start: record.metadosis_start,
-            state: record.state,
+            state: record.metadosis_state,
         }
     }
 }
 
-/// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key.
+/// Reads one typed EmissionDay projection by its `YYYYMMDD` UTC day key from `EMISSION_ADDRESS`.
 pub fn emission_day(storage: StorageHandle<'_>, day: u32) -> Result<Option<EmissionDayProjection>> {
-    Ok(MetadosisContract::new(storage)
+    Ok(EmissionContract::new(storage)
         .emission_days
         .get(day)?
         .map(EmissionDayProjection::from))

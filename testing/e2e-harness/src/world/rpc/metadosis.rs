@@ -1,3 +1,4 @@
+use crate::internal::eth::IEmission;
 use crate::world::rpc::*;
 use alloy_sol_types::SolEvent;
 
@@ -15,15 +16,15 @@ impl Rpc {
     ) -> Option<MetadosisEmissionDayStateV1> {
         let r = eth::read_call(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getEmissionDayCall { day },
+            addresses::EMISSION_ADDR,
+            &IEmission::getEmissionDayCall { day },
         )?;
         Some(MetadosisEmissionDayStateV1 {
-            emission_day: r.emissionDay,
-            emission_limit_minor: r.emissionLimitMinor,
+            emission_day: r.day,
+            emission_limit_minor: U256::from(r.metadosisLimit.max(r.emissionLimit)),
             wwd: r.wwd,
             metadosis_start: r.metadosisStart,
-            state: r.state,
+            state: r.metadosisState,
         })
     }
 
@@ -35,16 +36,16 @@ impl Rpc {
     ) -> Option<MetadosisEmissionDayStateV1> {
         let r = eth::read_call_at(
             &self.url(port),
-            addresses::WWD_ADDR,
-            &IMetadosis::getEmissionDayCall { day },
+            addresses::EMISSION_ADDR,
+            &IEmission::getEmissionDayCall { day },
             block_number,
         )?;
         Some(MetadosisEmissionDayStateV1 {
-            emission_day: r.emissionDay,
-            emission_limit_minor: r.emissionLimitMinor,
+            emission_day: r.day,
+            emission_limit_minor: U256::from(r.metadosisLimit.max(r.emissionLimit)),
             wwd: r.wwd,
             metadosis_start: r.metadosisStart,
-            state: r.state,
+            state: r.metadosisState,
         })
     }
 

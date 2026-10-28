@@ -1,7 +1,7 @@
 //! Trigger dispatch, emission settlement and validator top-up conservation.
 
 use alloy_sol_types::SolEvent;
-use outbe_emissionlimit::allocation::EmissionSinkId;
+use outbe_emission::allocation::EmissionSinkId;
 use outbe_primitives::addresses::CYCLE_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 

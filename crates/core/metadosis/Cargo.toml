@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-emission.workspace = true
 outbe-desis.workspace = true
 outbe-fidelity.workspace = true
 outbe-tribute.workspace = true

@@ -24,41 +24,41 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
             .unwrap();
         assert_eq!(active_wwds.len(), 7);
 
-        // Verify wwd = 20260920 -> day = 20261014 (and wwd = 20260925 -> day = 20261019)
+        // Verify wwd = 20260920 -> day = 20261011 (and wwd = 20260925 -> day = 20261016)
         let wwd_20 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260920))
             .unwrap()
             .unwrap();
-        assert_eq!(wwd_20.day, 20261014);
+        assert_eq!(wwd_20.day, 20261011);
 
-        let ed_14 = api::emission_day(storage.clone(), 20261014)
+        let ed_11 = api::emission_day(storage.clone(), 20261011)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_14.day, 20261014);
-        assert_eq!(ed_14.wwd, WorldwideDay::new(20260920));
+        assert_eq!(ed_11.day, 20261011);
+        assert_eq!(ed_11.wwd, WorldwideDay::new(20260920));
         assert_eq!(
-            ed_14.metadosis_start,
-            date_key_to_utc_timestamp(next_date_key(20261014).expect("date step")) + 1
+            ed_11.metadosis_start,
+            date_key_to_utc_timestamp(next_date_key(20261011).expect("date step")) + 1
         );
-        assert_eq!(ed_14.state, emission_day_state::NONE);
+        assert_eq!(ed_11.state, emission_day_state::NONE);
         assert_eq!(
-            ed_14.emission_limit_minor,
+            ed_11.emission_limit_minor,
             outbe_primitives::emission::metadosis_day_emission_limit(
-                day_number_between(anchor_utc_day, 20261014).unwrap()
+                day_number_between(anchor_utc_day, 20261011).unwrap()
             )
         );
 
         let wwd_25 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260925))
             .unwrap()
             .unwrap();
-        assert_eq!(wwd_25.day, 20261019);
-        let ed_19 = api::emission_day(storage.clone(), 20261019)
+        assert_eq!(wwd_25.day, 20261016);
+        let ed_16 = api::emission_day(storage.clone(), 20261016)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_19.wwd, WorldwideDay::new(20260925));
+        assert_eq!(ed_16.wwd, WorldwideDay::new(20260925));
         assert_eq!(
-            ed_19.emission_limit_minor,
+            ed_16.emission_limit_minor,
             outbe_primitives::emission::metadosis_day_emission_limit(
-                day_number_between(anchor_utc_day, 20261019).unwrap()
+                day_number_between(anchor_utc_day, 20261016).unwrap()
             )
         );
 
@@ -104,30 +104,30 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             .unwrap();
         assert_eq!(
             WorldwideDay::from_timestamp(wwd_proj.offerings_start),
-            WorldwideDay::new(20260924)
+            WorldwideDay::new(20260921)
         );
         assert_eq!(
             wwd_proj.offering_end,
-            date_key_to_utc_timestamp(20260925) + 12 * 3_600
+            date_key_to_utc_timestamp(20260922) + 12 * 3_600
         );
-        assert_eq!(wwd_proj.day, 20260925);
+        assert_eq!(wwd_proj.day, 20260922);
 
-        let expected_metadosis_start = date_key_to_utc_timestamp(20260926) + 1;
+        let expected_metadosis_start = date_key_to_utc_timestamp(20260923) + 1;
         assert_eq!(
             expected_metadosis_start,
             wwd_proj.offering_end + 12 * 3_600 + 1
         );
 
-        let ed_25 = api::emission_day(storage.clone(), 20260925)
+        let ed_22 = api::emission_day(storage.clone(), 20260922)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_25.day, 20260925);
-        assert_eq!(ed_25.wwd, wwd_sep_01);
-        assert_eq!(ed_25.metadosis_start, expected_metadosis_start);
+        assert_eq!(ed_22.day, 20260922);
+        assert_eq!(ed_22.wwd, wwd_sep_01);
+        assert_eq!(ed_22.metadosis_start, expected_metadosis_start);
         assert_eq!(
-            ed_25.emission_limit_minor,
+            ed_22.emission_limit_minor,
             outbe_primitives::emission::metadosis_day_emission_limit(
-                day_number_between(anchor_utc_day, 20260925).unwrap()
+                day_number_between(anchor_utc_day, 20260922).unwrap()
             )
         );
 
@@ -149,12 +149,12 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let due_at_start = crate::lifecycle::find_due_emission_day(&metadosis, &at_start)
             .unwrap()
             .unwrap();
-        assert_eq!(due_at_start.day, 20260925);
+        assert_eq!(due_at_start.day, 20260922);
         assert_eq!(due_at_start.wwd, wwd_sep_01);
 
-        // Simulate a halt from 25 Sep to 28 Sep 2026: the first block after restart
-        // must still select and execute the oldest due emission day (20260925).
-        let restart_ts = date_key_to_utc_timestamp(20260928) + 3_600;
+        // Simulate a halt from 22 Sep to 25 Sep 2026: the first block after restart
+        // must still select and execute the oldest due emission day (20260922).
+        let restart_ts = date_key_to_utc_timestamp(20260925) + 3_600;
         arm_reference_price(&storage, restart_ts);
         let restart_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(4, restart_ts, CHAIN_ID),
@@ -163,7 +163,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let due_after_halt = crate::lifecycle::find_due_emission_day(&metadosis, &restart_ctx)
             .unwrap()
             .unwrap();
-        assert_eq!(due_after_halt.day, 20260925);
+        assert_eq!(due_after_halt.day, 20260922);
         assert_eq!(due_after_halt.wwd, wwd_sep_01);
 
         // Nested process-ready checks recompute the lease from the provider clock
@@ -174,8 +174,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             storage.clone(),
         );
         crate::commands::start_metadosis(&aligned).unwrap();
-        let completed = api::emission_day(storage, 20260925).unwrap().unwrap();
-        assert_eq!(completed.day, 20260925);
+        let completed = api::emission_day(storage, 20260922).unwrap().unwrap();
+        assert_eq!(completed.day, 20260922);
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, emission_day_state::SUCCEEDED);
     });

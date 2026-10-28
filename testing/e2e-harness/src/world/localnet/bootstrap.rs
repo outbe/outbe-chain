@@ -37,8 +37,8 @@ const VALIDATOR_BALANCE_HEX: &str = "0x52b7d2dcc80cd2e4000000";
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
-const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
-const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
+const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 =
+    outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
@@ -248,7 +248,6 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, profile)?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp((now - SECONDS_PER_DAY) as i64)
             .wrap_err("genesis time")?
@@ -287,10 +286,7 @@ impl Localnet {
                         "votingWindowBlocks": profile.governance_voting_window_blocks,
                     },
                     "metadosis": {
-                        "formingPeriodSeconds": localnet_forming_period,
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-                        "offeringPeriodSeconds":
-                            localnet_metadosis_offering_period_seconds(profile),
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                     // A localnet day starts mid-day and runs few hours, so the
@@ -610,17 +606,6 @@ fn patch_felony_storage(
     storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
 
-fn localnet_metadosis_offering_period_seconds(profile: &BootstrapProfile) -> u64 {
-    profile.metadosis_offering_seconds
-}
-
-fn localnet_metadosis_forming_period_seconds(now: u64, profile: &BootstrapProfile) -> Result<u64> {
-    match profile.metadosis_forming_seconds {
-        Some(period) => Ok(period),
-        None => localnet_forming_period_seconds(now),
-    }
-}
-
 fn validator_balance_hex(profile: &BootstrapProfile) -> String {
     profile.validator_balance_coen.map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
@@ -701,16 +686,6 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
     let k = key.to_lowercase();
     let k = k.strip_prefix("0x").unwrap_or(&k);
     format!("{k:0>40}").ends_with(suffix)
-}
-
-fn localnet_forming_period_seconds(_now: u64) -> Result<u64> {
-    // A generic localnet is not an economic-calendar acceleration fixture.
-    // In particular, real SGX setup can consume several minutes before block 1.
-    // Shortening Forming relative to genesis-generation wall time can therefore
-    // skip directly to MissedOffering before Cycle has formed the immutable day
-    // limit. Scenarios that need a near-term edge use the checked profile tuning
-    // or a typed pre-start WorldwideDay fixture instead.
-    Ok(outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS)
 }
 
 #[cfg(test)]
@@ -834,21 +809,6 @@ mod tests {
     }
 
     #[test]
-    fn generic_localnet_keeps_the_production_forming_period_across_sgx_bootstrap() {
-        let utc_midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260302);
-
-        for now in [
-            utc_midnight + 9 * 3_600 + 59 * 60,
-            utc_midnight + 10 * 3_600,
-        ] {
-            let period = localnet_forming_period_seconds(now).unwrap();
-            assert_eq!(
-                period,
-                outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-            );
-        }
-    }
-    #[test]
     fn felony_patch_uses_current_slashindicator_config_slots() {
         let mut storage = serde_json::Map::new();
         patch_felony_storage(&mut storage, DEV_FELONY_THRESHOLD);
@@ -924,37 +884,21 @@ mod tests {
     }
 
     #[test]
-    fn metadosis_offering_period_can_be_tuned_only_in_generated_genesis() {
-        let default = BootstrapProfile::default();
+    fn metadosis_window_lengths_are_not_localnet_tuning_keys() {
         assert_eq!(
-            localnet_metadosis_offering_period_seconds(&default),
-            LOCALNET_METADOSIS_OFFERING_SECONDS
+            LOCALNET_METADOSIS_LOOKBACK_SECONDS,
+            outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS
         );
-        let tuned = BootstrapProfile::from_tuning(&[(
-            "TESTNET_METADOSIS_OFFERING_SECONDS",
-            "900".to_owned(),
-        )])
-        .unwrap();
-        assert_eq!(localnet_metadosis_offering_period_seconds(&tuned), 900);
-    }
-
-    #[test]
-    fn metadosis_forming_period_can_be_tuned_only_in_generated_genesis() {
-        let now = outbe_primitives::time::date_key_to_utc_timestamp(20260302) + 12 * 3_600;
-        let default = BootstrapProfile::default();
-        assert_eq!(
-            localnet_metadosis_forming_period_seconds(now, &default).unwrap(),
-            localnet_forming_period_seconds(now).unwrap()
-        );
-        let tuned = BootstrapProfile::from_tuning(&[(
+        for key in [
             "TESTNET_METADOSIS_FORMING_SECONDS",
-            "136860".to_owned(),
-        )])
-        .unwrap();
-        assert_eq!(
-            localnet_metadosis_forming_period_seconds(now, &tuned).unwrap(),
-            136_860
-        );
+            "TESTNET_METADOSIS_OFFERING_SECONDS",
+        ] {
+            let err = BootstrapProfile::from_tuning(&[(key, "900".to_owned())]).unwrap_err();
+            assert!(
+                err.to_string().contains("unsupported localnet tuning key"),
+                "{err}"
+            );
+        }
     }
 
     #[test]

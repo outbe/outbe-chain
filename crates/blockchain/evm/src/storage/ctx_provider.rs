@@ -143,11 +143,20 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub spec: SpecId,
     /// Immutable genesis hash sourced from the canonical ChainSpec.
     pub genesis_hash: B256,
+    /// Immutable genesis timestamp sourced from the canonical ChainSpec.
+    pub genesis_timestamp: u64,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
 
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
+}
+
+impl CtxStorageProviderConfig {
+    pub(crate) const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
+    }
 }
 
 pub(crate) struct CtxStorageProviderConfig {
@@ -156,6 +165,7 @@ pub(crate) struct CtxStorageProviderConfig {
     pub(crate) reentrancy_stack: ReentrancyStack,
     pub(crate) spec: SpecId,
     pub(crate) genesis_hash: B256,
+    pub(crate) genesis_timestamp: u64,
 
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
 
@@ -235,6 +245,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             reentrancy_stack: config.reentrancy_stack,
             spec: config.spec,
             genesis_hash: config.genesis_hash,
+            genesis_timestamp: 0,
 
             abort_bridge: config.abort_bridge,
 
@@ -242,6 +253,12 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
         }
+        .with_genesis_timestamp(config.genesis_timestamp)
+    }
+
+    pub(crate) const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
     }
 
     /// Installs the exact route inventory after a provider-backed read
@@ -321,6 +338,10 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn genesis_hash(&self) -> B256 {
         self.genesis_hash
+    }
+
+    fn genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp
     }
 
     fn timestamp(&self) -> U256 {
@@ -567,7 +588,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 execution: crate::precompiles::OutbePrecompileExecutionContext::new(
                     self.spec,
                     self.genesis_hash,
-                ),
+                )
+                .with_genesis_timestamp(self.genesis_timestamp),
                 runtime: crate::precompiles::OutbePrecompileRuntime::new()
                     .with_abort_bridge(self.abort_bridge.clone()),
             },

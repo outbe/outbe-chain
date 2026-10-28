@@ -18,13 +18,6 @@ pub const PERCENT_DENOMINATOR: u64 = 100;
 
 /// Typed day-emission sinks. These are fixed, hard-fork governed
 /// extension points, not dynamically registered runtime plugins.
-///
-/// The day 5-sink table `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Metadosis terminal)`
-/// replaced the per-block 3-sink table (`Validator 4 %`, `AgentReward 8 %`, `Metadosis 88 %`).
-/// WAA / SRA / CCA and the validator top-up go through
-/// `outbe_agentreward::distribute_daily`.
-/// The residue and the terminal 84 % land on Metadosis through
-/// [`crate::block::dispatch_terminal_remainder_at`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmissionSinkId {
     Validator,
@@ -164,7 +157,6 @@ mod tests {
 
     #[test]
     fn test_allocation_percentages() {
-        // Day 5-sink table: 4x4 % + Metadosis terminal 84 %.
         let total = U256::from(10000u64);
         let allocations = allocate_emission(total).unwrap();
         for sink in [
@@ -185,8 +177,6 @@ mod tests {
             "Metadosis should receive the remaining 84 %"
         );
 
-        // Independent witness. This table is not the active four-percent split.
-        // floor(101 * 10 / 100) = 10. floor(101 * 25 / 100) = 25. The terminal gets 66.
         let specs = [
             EmissionSinkSpec {
                 id: EmissionSinkId::Validator,
@@ -217,8 +207,6 @@ mod tests {
         assert_eq!(allocation_sum(&witness), U256::from(101u64));
     }
 
-    /// Regression: allocation must preserve invariant for values > 2^53
-    /// where f64 would lose precision.
     #[test]
     fn test_allocation_invariant_large_values() {
         let boundary = U256::from(9007199254740992u64);
@@ -375,9 +363,6 @@ mod tests {
 
     #[test]
     fn test_allocation_rounding_dust_goes_to_terminal_sink() {
-        // 4 x 4 % = 16 % -> each non-terminal sink gets floor(101 * 4 / 100) = 4.
-        // Sum of fixed shares = 16. Metadosis terminal absorbs the
-        // remainder = 85, including the rounding dust (101 - 16 = 85).
         let total = U256::from(101u64);
         let allocations = allocate_emission(total).unwrap();
 

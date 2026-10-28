@@ -56,6 +56,7 @@ outbe-genesis-cli.workspace = true
 outbe-consensus.workspace = true
 outbe-credis = { workspace = true }
 outbe-desis.workspace = true
+outbe-emission.workspace = true
 outbe-gem = { workspace = true }
 outbe-intexfactory = { workspace = true }
 outbe-metadosis.workspace = true

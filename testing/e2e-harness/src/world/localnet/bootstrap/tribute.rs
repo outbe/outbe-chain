@@ -1,7 +1,7 @@
 use super::*;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
-    addresses::{METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
+    addresses::{EMISSION_ADDRESS, METADOSIS_ADDRESS, ORACLE_ADDRESS, TRIBUTE_ADDRESS},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::WorldwideDay,
 };
@@ -320,14 +320,20 @@ fn load_measurement_accounts(
         .get("alloc")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
-    let mut keys = Vec::with_capacity(3);
+    let mut keys = Vec::with_capacity(4);
     for (address, label) in [
+        (EMISSION_ADDRESS, "Emission"),
         (METADOSIS_ADDRESS, "Metadosis"),
         (ORACLE_ADDRESS, "Oracle"),
         (TRIBUTE_ADDRESS, "Tribute"),
     ] {
-        let account_key = find_alloc_address_key(alloc, address)?
-            .ok_or_else(|| eyre::eyre!("generated genesis has no {label} account"))?;
+        let Some(account_key) = find_alloc_address_key(alloc, address)? else {
+            if address == EMISSION_ADDRESS {
+                keys.push((address, format!("{address:#x}")));
+                continue;
+            }
+            eyre::bail!("generated genesis has no {label} account");
+        };
         let account = alloc
             .get(&account_key)
             .and_then(serde_json::Value::as_object)
@@ -461,14 +467,26 @@ fn seed_native_lysis_fixture(
         .checked_sub(genesis_midnight)
         .ok_or_else(|| eyre!("native Lysis emission day precedes genesis"))?
         / outbe_primitives::time::SECONDS_PER_DAY;
+    let metadosis_limit_minor =
+        outbe_primitives::emission::metadosis_day_emission_limit(u32::try_from(day_number)?);
+    let metadosis_limit = u128::try_from(metadosis_limit_minor)
+        .map_err(|_| eyre!("native Lysis metadosis limit overflows u128"))?;
     let record = outbe_metadosis::EmissionDay {
         day: projection.day,
-        emission_limit_minor: outbe_primitives::emission::metadosis_day_emission_limit(
-            u32::try_from(day_number)?,
-        ),
         wwd: worldwide_day,
         metadosis_start: projection.offering_end,
-        state: outbe_metadosis::emission_day_state::NONE,
+        state: outbe_emission::schema::emission_day_state::PROCESSING,
+        metadosis_state: outbe_metadosis::emission_day_state::NONE,
+        emission_limit: metadosis_limit,
+        metadosis_limit,
+        lysis_limit: 0,
+        desis_limit: 0,
+        validators: 0,
+        waa: 0,
+        sra: 0,
+        cca: 0,
+        nods: 0,
+        promis_limit: 0,
     };
     let binding = outbe_primitives::storage::metadosis_process_ready_binding(
         storage.chain_id()?,
@@ -480,7 +498,7 @@ fn seed_native_lysis_fixture(
         || {
             outbe_primitives::storage::dsl::Map::<u32, outbe_metadosis::EmissionDay>::new(
                 U256::ZERO,
-                METADOSIS_ADDRESS,
+                outbe_primitives::addresses::EMISSION_ADDRESS,
                 storage.clone(),
             )
             .create(&record)
@@ -545,8 +563,9 @@ fn write_measurement_accounts(
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
     for (address, account_key) in account_keys {
         let account = alloc
-            .get_mut(&account_key)
-            .and_then(serde_json::Value::as_object_mut)
+            .entry(account_key)
+            .or_insert_with(|| serde_json::json!({"storage": {}, "balance": "0x0"}))
+            .as_object_mut()
             .ok_or_else(|| eyre::eyre!("genesis account {address:#x} is not an object"))?;
         let words = account
             .entry("storage".to_owned())
@@ -719,15 +738,15 @@ mod tests {
         let parameters = outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(
             &serde_json::json!({"config": {"outbeProtocol": {
                 "schemaVersion": 1,
-                "metadosis": {"formingPeriodSeconds": 60}
+                "metadosis": {"lookbackDelaySeconds": 79_200}
             }}}),
         )
         .unwrap();
         let timestamp = WorldwideDay::new(20260101).to_timestamp_utc();
         let day = MeasurementDay::new(timestamp, parameters.metadosis_forming_period_seconds, 600)
             .unwrap();
-        assert_eq!(day.worldwide_day.value(), 20251231);
-        assert_eq!(day.forming_end - day.forming_start, 60);
+        assert_eq!(day.worldwide_day.value(), 20251230);
+        assert_eq!(day.forming_end - day.forming_start, 180_000);
     }
 
     #[test]

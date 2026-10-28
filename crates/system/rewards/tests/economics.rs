@@ -6,7 +6,7 @@
 //! tests exercise their daily GEM accounting.
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
-use outbe_emissionlimit::allocation::{
+use outbe_emission::allocation::{
     CCA_REWARD_PCT, PERCENT_DENOMINATOR, SRA_REWARD_PCT, VALIDATOR_REWARD_PCT, WAA_REWARD_PCT,
 };
 use outbe_primitives::consensus_metadata::{

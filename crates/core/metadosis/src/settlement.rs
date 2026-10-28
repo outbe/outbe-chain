@@ -80,7 +80,7 @@ pub(crate) fn process_ready_candidate(
     emission_day: &EmissionDay,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
-    let limit_amount = emission_day.emission_limit_minor;
+    let limit_amount = emission_day.emission_limit_minor();
     if limit_amount.is_zero() {
         return fail_emission_day(
             metadosis,
@@ -123,7 +123,7 @@ fn settle_empty_day(
     emission_day: &EmissionDay,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
-    let day_limit = emission_day.emission_limit_minor;
+    let day_limit = emission_day.emission_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
     let to_promis = dispatch_brief(ctx, wwd, U256::ZERO)?;
     let returned = to_promis
@@ -149,17 +149,17 @@ fn settle_zero_allocation(
     calculation: MetadosisCalculation,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
+    let day_limit = emission_day.emission_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
-        emission_day.emission_limit_minor,
+        day_limit,
         U256::ZERO,
     )
     .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
     let to_promis = dispatch_brief(ctx, wwd, desis_limit_minor)?;
-    let returned = emission_day
-        .emission_limit_minor
+    let returned = day_limit
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))

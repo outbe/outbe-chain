@@ -52,17 +52,43 @@ pub trait StorageReader {
 pub struct ReadOnlyBlockContext {
     pub chain_id: u64,
     pub genesis_hash: B256,
+    pub genesis_timestamp: u64,
     pub block_number: u64,
     pub timestamp: u64,
 }
 
 impl ReadOnlyBlockContext {
+    /// Constructs a canonical read-only block context, rejecting `genesis_timestamp == 0`.
+    pub fn try_new(
+        chain_id: u64,
+        genesis_hash: B256,
+        genesis_timestamp: u64,
+        block_number: u64,
+        timestamp: u64,
+    ) -> std::result::Result<Self, crate::block::ZeroGenesisTimestamp> {
+        if genesis_timestamp == 0 {
+            return Err(crate::block::ZeroGenesisTimestamp);
+        }
+        Ok(Self {
+            chain_id,
+            genesis_hash,
+            genesis_timestamp,
+            block_number,
+            timestamp,
+        })
+    }
+
     #[must_use]
     pub fn is_complete(self) -> bool {
-        self.chain_id != 0
-            && !self.genesis_hash.is_zero()
-            && self.block_number != 0
-            && self.timestamp != 0
+        self.has_chain_identity() && self.has_block_position()
+    }
+
+    fn has_chain_identity(self) -> bool {
+        self.chain_id != 0 && !self.genesis_hash.is_zero() && self.genesis_timestamp != 0
+    }
+
+    fn has_block_position(self) -> bool {
+        self.block_number != 0 && self.timestamp != 0
     }
 }
 
@@ -75,6 +101,7 @@ pub struct ReadOnlyStorageProvider<R> {
     reader: R,
     chain_id: u64,
     genesis_hash: B256,
+    genesis_timestamp: u64,
     block_number: u64,
     timestamp: u64,
 }
@@ -93,6 +120,7 @@ impl<R: StorageReader> ReadOnlyStorageProvider<R> {
             reader,
             chain_id,
             genesis_hash,
+            genesis_timestamp: 0,
             block_number: 0,
             timestamp: 0,
         }
@@ -105,6 +133,7 @@ impl<R: StorageReader> ReadOnlyStorageProvider<R> {
             reader,
             chain_id: context.chain_id,
             genesis_hash: context.genesis_hash,
+            genesis_timestamp: context.genesis_timestamp,
             block_number: context.block_number,
             timestamp: context.timestamp,
         }
@@ -118,6 +147,10 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
 
     fn genesis_hash(&self) -> B256 {
         self.genesis_hash
+    }
+
+    fn genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp
     }
 
     fn timestamp(&self) -> U256 {

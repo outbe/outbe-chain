@@ -27,10 +27,10 @@ use fixtures::{
     seed_registered_active_validator, seed_test_committee_snapshot, signer_balance,
     state_with_active_proposer, state_with_active_proposer_and_funded_account,
     state_with_active_validators_seeded, state_with_active_validators_seeded_at_block,
-    state_with_active_validators_seeded_at_block_with_cycle_frames, test_chain_spec, test_evm_env,
-    test_evm_signer, test_metadata, test_oracle_submit_vote_tx,
-    test_oracle_submit_vote_tx_with_gas_limit, test_register_active, test_register_waiting,
-    test_regular_tx, BeginBlockFixture, BootstrapFixture, CHAIN_ID, OWNER,
+    state_with_active_validators_seeded_at_block_with_cycle_frames, test_chain_spec,
+    test_chain_spec_with_genesis_timestamp, test_evm_env, test_evm_signer, test_metadata,
+    test_oracle_submit_vote_tx, test_oracle_submit_vote_tx_with_gas_limit, test_register_active,
+    test_register_waiting, test_regular_tx, BeginBlockFixture, BootstrapFixture, CHAIN_ID, OWNER,
     TEST_BLOCK_TIMESTAMP_BASE,
 };
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;

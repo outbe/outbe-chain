@@ -1,9 +1,20 @@
 use alloy_primitives::{Address, B256};
 
 use crate::{
-    error::Result,
+    error::{PrecompileError, Result},
     storage::{StorageBacked, StorageHandle},
 };
+
+/// Error returned when a production block context is constructed with `genesis_timestamp == 0`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("genesis_timestamp must be non-zero")]
+pub struct ZeroGenesisTimestamp;
+
+impl From<ZeroGenesisTimestamp> for PrecompileError {
+    fn from(_: ZeroGenesisTimestamp) -> Self {
+        PrecompileError::fatal("genesis_timestamp must be non-zero")
+    }
+}
 
 /// Runtime context shared by begin-block/end-block handlers.
 ///
@@ -15,6 +26,7 @@ pub struct BlockContext {
     pub timestamp: u64,
     pub chain_id: u64,
     pub genesis_hash: B256,
+    pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
 }
@@ -26,11 +38,13 @@ pub struct BlockContextInput {
     pub timestamp: u64,
     pub chain_id: u64,
     pub genesis_hash: B256,
+    pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
 }
 
 impl BlockContext {
+    /// Test-only helper that mirrors `timestamp` into `genesis_timestamp`.
     pub fn new(
         block_number: u64,
         timestamp: u64,
@@ -43,22 +57,34 @@ impl BlockContext {
             timestamp,
             chain_id,
             genesis_hash: B256::ZERO,
+            genesis_timestamp: timestamp.max(1),
             proposer,
             validators,
         })
     }
 
+    /// Creates an execution context bound to the immutable chain identity,
+    /// rejecting `genesis_timestamp == 0`.
+    pub fn try_new_with_genesis_hash(
+        input: BlockContextInput,
+    ) -> std::result::Result<Self, ZeroGenesisTimestamp> {
+        if input.genesis_timestamp == 0 {
+            return Err(ZeroGenesisTimestamp);
+        }
+        Ok(Self::new_with_genesis_hash(input))
+    }
+
     /// Creates an execution context bound to the immutable chain identity.
     ///
-    /// Production execution must source `genesis_hash` from the canonical
-    /// `ChainSpec`; transaction calldata and mutable storage are not
-    /// authorities for this value.
+    /// Production execution must source `genesis_hash` and `genesis_timestamp`
+    /// from the canonical `ChainSpec` via [`Self::try_new_with_genesis_hash`].
     pub fn new_with_genesis_hash(input: BlockContextInput) -> Self {
         let BlockContextInput {
             block_number,
             timestamp,
             chain_id,
             genesis_hash,
+            genesis_timestamp,
             proposer,
             validators,
         } = input;
@@ -68,9 +94,15 @@ impl BlockContext {
             timestamp,
             chain_id,
             genesis_hash,
+            genesis_timestamp,
             proposer,
             validators,
         }
+    }
+
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
     }
 
     pub fn empty_for_tests(block_number: u64, timestamp: u64, chain_id: u64) -> Self {

@@ -41,6 +41,8 @@ pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x00000000000000000000000
 
 pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
+/// Emission precompile (`getEmissionDay(uint32)`).
+pub(crate) const EMISSION_ADDR: Address = address!("0x000000000000000000000000000000000000100D");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// Promis Limit (`promisLimit()`).

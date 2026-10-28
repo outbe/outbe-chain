@@ -78,6 +78,7 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
 
 pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
+        .with_genesis_timestamp(GENESIS_TS)
 }
 
 /// Synchronizes provider time; callers set provider height before entering each block.
@@ -233,10 +234,10 @@ pub(super) fn dispatch_at(
 }
 
 /// Day-0 emission allocation of `sink`.
-pub(super) fn day_zero_allocation(sink: outbe_emissionlimit::allocation::EmissionSinkId) -> U256 {
-    outbe_emissionlimit::allocation::allocate_emission(
-        outbe_emissionlimit::day_emission::day_emission_limit(0),
-    )
+pub(super) fn day_zero_allocation(sink: outbe_emission::allocation::EmissionSinkId) -> U256 {
+    outbe_emission::allocation::allocate_emission(outbe_emission::day_emission::day_emission_limit(
+        0,
+    ))
     .unwrap()
     .iter()
     .find(|allocation| allocation.id == sink)

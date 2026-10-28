@@ -111,27 +111,19 @@ const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 ///   `outbe_emissionlimit::day_emission`) diverge from quorum.
 /// - The post-exec state root mismatches at the first day-settle.
 /// - The node leaves consensus.
+///
+/// Derives the genesis UTC day directly from `ctx.block.genesis_timestamp` (OIP-00343).
 pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    let day = rewards.genesis_utc_day.read()?;
-    if day != 0 {
-        return Ok(day);
-    }
-    let init_day = timestamp_to_date_key(ctx.block.timestamp);
-    rewards.genesis_utc_day.write(init_day)?;
-    Ok(init_day)
+    genesis_utc_day(ctx)
 }
 
-/// Reads the locked-in genesis UTC day. Returns `Revert` if the slot is
-/// uninitialized. That happens only when `ensure_genesis_anchor` has not
-/// run for this chain, so the lifecycle is misconfigured.
+/// Derives the genesis UTC day from `ctx.block.genesis_timestamp`. Returns `Revert`
+/// if `genesis_timestamp` is zero (uninitialized).
 pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    let day = rewards.genesis_utc_day.read()?;
-    if day == 0 {
+    if ctx.block.genesis_timestamp == 0 {
         return Err(RewardsError::GenesisUtcDayNotInitialized.into());
     }
-    Ok(day)
+    Ok(timestamp_to_date_key(ctx.block.genesis_timestamp))
 }
 
 /// Computes the integer day number of `utc_day` relative to the chain's
@@ -324,7 +316,18 @@ mod tests {
     #[test]
     fn genesis_utc_day_uninitialized_is_fatal() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let err = genesis_utc_day(&ctx).unwrap_err();
+            let uninit_ctx = BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::new(
+                    0,
+                    GENESIS_TS_2024_01_01,
+                    1,
+                    Address::ZERO,
+                    Vec::new(),
+                )
+                .with_genesis_timestamp(0),
+                ctx.storage,
+            );
+            let err = genesis_utc_day(&uninit_ctx).unwrap_err();
             assert!(format!("{err}").contains("not initialized"));
         });
     }

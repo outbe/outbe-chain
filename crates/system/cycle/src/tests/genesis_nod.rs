@@ -53,7 +53,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         let rewards = ctx_fire
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
-        let genesis_day = rewards.genesis_utc_day.read().unwrap();
+        let genesis_day = outbe_rewards::runtime::genesis_utc_day(&ctx_fire).unwrap();
         assert_eq!(genesis_day, 20_240_101, "genesis_utc_day = day D");
         assert!(
             rewards.daily_settled.read(&genesis_day).unwrap(),

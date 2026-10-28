@@ -161,6 +161,7 @@ sol!("../../contracts/precompiles/src/IIntexFactory.sol");
 sol!("../../contracts/precompiles/src/IVaultRouter.sol");
 
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
+sol!("../../contracts/precompiles/src/IEmission.sol");
 sol!("../../contracts/precompiles/src/IDesis.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IZeroFee.sol");
@@ -1227,97 +1228,12 @@ pub(crate) fn storage(url: &str, address: Address, slot: U256) -> Option<U256> {
 
 mod delegation;
 
+#[cfg(test)]
+use delegation::delegated_sender_busy;
 pub(crate) use delegation::install_delegation_for_authority;
-pub(crate) use delegation::{install_delegation, install_delegation_with_overrides};
-
-/// Only this explicit admission rejection proves that the call was not accepted.
-/// Transport failures and other RPC errors must never trigger a fresh-nonce retry.
-fn delegated_sender_busy(code: i64, message: &str) -> bool {
-    code == -32000 && message == "in-flight transaction limit reached for delegated accounts"
-}
-
-/// Submit a canonical sponsored protocol call from an already delegated signer.
-/// The live Oracle feeder shares this signer, so retry explicit slot contention
-/// with a fresh nonce, then wait for the accepted call's canonical finality.
-pub(crate) fn send_sponsored_call<C: SolCall>(
-    url: &str,
-    key: &str,
-    to: Address,
-    gas_limit: u64,
-    call: &C,
-) -> Result<MinedCallOutcome> {
-    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
-    let sender = signer.address();
-    let wallet = EthereumWallet::from(signer);
-    let data = call.abi_encode();
-    let url = url.to_string();
-    block_on(async move {
-        let provider = ProviderBuilder::new()
-            .wallet(wallet)
-            .connect_http(url.parse()?);
-        let (hash, nonce) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            let mut attempt = 0;
-            loop {
-                attempt += 1;
-                let block = provider
-                    .get_block_by_number(BlockNumberOrTag::Latest)
-                    .await?
-                    .ok_or_else(|| eyre!("sponsored admission: latest block missing"))?;
-                let base_fee = block.header.base_fee_per_gas
-                    .ok_or_else(|| eyre!("sponsored admission: base fee missing"))?;
-                let max_fee = next_block_fee_cap(u128::from(base_fee), 0)?;
-                let nonce = provider.get_transaction_count(sender).pending().await?;
-                let tx = TransactionRequest::default()
-                    .from(sender)
-                    .nonce(nonce)
-                    .to(to)
-                    .input(Bytes::from(data.clone()).into())
-                    .gas_limit(gas_limit)
-                    .max_fee_per_gas(max_fee)
-                    .max_priority_fee_per_gas(0);
-                match provider.send_transaction(tx).await {
-                    Ok(pending) => {
-                        let hash = *pending.tx_hash();
-                        eprintln!("sponsored admission accepted: sender={sender} to={to} nonce={nonce} attempt={attempt} tx={hash}");
-                        break Ok::<_, eyre::Report>((hash, nonce));
-                    }
-                    Err(error) if error.as_error_resp().is_some_and(|response| {
-                        delegated_sender_busy(response.code, &response.message)
-                    }) => {
-                        eprintln!("sponsored admission busy: sender={sender} to={to} nonce={nonce} attempt={attempt} head={} error={error}", block.header.number);
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-        }).await.map_err(|_| eyre!("sponsored admission exceeded 15 seconds: sender={sender} to={to}; see admission diagnostics"))??;
-
-        // Once accepted, never create another transaction for this operation.
-        tokio::time::timeout(std::time::Duration::from_secs(60), async {
-            loop {
-                if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
-                    let height = receipt.block_number.ok_or_else(|| eyre!("sponsored receipt omitted block number: {hash}"))?;
-                    let block_hash = receipt.block_hash.ok_or_else(|| eyre!("sponsored receipt omitted block hash: {hash}"))?;
-                    if let Some(finalized) = provider.get_block_by_number(BlockNumberOrTag::Finalized).await? {
-                        if finalized.header.number >= height {
-                            let canonical = provider.get_block_by_number(BlockNumberOrTag::Number(height)).await?
-                                .ok_or_else(|| eyre!("sponsored receipt canonical block missing: {hash} height={height}"))?;
-                            ensure!(canonical.header.hash == block_hash,
-                                "sponsored receipt is not canonical: tx={hash} height={height} receipt={block_hash} canonical={}", canonical.header.hash);
-                            eprintln!("sponsored receipt finalized: sender={sender} nonce={nonce} tx={hash} height={height} block={block_hash} gas_used={} success={}", receipt.gas_used, receipt.status());
-                            return Ok(MinedCallOutcome {
-                                transaction_hash: format!("{:#x}", receipt.transaction_hash),
-                                success: receipt.status(),
-                                receipt: serde_json::to_value(receipt)?,
-                            });
-                        }
-                    }
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            }
-        }).await.map_err(|_| eyre!("sponsored transaction did not finalize within 60 seconds: sender={sender} nonce={nonce} tx={hash}"))?
-    })
-}
+pub(crate) use delegation::{
+    install_delegation, install_delegation_with_overrides, send_sponsored_call,
+};
 
 /// Move the complete spendable native balance to `recipient` with a plain
 /// 21k transfer. This is scenario plumbing for proving ZeroFee from an exact

@@ -4,7 +4,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_tribute::TributeContract;
 
-use crate::precompile::{dispatch as metadosis_dispatch, IMetadosis};
+use crate::precompile::IMetadosis;
 use crate::schema::{emission_day_state, MetadosisContract};
 use outbe_tribute::precompile::{dispatch as tribute_dispatch, ITribute};
 

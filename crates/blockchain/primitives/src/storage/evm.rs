@@ -25,6 +25,7 @@ pub struct EvmStorageProvider<'a> {
     gas: GasTracker,
     is_static: bool,
     genesis_hash: B256,
+    genesis_timestamp: u64,
 }
 
 impl<'a> EvmStorageProvider<'a> {
@@ -76,7 +77,13 @@ impl<'a> EvmStorageProvider<'a> {
             gas: GasTracker::new(gas_limit),
             is_static,
             genesis_hash,
+            genesis_timestamp: 0,
         }
+    }
+
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
     }
 
     /// Returns the remaining gas budget.
@@ -95,6 +102,10 @@ impl PrecompileStorageProvider for EvmStorageProvider<'_> {
 
     fn genesis_hash(&self) -> B256 {
         self.genesis_hash
+    }
+
+    fn genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp
     }
 
     fn timestamp(&self) -> U256 {

@@ -110,7 +110,8 @@ pub(crate) fn create_worldwide_day_for_date(
 ) -> Result<()> {
     let (schedule, metadosis_start) = compute_wwd_schedule(wwd)?;
     let day = schedule.day;
-    if let Some(existing_emission) = metadosis.emission_days.get(day)? {
+    let emission_days = metadosis.emission_days();
+    if let Some(existing_emission) = emission_days.get(day)? {
         if existing_emission.wwd != wwd {
             return Err(
                 MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
@@ -123,13 +124,15 @@ pub(crate) fn create_worldwide_day_for_date(
         }
     } else {
         let emission_limit_minor = default_emission_limit_for_day(ctx, day);
-        metadosis.emission_days.create(&EmissionDay {
+        let limit = u128::try_from(emission_limit_minor)
+            .map_err(|_| outbe_emission::errors::EmissionError::AmountOverflow)?;
+        emission_days.create(&EmissionDay::new_with_limit(
             day,
-            emission_limit_minor,
             wwd,
             metadosis_start,
-            state: emission_day_state::NONE,
-        })?;
+            limit,
+            emission_day_state::NONE,
+        ))?;
     }
 
     let mut tribute = TributeContract::new(metadosis.storage.clone());
@@ -143,9 +146,13 @@ pub(crate) fn ensure_emission_day_with_limit(
     day: u32,
     emission_limit_minor: U256,
 ) -> Result<()> {
-    if let Some(mut existing) = metadosis.emission_days.get(day)? {
-        existing.emission_limit_minor = emission_limit_minor;
-        metadosis.emission_days.update(&existing)?;
+    let limit = u128::try_from(emission_limit_minor)
+        .map_err(|_| outbe_emission::errors::EmissionError::AmountOverflow)?;
+    let emission_days = metadosis.emission_days();
+    if let Some(mut existing) = emission_days.get(day)? {
+        existing.emission_limit = limit;
+        existing.metadosis_limit = limit;
+        emission_days.update(&existing)?;
         return Ok(());
     }
     let wwd = WorldwideDay::new(day);
@@ -154,13 +161,13 @@ pub(crate) fn ensure_emission_day_with_limit(
     let metadosis_start = date_key_to_utc_timestamp(next_day)
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
-    metadosis.emission_days.create(&EmissionDay {
+    emission_days.create(&EmissionDay::new_with_limit(
         day,
-        emission_limit_minor,
         wwd,
         metadosis_start,
-        state: emission_day_state::NONE,
-    })?;
+        limit,
+        emission_day_state::NONE,
+    ))?;
     let mut tribute = TributeContract::new(metadosis.storage.clone());
     if tribute.worldwide_days.get(wwd)?.is_none() {
         create_worldwide_day(&mut tribute, wwd, NewWwdSchedule { day, ..schedule })?;
@@ -200,7 +207,7 @@ fn verify_emission_day_link(
     day: u32,
     expected_wwd: WorldwideDay,
 ) -> Result<()> {
-    if let Some(emission_day) = metadosis.emission_days.get(day)? {
+    if let Some(emission_day) = metadosis.emission_days().get(day)? {
         if emission_day.wwd != expected_wwd {
             return Err(
                 MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
@@ -266,9 +273,10 @@ pub(crate) fn find_due_emission_day(
     ctx: &BlockRuntimeContext<'_>,
 ) -> Result<Option<EmissionDay>> {
     let now = ctx.block.timestamp;
+    let emission_days = metadosis.emission_days();
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for wwd_record in aggregate.active_records() {
-        if let Some(record) = metadosis.emission_days.get(wwd_record.day)? {
+        if let Some(record) = emission_days.get(wwd_record.day)? {
             if record.wwd != wwd_record.worldwide_day {
                 return Err(
                     MetadosisStorageCorruptionError::EmissionDayWwdLinkMismatch {
@@ -279,15 +287,15 @@ pub(crate) fn find_due_emission_day(
                     .into(),
                 );
             }
-            if record.state == emission_day_state::NONE && now >= record.metadosis_start {
+            if record.metadosis_state == emission_day_state::NONE && now >= record.metadosis_start {
                 return Ok(Some(record));
             }
         }
     }
 
     let prev_utc_day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
-    if let Some(record) = metadosis.emission_days.get(prev_utc_day)? {
-        if record.state == emission_day_state::NONE && now >= record.metadosis_start {
+    if let Some(record) = emission_days.get(prev_utc_day)? {
+        if record.metadosis_state == emission_day_state::NONE && now >= record.metadosis_start {
             return Ok(Some(record));
         }
     }
@@ -299,14 +307,12 @@ pub(crate) fn complete_emission_day(
     emission_day: &EmissionDay,
     state: u8,
 ) -> Result<()> {
-    let updated = EmissionDay {
-        day: emission_day.day,
-        emission_limit_minor: emission_day.emission_limit_minor,
-        wwd: emission_day.wwd,
-        metadosis_start: emission_day.metadosis_start,
-        state,
-    };
-    metadosis.emission_days.update(&updated)?;
+    let mut updated = *emission_day;
+    updated.metadosis_state = state;
+    if state == emission_day_state::SUCCEEDED {
+        updated.state = outbe_emission::schema::emission_day_state::COMPLETED;
+    }
+    metadosis.emission_days().update(&updated)?;
     let mut tribute = TributeContract::new(metadosis.storage.clone());
     remove_active_worldwide_day(&mut tribute, emission_day.wwd)?;
     Ok(())
@@ -323,13 +329,18 @@ pub(crate) fn fail_emission_day(
     if !tribute.get_day_totals(wwd)?.is_sealed {
         tribute.seal_day(wwd)?;
     }
-    if let Some(mut record) = metadosis.emission_days.get(day)? {
-        if !record.emission_limit_minor.is_zero() {
-            PromisLimitContract::new(metadosis.storage.clone())
-                .checked_credit(record.emission_limit_minor)?;
+    let emission_days = metadosis.emission_days();
+    if let Some(mut record) = emission_days.get(day)? {
+        let limit_minor = record.emission_limit_minor();
+        if !limit_minor.is_zero() {
+            PromisLimitContract::new(metadosis.storage.clone()).checked_credit(limit_minor)?;
+            record.promis_limit = record
+                .promis_limit
+                .checked_add(record.metadosis_limit)
+                .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
         }
-        record.state = emission_day_state::FAILED;
-        metadosis.emission_days.update(&record)?;
+        record.metadosis_state = emission_day_state::FAILED;
+        emission_days.update(&record)?;
     }
     remove_active_worldwide_day(&mut tribute, wwd)?;
     metadosis.emit(IMetadosis::MetadosisSkipped {

@@ -15,49 +15,36 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// validator pool of AgentReward, weighted by [`crate::api::read_voters_for_day`].
 ///
 /// Storage slots:
-///   0:  genesis_utc_day                    - uint32 (yyyymmdd of block 0; 0 = uninit)
-///   1:  participation_counted_for_block    - mapping(B256 => mapping(address => bool))
-///   2:  daily_fee_sum_raw                  - mapping(uint32 => uint256)
-///   3:  daily_participation                - mapping(uint32 => mapping(address => uint64))
-///   4:  daily_voter_count                  - mapping(uint32 => uint32)
-///   5:  daily_voter_at                     - mapping(uint32 => mapping(uint32 => address))
-///   6:  daily_settled                      - mapping(uint32 => bool)
-///   7:  block_metadata_counted             - mapping(B256 => bool)
-///   8:  metadata_fingerprint_for_block     - mapping(B256 => B256)
-///   9:  pending_fees                       - mapping(B256 => uint256)
-///  10:  fee_settled                        - mapping(B256 => bool)
-///  11:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
-///  12:  late_voter_count                   - mapping(B256 => uint32)
-///  13:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
-///  14:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
-///  15:  pending_committee_size_at          - mapping(uint64 => uint32)
-///  16:  pending_epoch_at                   - mapping(uint64 => uint64)
-///  17:  pending_committee_set_hash_at      - mapping(uint64 => B256)
-///  18:  pending_view_at                    - mapping(uint64 => uint64)
-///  19:  pending_parent_view_at             - mapping(uint64 => uint64)
-///  20:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
-///  21:  block_guard_ring_seq               - uint64 (ring write cursor)
-///  22:  pending_reward_day                 - mapping(B256 => uint32)
-///  23:  daily_last_window_close            - mapping(uint32 => uint64)
-///  24:  late_residue_dust_native           - uint256
-///  25:  daily_participation_closed         - mapping(uint32 => bool)
-///  26:  settled_day_cleanup_head           - uint64
-///  27:  settled_day_cleanup_tail           - uint64
-///  28:  settled_day_cleanup_day_at         - mapping(uint64 => uint32)
+///   0:  participation_counted_for_block    - mapping(B256 => mapping(address => bool))
+///   1:  daily_fee_sum_raw                  - mapping(uint32 => uint256)
+///   2:  daily_participation                - mapping(uint32 => mapping(address => uint64))
+///   3:  daily_voter_count                  - mapping(uint32 => uint32)
+///   4:  daily_voter_at                     - mapping(uint32 => mapping(uint32 => address))
+///   5:  daily_settled                      - mapping(uint32 => bool)
+///   6:  block_metadata_counted             - mapping(B256 => bool)
+///   7:  metadata_fingerprint_for_block     - mapping(B256 => B256)
+///   8:  pending_fees                       - mapping(B256 => uint256)
+///   9:  fee_settled                        - mapping(B256 => bool)
+///  10:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
+///  11:  late_voter_count                   - mapping(B256 => uint32)
+///  12:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
+///  13:  pending_fb_hash_at                 - mapping(uint64 => B256)    (number -> fb_hash)
+///  14:  pending_committee_size_at          - mapping(uint64 => uint32)
+///  15:  pending_epoch_at                   - mapping(uint64 => uint64)
+///  16:  pending_committee_set_hash_at      - mapping(uint64 => B256)
+///  17:  pending_view_at                    - mapping(uint64 => uint64)
+///  18:  pending_parent_view_at             - mapping(uint64 => uint64)
+///  19:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
+///  20:  block_guard_ring_seq               - uint64 (ring write cursor)
+///  21:  pending_reward_day                 - mapping(B256 => uint32)
+///  22:  daily_last_window_close            - mapping(uint32 => uint64)
+///  23:  late_residue_dust_native           - uint256
+///  24:  daily_participation_closed         - mapping(uint32 => bool)
+///  25:  settled_day_cleanup_head           - uint64
+///  26:  settled_day_cleanup_tail           - uint64
+///  27:  settled_day_cleanup_day_at         - mapping(uint64 => uint32)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
-    /// UTC day of block 0 (yyyymmdd). 0 means uninitialized. `RewardsLifecycle::begin_block`
-    /// writes it exactly once at its first invocation, which is block 0 in any chain shipping
-    /// this refactor. After initialization the value is immutable.
-    /// `day_emission_limit(day_number_since_genesis(...))` from
-    /// `outbe_emissionlimit::day_emission` uses it.
-    ///
-    /// Tamper-resistance: a node that boots with a different `genesis.json` timestamp locks in
-    /// a different `genesis_utc_day` here. Then all subsequent day-settle math diverges from
-    /// the state root of the quorum, and the node falls out of consensus on the first settle.
-    /// Reth's startup hash check is a complementary defense, not the only one.
-    pub genesis_utc_day: Slot<u32>,
-
     /// Per-(finalized_block_hash, voter) guard: voter participation has
     /// already been counted for this finalized block in the day's
     /// emission top-up share. This guard is separate from the fee guard for
@@ -217,34 +204,33 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         let c = Rewards::new(StorageHandle::new(&mut provider));
 
-        assert_eq!(c.genesis_utc_day.slot(), U256::from(0));
-        assert_eq!(c.participation_counted_for_block.base_slot(), U256::from(1));
-        assert_eq!(c.daily_fee_sum_raw.base_slot(), U256::from(2));
-        assert_eq!(c.daily_participation.base_slot(), U256::from(3));
-        assert_eq!(c.daily_voter_count.base_slot(), U256::from(4));
-        assert_eq!(c.daily_voter_at.base_slot(), U256::from(5));
-        assert_eq!(c.daily_settled.base_slot(), U256::from(6));
-        assert_eq!(c.block_metadata_counted.base_slot(), U256::from(7));
-        assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(8));
-        assert_eq!(c.pending_fees.base_slot(), U256::from(9));
-        assert_eq!(c.fee_settled.base_slot(), U256::from(10));
-        assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(11));
-        assert_eq!(c.late_voter_count.base_slot(), U256::from(12));
-        assert_eq!(c.late_voter_at.base_slot(), U256::from(13));
-        assert_eq!(c.pending_fb_hash_at.base_slot(), U256::from(14));
-        assert_eq!(c.pending_committee_size_at.base_slot(), U256::from(15));
-        assert_eq!(c.pending_epoch_at.base_slot(), U256::from(16));
-        assert_eq!(c.pending_committee_set_hash_at.base_slot(), U256::from(17));
-        assert_eq!(c.pending_view_at.base_slot(), U256::from(18));
-        assert_eq!(c.pending_parent_view_at.base_slot(), U256::from(19));
-        assert_eq!(c.block_guard_ring.base_slot(), U256::from(20));
-        assert_eq!(c.block_guard_ring_seq.slot(), U256::from(21));
-        assert_eq!(c.pending_reward_day.base_slot(), U256::from(22));
-        assert_eq!(c.daily_last_window_close.base_slot(), U256::from(23));
-        assert_eq!(c.late_residue_dust_native.slot(), U256::from(24));
-        assert_eq!(c.daily_participation_closed.base_slot(), U256::from(25));
-        assert_eq!(c.settled_day_cleanup_head.slot(), U256::from(26));
-        assert_eq!(c.settled_day_cleanup_tail.slot(), U256::from(27));
-        assert_eq!(c.settled_day_cleanup_day_at.base_slot(), U256::from(28));
+        assert_eq!(c.participation_counted_for_block.base_slot(), U256::from(0));
+        assert_eq!(c.daily_fee_sum_raw.base_slot(), U256::from(1));
+        assert_eq!(c.daily_participation.base_slot(), U256::from(2));
+        assert_eq!(c.daily_voter_count.base_slot(), U256::from(3));
+        assert_eq!(c.daily_voter_at.base_slot(), U256::from(4));
+        assert_eq!(c.daily_settled.base_slot(), U256::from(5));
+        assert_eq!(c.block_metadata_counted.base_slot(), U256::from(6));
+        assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(7));
+        assert_eq!(c.pending_fees.base_slot(), U256::from(8));
+        assert_eq!(c.fee_settled.base_slot(), U256::from(9));
+        assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(10));
+        assert_eq!(c.late_voter_count.base_slot(), U256::from(11));
+        assert_eq!(c.late_voter_at.base_slot(), U256::from(12));
+        assert_eq!(c.pending_fb_hash_at.base_slot(), U256::from(13));
+        assert_eq!(c.pending_committee_size_at.base_slot(), U256::from(14));
+        assert_eq!(c.pending_epoch_at.base_slot(), U256::from(15));
+        assert_eq!(c.pending_committee_set_hash_at.base_slot(), U256::from(16));
+        assert_eq!(c.pending_view_at.base_slot(), U256::from(17));
+        assert_eq!(c.pending_parent_view_at.base_slot(), U256::from(18));
+        assert_eq!(c.block_guard_ring.base_slot(), U256::from(19));
+        assert_eq!(c.block_guard_ring_seq.slot(), U256::from(20));
+        assert_eq!(c.pending_reward_day.base_slot(), U256::from(21));
+        assert_eq!(c.daily_last_window_close.base_slot(), U256::from(22));
+        assert_eq!(c.late_residue_dust_native.slot(), U256::from(23));
+        assert_eq!(c.daily_participation_closed.base_slot(), U256::from(24));
+        assert_eq!(c.settled_day_cleanup_head.slot(), U256::from(25));
+        assert_eq!(c.settled_day_cleanup_tail.slot(), U256::from(26));
+        assert_eq!(c.settled_day_cleanup_day_at.base_slot(), U256::from(27));
     }
 }
