@@ -7,7 +7,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::precompile::{dispatch_with_handlers, IVote};
-use crate::schema::{BondState, Vote};
+use crate::schema::{BondState, ProposalStatus, Vote};
 
 use super::{
     assert_reverts_with, create_proposal_test, create_update_proposal, empty_update_payload,
@@ -439,6 +439,68 @@ fn dispatch_views_return_abi_shaped_data() {
         let list_ret = dispatch(storage, &list_data, PROPOSER, U256::ZERO).unwrap();
         let ids = IVote::listProposalsCall::abi_decode_returns(&list_ret).unwrap();
         assert_eq!(ids, vec![proposal_id]);
+    });
+}
+
+#[test]
+fn status_views_map_stable_storage_codes_to_compact_abi() {
+    with_vote_provider(200, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let expired = create_update_proposal(&mut vote, PROPOSER, 200).unwrap();
+        vote.set_proposal_status(expired, ProposalStatus::Expired)
+            .unwrap();
+        let errored = create_update_proposal(&mut vote, PROPOSER, 200).unwrap();
+        vote.set_proposal_status(errored, ProposalStatus::Error)
+            .unwrap();
+
+        for (id, stored_code, abi_status, abi_code) in [
+            (expired, 3, IVote::ProposalStatus::Expired, 2),
+            (errored, 4, IVote::ProposalStatus::Error, 3),
+        ] {
+            assert_eq!(vote.proposals.get(id).unwrap().unwrap().status, stored_code);
+            let get = IVote::getProposalCall { proposalId: id }.abi_encode();
+            let info = IVote::getProposalCall::abi_decode_returns(
+                &dispatch(storage.clone(), &get, PROPOSER, U256::ZERO).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(info.status, abi_status);
+            assert_eq!(info.status as u8, abi_code);
+
+            let filter = IVote::listProposalsByStatusCall {
+                status: abi_status,
+                index: U256::ZERO,
+                count: U256::from(10),
+            }
+            .abi_encode();
+            let ids = IVote::listProposalsByStatusCall::abi_decode_returns(
+                &dispatch(storage.clone(), &filter, PROPOSER, U256::ZERO).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(ids.as_slice(), &[id]);
+        }
+    });
+}
+
+#[test]
+fn invalid_abi_status_does_not_fall_back_to_pending() {
+    with_vote_provider(200, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let pending = create_update_proposal(&mut vote, PROPOSER, 200).unwrap();
+        let mut data = IVote::listProposalsByStatusCall {
+            status: IVote::ProposalStatus::Pending,
+            index: U256::ZERO,
+            count: U256::from(10),
+        }
+        .abi_encode();
+        let ids = IVote::listProposalsByStatusCall::abi_decode_returns(
+            &dispatch(storage.clone(), &data, PROPOSER, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ids.as_slice(), &[pending]);
+
+        // The previous ABI Error code is outside the compact public enum.
+        data[4 + 31] = 4;
+        assert!(dispatch(storage, &data, PROPOSER, U256::ZERO).is_err());
     });
 }
 

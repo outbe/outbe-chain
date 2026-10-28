@@ -35,12 +35,11 @@ contract StablecoinInterfacesTest {
         _assertEq(IStablecoin.forcedTransferWithMemo.selector, 0xea245fb8);
     }
 
-    function testVoteStatusEncodingIsAppendOnly() public pure {
+    function testVoteStatusEncodingUsesCompactAbi() public pure {
         require(uint8(IVote.ProposalStatus.Pending) == 0, "pending status");
         require(uint8(IVote.ProposalStatus.Approved) == 1, "approved status");
-        require(uint8(IVote.ProposalStatus.Rejected) == 2, "rejected status");
-        require(uint8(IVote.ProposalStatus.Expired) == 3, "expired status");
-        require(uint8(IVote.ProposalStatus.Error) == 4, "error status");
+        require(uint8(IVote.ProposalStatus.Expired) == 2, "expired status");
+        require(uint8(IVote.ProposalStatus.Error) == 3, "error status");
     }
 
     function testPolicyOperationEncodingIsFrozen() public pure {
