@@ -66,6 +66,8 @@ pub(super) fn activate_staked_for_test(vs: &mut ValidatorSet, addr: Address) {
 pub(super) fn make_inactive_for_test(vs: &mut ValidatorSet, addr: Address) {
     activate_for_test(vs, addr);
     vs.deactivate_validator(OWNER, addr).unwrap();
+    let height = vs.storage.block_number().unwrap();
+    vs.epoch_start_block.write(height).unwrap();
     vs.activate_reshared_set(&[], B256::ZERO).unwrap();
     vs.complete_unbonding(addr).unwrap();
 }
@@ -78,6 +80,10 @@ pub(super) fn dummy_consensus_pubkey(seed: u8) -> [u8; 48] {
 }
 
 pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, _seed: u8) {
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
+    vs.test_seed_authoritative_bonded(validator, minimum)
+        .unwrap();
     vs.confirm_validator_ready(validator).unwrap();
 }
 
@@ -99,7 +105,10 @@ pub(super) fn register_boundary_active(
     validator: Address,
     seed: u8,
 ) -> Result<()> {
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum)?;
     register_validators(vs, &[(validator, seed)])?;
+    vs.test_seed_authoritative_bonded(validator, minimum)?;
     vs.activate_validator_via_boundary_for_test(validator)?;
     Ok(())
 }

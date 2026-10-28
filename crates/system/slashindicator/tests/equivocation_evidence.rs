@@ -84,6 +84,7 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     vs.test_set_epoch_snapshot(epoch).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
     let bonded = U256::from(1_000_000u64);
+    vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
     vs.test_register_active_validator(ACCUSED, &pk, bonded)
         .unwrap();
     // The registration seeds Staking.stake_amount. Slash burns the same
@@ -101,8 +102,18 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     // the evidence verifier resolves the committee for the vote's epoch via
     // the snapshot ring. Seed it across the retained ring window so any test
     // epoch resolves to the committee the evidence is signed against.
-    vs.test_seed_committee_ring(OWNER, &committee_snapshot())
-        .unwrap();
+    let snap = committee_snapshot();
+    for member in &snap.committee {
+        if !vs.is_validator(member.address).unwrap() {
+            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            vs.test_seed_authoritative_bonded(member.address, U256::from(1))
+                .unwrap();
+            vs.activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+    }
+    vs.test_seed_committee_ring(OWNER, &snap).unwrap();
 }
 
 fn assert_jailed_once(storage: &StorageHandle) {

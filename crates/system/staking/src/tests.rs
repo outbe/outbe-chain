@@ -14,7 +14,7 @@ use crate::hooks;
 use crate::precompile::{dispatch, IStaking};
 
 const CHAIN_ID: u64 = 1;
-const MIN_STAKE: u64 = 1_000;
+pub(crate) const MIN_STAKE: u64 = 1_000;
 
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
@@ -323,7 +323,10 @@ pub(crate) fn register_validator(storage: StorageHandle, validator: Address) {
         .expect("register_validator");
 }
 
-fn test_bls_registration_material(validator: Address, seed: u8) -> ([u8; 48], B256, [u8; 96]) {
+pub(crate) fn test_bls_registration_material(
+    validator: Address,
+    seed: u8,
+) -> ([u8; 48], B256, [u8; 96]) {
     use blst::min_pk::SecretKey;
     use outbe_primitives::validators::{
         validator_registration_message, VALIDATOR_REGISTRATION_DST,
@@ -2367,4 +2370,411 @@ fn reregistration_via_stake_blocks_same_epoch_even_when_cooldown_zero() {
             ValidatorLifecycle::WaitingForReadiness(_)
         ));
     });
+}
+
+#[test]
+fn reregistration_via_stake_blocks_epoch_zero_with_zero_and_elapsed_nonzero_cooldown() {
+    let validator = address!("0x2828282828282828282828282828282828282828");
+    let (pk1, node, sig1) = test_bls_registration_material(validator, 0x28);
+    let (pk2, _, sig2) = test_bls_registration_material(validator, 0x29);
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(5);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = staking_with_unbonding_period(storage.clone(), 0);
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set
+            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .unwrap();
+        // `epoch_start_block` intentionally stays at 0 (genesis epoch 0).
+        assert_eq!(val_set.epoch_snapshot().unwrap().start_block, 0);
+
+        seed_balance(storage.clone(), validator, DEFAULT_BALANCE);
+        seed_staking_balance(storage.clone(), MIN_STAKE * 2);
+        staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk1, node, &sig1),
+                (0, &[]),
+            )
+            .unwrap();
+
+        // Exit at block 5 (`deactivated_at = 5 > epoch_start_block = 0`).
+        staking.unstake(validator, U256::from(MIN_STAKE)).unwrap();
+    });
+
+    // Case 1 (`epoch_start_block == 0`, `cooldown == 0` at block 6): claim -> Inactive,
+    // and `Staking::stake` reverts with `ReregistrationCooldownNotExpired`.
+    provider.set_block_number(6);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut staking = Staking::new(storage.clone());
+        staking.claim_unbonded(validator).unwrap();
+        assert!(matches!(
+            ValidatorSet::new(storage.clone())
+                .validator_lifecycle(validator)
+                .unwrap(),
+            ValidatorLifecycle::Inactive(_)
+        ));
+
+        let err = staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk2, node, &sig2),
+                (0, &[]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IStaking::ReregistrationCooldownNotExpired {}.abi_encode()
+        ));
+    });
+
+    // Case 2 (`epoch_start_block == 0`, `cooldown = 2` already elapsed by blocks at block 10 >= 5 + 2):
+    // still rejected in epoch 0 because `deactivated_at (5) > epoch_start_block (0)`.
+    provider.set_block_number(10);
+    StorageHandle::enter(&mut provider, |storage| {
+        let val_set = ValidatorSet::new(storage.clone());
+        val_set.config_reregistration_cooldown.write(2).unwrap();
+        let mut staking = Staking::new(storage.clone());
+        let err = staking
+            .stake(
+                validator,
+                validator,
+                U256::from(MIN_STAKE),
+                (&pk2, node, &sig2),
+                (0, &[]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PrecompileError::RevertBytes(ref bytes)
+                if bytes.as_ref() == IStaking::ReregistrationCooldownNotExpired {}.abi_encode()
+        ));
+    });
+}
+
+#[test]
+fn precompile_dispatch_rejects_msg_value_mismatch_for_stake_and_topup() {
+    let validator = address!("0x2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a");
+    let (pk, node, sig) = test_bls_registration_material(validator, 0x2a);
+    let amount = U256::from(MIN_STAKE);
+
+    // 1. `stakeCall` with `value = amount - 1` and `value = amount + 1`
+    for value in [amount - U256::ONE, amount + U256::ONE] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let _staking = staking_with_unbonding_period(storage.clone(), 3600);
+            ValidatorSet::new(storage.clone())
+                .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+                .unwrap();
+            seed_staking_balance_u256(storage.clone(), value);
+        });
+        let storage_before = provider.storage.clone();
+        let events_before = provider.get_ordered_events().to_vec();
+        StorageHandle::enter(&mut provider, |storage| {
+            let call = IStaking::stakeCall {
+                validatorAddress: validator,
+                amount,
+                consensusPubkey: pk.to_vec().into(),
+                radicleNodeId: node,
+                blsRegistrationSignature: sig.to_vec().into(),
+                p2pVersion: 0,
+                p2pEncoded: Vec::<u8>::new().into(),
+            };
+            let err = dispatch(storage.clone(), &call.abi_encode(), validator, value).unwrap_err();
+            let expected = IStaking::MsgValueMismatch {}.abi_encode();
+            assert!(
+                matches!(err, PrecompileError::RevertBytes(ref bytes) if bytes.as_ref() == expected),
+                "unexpected error for stake value={value}: {err:?}"
+            );
+            let s = Staking::new(storage.clone());
+            assert_eq!(s.get_stake(validator).unwrap(), U256::ZERO);
+            assert_eq!(s.get_total_staked().unwrap(), U256::ZERO);
+            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), value);
+            assert_eq!(storage.balance(validator).unwrap(), U256::ZERO);
+            assert!(!ValidatorSet::new(storage).is_validator(validator).unwrap());
+        });
+        assert_eq!(provider.storage, storage_before);
+        assert_eq!(provider.get_balance(STAKING_ADDRESS), value);
+        assert_eq!(provider.get_balance(validator), U256::ZERO);
+        assert_eq!(provider.get_ordered_events(), events_before);
+    }
+
+    // 2. `topupCall` with `value = amount - 1` and `value = amount + 1`
+    for value in [amount - U256::ONE, amount + U256::ONE] {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut staking = staking_with_unbonding_period(storage.clone(), 3600);
+            seed_staking_balance_u256(storage.clone(), amount + value);
+            stake_registered(storage.clone(), &mut staking, validator, amount).unwrap();
+        });
+        let storage_before = provider.storage.clone();
+        let events_before = provider.get_ordered_events().to_vec();
+        StorageHandle::enter(&mut provider, |storage| {
+            let call = IStaking::topupCall {
+                validatorAddress: validator,
+                amount,
+            };
+            let err = dispatch(storage.clone(), &call.abi_encode(), validator, value).unwrap_err();
+            let expected = IStaking::MsgValueMismatch {}.abi_encode();
+            assert!(
+                matches!(err, PrecompileError::RevertBytes(ref bytes) if bytes.as_ref() == expected),
+                "unexpected error for topup value={value}: {err:?}"
+            );
+            let s = Staking::new(storage.clone());
+            assert_eq!(s.get_stake(validator).unwrap(), amount);
+            assert_eq!(s.get_total_staked().unwrap(), amount);
+            assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), amount + value);
+            assert_eq!(storage.balance(validator).unwrap(), U256::ZERO);
+        });
+        assert_eq!(provider.storage, storage_before);
+        assert_eq!(provider.get_balance(STAKING_ADDRESS), amount + value);
+        assert_eq!(provider.get_balance(validator), U256::ZERO);
+        assert_eq!(provider.get_ordered_events(), events_before);
+    }
+}
+
+#[test]
+fn claim_unbonded_rolls_back_all_writes_when_transfer_balance_fails() {
+    let validator = address!("0x2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = staking_with_unbonding_period(storage.clone(), 100);
+        seed_staking_balance(storage.clone(), MIN_STAKE);
+        stake_registered(storage.clone(), &mut s, validator, U256::from(MIN_STAKE)).unwrap();
+        s.unstake(validator, U256::from(MIN_STAKE)).unwrap();
+        // Mature the entry and drain STAKING_ADDRESS so `transfer_balance` fails after queue unlinking.
+        storage.set_block_timestamp(U256::from(200u64)).unwrap();
+        storage.set_balance(STAKING_ADDRESS, U256::ZERO).unwrap();
+    });
+    let events_before = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
+        let val_set = ValidatorSet::new(storage.clone());
+        let state_before = val_set.validator_state(validator).unwrap();
+
+        assert!(s.claim_unbonded(validator).is_err());
+
+        assert_eq!(s.per_val_unbonding_head.read(&validator).unwrap(), 1);
+        assert_eq!(s.per_val_unbonding_len.read(&validator).unwrap(), 1);
+        assert_eq!(s.unbonding_validator.read(&0).unwrap(), validator);
+        assert_eq!(s.unbonding_amount.read(&0).unwrap(), U256::from(MIN_STAKE));
+        assert_eq!(s.unbonding_complete_time.read(&0).unwrap(), 100);
+        assert_eq!(s.unbonding_next.read(&0).unwrap(), 0);
+        assert_eq!(val_set.validator_state(validator).unwrap(), state_before);
+    });
+    assert_eq!(provider.get_ordered_events(), events_before);
+}
+
+#[test]
+fn process_unbonding_rolls_back_stake_debit_when_enqueue_fails() {
+    let validator = address!("0x2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c");
+    let survivor = address!("0x2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = staking_with_unbonding_period(storage.clone(), 100);
+        seed_staking_balance(storage.clone(), MIN_STAKE * 2);
+        stake_registered(storage.clone(), &mut s, survivor, U256::from(MIN_STAKE)).unwrap();
+        stake_registered(storage.clone(), &mut s, validator, U256::from(MIN_STAKE)).unwrap();
+        let mut val_set = ValidatorSet::new(storage.clone());
+        val_set
+            .promote_pending_validator_for_test(survivor)
+            .unwrap();
+        val_set
+            .promote_pending_validator_for_test(validator)
+            .unwrap();
+        val_set.deactivate_validator(validator, validator).unwrap();
+        val_set
+            .activate_reshared_set(&[survivor], B256::with_last_byte(0x55))
+            .unwrap();
+        assert!(matches!(
+            val_set.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::Unbonding(_)
+        ));
+        // Force `enqueue_unbonding` to fail with `UnbondingIndexOverflow` after `stake_amount` and
+        // `total_staked` are debited inside `retire_unbonding_validator`.
+        s.unbonding_count.write(u32::MAX).unwrap();
+    });
+    let events_before = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
+        let val_set = ValidatorSet::new(storage.clone());
+        let state_before = val_set.validator_state(validator).unwrap();
+        let total_before = s.get_total_staked().unwrap();
+
+        let err = s.process_unbonding(500).unwrap_err();
+        let expected = IStaking::UnbondingIndexOverflow {}.abi_encode();
+        assert!(
+            matches!(err, PrecompileError::RevertBytes(ref bytes) if bytes.as_ref() == expected),
+            "unexpected error: {err:?}"
+        );
+
+        assert_eq!(s.get_stake(validator).unwrap(), U256::from(MIN_STAKE));
+        assert_eq!(s.get_total_staked().unwrap(), total_before);
+        assert_eq!(s.unbonding_count.read().unwrap(), u32::MAX);
+        assert_eq!(s.per_val_unbonding_head.read(&validator).unwrap(), 0);
+        assert_eq!(s.per_val_unbonding_len.read(&validator).unwrap(), 0);
+        assert_eq!(val_set.validator_state(validator).unwrap(), state_before);
+    });
+    assert_eq!(provider.get_ordered_events(), events_before);
+}
+
+#[test]
+fn istaking_abi_includes_all_transitive_validator_set_errors() {
+    use alloy_sol_types::SolInterface;
+    use outbe_validatorset::errors::ValidatorSetError;
+
+    let addr = address!("0x1111111111111111111111111111111111111111");
+    let other = address!("0x2222222222222222222222222222222222222222");
+    let reachable_errors: [ValidatorSetError; 63] = [
+        ValidatorSetError::UnauthorizedOwnerOrValidator,
+        ValidatorSetError::ValidatorAlreadyOperationalDelegate,
+        ValidatorSetError::ConsensusPubkeyWrongLength,
+        ValidatorSetError::ConsensusPubkeyConversionFailed,
+        ValidatorSetError::BlsPopWrongLength,
+        ValidatorSetError::BlsSignatureConversionFailed,
+        ValidatorSetError::InvalidBlsPublicKey,
+        ValidatorSetError::InvalidBlsSignature,
+        ValidatorSetError::InvalidBlsRegistrationSignature,
+        ValidatorSetError::RegistrationRequiresBlsPop,
+        ValidatorSetError::UnsupportedP2pAddressVersion { version: 9 },
+        ValidatorSetError::P2pAddressPayloadTooLong { max_len: 128 },
+        ValidatorSetError::InvalidP2pAddress {
+            reason: "bad".to_string(),
+        },
+        ValidatorSetError::ZeroConsensusPublicKey,
+        ValidatorSetError::ZeroRadicleNodeId,
+        ValidatorSetError::RadicleNodeIdAlreadyRegistered,
+        ValidatorSetError::ConsensusPubkeyAlreadyRegistered,
+        ValidatorSetError::InactiveValidatorMustKeepRadicleNodeId,
+        ValidatorSetError::InconsistentRadicleNodeIdReverseBinding,
+        ValidatorSetError::UnregisteredValidatorRetainsRadicleReservation,
+        ValidatorSetError::ValidatorNotRegistered,
+        ValidatorSetError::ValidatorAlreadyRegistered,
+        ValidatorSetError::ValidatorIsAlreadyRegistered,
+        ValidatorSetError::ValidatorIsInactive,
+        ValidatorSetError::InactiveValidatorMustReregisterBeforeStaking,
+        ValidatorSetError::CannotIncreaseStakeWhileExitingOrUnbonding,
+        ValidatorSetError::ReregistrationCooldownHeightOverflow,
+        ValidatorSetError::ReregistrationCooldownNotExpired,
+        ValidatorSetError::MaxValidatorsReached,
+        ValidatorSetError::ValidatorCountOverflow,
+        ValidatorSetError::ValidatorRegistryIndexZero,
+        ValidatorSetError::BondedStakeBelowMinimum {
+            bonded: U256::from(1u64),
+            minimum: U256::from(2u64),
+        },
+        ValidatorSetError::BondedStakeNotBelowMinimum {
+            bonded: U256::from(2u64),
+            minimum: U256::from(1u64),
+        },
+        ValidatorSetError::JailedValidatorMustFullyUnstakeForExit,
+        ValidatorSetError::JailedValidatorStillRetained,
+        ValidatorSetError::UnjailRequiresJailedStatus { status: 1 },
+        ValidatorSetError::UnjailCooldownHeightOverflow,
+        ValidatorSetError::UnjailCooldownNotElapsed {
+            ready_at: 10,
+            current_height: 5,
+        },
+        ValidatorSetError::CannotCompleteUnbondingWithRemainingStakeOrClaim,
+        ValidatorSetError::UnknownValidatorStatus { status: 99 },
+        ValidatorSetError::CorruptValidatorState {
+            address: addr,
+            detail: "corrupt".to_string(),
+        },
+        ValidatorSetError::UnregisteredLifecycleNoStatus,
+        ValidatorSetError::ValidatorDeactivationHeightZero,
+        ValidatorSetError::RegisteredValidatorMissingHistory,
+        ValidatorSetError::RegisteredValidatorMissingConsensusPublicKey,
+        ValidatorSetError::RegisteredValidatorMissingConsensusPubkey,
+        ValidatorSetError::ValidatorRegistryIndexExceedsCount {
+            addr,
+            index: 5,
+            count: 3,
+        },
+        ValidatorSetError::ValidatorRegistryForwardIndexMismatch {
+            index: 1,
+            expected: addr,
+            actual: other,
+        },
+        ValidatorSetError::ValidatorConsensusPubkeyReverseMismatch { addr, owner: other },
+        ValidatorSetError::LifecycleTransitionChangedRegistryIdentity,
+        ValidatorSetError::CannotPersistAbsentLifecycle,
+        ValidatorSetError::RegisteredValidatorMissingRegistryIndex,
+        ValidatorSetError::DeactivationHeightZeroSentinel,
+        ValidatorSetError::ActiveHistoryHasDeactivationHeight,
+        ValidatorSetError::RetainedJailHistoryHeightMismatch,
+        ValidatorSetError::JailHistoryHeightMismatch,
+        ValidatorSetError::ExitingHistoryMissingDeactivationHeight,
+        ValidatorSetError::UnbondingHistoryMissingDeactivationHeight,
+        ValidatorSetError::InactiveHistoryMissingDeactivationHeight,
+        ValidatorSetError::UnbondingEndHintZeroSentinel,
+        ValidatorSetError::ValidatorJailHeightZero,
+        ValidatorSetError::InactiveValidatorMissingDeactivationHeight { addr },
+        ValidatorSetError::InactiveCleanupHeightOverflow,
+    ];
+
+    let exported_abi = include_str!("../../../../contracts/precompiles/abi-export/IStaking.json");
+    let abi_json: serde_json::Value =
+        serde_json::from_str(exported_abi).expect("IStaking.json must be valid JSON");
+    let entries = abi_json
+        .as_array()
+        .expect("IStaking.json root must be a JSON array");
+    let exported_error_selectors: std::collections::HashSet<(String, [u8; 4])> = entries
+        .iter()
+        .filter(|item| item.get("type").and_then(|t| t.as_str()) == Some("error"))
+        .map(|item| {
+            let name = item
+                .get("name")
+                .and_then(|n| n.as_str())
+                .expect("error entry must have name");
+            let inputs = item
+                .get("inputs")
+                .and_then(|i| i.as_array())
+                .expect("error entry must have inputs array");
+            let param_types: Vec<&str> = inputs
+                .iter()
+                .map(|inp| {
+                    inp.get("type")
+                        .and_then(|t| t.as_str())
+                        .expect("error input must have canonical type")
+                })
+                .collect();
+            let canonical_sig = format!("{name}({})", param_types.join(","));
+            let hash = alloy_primitives::keccak256(canonical_sig.as_bytes());
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&hash[..4]);
+            (name.to_string(), selector)
+        })
+        .collect();
+
+    for vs_err in reachable_errors {
+        let precompile_err: PrecompileError = vs_err.clone().into();
+        let PrecompileError::RevertBytes(bytes) = precompile_err else {
+            panic!("expected RevertBytes for {vs_err:?}, got {precompile_err:?}");
+        };
+        let decoded = IStaking::IStakingErrors::abi_decode(&bytes)
+            .unwrap_or_else(|e| panic!("IStakingErrors failed to decode {vs_err:?}: {e}"));
+        assert_eq!(decoded.abi_encode(), bytes.as_ref());
+        let debug_str = format!("{decoded:?}");
+        let error_name = debug_str
+            .split(['(', ' ', '{'])
+            .next()
+            .expect("error variant name");
+        let selector: [u8; 4] = bytes[..4].try_into().expect("4-byte error selector");
+        assert!(
+            exported_error_selectors.contains(&(error_name.to_string(), selector)),
+            "exported IStaking.json missing error {error_name} with selector 0x{}",
+            alloy_primitives::hex::encode(selector)
+        );
+    }
 }

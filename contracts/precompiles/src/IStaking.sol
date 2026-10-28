@@ -27,6 +27,71 @@ interface IStaking {
     error UnbondingIndexOverflow();
     error ClaimableAmountOverflow();
 
+    // Transitive ValidatorSetError reverts reachable from Staking entrypoints.
+    error UnauthorizedOwnerOrValidator();
+    error ValidatorAlreadyOperationalDelegate();
+    error ConsensusPubkeyWrongLength();
+    error ConsensusPubkeyConversionFailed();
+    error BlsPopWrongLength();
+    error BlsSignatureConversionFailed();
+    error InvalidBlsPublicKey();
+    error InvalidBlsSignature();
+    error InvalidBlsRegistrationSignature();
+    error RegistrationRequiresBlsPop();
+    error UnsupportedP2pAddressVersion(uint8 version);
+    error P2pAddressPayloadTooLong(uint64 max_len);
+    error InvalidP2pAddress(string reason);
+    error ZeroConsensusPublicKey();
+    error ZeroRadicleNodeId();
+    error RadicleNodeIdAlreadyRegistered();
+    error ConsensusPubkeyAlreadyRegistered();
+    error InactiveValidatorMustKeepRadicleNodeId();
+    error InconsistentRadicleNodeIdReverseBinding();
+    error UnregisteredValidatorRetainsRadicleReservation();
+    error ValidatorNotRegistered();
+    error ValidatorAlreadyRegistered();
+    error ValidatorIsAlreadyRegistered();
+    error ValidatorIsInactive();
+    error InactiveValidatorMustReregisterBeforeStaking();
+    error CannotIncreaseStakeWhileExitingOrUnbonding();
+    error ReregistrationCooldownHeightOverflow();
+    error ReregistrationCooldownNotExpired();
+    error MaxValidatorsReached();
+    error ValidatorCountOverflow();
+    error ValidatorRegistryIndexZero();
+    error BondedStakeBelowMinimum(uint256 bonded, uint256 minimum);
+    error BondedStakeNotBelowMinimum(uint256 bonded, uint256 minimum);
+    error JailedValidatorMustFullyUnstakeForExit();
+    error JailedValidatorStillRetained();
+    error UnjailRequiresJailedStatus(uint8 status);
+    error UnjailCooldownHeightOverflow();
+    error UnjailCooldownNotElapsed(uint64 ready_at, uint64 current_height);
+    error CannotCompleteUnbondingWithRemainingStakeOrClaim();
+    error UnknownValidatorStatus(uint8 status);
+    error CorruptValidatorState(address account, string detail);
+    error UnregisteredLifecycleNoStatus();
+    error ValidatorDeactivationHeightZero();
+    error RegisteredValidatorMissingHistory();
+    error RegisteredValidatorMissingConsensusPublicKey();
+    error RegisteredValidatorMissingConsensusPubkey();
+    error ValidatorRegistryIndexExceedsCount(address addr, uint64 index, uint64 count);
+    error ValidatorRegistryForwardIndexMismatch(uint64 index, address expected, address actual);
+    error ValidatorConsensusPubkeyReverseMismatch(address addr, address owner);
+    error LifecycleTransitionChangedRegistryIdentity();
+    error CannotPersistAbsentLifecycle();
+    error RegisteredValidatorMissingRegistryIndex();
+    error DeactivationHeightZeroSentinel();
+    error ActiveHistoryHasDeactivationHeight();
+    error RetainedJailHistoryHeightMismatch();
+    error JailHistoryHeightMismatch();
+    error ExitingHistoryMissingDeactivationHeight();
+    error UnbondingHistoryMissingDeactivationHeight();
+    error InactiveHistoryMissingDeactivationHeight();
+    error UnbondingEndHintZeroSentinel();
+    error ValidatorJailHeightZero();
+    error InactiveValidatorMissingDeactivationHeight(address addr);
+    error InactiveCleanupHeightOverflow();
+
     /// `amount` is the deposit. `bonded` is that validator's stake after the credit.
     event Staked(address indexed validator, uint256 amount, uint256 bonded);
     /// `index` is the existing queue slot and can be reused after that life ends.
@@ -58,6 +123,11 @@ interface IStaking {
     /// Add `amount` to an already-registered validator's bonded stake.
     /// The caller must be `validatorAddress` and `msg.value == amount`.
     function topup(address validatorAddress, uint256 amount) external payable;
+    /// Unstake `amount` from the caller's bonded stake and enqueue it for unbonding.
+    /// Any remaining bonded stake must be `0` or `>= getMinStake()`.
+    /// Jailed validators (`JailRetained` or `Jail`) must unstake their full balance (`JailedValidatorMustFullyUnstakeForExit`).
+    /// Passing `amount == 0` is permitted only to exit a zero-stake (`current_stake == 0`) slashed validator in
+    /// `WaitingForReadiness`, `Joining`, `JailRetained`, or `Jail`.
     function unstake(uint256 amount) external;
     function claimUnbonded() external;
     /// Unjail a JAILED validator. The caller must be that validator, and the

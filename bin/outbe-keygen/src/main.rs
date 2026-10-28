@@ -492,10 +492,28 @@ fn cmd_validator(output_dir: PathBuf, chain_id: u64, backend: &KeyBackend) -> Re
     println!();
 
     println!("registration (fund {} first):", bundle.validator_address);
-    println!("  outbe-cli --private-key <evm-key> staking stake \\");
-    println!("    --validator {} \\", bundle.validator_address);
-    println!("    --amount <amount> \\");
-    println!("    --keys-dir {}", output_dir.display());
+    match backend {
+        KeyBackend::Plaintext => {
+            println!("  outbe-cli --private-key <evm-key> staking stake \\");
+            println!("    --validator {} \\", bundle.validator_address);
+            println!("    --amount <amount> \\");
+            println!("    --keys-dir {}", output_dir.display());
+        }
+        KeyBackend::Encrypted(_) => {
+            println!("  BLS_PASSPHRASE=<bls-passphrase> outbe-cli --private-key <evm-key> staking stake \\");
+            println!("    --validator {} \\", bundle.validator_address);
+            println!("    --amount <amount> \\");
+            println!("    --keys-dir {} \\", output_dir.display());
+            println!("    --bls-key-backend encrypted");
+        }
+        KeyBackend::OsLevel => {
+            println!("  outbe-cli --private-key <evm-key> staking stake \\");
+            println!("    --validator {} \\", bundle.validator_address);
+            println!("    --amount <amount> \\");
+            println!("    --keys-dir {} \\", output_dir.display());
+            println!("    --bls-key-backend os-level");
+        }
+    }
     println!(
         "  registration signature: {}",
         hex::encode(bundle.registration_signature)

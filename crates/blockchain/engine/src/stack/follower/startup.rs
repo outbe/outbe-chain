@@ -7,7 +7,7 @@ use outbe_consensus::{
     block::ConsensusBlock,
     follow::{
         run_follow_engine, CommitteeChain, FinalizedSource as _, FollowEngineConfig,
-        FollowerEpocher, SharedCommitteeChain,
+        FollowerEpocher, SharedCommitteeChain, TipSource as _,
     },
     marshal_types::{Finalization, FollowMarshalActor, MarshalMailbox},
 };
@@ -45,7 +45,6 @@ impl<E> FollowerRuntime for E where
 pub(super) struct FollowerTrustAnchor {
     pub(super) participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     pub(super) epoch_length_blocks: u32,
-    pub(super) storage_root: std::path::PathBuf,
 }
 struct StartupChainState {
     genesis_hash: B256,
@@ -112,7 +111,7 @@ pub(super) async fn run_certified_follow_stack<E>(
     connection: FollowerConnection,
     trust: FollowerTrustAnchor,
     services: FollowerStackServices,
-) -> Result<()>
+) -> Result<crate::follower_shutdown::FollowStackExit>
 where
     E: FollowerRuntime,
 {
@@ -124,7 +123,6 @@ where
     let FollowerTrustAnchor {
         participants,
         epoch_length_blocks,
-        storage_root: consensus_storage_root,
     } = trust;
     let startup = read_startup_chain_state(&node)?;
     let history = HistoryBootstrap {
@@ -144,7 +142,6 @@ where
         history,
         startup,
         services,
-        storage_root: consensus_storage_root,
     }
     .run()
     .await
@@ -615,7 +612,6 @@ struct ExecutionBootstrap<E: FollowerRuntime> {
     history: RecoveredFollowerHistory<E>,
     startup: StartupChainState,
     services: FollowerStackServices,
-    storage_root: std::path::PathBuf,
 }
 struct ConfirmedExecutor<E: FollowerRuntime> {
     actor: ExecutorActor<E>,
@@ -624,7 +620,7 @@ struct ConfirmedExecutor<E: FollowerRuntime> {
 }
 struct ParentCertificateBootstrap<'a> {
     node: &'a OutbeFullNode,
-    consensus_storage_root: &'a std::path::Path,
+    store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
     recovery_anchor: &'a CertifiedFollowerRecoveryAnchor,
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
 }
@@ -673,7 +669,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             finalized_heights: execution_finalized_height_rx,
         })
     }
-    async fn run(self) -> Result<()> {
+    async fn run(self) -> Result<crate::follower_shutdown::FollowStackExit> {
         let ConfirmedExecutor {
             actor: executor_actor,
             mailbox: executor_mailbox,
@@ -682,6 +678,9 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
         let FollowerStackServices {
             finalized_execution_barrier,
             follower_shutdown,
+            parent_cert_store,
+            bootstrap,
+            finalization_notify,
         } = self.services;
         let recovery_anchor = &self.history.recovery_anchor;
         finalized_execution_barrier
@@ -689,7 +688,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             .wrap_err("native execution is not durable at the certified follower anchor")?;
         let finalized_parent_cert_store = ParentCertificateBootstrap {
             node: &self.node,
-            consensus_storage_root: &self.storage_root,
+            store: parent_cert_store,
             recovery_anchor,
             certificate_scheme_provider: &self.history.certificate_scheme_provider,
         }
@@ -707,7 +706,7 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             executor_actor.with_finalized_execution_barrier(finalized_execution_barrier);
         let Some(executor_reporter) = follower_shutdown.install(executor_mailbox)? else {
             // Shutdown won the startup race. No execution delivery was accepted.
-            return Ok(());
+            return Ok(crate::follower_shutdown::FollowStackExit::Shutdown);
         };
         let observer_ingress = executor_reporter.clone();
         let executor_handle =
@@ -724,6 +723,8 @@ impl<E: FollowerRuntime> ExecutionBootstrap<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
+            bootstrap,
+            finalization_notify,
         }
         .run()
         .await
@@ -735,21 +736,10 @@ impl ParentCertificateBootstrap<'_> {
     ) -> Result<outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore> {
         let Self {
             node,
-            consensus_storage_root,
+            store: finalized_parent_cert_store,
             recovery_anchor,
             certificate_scheme_provider,
         } = self;
-        let parent_cert_dir = consensus_storage_root.join("finalized_parent_certs");
-        let finalized_parent_cert_store =
-            outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
-                &parent_cert_dir,
-            )
-            .wrap_err_with(|| {
-                format!(
-                    "failed to open follower finalized parent certificate store at {}",
-                    parent_cert_dir.display()
-                )
-            })?;
         finalized_parent_cert_store
             .prune_above_height(recovery_anchor.checkpoint.block_number)
             .wrap_err("failed to prune follower parent certificates above recovery anchor")?;
@@ -796,9 +786,11 @@ struct LiveFollower<E: FollowerRuntime> {
     executor_handle: commonware_runtime::Handle<Result<()>>,
     execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     follower_shutdown: crate::follower_shutdown::FollowerDrain,
+    bootstrap: Option<ValidatorBootstrap>,
+    finalization_notify: Arc<tokio::sync::Notify>,
 }
 impl<E: FollowerRuntime> LiveFollower<E> {
-    async fn run(self) -> Result<()> {
+    async fn run(self) -> Result<crate::follower_shutdown::FollowStackExit> {
         let Self {
             ctx,
             node,
@@ -810,6 +802,8 @@ impl<E: FollowerRuntime> LiveFollower<E> {
             executor_handle,
             execution_finalized_height_rx,
             follower_shutdown,
+            bootstrap,
+            finalization_notify,
         } = self;
         let RecoveredFollowerHistory {
             marshal_actor,
@@ -826,11 +820,23 @@ impl<E: FollowerRuntime> LiveFollower<E> {
         } = history;
         // -- 4b. Serve `outbe_getFinalization`. The critical observer below owns
         // finality publication only after exact parent-proof persistence succeeds. --------------------------------------
-        spawn_finalization_drainer(
+        let (follower_phase_cancel, phase_cancel_rx) = tokio::sync::watch::channel(false);
+        let (driver_cancel, driver_cancel_rx) = tokio::sync::watch::channel(false);
+        let initial_upstream_tip = if bootstrap.is_some() {
+            tip_client
+                .finalized_tip()
+                .await
+                .ok_or(BootstrapPromotionError::UpstreamTipUnavailable)?
+                .get()
+        } else {
+            0
+        };
+        let finalization_drainer = spawn_finalization_drainer(
             &ctx,
             marshal_mailbox.clone(),
             bridge.clone(),
             finalized_parent_cert_store.clone(),
+            phase_cancel_rx.clone(),
         );
 
         // -- 5. Assemble + run the follower engine ----------------------------
@@ -842,6 +848,11 @@ impl<E: FollowerRuntime> LiveFollower<E> {
             observer_bridge: bridge.clone(),
             observer_ingress,
             execution_finalized_height_rx,
+            bootstrap,
+            initial_upstream_tip,
+            initial_persisted_height: last_consensus_finalized.get(),
+            driver_cancel,
+            finalization_notify,
         }
         .run();
         let follow_engine = run_follow_engine(
@@ -858,6 +869,8 @@ impl<E: FollowerRuntime> LiveFollower<E> {
                 chain,
                 anchor_epoch,
                 mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
+                driver_cancel: driver_cancel_rx,
+                follower_phase_cancel: phase_cancel_rx,
             },
         );
         let executor_exit = async move {
@@ -867,11 +880,26 @@ impl<E: FollowerRuntime> LiveFollower<E> {
         };
         // A clean marshal stop must not hide an executor error observed while its
         // mailbox drains, nor discard a queued finality reconciliation.
-        let accepted_work = follower_shutdown.finish(executor_exit, finality_observer);
-        futures::try_join!(follow_engine, accepted_work)?;
-        Ok(())
+        let accepted_work = async move {
+            follower_shutdown
+                .await_work(executor_exit, finality_observer)
+                .await?;
+            follower_phase_cancel.send_replace(true);
+            finalization_drainer.await.map_err(|error| {
+                crate::errors::FollowerStackError::ExecutorTaskFailed(format!("{error:?}"))
+            })?;
+            Ok::<_, eyre::Report>(follower_shutdown)
+        };
+        let (_, follower_shutdown) = futures::try_join!(follow_engine, accepted_work)?;
+        follower_shutdown.complete()
     }
 }
+#[derive(Debug, thiserror::Error)]
+enum BootstrapPromotionError {
+    #[error("upstream finalized tip unavailable before validator bootstrap")]
+    UpstreamTipUnavailable,
+}
+
 struct FinalityObserver {
     observer_mailbox: MarshalMailbox,
     observer_node: OutbeFullNode,
@@ -880,73 +908,129 @@ struct FinalityObserver {
     observer_bridge: ConsensusExecutionBridge,
     observer_ingress: crate::follower_shutdown::FollowerReporter,
     execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
+    bootstrap: Option<ValidatorBootstrap>,
+    initial_upstream_tip: u64,
+    initial_persisted_height: u64,
+    driver_cancel: tokio::sync::watch::Sender<bool>,
+    finalization_notify: Arc<tokio::sync::Notify>,
 }
 impl FinalityObserver {
-    async fn run(self) -> Result<()> {
-        let Self {
-            observer_mailbox,
-            observer_node,
-            observer_schemes,
-            observer_store,
-            observer_bridge,
-            observer_ingress,
-            mut execution_finalized_height_rx,
-        } = self;
-
-        let mut last_persisted = None;
-        while let Some(height) = execution_finalized_height_rx.recv().await {
-            if !follower_height_has_certified_finalization(height) {
-                continue;
-            }
-            if observer_mailbox
-                .get_finalization(Height::new(height))
-                .await
-                .is_none()
-            {
-                if observer_mailbox
-                    .get_info(Height::new(height))
-                    .await
-                    .is_none()
-                {
-                    return Err(
-                        crate::errors::FollowerStackError::MarshalLostFinalizedBlockBeforeDrain(
-                            height,
-                        )
-                        .into(),
-                    );
-                }
+    async fn run(mut self) -> Result<()> {
+        let mut last_persisted = Some(self.initial_persisted_height);
+        loop {
+            self.maybe_promote_bootstrap_validator(last_persisted.unwrap_or(0))
+                .await?;
+            let height = tokio::select! {
+                height = self.execution_finalized_height_rx.recv() => {
+                    let Some(height) = height else { break; };
+                    height
+                },
+                _ = wait_for_bootstrap_tee_lease(self.bootstrap.as_mut()) => continue,
+            };
+            if !should_persist_finalized_height(&self.observer_mailbox, height).await? {
                 continue;
             }
             FollowerProofPersistence {
-                node: &observer_node,
-                certificate_scheme_provider: &observer_schemes,
-                parent_cert_store: &observer_store,
+                node: &self.observer_node,
+                certificate_scheme_provider: &self.observer_schemes,
+                parent_cert_store: &self.observer_store,
             }
-            .reconcile_height(&observer_mailbox, height)
+            .reconcile_height(&self.observer_mailbox, height)
             .await?;
-            observer_bridge.set_last_finalized_block_number(height);
+            self.observer_bridge.set_last_finalized_block_number(height);
             last_persisted = Some(height);
+            self.finalization_notify.notify_waiters();
         }
-        if !observer_ingress.is_quiescing()? {
+        verify_finality_observer_quiesced(
+            &self.observer_ingress,
+            &self.observer_mailbox,
+            last_persisted,
+        )
+        .await
+    }
+
+    async fn maybe_promote_bootstrap_validator(&mut self, persisted: u64) -> Result<()> {
+        let Some(readiness) = self.bootstrap.as_ref() else {
+            return Ok(());
+        };
+        let processed = self
+            .observer_mailbox
+            .get_processed_height()
+            .await
+            .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
+        if processed.get() >= self.initial_upstream_tip
+            && persisted >= self.initial_upstream_tip
+            && readiness.is_validator_bootstrap_ready(&self.observer_node, persisted)?
+        {
+            self.observer_ingress.initiate_promotion(persisted)?;
+            self.driver_cancel.send_replace(true);
+            self.bootstrap = None;
+        }
+        Ok(())
+    }
+}
+
+pub(in crate::stack) async fn wait_for_bootstrap_tee_lease(
+    bootstrap: Option<&mut ValidatorBootstrap>,
+) {
+    match bootstrap {
+        Some(readiness) => {
+            if readiness.tee_lease_armed_rx.changed().await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+async fn should_persist_finalized_height(
+    observer_mailbox: &MarshalMailbox,
+    height: u64,
+) -> Result<bool> {
+    if !follower_height_has_certified_finalization(height) {
+        return Ok(false);
+    }
+    if observer_mailbox
+        .get_finalization(Height::new(height))
+        .await
+        .is_some()
+    {
+        return Ok(true);
+    }
+    if observer_mailbox
+        .get_info(Height::new(height))
+        .await
+        .is_none()
+    {
+        return Err(
+            crate::errors::FollowerStackError::MarshalLostFinalizedBlockBeforeDrain(height).into(),
+        );
+    }
+    Ok(false)
+}
+
+async fn verify_finality_observer_quiesced(
+    observer_ingress: &crate::follower_shutdown::FollowerReporter,
+    observer_mailbox: &MarshalMailbox,
+    last_persisted: Option<u64>,
+) -> Result<()> {
+    if !observer_ingress.is_quiescing()? {
+        return Err(crate::errors::FollowerStackError::FinalityObserverStoppedBeforeQuiesce.into());
+    }
+    if let Some(height) = last_persisted.filter(|height| *height > 0) {
+        let processed = observer_mailbox
+            .get_processed_height()
+            .await
+            .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
+        if processed.get() < height {
             return Err(
-                crate::errors::FollowerStackError::FinalityObserverStoppedBeforeQuiesce.into(),
+                crate::errors::FollowerStackError::MarshalHasNotAcknowledgedProofDrain {
+                    processed,
+                    persisted: height,
+                }
+                .into(),
             );
         }
-        if let Some(height) = last_persisted {
-            let processed = observer_mailbox
-                .get_processed_height()
-                .await
-                .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
-            if processed.get() < height {
-                return Err(
-                    crate::errors::FollowerStackError::MarshalHasNotAcknowledgedProofDrain {
-                        processed,
-                        persisted: height,
-                    }
-                    .into(),
-                );
-            }
-        }
-        Ok::<(), eyre::Report>(())
     }
+    Ok(())
 }

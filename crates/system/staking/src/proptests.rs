@@ -16,7 +16,7 @@ use crate::errors::StakingError;
 use crate::precompile::IStaking;
 use crate::tests::{
     register_validator, seed_balance, seed_staking_balance, seed_staking_balance_u256,
-    stake_registered, with_staking,
+    stake_registered, test_bls_registration_material, with_staking, MIN_STAKE,
 };
 
 fn physical_unbonding_len(staking: &Staking<'_>, validator: Address) -> u32 {
@@ -151,14 +151,42 @@ fn partial_unstake_is_capped_at_63_and_reserves_64th_slot_for_full_or_automatic_
 
 #[test]
 fn claim_unbonded_decrements_counter_for_zero_amount_slashed_entries_and_unblocks_restake() {
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+
     let validator = Address::repeat_byte(0x42);
     let max_partial = MAX_UNBONDING_ENTRIES_PER_VALIDATOR - 1;
+    let (pk1, radicle_node_id, sig1) = test_bls_registration_material(validator, 0x42);
+    let (pk2, _, sig2) = test_bls_registration_material(validator, 0x43);
+    let initial_stake = U256::from(2_000u64);
+    let min_stake = U256::from(MIN_STAKE);
 
-    with_staking(|storage, s| {
-        let initial_stake = U256::from(2_000u64);
-        seed_staking_balance_u256(storage.clone(), initial_stake);
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    let (initial_index, count_before) = StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
+        s.config_min_stake.write(min_stake).unwrap();
+        s.config_unbonding_period.write(3600).unwrap();
+        seed_staking_balance_u256(storage.clone(), initial_stake + min_stake);
         seed_balance(storage.clone(), validator, 1_000_000);
-        stake_registered(storage.clone(), s, validator, initial_stake).unwrap();
+        ValidatorSet::new(storage.clone())
+            .test_configure_registry(Address::repeat_byte(0xff))
+            .unwrap();
+        s.stake(
+            validator,
+            validator,
+            initial_stake,
+            (&pk1, radicle_node_id, &sig1),
+            (0, &[]),
+        )
+        .unwrap();
+        let initial_index = ValidatorSet::new(storage.clone())
+            .validator_state(validator)
+            .unwrap()
+            .registry_index();
+        let count_before = ValidatorSet::new(storage.clone())
+            .validator_count()
+            .unwrap();
 
         for _ in 0..max_partial {
             s.unstake(validator, U256::ONE).unwrap();
@@ -179,26 +207,75 @@ fn claim_unbonded_decrements_counter_for_zero_amount_slashed_entries_and_unblock
             val_set.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::Inactive(_)
         ));
-
-        // Advance past the slashed withdrawal delay (2 * 3600 = 7200) without claiming.
-        // Staking rejects restaking while 64 physical nodes remain linked until `claim_unbonded` runs.
         storage.set_block_timestamp(U256::from(8_000u64)).unwrap();
+        (initial_index, count_before)
+    });
+
+    // Advance past the slashed withdrawal delay (2 * 3600 = 7200) without claiming.
+    // Calling `s.stake(...)` while 64 physical nodes remain linked reverts with
+    // `TooManyUnbondingEntries { validator, maxEntries: 63 }` before `register_with_initial_stake`
+    // and leaves all storage, balances, and events unchanged.
+    let storage_before_reject = provider.storage.clone();
+    let staking_bal_before_reject = provider.get_balance(STAKING_ADDRESS);
+    let val_bal_before_reject = provider.get_balance(validator);
+    let events_before_reject = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
         let expected_err = IStaking::TooManyUnbondingEntries {
             validator,
             maxEntries: max_partial,
         }
         .abi_encode();
         let err = s
-            .topup(validator, validator, U256::from(1_000u64))
+            .stake(
+                validator,
+                validator,
+                min_stake,
+                (&pk2, radicle_node_id, &sig2),
+                (0, &[]),
+            )
             .unwrap_err();
         assert!(
             matches!(err, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected_err)
         );
+        assert_eq!(s.get_stake(validator).unwrap(), U256::ZERO);
+        assert_eq!(s.get_total_staked().unwrap(), U256::ZERO);
+    });
+    assert_eq!(provider.storage, storage_before_reject);
+    assert_eq!(
+        provider.get_balance(STAKING_ADDRESS),
+        staking_bal_before_reject
+    );
+    assert_eq!(provider.get_balance(validator), val_bal_before_reject);
+    assert_eq!(provider.get_ordered_events(), events_before_reject);
 
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut s = Staking::new(storage.clone());
+        let mut val_set = ValidatorSet::new(storage);
         // Claiming unlinks all 64 zero-amount matured nodes and resets `per_val_unbonding_len` to 0.
         s.claim_unbonded(validator).unwrap();
         assert_eq!(s.per_val_unbonding_len.read(&validator).unwrap(), 0);
-        assert_eq!(physical_unbonding_len(s, validator), 0);
+        assert_eq!(physical_unbonding_len(&s, validator), 0);
+
+        // Advance to the next epoch (`epoch_start_block >= deactivated_at`) and re-register via `s.stake(...)`.
+        val_set.update_epoch(8_000, 1).unwrap();
+        s.stake(
+            validator,
+            validator,
+            min_stake,
+            (&pk2, radicle_node_id, &sig2),
+            (0, &[]),
+        )
+        .unwrap();
+        let state = val_set.validator_state(validator).unwrap();
+        assert!(matches!(
+            state.lifecycle(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
+        assert_eq!(s.get_stake(validator).unwrap(), min_stake);
+        assert_eq!(state.bonded_stake(), min_stake);
+        assert_eq!(state.registry_index(), initial_index);
+        assert_eq!(val_set.validator_count().unwrap(), count_before);
     });
 }
 

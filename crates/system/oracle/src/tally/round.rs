@@ -56,7 +56,7 @@ pub(super) fn run_tally_inner(
 ) -> Result<()> {
     let enabled = oracle.config_enabled.read()?;
     if !enabled {
-        return Ok(());
+        return oracle.clear_votes();
     }
 
     let reward_band = oracle.config_reward_band.read()?;

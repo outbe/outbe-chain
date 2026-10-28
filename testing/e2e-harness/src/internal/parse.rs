@@ -52,7 +52,7 @@ pub(crate) fn extract_tx_hash(stdout: &str) -> Option<String> {
 pub struct VoteStatus {
     /// The `Proposal #<id>:` line was present.
     pub visible: bool,
-    /// `status=` field (pending/approved/rejected/expired).
+    /// `status=` field (pending/approved/expired/error).
     pub status: String,
     /// `target=` field (module address, as printed).
     pub target: String,

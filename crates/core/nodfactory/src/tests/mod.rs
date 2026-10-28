@@ -107,19 +107,15 @@ fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
         .expect("test identity has a nonce in the bounded search")
 }
 
-/// One observation at `rate` in the last second of the current trailing window.
+/// Covers the current trailing window at `rate`.
 fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(
-                outbe_oracle::api::AddressPair::new_coen_to(iso_code),
-                rate,
-                U256::from(SCALE_1E6_U64),
-            )],
-        )
-        .unwrap();
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso_code),
+        rate,
+        U256::from(SCALE_1E6_U64),
+    )
+    .unwrap();
 }
 
 struct World {

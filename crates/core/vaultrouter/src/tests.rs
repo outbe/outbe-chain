@@ -1900,18 +1900,18 @@ fn with_reservable_vault_at_block<R>(
             .unwrap();
         let pair = AddressPair::new_coen_to(USD_ISO_CODE);
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        let mut oracle = OracleContract::new(storage.clone());
+        let oracle = OracleContract::new(storage.clone());
         oracle
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
             .unwrap();
-        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-        oracle
-            .write_snapshot(
-                snapshot.cutoff() - 1,
-                &[(pair, U256::from(2_000_000), U256::ONE)],
-            )
-            .unwrap();
+        outbe_oracle::test_support::seed_covered_trailing_window(
+            &storage,
+            pair,
+            U256::from(2_000_000),
+            U256::ONE,
+        )
+        .unwrap();
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
         )

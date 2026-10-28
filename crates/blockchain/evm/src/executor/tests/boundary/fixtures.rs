@@ -25,6 +25,15 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         register_and_activate_native(&mut vs, active, &active_key);
         vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
             .unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_bonded(candidate, minimum)
+            .unwrap();
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        let total = staking.total_staked.read().unwrap();
+        staking.total_staked.write(total + minimum).unwrap();
+        storage
+            .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+            .unwrap();
         vs.admit_validator_for_boundary_for_test(candidate).unwrap();
         seed_test_committee_snapshot(storage.clone(), &[(active, active_key)]);
         // Seed the COEN/840 oracle pair + a 1.0 rate so the begin-block
@@ -98,6 +107,9 @@ pub(super) fn test_register_joining(
     pubkey: &[u8; 48],
 ) {
     test_register_waiting(vs, validator, pubkey);
+    vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
+    vs.test_seed_authoritative_bonded(validator, U256::from(1))
+        .unwrap();
     vs.record_stake_increase(validator, U256::from(1), U256::from(1))
         .unwrap();
     vs.admit_validator_for_boundary_for_test(validator).unwrap();

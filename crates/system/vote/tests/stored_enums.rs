@@ -43,7 +43,6 @@ fn proposal_status_preserves_all_storage_bytes_and_errors() {
         &[
             (0, ProposalStatus::Pending),
             (1, ProposalStatus::Approved),
-            (2, ProposalStatus::Rejected),
             (3, ProposalStatus::Expired),
             (4, ProposalStatus::Error),
         ],

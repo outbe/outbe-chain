@@ -502,6 +502,7 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             staking.stake_amount.write(&validator, stake).unwrap();
             staking.total_staked.write(stake).unwrap();
+            storage.set_balance(STAKING_ADDRESS, stake).unwrap();
             outbe_slashindicator::schema::SlashIndicator::new(storage.clone())
                 .config_slash_amount_percent
                 .write(configured_percent)

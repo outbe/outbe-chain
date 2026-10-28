@@ -148,7 +148,7 @@ fn start_auction(
     let utc_day =
         previous_date_key(timestamp_to_date_key(now)).map_err(crate::errors::date_step_error)?;
     let rows: Vec<ReferenceCurrencyPrice> =
-        outbe_oracle::api::priced_reference_currencies(storage.clone(), utc_day)?
+        outbe_oracle::api::priced_reference_currencies_of_day(storage.clone(), utc_day)?
             .into_iter()
             .map(|(iso_code, entry_price_minor)| ReferenceCurrencyPrice {
                 iso_code,

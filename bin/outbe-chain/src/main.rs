@@ -90,7 +90,9 @@ use launch::upgrade::{
 use cli::dkg::{parse_dkg_key_backend, DkgCli};
 
 #[cfg(test)]
-use launch::admission::LocalTeeAdmissionAnchorV1;
+use launch::admission::{
+    local_validator_tee_gate_v1, select_validator_upstream_anchor_v1, LocalTeeAdmissionAnchorV1,
+};
 
 #[cfg(test)]
 use launch::shutdown::abort_and_wait_supervised;

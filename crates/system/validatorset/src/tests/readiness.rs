@@ -128,7 +128,11 @@ fn test_confirm_validator_ready_requires_pending() {
     with_vs_configured(128, |vs| {
         let pend = address!("0x1111111111111111111111111111111111111111");
         let act = address!("0x3333333333333333333333333333333333333333");
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         register_validators(vs, &[(pend, 0x01), (act, 0x03)]).unwrap();
+        vs.test_seed_authoritative_bonded(pend, minimum).unwrap();
+        vs.test_seed_authoritative_bonded(act, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(act).unwrap();
 
         vs.confirm_validator_ready(pend).unwrap();
@@ -164,16 +168,24 @@ fn inactive_reentry_with_same_bls_requires_fresh_readiness() {
     with_vs_configured(128, |vs| {
         let validator = address!("0x5555555555555555555555555555555555555555");
         let consensus_pubkey = dummy_consensus_pubkey(0x55);
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
 
         vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.mark_pending(validator).unwrap();
         vs.confirm_validator_ready(validator).unwrap();
         vs.activate_validator_via_boundary_for_test(validator)
             .unwrap();
 
+        vs.test_seed_authoritative_bonded(validator, U256::ZERO)
+            .unwrap();
         make_inactive_for_test(vs, validator);
         vs.register_validator(OWNER, validator, &consensus_pubkey)
+            .unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
         assert!(!vs.val_join_confirmed.read(&validator).unwrap());
@@ -202,8 +214,11 @@ fn test_already_active_validator_does_not_raise_pending() {
     with_vs_configured(128, |vs| {
         let val = address!("0x1111111111111111111111111111111111111111");
         let pk = dummy_consensus_pubkey(0x01);
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
 
         vs.register_validator(OWNER, val, &pk).unwrap();
+        vs.test_seed_authoritative_bonded(val, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(val).unwrap();
 
         // Clear pending by completing reshare.
@@ -269,6 +284,67 @@ fn confirm_validator_ready_requires_minimum_bond_in_waiting_and_joining() {
                 I::BondedStakeBelowMinimum {
                     bonded: sub_min,
                     minimum,
+                }
+                .abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
+        );
+    });
+}
+
+#[test]
+fn confirm_validator_ready_enforces_default_min_stake_when_slot_zero_is_unconfigured() {
+    use crate::precompile::IValidatorSet as I;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::validators::DEFAULT_MIN_STAKE;
+
+    with_vs_configured(128, |vs| {
+        let validator = address!("0x7777777777777777777777777777777777777777");
+        let pk = dummy_consensus_pubkey(0x77);
+        let sub_min = DEFAULT_MIN_STAKE - U256::ONE;
+
+        // Leave Staking slot 0 (config_min_stake) at 0 so the default fallback applies.
+        vs.register_validator(OWNER, validator, &pk).unwrap();
+
+        for bonded in [U256::ZERO, sub_min] {
+            vs.test_seed_authoritative_bonded(validator, bonded)
+                .unwrap();
+            let err = vs.confirm_validator_ready(validator).unwrap_err();
+            assert_eq!(
+                super::typed_revert(
+                    I::BondedStakeBelowMinimum {
+                        bonded,
+                        minimum: DEFAULT_MIN_STAKE,
+                    }
+                    .abi_encode()
+                ),
+                match err {
+                    PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                    other => panic!("expected typed revert, got {other:?}"),
+                }
+            );
+            assert!(!vs.val_join_confirmed.read(&validator).unwrap());
+        }
+
+        // At DEFAULT_MIN_STAKE, WaitingForReadiness -> Joining succeeds.
+        vs.test_seed_authoritative_bonded(validator, DEFAULT_MIN_STAKE)
+            .unwrap();
+        vs.confirm_validator_ready(validator).unwrap();
+        assert!(vs.val_join_confirmed.read(&validator).unwrap());
+
+        // Lowering bonded below DEFAULT_MIN_STAKE while Joining causes idempotent
+        // confirm_validator_ready to reject with BondedStakeBelowMinimum.
+        vs.test_seed_authoritative_bonded(validator, sub_min)
+            .unwrap();
+        let err = vs.confirm_validator_ready(validator).unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                I::BondedStakeBelowMinimum {
+                    bonded: sub_min,
+                    minimum: DEFAULT_MIN_STAKE,
                 }
                 .abi_encode()
             ),

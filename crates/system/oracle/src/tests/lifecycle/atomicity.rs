@@ -15,7 +15,7 @@ fn oracle_owner_mutations_roll_back_every_partial_write_boundary() {
         ),
         (
             "finalize_utc_day_vwap",
-            seed_native_oracle_with_snapshot,
+            seed_native_oracle_with_covered_day,
             finalize_utc_day_mutation,
         ),
         (

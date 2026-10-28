@@ -81,6 +81,14 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
         vs.config_epoch_length_blocks.write(10).unwrap();
         vs.register_validator(OWNER, VALIDATOR, &consensus_key)
             .unwrap();
+        let stake = U256::from(1_000_000u64);
+        vs.test_seed_authoritative_min_stake(U256::from(1_000u64))
+            .unwrap();
+        vs.test_seed_authoritative_bonded(VALIDATOR, stake).unwrap();
+        outbe_staking::contract::Staking::new(storage.clone())
+            .total_staked
+            .write(stake)
+            .unwrap();
         vs.mark_pending(VALIDATOR).unwrap();
         vs.confirm_validator_ready(VALIDATOR).unwrap();
         vs.activate_validator_via_boundary_for_test(VALIDATOR)

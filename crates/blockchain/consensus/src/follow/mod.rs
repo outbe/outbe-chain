@@ -48,7 +48,7 @@ pub mod upstream;
 
 pub use admission::{Admission, AdmissionPolicy};
 pub use engine::{run_follow_engine, FollowEngineConfig};
-pub use epocher::FollowerEpocher;
+pub use epocher::{BoundaryObservationError, FollowerEpocher};
 pub use upstream::{
     decode_public_finalization, decode_public_finalized_block, CertifiedFinalizedBlock,
     FinalizedSource, LocalBlockSource, PublicFinalizedBlockDecodeError, TipSource,

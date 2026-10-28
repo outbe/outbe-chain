@@ -49,11 +49,14 @@ fn tee_committee_storage(block_number: u64, members: &[Address]) -> HashMapStora
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(10).unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         for (i, member) in members.iter().enumerate() {
             // Distinct consensus pubkey per member (uniqueness is enforced).
             let mut pubkey = [7u8; 48];
             pubkey[0] = i as u8;
             vs.register_validator(OWNER, *member, &pubkey).unwrap();
+            vs.test_seed_authoritative_bonded(*member, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(*member)
                 .unwrap();
         }
