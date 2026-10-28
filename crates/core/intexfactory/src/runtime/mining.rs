@@ -24,8 +24,8 @@ pub fn mine_promis(
     }
 
     let series = outbe_intex::api::get_series(storage, series_id)?;
-    let settled = nft_balance_of(storage, owner, settled_token_id(series_id))?;
-    if settled < units {
+    let settled = outbe_intex::api::owner_settled_units(storage, series_id, owner)?;
+    if U256::from(settled) < units {
         return Err(IntexFactoryError::InsufficientSettled.into());
     }
 
@@ -44,19 +44,6 @@ pub fn mine_promis(
     // The sequence moves only together with the burn and the mint.
     storage.clone().with_checkpoint(|| {
         factory.write_mine_seq(series_id, owner, next_seq)?;
-
-        // Burn Settled from owner on the NFT.
-        storage.call(
-            INTEX_NFT1155_ADDRESS,
-            U256::ZERO,
-            IIntexNFT1155::burnSettledCall {
-                owner,
-                seriesId: series_id.into(),
-                units,
-            }
-            .abi_encode()
-            .into(),
-        )?;
 
         let mined = u32::try_from(units).map_err(|_| IntexFactoryError::MinedUnitsExceedSeries)?;
         outbe_intex::api::record_mined_units(storage, series_id, owner, mined)?;
@@ -77,18 +64,6 @@ pub fn mine_promis(
         )?;
         Ok(promis_minor)
     })
-}
-
-/// Issued token id = `uint256(seriesId)`. Mirrors `IntexNFT1155._issuedTokenId`.
-pub(crate) fn issued_token_id(series_id: SeriesId) -> U256 {
-    U256::from_be_slice(series_id.as_bytes())
-}
-
-/// Settled token id = the series id with `SETTLED_TAG` set. A series id is 14 bytes, so the issued
-/// space ends at 2**112 and the bit above it distinguishes the classes without a hash. Mirrors
-/// `IntexNFT1155._settledTokenId`. The two derivations must stay identical.
-pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
-    issued_token_id(series_id) | SETTLED_TAG
 }
 
 /// PoW hash: `SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.

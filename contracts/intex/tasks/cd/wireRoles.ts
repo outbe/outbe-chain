@@ -1,10 +1,5 @@
 import { getViemForWire, grantRoleIfMissing, type Address, type RoleContract } from "./wireClient.js";
 
-interface FactoryRoleArgs {
-  settlementContract: string;
-  intexContract: string;
-}
-
 async function grantIntexRole(
   args: { intexContract: string; recipient: string },
   hre: unknown,
@@ -23,22 +18,15 @@ async function grantIntexRole(
   });
 }
 
-export async function settlementGrantRolesAction(args: FactoryRoleArgs, hre: unknown) {
-  await grantIntexRole({ intexContract: args.intexContract, recipient: args.settlementContract }, hre, {
-    role: "SETTLEMENT_ROLE", recipientLabel: "IntexFactory", heading: "Granting roles for IntexFactory...",
-  });
-}
-
-export async function promisWireAction(args: FactoryRoleArgs, hre: unknown) {
-  await grantIntexRole({ intexContract: args.intexContract, recipient: args.settlementContract }, hre, {
-    role: "PROMIS_ROLE", recipientLabel: "IntexFactory", heading: "Granting PROMIS_ROLE on IntexNFT1155...",
-  });
-}
-
-export async function gemWireAction(args: { gemFactory: string; intexContract: string }, hre: unknown) {
-  await grantIntexRole({ intexContract: args.intexContract, recipient: args.gemFactory }, hre, {
-    role: "GEM_ROLE", recipientLabel: "GemFactory", heading: "Granting GEM_ROLE on IntexNFT1155...",
-  });
+export async function burnerGrantRolesAction(
+  args: { intexFactory: string; gemFactory: string; intexContract: string },
+  hre: unknown,
+) {
+  for (const [recipient, recipientLabel] of [[args.intexFactory, "IntexFactory"], [args.gemFactory, "GemFactory"]]) {
+    await grantIntexRole({ intexContract: args.intexContract, recipient }, hre, {
+      role: "BURNER_ROLE", recipientLabel, heading: `Granting BURNER_ROLE on IntexNFT1155 to ${recipientLabel}...`,
+    });
+  }
 }
 
 export async function grantRelayerRoleAction(args: { token: string; adapter: string; contract: string }, hre: unknown) {

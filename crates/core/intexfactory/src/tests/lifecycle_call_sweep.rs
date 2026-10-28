@@ -186,7 +186,7 @@ fn expiry_returns_only_the_load_nobody_realized() {
         seed_called_candidate(&s, 20260101);
         let series_id =
             SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
-        outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
+        outbe_intex::api::record_settled_units(&s, series_id, owner(), 30).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
         let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);

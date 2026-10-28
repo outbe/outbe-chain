@@ -12,9 +12,7 @@ use outbe_primitives::time::WorldwideDay;
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement::{self, SettlementPayment};
 
-use crate::constants::{
-    INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, SETTLED_TAG,
-};
+use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS};
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
@@ -205,9 +203,9 @@ pub(crate) fn owner_balances(
     let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
         0
     } else {
-        nft_units_of(storage, owner, issued_token_id(series_id))?
+        nft_units_of(storage, owner, series_id.token_id())?
     };
-    let settled = nft_units_of(storage, owner, settled_token_id(series_id))?;
+    let settled = outbe_intex::api::owner_settled_units(storage, series_id, owner)?;
     Ok(crate::precompile::IIntexFactory::OwnerBalances {
         issuedUnits: issued,
         settledUnits: settled,
@@ -244,7 +242,7 @@ pub fn settle_intex(
     let series = outbe_intex::api::get_series(storage, series_id)?;
     require_settleable(storage, &series)?;
 
-    let balance = nft_balance_of(storage, owner, issued_token_id(series_id))?;
+    let balance = nft_balance_of(storage, owner, series_id.token_id())?;
     if balance.is_zero() {
         return Err(IntexFactoryError::ZeroBalance.into());
     }
@@ -265,9 +263,9 @@ pub fn settle_intex(
         storage.call(
             INTEX_NFT1155_ADDRESS,
             U256::ZERO,
-            IIntexNFT1155::settleIntexCall {
-                seriesId: series_id.into(),
+            IIntexNFT1155::burnIntexCall {
                 owner,
+                seriesId: series_id.into(),
                 units,
             }
             .abi_encode()
@@ -276,7 +274,7 @@ pub fn settle_intex(
 
         let settled_units =
             u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
-        outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
+        outbe_intex::api::record_settled_units(storage, series_id, owner, settled_units)?;
 
         settlement::collect(
             storage,
@@ -326,7 +324,7 @@ mod proceeds;
 
 #[cfg(test)]
 pub(crate) use mining::compute_pow_hash;
-pub(crate) use mining::{issued_token_id, settled_token_id, validate_pow};
+pub(crate) use mining::validate_pow;
 pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;
 #[cfg(test)]

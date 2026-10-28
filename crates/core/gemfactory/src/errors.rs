@@ -68,9 +68,6 @@ pub enum GemFactoryError {
     #[error("promis load must be positive")]
     ZeroPromisLoad,
 
-    #[error("{0} undecodable")]
-    UndecodableReturn(&'static str),
-
     #[error("gem group {group_key} has an empty member slot during cleanup")]
     EmptyMemberSlotDuringCleanup { group_key: B256 },
 
@@ -133,9 +130,6 @@ impl From<GemFactoryError> for PrecompileError {
             GemFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             GemFactoryError::Overflow => revert_with(I::Overflow {}),
             GemFactoryError::ZeroPromisLoad => revert_with(I::ZeroPromisLoad {}),
-            GemFactoryError::UndecodableReturn(value) => revert_with(I::UndecodableReturn {
-                value: value.to_string(),
-            }),
             GemFactoryError::EmptyMemberSlotDuringCleanup { group_key } => {
                 revert_with(I::EmptyMemberSlotDuringCleanup {
                     groupKey: group_key,

@@ -10,9 +10,9 @@ import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/I
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @dev Called freezes who owns a series. The bridge stays open so an owner can reach the chain that
-///      settles, but only for their own balance.
-contract CalledOwnershipFreezeTest is CrossChainTest {
+/// @dev A Called series still changes hands until its settlement deadline, on a chain and across
+///      the bridge. Past the deadline its unpaid units are forfeited and stay where they are.
+contract CalledSeriesTransfersTest is CrossChainTest {
     uint32 internal constant DST_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
@@ -42,20 +42,14 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenId: tokenId, units: amount});
     }
 
-    function test_AHolderMayCarryTheirOwnBalanceOut() public {
-        vm.prank(owner);
-        nftBridge.send(_param(owner, 4));
-
-        assertEq(intex.balanceOf(owner, tokenId), 6, "burned on the source, bound for the same owner");
-    }
-
-    function test_ABridgeHopToAnotherAddressIsRefused() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, tokenId));
+    function test_ABridgeHopToAnotherAddressPasses() public {
         vm.prank(owner);
         nftBridge.send(_param(stranger, 4));
+
+        assertEq(intex.balanceOf(owner, tokenId), 6, "burned on the source, bound for the new owner");
     }
 
-    function test_AMultiSendCannotFanOutToOthers() public {
+    function test_AMultiSendFansOutToOthers() public {
         bytes32[] memory to = new bytes32[](1);
         to[0] = bytes32(uint256(uint160(stranger)));
         uint256[] memory ids = new uint256[](1);
@@ -63,15 +57,25 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 1;
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, tokenId));
         vm.prank(owner);
         nftBridge.multiSend(
             MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
         );
+        assertEq(intex.balanceOf(owner, tokenId), 9);
     }
 
-    function test_APlainTransferStaysRefused() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, tokenId));
+    function test_APlainTransferPassesUntilTheDeadline() public {
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(owner);
+        intex.safeTransferFrom(owner, stranger, tokenId, 1, "");
+
+        assertEq(intex.balanceOf(stranger, tokenId), 1);
+    }
+
+    function test_APlainTransferPastTheDeadlineIsRefused() public {
+        uint32 deadline = uint32(block.timestamp + 1 days);
+        vm.warp(uint256(deadline) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, tokenId, deadline));
         vm.prank(owner);
         intex.safeTransferFrom(owner, stranger, tokenId, 1, "");
     }

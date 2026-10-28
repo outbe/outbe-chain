@@ -1,16 +1,27 @@
 //! Read-only view precompile for the Intex module.
 //!
 //! Writes stay Rust-to-Rust (IntexFactory). This surface only exposes reads so
-//! off-chain consumers can observe the canonical series identity + lifecycle.
-//! Every method is a view. `reject_value` rejects any `msg.value` before a read.
+//! off-chain consumers can observe the canonical series identity + lifecycle, and
+//! wallets can hold the Settled units as an ERC-1155 collection. Every method is a
+//! view, and the transfers revert. `reject_value` rejects any `msg.value` before a read.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::erc::{
+    ERC1155_INTERFACE_ID, ERC1155_METADATA_URI_INTERFACE_ID, ERC165_INTERFACE_ID,
+};
 use outbe_primitives::error::Result;
 
+use crate::constants::{SETTLED_TOKEN_NAME, SETTLED_TOKEN_SYMBOL};
 use crate::errors::{date_step_error, IntexError};
 use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
+
+const SUPPORTED_INTERFACES: [[u8; 4]; 3] = [
+    ERC165_INTERFACE_ID,
+    ERC1155_INTERFACE_ID,
+    ERC1155_METADATA_URI_INTERFACE_ID,
+];
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -60,16 +71,53 @@ pub fn dispatch(
                 })
             }),
             seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
-            totalSeries(_) => {
-                metadata::<IIntex::totalSeriesCall>(|| Ok(u64::from(registry.read_total_series()?)))
-            }
+            totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| {
+                Ok(U256::from(registry.read_total_series()?))
+            }),
             seriesAt(c) => view(c, |c| {
                 let index =
                     u32::try_from(c.index).map_err(|_| IntexError::SeriesIndexOutOfRange)?;
                 Ok(registry.read_series_id_at(index)?.into())
             }),
+            supportsInterface(c) => {
+                view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0)))
+            }
+            name(_) => metadata::<IIntex::nameCall>(|| Ok(SETTLED_TOKEN_NAME.to_string())),
+            symbol(_) => metadata::<IIntex::symbolCall>(|| Ok(SETTLED_TOKEN_SYMBOL.to_string())),
+            balanceOf(c) => view(c, |c| settled_balance(&registry, c.account, c.id)),
+            balanceOfBatch(c) => view(c, |c| {
+                if c.accounts.len() != c.ids.len() {
+                    return Err(IntexError::BatchLengthMismatch.into());
+                }
+                c.accounts
+                    .iter()
+                    .zip(&c.ids)
+                    .map(|(account, id)| settled_balance(&registry, *account, *id))
+                    .collect()
+            }),
+            isApprovedForAll(c) => view(c, |_| Ok(false)),
+            setApprovalForAll(_) | safeTransferFrom(_) | safeBatchTransferFrom(_) => {
+                Err(IntexError::NonTransferable.into())
+            }
+            uri(c) => view(c, |c| {
+                let series_id = SeriesId::from_token_id(c.id).ok_or(IntexError::SeriesNotFound)?;
+                Ok(crate::metadata::settled_token_uri(
+                    &registry.load_series(series_id)?,
+                ))
+            }),
         }
     })
+}
+
+/// An id outside the series id space holds nothing.
+fn settled_balance(registry: &IntexContract<'_>, account: Address, id: U256) -> Result<U256> {
+    let Some(series_id) = SeriesId::from_token_id(id) else {
+        return Ok(U256::ZERO);
+    };
+    let units = registry
+        .owner_settled_units
+        .read(&IntexContract::owner_units_key(series_id, account))?;
+    Ok(U256::from(units))
 }
 
 fn to_abi_data(

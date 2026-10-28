@@ -6,9 +6,7 @@ import {
   originBridgeWireAction,
 } from "./wireRouters.js";
 import {
-  settlementGrantRolesAction,
-  promisWireAction,
-  gemWireAction,
+  burnerGrantRolesAction,
   grantRelayerRoleAction,
 } from "./wireRoles.js";
 import {
@@ -30,11 +28,6 @@ function wireTask<A>(
     default: (args, hre) => action(args as A, hre),
   })).build();
 }
-
-const factoryOptions: [string, string][] = [
-  ["settlementContract", "IntexFactory contract address"],
-  ["intexContract", "IntexNFT1155 contract address on Outbe"],
-];
 
 export const wireTasks = [
   wireTask("auction-wire", "Wire Auction to EscrowAdapter", [
@@ -77,14 +70,11 @@ export const wireTasks = [
       ["systemAddress", "Outbe begin-block system caller (markCalled)"],
     ], intexFactoryAssertRelayerRoleAction,
   ),
-  wireTask("settlement-grant-roles", "Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory",
-    factoryOptions, settlementGrantRolesAction),
-  wireTask("promis-wire", "Grant PROMIS_ROLE on IntexNFT1155 to IntexFactory (enables minePromis burn path)",
-    factoryOptions, promisWireAction),
-  wireTask("gem-wire", "Grant GEM_ROLE on IntexNFT1155 to the GemFactory precompile (enables sendToGemFactory burn path)", [
+  wireTask("burner-grant-roles", "Grant BURNER_ROLE on IntexNFT1155 to the IntexFactory and GemFactory precompiles", [
+    ["intexFactory", "IntexFactory precompile address on Outbe"],
     ["gemFactory", "GemFactory precompile address on Outbe"],
     ["intexContract", "IntexNFT1155 contract address on Outbe"],
-  ], gemWireAction),
+  ], burnerGrantRolesAction),
   wireTask("grant-relayer-role", "Grant RELAYER_ROLE on an app contract (IntexAuction, EscrowAdapter, IntexNFT1155) to a bridge client", [
     ["token", "App contract that gates inbound calls by RELAYER_ROLE"],
     ["adapter", "Bridge client to grant RELAYER_ROLE to (router or NFT bridge)"],

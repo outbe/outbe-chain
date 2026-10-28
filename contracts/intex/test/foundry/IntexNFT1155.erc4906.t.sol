@@ -24,16 +24,13 @@ contract IntexNFT1155Erc4906Test is Test {
 
     IntexNFT1155 internal nft;
     uint256 internal iTok;
-    uint256 internal sTok;
 
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
         vm.startPrank(admin);
-        nft.grantRole(nft.SETTLEMENT_ROLE(), bridger);
-        nft.grantRole(nft.PROMIS_ROLE(), bridger);
-        nft.grantRole(nft.GEM_ROLE(), bridger);
+        nft.grantRole(nft.BURNER_ROLE(), bridger);
         vm.stopPrank();
-        (iTok, sTok) = nft.tokenIds(SERIES_ID);
+        iTok = nft.issuedTokenId(SERIES_ID);
     }
 
     /// @dev Drains recorded logs; counts MetadataUpdate emits and checks the de-indexed shape.
@@ -67,22 +64,14 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "mint is supply-only");
 
-        nft.sendToGemFactory(user, SERIES_ID, 1);
+        nft.burnIntex(user, SERIES_ID, 1);
         (count,) = _metadataUpdates();
-        assertEq(count, 0, "sendToGemFactory is supply-only");
+        assertEq(count, 0, "burnIntex is supply-only");
 
         nft.markCalled(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
         assertEq(count, 1, "markCalled changes the document");
         assertEq(tokenId, iTok);
-
-        nft.settleIntex(SERIES_ID, user, 2);
-        (count,) = _metadataUpdates();
-        assertEq(count, 0, "settle is supply-only");
-
-        nft.burnSettled(user, SERIES_ID, 1);
-        (count,) = _metadataUpdates();
-        assertEq(count, 0, "burnSettled is supply-only");
 
         nft.crosschainBurn(user, user, iTok, 1);
         nft.crosschainMint(user3, iTok, 1);

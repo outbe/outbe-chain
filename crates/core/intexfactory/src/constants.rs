@@ -1,8 +1,6 @@
 //! IntexFactory constants: external contract addresses called via `storage.call`, and
 //! the caps and timings of the cross-chain sends. The series terms live in Intex.
 
-use alloy_primitives::U256;
-
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
 /// Router calls a call notice gets before it is dropped.
@@ -31,9 +29,3 @@ pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 /// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.
 pub const MAX_SERIES_PER_MARK: usize = 8;
-
-/// Bit that marks a Settled NFT token id. A series id is 14 bytes, so the issued id space ends at
-/// 2**112 and this bit sits directly above it. The classes cannot collide, and clearing the bit
-/// recovers the series. Mirrors `IntexNFT1155._SETTLED_TAG`.
-/// `settled_token_id_tags_the_series_id` reads that Solidity constant.
-pub const SETTLED_TAG: U256 = U256::from_limbs([0, 1 << 48, 0, 0]);

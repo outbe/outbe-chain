@@ -24,7 +24,6 @@ contract IntexNFT1155ForfeitedTest is Test {
 
     IntexNFT1155 internal token;
     uint256 internal iTok;
-    uint256 internal sTok;
     uint256 internal deadline;
     uint256 internal closeAt;
 
@@ -35,7 +34,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         token.issueIntex(user, 10, SERIES_ID);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
-        (iTok, sTok) = token.tokenIds(SERIES_ID);
+        iTok = token.issuedTokenId(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
         closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
     }
@@ -69,7 +68,7 @@ contract IntexNFT1155ForfeitedTest is Test {
     function test_TransferStaysFrozenAfterExpiry() public {
         vm.warp(closeAt + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, iTok));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, iTok, uint32(deadline)));
         token.safeTransferFrom(user, makeAddr("other"), iTok, 1, "");
     }
 
@@ -78,13 +77,5 @@ contract IntexNFT1155ForfeitedTest is Test {
         vm.prank(relayer);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
         token.crosschainBurn(user, user, iTok, 1);
-    }
-
-    /// `statusOf` answers which of the two token ids this is, not where the series
-    /// stands, so expiry must leave it alone. A settled unit is paid for and alive.
-    function test_StatusOfIsUntouched() public {
-        vm.warp(closeAt + 1);
-        assertEq(uint8(token.statusOf(iTok)), uint8(IIntexNFT1155.IntexStatus.Issued));
-        assertEq(uint8(token.statusOf(sTok)), uint8(IIntexNFT1155.IntexStatus.Settled));
     }
 }

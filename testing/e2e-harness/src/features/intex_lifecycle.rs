@@ -37,8 +37,7 @@ const JPY_ISO: u16 = 392;
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
 const TARGET_UNITS: u32 = 6;
-/// Brought home while the series are still tradable. The rest travels under Called,
-/// where the bridge admits a move only to the owner's own address.
+/// Brought home while the series are still uncalled. The rest travels under Called.
 const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// What is home to pay for while issued, and what the second hop brings.

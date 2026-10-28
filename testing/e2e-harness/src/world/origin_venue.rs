@@ -297,22 +297,14 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
+    // Settlement and the Gem Factory burn Issued units through IntexNFT1155, which gates on
+    // BURNER_ROLE.
     hardhat::task(
         intex,
-        "settlement-grant-roles",
+        "burner-grant-roles",
         &[
-            ("--settlement-contract", INTEX_FACTORY.to_owned()),
-            ("--intex-contract", nft.clone()),
-        ],
-        url,
-        chain_id,
-    )?;
-
-    hardhat::task(
-        intex,
-        "promis-wire",
-        &[
-            ("--settlement-contract", INTEX_FACTORY.to_owned()),
+            ("--intex-factory", INTEX_FACTORY.to_owned()),
+            ("--gem-factory", GEM_FACTORY.to_owned()),
             ("--intex-contract", nft.clone()),
         ],
         url,
@@ -359,19 +351,6 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
             ("--intex-auction-contract", auction.clone()),
             ("--compact-contract", format!("{:?}", contracts.compact)),
             ("--payment-token", format!("{:?}", contracts.payment_token)),
-        ],
-        url,
-        chain_id,
-    )?;
-
-    // GemFactory.sendToGemFactory burns through IntexNFT1155, which gates on GEM_ROLE;
-    // without this grant the merchant gem path reverts on access control.
-    hardhat::task(
-        intex,
-        "gem-wire",
-        &[
-            ("--gem-factory", GEM_FACTORY.to_owned()),
-            ("--intex-contract", nft.clone()),
         ],
         url,
         chain_id,

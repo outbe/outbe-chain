@@ -184,8 +184,12 @@ pub struct IntexContract {
     #[attribute(order = 29)]
     pub mined_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 
-    // Per-owner history. The two current classes are the owner's Issued- and
-    // Settled-class token balances, so the ledger keeps only what the token no longer holds.
+    // Per-owner ledgers. The owner's Issued units are its token balance, so the
+    // registry keeps the Settled balance and what left the token.
+    /// `owner_units_key` -> units this owner settled and has not mined yet.
+    #[attribute(order = 78)]
+    pub owner_settled_units: outbe_primitives::storage::dsl::Map<B256, u32>,
+
     /// `owner_units_key` -> units this owner mined in the series.
     #[attribute(order = 30)]
     pub owner_mined_units: outbe_primitives::storage::dsl::Map<B256, u32>,

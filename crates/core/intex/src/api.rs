@@ -9,10 +9,12 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::{date_step_error, IntexError};
+use crate::precompile::IIntex;
 use crate::schema::{
     CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
     SeriesRecordEntryExt,
@@ -107,13 +109,16 @@ pub fn forfeitable_units(storage: &StorageHandle<'_>, record: &SeriesRecord) -> 
     })
 }
 
-/// Record `units` settled: their load belongs to the settler from now on.
+/// Record `units` settled for `owner`: their load belongs to the owner from now on.
 pub fn record_settled_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
+    owner: Address,
     units: u32,
 ) -> Result<()> {
-    add_realized_units(storage, series_id, units, RealizedKind::Settled)
+    add_realized_units(storage, series_id, units, RealizedKind::Settled)?;
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::Settled)?;
+    emit_settled_transfer(storage, series_id, Address::ZERO, owner, units)
 }
 
 /// Record `units` sent to the Gem Factory by `owner`: their load moved into the position.
@@ -157,7 +162,12 @@ pub fn record_mined_units(
     units: u32,
 ) -> Result<()> {
     let registry = IntexContract::new(storage.clone());
-    // Mining more than is settled means the ledger and the token disagree.
+    let key = IntexContract::owner_units_key(series_id, owner);
+    let owner_settled = registry
+        .owner_settled_units
+        .read(&key)?
+        .checked_sub(units)
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
     let settled = registry
         .settled_units
         .read(&series_id)?
@@ -168,12 +178,31 @@ pub fn record_mined_units(
         .read(&series_id)?
         .checked_add(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
+    registry.owner_settled_units.write(&key, owner_settled)?;
     registry.settled_units.write(&series_id, settled)?;
     registry.mined_units.write(&series_id, mined)?;
-    add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)
+    add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)?;
+    emit_settled_transfer(storage, series_id, owner, Address::ZERO, units)
 }
 
-/// Adds to one owner's history ledger for the series.
+/// The Settled collection's ERC-1155 record of a mint (`from` zero) or a burn (`to` zero).
+fn emit_settled_transfer(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    from: Address,
+    to: Address,
+    units: u32,
+) -> Result<()> {
+    IntexContract::new(storage.clone()).emit(IIntex::TransferSingle {
+        operator: INTEX_FACTORY_ADDRESS,
+        from,
+        to,
+        id: series_id.token_id(),
+        value: U256::from(units),
+    })
+}
+
+/// Adds to one owner's ledger for the series.
 fn add_owner_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -184,6 +213,7 @@ fn add_owner_units(
     let registry = IntexContract::new(storage.clone());
     let key = IntexContract::owner_units_key(series_id, owner);
     let ledger = match ledger {
+        OwnerLedger::Settled => &registry.owner_settled_units,
         OwnerLedger::Mined => &registry.owner_mined_units,
         OwnerLedger::GemFactory => &registry.owner_gem_factory_units,
     };
@@ -192,6 +222,17 @@ fn add_owner_units(
         .checked_add(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     ledger.write(&key, total)
+}
+
+/// Units of `series_id` this owner settled and has not mined yet.
+pub fn owner_settled_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    owner: Address,
+) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .owner_settled_units
+        .read(&IntexContract::owner_units_key(series_id, owner))
 }
 
 /// Units of `series_id` this owner mined.
@@ -258,8 +299,9 @@ enum RealizedKind {
     GemFactory,
 }
 
-/// Which per-owner history ledger a record touches.
+/// Which per-owner ledger a record touches.
 enum OwnerLedger {
+    Settled,
     Mined,
     GemFactory,
 }
