@@ -62,22 +62,6 @@ pub struct ConsensusArgs {
     #[arg(long = "validator.evm-key", value_name = "PATH")]
     pub validator_evm_key: Option<PathBuf>,
 
-    /// Path to the BLS12-381 signing share file (hex-encoded).
-    /// Generated via centralized DKG bootstrap and distributed to validators.
-    #[arg(long = "consensus.signing-share", value_name = "PATH")]
-    pub signing_share: Option<PathBuf>,
-
-    /// Path to the BLS12-381 public polynomial file (hex-encoded).
-    /// Used to verify partial signatures from other validators.
-    #[arg(long = "consensus.public-polynomial", value_name = "PATH")]
-    pub public_polynomial: Option<PathBuf>,
-
-    /// Path to the full DKG output artifact (hex-encoded).
-    /// Required with manual share + polynomial provisioning for fresh bootstrap or true
-    /// reshare continuity.
-    #[arg(long = "consensus.dkg-output", value_name = "PATH")]
-    pub dkg_output: Option<PathBuf>,
-
     /// P2P listen address for consensus network.
     #[arg(long = "consensus.listen-addr", default_value = "127.0.0.1:30400")]
     pub listen_address: SocketAddr,
@@ -251,16 +235,18 @@ pub struct ConsensusArgs {
     #[arg(long = "radicle.status-address", value_name = "SOCKET")]
     pub radicle_status_address: Option<SocketAddr>,
 
-    /// Run as a FOLLOWER instead of running the consensus engine. A follower
-    /// cold-syncs finalized blocks from this upstream node. It verifies them
-    /// against the committee, anchored on the genesis validator set that the node
-    /// reads from its own genesis state. This is the lightweight full-node path.
-    /// Mutually exclusive with `--validator`.
-    #[arg(long = "upstream", value_name = "URL", conflicts_with = "is_validator")]
+    /// Certified upstream node. Without `--validator`, the node runs as a
+    /// FOLLOWER: it cold-syncs finalized blocks from this upstream and verifies
+    /// them against the committee, anchored on the genesis validator set in its
+    /// own genesis state. With `--validator`, the node uses this upstream only
+    /// for the `UpstreamBootstrap` phase. It then starts the validator stack in
+    /// the same process when the local chain is bootstrap-ready. A validator
+    /// whose local chain is already ready ignores this value.
+    #[arg(long = "upstream", value_name = "URL")]
     pub upstream: Option<String>,
 
     /// Dev only: follow without verifying consensus certificates (EL-only sync).
-    /// Requires `--upstream`.
+    /// Requires `--upstream`. Rejected with `--validator`.
     #[arg(
         long = "upstream.nocertify",
         default_value_t = false,
@@ -322,15 +308,12 @@ impl ConsensusArgs {
         if self.txpool_pending_staleness_secs == 0 {
             return Err(crate::errors::ArgsError::PendingStalenessSecsZero.into());
         }
-        // Follower mode (`--upstream`) is the lightweight full-node path and must
-        // not be combined with validator/consensus participation. (clap's
-        // `conflicts_with` also enforces this on the CLI. This check covers
-        // programmatic construction and gives a clear message.)
-        if self.upstream.is_some() && self.is_validator {
-            return Err(crate::errors::ArgsError::UpstreamMutuallyExclusiveWithValidator.into());
-        }
         if self.upstream_nocertify && self.upstream.is_none() {
             return Err(crate::errors::ArgsError::UpstreamNocertifyRequiresUpstream.into());
+        }
+        // UpstreamBootstrap must verify every certificate through CommitteeChain.
+        if self.upstream_nocertify && self.is_validator {
+            return Err(crate::errors::ArgsError::ValidatorRejectsUpstreamNocertify.into());
         }
         if self.is_validator && self.signing_key.is_none() {
             return Err(crate::errors::ArgsError::ValidatorRequiresSigningKey.into());
@@ -371,24 +354,9 @@ impl ConsensusArgs {
     }
 
     fn validate_key_material(&self) -> eyre::Result<()> {
-        // Two valid manual-provisioning shapes:
-        //   * signer triplet: all of signing-share + public-polynomial + dkg-output.
-        //   * verifier-join pair: public-polynomial + dkg-output WITHOUT signing-share.
-        //     This is a node that joins a running chain and has no threshold share yet.
-        //     It runs the consensus engine in verifier (follow/verify) mode. It acquires
-        //     a share at the next DKG reshare.
-        // Any other partial combination is an error.
-        let (share, poly, output) = (
-            self.signing_share.is_some(),
-            self.public_polynomial.is_some(),
-            self.dkg_output.is_some(),
-        );
-        match (share, poly, output) {
-            (false, false, false) | (false, true, true) | (true, true, true) => {}
-            _ => {
-                return Err(crate::errors::ArgsError::InvalidManualDkgProvisioning.into());
-            }
-        }
+        // Threshold material comes only from the keys directory or from
+        // in-process DKG. A shareless verifier recovers its public material
+        // from the latest finalized on-chain boundary.
         if self.bls_key_backend == "encrypted" && self.bls_passphrase.is_none() {
             return Err(crate::errors::ArgsError::EncryptedBackendRequiresPassphraseArg.into());
         }
@@ -558,14 +526,61 @@ mod tests {
         assert!(args.validate().is_ok());
     }
 
-    #[test]
-    fn test_follower_upstream_conflicts_with_validator() {
+    fn validator_args() -> ConsensusArgs {
         let mut args = default_args();
-        args.upstream = Some("http://upstream:8545".to_string());
         args.is_validator = true;
         args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
-        let err = args.validate().unwrap_err().to_string();
-        assert!(err.contains("mutually exclusive"), "error: {err}");
+        args.validator_evm_key = Some(PathBuf::from("/tmp/evm-key.hex"));
+        args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
+        args.radicle_status_address = Some("127.0.0.1:9100".parse().unwrap());
+        args
+    }
+
+    #[test]
+    fn validator_accepts_upstream_for_bootstrap() {
+        let mut args = validator_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        args.validate()
+            .expect("validator plus upstream is one lifecycle");
+    }
+
+    #[test]
+    fn cli_parses_validator_with_upstream_signing_key_evm_key_and_radicle() {
+        let cli = TestConsensusCli::try_parse_from([
+            "test",
+            "--validator",
+            "--upstream",
+            "http://upstream:8545",
+            "--consensus.signing-key",
+            "/tmp/key.hex",
+            "--validator.evm-key",
+            "/tmp/evm-key.hex",
+            "--radicle.control-socket",
+            "/tmp/radicle.sock",
+            "--radicle.status-address",
+            "127.0.0.1:9100",
+        ])
+        .expect("clap accepts validator plus upstream");
+        assert!(cli.consensus.is_validator);
+        assert_eq!(
+            cli.consensus.upstream.as_deref(),
+            Some("http://upstream:8545")
+        );
+        cli.consensus
+            .validate()
+            .expect("validator plus upstream validates");
+    }
+
+    #[test]
+    fn validator_rejects_upstream_nocertify() {
+        let mut args = validator_args();
+        args.upstream = Some("http://upstream:8545".to_string());
+        args.upstream_nocertify = true;
+        let error = args.validate().unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<crate::errors::ArgsError>(),
+            Some(&crate::errors::ArgsError::ValidatorRejectsUpstreamNocertify)
+        );
     }
 
     #[test]
@@ -647,24 +662,6 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("--validator"));
-    }
-
-    #[test]
-    fn manual_dkg_provisioning_acceptance_covers_all_flag_combinations() {
-        let expected = [true, false, false, false, false, false, true, true];
-        for (flags, accepted) in expected.into_iter().enumerate() {
-            let mut args = default_args();
-            args.signing_share = (flags & 1 != 0).then(|| PathBuf::from("share.hex"));
-            args.public_polynomial = (flags & 2 != 0).then(|| PathBuf::from("poly.hex"));
-            args.dkg_output = (flags & 4 != 0).then(|| PathBuf::from("output.hex"));
-            let result = args.validate();
-            assert_eq!(result.is_ok(), accepted, "provisioning flags {flags:03b}");
-            if let Err(error) = result {
-                assert!(error
-                    .to_string()
-                    .starts_with("manual DKG provisioning requires"));
-            }
-        }
     }
 
     #[test]

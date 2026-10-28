@@ -27,7 +27,6 @@ fn setup_second_pair(oracle: &OracleContract) -> AddressPair {
         .write_pair(&SECOND_PAIR_ID, pair)
         .unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
-    oracle.reference_currencies.push(SECOND_ISO).unwrap();
     pair
 }
 

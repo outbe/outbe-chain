@@ -104,8 +104,14 @@ fn register_active_fixture(
     consensus_pubkey: &[u8; 48],
     stake: U256,
 ) {
-    vs.test_register_active_validator(validator, consensus_pubkey, stake)
+    let admission_stake = stake.max(U256::from(1));
+    vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
+    vs.test_register_active_validator(validator, consensus_pubkey, admission_stake)
         .unwrap();
+    if stake.is_zero() {
+        vs.test_set_stake_projection(validator, StakeProjection::new(U256::ZERO, None))
+            .unwrap();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +285,7 @@ fn direct_miss_felony_timestamp_overflow_is_side_effect_free_and_retryable() {
 #[test]
 fn test_felony_stays_jailed_when_slash_drops_below_min_stake() {
     // The single biggest ordering invariant: JAIL BEFORE SLASH. slash_stake demotes
-    // ACTIVE->EXITING / PENDING->REGISTERED when stake drops below min_stake. A JAILED
+    // ACTIVE->EXITING / Joining->WaitingForReadiness when stake drops below min_stake. A JAILED
     // status matches neither arm. Thus a JAILED validator stays JAILED even when the
     // slash takes it below min_stake.
     with_storage(|storage| {
@@ -915,6 +921,10 @@ fn test_full_lifecycle_integration() {
         // felony has an ACTIVE consensus participant to act on. The DKG reshare
         // normally promotes PENDING->ACTIVE. This test uses the semantic boundary fixture.
         staking
+            .config_min_stake
+            .write(U256::from(10_000u64))
+            .unwrap();
+        staking
             .topup(validator, validator, U256::from(10_000u64))
             .unwrap();
         // stake() no longer transfers funds (EVM call value does it).
@@ -1424,6 +1434,23 @@ fn write_test_committee(storage: &StorageHandle) {
     };
     let mut validators = ValidatorSet::new(storage.clone());
     validators.test_configure_registry(OWNER).unwrap();
+    let minimum = U256::from(1_000u64);
+    validators
+        .test_seed_authoritative_min_stake(minimum)
+        .unwrap();
+    for member in &snapshot.committee {
+        if !validators.is_validator(member.address).unwrap() {
+            validators
+                .register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(member.address, minimum)
+                .unwrap();
+            validators
+                .activate_validator_via_boundary_for_test(member.address)
+                .unwrap();
+        }
+    }
     validators
         .test_seed_committee_ring(OWNER, &snapshot)
         .unwrap();

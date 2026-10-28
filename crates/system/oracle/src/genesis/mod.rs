@@ -81,8 +81,6 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Sorted unique ISO codes valid as pricing reference currencies.
-    pub reference_currencies: Vec<u16>,
     /// Sorted unique annual policy rates, independent from references and pairs.
     pub policy_rates: Vec<PolicyRate>,
     /// Penalty counters as `(validator, success, abstain, miss)`.
@@ -108,7 +106,6 @@ impl OracleGenesisConfig {
             pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
-            reference_currencies: vec![156, 344, 392, 826, 840, 978],
             policy_rates: DEFAULT_POLICY_RATES
                 .iter()
                 .map(|&(iso_code, rate)| PolicyRate {

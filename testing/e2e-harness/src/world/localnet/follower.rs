@@ -32,6 +32,7 @@ const VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS: &[(&str, bool)] = &[
     ("--validator.evm-key", true),
     ("--radicle.control-socket", true),
     ("--radicle.status-address", true),
+    ("--upstream", true),
 ];
 
 pub(super) fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
@@ -64,10 +65,7 @@ pub(super) fn derive_validator_recovery_follower_args(
     let mut follower = Vec::with_capacity(original.len() + 2);
     let mut remaining = original.iter();
     while let Some(arg) = remaining.next() {
-        if ["--upstream", "--upstream.nocertify"]
-            .iter()
-            .any(|option| is_option(arg, option))
-        {
+        if is_option(arg, "--upstream.nocertify") {
             bail!("validator argv unexpectedly contains follower option {arg}");
         }
         match VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS
@@ -101,7 +99,7 @@ impl Localnet {
     /// Positive-start barrier for the selected upstream, not a substitute for
     /// the node's own authenticated admission. The owner is stopped while its
     /// exact durable anchor is loaded. Polling never reopens the owner journal.
-    pub(super) fn wait_selected_upstream_admission(
+    pub(crate) fn wait_selected_upstream_admission(
         &self,
         index: usize,
         upstream_slot: usize,

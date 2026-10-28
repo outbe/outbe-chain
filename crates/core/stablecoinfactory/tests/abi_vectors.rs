@@ -56,9 +56,8 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(vote),
-        // Pin the published interface including the unified bond error; its
-        // selector and dynamic error payload are independently pinned below.
-        b256!("fe40568b81a166b265f10624d3d2f8e0fd3370f8c4ec8b55ab2800234730288c")
+        // Enum ordinals are not represented in the export; pin their wire encoding below.
+        b256!("d70f8faa5eab98ddebd07e706f1fbadac3fb1e3db207b440ebff591fe48cbf18")
     );
 }
 
@@ -145,6 +144,27 @@ fn alloy_encodes_canonical_dynamic_arguments() {
         bond_error.as_slice(),
         &hex!("1fa7abd90000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d626f6e642072656a656374656400000000000000000000000000000000000000")
     );
+}
+
+#[test]
+fn vote_status_filters_match_compact_abi_vectors() {
+    for (status, expected) in [
+        (
+            IVote::ProposalStatus::Expired,
+            hex!("42d1895700000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a"),
+        ),
+        (
+            IVote::ProposalStatus::Error,
+            hex!("42d1895700000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a"),
+        ),
+    ] {
+        let call = IVote::listProposalsByStatusCall {
+            status,
+            index: U256::ZERO,
+            count: U256::from(10),
+        };
+        assert_eq!(call.abi_encode().as_slice(), &expected);
+    }
 }
 
 #[test]

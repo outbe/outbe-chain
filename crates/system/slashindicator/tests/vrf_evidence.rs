@@ -282,6 +282,7 @@ fn setup_storage(
         .find(|member| member.address == proposer)
         .expect("proposer belongs to snapshot")
         .consensus_pubkey;
+    vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
     vs.register_validator(OWNER, proposer, &proposer_pubkey)
         .unwrap();
     vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
@@ -291,6 +292,8 @@ fn setup_storage(
     for member in &snapshot.committee {
         if !vs.is_validator(member.address).unwrap() {
             vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .unwrap();
+            vs.test_seed_authoritative_bonded(member.address, U256::from(1))
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(member.address)
                 .unwrap();
@@ -335,7 +338,11 @@ fn register_submitter_as_active(storage: StorageHandle) {
     let mut pk = [0u8; 48];
     pk[0] = 0x77;
     vs.test_configure_registry(OWNER).unwrap();
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
+    vs.test_seed_authoritative_bonded(SUBMITTER, minimum)
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
         .unwrap();
 }
@@ -443,7 +450,11 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
         let mut pk = [0u8; 48];
         pk[0] = 0x44;
         vs.test_configure_registry(OWNER).unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
+        vs.test_seed_authoritative_bonded(SUBMITTER, minimum)
+            .unwrap();
         vs.activate_validator_via_boundary_for_test(SUBMITTER)
             .unwrap();
         vs.force_exit_validator(SUBMITTER).unwrap();

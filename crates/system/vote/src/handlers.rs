@@ -120,10 +120,9 @@ pub trait VoteTarget: Send + Sync {
     ) -> Result<TargetExecutionOutcome> {
         match status {
             ProposalStatus::Approved => self.handle_approved(ctx, proposal_id, payload, context),
-            ProposalStatus::Rejected
-            | ProposalStatus::Expired
-            | ProposalStatus::Pending
-            | ProposalStatus::Error => Ok(TargetExecutionOutcome::Applied),
+            ProposalStatus::Expired | ProposalStatus::Pending | ProposalStatus::Error => {
+                Ok(TargetExecutionOutcome::Applied)
+            }
         }
     }
 }

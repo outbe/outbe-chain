@@ -15,8 +15,8 @@ use outbe_primitives::{
     time::{timestamp_to_date_key, TimeError, SECONDS_PER_DAY},
 };
 
-use crate::api::get_all_reference_currencies;
 use crate::call_window::{CallWindow, CallWindows};
+use crate::constants::REFERENCE_CURRENCIES;
 use crate::schema::OracleContract;
 
 /// This trait processes one factory's calls and forfeits in the stored phase order.
@@ -45,9 +45,9 @@ pub trait CallSweep<'storage> {
     }
 
     /// Points every cursor at the start of a freshly opened day.
-    fn reset_cursors(&self, ctx: &BlockRuntimeContext) -> Result<()> {
+    fn reset_cursors(&self, _ctx: &BlockRuntimeContext) -> Result<()> {
         self.currency_cursor().write(0)?;
-        for reference_currency in get_all_reference_currencies(ctx)? {
+        for reference_currency in REFERENCE_CURRENCIES {
             self.bins(reference_currency)
                 .scan_cursor()
                 .write(&reference_currency, 0)?;
@@ -265,7 +265,7 @@ where
         mut scan_terms,
         mut skipped,
     } = index;
-    let currencies = get_all_reference_currencies(ctx)?;
+    let currencies = REFERENCE_CURRENCIES;
     let mut windows = CallWindows::new(ctx.storage.clone(), pinned_day);
     call_bins::walk_currencies(
         &currencies,

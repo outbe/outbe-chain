@@ -29,6 +29,11 @@ pub fn parse_amount(amount: &str) -> Result<U256> {
     Ok(amount)
 }
 
+/// Parse a decimal base-unit amount that may be zero (used only by `staking unstake`).
+pub fn parse_amount_allow_zero(amount: &str) -> Result<U256> {
+    U256::from_str_radix(amount, 10).map_err(|e| CommandInputError::InvalidAmount(e).into())
+}
+
 pub fn require_signer(private_key: Option<&str>) -> Result<TxSigner> {
     let key = private_key.ok_or(CommandInputError::PrivateKeyRequired)?;
     TxSigner::new(key)

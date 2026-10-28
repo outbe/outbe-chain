@@ -240,10 +240,6 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         // scans read their ISO from there, not from a hard-coded constant.
         outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(outbe_oracle::api::DAY_TYPE_ISO)
-            .unwrap();
         outbe_oracle::api::set_exchange_rate(
             storage.clone(),
             Address::ZERO,
@@ -592,11 +588,18 @@ fn test_register_active_with_stake(
 ) {
     test_register_waiting(vs, validator, pubkey);
     assert!(stake >= minimum);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     vs.test_set_stake_projection(
         validator,
         outbe_validatorset::StakeProjection::new(stake, None),
     )
     .unwrap();
+    let staking = outbe_staking::contract::Staking::new(vs.storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + stake).unwrap();
+    vs.storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
 }
@@ -614,14 +617,27 @@ pub(super) fn cache_db_from_storage(
     seed_storage: HashMapStorageProvider,
 ) -> CacheDB<EmptyDBTyped<ProviderError>> {
     let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let entries: Vec<_> = seed_storage.storage.into_iter().collect();
-    let mut addresses: Vec<Address> = entries.iter().map(|((address, _), _)| *address).collect();
+    let mut addresses: Vec<Address> = seed_storage
+        .storage
+        .keys()
+        .map(|(address, _)| *address)
+        .chain(std::iter::once(
+            outbe_primitives::addresses::STAKING_ADDRESS,
+        ))
+        .collect();
     addresses.sort_unstable();
     addresses.dedup();
     for address in addresses {
-        db.insert_account_info(address, AccountInfo::default());
+        let balance = seed_storage.get_balance(address);
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                balance,
+                ..Default::default()
+            },
+        );
     }
-    for ((address, slot), value) in entries {
+    for ((address, slot), value) in seed_storage.storage {
         db.insert_account_storage(address, slot, value)
             .expect("seed storage insert should succeed");
     }
@@ -638,7 +654,17 @@ pub(super) fn seed_registered_active_validator(
     vs.set_config_max_validators(128).unwrap();
     vs.config_epoch_length_blocks.write(60).unwrap();
     vs.config_is_initialized.write(true).unwrap();
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     vs.register_validator(OWNER, validator, pk).unwrap();
+    vs.test_seed_authoritative_bonded(validator, minimum)
+        .unwrap();
+    let staking = outbe_staking::contract::Staking::new(storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + minimum).unwrap();
+    storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(validator)
         .unwrap();
     seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
@@ -647,10 +673,6 @@ pub(super) fn seed_registered_active_validator(
     // 840 also goes on the reference currency list, matching genesis: the
     // scans read their ISO from there.
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(outbe_oracle::api::DAY_TYPE_ISO)
-        .unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage,
         Address::ZERO,
@@ -669,8 +691,22 @@ pub(super) fn register_and_activate_native(
     validator: Address,
     consensus_key: &[u8; 48],
 ) {
+    let minimum = U256::from(1_000u64);
+    validators
+        .test_seed_authoritative_min_stake(minimum)
+        .unwrap();
     validators
         .register_validator(OWNER, validator, consensus_key)
+        .unwrap();
+    validators
+        .test_seed_authoritative_bonded(validator, minimum)
+        .unwrap();
+    let staking = outbe_staking::contract::Staking::new(validators.storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + minimum).unwrap();
+    validators
+        .storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
         .unwrap();
     validators.mark_pending(validator).unwrap();
     validators.confirm_validator_ready(validator).unwrap();

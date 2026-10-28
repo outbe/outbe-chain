@@ -645,7 +645,7 @@ fn discounted(price: U256) -> U256 {
 }
 
 fn seed_oracle(storage: &StorageHandle<'_>) {
-    outbe_oracle::test_support::publish_day_type_quote(storage, U256::from(3_000_000), 1, NOW)
+    outbe_oracle::test_support::publish_day_type_rate(storage, U256::from(3_000_000), 1, NOW)
         .unwrap();
 }
 

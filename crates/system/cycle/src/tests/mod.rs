@@ -54,8 +54,15 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
         let mut validators = ValidatorSet::new(ctx.storage.clone());
         validators.config_owner.write(owner).unwrap();
         validators.set_config_max_validators(1).unwrap();
+        let minimum = U256::from(1_000u64);
+        validators
+            .test_seed_authoritative_min_stake(minimum)
+            .unwrap();
         validators
             .register_validator(owner, founder, &consensus_key)
+            .unwrap();
+        validators
+            .test_seed_authoritative_bonded(founder, minimum)
             .unwrap();
         validators.mark_pending(founder).unwrap();
         validators.confirm_validator_ready(founder).unwrap();
@@ -103,7 +110,6 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     let oracle = ctx
         .storage
         .contract::<outbe_oracle::schema::OracleContract<'_>>();
-    oracle.reference_currencies.push(840).unwrap();
     oracle
         .utc_day_vwap_last_finalized
         .write(29_991_231)

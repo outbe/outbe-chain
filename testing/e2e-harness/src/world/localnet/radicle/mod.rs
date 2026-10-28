@@ -19,10 +19,8 @@ mod governments;
 mod readiness;
 mod source;
 
-use readiness::{
-    native_address, native_node_id, provisioned_radicle_node_id, wait_radicle_ready,
-    RadicleReadiness,
-};
+pub(super) use readiness::provisioned_radicle_node_id;
+use readiness::{native_address, native_node_id, wait_radicle_ready, RadicleReadiness};
 use source::{
     configure_user_radicle, connected_sessions, native_sessions, repository_visible,
     require_public_source_repository, seed_scope_all,

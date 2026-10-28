@@ -125,10 +125,6 @@ fn register(storage: &StorageHandle<'_>, iso: u16) {
         .is_none()
     {
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso)).unwrap();
-        OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(iso)
-            .unwrap();
     }
 }
 

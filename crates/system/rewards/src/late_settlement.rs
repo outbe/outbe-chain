@@ -443,8 +443,15 @@ mod tests {
         storage.enter(|handle| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(handle.clone());
             validators.set_config_max_validators(1).unwrap();
+            let minimum = U256::from(1_000u64);
+            validators
+                .test_seed_authoritative_min_stake(minimum)
+                .unwrap();
             validators
                 .register_validator(Address::ZERO, V0, &CONSENSUS_KEY)
+                .unwrap();
+            validators
+                .test_seed_authoritative_bonded(V0, minimum)
                 .unwrap();
             validators.mark_pending(V0).unwrap();
             validators.confirm_validator_ready(V0).unwrap();

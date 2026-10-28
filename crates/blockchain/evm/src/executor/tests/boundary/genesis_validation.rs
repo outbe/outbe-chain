@@ -9,6 +9,8 @@ fn genesis_validation_rejects_active_validator_with_zero_stake() {
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         staking.config_min_stake.write(U256::from(100u64)).unwrap();
+        staking.stake_amount.write(&validator, U256::ZERO).unwrap();
+        staking.total_staked.write(U256::ZERO).unwrap();
 
         let genesis = GenesisValidators {
             validators: vec![GenesisValidator {

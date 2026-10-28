@@ -269,7 +269,7 @@ pub(crate) fn issue_reward_gem(
     (issuance_currency, reference_currency): (u16, u16),
 ) -> Result<U256> {
     let (owner, load) = recipient;
-    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    outbe_oracle::api::check_reference_currency(reference_currency)?;
     let vwap = previous_day_vwap(storage, reference_currency)?.ok_or(
         AgentRewardError::MissingPreviousDayPrice(reference_currency),
     )?;

@@ -147,6 +147,29 @@ fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
 }
 
 #[test]
+fn generic_market_overflow_saturates_the_aggregate() {
+    with_bare_coen_usdt_oracle(|_storage, oracle| {
+        let pair = pair_key(COEN, USDT);
+        let day = 1_780_012_800u64;
+        oracle
+            .daily_pv_sum
+            .get_nested(&pair)
+            .write(&day, U256::MAX)
+            .unwrap();
+
+        oracle
+            .write_snapshot(day + 60 * 60, &[(pair, U256::MAX, fixed18(2))])
+            .unwrap();
+
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
+        assert_eq!(
+            oracle.daily_pv_sum.get_nested(&pair).read(&day).unwrap(),
+            U256::MAX
+        );
+    });
+}
+
+#[test]
 fn calculate_vwap_reverts_for_a_window_without_snapshots() {
     with_bare_oracle(|_storage, oracle| {
         // No snapshots at all

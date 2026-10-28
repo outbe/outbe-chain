@@ -1,10 +1,96 @@
 mod finalization;
 pub(in crate::stack) mod local_anchor;
 mod startup;
+#[cfg(test)]
+pub(in crate::stack) use startup::wait_for_bootstrap_tee_lease;
 
 use finalization::finalization_bytes_for_height;
 
 use super::*;
+
+/// Local chain and process facts that decide `ValidatorBootstrapReady`.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::stack) struct BootstrapFacts {
+    pub(in crate::stack) finalized_height: u64,
+    pub(in crate::stack) local_key_in_validator_set: bool,
+    pub(in crate::stack) finalized_boundary_present: bool,
+    pub(in crate::stack) on_chain_offer: B256,
+    pub(in crate::stack) resident_offer: Option<B256>,
+    pub(in crate::stack) tee_lease_armed: bool,
+}
+
+/// Pure `ValidatorBootstrapReady` decision.
+pub(in crate::stack) fn bootstrap_ready_from_facts(facts: BootstrapFacts) -> bool {
+    if !facts.local_key_in_validator_set {
+        return false;
+    }
+    if facts.finalized_height == 0 {
+        return true;
+    }
+    facts.finalized_boundary_present
+        && !facts.on_chain_offer.is_zero()
+        && facts.tee_lease_armed
+        && facts.resident_offer == Some(facts.on_chain_offer)
+}
+
+/// Local authority required before a validator leaves certified sync.
+pub(in crate::stack) struct ValidatorBootstrap {
+    pub(in crate::stack) local_consensus_key: bls12381::PublicKey,
+    pub(in crate::stack) local_key_in_genesis_validator_set: bool,
+    pub(in crate::stack) dkg_rotation_params: DkgRotationParams,
+    pub(in crate::stack) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+impl ValidatorBootstrap {
+    pub(in crate::stack) fn is_validator_bootstrap_ready(
+        &self,
+        node: &OutbeFullNode,
+        height: u64,
+    ) -> Result<bool> {
+        if height == 0 {
+            return Ok(bootstrap_ready_from_facts(BootstrapFacts {
+                finalized_height: 0,
+                local_key_in_validator_set: self.local_key_in_genesis_validator_set,
+                finalized_boundary_present: false,
+                on_chain_offer: B256::ZERO,
+                resident_offer: None,
+                tee_lease_armed: false,
+            }));
+        }
+        let tee_lease_armed = *self.tee_lease_armed_rx.borrow();
+        if !tee_lease_armed {
+            return Ok(false);
+        }
+        let finalized_boundary_present =
+            recover_latest_boundary_artifact(&node.provider, height, self.dkg_rotation_params)?
+                .is_some();
+        if !finalized_boundary_present {
+            return Ok(false);
+        }
+        let hash = node
+            .provider
+            .block_hash(height)?
+            .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
+        let state = node.provider.state_by_block_hash(hash)?;
+        let on_chain_offer = validators::read_tee_offer_public_from_state(&state)?;
+        let resident_offer = outbe_tee::resident_offer_public_key_state_v1()?;
+        let local_key_in_validator_set =
+            validators::read_consensus_validators_at_block(&node.provider, hash)?
+                .public_keys
+                .contains(&self.local_consensus_key)
+                || validators::read_admitted_non_consensus_at_block(&node.provider, hash)?
+                    .public_keys
+                    .contains(&self.local_consensus_key);
+        Ok(bootstrap_ready_from_facts(BootstrapFacts {
+            finalized_height: height,
+            local_key_in_validator_set,
+            finalized_boundary_present,
+            on_chain_offer,
+            resident_offer,
+            tee_lease_armed,
+        }))
+    }
+}
 
 /// Spawn the drainer that answers `outbe_getFinalization` RPC requests from the
 /// marshal. The `outbe-rpc` handler cannot see the marshal or `ConsensusBlock`,
@@ -28,24 +114,31 @@ pub(in crate::stack) fn spawn_finalization_drainer<E>(
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     bridge: ConsensusExecutionBridge,
     parent_store: outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
-) where
+    mut phase_cancel: tokio::sync::watch::Receiver<bool>,
+) -> commonware_runtime::Handle<()>
+where
     E: Spawner + Metrics,
 {
     let rx = bridge.set_finalization_fetcher();
     ctx.child("finalization_drainer")
         .spawn(move |_| async move {
             let mut rx = rx;
-            while let Some((height, reply)) = rx.recv().await {
-                let answer = finalization_bytes_for_height(
-                    &marshal_mailbox,
-                    &parent_store,
-                    Height::new(height),
-                )
-                .await;
-                // The receiver may have gone away (RPC client disconnected). Ignore it.
-                let _ = reply.send(answer);
+            let serve = async {
+                while let Some((height, reply)) = rx.recv().await {
+                    let answer = finalization_bytes_for_height(
+                        &marshal_mailbox,
+                        &parent_store,
+                        Height::new(height),
+                    )
+                    .await;
+                    let _ = reply.send(answer);
+                }
+            };
+            tokio::select! {
+                _ = serve => {},
+                _ = phase_cancel.wait_for(|cancelled| *cancelled) => {},
             }
-        });
+        })
 }
 
 /// Run the follower stack. It does these steps WITHOUT running the consensus engine:
@@ -60,7 +153,7 @@ pub(in crate::stack) async fn run_follow_stack<E>(
     args: ConsensusArgs,
     connection: services::FollowerConnection,
     services: services::FollowerStackServices,
-) -> Result<()>
+) -> Result<crate::follower_shutdown::FollowStackExit>
 where
     E: BufferPooler
         + Clock
@@ -128,11 +221,6 @@ where
         "follower mode (--upstream) selected; anchored on the genesis validator set"
     );
 
-    let consensus_storage_root = args
-        .storage_dir
-        .clone()
-        .ok_or(crate::errors::FollowerStackError::MissingStorageDirBeforeStartup)?;
-
     startup::run_certified_follow_stack(
         ctx,
         services::FollowerConnection {
@@ -143,7 +231,6 @@ where
         startup::FollowerTrustAnchor {
             participants: anchor_participants,
             epoch_length_blocks: epoch_length,
-            storage_root: consensus_storage_root,
         },
         services,
     )

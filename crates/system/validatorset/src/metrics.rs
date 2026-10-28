@@ -17,7 +17,7 @@ fn addr_label(addr: Address) -> String {
 
 /// Per-validator current status, one of the values from
 /// [`crate::runtime::status`]:
-/// `0=REGISTERED`, `1=PENDING`, `2=ACTIVE`, `3=EXITING`,
+/// `1=PENDING`, `2=ACTIVE`, `3=EXITING`,
 /// `4=UNBONDING`, `5=INACTIVE`, `6=JAILED`.
 pub fn record_validator_status(addr: Address, status: u8) {
     gauge!("outbe_validator_status", "addr" => addr_label(addr)).set(f64::from(status));

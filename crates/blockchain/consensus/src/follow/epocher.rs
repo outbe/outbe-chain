@@ -3,7 +3,7 @@
 //!
 //! Validator activation can be delayed inside the configured grace window, and
 //! every subsequent plan is measured from that actual activation. Therefore
-//! neither `FixedEpocher` nor `(height-1)/L` is authoritative after the first
+//! a fixed-length epocher or `(height-1)/L` is not authoritative after the first
 //! delayed rotation. [`FollowerEpocher`] records exact, authenticated
 //! `BoundaryOutcome` carrier heights and derives every completed interval from
 //! adjacent observations. Length and activation grace only bound discovery of
@@ -37,6 +37,8 @@ pub enum BoundaryObservationError {
     },
     #[error("epoch boundary arithmetic overflow")]
     Overflow,
+    #[error("epoch anchor height must be non-zero")]
+    ZeroAnchorHeight,
 }
 
 #[derive(Debug)]
@@ -59,6 +61,48 @@ impl FollowerEpocher {
     /// boundary. They never select an epoch.
     pub fn new(length: u64, activation_grace: u64) -> Self {
         Self::from_anchor(length, activation_grace, Epoch::new(0), Height::new(1))
+    }
+
+    /// Replace the anchor on an epocher that is already shared with a marshal
+    /// actor. `Marshal::init` reads `last_index()` and does not call
+    /// `containing()`, so this is safe after init returns the last finalized
+    /// height. Earlier observations are dropped.
+    pub fn reset_from_anchor(
+        &self,
+        anchor_epoch: Epoch,
+        anchor_first_height: Height,
+    ) -> Result<(), BoundaryObservationError> {
+        if anchor_first_height.get() == 0 {
+            return Err(BoundaryObservationError::ZeroAnchorHeight);
+        }
+        let mut inner = self.write();
+        inner.activations = BTreeMap::from([(anchor_epoch.get(), anchor_first_height.get())]);
+        Ok(())
+    }
+
+    /// Height to hint when a backup vote names an epoch above `current_epoch`.
+    ///
+    /// A closed epoch, one whose next boundary is already in
+    /// `ObservedBoundaries`, hints [`Epocher::last`]. An open epoch hints one
+    /// block below the earliest height of [`Self::next_boundary_window`]:
+    /// `activation_height + epoch_length - 1`, which is the last height
+    /// guaranteed to belong to `current_epoch`.
+    pub fn backup_vote_hint_height(&self, current_epoch: Epoch) -> Option<Height> {
+        let next = current_epoch.get().checked_add(1)?;
+        let closed = {
+            let inner = self.read();
+            if !inner.activations.contains_key(&current_epoch.get()) {
+                return None;
+            }
+            inner.activations.contains_key(&next)
+        };
+        if closed {
+            self.last(current_epoch)
+        } else {
+            self.next_boundary_window(current_epoch)
+                .and_then(|(earliest, _)| earliest.get().checked_sub(1))
+                .map(Height::new)
+        }
     }
 
     /// Start from a boundary already present in trusted, finalized local
@@ -343,5 +387,92 @@ mod tests {
         );
         assert_eq!(e.first(Epoch::new(1)), Some(Height::new(63)));
         assert_eq!(e.first(Epoch::new(2)), None);
+    }
+
+    #[test]
+    fn reset_from_anchor_replaces_history_visible_through_clone() {
+        let epocher = FollowerEpocher::new(60, 10);
+        epocher
+            .observe_boundary(Epoch::new(1), Height::new(63))
+            .unwrap();
+        let shared = epocher.clone();
+        assert_eq!(
+            epocher.reset_from_anchor(Epoch::new(621), Height::new(0)),
+            Err(BoundaryObservationError::ZeroAnchorHeight)
+        );
+        epocher
+            .reset_from_anchor(Epoch::new(621), Height::new(745_205))
+            .unwrap();
+
+        assert_eq!(shared.activation_height(Epoch::new(0)), None);
+        assert_eq!(shared.activation_height(Epoch::new(1)), None);
+        assert_eq!(
+            shared.activation_height(Epoch::new(621)),
+            Some(Height::new(745_205))
+        );
+        assert!(shared.containing(Height::new(745_204)).is_none());
+        assert_eq!(
+            shared.containing(Height::new(745_205)).unwrap().epoch(),
+            Epoch::new(621)
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(621)),
+            Some(Height::new(745_264))
+        );
+        assert_eq!(
+            shared.containing(Height::new(745_264)).unwrap().epoch(),
+            Epoch::new(621)
+        );
+        shared
+            .observe_boundary(Epoch::new(622), Height::new(745_268))
+            .unwrap();
+        assert_eq!(
+            epocher.activation_height(Epoch::new(622)),
+            Some(Height::new(745_268))
+        );
+    }
+
+    #[test]
+    fn backup_vote_hint_uses_last_when_closed_and_last_guaranteed_epoch_block_when_open() {
+        let epocher = FollowerEpocher::new(60, 10);
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            Some(Height::new(60))
+        );
+        assert_eq!(
+            epocher.containing(Height::new(60)).unwrap().epoch(),
+            Epoch::new(0)
+        );
+        assert_eq!(epocher.backup_vote_hint_height(Epoch::new(1)), None);
+
+        epocher
+            .observe_boundary(Epoch::new(1), Height::new(63))
+            .unwrap();
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            Some(Height::new(62))
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(0)),
+            epocher.last(Epoch::new(0))
+        );
+        assert_eq!(
+            epocher.backup_vote_hint_height(Epoch::new(1)),
+            Some(Height::new(122))
+        );
+        assert_eq!(
+            epocher.containing(Height::new(122)).unwrap().epoch(),
+            Epoch::new(1)
+        );
+
+        let zero_grace = FollowerEpocher::new(60, 0);
+        assert_eq!(
+            zero_grace.next_boundary_window(Epoch::new(0)),
+            Some((Height::new(61), Height::new(61)))
+        );
+        assert_eq!(
+            zero_grace.backup_vote_hint_height(Epoch::new(0)),
+            Some(Height::new(60))
+        );
     }
 }

@@ -319,7 +319,6 @@ fn seed_closed_day_prices<'s>(
         storage.clone(),
         outbe_oracle::api::AddressPair::new_coen_to(840),
     )?;
-    oracle.reference_currencies.push(840)?;
     let mut day = previous_date_key(timestamp_to_date_key(midnight)).expect("date step");
     oracle.utc_day_vwap_last_finalized.write(day)?;
     for _ in 0..28 {

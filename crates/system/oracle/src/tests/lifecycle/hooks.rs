@@ -301,7 +301,6 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
 #[test]
 fn begin_block_scurve_hook_records_the_daily_peak() {
     with_oracle(|storage, oracle| {
-        oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
         // Shift the epoch day grid onto 2020-01-01. Offsets inside each day stay.
@@ -374,10 +373,6 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
 #[test]
 fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
     with_oracle(|storage, oracle| {
-        oracle.reference_currencies.push(840).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
-        oracle.reference_currencies.push(392).unwrap(); // no pair: no-op
-
         let usd_pair = AddressPair::new_coen_to(840);
         let eur_pair = AddressPair::new_coen_to(978);
         let cad_pair = AddressPair::new_coen_to(124); // active, priced, non-reference
@@ -461,17 +456,23 @@ fn begin_block_finalizes_the_closed_utc_day() {
         let d1_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d1);
         let d2_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d2);
 
-        oracle
-            .write_snapshot(
-                d_start + 1_000,
-                &[(pair_key(COEN, usd()), coen_iso(170), coen_iso(1))],
-            )
-            .unwrap();
+        // Day D saw blocks in every hour and a snapshot in each one. The
+        // first block of D+1 follows the last noted one.
+        let block = note_hours(oracle, d_start, d1_start);
+        for hour in (d_start..d1_start).step_by(3_600) {
+            oracle
+                .write_snapshot(
+                    hour + 1_000,
+                    &[(pair_key(COEN, usd()), coen_iso(170), coen_iso(1))],
+                )
+                .unwrap();
+        }
 
         // First block of day D+1 -> day D is now fully closed and finalized.
         // Odd block number avoids the vote-period tally path (period == 2).
+        assert_eq!(block % 2, 1);
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(11, d1_start + 5, 1),
+            BlockContext::empty_for_tests(block, d1_start + 5, 1),
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
@@ -494,14 +495,15 @@ fn begin_block_finalizes_the_closed_utc_day() {
         // Idempotent: a later block on the same UTC day neither advances the
         // watermark nor re-finalizes.
         let ctx2 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(13, d1_start + 50, 1),
+            BlockContext::empty_for_tests(block + 2, d1_start + 50, 1),
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx2).unwrap();
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
 
         // Next rollover finalizes the next day contiguously (non-zero
-        // watermark path).
+        // watermark path). Day D+1 saw blocks in one hour of 24, as after a
+        // halt, so it fails coverage and gets no VWAP.
         oracle
             .write_snapshot(
                 d1_start + 2_000,
@@ -509,7 +511,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             )
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(15, d2_start + 5, 1),
+            BlockContext::empty_for_tests(block + 4, d2_start + 5, 1),
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();
@@ -518,7 +520,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             oracle
                 .get_utc_day_vwap_for_pair(day_d1, oracle.pair_index_of(coen).unwrap())
                 .unwrap(),
-            Some(coen_iso(190))
+            None
         );
     });
 }

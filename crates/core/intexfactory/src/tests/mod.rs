@@ -243,20 +243,21 @@ fn word(value: u64) -> alloy_primitives::Bytes {
 }
 
 /// Publish `rate` as the finalized COEN/`iso_code` VWAP of the UTC day before
-/// `ISSUED_AT` and as the only observation of the trailing window settlement
+/// `ISSUED_AT` and as the price of the covered trailing window settlement
 /// converts at.
 fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(oracle.storage.clone()).unwrap();
-    OracleContract::new(oracle.storage.clone())
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(pair, rate, U256::from(1_000_000u64))],
-        )
-        .unwrap();
+    // Unit volume keeps the window sums of an extreme rate in range.
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &oracle.storage,
+        pair,
+        rate,
+        U256::ONE,
+    )
+    .unwrap();
 }
 
 fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {

@@ -559,6 +559,15 @@ pub enum FinalizationError {
     PruneParentCertRecords(String),
     #[error("prune temporary parent certificates: {0}")]
     PruneTemporaryParentCerts(String),
+    #[error(
+        "failed to observe finalized epoch boundary for epoch {epoch} at height {height}: {source}"
+    )]
+    BoundaryObservationFailed {
+        epoch: u64,
+        height: u64,
+        #[source]
+        source: crate::follow::BoundaryObservationError,
+    },
 }
 
 impl From<FinalizationError> for PrecompileError {

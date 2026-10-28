@@ -11,19 +11,21 @@ pub(super) struct RecoveredMarshal<
     pub(super) actor: MarshalActor<E>,
     pub(super) mailbox: MarshalMailbox,
     pub(super) processed_height: Height,
+    pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
 }
 
 pub(super) async fn recover_marshal<E>(
     ctx: &E,
     page_cache: &CacheRef,
-    epoch_length_blocks: u32,
     node: &OutbeFullNode,
     certificate_scheme_provider: &HybridSchemeProvider<MinSig>,
+    args: &ConsensusArgs,
 ) -> Result<RecoveredMarshal<E>>
 where
     E: BufferPooler + Clock + CryptoRng + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let partition_prefix = "outbe-marshal".to_string();
+    let epoch_length_blocks = epoch_length_blocks_from_genesis(node)?;
 
     let finalizations_archive = immutable::Archive::init(
         ctx.child("marshal_finalizations"),
@@ -49,10 +51,11 @@ where
     .await
     .wrap_err("failed to initialize blocks archive")?;
 
-    let epocher = commonware_consensus::types::FixedEpocher::new(nonzero_u64(
+    let dkg_rotation_params = DkgRotationParams::from_genesis(node, epoch_length_blocks);
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(
         u64::from(epoch_length_blocks),
-        "epochLengthBlocks",
-    )?);
+        dkg_rotation_params.activation_grace_blocks,
+    );
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or(crate::errors::StackEpochError::ViewRetentionTimeoutOverflow)?;
@@ -66,7 +69,7 @@ where
             marshal_archive::marshal_config(
                 certificate_scheme_provider.clone(),
                 marshal_archive::MarshalStart {
-                    epocher,
+                    epocher: epocher.clone(),
                     genesis: marshal_genesis_anchor,
                 },
                 marshal_archive::MarshalSettings {
@@ -83,6 +86,20 @@ where
     // height 0. This keeps the prior non-optional `Height` semantics that the
     // genesis-formation proof, crash-recovery detection, and executor start use.
     let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
+    let last_execution_height = node.provider.last_block_number().map_err(|error| {
+        crate::errors::StackDkgError::GetLastBlockNumber {
+            reason: format!("{error}"),
+        }
+    })?;
+    let scan_height = startup_live_join_scan_height(
+        last_execution_height,
+        last_consensus_finalized.get(),
+        args.trust_el_head,
+    )?;
+    let latest_boundary =
+        recover_latest_boundary_artifact(&node.provider, scan_height, dkg_rotation_params)?
+            .map(|(carrier_height, boundary)| (carrier_height, boundary.epoch));
+    reset_validator_marshal_epocher(&epocher, latest_boundary)?;
 
     info!(
         marshal_processed_height = last_consensus_finalized.get(),
@@ -93,5 +110,40 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        epocher,
     })
+}
+
+pub(in crate::stack) fn reset_validator_marshal_epocher(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    latest_boundary: Option<(u64, u64)>,
+) -> Result<()> {
+    if let Some((carrier_height, epoch)) = latest_boundary {
+        if epoch > 0 && carrier_height > 0 {
+            epocher
+                .reset_from_anchor(Epoch::new(epoch), Height::new(carrier_height))
+                .map_err(|source| {
+                    crate::errors::StackEpochError::EpochBoundaryObservationFailed {
+                        epoch: Epoch::new(epoch),
+                        height: carrier_height,
+                        source,
+                    }
+                })?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(in crate::stack) fn validator_marshal_epocher(
+    latest_boundary: Option<(u64, u64)>,
+    rotation: DkgRotationParams,
+) -> outbe_consensus::follow::FollowerEpocher {
+    let epocher = outbe_consensus::follow::FollowerEpocher::new(
+        rotation.epoch_length_blocks,
+        rotation.activation_grace_blocks,
+    );
+    reset_validator_marshal_epocher(&epocher, latest_boundary)
+        .expect("valid boundary anchor in test");
+    epocher
 }

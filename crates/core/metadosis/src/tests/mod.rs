@@ -38,12 +38,6 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         }
     };
     let oracle = OracleContract::new(storage.clone());
-    if oracle.reference_currencies.len().unwrap() == 0 {
-        oracle
-            .reference_currencies
-            .push(outbe_oracle::constants::DAY_TYPE_ISO)
-            .unwrap();
-    }
     let last_closed = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(timestamp),
     )

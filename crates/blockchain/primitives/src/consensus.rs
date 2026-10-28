@@ -9,7 +9,10 @@
 use alloy_primitives::{Address, Bytes, B256};
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex, MutexGuard,
+    },
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -367,6 +370,42 @@ impl RandomnessStatus {
     }
 }
 
+/// Ontological consensus operating mode of this node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[repr(u8)]
+pub enum ConsensusOperatingMode {
+    /// Pure certified follower node (`--upstream` without `--validator`).
+    #[default]
+    Follower = 0,
+    /// Validator node in Phase 1: syncing via `--upstream` until `ValidatorBootstrapReady`.
+    UpstreamBootstrap = 1,
+    /// Validator node in Phase 2: running `EpochSupervisor` with `HybridScheme::verifier` (`share = None`).
+    Verifier = 2,
+    /// Validator node in Phase 3: running `EpochSupervisor` with `HybridScheme::signer` (`share = Some`).
+    Signer = 3,
+}
+
+impl ConsensusOperatingMode {
+    /// Whether this operating mode belongs to the validator lifecycle.
+    #[must_use]
+    pub const fn is_validator(self) -> bool {
+        matches!(
+            self,
+            Self::UpstreamBootstrap | Self::Verifier | Self::Signer
+        )
+    }
+
+    const fn from_u8(raw: u8) -> Self {
+        match raw {
+            1 => Self::UpstreamBootstrap,
+            2 => Self::Verifier,
+            3 => Self::Signer,
+            _ => Self::Follower,
+        }
+    }
+}
+
 /// Finalized consensus status snapshot, updated by the reporter on each finalization.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ConsensusStatus {
@@ -421,6 +460,7 @@ impl ConsensusStatus {
 #[derive(Clone)]
 pub struct ConsensusExecutionBridge {
     inner: Arc<Mutex<BridgeState>>,
+    operating_mode: Arc<AtomicU8>,
     repository_publication: crate::radicle_publication::RepositoryPublicationMailbox,
 }
 
@@ -484,8 +524,20 @@ impl ConsensusExecutionBridge {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(BridgeState::default())),
+            operating_mode: Arc::new(AtomicU8::new(ConsensusOperatingMode::Follower as u8)),
             repository_publication: Default::default(),
         }
+    }
+
+    /// Returns the current ontological consensus operating mode.
+    #[must_use]
+    pub fn operating_mode(&self) -> ConsensusOperatingMode {
+        ConsensusOperatingMode::from_u8(self.operating_mode.load(Ordering::Acquire))
+    }
+
+    /// Updates the current ontological consensus operating mode.
+    pub fn set_operating_mode(&self, mode: ConsensusOperatingMode) {
+        self.operating_mode.store(mode as u8, Ordering::Release);
     }
 
     pub fn repository_publication_mailbox(
@@ -827,5 +879,32 @@ mod tests {
 
         bridge.set_local_threshold_share_present(false);
         assert!(!bridge.has_threshold_shares());
+    }
+
+    #[test]
+    fn bridge_tracks_consensus_operating_mode_atomically() {
+        let bridge = ConsensusExecutionBridge::new();
+        assert_eq!(bridge.operating_mode(), ConsensusOperatingMode::Follower);
+        assert!(!bridge.operating_mode().is_validator());
+
+        let clone = bridge.clone();
+        for (mode, expected_is_validator, expected_json) in [
+            (
+                ConsensusOperatingMode::UpstreamBootstrap,
+                true,
+                "\"upstreamBootstrap\"",
+            ),
+            (ConsensusOperatingMode::Verifier, true, "\"verifier\""),
+            (ConsensusOperatingMode::Signer, true, "\"signer\""),
+            (ConsensusOperatingMode::Follower, false, "\"follower\""),
+        ] {
+            bridge.set_operating_mode(mode);
+            assert_eq!(clone.operating_mode(), mode);
+            assert_eq!(clone.operating_mode().is_validator(), expected_is_validator);
+            let serialized = serde_json::to_string(&mode).unwrap();
+            assert_eq!(serialized, expected_json);
+            let deserialized: ConsensusOperatingMode = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(deserialized, mode);
+        }
     }
 }

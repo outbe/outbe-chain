@@ -518,10 +518,11 @@ fn demotion_height(before: &ValidatorState, freeze_height: u64) -> Result<u64> {
 
 /// Height used to retain a frozen joiner who is no longer `Joining`.
 ///
-/// A height after the freeze is the demotion block. A missing height is an
-/// already-finalized demotion from before that stamp existed: `freeze + 1`
-/// stays inside this epoch and before the next freeze. A height at or before
-/// the freeze means the artifact included someone who was already ineligible.
+/// Every post-freeze demotion (`demote_joining`, `unbond_joining`,
+/// `complete_unbonding`) stamps `last_deactivated_at_height > freeze_height`.
+/// A missing height (`None`) or a height at or before `freeze_height` is not a
+/// post-freeze demotion for an included member and means the artifact included
+/// an ineligible validator.
 fn post_freeze_demotion_height(
     changed_at: Option<u64>,
     freeze_height: u64,
@@ -530,15 +531,8 @@ fn post_freeze_demotion_height(
 ) -> Result<u64> {
     match changed_at {
         Some(height) if height > freeze_height => Ok(height),
-        Some(_) => {
+        Some(_) | None => {
             Err(ValidatorSetError::BoundaryIncludedIneligibleValidator { address, status }.into())
-        }
-        None => {
-            let height = freeze_height.saturating_add(1);
-            if height <= freeze_height {
-                return Err(ValidatorSetError::ValidatorDeactivationHeightZero.into());
-            }
-            Ok(height)
         }
     }
 }

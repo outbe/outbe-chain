@@ -2,7 +2,6 @@ use super::super::*;
 
 mod genesis;
 mod local;
-mod manual;
 mod offer_key;
 
 pub(in crate::stack) use offer_key::validate_offer_key_before_threshold_work;
@@ -153,10 +152,6 @@ pub(in crate::stack) struct StartupDkgSnapshot {
 }
 
 fn startup_threshold_material_candidate_available(args: &ConsensusArgs) -> bool {
-    if args.signing_share.is_some() && args.public_polynomial.is_some() {
-        return true;
-    }
-
     let Some(keys_dir) = &args.keys_dir else {
         return false;
     };
@@ -692,8 +687,8 @@ pub(in crate::stack) fn build_genesis_dkg_boundary_artifact(
 
 /// Recover threshold signer/verifier material before any interactive ceremony.
 ///
-/// Saved local state takes precedence over matching pending recovery and manual
-/// provisioning. Only proven empty genesis formation admits interactive DKG.
+/// Saved local state takes precedence over matching pending recovery.
+/// Only proven empty genesis formation admits interactive DKG.
 /// Existing-chain recovery and corrupt-material errors remain fail-fast.
 pub(in crate::stack) async fn obtain_threshold_material<C>(
     clock: C,
@@ -706,11 +701,6 @@ where
     C: Clock,
 {
     if let Some(material) = local::load_local_material(request.args, key_backend, request.context)?
-    {
-        return Ok(material);
-    }
-    if let Some(material) =
-        manual::load_manual_material(request.args, key_backend, request.context)?
     {
         return Ok(material);
     }

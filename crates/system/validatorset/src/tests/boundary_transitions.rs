@@ -207,7 +207,11 @@ fn included_demoted_joiner_without_height_at_the_last_freeze_is_rejected() -> Re
             vs.val_deactivated_at_height.write(&A, 0)
         },
         |vs| vs.activate_reshared_set(&[A], HASH),
-        &I::ValidatorDeactivationHeightZero {}.abi_encode(),
+        &I::BoundaryIncludedIneligibleValidator {
+            account: A,
+            status: status::PENDING,
+        }
+        .abi_encode(),
     )
 }
 

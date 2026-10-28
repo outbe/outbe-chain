@@ -7,7 +7,7 @@ use commonware_codec::Encode as _;
 use commonware_consensus::{
     marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::types::{Activity, Finalization, Finalize, Proposal},
-    types::{Epoch, FixedEpocher, Round, View, ViewDelta},
+    types::{Epoch, Round, View, ViewDelta},
     Reporter,
 };
 use commonware_cryptography::{
@@ -360,7 +360,7 @@ where
         blocks_archive,
         marshal::Config {
             provider,
-            epocher: FixedEpocher::new(NonZeroU64::new(10_000).expect("non-zero epoch")),
+            epocher: crate::follow::FollowerEpocher::new(10_000, 0),
             // 2026.5.0: the floor/genesis anchor is now an explicit `Start`.
             // A fresh epoch starts from the height-0 genesis block (the actor
             // asserts the anchor height is zero).
