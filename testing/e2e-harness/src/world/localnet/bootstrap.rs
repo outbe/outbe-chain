@@ -293,6 +293,11 @@ impl Localnet {
                             localnet_metadosis_offering_period_seconds(profile),
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
+                    // A localnet day starts mid-day and runs few hours, so the
+                    // production day coverage rule would leave it without a VWAP.
+                    "oracle": {
+                        "dayVwapMinCoverage": [0, 1],
+                    },
                 },
             },
             "nonce": "0x0",

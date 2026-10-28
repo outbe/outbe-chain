@@ -368,25 +368,21 @@ fn unallocated(storage: &StorageHandle) -> U256 {
 }
 
 /// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
-/// and as the only observation of the trailing window settlement converts at.
+/// and as the price of the covered trailing window settlement converts at.
 fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .expect("COEN pair registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
-    let mut oracle = OracleContract::new(storage.clone());
+    let oracle = OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(day, index, vwap).unwrap();
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-    oracle
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(
-                outbe_oracle::api::AddressPair::new_coen_to(iso),
-                vwap,
-                six_decimal_unit(),
-            )],
-        )
-        .unwrap();
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+        vwap,
+        six_decimal_unit(),
+    )
+    .unwrap();
 }
 
 fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {

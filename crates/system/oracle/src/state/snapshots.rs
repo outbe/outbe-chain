@@ -234,7 +234,7 @@ impl OracleContract<'_> {
         Ok(())
     }
 
-    fn accumulate_hourly_vwap(
+    pub(crate) fn accumulate_hourly_vwap(
         &self,
         pair: AddressPair,
         hour_start: u64,

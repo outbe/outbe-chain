@@ -22,7 +22,7 @@ fn the_default_policy_is_eight_hours_refreshed_hourly() {
 }
 
 #[test]
-fn test_networks_may_shorten_the_lookback_and_the_cadence_independently() {
+fn test_networks_may_shorten_the_lookback() {
     let six_hours = resolve(json!({ "vwapLookbackSeconds": 21_600 })).unwrap();
     assert_eq!(
         (
@@ -30,14 +30,6 @@ fn test_networks_may_shorten_the_lookback_and_the_cadence_independently() {
             six_hours.vwap_update_interval_seconds
         ),
         (21_600, 3_600)
-    );
-    let half_hourly = resolve(json!({ "vwapUpdateIntervalSeconds": 1_800 })).unwrap();
-    assert_eq!(
-        (
-            half_hourly.vwap_lookback_seconds,
-            half_hourly.vwap_update_interval_seconds
-        ),
-        (28_800, 1_800)
     );
 }
 
@@ -58,6 +50,10 @@ fn an_unsupported_policy_is_rejected() {
         ),
         (
             json!({ "vwapUpdateIntervalSeconds": 3_500 }),
+            "oracle.vwapUpdateIntervalSeconds",
+        ),
+        (
+            json!({ "vwapLookbackSeconds": 21_600, "vwapUpdateIntervalSeconds": 1_800 }),
             "oracle.vwapUpdateIntervalSeconds",
         ),
         (

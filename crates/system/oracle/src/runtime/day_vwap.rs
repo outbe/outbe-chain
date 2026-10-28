@@ -122,10 +122,13 @@ impl OracleContract<'_> {
     /// WorldwideDay, which is UTC+14). The window is the canonical
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
-    /// Pairs without data for the day are skipped (mirrors `calculate_vwaps`).
-    /// If no pair has data, nothing is written. The day then stays empty, and the
-    /// `utc_day_vwap_last_finalized` watermark tells it apart from an unfinalized
-    /// one. Emits one `VwapCalculated` event per written pair in registration
+    /// The day is judged by round coverage like a VWAP window (see
+    /// [`Self::finalized_window_vwap`]), with the share of
+    /// `oracle.dayVwapMinCoverage` (two thirds in production). A pair that fails coverage or has no
+    /// data for the day is skipped, so catch-up blocks after a halt cannot set
+    /// a day price. If no pair passes, nothing is written. The day then stays
+    /// empty, and the `utc_day_vwap_last_finalized` watermark tells it apart
+    /// from an unfinalized one. Emits one `VwapCalculated` event per written pair in registration
     /// order. The method overwrites unconditionally. The caller gates
     /// re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
@@ -137,16 +140,16 @@ impl OracleContract<'_> {
         let day_start = date_key_to_utc_timestamp(utc_day);
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
-        // No vote-target pair had data for the day. Leave it unwritten so the
-        // day reads as finalized-empty against the watermark.
-        let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(day_start, day_end)? else {
-            return Ok(());
-        };
+        // A pair with no covered VWAP stays unwritten, so the day reads as
+        // finalized-empty for it against the watermark.
+        let share = outbe_chain_constants::get_day_vwap_min_coverage();
+        let day_vwaps = self
+            .vote_target_values(|pair| self.judged_window_vwap(pair, day_start, day_end, share))?;
 
         // Keyed by the registry index. Unwritten entries stay zero and read back
         // as "no VWAP for this pair on this day". Re-finalizing a closed day
         // recomputes over the same immutable window, so no stale entry survives.
-        for (pair, vwap) in pairs.iter().copied().zip(vwaps.iter().copied()) {
+        for (pair, vwap) in day_vwaps {
             self.record_utc_day_vwap(utc_day, self.pair_index_of(pair)?, vwap)?;
             let event = IOracle::VwapCalculated {
                 utcDay: utc_day,
