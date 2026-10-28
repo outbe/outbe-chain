@@ -132,14 +132,20 @@ where
     let rx = bridge.set_finalization_fetcher();
     ctx.child("finalization_drainer")
         .spawn(move |_| async move {
+            use tracing::Instrument as _;
+
             let mut rx = rx;
             let serve = async {
                 while let Some((height, reply)) = rx.recv().await {
+                    if reply.is_closed() {
+                        continue;
+                    }
                     let answer = finalization_bytes_for_height(
                         &marshal_mailbox,
                         &parent_store,
                         Height::new(height),
                     )
+                    .instrument(tracing::debug_span!("finalization_fetch", height))
                     .await;
                     let _ = reply.send(answer);
                 }

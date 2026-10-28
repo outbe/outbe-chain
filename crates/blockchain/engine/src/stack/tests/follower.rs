@@ -225,3 +225,88 @@ fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
     });
     assert!(result);
 }
+
+#[test]
+fn publish_randomness_status_preserves_last_finalized_block() {
+    use outbe_primitives::consensus::RandomnessStatus;
+
+    let bridge = ConsensusExecutionBridge::new();
+    bridge.set_last_finalized_block_number(77);
+
+    let vrf_safety = VrfSafetyGate::new(3, 100, 300, 40);
+    vrf_safety.note_preparing(2, 260, 300, 40);
+
+    publish_randomness_status(&bridge, &vrf_safety);
+
+    let status = bridge.consensus_status();
+    assert_eq!(status.last_finalized_block, 77);
+    assert_eq!(status.randomness_status, RandomnessStatus::Preparing);
+    assert_eq!(status.vrf_material_version, 3);
+    assert_eq!(status.last_dkg_activation_height, 100);
+    assert_eq!(status.next_planned_activation_height, 300);
+    assert_eq!(status.vrf_expiry_height, 340);
+}
+
+#[test]
+fn finalization_drainer_skips_closed_replies_and_answers_live_requests() {
+    use outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore;
+    use std::task::{Context, Poll, Waker};
+
+    let directory = tempfile::tempdir().unwrap();
+    let proof_dir = directory.path().join("proofs");
+    commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let round = Round::new(Epoch::new(0), View::new(17));
+        let block = recovery_block(17);
+        let (provider, finalization) = recovery_finalization_fixture(&block, round);
+        let clock = context.child("proof_ready");
+        let drainer_ctx = context.child("drainer_parent");
+        let shutdown = context.child("shutdown");
+        let (mut mailbox, _resolver, actor) = start_recovery_marshal(context, provider).await;
+        let _ = mailbox.verified(round, block.clone()).await;
+        let _ = mailbox.report(Activity::Finalization(finalization.clone()));
+        recover_application_finalized_round(clock, mailbox.clone(), 17)
+            .await
+            .unwrap();
+
+        let bridge = ConsensusExecutionBridge::new();
+        let store = FinalizedParentCertStore::open(&proof_dir).unwrap();
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let drainer =
+            spawn_finalization_drainer(&drainer_ctx, mailbox, bridge.clone(), store, cancel_rx);
+
+        // Enqueue a request and immediately drop the caller future so `reply.is_closed()` is true.
+        let mut cx = Context::from_waker(Waker::noop());
+        {
+            let b = bridge.clone();
+            let mut cancelled_fut = Box::pin(async move { b.request_finalization(999).await });
+            assert!(matches!(
+                cancelled_fut.as_mut().poll(&mut cx),
+                Poll::Pending
+            ));
+        }
+
+        // Next live request for height 17 must succeed with exact encoded bytes.
+        let live = bridge
+            .request_finalization(17)
+            .await
+            .expect("drainer is serving")
+            .expect("height 17 is finalized in marshal");
+        assert_eq!(live.finalization.as_ref(), finalization.encode().as_ref());
+        assert_eq!(live.block.as_ref(), block.encode().as_ref());
+
+        // Missing height returns Ok(None).
+        let missing = bridge
+            .request_finalization(18)
+            .await
+            .expect("drainer is serving");
+        assert!(missing.is_none());
+
+        let _ = cancel_tx.send(true);
+        drainer.await.unwrap();
+        shutdown
+            .stop(0, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        actor.await.unwrap();
+    });
+}

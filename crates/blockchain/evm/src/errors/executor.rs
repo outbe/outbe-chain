@@ -78,10 +78,8 @@ impl From<ExecutorStorageError> for PrecompileError {
     fn from(error: ExecutorStorageError) -> Self {
         match error {
             ExecutorStorageError::ReadAccountedParentArtifact(_)
-            | ExecutorStorageError::MissingAccountedParentExecutionSummary { .. } => {
-                Self::BodyReadUnavailable(error.to_string())
-            }
-            ExecutorStorageError::HookFlush(_)
+            | ExecutorStorageError::MissingAccountedParentExecutionSummary { .. }
+            | ExecutorStorageError::HookFlush(_)
             | ExecutorStorageError::LoadPrecompileAccount { .. }
             | ExecutorStorageError::SponsoredQuotaWrite(_)
             | ExecutorStorageError::SponsoredQuotaFlush(_)

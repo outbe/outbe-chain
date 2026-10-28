@@ -421,15 +421,30 @@ pub trait OutbeApi {
     /// serve it. Otherwise, the call returns an error. The caller verifies the
     /// certificate against the epoch committee. This RPC is a bytes transport,
     /// not a trust root.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Returns JSON-RPC `-32005` when the bounded finalization
+    /// request queue is full or the request exceeds its 5s timeout.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 
     /// Canonical consensus block bytes for commitment-bound ancestor recovery.
     /// This endpoint conveys no finality authority. Consumers must authenticate
     /// the requested digest through an independently verified descendant.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Returns JSON-RPC `-32005` when the bounded finalization
+    /// request queue is full or the request exceeds its 5s timeout.
     #[method(name = "getConsensusBlock")]
     async fn get_consensus_block(&self, height: u64) -> jsonrpsee::core::RpcResult<Bytes>;
 
+    /// Returns a direct finalization certificate for `height` or its nearest
+    /// certified descendant within 64 blocks together with intermediate
+    /// ancestor block bytes.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Enforces a 5s total walk budget and returns JSON-RPC
+    /// `-32005` on queue saturation or timeout.
     #[method(name = "getFinalityProof")]
     async fn get_finality_proof(
         &self,

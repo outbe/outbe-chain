@@ -71,7 +71,7 @@ fn complete_request_deadlines(
             continue;
         };
         for line in content.lines() {
-            if line.contains("error=BodyReadRequestDeadline") {
+            if exact_request_deadline_fatal(line) {
                 typed.extend(scoped_new_payload_identity(line, validator));
             }
             if exact_request_deadline_receiver_drop(line) {
