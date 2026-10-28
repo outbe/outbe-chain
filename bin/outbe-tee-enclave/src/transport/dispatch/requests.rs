@@ -91,6 +91,12 @@ pub(in crate::transport) fn dispatch_with_initialization(
                     .to_string(),
             }
         }
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
+            EnclaveResponse::Error {
+                message: "GramineDirectDev artifact creation requires an authenticated production session"
+                    .to_string(),
+            }
+        }
         req @ (EnclaveRequest::AuthorizeRemoteSessionV2 { .. }
         | EnclaveRequest::AuthorizeRemoteSessionV1 { .. }
         | EnclaveRequest::RetireRemoteSessionsV1 { .. }) => super::remote_sessions::dispatch(req, resident),

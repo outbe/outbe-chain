@@ -346,6 +346,51 @@ impl EnclaveSession {
         )
     }
 
+    pub(crate) fn verify_dcap_evidence_v1_raw(
+        &mut self,
+        evidence: &[u8],
+        policy: &[u8],
+        block_timestamp: u64,
+    ) -> Result<EnclaveResponse, TransportError> {
+        self.with_production_retry(
+            "verify_dcap_evidence_v1",
+            || {
+                TransportError::DcapVerification(
+                    "development enclave client cannot verify consensus DCAP evidence".into(),
+                )
+            },
+            |client| client.verify_dcap_evidence_v1_raw(evidence, policy, block_timestamp),
+        )
+    }
+    pub(crate) fn verify_dcap_registration_and_seal_v1_raw(
+        &mut self,
+        request: RegistrationVerificationRequest<'_>,
+    ) -> Result<EnclaveResponse, TransportError> {
+        self.with_production_retry(
+            "verify_dcap_registration_and_seal_v1",
+            || {
+                TransportError::DcapVerification(
+                    "development enclave client cannot issue DCAP onboarding artifacts".into(),
+                )
+            },
+            |client| client.verify_dcap_registration_and_seal_v1_raw(request),
+        )
+    }
+    pub(crate) fn prepare_gramine_direct_dev_onboarding_artifact_v2_raw(
+        &mut self,
+        context: DcapOnboardingContextV1,
+    ) -> Result<EnclaveResponse, TransportError> {
+        self.with_production_retry(
+            "prepare_gramine_direct_dev_onboarding_artifact_v2",
+            || {
+                TransportError::Unavailable(
+                    "development enclave client cannot issue DirectDev onboarding artifacts".into(),
+                )
+            },
+            |client| client.prepare_gramine_direct_dev_onboarding_artifact_v2_raw(context),
+        )
+    }
+
     pub fn prepare_gramine_direct_dev_onboarding_artifact_v1(
         &mut self,
         context: DcapOnboardingContextV1,

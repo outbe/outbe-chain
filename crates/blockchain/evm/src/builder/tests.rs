@@ -68,6 +68,7 @@ fn final_artifact_adapter_binds_execution_summary_and_preserves_consensus_fields
             validator_fee_sum: U256::from(7),
         },
         321,
+        Some(Bytes::from_static(b"witness-v1")),
     )
     .unwrap();
     let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
@@ -82,12 +83,17 @@ fn final_artifact_adapter_binds_execution_summary_and_preserves_consensus_fields
         U256::from(7)
     );
     assert_eq!(decoded.timestamp_millis_part, 321);
+    assert_eq!(
+        decoded.enclave_witness,
+        Some(Bytes::from_static(b"witness-v1"))
+    );
     let other = super::encode_final_header_artifacts(
         &prefinal,
         ExecutionSummaryArtifact {
             validator_fee_sum: U256::from(8),
         },
         321,
+        None,
     )
     .unwrap();
     let first = SealedHeader::seal_slow(OutbeHeader::new(Header {

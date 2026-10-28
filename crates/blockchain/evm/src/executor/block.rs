@@ -97,6 +97,14 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) zero_fee_soft_failures: u32,
     /// Sum of included sponsored and bootstrap gas limits, reset per block.
     pub(super) sponsored_gas_used: u64,
+    /// Block-scoped consensus enclave witness state (`ProposerRecord`, `VerifierWithEnclave`,
+    /// `VerifierReplay`, or `RpcDirect`).
+    pub(super) witness_state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    /// Zero-based index of the next committed transaction in `body.transactions`.
+    pub(super) body_tx_index: u32,
+    /// Cached compressed `OART 0x0A` payload on the proposer path so `prepare_final_header_artifacts`
+    /// and `finalize_header_artifacts` never re-compress the witness tape.
+    pub(super) frozen_enclave_witness: Option<Bytes>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -164,6 +172,9 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             whitelisted_hook_event_logs: Vec::new(),
             zero_fee_soft_failures: 0,
             sponsored_gas_used: 0,
+            witness_state: None,
+            body_tx_index: 0,
+            frozen_enclave_witness: None,
         }
     }
 }
@@ -203,10 +214,12 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     where
         Evm: reth_ethereum::evm::primitives::Evm,
     {
+        let enclave_witness = self.final_enclave_witness_bytes()?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
             self.final_extra_data.as_ref(),
             self.current_execution_summary(),
             timestamp_millis_part,
+            enclave_witness,
         )?;
         Ok(())
     }
@@ -250,6 +263,11 @@ where
     ) -> Result<Self::Result, BlockExecutionError> {
         outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
+        if self.has_active_consensus_witness_scope() {
+            return Err(
+                crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
+            );
+        }
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
             return Err(
@@ -272,13 +290,48 @@ where
         outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
-        let outcome = (|| {
-            if is_reserved_system_tx(recovered.tx()) {
-                return self.execute_reserved_system_tx(recovered, f);
+        let tx_hash = *recovered.tx().tx_hash();
+        let is_system_tx = is_reserved_system_tx(recovered.tx());
+        if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
+            let outcome = self.execute_reserved_system_tx(recovered, f);
+            if outcome.is_ok() {
+                self.advance_preexecuted_phase1_witness_index()?;
             }
-            self.route_user_transaction(tx_env, recovered, f)
-        })();
-
+            return outcome.map_err(preserve_cancelled_execution);
+        }
+        let is_user_candidate = !is_system_tx;
+        let witness_scope = self.prepare_tx_witness_scope(is_user_candidate)?;
+        let witness_state = self.witness_state.clone();
+        let body_tx_index = self.body_tx_index;
+        let base_extra_data = self.block_extra_data.clone();
+        let wrapped_f = |result: &Self::Result| -> CommitChanges {
+            if !Self::check_witness_commit_allowed_with(
+                witness_state.as_ref(),
+                body_tx_index,
+                base_extra_data.as_ref(),
+                is_user_candidate,
+            ) {
+                return CommitChanges::No;
+            }
+            let decision = f(result);
+            if !decision.should_commit() {
+                if let Some(state) = witness_state.as_ref() {
+                    if let Ok(mut guard) = state.lock() {
+                        guard.staged.clear();
+                        guard.replay_cursor = 0;
+                    }
+                }
+            }
+            decision
+        };
+        let outcome = if is_system_tx {
+            self.execute_reserved_system_tx(recovered, wrapped_f)
+        } else {
+            self.route_user_transaction(tx_env, recovered, wrapped_f)
+        };
+        drop(witness_scope);
+        let committed = matches!(outcome, Ok(Some(_)));
+        self.finish_tx_witness(tx_hash, committed)?;
         outcome.map_err(preserve_cancelled_execution)
     }
 
@@ -409,10 +462,9 @@ mod cancellation_tests {
 
     #[test]
     fn node_local_execution_abort_is_preserved_across_evm_error() {
-        let evm_error: EVMError<std::convert::Infallible> =
-            EVMError::CustomAny(AnyError::new(NodeLocalExecutionAbort {
-                reason: "TEE sidecar down".into(),
-            }));
+        let evm_error: EVMError<std::convert::Infallible> = EVMError::CustomAny(AnyError::new(
+            NodeLocalExecutionAbort::new("TEE sidecar down"),
+        ));
         let error = BlockExecutionError::Internal(InternalBlockExecutionError::EVM {
             hash: B256::ZERO,
             error: Box::new(evm_error),

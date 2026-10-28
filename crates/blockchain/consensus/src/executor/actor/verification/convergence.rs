@@ -78,10 +78,22 @@ impl ExecutionStatus {
             return Some(Self::Cancelled(cancelled.clone()));
         }
         if let Some(abort) = NodeLocalExecutionAbort::find(source) {
-            return Some(Self::NodeLocalAbort(abort.clone()));
+            return match abort.witness_reason {
+                Some(
+                    outbe_primitives::projection::WitnessAbortReason::TapeInvalid
+                    | outbe_primitives::projection::WitnessAbortReason::SemanticMismatch,
+                ) => Some(Self::Completed(PayloadStatus::from_status(
+                    alloy_rpc_types_engine::PayloadStatusEnum::Invalid {
+                        validation_error: abort.reason.clone(),
+                    },
+                ))),
+                Some(outbe_primitives::projection::WitnessAbortReason::LocalUnavailable) | None => {
+                    Some(Self::NodeLocalAbort(abort.clone()))
+                }
+            };
         }
         if let Some(reason) = find_precompile_error(source, PrecompileError::is_node_local) {
-            return Some(Self::NodeLocalAbort(NodeLocalExecutionAbort { reason }));
+            return Some(Self::NodeLocalAbort(NodeLocalExecutionAbort::new(reason)));
         }
         find_precompile_error(source, is_candidate_validation_precompile_error).map(
             |validation_error| {
@@ -118,4 +130,55 @@ const fn is_candidate_validation_precompile_error(precompile_error: &PrecompileE
             | PrecompileError::WriteProtection
             | PrecompileError::BodyReadCorruption(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use alloy_rpc_types_engine::PayloadStatusEnum;
+    use outbe_primitives::projection::WitnessAbortReason;
+    use reth_ethereum::node::api::BeaconOnNewPayloadError;
+
+    #[test]
+    fn witness_tape_invalid_and_semantic_mismatch_classify_as_invalid_payload_without_aborting_node(
+    ) {
+        for reason in [
+            WitnessAbortReason::TapeInvalid,
+            WitnessAbortReason::SemanticMismatch,
+        ] {
+            let abort = NodeLocalExecutionAbort::witness(reason, "witness failure");
+            let err = BeaconOnNewPayloadError::Internal(Box::new(abort));
+            let status = ExecutionStatus::from_engine(Err(err), Digest(B256::ZERO))
+                .expect("witness invalid/mismatch must classify cleanly");
+            assert!(
+                matches!(
+                    status,
+                    ExecutionStatus::Completed(PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error },
+                        ..
+                    }) if validation_error == "witness failure"
+                ),
+                "expected PayloadStatusEnum::Invalid for {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn witness_local_unavailable_classifies_as_node_local_abort() {
+        let abort = NodeLocalExecutionAbort::witness(
+            WitnessAbortReason::LocalUnavailable,
+            "local tee socket timeout",
+        );
+        let err = BeaconOnNewPayloadError::Internal(Box::new(abort));
+        let status = ExecutionStatus::from_engine(Err(err), Digest(B256::ZERO))
+            .expect("local unavailable must classify as NodeLocalAbort");
+        assert!(matches!(
+            status,
+            ExecutionStatus::NodeLocalAbort(NodeLocalExecutionAbort {
+                witness_reason: Some(WitnessAbortReason::LocalUnavailable),
+                ..
+            })
+        ));
+    }
 }

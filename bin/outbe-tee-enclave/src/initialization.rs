@@ -279,6 +279,7 @@ impl InitializationState {
         if matches!(
             request,
             EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+                | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
                 | EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. }
         ) && (!self.gramine_direct_dev_evidence_allowed
             || manifest.attestation_mode != AttestationMode::GramineDirectDev)
@@ -540,6 +541,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::ApplyTributeDayOpV2 { .. }
         | EnclaveRequest::ReadTributeDayAmountV2 { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
         | EnclaveRequest::ApplyFidelityCohortOp { .. }
@@ -562,6 +564,9 @@ pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry:
     use crate::telemetry::RequestClassLabel;
     match request {
         EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+            return RequestClassLabel::DevSourceSeal
+        }
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
             return RequestClassLabel::DevSourceSeal
         }
         EnclaveRequest::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {

@@ -2,7 +2,7 @@
 use super::{
     consensus, fields, late_finalize, Bytes, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     ReshareArtifactError, Result, BOUNDARY_TAG, COMMITTEE_PREANNOUNCE_TAG, DEALER_LOG_TAG,
-    EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, RADICLE_PUBLICATION_TAG,
+    ENCLAVE_WITNESS_TAG, EXECUTION_SUMMARY_TAG, LATE_FINALIZE_CREDITS_TAG, RADICLE_PUBLICATION_TAG,
     TIMESTAMP_MILLIS_PART_TAG,
 };
 
@@ -56,6 +56,18 @@ pub(super) fn decode_into(
                 &mut artifacts.late_finalize_credits,
                 ReshareArtifactError::DuplicateLateFinalizeCredits,
                 || late_finalize::decode_payload(payload),
+            )?;
+        }
+        ENCLAVE_WITNESS_TAG => {
+            decode_unique_slot(
+                &mut artifacts.enclave_witness,
+                ReshareArtifactError::DuplicateEnclaveWitness,
+                || {
+                    if payload.is_empty() {
+                        return Err(ReshareArtifactError::EmptyEnclaveWitnessPayload.into());
+                    }
+                    Ok(Bytes::copy_from_slice(payload))
+                },
             )?;
         }
         _ => return Err(ReshareArtifactError::UnsupportedTag { tag }.into()),

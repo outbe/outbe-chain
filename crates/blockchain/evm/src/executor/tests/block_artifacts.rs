@@ -255,6 +255,7 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         consensus_header_artifact: None,
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("final extra_data must encode");
 
@@ -363,6 +364,7 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
         consensus_header_artifact: None,
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("mismatched final extra_data must encode");
     mismatch_executor.set_final_extra_data(mismatched_extra_data);

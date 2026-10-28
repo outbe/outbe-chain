@@ -21,6 +21,28 @@ pub fn is_sponsored_block_budget_deferral(error: &dyn alloy_evm::InvalidTxError)
     )
 }
 
+/// Exact transaction-validation reason used to defer a transaction whose enclave witness entries
+/// would exceed the current block's witness size budget.
+pub const ENCLAVE_WITNESS_BUDGET_EXCEEDED: &str = "enclave witness block budget exceeded";
+
+/// Rejects inclusion into the current block without evicting the transaction from the pool.
+pub fn enclave_witness_budget_deferral(tx_hash: B256) -> BlockExecutionError {
+    BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+        hash: tx_hash,
+        error: Box::new(InvalidTransaction::Str(
+            ENCLAVE_WITNESS_BUDGET_EXCEEDED.into(),
+        )),
+    })
+}
+
+/// Identifies only the block-local enclave witness budget deferral.
+pub fn is_enclave_witness_budget_deferral(error: &dyn alloy_evm::InvalidTxError) -> bool {
+    matches!(
+        error.as_invalid_tx_err(),
+        Some(InvalidTransaction::Str(reason)) if reason == ENCLAVE_WITNESS_BUDGET_EXCEEDED
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ZeroFeeCfgSnapshot {
     disable_balance_check: bool,

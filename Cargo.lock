@@ -8239,6 +8239,7 @@ dependencies = [
  "commonware-cryptography",
  "commonware-math",
  "commonware-utils",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "k256 0.13.4",
@@ -8278,6 +8279,7 @@ dependencies = [
  "outbe-stablecoinfactory",
  "outbe-stablecoinpolicy",
  "outbe-staking",
+ "outbe-tee",
  "outbe-teeregistry",
  "outbe-tribute",
  "outbe-tributefactory",
@@ -8289,6 +8291,7 @@ dependencies = [
  "outbe-zk",
  "outbe-zk-backend",
  "parking_lot",
+ "postcard",
  "proptest",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -9258,6 +9261,7 @@ dependencies = [
  "tokio",
  "x25519-dalek 2.0.1",
  "zeroize",
+ "zstd",
 ]
 
 [[package]]

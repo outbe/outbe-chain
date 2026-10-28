@@ -187,6 +187,7 @@ fn payload_attributes(timestamp: u64, proposer: Address) -> OutbePayloadAttribut
         )),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("Outbe boundary artifacts should encode");
     OutbePayloadAttributes::new(outbe_primitives::OutbePayloadAttributesInput {

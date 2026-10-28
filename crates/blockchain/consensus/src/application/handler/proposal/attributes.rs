@@ -252,6 +252,7 @@ impl ApplicationShared {
                     // at 0 here.
                     timestamp_millis_part: 0,
                     late_finalize_credits,
+                    enclave_witness: None,
                 },
                 &self.repository_publication,
             )?;

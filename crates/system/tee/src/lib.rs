@@ -54,6 +54,8 @@ pub mod tribute_decrypt;
 pub mod tribute_source;
 pub mod tribute_v2;
 pub mod upgrade_transfer;
+pub mod witness;
+pub use witness::consensus_call;
 
 pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use client::{

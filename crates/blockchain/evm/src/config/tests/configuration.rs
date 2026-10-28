@@ -247,6 +247,7 @@ fn sanitizer_preserves_late_credits() {
         consensus_header_artifact: None,
         timestamp_millis_part: 777,
         late_finalize_credits: Some(credits.clone()),
+        enclave_witness: None,
     })
     .expect("encode");
 

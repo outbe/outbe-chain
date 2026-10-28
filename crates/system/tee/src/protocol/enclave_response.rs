@@ -476,6 +476,18 @@ pub enum EnclaveResponse {
     NotReady {
         message: String,
     },
+    /// Signed DirectDev onboarding artifact prepared for one canonical request.
+    GramineDirectDevOnboardingArtifactPreparedV2 {
+        request_hash: B256,
+        onboarding_artifact: Vec<u8>,
+        attestation_tag: Vec<u8>,
+    },
+    /// Signed deterministic refusal of a `QueryFidelityIndex` operation.
+    FidelityQueryRejected {
+        inputs_canonical_hash: B256,
+        reason: String,
+        attestation_tag: Vec<u8>,
+    },
 }
 
 /// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by
@@ -667,4 +679,30 @@ pub fn fidelity_query_attestation_preimage(
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);
     Ok(buf)
+}
+
+#[cfg(test)]
+mod wire_compat_tests {
+    use super::EnclaveResponse;
+    use alloy_primitives::B256;
+
+    #[test]
+    fn new_responses_follow_the_existing_wire_tail() {
+        let old_tail = EnclaveResponse::NotReady {
+            message: String::new(),
+        };
+        let prepared = EnclaveResponse::GramineDirectDevOnboardingArtifactPreparedV2 {
+            request_hash: B256::ZERO,
+            onboarding_artifact: Vec::new(),
+            attestation_tag: Vec::new(),
+        };
+        let rejected = EnclaveResponse::FidelityQueryRejected {
+            inputs_canonical_hash: B256::ZERO,
+            reason: String::new(),
+            attestation_tag: Vec::new(),
+        };
+        assert_eq!(postcard::to_allocvec(&old_tail).unwrap()[0], 53);
+        assert_eq!(postcard::to_allocvec(&prepared).unwrap()[0], 54);
+        assert_eq!(postcard::to_allocvec(&rejected).unwrap()[0], 55);
+    }
 }

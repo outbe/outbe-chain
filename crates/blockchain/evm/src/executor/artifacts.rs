@@ -31,6 +31,7 @@ pub(in crate::executor) fn validate_finish_artifacts(
 ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {
     let block_artifacts = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
         .map_err(crate::errors::ExecutorValidationError::block_artifacts)?;
+    executor.validate_finish_witness(&block_artifacts)?;
     validate_execution_summary_artifact(
         executor.validate_execution_summary,
         block_number,

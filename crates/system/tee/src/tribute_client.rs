@@ -42,8 +42,15 @@ pub fn read_tribute_amounts(
 pub(crate) fn request_local_enclave(
     request: EnclaveRequest,
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    let (key, response) =
-        crate::try_with_enclave(|session| (session.attestation_pub(), session.request(&request)))
+    crate::witness::consensus_call(
+        request.label(),
+        || {
+            let (key, response) = crate::try_with_enclave(|session| {
+                (session.attestation_pub(), session.request(&request))
+            })
             .ok_or(crate::errors::TeeClientVerificationError::TeeSidecarNotConfigured)?;
-    Ok((key, response?))
+            Ok((key, response?))
+        },
+        |key, response| crate::witness::authenticate_request(&request, key, response),
+    )
 }

@@ -141,6 +141,7 @@ where
             has_publication: block_artifacts.radicle_publication.is_some(),
         };
         if !result.result.is_success() {
+            self.check_no_witness_fault()?;
             return self.commit_reserved_failure_receipt(tx, &result.result, receipt_context);
         }
         let output = EthTxResult {

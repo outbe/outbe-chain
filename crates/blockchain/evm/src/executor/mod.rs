@@ -70,6 +70,7 @@ mod receipts;
 mod system_execution;
 #[cfg(test)]
 mod tests;
+mod witness;
 mod zero_fee;
 
 pub use accounting::{AccountedParentArtifact, AccountedParentArtifactProvider};
@@ -91,8 +92,9 @@ pub(crate) use boundary::{apply_boundary_outcome, prepare_boundary_epoch_counter
 pub(crate) use system_execution::execute::system_tx_failure_code_for_result;
 
 pub use zero_fee::{
+    enclave_witness_budget_deferral, is_enclave_witness_budget_deferral,
     is_sponsored_block_budget_deferral, sponsored_block_budget_deferral,
-    SPONSORED_BLOCK_BUDGET_EXCEEDED,
+    ENCLAVE_WITNESS_BUDGET_EXCEEDED, SPONSORED_BLOCK_BUDGET_EXCEEDED,
 };
 pub(crate) use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};
 

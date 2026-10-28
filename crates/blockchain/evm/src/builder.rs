@@ -28,11 +28,13 @@ pub(crate) fn encode_final_header_artifacts(
     prefinal_extra_data: &[u8],
     execution_summary: outbe_primitives::reshare_artifact::ExecutionSummaryArtifact,
     timestamp_millis_part: u64,
+    enclave_witness: Option<alloy_primitives::Bytes>,
 ) -> Result<alloy_primitives::Bytes, BlockExecutionError> {
     let mut artifacts = decode_outbe_block_artifacts(prefinal_extra_data)
         .map_err(crate::errors::ExecutorValidationError::block_artifacts)?;
     artifacts.execution_summary = Some(execution_summary);
     artifacts.timestamp_millis_part = timestamp_millis_part;
+    artifacts.enclave_witness = enclave_witness;
     encode_outbe_block_artifacts(&artifacts)
         .map_err(|err| crate::errors::ExecutorValidationError::block_artifacts(err).into())
 }
@@ -73,10 +75,12 @@ where
     /// Encodes execution-produced header fields before state-root calculation.
     /// The final finish call repeats the same encoding.
     pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
+        let enclave_witness = self.executor.final_enclave_witness_bytes()?;
         self.ctx.inner.extra_data = encode_final_header_artifacts(
             self.ctx.inner.extra_data.as_ref(),
             self.executor.current_execution_summary(),
             self.ctx.timestamp_millis_part,
+            enclave_witness,
         )?;
         self.executor
             .set_final_extra_data(self.ctx.inner.extra_data.clone());

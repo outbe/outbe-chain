@@ -35,10 +35,34 @@ pub(super) async fn prepare(
         None
     };
     let validator_evm_address = evm_signer.as_ref().map(|signer| signer.address());
+    // Chain id and genesis are process context. A keyless follower still
+    // records them. It does not open a socket to do so.
+    outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
+        chain_id: config.chain.chain().id(),
+        genesis_hash: config.chain.genesis_hash(),
+        ..Default::default()
+    })?;
+    if keyless_follower_launch(args) {
+        install_keyless_replay_policy()?;
+        let (_node_host_signing, reth_p2p_public) =
+            load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
+        info!("keyless follower: enclave socket not configured; admission and offer-key checks skipped");
+        return Ok((
+            evm_signer,
+            outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+                reth_p2p_public,
+                expected_enclave_id: None,
+                validator: validator_evm_address,
+            },
+            None,
+        ));
+    }
     // Every network declares exactly one attestation policy in genesis. The
     // local session protocol is an independent, explicit operator choice:
     // GramineDirectDev may use either the development transport or a real
     // SGX, production NodeHost session. There is no connection fallback.
+    // A validator with no socket still fails here. A socket, validator or
+    // TEE fullnode, keeps the checks below.
     let socket = args
         .tee_enclave_socket
         .clone()
@@ -53,11 +77,6 @@ pub(super) async fn prepare(
         .resolve(initial_tee_policy.attestation_mode)?;
     let (node_host_signing, reth_p2p_public) =
         load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
-    outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
-        chain_id: config.chain.chain().id(),
-        genesis_hash: config.chain.genesis_hash(),
-        ..Default::default()
-    })?;
     let expected_enclave_id = match tee_session {
         outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
             use k256::ecdsa::signature::hazmat::PrehashSigner as _;
@@ -331,11 +350,61 @@ async fn initial_tee_lease_gate_v1(
 pub(super) struct TeeRuntimeWorkers {
     pub(super) finalization_notify: Arc<tokio::sync::Notify>,
     pub(super) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
-    pub(super) tee_lease_exit_rx: tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>,
-    pub(super) tee_lease_guard_handle: tokio::task::JoinHandle<()>,
+    /// Keeps the keyless armed-watch open for the launcher lifetime. The
+    /// enclave path moves its sender into the lease guard, so this is `None`.
+    pub(super) tee_lease_armed_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub(super) tee_lease_exit_rx:
+        Option<tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
+    pub(super) tee_lease_guard_handle: Option<tokio::task::JoinHandle<()>>,
     pub(super) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
     pub(super) upgrade_promotion: Arc<tokio::sync::Notify>,
     pub(super) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+/// Non-validator with no enclave socket. A validator without a socket is not
+/// keyless and still fails in `prepare` with `MissingTeeEnclaveSocket`.
+pub(super) fn keyless_follower_launch(args: &ConsensusArgs) -> bool {
+    !args.is_validator && args.tee_enclave_socket.is_none()
+}
+
+/// `None` and `ReplayOnly` are accepted. `None` means the caller installs
+/// `ReplayOnly`. Any other installed policy is a launch error.
+fn keyless_replay_policy_ok(
+    current: Option<outbe_tee::witness::WitnessPolicy>,
+) -> eyre::Result<bool> {
+    match current {
+        Some(outbe_tee::witness::WitnessPolicy::ReplayOnly) => Ok(false),
+        None => Ok(true),
+        Some(policy) => Err(eyre::eyre!(
+            "keyless follower requires WitnessPolicy::ReplayOnly, found {policy:?}"
+        )),
+    }
+}
+
+fn install_keyless_replay_policy() -> eyre::Result<()> {
+    if !keyless_replay_policy_ok(outbe_tee::witness::witness_policy())? {
+        return Ok(());
+    }
+    outbe_tee::witness::install_witness_policy(outbe_tee::witness::WitnessPolicy::ReplayOnly)
+        .or_else(|_| keyless_replay_policy_ok(outbe_tee::witness::witness_policy()).map(|_| ()))?;
+    if outbe_tee::witness::witness_policy() != Some(outbe_tee::witness::WitnessPolicy::ReplayOnly) {
+        eyre::bail!("keyless follower failed to install WitnessPolicy::ReplayOnly");
+    }
+    Ok(())
+}
+
+fn keyless_runtime_workers() -> TeeRuntimeWorkers {
+    let (tee_lease_armed_tx, tee_lease_armed_rx) = tokio::sync::watch::channel(false);
+    TeeRuntimeWorkers {
+        finalization_notify: Arc::new(tokio::sync::Notify::new()),
+        tee_lease_armed_rx,
+        tee_lease_armed_tx: Some(tee_lease_armed_tx),
+        tee_lease_exit_rx: None,
+        tee_lease_guard_handle: None,
+        tee_canary_handle: None,
+        upgrade_promotion: Arc::new(tokio::sync::Notify::new()),
+        upgrade_handle: None,
+    }
 }
 
 fn verify_initial_local_tee_admission_v1(
@@ -396,6 +465,10 @@ pub(super) async fn start_runtime_workers(
         outbe_node::shutdown::NodeShutdown,
     ),
 ) -> eyre::Result<TeeRuntimeWorkers> {
+    if keyless_follower_launch(args) {
+        info!("keyless follower: skipping TEE lease guard, canary, and upgrade watcher");
+        return Ok(keyless_runtime_workers());
+    }
     let chain = outbe_node::tee_remote_session::RegistryChainIdentity {
         chain_id: proof_chain_id,
         genesis_hash,
@@ -488,10 +561,64 @@ pub(super) async fn start_runtime_workers(
     Ok(TeeRuntimeWorkers {
         finalization_notify,
         tee_lease_armed_rx,
-        tee_lease_exit_rx,
-        tee_lease_guard_handle,
+        tee_lease_armed_tx: None,
+        tee_lease_exit_rx: Some(tee_lease_exit_rx),
+        tee_lease_guard_handle: Some(tee_lease_guard_handle),
         tee_canary_handle,
         upgrade_promotion,
         upgrade_handle,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct ArgsCli {
+        #[command(flatten)]
+        consensus: ConsensusArgs,
+    }
+
+    fn parsed_args(extra: &[&str]) -> ConsensusArgs {
+        let mut command = vec!["test"];
+        command.extend_from_slice(extra);
+        ArgsCli::try_parse_from(command)
+            .expect("consensus args parse")
+            .consensus
+    }
+
+    #[test]
+    fn keyless_launch_is_only_a_non_validator_without_a_socket() {
+        assert!(keyless_follower_launch(&parsed_args(&[])));
+        assert!(!keyless_follower_launch(&parsed_args(&[
+            "--tee-enclave-socket",
+            "/tmp/tee.sock",
+        ])));
+        let mut validator = parsed_args(&[]);
+        validator.is_validator = true;
+        assert!(!keyless_follower_launch(&validator));
+    }
+
+    #[test]
+    fn keyless_replay_policy_accepts_only_replay_only() {
+        use outbe_tee::witness::WitnessPolicy;
+        assert!(keyless_replay_policy_ok(None).unwrap());
+        assert!(!keyless_replay_policy_ok(Some(WitnessPolicy::ReplayOnly)).unwrap());
+        let err = keyless_replay_policy_ok(Some(WitnessPolicy::EnclaveBacked))
+            .expect_err("enclave policy");
+        assert!(err.to_string().contains("ReplayOnly"));
+    }
+
+    #[test]
+    fn keyless_workers_have_no_lease_guard() {
+        let workers = keyless_runtime_workers();
+        assert!(workers.tee_lease_exit_rx.is_none());
+        assert!(workers.tee_lease_guard_handle.is_none());
+        assert!(workers.tee_canary_handle.is_none());
+        assert!(workers.upgrade_handle.is_none());
+        assert!(!*workers.tee_lease_armed_rx.borrow());
+        assert!(workers.tee_lease_armed_tx.is_some());
+    }
 }

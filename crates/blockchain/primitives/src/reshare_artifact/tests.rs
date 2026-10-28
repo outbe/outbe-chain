@@ -130,6 +130,7 @@ fn roundtrip_block_artifacts_with_execution_summary_and_boundary() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary.clone())),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .unwrap();
     let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
@@ -355,6 +356,7 @@ fn roundtrip_matrix_summary_x_consensus_header() {
                     consensus_header_artifact: header.clone(),
                     timestamp_millis_part: ts,
                     late_finalize_credits: None,
+                    enclave_witness: None,
                 });
             }
         }
@@ -401,6 +403,7 @@ proptest! {
             consensus_header_artifact,
             timestamp_millis_part,
             late_finalize_credits: None,
+            enclave_witness: None,
         };
 
         let encoded = encode_outbe_block_artifacts(&artifacts).expect("encode");
@@ -446,6 +449,7 @@ fn encode_rejects_artifacts_over_extra_data_budget() {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            enclave_witness: None,
         };
     let err = encode_outbe_block_artifacts(&oversize)
         .expect_err("encoding past the extra_data budget must be rejected");
@@ -471,6 +475,7 @@ fn encode_rejects_artifacts_over_extra_data_budget() {
             )),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            enclave_witness: None,
         };
     let encoded = encode_outbe_block_artifacts(&at_limit).expect("at-limit artifact must encode");
     assert_eq!(encoded.len(), OUTBE_MAX_EXTRA_DATA_SIZE);
@@ -510,6 +515,7 @@ fn decode_rejects_reserved_tag_0x04() {
         ))),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("boundary encode");
     // Byte 7 is the first record tag after the v1 header.
@@ -525,6 +531,7 @@ fn decode_rejects_reserved_tag_0x04() {
         ))),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("dealer encode");
     assert_eq!(dealer_encoded[7], super::DEALER_LOG_TAG);
@@ -573,6 +580,7 @@ fn late_credits_coexist_with_execution_summary_and_timestamp() {
         late_finalize_credits: Some(super::LateFinalizeCreditsArtifact {
             batches: vec![sample_credit(5, 0x55)],
         }),
+        enclave_witness: Some(Bytes::from_static(b"opaque-witness")),
     };
     let encoded = encode_outbe_block_artifacts(&original).expect("encode");
     assert_eq!(
@@ -684,6 +692,7 @@ fn proposer_sanitization_strips_all_execution_produced_fields() {
         }),
         consensus_header_artifact: Some(consensus.clone()),
         timestamp_millis_part: 321,
+        enclave_witness: Some(Bytes::from_static(b"stale-witness")),
         ..Default::default()
     })
     .unwrap();
@@ -693,6 +702,7 @@ fn proposer_sanitization_strips_all_execution_produced_fields() {
     assert_eq!(decoded.consensus_header_artifact, Some(consensus));
     assert_eq!(decoded.execution_summary, None);
     assert_eq!(decoded.timestamp_millis_part, 0);
+    assert_eq!(decoded.enclave_witness, None);
 }
 
 #[test]

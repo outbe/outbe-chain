@@ -57,6 +57,9 @@ where
 
         // Pending-block RPC executes against its isolated EVM state.
         if !self.execute_outbe_block_hooks {
+            if block_number > 0 {
+                self.init_rpc_direct_witness_state();
+            }
             return Ok(());
         }
 
@@ -70,6 +73,7 @@ where
         let allow_boundary_proposer = self.boundary_allows_proposer(&block_artifacts, proposer);
         if block_number > 0 {
             self.validate_proposer_identity(proposer, allow_boundary_proposer)?;
+            self.init_block_witness_state(block_number, proposer, &block_artifacts)?;
         }
 
         // Phase 1 `verify_v2_proof`
@@ -89,50 +93,62 @@ where
         // missing committee snapshot aborts the block deterministically.
         self.verify_late_finalize_credits_in_preexec(block_number, &block_artifacts)?;
 
-        // Phase 1 commit physical move. After
-        // verify Ok, execute + commit the Phase 1 precompile so
-        // `run_outbe_pre_execution_hooks` (Cycle / Rewards / Oracle) observe
-        // post-Phase-1 accounting state. The proposer-supplied body[0] in
-        // the main tx loop is validated against the cached witness hash and
-        // skipped (validate-without-reexec). Receipt + state are already
-        // in place from this call. Reth state-root ordering is preserved
-        // because the preceding `verify_phase1_in_preexec` returned `Ok`.
-        self.apply_phase1_commit_in_preexec(block_number, &block_artifacts)?;
+        let prefix_witness_scope = self.enter_prefix_witness_scope()?;
+        let preexec_outcome = (|| -> Result<Vec<Log>, BlockExecutionError> {
+            // Phase 1 commit physical move. After
+            // verify Ok, execute + commit the Phase 1 precompile so
+            // `run_outbe_pre_execution_hooks` (Cycle / Rewards / Oracle) observe
+            // post-Phase-1 accounting state. The proposer-supplied body[0] in
+            // the main tx loop is validated against the cached witness hash and
+            // skipped (validate-without-reexec). Receipt + state are already
+            // in place from this call. Reth state-root ordering is preserved
+            // because the preceding `verify_phase1_in_preexec` returned `Ok`.
+            self.apply_phase1_commit_in_preexec(block_number, &block_artifacts)?;
 
-        // 4. Fresh bootstrap validation data from consensus config.
-        let genesis_validators = self
-            .bridge
-            .as_ref()
-            .and_then(|b| b.peek_genesis_validators());
+            // 4. Fresh bootstrap validation data from consensus config.
+            let genesis_validators = self
+                .bridge
+                .as_ref()
+                .and_then(|b| b.peek_genesis_validators());
 
-        // 5. Run Outbe block hooks. The provider flush commits through State,
-        //    which notifies the parallel state root hook.
-        let (_hook_changes, hook_events) = {
-            let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(
-                db,
-                BlockContext {
-                    block_number,
-                    timestamp,
-                    chain_id,
-                    genesis_hash: self.genesis_hash,
-                    proposer,
-                    validators: Vec::new(),
-                },
-            )?;
-            run_atomic_storage_hooks(db, ctx, |hook_ctx| -> outbe_primitives::error::Result<()> {
-                if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
-                    block_artifacts.consensus_header_artifact.as_ref()
-                {
-                    prepare_boundary_epoch_counters(
-                        hook_ctx.storage.clone(),
-                        boundary,
+            // 5. Run Outbe block hooks. The provider flush commits through State,
+            //    which notifies the parallel state root hook.
+            let (_hook_changes, hook_events) = {
+                let db = self.inner.evm.db_mut();
+                let ctx = build_block_context(
+                    db,
+                    BlockContext {
                         block_number,
-                    )?;
-                }
-                run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
-            })?
-        };
+                        timestamp,
+                        chain_id,
+                        genesis_hash: self.genesis_hash,
+                        proposer,
+                        validators: Vec::new(),
+                    },
+                )?;
+                run_atomic_storage_hooks(
+                    db,
+                    ctx,
+                    |hook_ctx| -> outbe_primitives::error::Result<()> {
+                        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+                            block_artifacts.consensus_header_artifact.as_ref()
+                        {
+                            prepare_boundary_epoch_counters(
+                                hook_ctx.storage.clone(),
+                                boundary,
+                                block_number,
+                            )?;
+                        }
+                        run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
+                    },
+                )?
+            };
+            Ok(hook_events)
+        })();
+        drop(prefix_witness_scope);
+        self.check_no_witness_fault()?;
+        let hook_events = preexec_outcome?;
+        self.finalize_prefix_witness()?;
         // Provider dropped here - mutable DB borrow released.
 
         // Log hook events via tracing for operator observability.
