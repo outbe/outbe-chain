@@ -9,6 +9,9 @@ pub const CALL_RATE_PCT: u16 = 128;
 /// Notice an owner gets to settle after a series is Called.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
+/// Time past the settlement deadline a move started by it has to arrive and settle.
+pub const TRANSIT_MARGIN: u32 = 3_600;
+
 /// Call-trigger evaluation window: the most recent stretch scanned for breaches.
 pub const CALL_WINDOW: u32 = 28 * SECONDS_PER_DAY_U32;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.

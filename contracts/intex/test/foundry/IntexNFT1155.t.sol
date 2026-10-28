@@ -327,19 +327,20 @@ contract IntexNFT1155Test is Test {
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 2, "");
         assertEq(nft.balanceOf(user2, TOKEN_ID_1), 2);
 
-        // Mark as called.
+        // Mark as called. With no notice period the deadline is the call itself.
+        uint32 deadline = uint32(block.timestamp);
         vm.prank(bridger);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        nft.markCalled(SERIES_ID_1, deadline);
 
         // A Called series still transfers until its settlement deadline.
         vm.prank(user);
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 3, "");
         assertEq(nft.balanceOf(user2, TOKEN_ID_1), 5);
 
-        // Past the deadline its unpaid units are forfeited and stay put.
+        // Past the deadline the units stay put, transit margin or not.
         vm.warp(block.timestamp + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, TOKEN_ID_1));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, TOKEN_ID_1, deadline));
         nft.safeTransferFrom(user, user2, TOKEN_ID_1, 1, "");
     }
 
@@ -393,8 +394,9 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, 10, SERIES_ID_1);
         nft.issueIntex(user, 10, SERIES_ID_2);
 
-        // Mark one as called.
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        // Mark one as called. With no notice period the deadline is the call itself.
+        uint32 deadline = uint32(block.timestamp);
+        nft.markCalled(SERIES_ID_1, deadline);
         vm.stopPrank();
 
         uint256[] memory ids = new uint256[](2);
@@ -408,7 +410,7 @@ contract IntexNFT1155Test is Test {
         // A batch containing a series past its settlement deadline reverts atomically.
         vm.warp(block.timestamp + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, TOKEN_ID_1));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, TOKEN_ID_1, deadline));
         nft.safeBatchTransferFrom(user, user2, ids, amounts, "");
 
         // The uncalled series still transfers on its own.
@@ -479,99 +481,64 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), mintAmount);
     }
 
-    function test_CrosschainBurn_RevertsAfterCutoff() public {
+    function _callWithNotice() internal returns (uint32 deadline, uint32 closeAt) {
         uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
-        vm.startPrank(bridger);
-        nft.issueIntex(user, 10, SERIES_ID_1);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        uint32 deadline = calledAt + callPeriod;
-
-        // One second past the cutoff: a hop could land after the settlement deadline.
-        uint32 cutoff = deadline - uint32(nft.BRIDGE_CUTOFF());
-        vm.warp(uint256(cutoff) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, TOKEN_ID_1, cutoff));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        vm.stopPrank();
-    }
-
-    function test_CrosschainMint_RevertsAfterDeadline() public {
-        uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
-        vm.startPrank(bridger);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        uint32 deadline = calledAt + callPeriod;
-
-        // Mirror of crosschainBurn: crosschainMint cannot re-inflate supply after the window closes.
-        vm.warp(uint256(deadline) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.crosschainMint(user, TOKEN_ID_1, 10);
-        vm.stopPrank();
-    }
-
-    function test_CrosschainBurn_ShortNoticeCutsOffATenthBeforeTheDeadline() public {
-        uint32 callPeriod = 600;
         _createSeries(SERIES_ID_1_DAY, callPeriod);
         vm.startPrank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
         uint32 calledAt = uint32(block.timestamp);
         nft.markCalled(SERIES_ID_1, calledAt);
-        uint32 cutoff = calledAt + callPeriod - callPeriod / 10;
-
-        vm.warp(cutoff);
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
-
-        vm.warp(uint256(cutoff) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, TOKEN_ID_1, cutoff));
-        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
         vm.stopPrank();
+        deadline = calledAt + callPeriod;
+        closeAt = deadline + nft.readData(SERIES_ID_1).callTrigger.transitMargin;
     }
 
-    function test_CrosschainBurn_AllowedAtCutoffBoundary() public {
-        uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
-        vm.startPrank(bridger);
-        nft.issueIntex(user, 10, SERIES_ID_1);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        uint32 deadline = calledAt + callPeriod;
-
-        // Exactly at the cutoff is still inside the window (the gate is strict `>`).
-        vm.warp(deadline - nft.BRIDGE_CUTOFF());
+    function test_CrosschainBurn_AllowedAtDeadline() public {
+        (uint32 deadline,) = _callWithNotice();
+        vm.warp(deadline);
+        vm.prank(bridger);
         nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
-        vm.stopPrank();
-
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
     }
 
-    function test_Issue_RevertsAfterDeadline() public {
-        uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
-        vm.startPrank(bridger);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, calledAt);
-        uint32 deadline = calledAt + callPeriod;
-
+    function test_CrosschainBurn_RevertsAfterDeadline() public {
+        (uint32 deadline,) = _callWithNotice();
         vm.warp(uint256(deadline) + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IssueAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.issueIntex(user, 10, SERIES_ID_1);
-        vm.stopPrank();
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
     }
 
-    function test_Issue_AllowedOnCalledSeriesAtDeadlineBoundary() public {
-        uint32 callPeriod = uint32(14 days);
-        _createSeries(SERIES_ID_1_DAY, callPeriod);
-        vm.startPrank(bridger);
-        uint32 calledAt = uint32(block.timestamp);
-        nft.markCalled(SERIES_ID_1, calledAt);
+    function test_CrosschainMint_LandsUntilTransitClose() public {
+        (, uint32 closeAt) = _callWithNotice();
+        vm.warp(closeAt);
+        vm.prank(bridger);
+        nft.crosschainMint(user, TOKEN_ID_1, 5);
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 15);
+    }
 
-        vm.warp(uint256(calledAt) + callPeriod);
+    function test_CrosschainMint_RevertsAfterTransitClose() public {
+        (, uint32 closeAt) = _callWithNotice();
+        vm.warp(uint256(closeAt) + 1);
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, closeAt));
+        nft.crosschainMint(user, TOKEN_ID_1, 10);
+    }
+
+    function test_Issue_AllowedOnCalledSeriesUntilTransitClose() public {
+        (, uint32 closeAt) = _callWithNotice();
+        vm.warp(closeAt);
+        vm.prank(bridger);
         nft.issueIntex(user, 10, SERIES_ID_1);
-        vm.stopPrank();
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 20);
+    }
 
-        assertEq(nft.balanceOf(user, TOKEN_ID_1), 10);
+    function test_Issue_RevertsAfterTransitClose() public {
+        (, uint32 closeAt) = _callWithNotice();
+        vm.warp(uint256(closeAt) + 1);
+        vm.prank(bridger);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.IssueAfterDeadline.selector, TOKEN_ID_1, closeAt));
+        nft.issueIntex(user, 10, SERIES_ID_1);
     }
 
     /// @dev A notice period near `type(uint32).max` pushes the deadline past uint32. Nothing may

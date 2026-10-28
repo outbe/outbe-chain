@@ -179,11 +179,12 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 calledAt = uint32(block.timestamp);
         tokenA.markCalled(series, calledAt);
         tokenB.markCalled(series, calledAt);
-        vm.warp(uint256(calledAt) + 61);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, calledAt + 60));
+        uint32 closeAt = calledAt + 60 + tokenB.readData(series).callTrigger.transitMargin;
+        vm.warp(uint256(closeAt) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, closeAt));
         adapterB.retryCrosschainMint(receiveId, 0);
 
-        // Past the deadline the Called origin refuses the reclaim's mint, so it parks on A.
+        // Past the transit close the Called origin refuses the reclaim's mint, so it parks on A.
         adapterB.reclaimToSource(receiveId, 0);
         bytes memory reclaim = bridge.lastPayload();
         bytes32 reclaimId = keccak256(abi.encode(_interop(B_CHAIN_ID, address(adapterB)), reclaim));
@@ -194,7 +195,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         (,, parkedOnA, exists) = adapterA.failedCrosschainMints(reclaimId, 0);
         assertTrue(exists, "late reclaim parks on A");
         assertEq(parkedOnA, 60);
-        assertEq(tokenA.totalSupply(id), 40, "A regains no supply past the deadline");
+        assertEq(tokenA.totalSupply(id), 40, "A regains no supply past the transit close");
         assertEq(tokenA.balanceOf(user, id), 40);
         assertEq(tokenB.totalSupply(id), 0);
         assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parkedOnA, 100);
@@ -253,10 +254,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
             dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenIds: tokenIds, units: amounts
         });
         uint256 fee = adapterB.quoteBatchSend(back);
-        // A 60 s notice leaves a tenth of it, 6 s, before the deadline for the hop to land.
-        uint32 cutoff = uint32(deadlineB - 6);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, id, cutoff));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, uint32(deadlineB)));
         adapterB.batchSend{value: fee}(back);
     }
 

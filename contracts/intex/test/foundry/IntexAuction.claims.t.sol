@@ -232,7 +232,7 @@ contract IntexAuctionClaimsTest is Test {
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
         intex.markCalled(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
-        vm.warp(block.timestamp + 1);
+        vm.warp(block.timestamp + intex.readData(CreateSeriesLib.seriesId(DAY)).callTrigger.transitMargin + 1);
         assertEq(uint8(intex.readData(CreateSeriesLib.seriesId(DAY)).state), uint8(IIntexNFT1155.IntexState.Forfeited));
 
         vm.expectEmit(true, true, true, true, address(auction));

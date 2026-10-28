@@ -38,6 +38,7 @@ impl<'storage> DesisContract<'storage> {
                 call_notice_period_seconds: self
                     .config_call_notice_period_seconds
                     .read(&worldwide_day)?,
+                transit_margin_seconds: self.config_transit_margin_seconds.read(&worldwide_day)?,
             },
             min_intex_bid_rate: self.config_min_bid_rate.read(&worldwide_day)?,
             min_intex_bid_quantity: self.config_min_bid_quantity.read(&worldwide_day)? as u16,
@@ -79,6 +80,8 @@ impl<'storage> DesisContract<'storage> {
             .write(&worldwide_day, cfg.call_trigger.call_threshold_seconds)?;
         self.config_call_notice_period_seconds
             .write(&worldwide_day, cfg.call_trigger.call_notice_period_seconds)?;
+        self.config_transit_margin_seconds
+            .write(&worldwide_day, cfg.call_trigger.transit_margin_seconds)?;
         self.config_min_bid_rate
             .write(&worldwide_day, cfg.min_intex_bid_rate)?;
         self.config_min_bid_quantity

@@ -142,7 +142,8 @@ contract GasBudgetTest is CrossChainTest {
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,
-                callPriceMinor: 200e6
+                callPriceMinor: 200e6,
+                transitMargin: 1 hours
             });
         }
 
@@ -711,7 +712,8 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 referenceCurrency: 840,
                 callWindow: 0,
                 callThreshold: 0,
-                callPriceMinor: 200e6
+                callPriceMinor: 200e6,
+                transitMargin: 1 hours
             });
         }
         return BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, index, 2, batch);

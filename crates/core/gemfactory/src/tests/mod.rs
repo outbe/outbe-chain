@@ -321,6 +321,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
         six_decimal_u128(),
         outbe_intex::IntexCallTrigger {
             call_notice_period_seconds: SOURCE_NOTICE_SECONDS,
+            transit_margin_seconds: 3_600,
             ..Default::default()
         },
     );

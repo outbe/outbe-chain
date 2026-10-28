@@ -24,7 +24,7 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
-pub const MAX_SERIES_PER_MESSAGE: usize = 24;
+pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 
 /// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.

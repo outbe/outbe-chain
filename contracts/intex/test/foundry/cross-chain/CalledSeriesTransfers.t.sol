@@ -73,8 +73,9 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     }
 
     function test_APlainTransferPastTheDeadlineIsRefused() public {
-        vm.warp(block.timestamp + 1 days + 1);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, tokenId));
+        uint32 deadline = uint32(block.timestamp + 1 days);
+        vm.warp(uint256(deadline) + 1);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, tokenId, deadline));
         vm.prank(owner);
         intex.safeTransferFrom(owner, stranger, tokenId, 1, "");
     }

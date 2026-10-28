@@ -7,7 +7,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 
-/// @notice A called series past its notice period reads as `Forfeited`, while storage
+/// @notice A called series past its transit close reads as `Forfeited`, while storage
 ///         keeps `Called` so every freeze written against the stored field still bites.
 contract IntexNFT1155ForfeitedTest is Test {
     uint32 internal constant SERIES_ID_DAY = 20260622;
@@ -25,6 +25,7 @@ contract IntexNFT1155ForfeitedTest is Test {
     IntexNFT1155 internal token;
     uint256 internal iTok;
     uint256 internal deadline;
+    uint256 internal closeAt;
 
     function setUp() public {
         token = DeployProxy.intexNFT1155(admin, relayer);
@@ -35,6 +36,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         vm.stopPrank();
         iTok = token.issuedTokenId(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
+        closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
     }
 
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
@@ -44,11 +46,14 @@ contract IntexNFT1155ForfeitedTest is Test {
         return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
     }
 
-    function test_ReadsCalledUpToTheDeadlineAndForfeitedAfterIt() public {
-        vm.warp(deadline);
+    function test_ReadsCalledUpToTheTransitCloseAndForfeitedAfterIt() public {
+        vm.warp(deadline + 1);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
 
-        vm.warp(deadline + 1);
+        vm.warp(closeAt);
+        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
+
+        vm.warp(closeAt + 1);
         assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Forfeited));
     }
 
@@ -56,22 +61,21 @@ contract IntexNFT1155ForfeitedTest is Test {
     /// `crosschainBurn` and `crosschainMint` keep refusing a Forfeited series.
     function test_StorageStillHoldsCalled() public {
         assertEq(_storedState(), uint8(IIntexNFT1155.IntexState.Called), "before");
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         assertEq(_storedState(), uint8(IIntexNFT1155.IntexState.Called), "after");
     }
 
     function test_TransferStaysFrozenAfterExpiry() public {
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnForfeitedForbidden.selector, iTok));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferAfterDeadline.selector, iTok, uint32(deadline)));
         token.safeTransferFrom(user, makeAddr("other"), iTok, 1, "");
     }
 
     function test_BridgeStaysClosedAfterExpiry() public {
-        vm.warp(deadline + 1);
-        uint32 cutoff = uint32(deadline - token.BRIDGE_CUTOFF());
+        vm.warp(closeAt + 1);
         vm.prank(relayer);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeCutoffPassed.selector, iTok, cutoff));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, iTok, uint32(deadline)));
         token.crosschainBurn(user, user, iTok, 1);
     }
 }

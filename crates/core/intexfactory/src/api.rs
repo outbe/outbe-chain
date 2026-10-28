@@ -12,7 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::{IntexCallTerms, IssuanceParams};
 
-/// The live profile's call rate, window, threshold and notice. Desis calls this at
+/// The live profile's call rate, window, threshold, notice and transit margin. Desis calls this at
 /// the auction start and stores the day's call prices and trigger with the other conditions.
 pub fn call_terms(storage: &StorageHandle<'_>) -> Result<IntexCallTerms> {
     let profile = outbe_intex::config::read(storage)?;
@@ -22,6 +22,7 @@ pub fn call_terms(storage: &StorageHandle<'_>) -> Result<IntexCallTerms> {
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,
             call_notice_period_seconds: profile.call_notice_period_seconds,
+            transit_margin_seconds: profile.transit_margin_seconds,
         },
     })
 }

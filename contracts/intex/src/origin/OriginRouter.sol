@@ -570,6 +570,7 @@ contract OriginRouter is
         payload.callWindow = p.callWindow;
         payload.callThreshold = p.callThreshold;
         payload.callPriceMinor = p.callPriceMinor;
+        payload.transitMargin = p.transitMargin;
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

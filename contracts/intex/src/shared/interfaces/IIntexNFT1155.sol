@@ -46,6 +46,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         /// @notice Called->deadline window in seconds. It is stored verbatim. The issuer must
         ///         supply a non-zero value.
         uint32 callNoticePeriod;
+        /// @notice Seconds past the settlement deadline a Called unit may still arrive and settle.
+        uint32 transitMargin;
     }
 
     /// @notice Series-level data, stored once per series under its Issued token id.
@@ -129,17 +131,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroUnits();
     /// @notice A mint or crosschainMint exceeds the units its packed storage field can hold.
     error UnitsTooLarge(uint256 units);
-    /// @notice Owner-to-owner transfer attempted after a Called series' settlement deadline.
-    error TransferOnForfeitedForbidden(uint256 tokenId);
-    /// @notice Bridge crosschainMint attempted on a `Called` series after the settlement deadline
-    ///         (`calledAt + callNoticePeriod`) has passed.
-    error BridgeAfterDeadline(uint256 tokenId, uint32 deadline);
-    /// @notice Bridge crosschainBurn attempted on a `Called` series after its bridge cutoff (the
-    ///         deadline less a tenth of the notice period, at most `BRIDGE_CUTOFF`).
-    error BridgeCutoffPassed(uint256 tokenId, uint32 cutoff);
-    /// @notice Issue attempted on a `Called` series after the settlement deadline
-    ///         (`calledAt + callNoticePeriod`) has passed.
-    error IssueAfterDeadline(uint256 tokenId, uint32 deadline);
+    /// @notice Owner-to-owner transfer attempted on a `Called` series after its settlement deadline.
+    error TransferAfterDeadline(uint256 tokenId, uint32 deadline);
+    /// @notice Bridge attempted on a `Called` series after it closed: crosschainBurn after the
+    ///         settlement deadline, crosschainMint after the transit margin past it.
+    error BridgeAfterDeadline(uint256 tokenId, uint32 closedAt);
+    /// @notice Issue attempted on a `Called` series after the transit margin past its settlement
+    ///         deadline ended.
+    error IssueAfterDeadline(uint256 tokenId, uint32 closedAt);
     /// @notice `markCalled` was given a call time of zero or one the destination clock has not
     ///         reached.
     error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
@@ -174,7 +173,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     function createSeries(CreateSeriesParams calldata params) external;
 
     /// @notice Mint Intex to a specific address.
-    /// @dev A `Called` series takes no issuance past its settlement deadline.
+    /// @dev A `Called` series takes no issuance past the transit margin after its settlement deadline.
     /// @param to Recipient of the minted Issued tokens.
     /// @param units Units to mint, bounded by `type(uint16).max`. `totalSupply` stays within
     ///        `uint32`.

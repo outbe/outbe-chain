@@ -56,8 +56,8 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             .unwrap();
         (promis_minor, nonce)
     });
-    let deadline = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD);
-    storage.set_timestamp(U256::from(deadline + 1));
+    let close_at = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD) + u64::from(TRANSIT_MARGIN);
+    storage.set_timestamp(U256::from(close_at + 1));
 
     StorageHandle::enter(&mut storage, |s| {
         let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
@@ -66,8 +66,8 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             ISSUED_AT
         );
         assert!(
-            s.now_secs().unwrap() > deadline,
-            "the fixture sits past the settlement deadline"
+            s.now_secs().unwrap() > close_at,
+            "the fixture sits past the transit close"
         );
 
         // The unpaid unit is closed.

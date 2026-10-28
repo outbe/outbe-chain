@@ -137,14 +137,15 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
+        uint256 closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
 
-        vm.warp(deadline);
+        vm.warp(closeAt);
         _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
 
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         bytes memory json = _json(iTok);
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Forfeited\"}");
-        _assertContains(json, "\"Call Deadline\"");
+        _assertContains(json, string.concat("{\"trait_type\":\"Call Deadline\",\"value\":", vm.toString(deadline), ","));
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("FORFEITED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");

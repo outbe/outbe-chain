@@ -18,8 +18,8 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev One auction produces one series with shared parameters for all winners.
  * @dev State transitions affect the entire series simultaneously (O(1) gas).
  * @dev Series lifecycle: Issued -> Called.
- *      Expiry is not an on-chain state. It is derived from `calledAt + callNoticePeriod`
- *      against the clock (issue/settle/bridge gates, metadata rendering).
+ *      Forfeit is not an on-chain state. It is derived against the clock once the transit margin
+ *      past `calledAt + callNoticePeriod` ends (issue/bridge gates, metadata rendering).
  * @dev A series' units are the token id `uint112(seriesId)`. Settled units live in the Intex
  *      precompile on Outbe: a settlement burns them here.
  */
@@ -30,11 +30,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
     /// @notice Burner role: the IntexFactory and GemFactory precompiles on Outbe. It can call `burnIntex`.
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
-    /// @notice Upper bound on how early a `Called` series stops leaving a chain before its settlement
-    ///         deadline. The margin is a tenth of the notice period, capped at this value, and leaves a
-    ///         hop in flight time to land before the deadline.
-    uint256 public constant BRIDGE_CUTOFF = 1 hours;
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
@@ -129,7 +124,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 callWindow: params.callTrigger.callWindow,
                 callThreshold: params.callTrigger.callThreshold,
-                callNoticePeriod: params.callTrigger.callNoticePeriod
+                callNoticePeriod: params.callTrigger.callNoticePeriod,
+                transitMargin: params.callTrigger.transitMargin
             }),
             issuedAt: params.issuedAt,
             calledAt: 0,
@@ -162,10 +158,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert NonexistentToken(tokenId);
         }
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            uint256 deadline = _settlementDeadline(data);
-            if (block.timestamp > deadline) {
+            uint256 closeAt = _transitCloseAt(data);
+            if (block.timestamp > closeAt) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert IssueAfterDeadline(tokenId, uint32(deadline));
+                revert IssueAfterDeadline(tokenId, uint32(closeAt));
             }
         }
 
@@ -221,20 +217,18 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Bridge crosschainBurn gating:
     ///      - Series state `Issued`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, owner-initiated moves while the series is tradable).
-    ///      - Series state `Called`: allowed only until the bridge cutoff before the deadline.
+    ///      - Series state `Called`: allowed to any recipient until the settlement deadline.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances
-            // freeze. A hop leaves no later than the cutoff, so its `crosschainMint` has the
-            // margin to land before the deadline.
-            uint256 cutoff = _bridgeCutoff(data);
-            if (block.timestamp > cutoff) {
+            // A hop leaves by the deadline, and the transit margin past it lets the hop land and settle.
+            uint256 deadline = _settlementDeadline(data);
+            if (block.timestamp > deadline) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert BridgeCutoffPassed(tokenId, uint32(cutoff));
+                revert BridgeAfterDeadline(tokenId, uint32(deadline));
             }
         }
 
@@ -246,19 +240,18 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge crosschainMint mirrors `crosschainBurn`: `RELAYER_ROLE` throughout. Inside the
-    ///      call window, the bridge may still mint into a Called series so a bridged balance lands.
+    /// @dev Bridge crosschainMint mirrors `crosschainBurn`: `RELAYER_ROLE` throughout. Until the transit
+    ///      margin past the deadline ends, the bridge may still mint into a Called series so a hop lands.
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline.
-            uint256 deadline = _settlementDeadline(data);
-            if (block.timestamp > deadline) {
+            uint256 closeAt = _transitCloseAt(data);
+            if (block.timestamp > closeAt) {
                 // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert BridgeAfterDeadline(tokenId, uint32(deadline));
+                revert BridgeAfterDeadline(tokenId, uint32(closeAt));
             }
         }
 
@@ -310,12 +303,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
     }
 
-    /// @dev Last second a `Called` series may leave a chain: the deadline less a tenth of the notice
-    ///      period, capped at `BRIDGE_CUTOFF`.
-    function _bridgeCutoff(IIntexNFT1155.SeriesData storage data) internal view returns (uint256) {
-        uint256 margin = data.callTrigger.callNoticePeriod / 10;
-        if (margin > BRIDGE_CUTOFF) margin = BRIDGE_CUTOFF;
-        return _settlementDeadline(data) - margin;
+    /// @dev Last second a `Called` unit may still land and settle: the deadline plus the transit margin.
+    function _transitCloseAt(IIntexNFT1155.SeriesData storage data) internal view returns (uint256) {
+        return _settlementDeadline(data) + data.callTrigger.transitMargin;
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -332,11 +322,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return data;
     }
 
-    /// @dev Derived, never stored: no transaction arrives at the deadline to write it.
+    /// @dev Derived, never stored: no transaction arrives at the transit close to write it.
     function _effectiveState(IIntexNFT1155.SeriesData memory data) private view returns (IIntexNFT1155.IntexState) {
         if (
             data.state == IIntexNFT1155.IntexState.Called
-                && block.timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod
+                && block.timestamp
+                    > uint256(data.calledAt) + data.callTrigger.callNoticePeriod + data.callTrigger.transitMargin
         ) {
             return IIntexNFT1155.IntexState.Forfeited;
         }
@@ -374,9 +365,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     /// @dev Transfer lock.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (issue, burnIntex,
     ///        bridge crosschainBurn/crosschainMint).
-    ///      - Owner-to-owner transfers stay open until a Called series' settlement deadline.
-    ///        Its unpaid units are forfeited then, so they no longer move. Bridge gating is
-    ///        separate and lives in `crosschainBurn` / `crosschainMint`.
+    ///      - Owner-to-owner transfers stay open until a Called series' settlement deadline, the
+    ///        same moment its units stop leaving by bridge. Bridge gating is separate and lives in
+    ///        `crosschainBurn` / `crosschainMint`.
     /// @param from Sender address (address(0) for mints).
     /// @param to Receiver address (address(0) for burns).
     /// @param ids Array of token IDs.
@@ -386,8 +377,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             IntexNFT1155Storage storage $ = _s();
             for (uint256 i = 0; i < ids.length; i++) {
                 IIntexNFT1155.SeriesData storage data = $.seriesData[ids[i]];
-                if (data.state == IIntexNFT1155.IntexState.Called && block.timestamp > _settlementDeadline(data)) {
-                    revert TransferOnForfeitedForbidden(ids[i]);
+                if (data.state == IIntexNFT1155.IntexState.Called) {
+                    uint256 deadline = _settlementDeadline(data);
+                    if (block.timestamp > deadline) {
+                        // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
+                        revert TransferAfterDeadline(ids[i], uint32(deadline));
+                    }
                 }
             }
         }
