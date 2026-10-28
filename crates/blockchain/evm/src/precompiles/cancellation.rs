@@ -21,9 +21,7 @@ impl ExecutionAbortBridge {
             PrecompileError::EnclaveUnavailable(reason)
             | PrecompileError::Storage(reason)
             | PrecompileError::SubCall(SubCallError::DatabaseError(reason)) => {
-                *self.terminal.lock() = Some(NodeLocalExecutionAbort {
-                    reason: reason.clone(),
-                });
+                *self.terminal.lock() = Some(NodeLocalExecutionAbort::new(reason.clone()));
             }
             // A child fatal is propagated by this provider into its caller.
             PrecompileError::SubCall(SubCallError::Fatal(_)) => {}

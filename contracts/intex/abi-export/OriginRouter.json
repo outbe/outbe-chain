@@ -738,6 +738,11 @@
               "name": "callPriceMinor",
               "type": "uint64",
               "internalType": "uint64"
+            },
+            {
+              "name": "transitMargin",
+              "type": "uint32",
+              "internalType": "uint32"
             }
           ]
         }

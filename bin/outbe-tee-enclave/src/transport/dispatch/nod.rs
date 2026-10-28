@@ -127,48 +127,6 @@ pub(super) fn encrypt_for_tribute(
     })())
 }
 
-#[cfg(feature = "e2e-test")]
-pub(super) struct NodFixtureInput {
-    pub terms: outbe_primitives::nod_encryption::NodTermsV1,
-    pub creator_public: [u8; 32],
-    pub amount: alloy_primitives::U256,
-}
-#[cfg(feature = "e2e-test")]
-pub(super) fn create_for_test(
-    keys: &EnclaveKeys,
-    offer: &SharedTributeOfferKey,
-    chain: B256,
-    fixture: NodFixtureInput,
-) -> EnclaveResponse {
-    let NodFixtureInput {
-        terms,
-        creator_public,
-        amount,
-    } = fixture;
-    response((|| -> EnclaveResult<EnclaveResponse> {
-        let key = offer
-            .get()
-            .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
-        if terms.chain_id != resident_chain_id(chain)? {
-            return Err(TransportDispatchError::NodFixtureChainMismatch.into());
-        }
-        let inputs = response_auth::hash(
-            b"outbe/nod/test-create-inputs/v1",
-            &(&terms, &creator_public, amount),
-        )
-        .map_err(|_| TransportDispatchError::InvalidNodFixtureInputs)?;
-        let nod = crate::nod_encryption::encrypt_nod(key.secret(), &creator_public, terms, amount)
-            .map_err(|_| TransportDispatchError::InvalidNodFixture)?;
-        let preimage = response_auth::attestation(b"outbe/nod/test-create-result/v1", inputs, &nod)
-            .map_err(|_| TransportDispatchError::InvalidNodFixtureResult)?;
-        Ok(EnclaveResponse::NodCreatedForTestV1 {
-            nod,
-            inputs_canonical_hash: inputs,
-            attestation_tag: keys.sign_attestation(&preimage).to_vec(),
-        })
-    })())
-}
-
 pub(super) fn execute_lysis(
     keys: &EnclaveKeys,
     offer: &SharedTributeOfferKey,

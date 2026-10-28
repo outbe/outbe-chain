@@ -1,19 +1,16 @@
 //! Storage schema for the Intex runtime module: the canonical per-series
 //! identity + lifecycle ledger. One record per `seriesId`.
 
-use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::call_breach::group_key;
-use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
-use std::fmt;
 
 use crate::errors::IntexError;
 
 /// Series lifecycle state: `Issued -> Called -> Forfeited`, derived from the series' group.
-/// A Called series becomes Forfeited after its notice-period deadline.
+/// A Called series becomes Forfeited once the transit margin past its settlement deadline ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
@@ -40,21 +37,24 @@ pub struct IntexCallTrigger {
     pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
     pub call_notice_period_seconds: u32,
+    /// Seconds past the settlement deadline a Called unit may still arrive and settle.
+    pub transit_margin_seconds: u32,
 }
 
-/// When a series' group was called and the last second it may still settle. Both are
-/// zero while the group is uncalled.
+/// When a series' group was called, its settlement deadline, and the last second a Called
+/// unit may still land and settle. All are zero while the group is uncalled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CallStamp {
     pub called_at: u32,
     pub deadline: u64,
+    pub close_at: u64,
 }
 
 impl CallStamp {
-    /// The state as of `now`: derived, because no transaction arrives at the deadline
+    /// The state as of `now`: derived, because no transaction arrives at the transit close
     /// to write it.
     pub const fn state(&self, now: u64) -> IntexState {
-        match (self.called_at, now > self.deadline) {
+        match (self.called_at, now > self.close_at) {
             (0, _) => IntexState::Issued,
             (_, false) => IntexState::Called,
             (_, true) => IntexState::Forfeited,
@@ -62,120 +62,7 @@ impl CallStamp {
     }
 }
 
-/// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`.
-#[repr(transparent)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct SeriesId([u8; SERIES_ID_LEN]);
-
-pub const SERIES_ID_LEN: usize = 14;
-
-const DAY_DIGITS: usize = 8;
-const ISSUANCE_AT: usize = 9;
-const REFERENCE_AT: usize = 13;
-
-impl SeriesId {
-    /// Rejects a day outside eight digits and code bytes outside `A-Z` / `0-9`.
-    pub fn pack(
-        worldwide_day: WorldwideDay,
-        issuance: [u8; 3],
-        reference: u8,
-    ) -> Result<Self, IntexError> {
-        let mut day = worldwide_day.value();
-        if day == 0 || day > 99_999_999 {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        if !issuance.iter().all(|byte| is_code_byte(*byte)) || !is_code_byte(reference) {
-            return Err(IntexError::InvalidSeriesId);
-        }
-        let mut bytes = [b'-'; SERIES_ID_LEN];
-        for slot in bytes[..DAY_DIGITS].iter_mut().rev() {
-            *slot = b'0' + (day % 10) as u8;
-            day /= 10;
-        }
-        bytes[ISSUANCE_AT..ISSUANCE_AT + 3].copy_from_slice(&issuance);
-        bytes[REFERENCE_AT] = reference;
-        Ok(Self(bytes))
-    }
-
-    pub const fn from_bytes(bytes: [u8; SERIES_ID_LEN]) -> Self {
-        Self(bytes)
-    }
-
-    pub const fn as_bytes(&self) -> &[u8; SERIES_ID_LEN] {
-        &self.0
-    }
-
-    pub fn worldwide_day(&self) -> WorldwideDay {
-        WorldwideDay::new(self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
-            acc * 10 + u32::from(byte.wrapping_sub(b'0'))
-        }))
-    }
-
-    /// How a currency is spelled inside an id: its ISO 4217 alpha-3 code.
-    pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
-        iso_4217_alpha(iso).ok_or(IntexError::InvalidSeriesId)
-    }
-
-    /// The id of the series a day issues for one `(issuance, reference)` pair.
-    pub fn for_pair(
-        worldwide_day: WorldwideDay,
-        issuance: u16,
-        reference: u16,
-    ) -> Result<Self, IntexError> {
-        Self::pack(
-            worldwide_day,
-            Self::currency_code(issuance)?,
-            Self::currency_code(reference)?[0],
-        )
-    }
-}
-
-const fn is_code_byte(byte: u8) -> bool {
-    byte.is_ascii_uppercase() || byte.is_ascii_digit()
-}
-
-impl fmt::Display for SeriesId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&String::from_utf8_lossy(&self.0))
-    }
-}
-
-impl StorableType for SeriesId {
-    const SLOTS: usize = 1;
-}
-
-/// Left-aligned in the word, matching the Solidity `bytes14` layout.
-impl Storable for SeriesId {
-    fn from_word(word: U256) -> Self {
-        let mut bytes = [0u8; SERIES_ID_LEN];
-        bytes.copy_from_slice(&word.to_be_bytes::<32>()[..SERIES_ID_LEN]);
-        Self(bytes)
-    }
-
-    fn to_word(&self) -> U256 {
-        let mut word = [0u8; 32];
-        word[..SERIES_ID_LEN].copy_from_slice(&self.0);
-        U256::from_be_bytes(word)
-    }
-}
-
-impl StorageKey for SeriesId {
-    fn key_bytes(&self) -> Vec<u8> {
-        self.0.to_vec()
-    }
-}
-
-impl From<SeriesId> for FixedBytes<SERIES_ID_LEN> {
-    fn from(id: SeriesId) -> Self {
-        Self(id.0)
-    }
-}
-
-impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
-    fn from(value: FixedBytes<SERIES_ID_LEN>) -> Self {
-        Self(value.0)
-    }
-}
+pub use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
 
 /// Identity parameters captured once at series creation.
 ///
@@ -243,6 +130,9 @@ pub struct SeriesRecord {
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
     #[attribute(order = 10, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
+
+    #[attribute(order = 11)]
+    pub transit_margin_seconds: u32,
 }
 
 impl SeriesRecord {
@@ -261,6 +151,7 @@ impl SeriesRecord {
             call_window_seconds: self.call_window_seconds,
             call_threshold_seconds: self.call_threshold_seconds,
             call_notice_period_seconds: self.call_notice_period_seconds,
+            transit_margin_seconds: self.transit_margin_seconds,
         }
     }
 }
@@ -325,7 +216,7 @@ pub struct IntexContract {
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     // `(bin << 32) | groups of that bin still to visit` where each currency's call scan
-    // resumes. 0 = fresh sweep.
+    // resumes. 0 = fresh pass.
     #[attribute(order = 38)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
 
@@ -340,7 +231,7 @@ pub struct IntexContract {
     #[attribute(order = 41)]
     pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // UTC day an unfinished call sweep is pinned to, so its later slices decide
+    // UTC day an unfinished call pass is pinned to, so its later slices decide
     // against the prices it opened with. 0 = none in flight. A date key is never 0.
     #[attribute(order = 42)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
@@ -351,12 +242,12 @@ pub struct IntexContract {
 
     // This queue schedules called groups by the day when their settlement window closes.
     #[attribute(order = 44)]
-    pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 45)]
-    pub expiry_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub expiry_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Group key -> when the group's settlement window closes.
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// Group key -> when the group's transit margin past its settlement deadline ends.
     #[attribute(order = 47)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     // Widest terms ever issued in a currency. Both only move outwards, so the range
@@ -369,24 +260,24 @@ pub struct IntexContract {
     /// This value counts all slots ever used in a day.
     /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 50)]
-    pub expiry_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 51)]
-    pub expiry_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// This map associates `keccak256(day_be32 ++ slot_be32)` with the group key.
     #[attribute(order = 52)]
-    pub expiry_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// This map associates a group key with `((day + 1) << 32) | slot`.
     /// Zero means that the group is not queued.
     #[attribute(order = 53)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 54)]
-    pub expiry_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 55)]
-    pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 56)]
     pub call_latest_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// UTC day the call sweep could not price a reference currency on. The rest of that
+    /// UTC day the call pass could not price a reference currency on. The rest of that
     /// day's pass passes it by.
     #[attribute(order = 57)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
@@ -398,7 +289,7 @@ pub struct IntexContract {
     pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // This queue stores expired groups whose spent series await deletion.
-    // It schedules groups by day, like the expiry queue.
+    // It schedules groups by day, like the forfeit queue.
     #[attribute(order = 60)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 61)]
@@ -437,6 +328,8 @@ pub struct IntexContract {
     pub call_group_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 72)]
     pub call_group_notice_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 77)]
+    pub call_group_transit_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {

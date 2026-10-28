@@ -138,7 +138,7 @@ fn cycle_notice_count_limit_does_not_reserve_internal_work() {
                 .notify_at
                 .write(
                     &(index as u32),
-                    outbe_intexfactory::notify::pack_called_notice(id, 1),
+                    outbe_intexfactory::notify::pack_call_notice(id, 1),
                 )
                 .unwrap();
         }
@@ -149,7 +149,7 @@ fn cycle_notice_count_limit_does_not_reserve_internal_work() {
     p.gas = SubcallGasMeter::new(limit);
     let result = StorageHandle::enter(&mut p, |storage| {
         let block = BlockContext::new(1, 2, 1, CALLER, vec![CALLER]);
-        outbe_intexfactory::notify::send_notices(&BlockRuntimeContext::new(block, storage))
+        outbe_intexfactory::notify::send_call_notices(&BlockRuntimeContext::new(block, storage))
     });
     assert!(matches!(result, Err(PrecompileError::OutOfGas)));
     let spent = limit.checked_sub(p.gas.remaining()).unwrap();

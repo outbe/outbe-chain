@@ -91,7 +91,7 @@ impl Localnet {
         self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
-        // Step 1: DKG bootstrap - keys, polynomial, dkg-output, validators.json,
+        // Step 1: DKG bootstrap - keys, polynomial, DKG output, validators.json,
         // reth-bootnodes.txt.
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.args([
@@ -292,6 +292,11 @@ impl Localnet {
                         "offeringPeriodSeconds":
                             localnet_metadosis_offering_period_seconds(profile),
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
+                    },
+                    // A localnet day starts mid-day and runs few hours, so the
+                    // production day coverage rule would leave it without a VWAP.
+                    "oracle": {
+                        "dayVwapMinCoverage": [0, 1],
                     },
                 },
             },

@@ -146,10 +146,15 @@ fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
     let jumped_timestamp = deadline + 10 * 14 * SECONDS_PER_DAY;
     let mut base = configured_storage(12, jumped_timestamp);
     install_validator_lease(&mut base, deadline);
+    base.enter(|storage| {
+        fund_staking_escrow(storage, &[VALIDATOR], FUNDED_STAKE);
+    });
     let parent = base.storage.clone();
+    let staking_balance = base.get_balance(STAKING_ADDRESS);
 
     let run = || {
         let mut provider = provider_from_storage(12, jumped_timestamp, parent.clone());
+        provider.set_balance(STAKING_ADDRESS, staking_balance);
         let jailed = provider.enter(|storage| {
             let ctx = runtime_ctx(storage);
             enforce_tee_lease_deadlines(&ctx).unwrap()
@@ -173,10 +178,10 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.register_validator(OWNER, later, &[8u8; 48]).unwrap();
         vs.mark_pending(later).unwrap();
+        // One 8% burn is 80_000. The second overdue validator cannot be paid.
+        fund_staking_escrow(storage.clone(), &[VALIDATOR, later], 80_000);
         vs.confirm_validator_ready(later).unwrap();
         vs.activate_validator_via_boundary_for_test(later).unwrap();
-        // One 8% burn is 80_000. The second overdue validator cannot be paid.
-        fund_staking_escrow(storage, &[VALIDATOR, later], 80_000);
     });
 
     let storage_before = provider.storage.clone();

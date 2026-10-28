@@ -198,6 +198,9 @@ pub struct DesisContract {
     /// worldwide_day -> call cooldown (seconds).
     #[attribute(order = 15)]
     pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    /// worldwide_day -> transit margin past the settlement deadline (seconds).
+    #[attribute(order = 42)]
+    pub config_transit_margin_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// worldwide_day -> commit-entry bond (protocol units).
     #[attribute(order = 16)]

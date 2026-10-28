@@ -307,6 +307,122 @@ fn production_full_node_follower(world: &mut World) {
         .expect("launch production FullNode follower");
 }
 
+#[when("a keyless FullNode without an enclave syncs from the committee")]
+fn keyless_full_node_follower(world: &mut World) {
+    world
+        .localnet
+        .launch_keyless_full_node("follower", FOLLOWER1_SLOT, 0)
+        .expect("launch keyless FullNode follower without enclave");
+}
+
+#[then("the keyless FullNode reports an unconfigured enclave")]
+fn keyless_full_node_reports_unconfigured_enclave(world: &mut World) {
+    let follower_port = world.validators.http_port(FOLLOWER1_SLOT);
+    assert_keyless_enclave_health(&world.rpc, follower_port);
+}
+
+#[then("a keyless FullNode without an enclave replays the confidential Lysis blocks and rejects private eth_call")]
+fn keyless_full_node_replays_confidential_lysis_and_rejects_private_call(world: &mut World) {
+    world
+        .localnet
+        .launch_keyless_full_node("keyless-lysis-follower", FOLLOWER2_SLOT, 0)
+        .expect("launch keyless FullNode follower for confidential Lysis replay");
+
+    let primary = world.validators.primary_port();
+    let keyless = world.validators.http_port(FOLLOWER2_SLOT);
+    let height = world.state.nod_creation_height.expect("created Nods");
+    let checkpoint = world
+        .rpc
+        .wait_finalized_checkpoint(&[primary, keyless], height, 120)
+        .expect("keyless FullNode reached confidential Lysis and createNod checkpoint");
+    assert_keyless_nod_state_and_private_call_rejection(world, primary, keyless, checkpoint);
+}
+
+fn assert_keyless_enclave_health(rpc: &Rpc, port: u16) {
+    let health = crate::internal::eth::raw_json_result(
+        &rpc.url(port),
+        "outbe_teeEnclaveHealth",
+        serde_json::json!([]),
+    )
+    .expect("query outbe_teeEnclaveHealth on keyless FullNode");
+    assert_eq!(health["configured"].as_bool(), Some(false));
+    assert_eq!(health["healthy"].as_bool(), Some(false));
+}
+
+fn assert_keyless_nod_state_and_private_call_rejection(
+    world: &World,
+    primary: u16,
+    keyless: u16,
+    checkpoint: crate::world::rpc::FinalizedCheckpoint,
+) {
+    use alloy_primitives::U256;
+    use alloy_sol_types::SolCall as _;
+
+    assert_keyless_enclave_health(&world.rpc, keyless);
+    let owner_key = world
+        .state
+        .tribute_owner_keys
+        .first()
+        .cloned()
+        .unwrap_or_else(|| crate::world::forge::DEPLOYER_KEY.to_owned());
+    let owner_addr = crate::internal::eth::address_of(&owner_key).expect("Tribute owner address");
+    let (id_bytes, _) = world
+        .rpc
+        .nod_for_owner(primary, owner_addr)
+        .expect("Nod owner read on primary")
+        .expect("created Nod on primary");
+    let nod_u256 = U256::from_be_slice(&id_bytes);
+    let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(nod_u256);
+    let expected = world
+        .rpc
+        .nod_state_at(primary, checkpoint, id)
+        .expect("primary Nod MPT proof")
+        .expect("primary Nod");
+    let actual = world
+        .rpc
+        .nod_state_at(keyless, checkpoint, id)
+        .expect("keyless FullNode Nod MPT proof")
+        .expect("keyless FullNode Nod");
+    assert_eq!(
+        outbe_nod::canonical_item(&actual.0),
+        outbe_nod::canonical_item(&expected.0)
+    );
+    assert_eq!(actual.1.group_key, expected.1.group_key);
+
+    let keyless_url = world.rpc.url(keyless);
+    let observed_owner: Option<alloy_primitives::Address> = crate::internal::eth::read_call(
+        &keyless_url,
+        crate::internal::addresses::NOD_ADDR,
+        &outbe_nod::precompile::INod::ownerOfCall { nodId: nod_u256 },
+    );
+    assert_eq!(observed_owner, Some(owner_addr));
+
+    let call_hex = format!(
+        "0x{}",
+        hex::encode(outbe_nod::precompile::INod::getNodCall { nodId: nod_u256 }.abi_encode())
+    );
+    let private_call = crate::internal::eth::raw_json_result(
+        &keyless_url,
+        "eth_call",
+        serde_json::json!([
+            {
+                "to": format!("{:#x}", crate::internal::addresses::NOD_ADDR),
+                "data": call_hex
+            },
+            "latest"
+        ]),
+    );
+    let err = private_call
+        .expect_err("private INod::getNod eth_call must fail closed on a keyless FullNode");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.contains("PrivateExecutionUnavailable")
+            || err_msg.contains("private execution is unavailable")
+            || err_msg.contains("enclave unavailable"),
+        "expected PrivateExecutionUnavailable / enclave unavailable error, got: {err_msg}"
+    );
+}
+
 #[when("a certified FullNode is launched without its mandatory enclave")]
 fn launch_enclave_less_follower(world: &mut World) {
     world
@@ -379,6 +495,11 @@ fn follower_exact_finality(world: &mut World) {
         "FullNode unexpectedly entered validator mode"
     );
     assert_eq!(
+        world.rpc.consensus_status_field(follower, "mode"),
+        Some("follower".to_string()),
+        "FullNode did not report follower operating mode"
+    );
+    assert_eq!(
         world.rpc.has_threshold_shares(follower),
         Some(false),
         "FullNode unexpectedly required participant DKG material"
@@ -399,6 +520,11 @@ fn fifth_full_node_exact_finality(world: &mut World) {
         world.rpc.consensus_status_field(follower, "isValidator"),
         Some("false".to_string()),
         "fifth FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "mode"),
+        Some("follower".to_string()),
+        "fifth FullNode did not report follower operating mode"
     );
     assert_eq!(
         world.rpc.has_threshold_shares(follower),

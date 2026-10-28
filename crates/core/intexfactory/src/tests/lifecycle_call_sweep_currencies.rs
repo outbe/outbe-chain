@@ -3,8 +3,8 @@ use outbe_intex::{IntexContract, SeriesId};
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -27,7 +27,6 @@ fn setup_second_pair(oracle: &OracleContract) -> AddressPair {
         .write_pair(&SECOND_PAIR_ID, pair)
         .unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
-    oracle.reference_currencies.push(SECOND_ISO).unwrap();
     pair
 }
 
@@ -109,7 +108,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
             BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
             s.clone(),
         );
-        called::run_daily(&next).unwrap();
+        called::schedule_call_pass(&next).unwrap();
         assert_eq!(factory.call_sweep_day.read().unwrap(), day);
         assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
@@ -119,7 +118,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         );
 
         // The next slice finishes the old day and hands the sweep to the queued one.
-        called::run_call_slice(&next).unwrap();
+        called::process_call_pass(&next).unwrap();
         assert_eq!(called_count(&s, days), groups);
         assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
         assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
@@ -148,7 +147,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             // Only the first trigger's block walks: the later days arrive meanwhile.
             match offset {
                 0 => called::scan_and_call(&ctx).map(drop),
-                _ => called::run_daily(&ctx),
+                _ => called::schedule_call_pass(&ctx),
             }
             .unwrap();
             closed.push(day);
@@ -166,7 +165,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             if walked.last() == Some(&0) {
                 break;
             }
-            called::run_call_slice(&at_height(&ctx, height)).unwrap();
+            called::process_call_pass(&at_height(&ctx, height)).unwrap();
             let day = factory.call_sweep_day.read().unwrap();
             if walked.last() != Some(&day) {
                 walked.push(day);
@@ -203,7 +202,7 @@ fn a_sweep_over_several_currencies_always_ends() {
         );
         called::scan_and_call(&ctx).unwrap();
         for height in 2..=4 {
-            called::run_call_slice(&at_height(&ctx, height)).unwrap();
+            called::process_call_pass(&at_height(&ctx, height)).unwrap();
         }
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -241,6 +240,7 @@ pub(super) fn seed_series(
                 call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
+                transit_margin_seconds: 3_600,
             },
             issued_at,
             issuance_currency: 840,

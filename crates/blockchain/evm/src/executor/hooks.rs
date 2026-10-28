@@ -141,6 +141,7 @@ fn run_outbe_pre_execution_hooks_inner(
     Ok(())
 }
 
+#[cfg(test)]
 pub(in crate::executor) fn run_atomic_storage_hooks<DB, F>(
     db: &mut DB,
     ctx: BlockContext,
@@ -151,19 +152,20 @@ where
     DB::Error: std::fmt::Display,
     F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
 {
-    run_atomic_storage_hook_with_output(db, ctx, hooks)
-        .map(|(changes, events, ())| (changes, events))
+    run_atomic_storage_hooks_with_pre_flush(db, ctx, hooks, || Ok(()))
 }
 
-pub(in crate::executor) fn run_atomic_storage_hook_with_output<DB, F, R>(
+pub(in crate::executor) fn run_atomic_storage_hooks_with_pre_flush<DB, F, G>(
     db: &mut DB,
     ctx: BlockContext,
     hooks: F,
-) -> Result<(AddressMap<Account>, Vec<Log>, R), BlockExecutionError>
+    pre_flush: G,
+) -> Result<(AddressMap<Account>, Vec<Log>), BlockExecutionError>
 where
     DB: StateDB,
     DB::Error: std::fmt::Display,
-    F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<R>,
+    F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
+    G: FnOnce() -> Result<(), BlockExecutionError>,
 {
     let mut provider = DirectStorageProvider::new(db, ctx.clone());
     let storage = StorageHandle::new(&mut provider);
@@ -171,10 +173,7 @@ where
 
     let result = storage.with_checkpoint(|| hooks(&runtime_ctx));
 
-    // Preserve node-local and fatal hook errors across the executor boundary,
-    // while mapping candidate/deterministic hook errors to BlockValidationError
-    // so an invalid candidate payload cannot abort the executor actor.
-    let output = result.map_err(|error| match error {
+    result.map_err(|error| match error {
         PrecompileError::Revert(_)
         | PrecompileError::RevertBytes(_)
         | PrecompileError::Halt(_)
@@ -200,11 +199,13 @@ where
         ),
     })?;
 
+    pre_flush()?;
+
     provider.flush().map_err(|e| {
         BlockExecutionError::other(crate::errors::ExecutorStorageError::hook_flush(e))
     })?;
 
     let changes = provider.take_committed_changes();
     let events = provider.take_events();
-    Ok((changes, events, output))
+    Ok((changes, events))
 }

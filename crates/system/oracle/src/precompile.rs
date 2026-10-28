@@ -106,7 +106,7 @@ pub fn dispatch(
             getScurveValues(c) => scurve_values(oracle, c),
             getAllScurveData(_) => all_scurve_data(oracle),
             getAllScurveDataForPair(c) => all_scurve_data_for_pair(oracle, c),
-            getReferenceCurrencies(_) => reference_currencies(oracle),
+            getReferenceCurrencies(_) => reference_currencies(),
             currencyAlphaCode(c) => currency_alpha_code(c),
             getPolicyRateCurrencies(_) => policy_rate_currencies(oracle),
             getPolicyRate(c) => policy_rate(oracle, c),
@@ -154,8 +154,10 @@ fn currency_cross_rate(
     })
 }
 
-fn reference_currencies(oracle: &OracleContract) -> Result<Bytes> {
-    metadata::<IOracle::getReferenceCurrenciesCall>(|| oracle.reference_currencies.read_all())
+fn reference_currencies() -> Result<Bytes> {
+    metadata::<IOracle::getReferenceCurrenciesCall>(|| {
+        Ok(crate::constants::REFERENCE_CURRENCIES.to_vec())
+    })
 }
 
 /// Reads the chain's ISO 4217 table. An unknown number returns an empty string.

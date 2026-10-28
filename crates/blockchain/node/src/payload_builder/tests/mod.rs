@@ -152,6 +152,7 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
         )),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("genesis boundary artifacts encode");
     (artifacts, committee_snapshot_hash)
@@ -210,9 +211,16 @@ fn active_native_provider(
             .config_is_initialized
             .write(true)
             .expect("validator initialization seed succeeds");
+        let minimum = U256::from(1_000u64);
+        validators
+            .test_seed_authoritative_min_stake(minimum)
+            .expect("min stake seed succeeds");
         validators
             .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
             .expect("proposer registration seed succeeds");
+        validators
+            .test_seed_authoritative_bonded(proposer, minimum)
+            .expect("proposer bonded seed succeeds");
         validators
             .activate_validator_via_boundary_for_test(proposer)
             .expect("active proposer reaches production boundary activation");

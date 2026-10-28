@@ -44,7 +44,7 @@ pub struct IssuanceParams {
     pub snapshot_chains: Vec<u32>,
 }
 
-/// EVM storage layout: settlement bookkeeping (mine_seq), the Called-notice outbox and
+/// EVM storage layout: settlement bookkeeping (mine_seq), the call notice outbox and
 /// the cursors of the cross-chain sends. The series lifecycle lives in Intex.
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
@@ -53,7 +53,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Called notices waiting to be sent after the call slice, in order. Head and tail
+    // Call notices waiting to be sent after the call slice, in order. Head and tail
     // reset to 0 whenever the queue drains empty.
     #[attribute(order = 24)]
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,

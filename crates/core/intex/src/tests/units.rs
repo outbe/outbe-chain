@@ -14,13 +14,13 @@ fn expiry_forfeits_every_unrealized_unit() {
     with_registry(|s| {
         let id = called_series(&s, 40);
         assert_eq!(
-            api::forfeitable_units(&s, &api::read_series(&s, id).unwrap())
+            api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
                 .units,
             100
         );
         assert_eq!(
-            api::state(&s, &api::read_series(&s, id).unwrap()).unwrap(),
+            api::state(&s, &api::get_series(&s, id).unwrap()).unwrap(),
             IntexState::Called
         );
     });
@@ -36,7 +36,7 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
         assert_eq!(api::gem_factory_units(&s, id).unwrap(), 25);
         assert_eq!(
-            api::forfeitable_units(&s, &api::read_series(&s, id).unwrap())
+            api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
                 .units,
             45
@@ -52,7 +52,7 @@ fn a_fully_realized_series_forfeits_nothing() {
         api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
 
         assert_eq!(
-            api::forfeitable_units(&s, &api::read_series(&s, id).unwrap())
+            api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
                 .units,
             0
@@ -76,7 +76,7 @@ fn the_view_carries_the_whole_split() {
         assert_eq!(data.gemFactoryUnits, 25);
 
         // The counters survive expiry, so the split stays readable afterwards.
-        api::forfeitable_units(&s, &api::read_series(&s, id).unwrap()).unwrap();
+        api::forfeitable_units(&s, &api::get_series(&s, id).unwrap()).unwrap();
         let data = dispatch_series_data(&s, id);
         assert_eq!(data.settledUnits, 25);
         assert_eq!(data.minedUnits, 5);
@@ -106,6 +106,7 @@ fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
 }
 
 const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
+const TRANSIT_CLOSE: u64 = NOTICE_END + TRANSIT_MARGIN as u64;
 
 #[test]
 fn series_data_reports_the_settlement_deadline_once_called() {
@@ -119,14 +120,19 @@ fn series_data_reports_the_settlement_deadline_once_called() {
 }
 
 #[test]
-fn a_called_series_reads_forfeited_from_its_deadline_not_from_the_sweep() {
-    // Strictly after: on the deadline itself the notice has not expired.
-    with_registry_at(NOTICE_END, |s| {
+fn a_called_series_reads_forfeited_from_its_transit_close_not_from_the_sweep() {
+    // Strictly after: a unit may still land and settle on the transit close itself.
+    with_registry_at(NOTICE_END + 1, |s| {
+        let id = called_series(&s, 59);
+        assert_eq!(dispatch_series_data(&s, id).state, IntexState::Called as u8);
+    });
+
+    with_registry_at(TRANSIT_CLOSE, |s| {
         let id = called_series(&s, 60);
         assert_eq!(dispatch_series_data(&s, id).state, IntexState::Called as u8);
     });
 
-    with_registry_at(NOTICE_END + 1, |s| {
+    with_registry_at(TRANSIT_CLOSE + 1, |s| {
         let id = called_series(&s, 61);
         assert_eq!(
             dispatch_series_data(&s, id).state,
@@ -144,7 +150,7 @@ fn realized_units_can_never_exceed_the_issued_count() {
         // arithmetic would underflow later, so this call refuses it here instead.
         assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
         assert_eq!(
-            api::forfeitable_units(&s, &api::read_series(&s, id).unwrap())
+            api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
                 .units,
             0
@@ -176,7 +182,7 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
 
 #[test]
 fn expiry_moves_the_active_units_into_forfeited() {
-    with_registry_at(NOTICE_END + 1, |s| {
+    with_registry_at(TRANSIT_CLOSE + 1, |s| {
         let id = called_series(&s, 51);
         api::record_settled_units(&s, id, 30).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
@@ -250,7 +256,7 @@ fn the_unpaid_remainder_excludes_settled_mined_and_gem_factory_units() {
         assert_eq!(counts.active, 55);
 
         assert_eq!(
-            api::forfeitable_units(&s, &api::read_series(&s, id).unwrap())
+            api::forfeitable_units(&s, &api::get_series(&s, id).unwrap())
                 .unwrap()
                 .units,
             55

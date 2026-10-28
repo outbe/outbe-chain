@@ -119,17 +119,9 @@ interface IIntexFactory {
     /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
     event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
 
-    /// @notice The router kept refusing the series' Called notice, so it was dropped
+    /// @notice All 8 sends of the series' call notice failed, so the chain sends it no more
     ///         and the targets were not told of the call.
-    event CalledNoticeDropped(bytes14 indexed seriesId, uint32 calledAt);
-
-    /// @notice A reference currency was left out of one day's Call scan because its
-    ///         window price could not be indexed. The next day's pass tries it again.
-    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice The expiry sweep could not expire a called group and parked it for
-    ///         another pass at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
+    event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
 
     /// @notice `proceedsMinor` native COEN (18 decimals) of `worldwideDay`'s auction proceeds from
     ///         `srcChainId` was burned and `creditedPromisMinor` (6 decimals) was added to the Promis

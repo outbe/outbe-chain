@@ -375,25 +375,6 @@
   },
   {
     "type": "event",
-    "name": "ProposalCancelled",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "proposer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ProposalCreated",
     "inputs": [
       {
@@ -487,43 +468,6 @@
             "internalType": "uint64"
           }
         ]
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProposalRejected",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "state",
-        "type": "tuple",
-        "indexed": false,
-        "internalType": "struct IVote.VoteTally",
-        "components": [
-          {
-            "name": "yes",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "no",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      },
-      {
-        "name": "conflictingproposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false

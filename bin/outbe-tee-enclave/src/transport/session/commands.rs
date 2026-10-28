@@ -128,6 +128,19 @@ impl CommandSession {
                     message: message.to_string(),
                 },
             },
+            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context } => {
+                match initialization.manifest() {
+                    Ok(manifest) => complete_gramine_direct_dev_onboarding_response_v2(
+                        context,
+                        offer_key.get(),
+                        manifest.as_ref(),
+                        keys,
+                    ),
+                    Err(message) => EnclaveResponse::Error {
+                        message: message.to_string(),
+                    },
+                }
+            }
             request @ (EnclaveRequest::BeginDcapVerificationV1 { .. }
             | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
             | EnclaveRequest::DcapVerificationChunkV1 { .. }

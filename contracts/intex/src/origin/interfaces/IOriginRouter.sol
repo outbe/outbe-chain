@@ -195,6 +195,7 @@ interface IOriginRouter {
         uint32 callWindow;
         uint32 callThreshold;
         uint64 callPriceMinor;
+        uint32 transitMargin;
     }
 
     // --- Errors ---

@@ -40,11 +40,7 @@ impl Staking<'_> {
     /// units `unit`).
     pub fn min_stake(&self) -> Result<U256> {
         let configured = self.config_min_stake.read()?;
-        if configured.is_zero() {
-            Ok(crate::contract::DEFAULT_MIN_STAKE)
-        } else {
-            Ok(configured)
-        }
+        Ok(crate::contract::effective_min_stake(configured))
     }
 
     /// Atomically registers `validator` (or re-registers an `INACTIVE`

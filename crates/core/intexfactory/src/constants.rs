@@ -5,8 +5,8 @@ use alloy_primitives::U256;
 
 pub use outbe_primitives::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
-/// Router calls a Called notice gets before it is dropped.
-pub const MAX_CALLED_NOTICE_ATTEMPTS: u8 = 8;
+/// Router calls a call notice gets before it is dropped.
+pub const MAX_CALL_NOTICE_ATTEMPTS: u8 = 8;
 
 /// Pause before a refused notice is sent again, so the 8 sends span about 35 minutes
 /// of a router outage.
@@ -26,7 +26,7 @@ pub const MAX_PARKED_CALLS_PER_FIRING: u32 = 16;
 pub const MAX_PARKED_FAILURES_PER_FIRING: u32 = 3;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
-pub const MAX_SERIES_PER_MESSAGE: usize = 24;
+pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 
 /// Series one MARK_CALLED message may carry. Mirrors the
 /// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.

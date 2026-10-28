@@ -21,6 +21,28 @@ pub fn is_sponsored_block_budget_deferral(error: &dyn alloy_evm::InvalidTxError)
     )
 }
 
+/// Exact transaction-validation reason used to defer a transaction whose enclave witness entries
+/// would exceed the current block's witness size budget.
+pub const ENCLAVE_WITNESS_BUDGET_EXCEEDED: &str = "enclave witness block budget exceeded";
+
+/// Rejects inclusion into the current block without evicting the transaction from the pool.
+pub fn enclave_witness_budget_deferral(tx_hash: B256) -> BlockExecutionError {
+    BlockExecutionError::Validation(BlockValidationError::InvalidTx {
+        hash: tx_hash,
+        error: Box::new(InvalidTransaction::Str(
+            ENCLAVE_WITNESS_BUDGET_EXCEEDED.into(),
+        )),
+    })
+}
+
+/// Identifies only the block-local enclave witness budget deferral.
+pub fn is_enclave_witness_budget_deferral(error: &dyn alloy_evm::InvalidTxError) -> bool {
+    matches!(
+        error.as_invalid_tx_err(),
+        Some(InvalidTransaction::Str(reason)) if reason == ENCLAVE_WITNESS_BUDGET_EXCEEDED
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ZeroFeeCfgSnapshot {
     disable_balance_check: bool,
@@ -31,6 +53,12 @@ pub(crate) struct ZeroFeeCfgSnapshot {
 pub(crate) trait ZeroFeeCfgAccess {
     fn enable_zero_fee_overrides(&mut self) -> ZeroFeeCfgSnapshot;
     fn restore_zero_fee_overrides(&mut self, snapshot: ZeroFeeCfgSnapshot);
+    fn set_executor_owned(&mut self, _owned: bool) {}
+    fn set_witness_state(
+        &mut self,
+        _state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+    }
 }
 
 impl<DB, I, P> ZeroFeeCfgAccess for OutbeEvm<DB, I, P>
@@ -55,6 +83,17 @@ where
         cfg.disable_balance_check = snapshot.disable_balance_check;
         cfg.disable_base_fee = snapshot.disable_base_fee;
         cfg.disable_fee_charge = snapshot.disable_fee_charge;
+    }
+
+    fn set_executor_owned(&mut self, owned: bool) {
+        self.set_owned_by_executor(owned);
+    }
+
+    fn set_witness_state(
+        &mut self,
+        state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+        self.set_attached_witness_state(state);
     }
 }
 

@@ -25,7 +25,7 @@ use alloy_sol_types::SolCall;
 use outbe_vaultrouter::api::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
-const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
     process_call: true,
     process_forfeit: true,
     process_cleanup: true,
@@ -172,7 +172,6 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.
         let oracle = OracleContract::new(handle.clone());
-        oracle.reference_currencies.push(840u16).unwrap();
         oracle
             .config_lookback_duration
             .write(SECONDS_PER_DAY)
@@ -286,10 +285,6 @@ fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
         },
     )
     .unwrap();
-    OracleContract::new(storage.clone())
-        .reference_currencies
-        .push(iso)
-        .unwrap();
     seed_day_vwap(storage, iso, rate);
 }
 
@@ -372,6 +367,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
         six_decimal_u128(),
         outbe_intex::IntexCallTrigger {
             call_notice_period_seconds: SOURCE_NOTICE_SECONDS,
+            transit_margin_seconds: 3_600,
             ..Default::default()
         },
     );
@@ -419,25 +415,21 @@ fn unallocated(storage: &StorageHandle) -> U256 {
 }
 
 /// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
-/// and as the only observation of the trailing window settlement converts at.
+/// and as the price of the covered trailing window settlement converts at.
 fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
         .expect("COEN pair registered");
     let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
-    let mut oracle = OracleContract::new(storage.clone());
+    let oracle = OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(day, index, vwap).unwrap();
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-    oracle
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(
-                outbe_oracle::api::AddressPair::new_coen_to(iso),
-                vwap,
-                six_decimal_unit(),
-            )],
-        )
-        .unwrap();
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+        vwap,
+        six_decimal_unit(),
+    )
+    .unwrap();
 }
 
 fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {

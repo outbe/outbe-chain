@@ -231,7 +231,6 @@ fn proposal_status_label(status: IVote::ProposalStatus) -> &'static str {
     match status {
         IVote::ProposalStatus::Pending => "pending",
         IVote::ProposalStatus::Approved => "approved",
-        IVote::ProposalStatus::Rejected => "rejected",
         IVote::ProposalStatus::Expired => "expired",
         IVote::ProposalStatus::Error => "error",
         _ => "unknown",

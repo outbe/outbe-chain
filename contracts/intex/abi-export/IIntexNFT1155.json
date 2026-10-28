@@ -158,6 +158,11 @@
                   "name": "callNoticePeriod",
                   "type": "uint32",
                   "internalType": "uint32"
+                },
+                {
+                  "name": "transitMargin",
+                  "type": "uint32",
+                  "internalType": "uint32"
                 }
               ]
             }
@@ -456,6 +461,11 @@
                 },
                 {
                   "name": "callNoticePeriod",
+                  "type": "uint32",
+                  "internalType": "uint32"
+                },
+                {
+                  "name": "transitMargin",
                   "type": "uint32",
                   "internalType": "uint32"
                 }
@@ -1128,23 +1138,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "deadline",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "BridgeCutoffPassed",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "cutoff",
+          "name": "closedAt",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1214,7 +1208,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "deadline",
+          "name": "closedAt",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1241,7 +1235,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "deadline",
+          "name": "closedAt",
           "type": "uint32",
           "internalType": "uint32"
         }

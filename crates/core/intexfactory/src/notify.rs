@@ -1,4 +1,4 @@
-//! Queue of Called notices, sent every block after the call slice. A refused notice
+//! Queue of call notices, sent every block after the call slice. A refused notice
 //! waits [`NOTICE_RETRY_SECONDS`] before its next attempt.
 
 use alloy_primitives::U256;
@@ -6,14 +6,13 @@ use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
-    block::BlockRuntimeContext, error::Result, storage::StorageHandle, sweep_budget::SweepBudget,
+    block::BlockRuntimeContext, error::Result, pass_budget::PassBudget, storage::StorageHandle,
 };
 
 use crate::constants::{
-    MAX_CALLED_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK,
-    NOTICE_RETRY_SECONDS,
+    MAX_CALL_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK, NOTICE_RETRY_SECONDS,
 };
-use crate::precompile::IIntexFactory::CalledNoticeDropped;
+use crate::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use crate::schema::IntexFactoryContract;
 
 /// Bit offset of the refused-attempt count, in the byte above the call time.
@@ -23,12 +22,12 @@ const RETRY_AT_SHIFT: usize = 40;
 
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
 /// free, so the origin's stamp reaches the target instead of its delivery time.
-pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
+pub fn pack_call_notice(series_id: SeriesId, called_at: u32) -> U256 {
     series_id.to_word() | U256::from(called_at)
 }
 
 /// Router calls a queued Called entry has been refused so far.
-pub fn called_notice_attempts(entry: U256) -> u8 {
+pub fn call_notice_attempts(entry: U256) -> u8 {
     ((entry >> ATTEMPTS_SHIFT) & U256::from(u8::MAX)).to::<u8>()
 }
 
@@ -51,7 +50,7 @@ pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bo
     ts == called_at && id.worldwide_day() == day
 }
 
-fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
+fn unpack_call_notice(entry: U256) -> (SeriesId, u32) {
     (
         SeriesId::from_word(entry),
         (entry & U256::from(u32::MAX)).to::<u32>(),
@@ -68,7 +67,7 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
 /// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
-pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
     let tail = factory.notify_tail.read()?;
@@ -80,7 +79,7 @@ pub fn send_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         storage: &ctx.storage,
         now: ctx.block.timestamp,
         stop: tail,
-        budget: SweepBudget::per_block(),
+        budget: PassBudget::per_block(),
     };
     let mut index = head;
     let mut refused_runs: u32 = 0;
@@ -109,7 +108,7 @@ struct NoticeSend<'a, 'storage> {
     now: u64,
     /// End of this block's window. Entries requeued behind it wait for a later block.
     stop: u32,
-    budget: SweepBudget,
+    budget: PassBudget,
 }
 
 impl NoticeSend<'_, '_> {
@@ -120,7 +119,7 @@ impl NoticeSend<'_, '_> {
         let factory = self.factory;
         let first = factory.notify_at.read(&at)?;
         let calls_left = self.budget.writes_left();
-        let (first_id, called_at) = unpack_called_notice(first);
+        let (first_id, called_at) = unpack_call_notice(first);
         let worldwide_day = first_id.worldwide_day();
         let mut run = vec![first_id];
         let mut entries = vec![first];
@@ -131,7 +130,7 @@ impl NoticeSend<'_, '_> {
         let mut index = at.saturating_add(1);
         while index < self.stop && run.len() < run_cap {
             let entry = factory.notify_at.read(&index)?;
-            let (id, ts) = unpack_called_notice(entry);
+            let (id, ts) = unpack_call_notice(entry);
             if !joins_run(worldwide_day, called_at, id, ts) || notice_retry_at(entry) > self.now {
                 break;
             }
@@ -148,7 +147,7 @@ impl NoticeSend<'_, '_> {
         let all_refused = refused.len() == run.len();
         // A refused entry goes behind this block's window and waits out its pause.
         for entry in entries {
-            if refused.contains(&unpack_called_notice(entry).0) {
+            if refused.contains(&unpack_call_notice(entry).0) {
                 self.requeue_refused(entry)?;
             }
         }
@@ -156,27 +155,27 @@ impl NoticeSend<'_, '_> {
     }
 
     fn requeue_refused(&self, entry: U256) -> Result<()> {
-        let attempts = called_notice_attempts(entry).saturating_add(1);
-        if attempts < MAX_CALLED_NOTICE_ATTEMPTS {
+        let attempts = call_notice_attempts(entry).saturating_add(1);
+        if attempts < MAX_CALL_NOTICE_ATTEMPTS {
             let retry_at = self.now.saturating_add(NOTICE_RETRY_SECONDS);
             return enqueue_notice(
                 self.factory,
                 with_retry_at(with_attempts(entry, attempts), retry_at),
             );
         }
-        let (series_id, called_at) = unpack_called_notice(entry);
+        let (series_id, called_at) = unpack_call_notice(entry);
         tracing::warn!(
             target: "outbe::intexfactory",
             series = %series_id,
             called_at,
             attempts,
-            "called notice: dropping"
+            "call notice: all sends failed"
         );
         crate::runtime::emit_event(
             self.storage,
-            CalledNoticeDropped {
+            IntexSeriesCallNoticeFailed {
                 seriesId: series_id.into(),
-                calledAt: called_at,
+                calledAt: u64::from(called_at),
             },
         )
     }

@@ -323,7 +323,6 @@ fn seed_closed_day_prices<'s>(
         storage.clone(),
         outbe_oracle::api::AddressPair::new_coen_to(840),
     )?;
-    oracle.reference_currencies.push(840)?;
     let mut day = previous_date_key(timestamp_to_date_key(midnight)).expect("date step");
     oracle.utc_day_vwap_last_finalized.write(day)?;
     for _ in 0..28 {
@@ -374,10 +373,10 @@ fn issue_nod(
 
 /// Explicitly requests Nod daily scheduling and all daily maintenance phases.
 fn maintain_nod(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
-    outbe_nodfactory::called::run_daily(ctx)?;
-    outbe_nodfactory::called::run_call_slice(
+    outbe_nodfactory::called::schedule_call_pass(ctx)?;
+    outbe_nodfactory::called::process_call_pass(
         ctx,
-        outbe_oracle::call_sweep::Selection {
+        outbe_oracle::call_pass::Selection {
             process_call: true,
             process_forfeit: true,
             process_cleanup: true,

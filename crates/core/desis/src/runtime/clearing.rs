@@ -361,7 +361,8 @@ pub(crate) fn issuance_groups(
                         worldwide_day,
                         issuance_currency,
                         reference_currency,
-                    )?,
+                    )
+                    .map_err(outbe_intex::IntexError::from)?,
                     worldwide_day,
                     issued_units: 0,
                     promis_load_minor: config.promis_load_minor,

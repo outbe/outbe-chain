@@ -8,7 +8,7 @@ use outbe_gratis::precompile::IGratis;
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{
     schema::OracleContract,
-    test_support::{publish_day_type_quote, record_finalized_day_vwap},
+    test_support::{publish_day_type_rate, record_finalized_day_vwap},
 };
 use outbe_primitives::{
     addresses::{
@@ -174,7 +174,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
 
 fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
     let price = U256::from(2_000_000);
-    publish_day_type_quote(&storage, price, 1, NOW)?;
+    publish_day_type_rate(&storage, price, 1, NOW)?;
     OracleContract::new(storage.clone())
         .policy_rate
         .write(&840, U256::from(43_000))?;

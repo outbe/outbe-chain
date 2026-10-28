@@ -69,7 +69,12 @@ reth-primitives-traits.workspace = true
 [dev-dependencies]
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-teeregistry.workspace = true
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
 postcard.workspace = true
+reth-chain-state.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 commonware-consensus.workspace = true
 commonware-storage.workspace = true

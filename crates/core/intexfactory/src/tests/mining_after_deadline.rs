@@ -48,7 +48,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), 1).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
-        let promis_minor = outbe_intex::api::read_series(&s, sid(7))
+        let promis_minor = outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .promis_load_minor;
         let nonce = (0u64..)
@@ -56,18 +56,18 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             .unwrap();
         (promis_minor, nonce)
     });
-    let deadline = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD);
-    storage.set_timestamp(U256::from(deadline + 1));
+    let close_at = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD) + u64::from(TRANSIT_MARGIN);
+    storage.set_timestamp(U256::from(close_at + 1));
 
     StorageHandle::enter(&mut storage, |s| {
-        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &series).unwrap().called_at,
             ISSUED_AT
         );
         assert!(
-            s.now_secs().unwrap() > deadline,
-            "the fixture sits past the settlement deadline"
+            s.now_secs().unwrap() > close_at,
+            "the fixture sits past the transit close"
         );
 
         // The unpaid unit is closed.
@@ -169,7 +169,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         runtime::issue_intex(&s, sample(7)).unwrap();
         outbe_intex::api::record_settled_units(&s, sid(7), SETTLED).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
-        outbe_intex::api::read_series(&s, sid(7))
+        outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .promis_load_minor
     });
@@ -185,7 +185,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::hooks::sweep_cleanup(&ctx).unwrap();
+        crate::hooks::cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .promis_limit()
@@ -234,7 +234,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             s.clone(),
         );
         crate::hooks::sweep_forfeits(&later).unwrap();
-        crate::hooks::sweep_cleanup(&later).unwrap();
+        crate::hooks::cleanup(&later).unwrap();
         assert_eq!(reserve(), forfeited);
     });
     let forfeited_groups: Vec<_> = storage

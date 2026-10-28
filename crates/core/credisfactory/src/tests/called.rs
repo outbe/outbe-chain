@@ -84,20 +84,20 @@ fn maintenance_cleanup_waits_for_forfeiture_then_resumes_without_calls() {
         let at = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         finalize_through(&s, at);
         let ctx = block_at(&s, at);
-        let selection = outbe_oracle::call_sweep::Selection {
+        let selection = outbe_oracle::call_pass::Selection {
             process_call: true,
             process_forfeit: false,
             process_cleanup: true,
         };
-        crate::called::run_call_slice(&ctx, selection).unwrap();
+        crate::called::process_call_pass(&ctx, selection).unwrap();
         assert_eq!(
             CredisContract::new(s.clone()).daily_phase.read().unwrap(),
             1
         );
         assert!(ids.iter().all(|id| !is_deleted(&s, *id)));
-        crate::called::run_call_slice(
+        crate::called::process_call_pass(
             &ctx,
-            outbe_oracle::call_sweep::Selection {
+            outbe_oracle::call_pass::Selection {
                 process_call: false,
                 process_forfeit: true,
                 process_cleanup: false,
@@ -109,9 +109,9 @@ fn maintenance_cleanup_waits_for_forfeiture_then_resumes_without_calls() {
             (false, false, true)
         );
         assert!(ids.iter().all(|id| !is_deleted(&s, *id)));
-        crate::called::run_call_slice(
+        crate::called::process_call_pass(
             &ctx,
-            outbe_oracle::call_sweep::Selection {
+            outbe_oracle::call_pass::Selection {
                 process_call: false,
                 process_forfeit: false,
                 process_cleanup: true,
@@ -1074,8 +1074,8 @@ fn a_forfeit_waits_for_the_day_its_deadline_falls_in_to_close() {
         let ids = open_three(&storage);
         call_by_hand(&storage, &ids[..1], CREATED_AT);
         let deadline = CREATED_AT + NOTICE;
-        let day_end = outbe_primitives::expiry_queue::day_end(
-            outbe_primitives::expiry_queue::deadline_day(deadline).unwrap(),
+        let day_end = outbe_primitives::deadline_queue::day_end(
+            outbe_primitives::deadline_queue::deadline_day(deadline).unwrap(),
         );
         assert!(
             day_end > deadline + 1,
@@ -1138,7 +1138,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         assert_eq!(expire(&storage, lapsed), 0);
         assert_eq!(
             CredisContract::new(storage.clone())
-                .expiry_tree_root
+                .forfeit_tree_root
                 .read()
                 .unwrap(),
             U256::ZERO,
@@ -1153,7 +1153,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
-    let budget = outbe_primitives::sweep_budget::SWEEP_WRITES_PER_BLOCK;
+    let budget = outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
     let total = budget + 1;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
@@ -1211,10 +1211,10 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
             storage.clone(),
         );
-        assert_eq!(crate::expired::sweep_expired(&ctx).unwrap(), 1);
+        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         outbe_gratis::enclave_client::test_enclave::uninstall();
         assert!(matches!(
-            crate::cleanup::sweep_cleanup(&ctx),
+            crate::cleanup::cleanup(&ctx),
             Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
         ));
         assert!(!is_deleted(&storage, ids[0]));
@@ -1241,10 +1241,10 @@ fn a_deterministic_cleanup_failure_defers_the_group() {
         assert_eq!(expire(&storage, lapsed), 1);
         assert!(!is_deleted(&storage, ids[0]));
         let (day, _) =
-            outbe_primitives::expiry_queue::unpack_slot(cleanup_queued_at(&storage, group));
+            outbe_primitives::deadline_queue::unpack_slot(cleanup_queued_at(&storage, group));
         assert_eq!(
             day,
-            outbe_primitives::expiry_queue::deadline_day(lapsed).unwrap()
+            outbe_primitives::deadline_queue::deadline_day(lapsed).unwrap()
         );
     });
     teardown();
@@ -1277,7 +1277,7 @@ fn lapsed_group_of_three() -> (
 
 #[test]
 fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
-    use outbe_primitives::sweep_budget::BlockAllowance;
+    use outbe_primitives::pass_budget::BlockAllowance;
 
     let (mut provider, ids) = lapsed_group_of_three();
     StorageHandle::enter(&mut provider, |storage| {
@@ -1296,7 +1296,10 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         };
         let before = reserve();
 
-        assert_eq!(crate::called::run_call_slice(&ctx, ALL_PHASES).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(
             credis.daily_phase.read().unwrap(),
             2,
@@ -1315,7 +1318,10 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
             pledge_cost() * U256::from(2)
         );
         let saved = credis.daily_budget.read().unwrap();
-        assert_eq!(crate::called::run_call_slice(&ctx, ALL_PHASES).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
         let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
@@ -1331,14 +1337,20 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         );
 
         let next = block_at(&storage, at);
-        assert_eq!(crate::called::run_call_slice(&next, ALL_PHASES).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&next, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(credis.call_sweep_day.read().unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         for id in &ids {
             assert!(is_deleted(&storage, *id));
         }
-        assert_eq!(crate::called::run_call_slice(&next, ALL_PHASES).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&next, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
     });
     teardown();
@@ -1354,8 +1366,8 @@ fn forfeit_block(
         storage.clone(),
     );
     storage.with_checkpoint(|| {
-        let forfeited = crate::expired::sweep_expired(&ctx)?;
-        crate::cleanup::sweep_cleanup(&ctx)?;
+        let forfeited = crate::forfeited::sweep_expired(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
         Ok(forfeited)
     })
 }

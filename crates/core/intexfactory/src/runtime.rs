@@ -39,17 +39,17 @@ fn maintenance_context<'s>(
 /// Run selected daily phases, then independent spent-series cleanup. Notices are only queued.
 pub fn maintain(
     storage: &StorageHandle<'_>,
-    selection: outbe_oracle::call_sweep::Selection,
+    selection: outbe_oracle::call_pass::Selection,
 ) -> Result<()> {
     outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
     // TODO: Reward callers for maintenance work performed.
-    if selection == outbe_oracle::call_sweep::Selection::default() {
+    if selection == outbe_oracle::call_pass::Selection::default() {
         return Ok(());
     }
     let ctx = maintenance_context(storage)?;
-    crate::called::run_call_slice(&ctx, selection)?;
+    crate::called::process_call_pass(&ctx, selection)?;
     if selection.process_cleanup {
-        crate::cleanup::sweep_cleanup(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
     }
     Ok(())
 }
@@ -128,6 +128,7 @@ pub fn issue_intex(
                 callWindow: trigger.call_window_seconds,
                 callThreshold: trigger.call_threshold_seconds,
                 callPriceMinor: call_price_minor_u64,
+                transitMargin: trigger.transit_margin_seconds,
             },
         })
         .collect();
@@ -241,7 +242,7 @@ pub(crate) fn owner_balances(
     series_id: SeriesId,
     owner: Address,
 ) -> Result<crate::precompile::IIntexFactory::OwnerBalances> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     let issued = if outbe_intex::api::state(storage, &series)? == IntexState::Forfeited {
         0
     } else {
@@ -281,7 +282,7 @@ pub fn settle_intex(
         return Err(IntexFactoryError::ZeroUnits.into());
     }
 
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     require_settleable(storage, &series)?;
 
     let balance = nft_balance_of(storage, owner, issued_token_id(series_id))?;

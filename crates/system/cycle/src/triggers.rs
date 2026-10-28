@@ -115,7 +115,7 @@ impl TriggerHandler {
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexDrainParked => outbe_intexfactory::parked::drain(ctx),
+            Self::IntexDrainParked => outbe_intexfactory::parked::resend_parked_messages(ctx),
         }
     }
 }

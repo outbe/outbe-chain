@@ -40,7 +40,7 @@ pub fn dispatch(
             maintain(c) => mutate(&storage, c, caller, |_sender, c| {
                 runtime::maintain(
                     &storage,
-                    outbe_oracle::call_sweep::Selection {
+                    outbe_oracle::call_pass::Selection {
                         process_call: c.process_call,
                         process_forfeit: c.process_forfeit,
                         process_cleanup: c.process_cleanup,

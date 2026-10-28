@@ -2,13 +2,13 @@
 //! the forfeit already returned their load.
 
 use alloy_primitives::B256;
-use outbe_nod::state::CleanupDays;
+use outbe_nod::state::CleanupQueue;
 use outbe_nod::{api, schema::NodContract};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, PrecompileError, Result},
     storage::StorageHandle,
 };
 
@@ -16,15 +16,15 @@ use crate::errors::NodFactoryError;
 
 pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<bool> {
     let queue = NodContract::new(ctx.storage.clone());
-    expiry_queue::has_cleanup_work(&CleanupDays(&queue), ctx.block.timestamp)
+    deadline_queue::has_cleanup_work(&CleanupQueue(&queue), ctx.block.timestamp)
 }
 
 /// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
-pub fn sweep_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup::new(ctx);
-    expiry_queue::sweep_cleanup(
-        &CleanupDays(&queue),
+    deadline_queue::process_cleanup(
+        &CleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
         &mut cleanup,
@@ -49,13 +49,13 @@ impl<'a, 's> NodCleanup<'a, 's> {
 }
 
 /// A forfeited group's members are its unpaid Nods.
-impl ExpiryHandler<B256> for NodCleanup<'_, '_> {
+impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
     type Member = WwdEntityId;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.nod.group_nod_count.read(&group)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -69,11 +69,11 @@ impl ExpiryHandler<B256> for NodCleanup<'_, '_> {
             .read(&outbe_nod::index_keys::group_nod_key(group, index))
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
-    fn expire_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {
+    fn process_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {
         if nod_id.is_zero() {
             return Err(NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key }.into());
         }

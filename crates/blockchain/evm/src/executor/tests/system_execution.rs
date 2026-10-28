@@ -668,6 +668,7 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(header_artifact)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("extra_data encodes");
 
@@ -802,6 +803,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
         }
         let mut vs = ValidatorSet::new(ctx.storage.clone());
         vs.test_configure_registry(OWNER)?;
+        vs.test_seed_authoritative_min_stake(U256::from(1_000u64))?;
         for (index, validator) in order.into_iter().enumerate() {
             vs.test_register_active_validator(
                 validator,

@@ -19,7 +19,8 @@ fn proposer_uses_maximum_ready_prefix_after_reserving_final_fields() {
         final_fields.timestamp_millis_part = 999;
         let final_base_len = encode_outbe_block_artifacts(&final_fields).unwrap().len();
         let available = 3 + PUBLICATION_BODY_LEN + 1 + count * 100;
-        let padding = OUTBE_MAX_EXTRA_DATA_SIZE - final_base_len - available;
+        let padding =
+            OUTBE_MAX_EXTRA_DATA_SIZE - final_base_len - ENCLAVE_WITNESS_RESERVED_BYTES - available;
         artifacts.consensus_header_artifact =
             Some(ConsensusHeaderArtifact::DealerLog(vec![1; padding].into()));
         let encoded = encode_proposal_block_artifacts(artifacts.clone(), &mailbox).unwrap();
@@ -44,7 +45,16 @@ fn proposer_uses_maximum_ready_prefix_after_reserving_final_fields() {
         let sealed = encode_outbe_block_artifacts(&decoded).unwrap();
         assert!(sealed.len() <= OUTBE_MAX_EXTRA_DATA_SIZE);
         if count > 0 {
-            assert_eq!(sealed.len(), OUTBE_MAX_EXTRA_DATA_SIZE);
+            assert_eq!(
+                sealed.len() + ENCLAVE_WITNESS_RESERVED_BYTES,
+                OUTBE_MAX_EXTRA_DATA_SIZE
+            );
+            let mut with_max_reserved_witness = decoded.clone();
+            with_max_reserved_witness.enclave_witness =
+                Some(Bytes::from(vec![0xAA; ENCLAVE_WITNESS_RESERVED_BYTES - 3]));
+            let sealed_with_witness =
+                encode_outbe_block_artifacts(&with_max_reserved_witness).unwrap();
+            assert_eq!(sealed_with_witness.len(), OUTBE_MAX_EXTRA_DATA_SIZE);
         }
     }
     assert!(

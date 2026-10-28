@@ -23,7 +23,7 @@ pub fn mine_promis(
         return Err(IntexFactoryError::ZeroUnits.into());
     }
 
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     let settled = nft_balance_of(storage, owner, settled_token_id(series_id))?;
     if settled < units {
         return Err(IntexFactoryError::InsufficientSettled.into());

@@ -36,7 +36,7 @@ mod called {
         prepare(ctx);
         crate::called::scan_and_call(
             ctx,
-            outbe_oracle::call_sweep::Selection {
+            outbe_oracle::call_pass::Selection {
                 process_call: true,
                 process_forfeit: true,
                 process_cleanup: true,
@@ -44,13 +44,13 @@ mod called {
         )
     }
 
-    pub(super) fn run_call_slice(
+    pub(super) fn process_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<u32> {
         prepare(ctx);
-        crate::called::run_call_slice(
+        crate::called::process_call_pass(
             ctx,
-            outbe_oracle::call_sweep::Selection {
+            outbe_oracle::call_pass::Selection {
                 process_call: true,
                 process_forfeit: true,
                 process_cleanup: true,
@@ -58,9 +58,11 @@ mod called {
         )
     }
 
-    pub(super) fn run_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    pub(super) fn schedule_call_pass(
+        ctx: &BlockRuntimeContext,
+    ) -> outbe_primitives::error::Result<()> {
         prepare(ctx);
-        crate::called::run_daily(ctx)
+        crate::called::schedule_call_pass(ctx)
     }
 }
 use crate::constants::MAX_SERIES_PER_MESSAGE;
@@ -86,6 +88,7 @@ const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+const TRANSIT_MARGIN: u32 = 3_600;
 
 fn at_height<'s>(ctx: &BlockRuntimeContext<'s>, height: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
@@ -138,13 +141,13 @@ fn sid(worldwide_day: u32) -> SeriesId {
 
 /// The series' state as of this block.
 fn series_state(s: &StorageHandle<'_>, id: SeriesId) -> IntexState {
-    let record = outbe_intex::api::read_series(s, id).unwrap();
+    let record = outbe_intex::api::get_series(s, id).unwrap();
     outbe_intex::api::state(s, &record).unwrap()
 }
 
 /// The call group the series belongs to.
 fn group_of(s: &StorageHandle<'_>, id: SeriesId) -> B256 {
-    outbe_intex::api::read_series(s, id)
+    outbe_intex::api::get_series(s, id)
         .unwrap()
         .group_key()
         .expect("date step")
@@ -187,6 +190,7 @@ fn prod_trigger() -> outbe_intex::IntexCallTrigger {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
+        transit_margin_seconds: TRANSIT_MARGIN,
     }
 }
 
@@ -221,12 +225,12 @@ impl SeedCalledGroup for IntexContract<'_> {
         member: SeriesId,
         deadline: u64,
     ) -> outbe_primitives::error::Result<()> {
-        let record = outbe_intex::api::read_series(&self.storage, member)?;
+        let record = outbe_intex::api::get_series(&self.storage, member)?;
         let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
         self.record_group_called(
             record.group_key().expect("date step"),
             called_at as u32,
-            deadline,
+            deadline + u64::from(record.transit_margin_seconds),
         )
     }
 }
@@ -255,20 +259,21 @@ fn word(value: u64) -> alloy_primitives::Bytes {
 }
 
 /// Publish `rate` as the finalized COEN/`iso_code` VWAP of the UTC day before
-/// `ISSUED_AT` and as the only observation of the trailing window settlement
+/// `ISSUED_AT` and as the price of the covered trailing window settlement
 /// converts at.
 fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(oracle.storage.clone()).unwrap();
-    OracleContract::new(oracle.storage.clone())
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(pair, rate, U256::from(1_000_000u64))],
-        )
-        .unwrap();
+    // Unit volume keeps the window sums of an extreme rate in range.
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &oracle.storage,
+        pair,
+        rate,
+        U256::ONE,
+    )
+    .unwrap();
 }
 
 fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {

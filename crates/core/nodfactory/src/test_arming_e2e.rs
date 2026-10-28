@@ -1,29 +1,21 @@
 //! Only a temporary E2E build responds to these hooks. Lysis issues a Nod over a certified generation.
-//! A scenario that needs a Nod requests it directly.
+//! A scenario that needs an earlier group stamp moves that stamp in storage.
 //! The forfeit sweep opens a group only after its day closes.
 //! Thus, `closeCallNoticeForTest` moves a lapsed deadline into a day that the sweep opens on the next block.
 
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_nod::schema::NodContract;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-use crate::runtime;
+use crate::errors::NodFactoryError;
 
 alloy_sol_types::sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface INodFactoryTestArming {
-        function issueForTest(
-            address owner,
-            bytes32 creatorPublicKey,
-            uint32 worldwideDay,
-            uint256 gratisLoadMinor,
-            uint256 entryPriceMinor,
-            uint16 issuanceCurrency,
-            uint16 referenceCurrency,
-            uint64 issuedAt
-        ) external;
+        function backdateNodForTest(uint256 nodId, uint64 issuedAt, uint256 gratisLoadMinor) external;
         function closeCallNoticeForTest(bytes32 groupKey, uint64 deadline) external;
         function rescanClosedDayForTest() external;
     }
@@ -32,8 +24,10 @@ alloy_sol_types::sol! {
 /// Answers a test hook, or `None` when `data` is no test hook.
 pub(crate) fn dispatch(storage: &StorageHandle<'_>, data: &[u8]) -> Option<Result<Bytes>> {
     use INodFactoryTestArming::*;
-    if let Ok(call) = issueForTestCall::abi_decode(data) {
-        return Some(guarded(storage, || issue(storage, call)));
+    if let Ok(call) = backdateNodForTestCall::abi_decode(data) {
+        return Some(guarded(storage, || {
+            backdate_nod(storage, call.nodId, call.issuedAt, call.gratisLoadMinor)
+        }));
     }
     if let Ok(call) = closeCallNoticeForTestCall::abi_decode(data) {
         return Some(guarded(storage, || {
@@ -57,31 +51,43 @@ fn guarded(storage: &StorageHandle<'_>, hook: impl FnOnce() -> Result<()>) -> Re
     hook().map(|()| Bytes::new())
 }
 
-/// Issue one Nod straight to its owner. A non-zero `issuedAt` restamps the group,
-/// since calls count only days after it.
-fn issue(storage: &StorageHandle<'_>, call: INodFactoryTestArming::issueForTestCall) -> Result<()> {
-    let day = outbe_primitives::time::WorldwideDay::new(call.worldwideDay);
-    let encrypted = outbe_tee::nod_mine::create_nod_for_test(
-        outbe_primitives::nod_encryption::NodTermsV1 {
-            chain_id: storage.chain_id()?,
-            nod_id: outbe_nod::identity::generate_nod_id(call.owner, day)?,
-            owner: call.owner,
-            worldwide_day: day,
-            league_id: 1,
-            entry_price_minor: call.entryPriceMinor,
-            issuance_currency: call.issuanceCurrency,
-            reference_currency: call.referenceCurrency,
-        },
-        call.creatorPublicKey.0,
-        call.gratisLoadMinor,
+/// Re-issues one unsettled Nod at `issued_at` without calling the enclave.
+///
+/// The encrypted body stays. The item leaves its old group, after that group's
+/// unpaid load drops by `gratis_load_minor`, and joins the group of the new stamp.
+fn backdate_nod(
+    storage: &StorageHandle<'_>,
+    nod_id: U256,
+    issued_at: u64,
+    gratis_load_minor: U256,
+) -> Result<()> {
+    let id = WwdEntityId::from(nod_id);
+    let item = outbe_nod::api::load_item(storage, id)?.ok_or(NodFactoryError::NodNotFound)?;
+    let group = outbe_nod::api::load_group(storage, item.body().group_key)?
+        .ok_or(NodFactoryError::GroupNotFound)?;
+    if item.body().is_settled {
+        return Err(NodFactoryError::NodAlreadySettled.into());
+    }
+    let terms = crate::runtime::call_terms(
+        storage,
+        item.body().entry_price_minor(),
+        item.body().reference_currency,
+    )?;
+    let group_key = outbe_nod::identity::group_key(
+        issued_at,
+        terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+        item.body().reference_currency,
     )
-    .map_err(crate::errors::NodFactoryError::CreateNodForTest)?;
-    let issued_at = match call.issuedAt {
-        0 => storage.now_secs()?,
-        at => at,
-    };
-    runtime::issue_nod_at(storage, &encrypted, issued_at)?;
-    Ok(())
+    .map_err(crate::errors::date_step_error)?;
+    let old_group_key = item.body().group_key;
+    let mut reissued = item.body().clone();
+    reissued.issued_at = issued_at;
+    reissued.group_key = group_key;
+    storage.clone().with_checkpoint(|| {
+        outbe_nod::api::take_unpaid_load(storage, old_group_key, gratis_load_minor)?;
+        outbe_nod::api::remove_nod(storage, item, group)?;
+        outbe_nod::api::add_nod(storage, &reissued, terms, gratis_load_minor)
+    })
 }
 
 /// Moves a called group onto `deadline`: its call and its queue entry.
@@ -113,7 +119,7 @@ fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
     nod.call_sweep_day.write(day)?;
     nod.daily_phase.write(0)?;
     nod.call_currency_cursor.write(0)?;
-    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+    for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
         nod.call_bin_cursor.write(&currency, 0)?;
         nod.call_scan_failed_day.clear(&currency)?;
     }

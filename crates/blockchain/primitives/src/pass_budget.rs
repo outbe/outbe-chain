@@ -1,4 +1,4 @@
-//! Work one sweep of a right may do in a block. Every right draws from the same limits.
+//! Work one pass of a right may do in a block. Every right draws from the same limits.
 
 use alloy_primitives::U256;
 
@@ -9,9 +9,9 @@ pub const SWEEP_VISITS_PER_BLOCK: u32 = 256;
 /// EVM state changes: a call, a burned or expired member, a void, a sent notice.
 pub const SWEEP_WRITES_PER_BLOCK: u32 = 64;
 
-/// What is left of one sweep's work in this block.
+/// What is left of one pass's work in this block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SweepBudget {
+pub struct PassBudget {
     visits: u32,
     writes: u32,
     written: bool,
@@ -32,7 +32,7 @@ pub struct SweepBudget {
 pub struct BlockAllowance {
     pub height: u64,
     pub day: u32,
-    pub budget: SweepBudget,
+    pub budget: PassBudget,
 }
 
 impl BlockAllowance {
@@ -40,7 +40,7 @@ impl BlockAllowance {
         Self {
             height,
             day,
-            budget: SweepBudget::per_block(),
+            budget: PassBudget::per_block(),
         }
     }
 
@@ -86,7 +86,7 @@ impl BlockAllowance {
         Ok(Some(Self {
             height,
             day,
-            budget: SweepBudget {
+            budget: PassBudget {
                 visits,
                 writes,
                 written,
@@ -95,7 +95,7 @@ impl BlockAllowance {
     }
 }
 
-impl SweepBudget {
+impl PassBudget {
     pub const fn per_block() -> Self {
         Self::new(SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK)
     }
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn each_limit_runs_out_on_its_own() {
-        let mut budget = SweepBudget::new(1, 1);
+        let mut budget = PassBudget::new(1, 1);
         assert!(budget.visit());
         assert!(!budget.visit());
         assert!(budget.write());
@@ -179,20 +179,20 @@ mod tests {
 
     #[test]
     fn a_walk_stops_when_visits_or_writes_run_out() {
-        assert!(!SweepBudget::new(1, 1).spent());
-        assert!(SweepBudget::new(0, 1).spent());
-        let mut budget = SweepBudget::new(1, 1);
+        assert!(!PassBudget::new(1, 1).spent());
+        assert!(PassBudget::new(0, 1).spent());
+        let mut budget = PassBudget::new(1, 1);
         assert!(budget.write());
         assert!(budget.spent());
     }
 
     #[test]
     fn a_wide_batch_passes_whole_only_as_the_first_write() {
-        let mut budget = SweepBudget::new(0, 4);
+        let mut budget = PassBudget::new(0, 4);
         assert!(budget.admit_writes(10));
         assert_eq!(budget.writes_left(), 0);
 
-        let mut budget = SweepBudget::new(0, 4);
+        let mut budget = PassBudget::new(0, 4);
         assert!(budget.write());
         assert!(!budget.admit_writes(10));
         assert!(budget.admit_writes(3));
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn the_block_limits_are_shared() {
-        let budget = SweepBudget::per_block();
+        let budget = PassBudget::per_block();
         assert_eq!(budget.visits_left(), SWEEP_VISITS_PER_BLOCK);
         assert_eq!(budget.writes_left(), SWEEP_WRITES_PER_BLOCK);
     }

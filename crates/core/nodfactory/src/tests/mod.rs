@@ -27,7 +27,7 @@ use crate::{
 use outbe_vaultrouter::api::IVaultRouter;
 use outbe_vaultrouter::settlement::SettlementError;
 
-const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
     process_call: true,
     process_forfeit: true,
     process_cleanup: true,
@@ -94,7 +94,7 @@ fn maintenance_noop_and_query_are_read_only_and_dispatch_is_guarded() {
 #[test]
 fn cleanup_only_maintenance_inspects_eligible_queue_without_advancing_daily_calls() {
     use outbe_primitives::{
-        expiry_queue,
+        deadline_queue,
         time::{timestamp_to_date_key, SECONDS_PER_DAY},
     };
     let now = 1_700_000_000u64;
@@ -109,22 +109,22 @@ fn cleanup_only_maintenance_inspects_eligible_queue_without_advancing_daily_call
             .utc_day_vwap_last_finalized
             .write(day)
             .unwrap();
-        let queue = outbe_nod::state::CleanupDays(&nod);
+        let queue = outbe_nod::state::CleanupQueue(&nod);
         let future = B256::repeat_byte(1);
         let eligible = B256::repeat_byte(2);
-        expiry_queue::push(&queue, future, now + SECONDS_PER_DAY).unwrap();
+        deadline_queue::push(&queue, future, now + SECONDS_PER_DAY).unwrap();
         assert_eq!(
             runtime::has_maintenance_work(&storage).unwrap(),
             (true, true, false)
         );
-        expiry_queue::push(&queue, eligible, now - SECONDS_PER_DAY).unwrap();
+        deadline_queue::push(&queue, eligible, now - SECONDS_PER_DAY).unwrap();
         assert_eq!(
             runtime::has_maintenance_work(&storage).unwrap(),
             (true, true, true)
         );
         runtime::maintain(
             &storage,
-            outbe_oracle::call_sweep::Selection {
+            outbe_oracle::call_pass::Selection {
                 process_call: false,
                 process_forfeit: false,
                 process_cleanup: true,
@@ -221,19 +221,15 @@ fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
         .expect("test identity has a nonce in the bounded search")
 }
 
-/// One observation at `rate` in the last second of the current trailing window.
+/// Covers the current trailing window at `rate`.
 fn seed_window_vwap(storage: &StorageHandle<'_>, iso_code: u16, rate: U256) {
-    let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .write_snapshot(
-            snapshot.cutoff() - 1,
-            &[(
-                outbe_oracle::api::AddressPair::new_coen_to(iso_code),
-                rate,
-                U256::from(SCALE_1E6_U64),
-            )],
-        )
-        .unwrap();
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso_code),
+        rate,
+        U256::from(SCALE_1E6_U64),
+    )
+    .unwrap();
 }
 
 struct World {

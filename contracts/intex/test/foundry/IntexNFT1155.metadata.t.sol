@@ -79,6 +79,16 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(token.symbol(), "INTEX");
     }
 
+    function test_uri_ShortSeriesId_TrimsPadding() public {
+        bytes14 shortId = "20260623-USD";
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(20260623, CAP, CALL_PERIOD);
+        params.seriesId = shortId;
+        vm.prank(bridger);
+        token.createSeries(params);
+        (uint256 issued,) = token.tokenIds(shortId);
+        _assertContains(_json(issued), "\"name\":\"Intex 20260623-USD\",");
+    }
+
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
@@ -143,14 +153,15 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
+        uint256 closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
 
-        vm.warp(deadline);
+        vm.warp(closeAt);
         _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");
 
-        vm.warp(deadline + 1);
+        vm.warp(closeAt + 1);
         bytes memory json = _json(iTok);
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Forfeited\"}");
-        _assertContains(json, "\"Call Deadline\"");
+        _assertContains(json, string.concat("{\"trait_type\":\"Call Deadline\",\"value\":", vm.toString(deadline), ","));
         bytes memory svg = json.decodeSvg();
         assertTrue(svg.contains("FORFEITED"), "badge text");
         assertTrue(svg.contains("#6b7280"), "badge color");

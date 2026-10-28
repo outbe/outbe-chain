@@ -138,69 +138,6 @@
   },
   {
     "type": "event",
-    "name": "CallScanSkipped",
-    "inputs": [
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": true,
-        "internalType": "uint16"
-      },
-      {
-        "name": "utcDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ExpiryDeferred",
-    "inputs": [
-      {
-        "name": "groupKey",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "retryAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodBurned",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "encryptedGratisAmount",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "NodIssued",
     "inputs": [
       {
@@ -314,17 +251,6 @@
     "type": "error",
     "name": "CallPriceOverflow",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CreateNodForTest",
-    "inputs": [
-      {
-        "name": "reason",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
   },
   {
     "type": "error",

@@ -46,6 +46,7 @@ impl Rail for Intex {
                     call_window_seconds: 1,
                     call_threshold_seconds: 1,
                     call_notice_period_seconds: 1,
+                    transit_margin_seconds: 0,
                 },
                 issued_at: TIMESTAMP as u32,
                 issuance_currency,

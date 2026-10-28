@@ -1900,19 +1900,18 @@ fn with_reservable_vault_at_block<R>(
             .unwrap();
         let pair = AddressPair::new_coen_to(USD_ISO_CODE);
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(USD_ISO_CODE).unwrap();
+        let oracle = OracleContract::new(storage.clone());
         oracle
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
             .unwrap();
-        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
-        oracle
-            .write_snapshot(
-                snapshot.cutoff() - 1,
-                &[(pair, U256::from(2_000_000), U256::ONE)],
-            )
-            .unwrap();
+        outbe_oracle::test_support::seed_covered_trailing_window(
+            &storage,
+            pair,
+            U256::from(2_000_000),
+            U256::ONE,
+        )
+        .unwrap();
         let day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(1_700_000_000),
         )
@@ -2056,10 +2055,6 @@ fn a_reservation_needs_every_call_term() {
             .record_utc_day_vwap(day, index, U256::from(2_000_000))
             .unwrap();
 
-        OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(EUR_ISO_CODE)
-            .unwrap();
         rejected(
             &storage,
             EUR_ISO_CODE,
@@ -2082,7 +2077,6 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
             .unwrap();
         let oracle = OracleContract::new(storage.clone());
-        oracle.reference_currencies.push(EUR_ISO_CODE).unwrap();
         oracle
             .policy_rate
             .write(&EUR_ISO_CODE, U256::from(99_000))

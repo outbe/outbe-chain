@@ -43,8 +43,11 @@ fn register_active_validator(storage: StorageHandle, addr: Address, seed: u8) {
         vs.config_owner.write(VALIDATOR_OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
     }
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
         .unwrap();
+    vs.test_seed_authoritative_bonded(addr, minimum).unwrap();
     vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }
 

@@ -8,7 +8,7 @@ use commonware_consensus::{
         types::{Activity, Finalization, Finalize, Proposal, Subject},
         Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardPolicy,
     },
-    types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
+    types::{Epoch, Height, Round, View, ViewDelta},
     Reporter,
 };
 use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};
@@ -66,6 +66,7 @@ mod fixtures;
 mod follower;
 mod genesis_formation;
 mod harness;
+mod lifecycle;
 mod local_anchor;
 mod marshal_reporter;
 #[cfg(test)]

@@ -136,7 +136,6 @@ pub(crate) fn set_profile(storage: &StorageHandle, profile: u8) {
 /// `rate` is given. Returns the pair index, or 0 when no pair was registered.
 pub(crate) fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option<U256>) -> u32 {
     let oracle = OracleContract::new(storage.clone());
-    oracle.reference_currencies.push(iso_code).unwrap();
     let Some(rate) = rate else {
         return 0;
     };
@@ -201,7 +200,7 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
 /// This helper runs one block of the raw expiry and deletion workers, independent of Oracle scheduling.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
-    crate::hooks::sweep_cleanup(ctx)?;
+    crate::hooks::cleanup(ctx)?;
     Ok(())
 }
 
@@ -226,14 +225,14 @@ fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     crate::called::scan_and_call(ctx, ALL_PHASES)
 }
 
-fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     prepare_daily(ctx);
-    crate::called::run_daily(ctx)
+    crate::called::schedule_call_pass(ctx)
 }
 
-fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     prepare_daily(ctx);
-    crate::called::run_call_slice(ctx, ALL_PHASES)
+    crate::called::process_call_pass(ctx, ALL_PHASES)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

@@ -37,7 +37,7 @@ fn maintenance_context<'s>(
 
 pub fn maintain(
     storage: &StorageHandle<'_>,
-    selection: outbe_oracle::call_sweep::Selection,
+    selection: outbe_oracle::call_pass::Selection,
 ) -> Result<()> {
     outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
     // TODO: Reward callers for maintenance work performed.
@@ -47,8 +47,8 @@ pub fn maintain(
     let ctx = maintenance_context(storage)?;
     crate::called::maintain(&ctx, selection)?;
     if selection.process_cleanup {
-        crate::cleanup::sweep_cleanup(&ctx)?;
-        crate::positions_expired::sweep_position_cleanup(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
+        crate::positions_expired::cleanup_positions(&ctx)?;
     }
     Ok(())
 }
@@ -87,7 +87,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         }
         .into());
     }
-    outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
+    outbe_oracle::api::check_reference_currency(reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
@@ -204,17 +204,14 @@ pub fn issue_gem_position(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    let series = outbe_intex::api::get_series(storage, source_intex_id)?
+    let series = outbe_intex::api::find_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
     if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());
     }
 
     // The daily call scan walks only listed reference currencies.
-    outbe_oracle::api::check_reference_currency_with_storage(
-        storage.clone(),
-        series.reference_currency,
-    )?;
+    outbe_oracle::api::check_reference_currency(series.reference_currency)?;
 
     let issued_at = storage.now_secs()?;
 

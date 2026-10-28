@@ -13,7 +13,7 @@ fn provider() -> HashMapStorageProvider {
     HashMapStorageProvider::new(1)
 }
 
-const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
     process_call: true,
     process_forfeit: true,
     process_cleanup: true,
@@ -31,7 +31,6 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
         let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
-        oracle.reference_currencies.push(978).unwrap();
         oracle
             .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();
@@ -55,8 +54,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             storage.clone(),
         ))
         .unwrap();
-        called::run_daily(&ctx).unwrap();
-        called::run_call_slice(&ctx, ALL_PHASES).unwrap();
+        called::schedule_call_pass(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -70,28 +69,27 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             BlockContext::empty_for_tests(2, midnight, 1),
             storage.clone(),
         );
-        called::run_call_slice(&ctx, ALL_PHASES).unwrap();
-        hooks::sweep_cleanup(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
+        hooks::cleanup(&ctx).unwrap();
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         assert_eq!(nod.call_latest_day.read().unwrap(), 20260715);
-        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
-            nod.daily_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let allowance =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
+                .unwrap()
+                .unwrap();
         assert_eq!(allowance.height, 2);
         assert_eq!(allowance.day, 0);
         assert_eq!(
             allowance.budget,
-            outbe_primitives::sweep_budget::SweepBudget::per_block()
+            outbe_primitives::pass_budget::PassBudget::per_block()
         );
     });
     let before = provider.storage.clone();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        called::run_call_slice(&ctx, ALL_PHASES).unwrap();
-        hooks::sweep_cleanup(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
+        hooks::cleanup(&ctx).unwrap();
     });
     assert_eq!(
         provider.storage, before,

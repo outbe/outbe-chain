@@ -25,10 +25,6 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             },
         )
         .unwrap();
-        OracleContract::new(storage.clone())
-            .reference_currencies
-            .push(978)
-            .unwrap();
         seed_day_vwap(&storage, 840, rate);
         let gem_id = issue_at_live_rate(
             &storage,

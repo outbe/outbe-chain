@@ -119,8 +119,15 @@ fn governance_deadline_replay_child() {
         validators.set_config_max_validators(4).unwrap();
         let mut key = [0u8; 48];
         key[0] = 1;
+        let minimum = U256::from(1_000u64);
+        validators
+            .test_seed_authoritative_min_stake(minimum)
+            .unwrap();
         validators
             .register_validator(OWNER, PROPOSER, &key)
+            .unwrap();
+        validators
+            .test_seed_authoritative_bonded(PROPOSER, minimum)
             .unwrap();
         validators
             .activate_validator_via_boundary_for_test(PROPOSER)

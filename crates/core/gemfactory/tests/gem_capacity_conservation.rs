@@ -23,7 +23,7 @@ use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
 const GEMS: u8 = 5;
-const ALL_PHASES: outbe_oracle::call_sweep::Selection = outbe_oracle::call_sweep::Selection {
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
     process_call: true,
     process_forfeit: true,
     process_cleanup: true,
@@ -73,7 +73,6 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         let pair =
             outbe_oracle::api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        oracle.reference_currencies.push(840).unwrap();
         let latest = previous_date_key(timestamp_to_date_key(CALLED)).expect("date step");
         let mut day = latest;
         for _ in 0..28 {
@@ -124,7 +123,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                     BlockContext::empty_for_tests(at * 32 + block, at, 1),
                     s.clone(),
                 );
-                called::run_call_slice(&ctx, ALL_PHASES)?;
+                called::process_call_pass(&ctx, ALL_PHASES)?;
                 if GemContract::new(s.clone()).call_sweep_day.read()? == 0 {
                     break;
                 }
@@ -133,7 +132,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 BlockContext::empty_for_tests(at * 32 + 16, at, 1),
                 s.clone(),
             );
-            hooks::sweep_cleanup(&ctx)?;
+            hooks::cleanup(&ctx)?;
             Ok(())
         })
     })
@@ -205,7 +204,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
         assert_eq!(
-            GemContract::new(s).expiry_tree_root.read().unwrap(),
+            GemContract::new(s).forfeit_tree_root.read().unwrap(),
             U256::ZERO
         );
     });
@@ -287,7 +286,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         assert_eq!(gem.group_gem_count.read(&group_key).unwrap(), 0);
         assert_eq!(gem.group_unpaid_load.read(&group_key).unwrap(), U256::ZERO);
         assert_eq!(gem.cleanup_group_slot.read(&group_key).unwrap(), 0);
-        assert_eq!(gem.expiry_tree_root.read().unwrap(), U256::ZERO);
+        assert_eq!(gem.forfeit_tree_root.read().unwrap(), U256::ZERO);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
@@ -342,7 +341,7 @@ fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once(
             StorageHandle::enter(&mut p, |s| {
                 assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
                 assert_eq!(
-                    GemContract::new(s).expiry_tree_root.read().unwrap(),
+                    GemContract::new(s).forfeit_tree_root.read().unwrap(),
                     U256::ZERO
                 );
             });

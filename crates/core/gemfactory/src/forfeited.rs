@@ -1,51 +1,48 @@
 use alloy_primitives::B256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
-    sweep_budget::SweepBudget,
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, Result},
+    pass_budget::PassBudget,
 };
 
 use outbe_gem::precompile::IGem::GemGroupForfeited;
-use outbe_gem::{ExpiryDays, GemContract};
+use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
-
-use crate::precompile::IGemFactory::ExpiryDeferred;
-use crate::runtime::emit_event;
 
 /// Forfeits the called groups whose notice period closed, one credit per group.
 /// Returns the groups forfeited.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());
-    let mut expiry = GemExpiry::new(ctx);
-    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    let mut expiry = GemForfeit::new(ctx);
+    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+    budget: &mut PassBudget,
+) -> Result<deadline_queue::Progress> {
     let queue = GemContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
-        &ExpiryDays(&queue),
+    deadline_queue::process_day(
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut GemExpiry::new(ctx),
+        &mut GemForfeit::new(ctx),
     )
 }
 
-pub(crate) struct GemExpiry<'a, 's> {
+pub(crate) struct GemForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
     forfeited: u32,
 }
 
-impl<'a, 's> GemExpiry<'a, 's> {
+impl<'a, 's> GemForfeit<'a, 's> {
     pub(crate) fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
         Self {
             storage: &ctx.storage,
@@ -56,14 +53,14 @@ impl<'a, 's> GemExpiry<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
+impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.gem.group_called_at.read(&group)? != 0;
         Ok(
             match called && self.gem.group_gem_count.read(&group)? != 0 {
-                true => Due::Expire,
+                true => Due::Process,
                 false => Due::Drop,
             },
         )
@@ -77,13 +74,13 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
         Ok(group)
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     /// Returns the load of the group's unpaid gems in one credit and hands the gems to
     /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
-    fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let gems = self.gem.group_gem_count.read(&group)?;
         let load = self.gem.group_unpaid_load.read(&group)?;
         if !load.is_zero() {
@@ -101,13 +98,7 @@ impl ExpiryHandler<B256> for GemExpiry<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "expiry sweep: group deferred");
-        emit_event(
-            &self.gem.storage,
-            ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            },
-        )
+        tracing::warn!(target: "outbe::gemfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }

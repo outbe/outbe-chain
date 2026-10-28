@@ -49,10 +49,10 @@ mod verification;
 use transport::timeout_seconds_from;
 use transport::{connect_endpoint_transport, enclave_io_timeout, with_io_phase, Transport};
 
-use verification::{
+pub(crate) use verification::{
     validate_dcap_onboarding_response, validate_dcap_verification_response,
-    validate_generated_dcap_quote, verify_quote,
 };
+use verification::{validate_generated_dcap_quote, verify_quote};
 pub use verification::{
     verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
     verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
@@ -869,12 +869,12 @@ impl AuthorizedEnclaveClient {
     /// Verify exact canonical evidence against exact canonical policy and
     /// consensus time inside the initialized Gramine enclave. This method hides
     /// the bounded multi-frame protocol from callers.
-    pub fn verify_dcap_evidence_v1(
+    pub(crate) fn verify_dcap_evidence_v1_raw(
         &mut self,
         evidence: &[u8],
         policy: &[u8],
         block_timestamp: u64,
-    ) -> Result<DcapVerificationOutcomeV1, TransportError> {
+    ) -> Result<EnclaveResponse, TransportError> {
         let request_hash = dcap_verification_request_hash(evidence, policy, block_timestamp)
             .map_err(|code| {
                 crate::errors::TeeClientVerificationError::InvalidVerifierInputDimensions {
@@ -896,15 +896,31 @@ impl AuthorizedEnclaveClient {
                 block_timestamp,
             },
         )?;
+        Ok(response)
+    }
+
+    pub fn verify_dcap_evidence_v1(
+        &mut self,
+        evidence: &[u8],
+        policy: &[u8],
+        block_timestamp: u64,
+    ) -> Result<DcapVerificationOutcomeV1, TransportError> {
+        let request_hash = dcap_verification_request_hash(evidence, policy, block_timestamp)
+            .map_err(|code| {
+                crate::errors::TeeClientVerificationError::InvalidVerifierInputDimensions {
+                    code: code.code(),
+                }
+            })?;
+        let response = self.verify_dcap_evidence_v1_raw(evidence, policy, block_timestamp)?;
         validate_dcap_verification_response(self.attestation_pub, request_hash, response)
     }
 
     /// Verify one exact `RegisterEnclave` request and request the deterministic
     /// one-time offer-key artifact from a resident source enclave.
-    pub fn verify_dcap_registration_and_seal_v1(
+    pub(crate) fn verify_dcap_registration_and_seal_v1_raw(
         &mut self,
         request: RegistrationVerificationRequest<'_>,
-    ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
+    ) -> Result<EnclaveResponse, TransportError> {
         let RegistrationVerificationRequest {
             evidence,
             policy,
@@ -940,6 +956,19 @@ impl AuthorizedEnclaveClient {
                 tribute_offer_epoch,
             },
         )?;
+        Ok(response)
+    }
+
+    pub fn verify_dcap_registration_and_seal_v1(
+        &mut self,
+        request: RegistrationVerificationRequest<'_>,
+    ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
+        let request_hash = dcap_onboarding_request_hash(request).map_err(|code| {
+            crate::errors::TeeClientVerificationError::InvalidOnboardingVerifierInputDimensions {
+                code: code.code(),
+            }
+        })?;
+        let response = self.verify_dcap_registration_and_seal_v1_raw(request)?;
         validate_dcap_onboarding_response(self.attestation_pub, request_hash, response)
     }
 
@@ -978,6 +1007,13 @@ impl AuthorizedEnclaveClient {
             ));
         }
         Ok(artifact)
+    }
+
+    pub(crate) fn prepare_gramine_direct_dev_onboarding_artifact_v2_raw(
+        &mut self,
+        context: DcapOnboardingContextV1,
+    ) -> Result<EnclaveResponse, TransportError> {
+        self.request(&EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { context })
     }
 
     fn upload_dcap_verification_v1(

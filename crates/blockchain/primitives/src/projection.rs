@@ -60,17 +60,47 @@ impl ExecutionReadCancelled {
     }
 }
 
+/// Typed reason why consensus witness execution or verification aborted.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum WitnessAbortReason {
+    /// Block witness tape is missing, malformed, truncated, unconsumed, has a variant or input hash
+    /// mismatch, has an invalid leader attestation tag, or contains an unsigned error.
+    TapeInvalid,
+    /// In `VerifierWithEnclave`, the local enclave returned business fields that diverge from the
+    /// leader's recorded witness entry.
+    SemanticMismatch,
+    /// The local enclave sidecar became unavailable during execution.
+    LocalUnavailable,
+}
+
 /// Positive evidence that execution stopped on a node-local dependency failure
 /// (such as local TEE sidecar unavailability, off-chain body reader unavailability,
-/// or native storage unavailability). This is a local abort, never a
-/// consensus block-validity verdict or a reason to crash the node process.
+/// native storage unavailability, or a witness execution/verification abort).
+/// Routing through this type prevents Reth from caching the block in `invalid_headers`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("execution stopped on a node-local dependency failure: {reason}")]
 pub struct NodeLocalExecutionAbort {
     pub reason: String,
+    pub witness_reason: Option<WitnessAbortReason>,
 }
 
 impl NodeLocalExecutionAbort {
+    #[must_use]
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            witness_reason: None,
+        }
+    }
+
+    #[must_use]
+    pub fn witness(witness_reason: WitnessAbortReason, reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            witness_reason: Some(witness_reason),
+        }
+    }
+
     /// Finds the typed node-local abort through adapters without parsing error messages.
     pub fn find<'a>(mut error: &'a (dyn std::error::Error + 'static)) -> Option<&'a Self> {
         loop {

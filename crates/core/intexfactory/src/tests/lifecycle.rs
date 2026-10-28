@@ -20,14 +20,6 @@ fn issue_enrolls_in_call_bin() {
 /// columns are keyed by it.
 const PAIR_ID: u32 = 1;
 
-/// List the reference currency in the oracle's reference registry, which the
-/// scans walk to decide which currencies to price this block.
-pub(super) fn list_reference(oracle: &OracleContract) {
-    if oracle.reference_currencies.len().unwrap() == 0 {
-        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
-    }
-}
-
 pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
     let pair_id = PAIR_ID;
@@ -38,7 +30,6 @@ pub(super) fn setup_pair(oracle: &OracleContract) -> AddressPair {
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
     oracle.vote_target.write(&pair, true).unwrap();
-    list_reference(oracle);
     pair
 }
 
@@ -156,6 +147,7 @@ fn try_call_excludes_pre_issuance_days() {
                     call_window_seconds: 30 * SECONDS_PER_DAY_U32,
                     call_threshold_seconds: 27 * SECONDS_PER_DAY_U32,
                     call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                    transit_margin_seconds: 3_600,
                 },
                 issued_at: ISSUED_AT,
                 issuance_currency: 840,
@@ -189,7 +181,7 @@ fn a_group_is_called_once() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(9)).unwrap();
         outbe_intex::api::call_group_of(&s, sid(9), ISSUED_AT + 10).unwrap();
-        let series = outbe_intex::api::read_series(&s, sid(9)).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(9)).unwrap();
         assert_eq!(series_state(&s, sid(9)), outbe_intex::IntexState::Called);
         assert_eq!(
             outbe_intex::api::call_stamp(&s, &series).unwrap().called_at,

@@ -34,7 +34,7 @@ pub(crate) fn call_if_breached(
     let Some(&first) = members.first() else {
         return Ok(0);
     };
-    let series = outbe_intex::api::read_series(storage, first)?;
+    let series = outbe_intex::api::get_series(storage, first)?;
     let breached = window.breached(&BreachTerms {
         call_price: series.call_price_minor,
         window_seconds: intex.call_group_window_seconds.read(&group)?,
@@ -48,14 +48,14 @@ pub(crate) fn call_if_breached(
     // u32 timestamp. It is bounded until 2106 (matches issued_at).
     let called_at =
         u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
-    let settlement_deadline = intex.group_stamp(group, called_at)?.deadline;
-    intex.record_group_called(group, called_at, settlement_deadline)?;
+    let stamp = intex.group_stamp(group, called_at)?;
+    intex.record_group_called(group, called_at, stamp.close_at)?;
 
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
         crate::notify::enqueue_notice(
             factory,
-            crate::notify::pack_called_notice(series_id, called_at),
+            crate::notify::pack_call_notice(series_id, called_at),
         )?;
     }
 
@@ -63,7 +63,7 @@ pub(crate) fn call_if_breached(
         groupKey: group,
         seriesIds: members.iter().map(|id| (*id).into()).collect(),
         calledAt: called_at,
-        settlementDeadline: settlement_deadline,
+        settlementDeadline: stamp.deadline,
     })?;
     Ok(members.len() as u32)
 }

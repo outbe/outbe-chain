@@ -17,6 +17,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
 metrics.workspace = true
 postcard.workspace = true
+zstd = "=0.13.3"
 snow.workspace = true
 thiserror.workspace = true
 rand.workspace = true

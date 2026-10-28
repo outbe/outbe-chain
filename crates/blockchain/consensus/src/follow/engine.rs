@@ -92,6 +92,10 @@ where
     pub anchor_epoch: Epoch,
     /// Mailbox capacity for the resolver handler.
     pub mailbox_size: NonZeroUsize,
+    /// Stops upstream hints before execution ingress closes.
+    pub driver_cancel: tokio::sync::watch::Receiver<bool>,
+    /// Stops resolver acquisition only after execution and proof persistence drain.
+    pub follower_phase_cancel: tokio::sync::watch::Receiver<bool>,
 }
 
 /// Assemble and run the follower engine until requested stop or fatal exit.
@@ -129,6 +133,8 @@ where
         chain,
         anchor_epoch,
         mailbox_size,
+        mut driver_cancel,
+        follower_phase_cancel,
     } = config;
 
     // -- 1. Rebuild the authenticated committee chain through the durable
@@ -139,17 +145,24 @@ where
     let (handler_receiver, handler): (handler::Receiver<Digest>, handler::Handler<Digest>) =
         handler::init(context.child("follow_resolver_handler"), mailbox_size);
 
-    let follow_resolver = resolver::init(
-        context.child("follow_resolver"),
-        handler,
-        resolver::FetchResolution {
-            upstream: upstream.clone(),
-            local,
-            chain: chain.clone(),
-            epocher: epocher.clone(),
-        },
-        mailbox_size,
-    );
+    // The resolver owns spawned acquisitions. Its phase owner exits only after
+    // proof drain, cancelling those descendants without stopping the runtime.
+    let (resolver_tx, resolver_rx) = tokio::sync::oneshot::channel();
+    let resolution = resolver::FetchResolution {
+        upstream: upstream.clone(),
+        local,
+        chain: chain.clone(),
+        epocher: epocher.clone(),
+    };
+    let mut resolver_cancel = follower_phase_cancel.clone();
+    let resolver_handle = context
+        .child("follow_resolver")
+        .spawn(move |ctx| async move {
+            let resolver = resolver::init(ctx, handler, resolution, mailbox_size);
+            let _ = resolver_tx.send(resolver);
+            wait_for_cancel(&mut resolver_cancel).await;
+        });
+    let follow_resolver = resolver_rx.await?;
 
     // -- 3. Null broadcast (the follower never disseminates) -----------------
     let broadcast = stubs::null_broadcast(context.child("follow_broadcast"), mailbox_size);
@@ -171,20 +184,45 @@ where
             epocher,
         },
     );
-    let _driver_handle = driver.start();
+    let mut driver_handle = driver.start();
+    let driver_exit = async move {
+        tokio::select! {
+            () = wait_for_cancel(&mut driver_cancel) => {
+                driver_handle.abort();
+                let _ = driver_handle.await;
+            },
+            _ = &mut driver_handle => {},
+        }
+        Ok::<(), eyre::Report>(())
+    };
 
     info!("follower engine started; syncing from upstream");
 
-    await_marshal_exit(context.stopped(), marshal_handle).await
+    let marshal_exit = await_marshal_exit(context.stopped(), marshal_handle, follower_phase_cancel);
+    futures::try_join!(driver_exit, marshal_exit)?;
+    resolver_handle.await.map_err(FollowError::marshal_exited)?;
+    Ok(())
+}
+
+async fn wait_for_cancel(rx: &mut tokio::sync::watch::Receiver<bool>) {
+    while !*rx.borrow_and_update() {
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
 }
 
 async fn await_marshal_exit(
     stopped: commonware_runtime::signal::Signal,
     marshal: impl std::future::Future<Output = std::result::Result<(), commonware_runtime::Error>>,
+    follower_phase_cancel: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     // Await the actual task outcome even during shutdown. A stop request is
     // not permission to discard an already completed error or panic.
     marshal.await.map_err(FollowError::marshal_exited)?;
+    if *follower_phase_cancel.borrow() {
+        return Ok(());
+    }
     match stopped.now_or_never() {
         Some(Ok(_)) => Ok(()),
         Some(Err(error)) => Err(FollowError::shutdown_signal_failed(error).into()),
@@ -583,10 +621,23 @@ mod shutdown_tests {
     use futures::FutureExt as _;
 
     #[tokio::test]
+    async fn promotion_allows_clean_marshal_exit_without_runtime_stop() {
+        let (_signaler, signal) = Signaler::new();
+        let (_cancel, phase) = tokio::sync::watch::channel(true);
+        await_marshal_exit(signal, std::future::ready(Ok(())), phase)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn requested_stop_waits_for_actual_marshal_completion() {
         let (signaler, signal) = Signaler::new();
         let (done, completed) = tokio::sync::oneshot::channel();
-        let drain = await_marshal_exit(signal, async { completed.await.unwrap() });
+        let drain = await_marshal_exit(
+            signal,
+            async { completed.await.unwrap() },
+            tokio::sync::watch::channel(false).1,
+        );
         tokio::pin!(drain);
         assert!(drain.as_mut().now_or_never().is_none());
         let stopped = signaler.signal(0);
@@ -599,9 +650,13 @@ mod shutdown_tests {
     #[tokio::test]
     async fn clean_marshal_completion_without_stop_is_an_error() {
         let (_signaler, signal) = Signaler::new();
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
+        let error = await_marshal_exit(
+            signal,
+            std::future::ready(Ok(())),
+            tokio::sync::watch::channel(false).1,
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("marshal exited unexpectedly"));
     }
 
@@ -611,9 +666,13 @@ mod shutdown_tests {
             let (signaler, signal) = Signaler::new();
             let stopped = signaler.signal(0);
             let expected = format!("{failure:?}");
-            let error = await_marshal_exit(signal, std::future::ready(Err(failure)))
-                .await
-                .unwrap_err();
+            let error = await_marshal_exit(
+                signal,
+                std::future::ready(Err(failure)),
+                tokio::sync::watch::channel(false).1,
+            )
+            .await
+            .unwrap_err();
             assert!(error.to_string().contains(&expected));
             stopped.await.unwrap();
         }
@@ -623,9 +682,13 @@ mod shutdown_tests {
     async fn lost_shutdown_sender_is_not_a_requested_stop() {
         let (signaler, signal) = Signaler::new();
         drop(signaler);
-        let error = await_marshal_exit(signal, std::future::ready(Ok(())))
-            .await
-            .unwrap_err();
+        let error = await_marshal_exit(
+            signal,
+            std::future::ready(Ok(())),
+            tokio::sync::watch::channel(false).1,
+        )
+        .await
+        .unwrap_err();
         assert!(error.to_string().contains("shutdown signal failed"));
     }
 }

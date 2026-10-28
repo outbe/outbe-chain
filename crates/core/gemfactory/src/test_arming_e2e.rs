@@ -69,7 +69,7 @@ fn requeue_position_hour(
     position_id: U256,
     deadline: u64,
 ) -> Result<()> {
-    use outbe_primitives::expiry_queue;
+    use outbe_primitives::deadline_queue;
     let factory = crate::GemFactoryContract::new(storage.clone());
     let position = factory
         .positions
@@ -79,10 +79,10 @@ fn requeue_position_hour(
     if now < position.expires_at {
         return Err(GemFactoryError::PositionNotExpired.into());
     }
-    let days = crate::state::PositionExpiryDays(&factory);
+    let days = crate::state::PositionExpiryQueue(&factory);
     let entry = crate::state::position_queue_entry(position.expiry_hour())?;
-    expiry_queue::remove(&days, entry)?;
-    expiry_queue::push(&days, entry, deadline)?;
+    deadline_queue::remove(&days, entry)?;
+    deadline_queue::push(&days, entry, deadline)?;
     reopen_day(storage, deadline)
 }
 
@@ -165,7 +165,7 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
         .write(gem.call_latest_day.read()?.max(day))?;
     gem.daily_genesis_day.write(day)?;
     gem.daily_phase.write(0)?;
-    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+    for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
         gem.call_bin_cursor.clear(&currency)?;
         gem.call_scan_failed_day.clear(&currency)?;
     }

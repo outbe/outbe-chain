@@ -78,6 +78,7 @@ fn params(index: usize) -> IssuanceParams {
             call_window_seconds: prod.call_window_seconds,
             call_threshold_seconds: prod.call_threshold_seconds,
             call_notice_period_seconds: prod.call_notice_period_seconds,
+            transit_margin_seconds: prod.transit_margin_seconds,
         },
         issuance_currency: 840,
         reference_currency: 840,
@@ -189,7 +190,7 @@ fn measure_issue(prepared: &PreparedIntex) -> Result<Observation, String> {
     )?;
     let all_readable = StorageHandle::enter(&mut provider, |storage| {
         prepared.params.iter().try_fold(true, |all, params| {
-            outbe_intex::api::get_series(&storage, params.series_id)
+            outbe_intex::api::find_series(&storage, params.series_id)
                 .map(|series| all && series.is_some())
                 .map_err(|error| error.to_string())
         })

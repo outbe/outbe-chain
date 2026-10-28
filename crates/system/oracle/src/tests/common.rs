@@ -99,7 +99,27 @@ pub(super) fn policy_rate(iso_code: u16) -> crate::genesis::PolicyRate {
     }
 }
 
+/// A test policy rate for every reference currency, as genesis requires.
+pub(super) fn reference_policy_rates() -> Vec<crate::genesis::PolicyRate> {
+    crate::constants::REFERENCE_CURRENCIES
+        .into_iter()
+        .map(policy_rate)
+        .collect()
+}
+
 pub(super) const ATOMIC_DAY_START: u64 = 1_753_228_800;
+
+/// Records the first block of every hour in `[start, end)`, one vote period
+/// apart, so each hour allows one tally round. Returns the next block number.
+pub(super) fn note_hours(oracle: &mut OracleContract<'_>, start: u64, end: u64) -> u64 {
+    let period = oracle.config_vote_period.read().unwrap().max(1);
+    let mut block = 1;
+    for hour in (start..end).step_by(3_600) {
+        oracle.record_hour_block(hour, block).unwrap();
+        block += period;
+    }
+    block
+}
 
 pub(super) type OracleFixture = fn(&mut HashMapStorageProvider);
 pub(super) type OracleMutation = for<'a> fn(StorageHandle<'a>) -> PrecompileResult<()>;
@@ -120,6 +140,25 @@ pub(super) fn seed_native_oracle_with_snapshot(provider: &mut HashMapStorageProv
                 &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
+    });
+}
+
+/// Seeds one COEN/USD snapshot in every hour of the UTC day at
+/// [`ATOMIC_DAY_START`], with hour notes, so the day has a covered VWAP.
+pub(super) fn seed_native_oracle_with_covered_day(provider: &mut HashMapStorageProvider) {
+    seed_native_oracle(provider);
+    StorageHandle::enter(provider, |storage| {
+        let mut oracle = OracleContract::new(storage);
+        let day_end = ATOMIC_DAY_START + SECONDS_PER_DAY;
+        note_hours(&mut oracle, ATOMIC_DAY_START, day_end + 3_600);
+        for hour in (ATOMIC_DAY_START..day_end).step_by(3_600) {
+            oracle
+                .write_snapshot(
+                    hour + 100,
+                    &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
+                )
+                .unwrap();
+        }
     });
 }
 

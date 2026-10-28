@@ -218,10 +218,6 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
             BlockContext::new(1, 1_700_000_000, 1, sender, vec![sender]),
         );
         StorageHandle::enter(&mut seed, |storage| {
-            outbe_oracle::schema::OracleContract::new(storage.clone())
-                .reference_currencies
-                .push(840)
-                .unwrap();
             outbe_intex::api::create_series(
                 &storage,
                 CreateSeriesParams {

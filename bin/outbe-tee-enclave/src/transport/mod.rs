@@ -31,7 +31,8 @@ use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::NOISE_PARAMS;
 
 use crate::dcap_verifier::{
-    complete_gramine_direct_dev_onboarding_response, complete_verification_response,
+    complete_gramine_direct_dev_onboarding_response,
+    complete_gramine_direct_dev_onboarding_response_v2, complete_verification_response,
     DcapVerificationProgressV1, DcapVerificationSessionV1,
 };
 use crate::dkg::{build_ceremony_info, DkgSessionStore};

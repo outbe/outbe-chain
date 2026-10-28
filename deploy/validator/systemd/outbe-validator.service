@@ -39,8 +39,6 @@ ExecStart=/opt/outbe-chain/outbe-chain node \
   --validator \
   --consensus.signing-key /opt/outbe-chain/keys/signing-key.hex \
   --validator.evm-key /opt/outbe-chain/keys/evm-key.hex \
-  --consensus.public-polynomial /opt/outbe-chain/dkg_polynomial.hex \
-  --consensus.dkg-output /opt/outbe-chain/dkg_output.hex \
   --consensus.keys-dir /opt/outbe-chain/keys \
   --consensus.listen-addr 0.0.0.0:30400 \
   --consensus.peers ${OUTBE_CONSENSUS_PEERS} \

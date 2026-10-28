@@ -40,7 +40,7 @@ fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
         storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
         runtime::issue_intex(&storage, sample(7)).unwrap();
         assert_eq!(
-            outbe_intex::api::read_series(&storage, sid(7))
+            outbe_intex::api::get_series(&storage, sid(7))
                 .unwrap()
                 .issued_at,
             u32::MAX
@@ -54,7 +54,7 @@ fn issue_creates_series_in_registry() {
         runtime::issue_intex(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.series_id, sid(7));
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
         assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE));
@@ -69,6 +69,7 @@ fn issue_creates_series_in_registry() {
                 call_window_seconds: 28 * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                transit_margin_seconds: 3_600,
             }
         );
         // Born Issued. `issued_at` is the block timestamp.
@@ -104,6 +105,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
                 call_window_seconds: dev.call_window_seconds,
                 call_threshold_seconds: dev.call_threshold_seconds,
                 call_notice_period_seconds: dev.call_notice_period_seconds,
+                transit_margin_seconds: dev.transit_margin_seconds,
             }
         );
     });
@@ -125,7 +127,7 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
         let params = sample(7);
         let legs = runtime::issue_intex(&s, params.clone()).unwrap();
 
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.promis_load_minor, U256::from(params.promis_load_minor));
         assert_eq!(r.entry_price_minor, params.entry_price_minor);
         assert_eq!(r.call_price_minor, params.call_price_minor);
@@ -244,6 +246,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
         callWindow: 0,
         callThreshold: 0,
         callPriceMinor: 0,
+        transitMargin: 0,
     };
     runtime::IssuanceLeg { chain_id, payload }
 }
@@ -630,7 +633,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
 }
 
 #[test]
-fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
+fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
     let mut storage = dual_currency_series(EUR_ISO as u64);
     stub_token_that_never_credits(&mut storage);
     let quote = |storage: &mut HashMapStorageProvider| {
@@ -651,18 +654,18 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
     });
     let quoted = quote(&mut storage);
-    let deadline = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
+    let close_at = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
         .cutoff()
         + 3_600;
     StorageHandle::enter(&mut storage, |s| {
-        let notice = outbe_intex::api::read_series(&s, sid(7))
-            .unwrap()
-            .call_notice_period_seconds;
-        outbe_intex::api::call_group_of(&s, sid(7), (deadline - u64::from(notice)) as u32).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
+        let terms =
+            u64::from(series.call_notice_period_seconds) + u64::from(series.transit_margin_seconds);
+        outbe_intex::api::call_group_of(&s, sid(7), (close_at - terms) as u32).unwrap();
     });
 
-    storage.set_timestamp(U256::from(deadline));
+    storage.set_timestamp(U256::from(close_at));
     let required = quote(&mut storage);
     assert_eq!(
         settle_series_7(&mut storage, quoted),
@@ -675,7 +678,7 @@ fn the_hourly_rollover_at_the_call_deadline_grants_no_grace() {
         .to_string()
     );
 
-    storage.set_timestamp(U256::from(deadline + 1));
+    storage.set_timestamp(U256::from(close_at + 1));
     assert_eq!(
         settle_series_7(&mut storage, required),
         outbe_primitives::error::PrecompileError::from(

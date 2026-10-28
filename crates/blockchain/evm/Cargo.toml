@@ -29,6 +29,7 @@ outbe-stablecoinpolicy.workspace = true
 outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
+outbe-tee.workspace = true
 outbe-l2registry.workspace = true
 outbe-hyperlanecontroller.workspace = true
 outbe-coderegistry.workspace = true
@@ -83,11 +84,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
+postcard.workspace = true
 
 [dev-dependencies]
 outbe-genesis-cli.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-evm = { path = ".", features = ["test-utils"] }
+outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-chain-constants.workspace = true
 outbe-node.workspace = true
@@ -103,6 +106,7 @@ reth-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
+ed25519-dalek.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

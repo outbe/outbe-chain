@@ -179,17 +179,19 @@ fn register_pair(oracle: &OracleContract, iso_code: u16, pair_id: u32) {
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     oracle.pair_count.write(pair_id).unwrap();
     oracle.pair_by_index.write_pair(&pair_id, pair).unwrap();
-    oracle.reference_currencies.push(iso_code).unwrap();
 }
 
-/// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads.
+/// Price COEN/`iso_code` into the UTC day an auction starting at `now` reads,
+/// and into the day before it, which a priced currency also needs.
 fn seed_price(s: &StorageHandle, now: u64, iso_code: u16, pair_id: u32, rate: u128) {
     let oracle = OracleContract::new(s.clone());
     register_pair(&oracle, iso_code, pair_id);
     let day = price_day(now);
-    oracle
-        .record_utc_day_vwap(day, pair_id, U256::from(rate))
-        .unwrap();
+    for priced in [previous_date_key(day).expect("date step"), day] {
+        oracle
+            .record_utc_day_vwap(priced, pair_id, U256::from(rate))
+            .unwrap();
+    }
     if oracle.utc_day_vwap_last_finalized.read().unwrap() < day {
         oracle.utc_day_vwap_last_finalized.write(day).unwrap();
     }
@@ -1244,7 +1246,7 @@ fn the_price_chosen_at_start_is_the_one_the_series_carries() {
         assert_eq!(clear(&s).issued_units, 2);
 
         let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
-        let series = outbe_intex::api::read_series(&s, series_id).unwrap();
+        let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(series.entry_price_minor, U256::from(ENTRY_PRICE));
     });
 }
@@ -2438,12 +2440,12 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 
         let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
         let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
-        assert_eq!(usd.to_string(), "20260101-USD-U");
+        assert_eq!(usd.to_string(), "20260101-USD");
         assert_eq!(lira.to_string(), "20260101-TRY-E");
 
         // Each series holds only its own winners and its own reference price.
-        let usd_series = outbe_intex::api::read_series(&s, usd).unwrap();
-        let lira_series = outbe_intex::api::read_series(&s, lira).unwrap();
+        let usd_series = outbe_intex::api::get_series(&s, usd).unwrap();
+        let lira_series = outbe_intex::api::get_series(&s, lira).unwrap();
         assert_eq!(usd_series.issued_units, 2);
         assert_eq!(lira_series.issued_units, 1);
         assert_eq!(
@@ -2458,11 +2460,9 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 }
 
 #[test]
-fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
-    // CHF and CNY both spell their series `C`. The day keeps the lower code, so the
-    // survivor cannot depend on the order the two brief paths collect prices in.
+fn a_day_priced_in_every_reference_currency_starts_with_one_row_each() {
     with_storage(|s| {
-        open_clearing_priced(&s, 4, &[756, 156]);
+        open_clearing_priced(&s, 4, &outbe_oracle::api::REFERENCE_CURRENCIES);
         let config = s
             .contract::<DesisContract>()
             .read_auction_config(WORLDWIDE_DAY)
@@ -2473,9 +2473,8 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .iter()
                 .map(|row| row.iso_code)
                 .collect::<Vec<_>>(),
-            vec![156]
+            outbe_oracle::api::REFERENCE_CURRENCIES.to_vec()
         );
-        assert!(config.price_for(756).is_none());
     });
 }
 

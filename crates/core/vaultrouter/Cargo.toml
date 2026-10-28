@@ -19,6 +19,7 @@ alloy-sol-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-evm = { workspace = true, features = ["test-utils"] }
 revm.workspace = true
 

@@ -26,6 +26,7 @@ pub(crate) struct StakeIdentity {
 
 pub(crate) struct StakeIdentityInput<'a> {
     pub(crate) keys_dir: Option<&'a Path>,
+    pub(crate) key_backend: &'a KeyBackend,
     pub(crate) consensus_pubkey: Option<&'a str>,
     pub(crate) radicle_node_id: Option<B256>,
     pub(crate) bls_registration_signature: Option<&'a str>,
@@ -43,7 +44,7 @@ pub(crate) async fn resolve_stake_identity(
         if explicit_count > 0 {
             return Err(StakingError::IdentitySourceConflict.into());
         }
-        return load_keys_dir(client, validator, dir).await;
+        return load_keys_dir(client, validator, dir, input.key_backend).await;
     }
     let (Some(pubkey), Some(node_id), Some(signature)) = (
         input.consensus_pubkey,
@@ -63,6 +64,7 @@ async fn load_keys_dir(
     client: &(impl Rpc + Sync),
     validator: Address,
     keys_dir: &Path,
+    key_backend: &KeyBackend,
 ) -> Result<StakeIdentity> {
     let evm_path = keys_dir.join("evm-key.hex");
     let evm_hex = Zeroizing::new(std::fs::read_to_string(&evm_path).map_err(|source| {
@@ -98,7 +100,7 @@ async fn load_keys_dir(
 
     let consensus_path = keys_dir.join("signing-key.hex");
     let consensus_key =
-        bls::load_individual_key(&consensus_path, &KeyBackend::Plaintext).map_err(|source| {
+        bls::load_individual_key(&consensus_path, key_backend).map_err(|source| {
             StakingError::ConsensusKeyLoad {
                 path: consensus_path,
                 source,

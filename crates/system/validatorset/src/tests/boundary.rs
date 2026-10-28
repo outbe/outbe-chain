@@ -475,6 +475,8 @@ fn post_freeze_joiner_unstake_is_retained_then_excluded_at_a_later_boundary() {
 #[test]
 fn post_freeze_joiner_inactive_is_retained_then_excluded_at_a_later_boundary() {
     with_frozen_target_joiner(|vs, survivor, joiner| {
+        vs.test_seed_authoritative_bonded(joiner, U256::ZERO)
+            .unwrap();
         vs.record_unstake(joiner, U256::ZERO, U256::from(1_000u64), 0)
             .unwrap();
         vs.complete_unbonding(joiner).unwrap();
@@ -545,25 +547,44 @@ fn included_demoted_joiner_at_or_before_freeze_still_fatals() {
 }
 
 #[test]
-fn included_demoted_joiner_without_height_is_retained_for_upgrade() {
+fn included_waiting_for_readiness_without_deactivation_height_is_rejected() {
+    use crate::precompile::IValidatorSet as I;
+    use alloy_sol_types::SolError;
+
     with_frozen_target_joiner(|vs, survivor, joiner| {
         vs.record_stake_slash(joiner, U256::from(1u64), U256::from(1_000u64), None)
             .unwrap();
-        // Old demotions finalized before the height stamp existed.
         vs.val_deactivated_at_height.write(&joiner, 0).unwrap();
 
-        vs.test_activate_validated_boundary_set(
-            &[survivor, joiner],
-            B256::with_last_byte(0xB0),
-            10,
-        )
-        .unwrap();
-        assert!(matches!(
-            vs.validator_lifecycle(joiner).unwrap(),
-            ValidatorLifecycle::Exiting(_)
-        ));
-        assert_eq!(vs.val_deactivated_at_height.read(&joiner).unwrap(), 11);
-        assert!(vs.is_consensus_participant(joiner).unwrap());
+        let survivor_before = vs.validator_lifecycle(survivor).unwrap();
+        let joiner_before = vs.validator_lifecycle(joiner).unwrap();
+        let pending_before = vs.has_pending_set_change().unwrap();
+        let hash_before = vs.active_consensus_set_hash().unwrap();
+
+        let err = vs
+            .test_activate_validated_boundary_set(
+                &[survivor, joiner],
+                B256::with_last_byte(0xB0),
+                10,
+            )
+            .unwrap_err();
+        assert_eq!(
+            super::typed_revert(
+                I::BoundaryIncludedIneligibleValidator {
+                    account: joiner,
+                    status: status::PENDING,
+                }
+                .abi_encode()
+            ),
+            match err {
+                PrecompileError::RevertBytes(bytes) => super::typed_revert(bytes),
+                other => panic!("expected typed revert, got {other:?}"),
+            }
+        );
+        assert_eq!(vs.validator_lifecycle(survivor).unwrap(), survivor_before);
+        assert_eq!(vs.validator_lifecycle(joiner).unwrap(), joiner_before);
+        assert_eq!(vs.has_pending_set_change().unwrap(), pending_before);
+        assert_eq!(vs.active_consensus_set_hash().unwrap(), hash_before);
     });
 }
 

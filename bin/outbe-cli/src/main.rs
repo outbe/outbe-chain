@@ -159,6 +159,12 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_staking_unstake_zero_amount() {
+        let cli = Cli::try_parse_from(["outbe-cli", "staking", "unstake", "--amount", "0"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
     fn test_cli_parse_rewards_emission() {
         // `rewards emission` is a remaining valid subcommand.
         let cli = Cli::try_parse_from(["outbe-cli", "rewards", "emission"]);

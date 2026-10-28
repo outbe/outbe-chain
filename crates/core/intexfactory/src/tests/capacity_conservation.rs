@@ -42,6 +42,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
                     call_window_seconds: 28 * SECONDS_PER_DAY_U32,
                     call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                     call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
+                    transit_margin_seconds: 3_600,
                 },
                 issued_at: ISSUED,
                 issuance_currency: 840,
@@ -71,7 +72,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
         crate::hooks::sweep_forfeits(&ctx)?;
-        crate::notify::send_notices(&ctx)
+        crate::notify::send_call_notices(&ctx)
     })
 }
 
@@ -87,7 +88,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
             10
         );
         let factory = IntexContract::new(s.clone());
-        let key = api::read_series(&s, id)
+        let key = api::get_series(&s, id)
             .unwrap()
             .group_key()
             .expect("date step");
@@ -96,7 +97,7 @@ fn ledger(p: &mut HashMapStorageProvider, id: SeriesId, terminal: bool) {
         if terminal {
             assert_eq!((units.active, units.forfeited, pending), (0, 5, 0));
             assert_eq!(returned, U256::from(5 * LOAD));
-            assert_eq!(factory.expiry_tree_root.read().unwrap(), U256::ZERO);
+            assert_eq!(factory.forfeit_tree_root.read().unwrap(), U256::ZERO);
             assert!(factory.first_cleanup_day().unwrap().is_some());
         } else {
             assert!(pending <= 1);

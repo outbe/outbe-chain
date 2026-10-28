@@ -91,7 +91,7 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     process_scurve_day(&mut oracle, timestamp)?;
 
     if timestamp > 0 {
-        finalize_closed_utc_days(&mut oracle, timestamp)?;
+        finalize_day_vwaps(&mut oracle, timestamp)?;
     }
 
     Ok(())
@@ -109,7 +109,7 @@ fn process_scurve_day(oracle: &mut OracleContract, timestamp: u64) -> Result<()>
     let current_day = scurve::truncate_to_day(timestamp);
     let last_processed = oracle.scurve_last_processed_day.read()?;
     if current_day > last_processed && timestamp > 0 {
-        for iso_code in oracle.reference_currencies.read_all()? {
+        for iso_code in crate::constants::REFERENCE_CURRENCIES {
             let pair = crate::types::AddressPair::new_coen_to(iso_code);
             if oracle.pair_index_of(pair)? != 0 && oracle.vote_target.read(&pair)? {
                 scurve::process_daily_scurve(oracle, pair, timestamp)?;
@@ -126,7 +126,7 @@ fn process_scurve_day(oracle: &mut OracleContract, timestamp: u64) -> Result<()>
 /// validators. The monotonic `utc_day_vwap_last_finalized` watermark makes
 /// this idempotent across the many blocks within a day and bounds catch-up
 /// after a gap.
-fn finalize_closed_utc_days(oracle: &mut OracleContract, timestamp: u64) -> Result<()> {
+fn finalize_day_vwaps(oracle: &mut OracleContract, timestamp: u64) -> Result<()> {
     let current_utc_day = timestamp_to_date_key(timestamp);
     let most_recent_closed =
         previous_date_key(current_utc_day).map_err(crate::errors::date_step_error)?;

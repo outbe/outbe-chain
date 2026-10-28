@@ -36,14 +36,14 @@ fn maintenance_context<'s>(
 /// Run selected phases in pinned-day order with the shared per-height allowance.
 pub fn maintain(
     storage: &StorageHandle<'_>,
-    selection: outbe_oracle::call_sweep::Selection,
+    selection: outbe_oracle::call_pass::Selection,
 ) -> Result<()> {
     outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
     // TODO: Reward callers for maintenance work performed.
-    if selection == outbe_oracle::call_sweep::Selection::default() {
+    if selection == outbe_oracle::call_pass::Selection::default() {
         return Ok(());
     }
-    crate::called::run_call_slice(&maintenance_context(storage)?, selection)?;
+    crate::called::process_call_pass(&maintenance_context(storage)?, selection)?;
     Ok(())
 }
 

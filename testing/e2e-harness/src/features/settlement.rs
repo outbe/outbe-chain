@@ -653,7 +653,7 @@ mod tests {
     fn redemption_event_requires_exact_emitter_amount_and_one_occurrence() {
         let emitter = addresses::PROMIS_FACTORY_ADDR;
         let event = eth::IPromisFactory::CoenMined {
-            sender: Address::repeat_byte(1),
+            account: Address::repeat_byte(1),
             coenMinor: U256::from(123),
         };
         let encoded = event.encode_log_data();

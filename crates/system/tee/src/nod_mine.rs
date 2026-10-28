@@ -97,11 +97,6 @@ fn verify_created_nod(
             nod,
             inputs_canonical_hash,
             attestation_tag,
-        }
-        | EnclaveResponse::NodCreatedForTestV1 {
-            nod,
-            inputs_canonical_hash,
-            attestation_tag,
         } if inputs_canonical_hash == expected => {
             let preimage =
                 crate::response_auth::attestation(domain, expected, &nod).map_err(codec)?;
@@ -134,23 +129,4 @@ pub fn encrypt_nod_for_tribute(
         expected,
         response,
     )
-}
-#[cfg(feature = "e2e-test")]
-pub fn create_nod_for_test(
-    terms: outbe_primitives::nod_encryption::NodTermsV1,
-    creator_public: [u8; 32],
-    amount: U256,
-) -> Result<EncryptedNodV1, TransportError> {
-    let expected = crate::response_auth::hash(
-        b"outbe/nod/test-create-inputs/v1",
-        &(&terms, &creator_public, amount),
-    )
-    .map_err(codec)?;
-    let (key, response) =
-        crate::tribute_client::request_local_enclave(EnclaveRequest::CreateNodForTestV1 {
-            terms,
-            creator_public,
-            amount,
-        })?;
-    verify_created_nod(&key, b"outbe/nod/test-create-result/v1", expected, response)
 }

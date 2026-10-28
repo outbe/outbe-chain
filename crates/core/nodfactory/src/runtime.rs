@@ -41,7 +41,7 @@ fn maintenance_context<'s>(
 
 pub fn maintain(
     storage: &StorageHandle<'_>,
-    selection: outbe_oracle::call_sweep::Selection,
+    selection: outbe_oracle::call_pass::Selection,
 ) -> Result<()> {
     outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
     // TODO: Reward callers for maintenance work performed.
@@ -51,7 +51,7 @@ pub fn maintain(
     let ctx = maintenance_context(storage)?;
     crate::called::maintain(&ctx, selection)?;
     if selection.process_cleanup {
-        crate::cleanup::sweep_cleanup(&ctx)?;
+        crate::cleanup::cleanup(&ctx)?;
     }
     Ok(())
 }
@@ -281,7 +281,7 @@ fn nod_cost(entry_price_minor: U256, gratis_load_minor: U256) -> SettlementCost 
 ///
 /// `None` when entry is zero: a zero call price would fire on the first scan. Every
 /// later check reads the group's sealed copy, so a retune cannot re-term an issued Nod.
-pub fn call_terms(
+pub(crate) fn call_terms(
     storage: &StorageHandle<'_>,
     entry_price_minor: U256,
     reference_currency: u16,
@@ -328,14 +328,6 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
                 owner,
                 nodId: nod_id.to_u256(),
                 encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
-            },
-        )?;
-        emit_event(
-            storage,
-            INodFactory::NodBurned {
-                owner,
-                nodId: nod_id.to_u256(),
-                encryptedGratisAmount: encrypted.encrypted_gratis_amount.into(),
             },
         )?;
         outbe_gratisfactory::api::encrypted_balance(storage.clone(), owner)

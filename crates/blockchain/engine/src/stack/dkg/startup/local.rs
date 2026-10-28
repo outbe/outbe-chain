@@ -32,7 +32,7 @@ pub(super) fn load_local_material(
         return Err(error)
             .wrap_err("saved DKG state failed to load and pending state could not be promoted");
     }
-    validate_local_fallback(args, startup_dkg_context)?;
+    validate_local_fallback(startup_dkg_context)?;
     Ok(None)
 }
 
@@ -155,21 +155,14 @@ fn promote_recovered_pending_material(
     Ok(())
 }
 
-fn validate_local_fallback(
-    args: &ConsensusArgs,
-    startup_dkg_context: StartupDkgContext,
-) -> Result<()> {
+fn validate_local_fallback(startup_dkg_context: StartupDkgContext) -> Result<()> {
     if startup_dkg_context.has_chain_finalized_dkg_boundary()
         && !startup_dkg_context.recovered_boundary_finalized
     {
         return Err(crate::errors::StackDkgError::PendingBoundarySnapshotMissingMaterial.into());
     }
 
-    if startup_dkg_context.has_chain_finalized_dkg_boundary()
-        && !(args.signing_share.is_none()
-            && args.public_polynomial.is_some()
-            && args.dkg_output.is_some())
-    {
+    if startup_dkg_context.has_chain_finalized_dkg_boundary() {
         return Err(missing_current_threshold_material_error(
             "saved and pending DKG material do not match the latest finalized boundary",
         ));

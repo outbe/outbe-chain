@@ -29,25 +29,26 @@ sol! {
     }
 }
 
-/// This function moves the called group of `series_id` to `deadline` and into that deadline's day.
-/// A notice that lapsed minutes ago would otherwise wait for midnight.
-fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, deadline: u64) -> Result<()> {
+/// This function moves the called group of `series_id` so its transit close falls at `close_at`, in
+/// that day. A notice that lapsed minutes ago would otherwise wait for midnight.
+fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, close_at: u64) -> Result<()> {
     use outbe_intex::IntexContract;
 
     let mut intex = IntexContract::new(storage.clone());
-    let group = outbe_intex::api::read_series(storage, series_id)?
+    let group = outbe_intex::api::get_series(storage, series_id)?
         .group_key()
         .expect("date step");
     if intex.called_deadline.read(&group)? == 0 {
         return Err(crate::errors::IntexFactoryError::NoCalledGroupForTest.into());
     }
     // Members read the deadline from the call, so the call moves with the queue.
-    let notice = u64::from(intex.call_group_notice_seconds.read(&group)?);
-    let called_at = u32::try_from(deadline.saturating_sub(notice).max(1))
+    let terms = u64::from(intex.call_group_notice_seconds.read(&group)?)
+        + u64::from(intex.call_group_transit_seconds.read(&group)?);
+    let called_at = u32::try_from(close_at.saturating_sub(terms).max(1))
         .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
     intex.call_group_called_at.write(&group, called_at)?;
-    intex.requeue_called(group, deadline)?;
-    reopen_day(storage, deadline)
+    intex.requeue_called(group, close_at)?;
+    reopen_day(storage, close_at)
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
@@ -59,7 +60,7 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
         .write(intex.call_latest_day.read()?.max(day))?;
     intex.daily_genesis_day.write(day)?;
     intex.daily_phase.write(0)?;
-    for currency in outbe_oracle::api::reference_currencies(storage.clone())? {
+    for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
         intex.call_bin_cursor.clear(&currency)?;
         intex.call_scan_failed_day.clear(&currency)?;
     }
