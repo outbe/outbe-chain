@@ -350,3 +350,106 @@ fn judge_window_without_blocks_has_no_verdict() {
     assert_eq!(covered(&[0, 0, 5], &[0, 0], 8), None);
     assert_eq!(covered(&[0, 0, 0], &[3, 3], 8), None);
 }
+
+/// VWAP of the UTC day at `ATOMIC_DAY_START`. Hour `k` starts at block
+/// `first_block(k)` (0: no hour note) and has `snapshots_in(k)` snapshots of the pair.
+fn day_vwap_for(
+    vote_period: u64,
+    first_block: impl Fn(u64) -> u64,
+    snapshots_in: impl Fn(u64) -> u64,
+) -> Option<U256> {
+    let day = ATOMIC_DAY_START;
+    let utc_day = outbe_primitives::time::timestamp_to_date_key(day);
+    let mut result = None;
+    with_storage_at(day + SECONDS_PER_DAY + 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle.config_vote_period.write(vote_period).unwrap();
+        for k in 0..=24 {
+            if first_block(k) != 0 {
+                oracle
+                    .record_hour_block(day + k * 3_600, first_block(k))
+                    .unwrap();
+            }
+        }
+        for k in 0..24 {
+            for i in 0..snapshots_in(k) {
+                oracle
+                    .write_snapshot(
+                        day + k * 3_600 + i * 16,
+                        &[(pair, coen_iso(2), coen_iso(1))],
+                    )
+                    .unwrap();
+            }
+        }
+        oracle.finalize_utc_day_vwap(utc_day).unwrap();
+        let index = oracle.pair_index_of(pair).unwrap();
+        result = oracle.get_utc_day_vwap_for_pair(utc_day, index).unwrap();
+    });
+    result.filter(|vwap| !vwap.is_zero())
+}
+
+#[test]
+fn day_vwap_needs_sixteen_counted_hours() {
+    // One possible round per hour. An hour without a snapshot does not count.
+    let hourly = |k| 1_000 + k * 8;
+    assert_eq!(
+        day_vwap_for(8, hourly, |k| u64::from(k < 16)),
+        Some(coen_iso(2))
+    );
+    assert_eq!(day_vwap_for(8, hourly, |k| u64::from(k < 15)), None);
+}
+
+#[test]
+fn a_day_of_catch_up_blocks_has_no_vwap() {
+    // After a halt, one block moves chain time one hour, and a price round
+    // runs every 2 blocks: 12 of 24 hours carry a price.
+    assert_eq!(
+        day_vwap_for(2, |k| 1_000 + k, |k| u64::from(k % 2 == 0)),
+        None
+    );
+}
+
+#[test]
+fn a_window_without_hour_notes_has_no_vwap() {
+    assert_eq!(day_vwap_for(8, |_| 0, |_| 1), None);
+
+    let start = ATOMIC_DAY_START + 2 * 3_600;
+    let cutoff = start + 8 * 3_600;
+    with_storage_at(cutoff + 5 * 60, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        for k in 0..8 {
+            oracle
+                .write_snapshot(start + k * 3_600, &[(pair, coen_iso(2), coen_iso(1))])
+                .unwrap();
+        }
+        assert_eq!(
+            oracle
+                .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
+                .unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn a_currency_is_priced_for_a_day_only_with_the_vwap_of_the_day_before() {
+    let day = 20260624;
+    let day_before = 20260623;
+    with_bare_oracle(|storage, oracle| {
+        let usd = oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+        let eur = oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+        for (utc_day, index) in [(day, usd), (day, eur), (day_before, usd)] {
+            oracle
+                .record_utc_day_vwap(utc_day, index, coen_iso(2))
+                .unwrap();
+        }
+        assert_eq!(
+            crate::api::priced_reference_currencies_of_day(storage.clone(), day).unwrap(),
+            vec![(840, coen_iso(2))]
+        );
+    });
+}

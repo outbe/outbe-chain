@@ -18,6 +18,7 @@ thiserror.workspace = true
 [dev-dependencies]
 blst.workspace = true
 proptest.workspace = true
+serde_json.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]

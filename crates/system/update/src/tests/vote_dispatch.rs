@@ -57,13 +57,16 @@ fn with_vote<F: FnOnce(outbe_primitives::storage::StorageHandle)>(f: F) {
 
 fn setup_validators(storage: outbe_primitives::storage::StorageHandle) {
     let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
+    let minimum = alloy_primitives::U256::from(1_000u64);
     for (addr, seed) in [(PROPOSER, 1u8), (VOTER_A, 2), (VOTER_B, 3)] {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(owner).unwrap();
         vs.set_config_max_validators(100).unwrap();
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
         let mut pk = [0u8; 48];
         pk[0] = seed;
         vs.register_validator(owner, addr, &pk).unwrap();
+        vs.test_seed_authoritative_bonded(addr, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(addr).unwrap();
     }
 }

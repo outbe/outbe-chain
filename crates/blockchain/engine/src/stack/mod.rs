@@ -10,7 +10,7 @@
 //!    consensus channels (all in transport startup)
 //! 4. Obtain threshold material:
 //!    a. From saved DKG state on disk (restart precedence)
-//!    b. From CLI args (`--consensus.signing-share` + `--consensus.public-polynomial`)
+//!    b. From finalized on-chain `BoundaryOutcome` (shareless Verifier join/restart)
 //!    c. Via interactive DKG ceremony during fresh genesis formation
 //! 5. Enter epoch loop:
 //!    a. Register epoch sub-channels, build HybridScheme + Reporter
@@ -75,7 +75,7 @@ use outbe_consensus::{
     dkg_manager::{self, Mailbox as DkgManagerMailbox},
     executor::actor::{ExecutorActor, FinalizedExecutionBarrier, RecoveredForkchoiceAttempt},
     finalization::{
-        actor::{FinalizationActor, FinalizationActorDeps},
+        actor::{FinalizationActor, FinalizationActorBuilder, FinalizationActorDeps},
         block_cache::BlockCache,
         state::new_finalization_view,
     },

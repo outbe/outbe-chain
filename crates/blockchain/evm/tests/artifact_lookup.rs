@@ -328,7 +328,11 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             vs.config_is_initialized.write(true).unwrap();
             let mut pubkey = [0u8; 48];
             pubkey[0] = 0xA2;
+            vs.test_seed_authoritative_min_stake(U256::from(1_000u64))
+                .unwrap();
             vs.register_validator(proposer, proposer, &pubkey).unwrap();
+            vs.test_seed_authoritative_bonded(proposer, U256::from(1_000u64))
+                .unwrap();
             vs.activate_validator_via_boundary_for_test(proposer)
                 .unwrap();
             outbe_validatorset::write_committee_snapshot(

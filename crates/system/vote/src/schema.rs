@@ -6,22 +6,26 @@ use outbe_primitives::storage::{Storable, StorableType};
 
 /// Lifecycle status of a generic proposal.
 ///
-/// Storage values match the Solidity `ProposalStatus` enum (0-based).
+/// Stored discriminants stay stable and intentionally differ from the compact ABI
+/// enum. Convert at the precompile boundary instead of casting between them.
+/// The removed reserved status is invalid rather than reused: old records must
+/// never acquire a different meaning when the public enum is compacted.
 ///
-/// Flow:
-/// 1. `Pending` - created, voting open until `voting_deadline_height`.
-/// 2. On deadline (`begin_block`): `Pending` -> `Approved` | `Expired` | `Error`.
-/// 3. For `Approved`, vote dispatches to the target-module handler. Further
-///    state (e.g. scheduled update, activation) lives in that module, not here.
-/// 4. `Error` means deterministic target execution failure.
-///    The proposal is terminal and leaves the pending index.
-///    The same pass refunds its bond. The module does not retry it.
+/// Voting has two outcomes after the inclusive `voting_deadline_height`:
+/// - Quorum reached: dispatch to the target; successful application is `Approved`.
+/// - Quorum not reached: the proposal is `Expired`.
+///
+/// `Pending` is intermediate. A target-declared execution failure is `Error`,
+/// not a rejection by the voters. It is terminal, leaves the pending index and
+/// refunds its bond in the same pass; the module does not retry it.
+///
+/// There is no manual cancellation or separate conflict-rejection transition.
+/// Further state, such as a scheduled upgrade, belongs to the target module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ProposalStatus {
     Pending = 0,
     Approved = 1,
-    Rejected = 2,
     Expired = 3,
     Error = 4,
 }
@@ -52,13 +56,7 @@ impl BondState {
 }
 
 impl ProposalStatus {
-    const VARIANTS: [Self; 5] = [
-        Self::Pending,
-        Self::Approved,
-        Self::Rejected,
-        Self::Expired,
-        Self::Error,
-    ];
+    const VARIANTS: [Self; 4] = [Self::Pending, Self::Approved, Self::Expired, Self::Error];
 
     pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
         decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
@@ -73,10 +71,7 @@ impl ProposalStatus {
     /// `Error` is terminal. The module never retries a target-execution failure.
     /// It refunds the bond when it records the `Error` status.
     pub const fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Approved | Self::Rejected | Self::Expired | Self::Error
-        )
+        matches!(self, Self::Approved | Self::Expired | Self::Error)
     }
 }
 

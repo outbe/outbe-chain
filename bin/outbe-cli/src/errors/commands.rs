@@ -207,6 +207,18 @@ pub(crate) enum StakingError {
         derived: Address,
         path: PathBuf,
     },
+    /// `--bls-key-backend` or `--bls-passphrase` was supplied without `--keys-dir`.
+    #[error("--bls-key-backend and --bls-passphrase require --keys-dir")]
+    KeyBackendRequiresKeysDir,
+    /// `--bls-passphrase` was supplied with a non-encrypted BLS key backend.
+    #[error("--bls-passphrase requires --bls-key-backend encrypted")]
+    PassphraseRequiresEncryptedBackend,
+    /// `--bls-key-backend encrypted` was supplied without a non-empty passphrase.
+    #[error("--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE")]
+    EncryptedKeyRequiresPassphrase,
+    /// `--bls-key-backend` was not recognized by `outbe_consensus::bls`.
+    #[error("unsupported --bls-key-backend {0:?}")]
+    UnknownKeyBackend(String),
 }
 
 /// Errors for the `validator` subcommand.

@@ -43,12 +43,18 @@ fn finalized_window_vwap_weights_whole_window_volume() {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        oracle
-            .write_snapshot(day + 3 * hour + 5, &[(pair, coen_iso(1), coen_iso(1))])
-            .unwrap();
-        oracle
-            .write_snapshot(day + 7 * hour + 5, &[(pair, coen_iso(3), coen_iso(9))])
-            .unwrap();
+        note_hours(&mut oracle, day + 2 * hour, day + 11 * hour);
+        // Four hours at 1 x 1 and four at 3 x 9: (4 + 108) / 40 = 2.8, not the
+        // unweighted 2.
+        for k in 2..10 {
+            let (price, volume) = if k < 6 { (1, 1) } else { (3, 9) };
+            oracle
+                .write_snapshot(
+                    day + k * hour + 5,
+                    &[(pair, coen_iso(price), coen_iso(volume))],
+                )
+                .unwrap();
+        }
 
         let snapshot = default_snapshot_at(day + 10 * hour + 37 * 60);
         assert_eq!(
@@ -66,26 +72,30 @@ fn finalized_window_vwap_is_half_open_and_counts_overlapping_hours_once() {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        for (ts, price) in [
-            (day + 2 * hour, 10),
-            (day + 3 * hour + 60, 20),
-            (day + 9 * hour + 60, 30),
-            (day + 10 * hour, 40),
-        ] {
+        note_hours(&mut oracle, day + 2 * hour, day + 12 * hour);
+        // 12 exactly at 02:00, 20 in every hour 03..09, 36 exactly at 10:00.
+        oracle
+            .write_snapshot(day + 2 * hour, &[(pair, coen_iso(12), coen_iso(1))])
+            .unwrap();
+        for k in 3..10 {
             oracle
-                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .write_snapshot(day + k * hour + 60, &[(pair, coen_iso(20), coen_iso(1))])
                 .unwrap();
         }
+        oracle
+            .write_snapshot(day + 10 * hour, &[(pair, coen_iso(36), coen_iso(1))])
+            .unwrap();
 
+        // [02:00, 10:00): (12 + 7 * 20) / 8. [03:00, 11:00): (7 * 20 + 36) / 8.
         let at_ten = default_snapshot_at(day + 10 * hour);
         let at_eleven = default_snapshot_at(day + 11 * hour);
         assert_eq!(
             oracle.finalized_window_vwap(pair, at_ten).unwrap(),
-            Some(coen_iso(20))
+            Some(coen_iso(19))
         );
         assert_eq!(
             oracle.finalized_window_vwap(pair, at_eleven).unwrap(),
-            Some(coen_iso(30))
+            Some(coen_iso(22))
         );
     });
 }
@@ -118,9 +128,14 @@ fn finalized_window_vwap_never_falls_back_to_an_earlier_window() {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        oracle
-            .write_snapshot(day + 2 * hour + 1_800, &[(pair, coen_iso(7), coen_iso(1))])
-            .unwrap();
+        note_hours(&mut oracle, day + 2 * hour, day + 12 * hour);
+        // Hours 02..07 cover [02:00, 10:00), but only five of them fall in
+        // [03:00, 11:00).
+        for k in 2..8 {
+            oracle
+                .write_snapshot(day + k * hour + 1_800, &[(pair, coen_iso(7), coen_iso(1))])
+                .unwrap();
+        }
 
         assert_eq!(
             oracle
@@ -145,16 +160,24 @@ fn finalized_window_vwap_spans_midnight() {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        for (ts, price) in [
-            (day - 6 * hour, 1_000),
-            (day - 4 * hour, 10),
-            (day + hour, 40),
-            (day + 3 * hour, 1_000),
-        ] {
+        note_hours(&mut oracle, day - 6 * hour, day + 4 * hour);
+        // 16 in the five hours before midnight, 40 in the three after it, and
+        // 1,000 just outside the window on each side: (5 * 16 + 3 * 40) / 8.
+        oracle
+            .write_snapshot(day - 6 * hour, &[(pair, coen_iso(1_000), coen_iso(1))])
+            .unwrap();
+        for k in 0..8 {
+            let price = if k < 5 { 16 } else { 40 };
             oracle
-                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .write_snapshot(
+                    day - 5 * hour + k * hour,
+                    &[(pair, coen_iso(price), coen_iso(1))],
+                )
                 .unwrap();
         }
+        oracle
+            .write_snapshot(day + 3 * hour, &[(pair, coen_iso(1_000), coen_iso(1))])
+            .unwrap();
 
         let snapshot = default_snapshot_at(day + 3 * hour + 1_800);
         assert_eq!(
@@ -197,9 +220,12 @@ fn a_policy_change_leaves_an_old_snapshot_readable_and_unchanged() {
         let mut oracle = OracleContract::new(storage.clone());
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
-        for (ts, price) in [(day + 3 * hour, 10), (day + 5 * hour, 40)] {
+        note_hours(&mut oracle, day + 2 * hour, day + 11 * hour);
+        // 16 in hours 02..03, 40 in hours 04..09.
+        for k in 2..10 {
+            let price = if k < 4 { 16 } else { 40 };
             oracle
-                .write_snapshot(ts, &[(pair, coen_iso(price), coen_iso(1))])
+                .write_snapshot(day + k * hour, &[(pair, coen_iso(price), coen_iso(1))])
                 .unwrap();
         }
         let now = day + 10 * hour + 30 * 60;
@@ -223,7 +249,8 @@ fn a_policy_change_leaves_an_old_snapshot_readable_and_unchanged() {
             oracle.finalized_window_vwap(pair, before).unwrap(),
             price_before
         );
-        assert_eq!(price_before, Some(coen_iso(25)));
+        // (2 * 16 + 6 * 40) / 8.
+        assert_eq!(price_before, Some(coen_iso(34)));
     });
 }
 
@@ -292,6 +319,7 @@ fn settlement_fx_rates_read_both_legs_from_the_one_required_snapshot() {
         let eur = AddressPair::new_coen_to(978);
         oracle.register_pair(usd).unwrap();
         oracle.register_pair(eur).unwrap();
+        note_hours(&mut oracle, day + 2 * hour, day + 11 * hour);
         for k in 2..10 {
             oracle
                 .write_snapshot(
@@ -333,6 +361,7 @@ fn the_required_snapshot_identity_rolls_over_at_the_whole_hour_even_when_prices_
         let eur = AddressPair::new_coen_to(978);
         oracle.register_pair(usd).unwrap();
         oracle.register_pair(eur).unwrap();
+        note_hours(&mut oracle, day, day + 12 * hour);
         // Flat prices through the whole day: the numbers never move.
         for k in 0..12 {
             oracle
@@ -389,15 +418,17 @@ fn a_finalized_window_value_is_immutable_after_its_cutoff() {
     with_storage_at(day + 10 * hour + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(usd).unwrap();
-        oracle
-            .write_snapshot(day + 3 * hour, &[(usd, coen_iso(1), coen_iso(1))])
-            .unwrap();
-        oracle
-            .write_snapshot(
-                day + 9 * hour + 59 * 60 + 59,
-                &[(usd, coen_iso(3), coen_iso(1))],
-            )
-            .unwrap();
+        note_hours(&mut oracle, day + 2 * hour, day + 11 * hour);
+        // 1 in hours 02..05, 3 in hours 06..09, the last at 09:59:59.
+        for k in 2..10 {
+            let (price, offset) = if k < 6 { (1, 0) } else { (3, 59 * 60 + 59) };
+            oracle
+                .write_snapshot(
+                    day + k * hour + offset,
+                    &[(usd, coen_iso(price), coen_iso(1))],
+                )
+                .unwrap();
+        }
         // An observation stamped exactly at the cutoff belongs to the next window.
         oracle
             .write_snapshot(day + 10 * hour, &[(usd, coen_iso(9), coen_iso(100))])
@@ -409,15 +440,17 @@ fn a_finalized_window_value_is_immutable_after_its_cutoff() {
     with_storage_at(day + 20 * hour, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         oracle.register_pair(usd).unwrap();
-        oracle
-            .write_snapshot(day + 3 * hour, &[(usd, coen_iso(1), coen_iso(1))])
-            .unwrap();
-        oracle
-            .write_snapshot(
-                day + 9 * hour + 59 * 60 + 59,
-                &[(usd, coen_iso(3), coen_iso(1))],
-            )
-            .unwrap();
+        note_hours(&mut oracle, day + 2 * hour, day + 21 * hour);
+        // 1 in hours 02..05, 3 in hours 06..09, the last at 09:59:59.
+        for k in 2..10 {
+            let (price, offset) = if k < 6 { (1, 0) } else { (3, 59 * 60 + 59) };
+            oracle
+                .write_snapshot(
+                    day + k * hour + offset,
+                    &[(usd, coen_iso(price), coen_iso(1))],
+                )
+                .unwrap();
+        }
         oracle
             .write_snapshot(day + 10 * hour, &[(usd, coen_iso(9), coen_iso(100))])
             .unwrap();

@@ -103,14 +103,17 @@ fn test_dkg_bootstrap_3_validators() {
     let args = dkg_args(&["bootstrap", "--output-dir", dir_str, "--validators", "3"]);
     super::run_dkg_command(&args).unwrap();
 
-    // Verify output structure
+    // Verify output structure: every validator gets a ready keys directory.
     assert!(dir.path().join("polynomial.hex").exists());
-    assert!(dir.path().join("dkg-output.hex").exists());
+    assert!(dir.path().join("dkg_output.hex").exists());
     assert!(dir.path().join("validators.json").exists());
     for i in 0..3 {
         let vdir = dir.path().join(format!("validator-{i}"));
         assert!(vdir.join("signing-key.hex").exists());
         assert!(vdir.join("evm-key.hex").exists());
+        for name in ["dkg_share.hex", "dkg_polynomial.hex", "dkg_output.hex"] {
+            assert!(vdir.join("dkg-keys").join(name).exists(), "{name}");
+        }
     }
 }
 
@@ -129,13 +132,13 @@ fn test_dkg_identities_do_not_precompute_genesis_threshold_material() {
     assert!(dir.path().join("validators.json").exists());
     assert!(dir.path().join("reth-bootnodes.txt").exists());
     assert!(!dir.path().join("polynomial.hex").exists());
-    assert!(!dir.path().join("dkg-output.hex").exists());
+    assert!(!dir.path().join("dkg_output.hex").exists());
     for index in 0..4 {
         let validator = dir.path().join(format!("validator-{index}"));
         assert!(validator.join("signing-key.hex").exists());
         assert!(validator.join("evm-key.hex").exists());
         assert!(validator.join("reth-p2p-secret.hex").exists());
-        assert!(!validator.join("signing-share.hex").exists());
+        assert!(!validator.join("dkg-keys").join("dkg_share.hex").exists());
     }
 }
 
@@ -146,8 +149,8 @@ fn test_dkg_status_after_bootstrap() {
     let args = dkg_args(&["bootstrap", "--output-dir", dir_str, "--validators", "3"]);
     super::run_dkg_command(&args).unwrap();
 
-    // Status on a validator directory (has share + poly from bootstrap)
-    let v0 = dir.path().join("validator-0");
+    // Status on a validator keys directory (has share + poly from bootstrap)
+    let v0 = dir.path().join("validator-0").join("dkg-keys");
     let v0_str = v0.to_str().unwrap();
     let status_args = dkg_args(&["status", "--storage-dir", v0_str]);
     super::run_dkg_command(&status_args).unwrap();
@@ -169,13 +172,13 @@ fn test_dkg_export_requires_complete_runtime_state() {
     let args = dkg_args(&["bootstrap", "--output-dir", dir_str, "--validators", "3"]);
     super::run_dkg_command(&args).unwrap();
 
-    // Bootstrap output keeps the shared dkg-output.hex at the output root.
-    // Runtime export must still reject validator storage that lacks its local
+    // Runtime export must reject validator storage that lacks its local
     // complete triplet instead of producing an import bundle startup cannot load.
     let v0 = dir.path().join("validator-0");
-    std::fs::copy(v0.join("signing-share.hex"), v0.join("dkg_share.hex")).unwrap();
+    let keys = v0.join("dkg-keys");
+    std::fs::copy(keys.join("dkg_share.hex"), v0.join("dkg_share.hex")).unwrap();
     std::fs::copy(
-        dir.path().join("polynomial.hex"),
+        keys.join("dkg_polynomial.hex"),
         v0.join("dkg_polynomial.hex"),
     )
     .unwrap();
@@ -199,10 +202,11 @@ fn test_dkg_force_restart_only_removes_consensus_material() {
     super::run_dkg_command(&args).unwrap();
 
     let v0 = dir.path().join("validator-0");
+    let keys = v0.join("dkg-keys");
     // Copy into runtime filenames
-    std::fs::copy(v0.join("signing-share.hex"), v0.join("dkg_share.hex")).unwrap();
+    std::fs::copy(keys.join("dkg_share.hex"), v0.join("dkg_share.hex")).unwrap();
     std::fs::copy(
-        dir.path().join("polynomial.hex"),
+        keys.join("dkg_polynomial.hex"),
         v0.join("dkg_polynomial.hex"),
     )
     .unwrap();

@@ -88,7 +88,7 @@ fn dispatch_vote_call(
         listProposalsByStatus(c) => view(c, |c| {
             list_proposals_by_status(
                 storage.clone(),
-                proposal_status_from_abi(c.status),
+                proposal_status_from_abi(c.status)?,
                 c.index,
                 c.count,
             )
@@ -129,20 +129,18 @@ fn proposal_status_to_abi(status: ProposalStatus) -> IVote::ProposalStatus {
     match status {
         ProposalStatus::Pending => IVote::ProposalStatus::Pending,
         ProposalStatus::Approved => IVote::ProposalStatus::Approved,
-        ProposalStatus::Rejected => IVote::ProposalStatus::Rejected,
         ProposalStatus::Expired => IVote::ProposalStatus::Expired,
         ProposalStatus::Error => IVote::ProposalStatus::Error,
     }
 }
 
-fn proposal_status_from_abi(status: IVote::ProposalStatus) -> ProposalStatus {
+fn proposal_status_from_abi(status: IVote::ProposalStatus) -> Result<ProposalStatus> {
     match status {
-        IVote::ProposalStatus::Pending => ProposalStatus::Pending,
-        IVote::ProposalStatus::Approved => ProposalStatus::Approved,
-        IVote::ProposalStatus::Rejected => ProposalStatus::Rejected,
-        IVote::ProposalStatus::Expired => ProposalStatus::Expired,
-        IVote::ProposalStatus::Error => ProposalStatus::Error,
-        _ => ProposalStatus::Pending,
+        IVote::ProposalStatus::Pending => Ok(ProposalStatus::Pending),
+        IVote::ProposalStatus::Approved => Ok(ProposalStatus::Approved),
+        IVote::ProposalStatus::Expired => Ok(ProposalStatus::Expired),
+        IVote::ProposalStatus::Error => Ok(ProposalStatus::Error),
+        _ => Err(VoteError::InvalidProposalStatus.into()),
     }
 }
 

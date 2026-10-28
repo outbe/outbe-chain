@@ -54,6 +54,8 @@ where
         application_drain,
         follower_shutdown,
         finalized_execution_barrier,
+        finalization_notify,
+        tee_lease_armed_rx,
         radicle_status,
         mut radicle_endpoint,
     } = services;
@@ -89,11 +91,24 @@ where
         chain_id,
     )?;
 
-    // Follower mode: cold-sync finalized blocks from an upstream node and verify
-    // them against the trusted network identity, WITHOUT running the consensus
-    // engine. Short-circuits before this function loads any validator material.
-    if let Some(upstream) = args.upstream.clone() {
-        return run_follow_stack(
+    let parent_cert_dir = args
+        .storage_dir
+        .as_ref()
+        .ok_or(crate::errors::StackEpochError::ConsensusStorageDirRequired)?
+        .join("finalized_parent_certs");
+    let finalized_parent_cert_store =
+        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
+            &parent_cert_dir,
+        )
+        .wrap_err("failed to open finalized parent certificate store")?;
+    use outbe_primitives::consensus::ConsensusOperatingMode;
+    if !args.is_validator {
+        bridge.set_operating_mode(ConsensusOperatingMode::Follower);
+        let upstream = args
+            .upstream
+            .clone()
+            .ok_or(crate::errors::StackEpochError::ValidatorBootstrapRequiresUpstream)?;
+        run_follow_stack(
             ctx,
             args,
             services::FollowerConnection {
@@ -105,9 +120,13 @@ where
                 finalized_execution_barrier,
                 follower_shutdown: follower_shutdown
                     .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
+                parent_cert_store: finalized_parent_cert_store,
+                bootstrap: None,
+                finalization_notify,
             },
         )
-        .await;
+        .await?;
+        return Ok(());
     }
 
     // -- 1. Load signing key ---------------------------------------------
@@ -118,6 +137,30 @@ where
     let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
     let signing_key = validators::load_signing_key(signing_key_path, &key_backend)
         .wrap_err("failed to load signing key")?;
+
+    let genesis_hash = genesis_hash(&node)?;
+    if maybe_run_validator_bootstrap_follow(
+        ctx.child("bootstrap_follow"),
+        ValidatorBootstrapFollowInputs {
+            args: &args,
+            node: &node,
+            bridge: &bridge,
+            signing_key: &signing_key,
+            genesis_hash,
+            dkg_rotation_params,
+            tee_lease_armed_rx,
+            finalized_execution_barrier: &finalized_execution_barrier,
+            follower_shutdown,
+            finalized_parent_cert_store: &finalized_parent_cert_store,
+            finalization_notify: &finalization_notify,
+        },
+    )
+    .await?
+    {
+        return Ok(());
+    }
+    bridge.set_operating_mode(outbe_primitives::consensus::ConsensusOperatingMode::Verifier);
+    let ctx = ctx.child("validator_epoch");
 
     // -- 2. Load validator set -------------------------------------------
     // Chain state is the only runtime source of validator membership. For a
@@ -170,13 +213,12 @@ where
         tee_bootstrap_round0,
         tee_dkg_mux: _tee_dkg_mux,
         tee_bootstrap_mux: _tee_bootstrap_mux,
+        vote_backup_rx,
     } = transport;
     // Startup chain-state sources must exist before threshold material selection:
     // DKG round 0 is allowed only when both execution and marshal prove genesis
     // formation. Local execution height 0 alone is not sufficient for a fresh
     // datadir joining an already-running network.
-    let genesis_hash = genesis_hash(&node)?;
-
     // -- 5b. Pre-compute page cache (shared across marshal + epochs) -----
     let page_cache = CacheRef::from_pooler(
         &ctx,
@@ -199,12 +241,13 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        epocher,
     } = super::marshal_recovery::recover_marshal(
         &ctx,
         &page_cache,
-        epoch_length_blocks,
         &node,
         &certificate_scheme_provider,
+        &args,
     )
     .await?;
 
@@ -314,7 +357,7 @@ where
     );
     publish_randomness_status(&bridge, &vrf_safety);
 
-    // NOTE: is_fresh_bootstrap is determined AFTER marshal init (below),
+    // `is_fresh_bootstrap` is determined AFTER marshal init (below),
     // using both execution height and consensus processed height.
     // This prevents false fresh-bootstrap on crash restart (SIGKILL/OOM)
     // where Reth lost in-memory state but consensus is durable.
@@ -590,26 +633,6 @@ where
     );
     let finalization_block_cache = BlockCache::new();
 
-    // Construct the consensus-owned exact-parent certificate handoff store
-    // before the application handler (consumer-side waiter) and before the
-    // FinalizationActor (single writer). Then both can clone from the same
-    // durable backing.
-    let parent_cert_dir = args
-        .storage_dir
-        .as_ref()
-        .ok_or(crate::errors::StackEpochError::ConsensusStorageDirRequired)?
-        .join("finalized_parent_certs");
-    let finalized_parent_cert_store =
-        outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore::open(
-            &parent_cert_dir,
-        )
-        .wrap_err_with(|| {
-            format!(
-                "failed to open finalized parent certificate store at {}",
-                parent_cert_dir.display()
-            )
-        })?;
-
     // Defensive startup hygiene: a crash between persisting a finalization parent
     // record and advancing the finalization view can leave an ahead-of-view
     // record on disk. Drop any finalization record above the recovered finalized
@@ -625,11 +648,14 @@ where
         );
     }
 
-    spawn_finalization_drainer(
+    let (_validator_drainer_cancel, validator_drainer_cancel_rx) =
+        tokio::sync::watch::channel(false);
+    let _finalization_drainer = spawn_finalization_drainer(
         &ctx,
         marshal_mailbox.clone(),
         bridge.clone(),
         finalized_parent_cert_store.clone(),
+        validator_drainer_cancel_rx,
     );
 
     // Resolve consensus-sync block timings from genesis (timing.rs fallbacks,
@@ -722,7 +748,9 @@ where
             parent_cert_store: finalized_parent_cert_store.clone(),
             certificate_scheme_provider: certificate_scheme_provider.clone(),
             late_sig_store: late_sig_store.clone(),
-        });
+        })
+        .with_epocher(epocher.clone())
+        .with_finalization_notify(finalization_notify);
     let finalization_handle = ctx
         .child("finalization")
         .spawn(move |ctx| finalization_actor.run(ctx));
@@ -835,6 +863,8 @@ where
         execution_finalized_height_rx,
         execution_finalized_height_tx,
         consensus_tip_rx,
+        epocher,
+        vote_backup_rx,
     }
     .run(ctx, recovered_pending_boundary, recovery_anchor_height)
     .await
@@ -942,7 +972,7 @@ fn reconcile_recovered_vrf_material(
     // These strict checks (saved polynomial / DKG output must equal the recovered
     // finalized boundary) only matter for a SIGNER, which signs with its polynomial +
     // share. A share-less VERIFIER follows finality via the certificate's PARTICIPANT
-    // set (not its polynomial). So its CLI `--public-polynomial`/`--dkg-output` may be
+    // set (not its polynomial). So its local public material may be
     // off without affecting sync. Examples: a TEE chain's runtime-derived genesis
     // consensus polynomial differs from the bootstrap file, or the chain rotated past
     // it. Only its local VRF/leader view degrades (process-local, non-fatal, same as
@@ -965,7 +995,7 @@ fn reconcile_recovered_vrf_material(
         // polynomial and the reshare prev_output. The DKG reshare ceremony binds the
         // FULL previous output into its `info_hash` (not just the group key). So if the
         // verifier later becomes a frozen-target player, it MUST present the committee's
-        // current output as prev_output. Otherwise its stale `--consensus.dkg-output`
+        // current output as prev_output. Otherwise its stale local output
         // would cause this sequence:
         // 1. it yields a divergent `info_hash`.
         // 2. the dealers' bundles get dropped.
@@ -979,4 +1009,89 @@ fn reconcile_recovered_vrf_material(
         *last_dkg_output = Some(canonical_output);
     }
     Ok(())
+}
+
+struct ValidatorBootstrapFollowInputs<'a> {
+    args: &'a ConsensusArgs,
+    node: &'a OutbeFullNode,
+    bridge: &'a ConsensusExecutionBridge,
+    signing_key: &'a bls12381::PrivateKey,
+    genesis_hash: B256,
+    dkg_rotation_params: DkgRotationParams,
+    tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+    finalized_execution_barrier: &'a Arc<dyn FinalizedExecutionBarrier>,
+    follower_shutdown: Option<crate::follower_shutdown::FollowerDrain>,
+    finalized_parent_cert_store:
+        &'a outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
+    finalization_notify: &'a Arc<tokio::sync::Notify>,
+}
+
+async fn maybe_run_validator_bootstrap_follow<E>(
+    ctx: E,
+    inputs: ValidatorBootstrapFollowInputs<'_>,
+) -> Result<bool>
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRng
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    use outbe_primitives::consensus::ConsensusOperatingMode;
+    use reth_provider::BlockIdReader as _;
+
+    let local_consensus_key = inputs.signing_key.public_key();
+    let bootstrap = super::super::follower::ValidatorBootstrap {
+        local_key_in_genesis_validator_set: validators::read_consensus_validators_at_block(
+            &inputs.node.provider,
+            inputs.genesis_hash,
+        )?
+        .public_keys
+        .contains(&local_consensus_key),
+        local_consensus_key,
+        dkg_rotation_params: inputs.dkg_rotation_params,
+        tee_lease_armed_rx: inputs.tee_lease_armed_rx,
+    };
+    let finalized_height = inputs
+        .node
+        .provider
+        .finalized_block_num_hash()?
+        .map_or(0, |head| head.number);
+    if bootstrap.is_validator_bootstrap_ready(inputs.node, finalized_height)? {
+        return Ok(false);
+    }
+    let upstream = inputs
+        .args
+        .upstream
+        .clone()
+        .ok_or(crate::errors::StackEpochError::ValidatorBootstrapRequiresUpstream)?;
+    inputs
+        .bridge
+        .set_operating_mode(ConsensusOperatingMode::UpstreamBootstrap);
+    let exit = run_follow_stack(
+        ctx,
+        inputs.args.clone(),
+        services::FollowerConnection {
+            node: inputs.node.clone(),
+            bridge: inputs.bridge.clone(),
+            upstream,
+        },
+        services::FollowerStackServices {
+            finalized_execution_barrier: inputs.finalized_execution_barrier.clone(),
+            follower_shutdown: inputs
+                .follower_shutdown
+                .ok_or(crate::errors::StackEpochError::FollowerPreStopHandshakeNotInstalled)?,
+            parent_cert_store: inputs.finalized_parent_cert_store.clone(),
+            bootstrap: Some(bootstrap),
+            finalization_notify: inputs.finalization_notify.clone(),
+        },
+    )
+    .await?;
+    Ok(exit == crate::follower_shutdown::FollowStackExit::Shutdown)
 }

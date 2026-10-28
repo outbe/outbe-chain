@@ -9,11 +9,13 @@ use clap::{Args, Subcommand};
 use eyre::Result;
 use outbe_primitives::consensus_p2p::{encode_v1, P2P_ADDRESS_VERSION_V1};
 
-use super::parse_amount;
 use super::stake_identity::{resolve_stake_identity, StakeIdentityInput};
 use super::validator::build_p2p_address;
+use super::{parse_amount, parse_amount_allow_zero};
 use crate::abi::{self, IStaking, IValidatorSet};
+use crate::errors::StakingError;
 use crate::rpc::Rpc;
+use outbe_consensus::bls::{self, KeyBackend, KeyBackendNameError};
 
 #[derive(Subcommand)]
 pub enum StakingCmd {
@@ -28,9 +30,9 @@ pub enum StakingCmd {
         #[arg(long)]
         amount: String,
     },
-    /// Begin unstaking tokens
+    /// Begin unstaking tokens (pass --amount 0 to exit a zero-stake slashed validator in WaitingForReadiness, Joining, JailRetained, or Jail; remaining stake must be 0 or >= min_stake, and jailed validators must unstake their full balance).
     Unstake {
-        /// Amount in unit (base denomination)
+        /// Amount in unit (base denomination; 0 is allowed to exit a zero-stake slashed validator)
         #[arg(long)]
         amount: String,
     },
@@ -74,6 +76,20 @@ pub struct StakeRequest {
     /// Key directory written by `outbe-keygen validator`.
     #[arg(long)]
     keys_dir: Option<PathBuf>,
+    /// BLS consensus key storage backend for `--keys-dir` (`plaintext`, `encrypted`, or `os-level`).
+    #[arg(
+        long = "bls-key-backend",
+        default_value = "plaintext",
+        value_parser = ["plaintext", "encrypted", "os-level"]
+    )]
+    bls_key_backend: String,
+    /// Passphrase for `--bls-key-backend encrypted` (used with `--keys-dir`).
+    #[arg(
+        long = "bls-passphrase",
+        env = "BLS_PASSPHRASE",
+        hide_env_values = true
+    )]
+    bls_passphrase: Option<String>,
     /// BLS consensus public key (hex).
     #[arg(long)]
     consensus_pubkey: Option<String>,
@@ -100,6 +116,25 @@ pub struct StakeRequest {
     egress: Option<SocketAddr>,
 }
 
+fn resolve_key_backend(request: &StakeRequest) -> Result<KeyBackend> {
+    if request.keys_dir.is_none() {
+        if request.bls_key_backend != "plaintext" || request.bls_passphrase.is_some() {
+            return Err(StakingError::KeyBackendRequiresKeysDir.into());
+        }
+        return Ok(KeyBackend::Plaintext);
+    }
+    if request.bls_key_backend != "encrypted" && request.bls_passphrase.is_some() {
+        return Err(StakingError::PassphraseRequiresEncryptedBackend.into());
+    }
+    let passphrase = request.bls_passphrase.clone().filter(|p| !p.is_empty());
+    bls::parse_key_backend_name(&request.bls_key_backend, passphrase).map_err(|err| match err {
+        KeyBackendNameError::MissingPassphrase => {
+            StakingError::EncryptedKeyRequiresPassphrase.into()
+        }
+        KeyBackendNameError::Unknown(name) => StakingError::UnknownKeyBackend(name).into(),
+    })
+}
+
 async fn stake(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
@@ -107,11 +142,13 @@ async fn stake(
 ) -> Result<()> {
     let signer = super::require_signer(private_key)?;
     let amount = parse_amount(&request.amount)?;
+    let key_backend = resolve_key_backend(&request)?;
     let identity = resolve_stake_identity(
         client,
         request.validator,
         StakeIdentityInput {
             keys_dir: request.keys_dir.as_deref(),
+            key_backend: &key_backend,
             consensus_pubkey: request.consensus_pubkey.as_deref(),
             radicle_node_id: request.radicle_node_id,
             bls_registration_signature: request.bls_registration_signature.as_deref(),
@@ -187,7 +224,7 @@ async fn unstake(
     amount: String,
 ) -> Result<()> {
     let signer = super::require_signer(private_key)?;
-    let amount = parse_amount(&amount)?;
+    let amount = parse_amount_allow_zero(&amount)?;
 
     let call = IStaking::unstakeCall { amount };
     let tx_hash = signer
@@ -478,6 +515,8 @@ mod tests {
             validator,
             amount: amount.to_string(),
             keys_dir: None,
+            bls_key_backend: "plaintext".to_string(),
+            bls_passphrase: None,
             consensus_pubkey: Some("0xaabbcc".to_string()),
             radicle_node_id: Some(B256::repeat_byte(0x44)),
             bls_registration_signature: Some("0x112233".to_string()),
@@ -679,22 +718,43 @@ mod tests {
         assert!(mock.recorded_calls().is_empty());
     }
 
+    #[tokio::test]
+    async fn test_topup_invalid_amounts_do_not_call_rpc() {
+        for (amount, expected) in invalid_amount_cases() {
+            let mock =
+                recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+            let err = topup(&mock, Some(TEST_KEY), validator_addr(), amount.to_string())
+                .await
+                .unwrap_err();
+            assert!(
+                err.to_string().contains(expected),
+                "amount={amount:?}: expected {expected:?}, got {err}"
+            );
+            assert!(
+                mock.recorded_calls().is_empty(),
+                "invalid topup amount {amount:?} must not call RPC"
+            );
+        }
+    }
+
     fn write_keys_dir(dir: &std::path::Path, evm_key_hex: &str) -> (Vec<u8>, B256) {
+        write_keys_dir_with_backend(dir, evm_key_hex, &KeyBackend::Plaintext)
+    }
+
+    fn write_keys_dir_with_backend(
+        dir: &std::path::Path,
+        evm_key_hex: &str,
+        backend: &KeyBackend,
+    ) -> (Vec<u8>, B256) {
         use commonware_codec::Encode as _;
         use commonware_cryptography::{bls12381, Signer as _};
         use commonware_math::algebra::Random as _;
-        use outbe_consensus::bls::{self, KeyBackend};
 
         let bls_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
             rand_commonware::rngs::SysRng,
         ));
         let pubkey = bls_key.public_key().encode().as_ref().to_vec();
-        bls::save_individual_key(
-            &dir.join("signing-key.hex"),
-            &bls_key,
-            &KeyBackend::Plaintext,
-        )
-        .unwrap();
+        bls::save_individual_key(&dir.join("signing-key.hex"), &bls_key, backend).unwrap();
         std::fs::write(dir.join("evm-key.hex"), evm_key_hex).unwrap();
         let keystore = radicle_crypto::ssh::Keystore::new(&dir.join("radicle/keys"));
         let public = keystore
@@ -713,15 +773,29 @@ mod tests {
         validator: Address,
         node_id: B256,
     ) -> Vec<u8> {
+        reference_registration_signature_with_backend(
+            dir,
+            chain_id,
+            validator,
+            node_id,
+            &KeyBackend::Plaintext,
+        )
+    }
+
+    fn reference_registration_signature_with_backend(
+        dir: &std::path::Path,
+        chain_id: u64,
+        validator: Address,
+        node_id: B256,
+        backend: &KeyBackend,
+    ) -> Vec<u8> {
         use commonware_codec::Encode as _;
         use commonware_cryptography::Signer as _;
-        use outbe_consensus::bls::{self, KeyBackend};
         use outbe_primitives::validators::{
             validator_registration_message, VALIDATOR_REGISTRATION_DST,
         };
 
-        let key =
-            bls::load_individual_key(&dir.join("signing-key.hex"), &KeyBackend::Plaintext).unwrap();
+        let key = bls::load_individual_key(&dir.join("signing-key.hex"), backend).unwrap();
         let encoded = key.encode();
         let blst_key = blst::min_pk::SecretKey::from_bytes(encoded.as_ref()).unwrap();
         let message = validator_registration_message(chain_id, validator, node_id);
@@ -747,6 +821,8 @@ mod tests {
             validator,
             amount: amount.to_string(),
             keys_dir: Some(dir.to_path_buf()),
+            bls_key_backend: "plaintext".to_string(),
+            bls_passphrase: None,
             consensus_pubkey: None,
             radicle_node_id: None,
             bls_registration_signature: None,
@@ -819,12 +895,145 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_stake_keys_dir_encrypted_backend_signs_and_sends_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = KeyBackend::Encrypted("test-passphrase-123".to_string());
+        let (pubkey, node_id) = write_keys_dir_with_backend(dir.path(), TEST_KEY, &backend);
+        let validator = crate::tx::TxSigner::new(TEST_KEY).unwrap().address();
+        let amount = U256::from(1000u64);
+        let signature = reference_registration_signature_with_backend(
+            dir.path(),
+            1337,
+            validator,
+            node_id,
+            &backend,
+        );
+        let data = IStaking::stakeCall {
+            validatorAddress: validator,
+            amount,
+            consensusPubkey: pubkey.into(),
+            radicleNodeId: node_id,
+            blsRegistrationSignature: signature.into(),
+            p2pVersion: 0,
+            p2pEncoded: Vec::<u8>::new().into(),
+        }
+        .abi_encode();
+        let mock = recording_send_tx_rpc_after(
+            TEST_KEY,
+            abi::STAKING_ADDR,
+            data,
+            amount,
+            [ExpectedRpcCall::ok(
+                RecordedRpcCall::EthChainId,
+                RecordedRpcResponse::U64(1337),
+            )],
+        )
+        .unwrap();
+
+        let mut request = keys_dir_request(dir.path(), validator, "1000");
+        request.bls_key_backend = "encrypted".to_string();
+        request.bls_passphrase = Some("test-passphrase-123".to_string());
+        stake(&mock, Some(TEST_KEY), request).await.unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_stake_keys_dir_encrypted_backend_missing_passphrase_does_not_call_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        let validator = crate::tx::TxSigner::new(TEST_KEY).unwrap().address();
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+
+        for passphrase in [None, Some(String::new())] {
+            let mut request = keys_dir_request(dir.path(), validator, "1000");
+            request.bls_key_backend = "encrypted".to_string();
+            request.bls_passphrase = passphrase;
+            let err = stake(&mock, Some(TEST_KEY), request).await.unwrap_err();
+            assert!(
+                err.to_string().contains(
+                    "--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE"
+                ),
+                "unexpected error: {err}"
+            );
+            assert!(mock.recorded_calls().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stake_keys_dir_encrypted_backend_wrong_passphrase_does_not_call_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = KeyBackend::Encrypted("correct-passphrase".to_string());
+        let (_pubkey, _node_id) = write_keys_dir_with_backend(dir.path(), TEST_KEY, &backend);
+        let validator = crate::tx::TxSigner::new(TEST_KEY).unwrap().address();
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+
+        let mut request = keys_dir_request(dir.path(), validator, "1000");
+        request.bls_key_backend = "encrypted".to_string();
+        request.bls_passphrase = Some("wrong-passphrase".to_string());
+        let err = stake(&mock, Some(TEST_KEY), request).await.unwrap_err();
+        assert!(
+            err.to_string().contains("failed to load consensus key"),
+            "unexpected error: {err}"
+        );
+        assert!(mock.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stake_explicit_identity_rejects_key_backend_flags_before_rpc() {
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
+
+        let mut req_backend = explicit_request(validator_addr(), "1000");
+        req_backend.bls_key_backend = "encrypted".to_string();
+        let err = stake(&mock, Some(TEST_KEY), req_backend).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--bls-key-backend and --bls-passphrase require --keys-dir"),
+            "{err}"
+        );
+        assert!(mock.recorded_calls().is_empty());
+
+        let mut req_pass = explicit_request(validator_addr(), "1000");
+        req_pass.bls_passphrase = Some("secret".to_string());
+        let err = stake(&mock, Some(TEST_KEY), req_pass).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--bls-key-backend and --bls-passphrase require --keys-dir"),
+            "{err}"
+        );
+        assert!(mock.recorded_calls().is_empty());
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut req_pass_plaintext = keys_dir_request(dir.path(), validator_addr(), "1000");
+        req_pass_plaintext.bls_passphrase = Some("secret".to_string());
+        let err = stake(&mock, Some(TEST_KEY), req_pass_plaintext)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--bls-passphrase requires --bls-key-backend encrypted"),
+            "{err}"
+        );
+        assert!(mock.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
     async fn test_unstake_sends_tx() {
         let amount = U256::from(500u64);
         let data = IStaking::unstakeCall { amount }.abi_encode();
         let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, U256::ZERO).unwrap();
 
         unstake(&mock, Some(TEST_KEY), "500".to_string())
+            .await
+            .unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_unstake_zero_amount_sends_tx() {
+        let amount = U256::ZERO;
+        let data = IStaking::unstakeCall { amount }.abi_encode();
+        let mock = recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, data, U256::ZERO).unwrap();
+
+        unstake(&mock, Some(TEST_KEY), "0".to_string())
             .await
             .unwrap();
         mock.assert_done();
@@ -844,7 +1053,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_unstake_invalid_amounts_do_not_call_rpc() {
-        for (amount, expected) in invalid_amount_cases() {
+        for (amount, expected) in invalid_amount_cases()
+            .into_iter()
+            .filter(|(amount, _)| *amount != "0")
+        {
             let mock =
                 recording_send_tx_rpc(TEST_KEY, abi::STAKING_ADDR, vec![], U256::ZERO).unwrap();
             let err = unstake(&mock, Some(TEST_KEY), amount.to_string())

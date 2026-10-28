@@ -205,6 +205,22 @@ where
                     if let EventAction::Outcome(outcome) = self.schedule_rotation(&ctx, current_height).await? { return Ok(outcome); }
                 },
 
+                backup_vote = self.vote_backup_rx.recv() => {
+                    let Some((their_epoch, (from, _))) = backup_vote else {
+                        continue;
+                    };
+                    if let Some(hint_height) = future_epoch_hint_height(
+                        &self.epocher,
+                        self.state.current_epoch,
+                        Epoch::new(their_epoch),
+                    ) {
+                        self.marshal_mailbox.hint_finalized(
+                            hint_height,
+                            commonware_utils::vec::NonEmptyVec::new(from),
+                        );
+                    }
+                },
+
                 // Component exits -> fatal.
                 result = &mut self.actors.executor_handle_task => {
                     info!("executor actor exited");
@@ -370,4 +386,15 @@ where
         )
         .await
     }
+}
+
+pub(in crate::stack) fn future_epoch_hint_height(
+    epocher: &outbe_consensus::follow::FollowerEpocher,
+    current_epoch: Epoch,
+    their_epoch: Epoch,
+) -> Option<Height> {
+    if their_epoch <= current_epoch {
+        return None;
+    }
+    epocher.backup_vote_hint_height(current_epoch)
 }

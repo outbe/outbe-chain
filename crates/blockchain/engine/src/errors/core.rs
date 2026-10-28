@@ -34,12 +34,14 @@ pub enum ArgsError {
     /// Indicates that the pending staleness duration is zero.
     #[error("--txpool.outbe.pending-staleness-secs must be greater than zero")]
     PendingStalenessSecsZero,
-    /// Indicates that follower mode and validator mode are both enabled.
-    #[error("--upstream (follower mode) is mutually exclusive with --validator")]
-    UpstreamMutuallyExclusiveWithValidator,
     /// Indicates that nocertify mode lacks an upstream endpoint.
     #[error("--upstream.nocertify requires --upstream")]
     UpstreamNocertifyRequiresUpstream,
+    /// Indicates that a validator requested uncertified upstream sync.
+    #[error(
+        "--validator rejects --upstream.nocertify: UpstreamBootstrap must verify every certificate"
+    )]
+    ValidatorRejectsUpstreamNocertify,
     /// Indicates that validator mode lacks a consensus signing key path.
     #[error(
         "--validator requires --consensus.signing-key. Provide the path to your BLS signing key file."
@@ -57,11 +59,6 @@ pub enum ArgsError {
     /// Indicates that the caller specified Radicle flags without validator mode.
     #[error("Radicle flags require --validator")]
     RadicleFlagsRequireValidator,
-    /// Indicates an incomplete manual DKG flag combination.
-    #[error(
-        "manual DKG provisioning requires either all of --consensus.signing-share, --consensus.public-polynomial, --consensus.dkg-output (signer), or --consensus.public-polynomial + --consensus.dkg-output without --consensus.signing-share (verifier-join)."
-    )]
-    InvalidManualDkgProvisioning,
     /// Indicates that the encrypted BLS key backend lacks a passphrase.
     #[error("--bls-key-backend encrypted requires --bls-passphrase or BLS_PASSPHRASE env var.")]
     EncryptedBackendRequiresPassphraseArg,

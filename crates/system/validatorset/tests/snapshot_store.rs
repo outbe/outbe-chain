@@ -151,6 +151,10 @@ fn shared_test_activation_helper_drives_production_boundary_hook() {
         vs.set_config_max_validators(128).unwrap();
         vs.register_validator(Address::ZERO, validator, &consensus_pubkey)
             .unwrap();
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        vs.test_seed_authoritative_bonded(validator, minimum)
+            .unwrap();
 
         let snapshot_key = activate_validator_via_boundary(&mut vs, validator).unwrap();
 
@@ -1006,7 +1010,11 @@ fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
 
 fn admit_validator(vs: &mut ValidatorSet<'_>, validator: Address, consensus_pubkey: &[u8; 48]) {
     let owner = vs.config_owner.read().unwrap();
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
     vs.register_validator(owner, validator, consensus_pubkey)
+        .unwrap();
+    vs.test_seed_authoritative_bonded(validator, minimum)
         .unwrap();
     vs.mark_pending(validator).unwrap();
     vs.confirm_validator_ready(validator).unwrap();

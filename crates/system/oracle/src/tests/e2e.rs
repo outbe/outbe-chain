@@ -1215,27 +1215,31 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
 
-        // Two COEN samples within the day -> volume-weighted:
-        // (100*2 + 200*1) / (2 + 1) = 133.333333 at the six-decimal boundary.
-        oracle
-            .write_snapshot(
-                day_start + 100,
-                &[(pair_key(COEN, usd()), coen_iso(100), coen_iso(2))],
-            )
-            .unwrap();
-        oracle
-            .write_snapshot(
-                day_start + 200,
-                &[(pair_key(COEN, usd()), coen_iso(200), coen_iso(1))],
-            )
-            .unwrap();
-        // ETH single sample -> VWAP == rate.
-        oracle
-            .write_snapshot(
-                day_start + 300,
-                &[(pair_key(usd(), ETH), fixed18(2_200), SCALE_1E18)],
-            )
-            .unwrap();
+        let day_end = day_start + SECONDS_PER_DAY;
+        note_hours(oracle, day_start, day_end + 3_600);
+        for hour in (day_start..day_end).step_by(3_600) {
+            // Two COEN samples every hour -> volume-weighted:
+            // (100*2 + 200*1) / (2 + 1) = 133.333333 at the six-decimal boundary.
+            oracle
+                .write_snapshot(
+                    hour + 100,
+                    &[(pair_key(COEN, usd()), coen_iso(100), coen_iso(2))],
+                )
+                .unwrap();
+            oracle
+                .write_snapshot(
+                    hour + 200,
+                    &[(pair_key(COEN, usd()), coen_iso(200), coen_iso(1))],
+                )
+                .unwrap();
+            // One flat ETH sample every hour -> VWAP == rate.
+            oracle
+                .write_snapshot(
+                    hour + 300,
+                    &[(pair_key(usd(), ETH), fixed18(2_200), SCALE_1E18)],
+                )
+                .unwrap();
+        }
 
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
 
@@ -1312,12 +1316,19 @@ fn trailing_vwap_views_select_and_read_the_current_snapshot() {
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        oracle
-            .write_snapshot(
-                ATOMIC_DAY_START + 4 * hour,
-                &[(AddressPair::new_coen_to(840), coen_iso(2), coen_iso(1))],
-            )
-            .unwrap();
+        note_hours(
+            &mut oracle,
+            ATOMIC_DAY_START + 2 * hour,
+            ATOMIC_DAY_START + 11 * hour,
+        );
+        for k in 2..10 {
+            oracle
+                .write_snapshot(
+                    ATOMIC_DAY_START + k * hour,
+                    &[(AddressPair::new_coen_to(840), coen_iso(2), coen_iso(1))],
+                )
+                .unwrap();
+        }
         let call = |data: Vec<u8>| dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO);
 
         let policy = IOracle::getVwapPolicyCall::abi_decode_returns(
@@ -1388,12 +1399,16 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
         let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
-        oracle
-            .write_snapshot(
-                day_start + 100,
-                &[(pair_key(COEN, usd()), coen_iso(150), coen_iso(1))],
-            )
-            .unwrap();
+        let day_end = day_start + SECONDS_PER_DAY;
+        note_hours(oracle, day_start, day_end + 3_600);
+        for hour in (day_start..day_end).step_by(3_600) {
+            oracle
+                .write_snapshot(
+                    hour + 100,
+                    &[(pair_key(COEN, usd()), coen_iso(150), coen_iso(1))],
+                )
+                .unwrap();
+        }
         oracle.finalize_utc_day_vwap(utc_day).unwrap();
 
         use crate::precompile::IOracle;

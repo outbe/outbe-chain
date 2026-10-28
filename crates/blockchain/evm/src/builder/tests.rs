@@ -388,8 +388,18 @@ fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
+        let minimum = U256::from(1_000u64);
+        vs.test_seed_authoritative_min_stake(minimum).unwrap();
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
         for (validator, consensus_key) in &founders {
             vs.register_validator(Address::ZERO, *validator, consensus_key)
+                .unwrap();
+            vs.test_seed_authoritative_bonded(*validator, minimum)
+                .unwrap();
+            let total = staking.total_staked.read().unwrap();
+            staking.total_staked.write(total + minimum).unwrap();
+            storage
+                .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
                 .unwrap();
             vs.mark_pending(*validator).unwrap();
             vs.confirm_validator_ready(*validator).unwrap();
@@ -400,6 +410,13 @@ fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         outbe_oracle::test_support::publish_day_type_rate(&storage, U256::from(1_000_000u64), 0, 0)
             .unwrap();
     });
+    db.insert_account_info(
+        outbe_primitives::addresses::STAKING_ADDRESS,
+        AccountInfo {
+            balance: metadosis_genesis.get_balance(outbe_primitives::addresses::STAKING_ADDRESS),
+            ..Default::default()
+        },
+    );
     for ((address, slot), value) in metadosis_genesis.storage {
         db.insert_account_storage(address, slot, value)
             .expect("production-route genesis seed must install");

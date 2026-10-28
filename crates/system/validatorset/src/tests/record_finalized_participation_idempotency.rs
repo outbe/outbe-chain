@@ -5,16 +5,8 @@ use alloy_primitives::b256;
 const FB_HASH_A: B256 = b256!("0x1111111111111111111111111111111111111111111111111111111111111111");
 const FB_HASH_B: B256 = b256!("0x2222222222222222222222222222222222222222222222222222222222222222");
 
-fn dummy_consensus_pubkey_local(seed: u8) -> [u8; 48] {
-    let mut pk = [0u8; 48];
-    pk[0] = seed;
-    pk
-}
-
 fn register_active(vs: &mut ValidatorSet, addr: Address, seed: u8) {
-    vs.register_validator(OWNER, addr, &dummy_consensus_pubkey_local(seed))
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(addr).unwrap();
+    register_boundary_active(vs, addr, seed).unwrap();
     vs.val_has_bls_share.write(&addr, true).unwrap();
 }
 

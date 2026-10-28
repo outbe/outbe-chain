@@ -87,6 +87,22 @@ fn run_tally_gives_every_validator_one_median_observation_regardless_of_stake() 
 }
 
 #[test]
+fn a_disabled_oracle_clears_votes_without_a_tally() {
+    with_coen840_oracle(|storage, oracle, pair| {
+        let [voter, ..] = register_four_voters(&storage);
+        oracle
+            .submit_vote(voter, &[pair_vote(pair, coen_iso(2), COEN_ISO_SCALE)])
+            .unwrap();
+        oracle.config_enabled.write(false).unwrap();
+
+        crate::tally::run_tally(oracle, 2, 24).unwrap();
+
+        assert!(!oracle.vote_exists.read(&voter).unwrap());
+        assert_eq!(pair_rate(oracle, pair), U256::ZERO);
+    });
+}
+
+#[test]
 fn run_tally_penalizes_a_voter_outside_the_reward_band() {
     with_coen_usdt_oracle(|storage, oracle| {
         let [v1, v2, v3] = register_staked_voters(&storage, [100, 200, 100]);
