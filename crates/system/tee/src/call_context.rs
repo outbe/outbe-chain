@@ -348,3 +348,31 @@ mod tests {
         assert!(sender.for_request(&chunk).is_err());
     }
 }
+
+thread_local! {
+    static WITNESS: std::cell::RefCell<Option<Arc<std::sync::Mutex<crate::witness::WitnessState>>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The active synchronous execution owns the state; no scope crosses await/thread boundaries.
+pub fn current_witness_state() -> Option<Arc<std::sync::Mutex<crate::witness::WitnessState>>> {
+    WITNESS.with(|slot| slot.borrow().clone())
+}
+pub struct WitnessExecutionScope {
+    previous: Option<Arc<std::sync::Mutex<crate::witness::WitnessState>>>,
+    _not_send: PhantomData<Rc<()>>,
+}
+impl WitnessExecutionScope {
+    pub fn enter(state: Arc<std::sync::Mutex<crate::witness::WitnessState>>) -> Self {
+        Self {
+            previous: WITNESS.with(|slot| slot.replace(Some(state))),
+            _not_send: PhantomData,
+        }
+    }
+}
+impl Drop for WitnessExecutionScope {
+    fn drop(&mut self) {
+        WITNESS.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}

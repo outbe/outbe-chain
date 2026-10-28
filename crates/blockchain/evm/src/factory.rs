@@ -97,6 +97,19 @@ pub(crate) fn with_forced_outbe_system_call_revert<R>(f: impl FnOnce() -> R) -> 
     f()
 }
 
+#[derive(Default)]
+struct DetachedTraceCleanupGuard {
+    active: bool,
+}
+
+impl Drop for DetachedTraceCleanupGuard {
+    fn drop(&mut self) {
+        if self.active {
+            crate::executor::witness::clear_detached_trace_witness();
+        }
+    }
+}
+
 /// Outbe EVM wrapper.
 ///
 /// Upstream `EthEvm::transact_system_call` delegates to revm's EIP system-call
@@ -116,6 +129,10 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     >,
     inspect: bool,
     abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    owned_by_executor: bool,
+    precompiles_mut_called: bool,
+    witness_state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    detached_trace_guard: DetachedTraceCleanupGuard,
 }
 
 /// Creates a new Outbe EVM instance.
@@ -133,10 +150,24 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
         inner: evm,
         inspect,
         abort_bridge: crate::precompiles::ExecutionAbortBridge::default(),
+        owned_by_executor: false,
+        precompiles_mut_called: false,
+        witness_state: None,
+        detached_trace_guard: DetachedTraceCleanupGuard::default(),
     }
 }
 
 impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
+    pub(crate) fn set_owned_by_executor(&mut self, owned: bool) {
+        self.owned_by_executor = owned;
+    }
+
+    pub(crate) fn set_attached_witness_state(
+        &mut self,
+        state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+        self.witness_state = state;
+    }
     /// Consumes self and returns the inner revm instance.
     pub fn into_inner(
         self,
@@ -158,6 +189,26 @@ impl<DB: Database, I, PRECOMPILE> OutbeEvm<DB, I, PRECOMPILE> {
     /// Provides a mutable reference to the EVM context.
     pub const fn ctx_mut(&mut self) -> &mut EthEvmContext<DB> {
         &mut self.inner.ctx
+    }
+
+    fn run_inner_transact_raw(
+        &mut self,
+        tx: TxEnv,
+    ) -> Result<ResultAndState<HaltReason>, EVMError<DB::Error>>
+    where
+        I: Inspector<EthEvmContext<DB>>,
+        PRECOMPILE: PrecompileProvider<EthEvmContext<DB>, Output = InterpreterResult>,
+    {
+        let call = self.abort_bridge.begin_call();
+        self.inner.ctx.set_tx(tx);
+        let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
+        let output = if self.inspect {
+            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
+        } else {
+            handler.run(&mut NativeDelegationEvm(&mut self.inner))
+        };
+        let state = self.inner.finalize();
+        Ok(ResultAndState::new(call.finish(output)?, state))
     }
 }
 
@@ -208,16 +259,53 @@ where
         &mut self,
         tx: Self::Tx,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        let call = self.abort_bridge.begin_call();
-        self.inner.ctx.set_tx(tx);
-        let mut handler: ReservedNamespaceHandler<_, EVMError<DB::Error>> = Default::default();
-        let output = if self.inspect {
-            handler.inspect_run(&mut NativeDelegationEvm(&mut self.inner))
-        } else {
-            handler.run(&mut NativeDelegationEvm(&mut self.inner))
+        let attached_state = self.witness_state.clone();
+        let input = crate::executor::witness::EvmTransactWitnessInput {
+            attached_state: attached_state.as_ref(),
+            owned_by_executor: self.owned_by_executor,
+            precompiles_mut_called: self.precompiles_mut_called,
+            chain_id: self.chain_id(),
+            block_number: self.block().number.saturating_to::<u64>(),
+            block_timestamp: self.block().timestamp.saturating_to::<u64>(),
         };
-        let state = self.inner.finalize();
-        Ok(ResultAndState::new(call.finish(output)?, state))
+        if let Some(matched) = crate::executor::witness::match_detached_trace_tx(&input, &tx) {
+            self.detached_trace_guard.active = true;
+            return crate::executor::witness::run_matched_detached_trace_tx(matched, |action| {
+                match action {
+                    crate::executor::witness::DetachedTraceTxAction::SkipPreexecutedPhase1 {
+                        gas_limit,
+                    } => Ok(crate::executor::witness::synthetic_trace_success(
+                        gas_limit,
+                        Vec::new(),
+                    )),
+                    crate::executor::witness::DetachedTraceTxAction::SyntheticHookEvents {
+                        gas_limit,
+                        logs,
+                    } => Ok(crate::executor::witness::synthetic_trace_success(
+                        gas_limit, logs,
+                    )),
+                    crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
+                        data,
+                        context,
+                    } => crate::begin_block_precompile::with_preloaded_system_tx_context(
+                        context,
+                        || {
+                            self.transact_system_call(
+                                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                                data,
+                            )
+                        },
+                    ),
+                    crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
+                        self.run_inner_transact_raw(tx)
+                    }
+                }
+            });
+        }
+        crate::executor::witness::with_evm_transact_witness_scope(input, || {
+            self.run_inner_transact_raw(tx)
+        })
     }
 
     fn transact_system_call(
@@ -301,6 +389,13 @@ where
 
     fn set_inspector_enabled(&mut self, enabled: bool) {
         self.inspect = enabled;
+    }
+
+    fn precompiles_mut(&mut self) -> &mut Self::Precompiles {
+        if !self.owned_by_executor {
+            self.precompiles_mut_called = true;
+        }
+        &mut self.inner.precompiles
     }
 
     fn components(&self) -> (&Self::DB, &Self::Inspector, &Self::Precompiles) {
@@ -406,8 +501,14 @@ impl EvmFactory for OutbeEvmFactory {
         let evm = self.create_evm(db, input);
 
         let abort_bridge = evm.abort_bridge.clone();
+        let owned_by_executor = evm.owned_by_executor;
+        let precompiles_mut_called = evm.precompiles_mut_called;
+        let witness_state = evm.witness_state.clone();
         let mut evm = outbe_evm(evm.into_inner().with_inspector(inspector), true);
         evm.abort_bridge = abort_bridge;
+        evm.owned_by_executor = owned_by_executor;
+        evm.precompiles_mut_called = precompiles_mut_called;
+        evm.witness_state = witness_state;
         evm
     }
 }

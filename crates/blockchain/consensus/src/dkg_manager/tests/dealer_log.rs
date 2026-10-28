@@ -404,6 +404,7 @@ fn dealer_log_size_within_extra_data_for_n128() {
             consensus_header_artifact: Some(ConsensusHeaderArtifact::DealerLog(dealer_log)),
             timestamp_millis_part: 0,
             late_finalize_credits: None,
+            enclave_witness: None,
         },
     )
     .unwrap();

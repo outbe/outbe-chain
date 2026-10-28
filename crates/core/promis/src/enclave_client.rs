@@ -15,6 +15,7 @@ use outbe_primitives::error::Result;
 use outbe_tee::protocol::{
     promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, PromisOpRequest, PromisOpResult,
 };
+use outbe_tee::TransportError;
 
 use crate::errors::PromisFatalError;
 
@@ -34,15 +35,38 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     }
 
     let expected_hash = promis_op_canonical_hash(&req);
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::ApplyPromisOp {
-            request: Box::new(req),
-        });
-        (attestation_pub, response)
-    })
-    .ok_or(PromisFatalError::SidecarUnavailable)?;
-    let response = response.map_err(PromisFatalError::sidecar_request_failed)?;
+    let (attestation_pub, response) = outbe_tee::consensus_call(
+        "ApplyPromisOp",
+        || {
+            outbe_tee::try_with_enclave(|client| {
+                let attestation_pub = client.attestation_pub();
+                client
+                    .request(&EnclaveRequest::ApplyPromisOp {
+                        request: Box::new(req),
+                    })
+                    .map(|response| (attestation_pub, response))
+            })
+            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
+        },
+        |key, response| match response {
+            EnclaveResponse::PromisOpApplied { result } => {
+                if result.inputs_canonical_hash != expected_hash {
+                    return Err(TransportError::UnexpectedResponse);
+                }
+                outbe_tee::verify_promis_op_attestation(
+                    key,
+                    result.inputs_canonical_hash,
+                    result,
+                    &result.attestation_tag,
+                )
+            }
+            _ => Err(TransportError::UnexpectedResponse),
+        },
+    )
+    .map_err(|error| match error {
+        TransportError::EnclaveError(message) => PromisFatalError::EnclaveOpError(message),
+        other => PromisFatalError::sidecar_request_failed(other),
+    })?;
 
     let result = match response {
         EnclaveResponse::PromisOpApplied { result } => *result,

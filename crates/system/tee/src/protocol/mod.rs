@@ -19,6 +19,9 @@ use alloy_primitives::{Address, B256, U256};
 
 pub use outbe_primitives::time::WorldwideDay;
 
+/// Canonical DirectDev onboarding context used by the typed enclave request.
+pub type GramineDirectDevOnboardingContextV1 = crate::dcap_protocol::DcapOnboardingContextV1;
+
 mod enclave_request;
 mod enclave_response;
 
@@ -33,6 +36,14 @@ pub use enclave_response::{
     tribute_offer_attestation_preimage, EnclaveHealthStatusV1, EnclaveHeapUsageV1,
     EnclaveRequestClassCountsV1, EnclaveRequestCountsV1, EnclaveResponse,
 };
+
+/// How a request participates in the block's enclave witness tape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsensusWitnessKind {
+    Recorded,
+    StreamFrame,
+    NonConsensus,
+}
 
 /// Hard cap for the deterministic registry onboarding artifact. The current
 /// X25519/nonce/AEAD envelope is substantially smaller. This cap prevents a
@@ -458,8 +469,9 @@ pub struct FidelityLeagueEntry {
 }
 
 /// Inputs for a `QueryFidelityIndex`: an owner-authorized read of one account's
-/// RCFI/league over its encrypted cohorts. NOT a consensus path. Served via
-/// `eth_call`. `owner_sig` is the 65-byte EIP-191 `personal_sign` signature by
+/// RCFI/league over its encrypted cohorts. Consensus when executed in a transaction;
+/// also served via `eth_call`. `owner_sig` is the 65-byte EIP-191
+/// `personal_sign` signature by
 /// `account` over [`fidelity_query_auth_message`]. The enclave recovers it and
 /// rejects the request unless all of these are true:
 /// - the signer equals `account`.

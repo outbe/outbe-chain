@@ -953,11 +953,9 @@ impl FinalityObserver {
         let Some(readiness) = self.bootstrap.as_ref() else {
             return Ok(());
         };
-        let processed = self
-            .observer_mailbox
-            .get_processed_height()
-            .await
-            .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
+        let Some(processed) = self.observer_mailbox.get_processed_height().await else {
+            return Ok(());
+        };
         if processed.get() >= self.initial_upstream_tip
             && persisted >= self.initial_upstream_tip
             && readiness.is_validator_bootstrap_ready(&self.observer_node, persisted)?

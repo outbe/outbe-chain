@@ -39,6 +39,10 @@ fn fresh_native_lysis(world: &mut World) {
 
 #[when("the committee logical clock reaches the native Lysis processing time")]
 fn reach_processing_time(world: &mut World) {
+    reach_native_lysis_processing_time(world);
+}
+
+pub(crate) fn reach_native_lysis_processing_time(world: &mut World) {
     let day = world
         .state
         .wwd
@@ -79,6 +83,31 @@ fn reach_processing_time(world: &mut World) {
 
 #[then("Metadosis completes confidential Lysis and stores ready Nods on every validator")]
 fn native_lysis_completes(world: &mut World) {
+    let day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("offering day")
+        .parse::<u32>()
+        .expect("numeric WWD");
+    let ports = world.validators.committee_ports();
+    let height = wait_for_native_lysis(world);
+    let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
+    let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
+    assert!(supply > 0);
+    for port in ports {
+        assert_eq!(world.rpc.nod_supply(port), Some(supply));
+    }
+    world.state.lysis_completion_height = Some(height);
+    world.state.nod_creation_height = Some(nod_height);
+    world.state.nod_creation_blocks = nod_blocks;
+}
+
+/// Waits until confidential Lysis has succeeded on every validator.
+///
+/// Does not mint Nods. The native scenario mints afterwards; a lifecycle scenario
+/// mints through each owner's `ITribute::createNod`.
+pub(crate) fn wait_for_native_lysis(world: &World) -> u64 {
     let day = world
         .state
         .wwd
@@ -162,15 +191,7 @@ fn native_lysis_completes(world: &mut World) {
             .expect("native Lysis emission day at the completion checkpoint");
         assert_eq!(state.state, EMISSION_DAY_SUCCEEDED);
     }
-    let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
-    let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
-    assert!(supply > 0);
-    for port in ports {
-        assert_eq!(world.rpc.nod_supply(port), Some(supply));
-    }
-    world.state.lysis_completion_height = Some(height);
-    world.state.nod_creation_height = Some(nod_height);
-    world.state.nod_creation_blocks = nod_blocks;
+    height
 }
 
 fn tribute_owner_keys(

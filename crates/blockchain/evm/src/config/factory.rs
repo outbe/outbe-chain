@@ -50,7 +50,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
 
     fn create_executor<'a, DB, I>(
         &'a self,
-        evm: EvmFor<Self, DB, I>,
+        mut evm: EvmFor<Self, DB, I>,
         ctx: OutbeBlockExecutionCtx<'a>,
     ) -> Self::Executor<'a, DB, I>
     where
@@ -58,6 +58,7 @@ impl BlockExecutorFactory for OutbeEvmConfig {
         I: Inspector<<Self::EvmFactory as alloy_evm::EvmFactory>::Context<DB>>,
     {
         use alloy_evm::eth::EthBlockExecutor;
+        evm.set_owned_by_executor(true);
         let block_extra_data = ctx.inner.extra_data.clone();
         let block_hash = ctx.block_hash;
         let parent_hash = ctx.inner.parent_hash;

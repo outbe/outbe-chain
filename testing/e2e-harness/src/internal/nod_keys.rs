@@ -1,7 +1,7 @@
 //! Owner-local NOD decryption used by hardware acceptance scenarios.
 use crate::internal::{eth, tribute_keys};
 use crate::world::World;
-use alloy_primitives::{Address, U256};
+use alloy_primitives::U256;
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
@@ -39,9 +39,4 @@ pub(crate) fn decrypt_with_public(data: &eth::INod::NodData, public: &[u8; 32]) 
         &encrypted(data),
     )
     .expect("owner-local NOD decryption")
-}
-pub(crate) fn public(owner: Address) -> alloy_primitives::B256 {
-    tribute_keys::public_hex(owner)
-        .parse()
-        .expect("creator encryption public key")
 }

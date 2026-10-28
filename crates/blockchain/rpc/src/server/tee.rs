@@ -31,6 +31,7 @@ where
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> RpcResult<Bytes> {
+        require_enclave_session()?;
         // Bound concurrent expensive verification on this process. Never queue
         // it on the consensus enclave connection.
         static GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
@@ -279,6 +280,34 @@ fn candidate_offer_matches(
             && registry.key_epoch()? == context.key_epoch
             && registry.tribute_offer_epoch()? == context.tribute_offer_epoch,
     )
+}
+
+/// No installed enclave session. Keyless RPC cannot derive keys or export an
+/// upgrade artifact. Display text is the stable error name.
+#[derive(Debug, thiserror::Error)]
+#[error("PrivateExecutionUnavailable")]
+pub(super) struct PrivateExecutionUnavailable;
+
+pub(super) fn require_enclave_session() -> RpcResult<()> {
+    if outbe_tee::try_with_enclave(|_| ()).is_none() {
+        Err(super::internal_err(PrivateExecutionUnavailable))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod private_execution_tests {
+    use super::*;
+
+    #[test]
+    fn missing_session_is_private_execution_unavailable() {
+        if outbe_tee::try_with_enclave(|_| ()).is_some() {
+            return;
+        }
+        let error = require_enclave_session().expect_err("no session");
+        assert_eq!(error.message(), "PrivateExecutionUnavailable");
+    }
 }
 
 #[cfg(test)]

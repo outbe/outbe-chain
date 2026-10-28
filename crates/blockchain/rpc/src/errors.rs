@@ -246,6 +246,28 @@ pub enum RpcInvalidParamsError {
         /// Target account address.
         account: alloy_primitives::Address,
     },
+    /// The requested block height exceeds the node's advertised finalized height.
+    #[error("height {height} is above the node's finalized height {finalized}")]
+    HeightAboveFinalized {
+        /// Caller-requested block height.
+        height: u64,
+        /// Node's latest advertised finalized block height.
+        finalized: u64,
+    },
+}
+
+/// JSON-RPC error code for retryable resource exhaustion / limit exceeded (EIP-1474).
+pub const RESOURCE_EXHAUSTED_ERROR_CODE: i32 = -32005;
+
+/// Typed resource-exhaustion errors returned with [`RESOURCE_EXHAUSTED_ERROR_CODE`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum RpcResourceExhaustedError {
+    /// The bounded consensus finalization request queue is full.
+    #[error("finalization service is busy; retry shortly")]
+    FinalizationServiceBusy,
+    /// Waiting for the consensus finalization drainer timed out.
+    #[error("finalization request timed out")]
+    FinalizationRequestTimedOut,
 }
 
 impl RpcInvalidParamsError {

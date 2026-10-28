@@ -5,6 +5,7 @@ use outbe_primitives::error::Result;
 use outbe_tee::{
     protocol::{EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus},
     tribute_v2::{self, EncryptedTributeOfferResultV2},
+    TransportError,
 };
 
 use crate::errors::TributeFactoryError;
@@ -19,16 +20,45 @@ pub(crate) fn process_encrypted_offers(
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<EncryptedTributeOfferResultV2>> {
-    let (key, response) = outbe_tee::try_with_enclave(|session| {
-        (
-            session.attestation_pub(),
-            session.request(&EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
-                offers: offers.to_vec(),
-            }),
-        )
-    })
-    .ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
-    let response = response.map_err(TributeFactoryError::sidecar_unavailable)?;
+    let expected_hash = tribute_v2::encrypted_offer_inputs_hash(chain_id, offers);
+    let (key, response) = outbe_tee::consensus_call(
+        "ProcessEncryptedTributeOfferBatchV2",
+        || {
+            outbe_tee::try_with_enclave(|session| {
+                let key = session.attestation_pub();
+                session
+                    .request(&EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
+                        offers: offers.to_vec(),
+                    })
+                    .map(|response| (key, response))
+            })
+            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
+        },
+        |key, response| match response {
+            EnclaveResponse::EncryptedTributeOfferBatchV2 {
+                results,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => {
+                if *inputs_canonical_hash != expected_hash {
+                    return Err(TransportError::UnexpectedResponse);
+                }
+                let preimage =
+                    tribute_v2::encrypted_offer_attestation_preimage(expected_hash, results)
+                        .map_err(TransportError::codec)?;
+                tribute_v2::verify_attestation(key, &preimage, attestation_tag)
+            }
+            _ => Err(TransportError::UnexpectedResponse),
+        },
+    )
+    .map_err(|error| -> outbe_primitives::error::PrecompileError {
+        match error {
+            TransportError::EnclaveError(message) => {
+                TributeFactoryError::EncryptedOfferEnclaveError(message).into()
+            }
+            other => TributeFactoryError::sidecar_unavailable(other).into(),
+        }
+    })?;
     match response {
         EnclaveResponse::EncryptedTributeOfferBatchV2 {
             results,

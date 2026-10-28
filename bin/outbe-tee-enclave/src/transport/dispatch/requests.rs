@@ -57,8 +57,7 @@ pub(in crate::transport) fn dispatch_with_initialization(
         initialization: context,
     };
     match req {
-        req @ (EnclaveRequest::CreateNodForTestV1 { .. }
-        | EnclaveRequest::ExecuteLysis { .. }
+        req @ (EnclaveRequest::ExecuteLysis { .. }
         | EnclaveRequest::MineEncryptedNodV1 { .. }
         | EnclaveRequest::ReadNodAmountV1 { .. }
         | EnclaveRequest::EncryptNodForTributeV1 { .. }
@@ -86,6 +85,12 @@ pub(in crate::transport) fn dispatch_with_initialization(
             message: "DCAP verification requires an authenticated production session".to_string(),
         },
         EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => {
+            EnclaveResponse::Error {
+                message: "GramineDirectDev artifact creation requires an authenticated production session"
+                    .to_string(),
+            }
+        }
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
             EnclaveResponse::Error {
                 message: "GramineDirectDev artifact creation requires an authenticated production session"
                     .to_string(),

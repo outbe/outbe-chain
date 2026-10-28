@@ -338,8 +338,7 @@ fn malformed_unknown_mismatched_and_other_failures_fail_closed() {
 
 fn legacy_deadline_bundle(hash: &str, terminal_hash: &str) -> Vec<(PathBuf, String)> {
     let reth = format!(
-        "2026-08-09T10:48:40Z ERROR on_new_payload{{block_hash={hash} block_num=323}}: trigger failed error=BodyReadRequestDeadline\n\
-         2026-08-09T10:48:40Z ERROR on_new_payload{{block_hash={hash} block_num=323}}: fatal: body read request deadline exceeded\n\
+        "2026-08-09T10:48:40Z ERROR on_new_payload{{block_hash={hash} block_num=323}}: fatal: body read request deadline exceeded\n\
          2026-08-09T10:48:40Z DEBUG on_new_payload{{block_hash={hash} block_num=323}}: fatal: body read request deadline exceeded block=NumHash {{ number: 323, hash: {hash} }}\n\
          2026-08-09T10:48:40Z WARN Failed to deliver newPayload response, receiver dropped (request cancelled): Err(Internal(BlockExecutionError(Other(\"fatal: body read request deadline exceeded\")))) payload=NumHash {{ number: 323, hash: {terminal_hash} }}"
     );

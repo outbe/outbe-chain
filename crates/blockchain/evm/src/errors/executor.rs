@@ -78,10 +78,8 @@ impl From<ExecutorStorageError> for PrecompileError {
     fn from(error: ExecutorStorageError) -> Self {
         match error {
             ExecutorStorageError::ReadAccountedParentArtifact(_)
-            | ExecutorStorageError::MissingAccountedParentExecutionSummary { .. } => {
-                Self::BodyReadUnavailable(error.to_string())
-            }
-            ExecutorStorageError::HookFlush(_)
+            | ExecutorStorageError::MissingAccountedParentExecutionSummary { .. }
+            | ExecutorStorageError::HookFlush(_)
             | ExecutorStorageError::LoadPrecompileAccount { .. }
             | ExecutorStorageError::SponsoredQuotaWrite(_)
             | ExecutorStorageError::SponsoredQuotaFlush(_)
@@ -204,6 +202,8 @@ pub enum ExecutorValidationError {
     BlockArtifacts(String),
     #[error("reserved system transaction cannot execute without commit")]
     ReservedSystemTxWithoutCommit,
+    #[error("consensus witness execution requires execute_transaction_with_commit_condition")]
+    WitnessRequiresCommitCondition,
     #[error("missing Outbe post-execution output")]
     MissingPostExecutionOutput,
     #[error("missing execution summary artifact in block extra_data")]

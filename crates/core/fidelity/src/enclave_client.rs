@@ -45,7 +45,7 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
     }
 
     let expected_hash = fidelity_snapshot_canonical_hash(&req);
-    let snapshot: LeagueSnapshot = call_enclave(
+    let snapshot: LeagueSnapshot = call_consensus_enclave(
         expected_hash,
         EnclaveRequest::SnapshotFidelityLeagues {
             request: Box::new(req),
@@ -78,7 +78,7 @@ pub(crate) fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResu
     }
 
     let expected_hash = fidelity_query_canonical_hash(&req);
-    call_enclave(
+    call_query_enclave(
         expected_hash,
         EnclaveRequest::QueryFidelityIndex {
             request: Box::new(req),
@@ -98,6 +98,177 @@ fn call_enclave<T: AttestedAnswer>(expected_hash: B256, request: EnclaveRequest)
     let response =
         response.map_err(|e| FidelityFatalError::sidecar_request_failed(T::OPERATION, e))?;
     validate_answer(expected_hash, &attestation_pub, response)
+}
+
+fn call_consensus_enclave<T: AttestedAnswer>(
+    expected_hash: B256,
+    request: EnclaveRequest,
+) -> Result<T> {
+    let (attestation_pub, response) = outbe_tee::consensus_call(
+        T::OPERATION,
+        || {
+            outbe_tee::try_with_enclave(|client| {
+                let attestation_pub = client.attestation_pub();
+                client
+                    .request(&request)
+                    .map(|response| (attestation_pub, response))
+            })
+            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
+        },
+        |key, response| authenticate_answer::<T>(expected_hash, key, response),
+    )
+    .map_err(|error| map_consensus_error(T::OPERATION, error))?;
+    validate_answer(expected_hash, &attestation_pub, response)
+}
+
+fn authenticate_answer<T: AttestedAnswer>(
+    expected_hash: B256,
+    attestation_pub: &[u8; 32],
+    response: &EnclaveResponse,
+) -> core::result::Result<(), TransportError> {
+    let answer =
+        T::from_response(response.clone()).map_err(|_| TransportError::UnexpectedResponse)?;
+    if answer.inputs_canonical_hash() != expected_hash {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    answer.verify_attestation(attestation_pub)
+}
+
+fn call_query_enclave(expected_hash: B256, request: EnclaveRequest) -> Result<FidelityQueryResult> {
+    let (attestation_pub, response) = outbe_tee::consensus_call(
+        "QueryFidelityIndex",
+        || {
+            outbe_tee::try_with_enclave(|client| {
+                let attestation_pub = client.attestation_pub();
+                client
+                    .request(&request)
+                    .map(|response| (attestation_pub, response))
+            })
+            .ok_or_else(|| TransportError::Unavailable("enclave session unavailable".into()))?
+        },
+        |key, response| match response {
+            EnclaveResponse::FidelityIndexQueried { result } => {
+                if result.inputs_canonical_hash != expected_hash {
+                    return Err(TransportError::UnexpectedResponse);
+                }
+                outbe_tee::verify_fidelity_query_attestation(
+                    key,
+                    result.inputs_canonical_hash,
+                    result,
+                    &result.attestation_tag,
+                )
+            }
+            EnclaveResponse::FidelityQueryRejected {
+                reason,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => verify_query_rejection(
+                key,
+                expected_hash,
+                *inputs_canonical_hash,
+                reason,
+                attestation_tag,
+            ),
+            _ => Err(TransportError::UnexpectedResponse),
+        },
+    )
+    .map_err(|error| map_consensus_error("QueryFidelityIndex", error))?;
+
+    match response {
+        EnclaveResponse::FidelityIndexQueried { .. } => {
+            validate_answer(expected_hash, &attestation_pub, response)
+        }
+        EnclaveResponse::FidelityQueryRejected {
+            reason,
+            inputs_canonical_hash,
+            attestation_tag,
+        } => {
+            verify_query_rejection(
+                &attestation_pub,
+                expected_hash,
+                inputs_canonical_hash,
+                &reason,
+                &attestation_tag,
+            )
+            .map_err(FidelityFatalError::attestation_invalid)?;
+            Err(crate::errors::FidelityError::QueryFailed { reason }.into())
+        }
+        other => Err(failed_response("QueryFidelityIndex", other)),
+    }
+}
+
+fn verify_query_rejection(
+    key: &[u8; 32],
+    expected_hash: B256,
+    inputs_hash: B256,
+    reason: &str,
+    tag: &[u8],
+) -> core::result::Result<(), TransportError> {
+    if inputs_hash != expected_hash {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    let preimage = outbe_tee::response_auth::attestation(
+        b"outbe/fidelity/query-rejected/v1",
+        expected_hash,
+        reason,
+    )
+    .map_err(TransportError::codec)?;
+    outbe_tee::tribute_v2::verify_attestation(key, &preimage, tag)
+}
+
+fn map_consensus_error(operation: &'static str, error: TransportError) -> FidelityFatalError {
+    match error {
+        TransportError::EnclaveError(message) => FidelityFatalError::EnclaveOpError {
+            context: operation,
+            message,
+        },
+        other => FidelityFatalError::sidecar_request_failed(operation, other),
+    }
+}
+
+#[cfg(test)]
+mod consensus_tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn signed_query_rejection_requires_its_expected_hash_and_reason() {
+        let signer = SigningKey::from_bytes(&[0x71; 32]);
+        let expected = B256::repeat_byte(0x42);
+        let reason = "query is not available";
+        let preimage = outbe_tee::response_auth::attestation(
+            b"outbe/fidelity/query-rejected/v1",
+            expected,
+            reason,
+        )
+        .unwrap();
+        let tag = signer.sign(&preimage).to_bytes();
+
+        assert!(verify_query_rejection(
+            signer.verifying_key().as_bytes(),
+            expected,
+            expected,
+            reason,
+            &tag,
+        )
+        .is_ok());
+        assert!(verify_query_rejection(
+            signer.verifying_key().as_bytes(),
+            B256::ZERO,
+            expected,
+            reason,
+            &tag,
+        )
+        .is_err());
+        assert!(verify_query_rejection(
+            signer.verifying_key().as_bytes(),
+            expected,
+            expected,
+            "different reason",
+            &tag,
+        )
+        .is_err());
+    }
 }
 
 /// Checks the answer variant, then the canonical input hash, then the attestation tag.

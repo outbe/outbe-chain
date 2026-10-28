@@ -8,8 +8,29 @@ use outbe_primitives::{
 use outbe_tribute::worldwideday::genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay};
 use std::str::FromStr as _;
 
+struct OfferingPairs {
+    issuance_iso: u16,
+    reference_iso: u16,
+    issuance_vwap: U256,
+    reference_vwap: U256,
+    reference_scurve: U256,
+}
+
 impl Localnet {
     pub(crate) fn prepare_native_lysis_fixture(&self, worldwide_day: u32) -> Result<()> {
+        self.prepare_native_lysis_prices(
+            worldwide_day,
+            &[(840, U256::from(1_000_000)), (978, U256::from(250_000))],
+        )
+    }
+
+    /// Same allocation as [`prepare_native_lysis_fixture`], with the entry prices
+    /// the scenario's reference and issuance currencies must seal.
+    pub(crate) fn prepare_native_lysis_prices(
+        &self,
+        worldwide_day: u32,
+        prices: &[(u16, U256)],
+    ) -> Result<()> {
         let path = self.cfg.dir.join("genesis.json");
         let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
         let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis)?);
@@ -26,10 +47,25 @@ impl Localnet {
             1,
         );
         StorageHandle::enter(&mut provider, |storage| {
-            seed_native_lysis_fixture(storage, WorldwideDay::new(worldwide_day), timestamp)
+            seed_native_lysis_fixture(storage, WorldwideDay::new(worldwide_day), timestamp, prices)
         })?;
         write_measurement_accounts(&mut genesis, &provider, keys)?;
         replace_json_atomically(&path, &genesis)
+    }
+
+    /// Offering day plus a native Lysis allocation for MYR issuance against a USD
+    /// reference. `usd_entry_price_minor` is the USD UTC-day VWAP Lysis seals.
+    pub(crate) fn prepare_nod_lifecycle_fixture(&self, usd_entry_price_minor: u64) -> Result<u32> {
+        let entry = U256::from(usd_entry_price_minor);
+        let day = self.prepare_offering_fixture(OfferingPairs {
+            issuance_iso: 458,
+            reference_iso: 840,
+            issuance_vwap: U256::from(10_250_000_u64),
+            reference_vwap: entry,
+            reference_scurve: entry,
+        })?;
+        self.prepare_native_lysis_prices(day, &[(840, entry), (458, U256::from(10_250_000_u64))])?;
+        Ok(day)
     }
 
     pub(crate) fn fund_tribute_owners(&self, count: usize) -> Result<Vec<String>> {
@@ -47,6 +83,16 @@ impl Localnet {
     /// path still reads the canonical pair registry, WWD snapshot and EUR
     /// S-curve through the ordinary Tribute host/enclave interfaces.
     pub fn prepare_cross_currency_tribute_fixture(&self) -> Result<u32> {
+        self.prepare_offering_fixture(OfferingPairs {
+            issuance_iso: 949,
+            reference_iso: 978,
+            issuance_vwap: U256::from(10_250_000_u64),
+            reference_vwap: U256::from(250_000_u64),
+            reference_scurve: U256::from(320_000_u64),
+        })
+    }
+
+    fn prepare_offering_fixture(&self, pairs: OfferingPairs) -> Result<u32> {
         {
             let genesis_path = self.cfg.dir.join("genesis.json");
             let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
@@ -81,8 +127,10 @@ impl Localnet {
             }
 
             StorageHandle::enter(&mut provider, |storage| {
-                let issuance_pair = outbe_oracle::types::AddressPair::new_coen_to(949);
-                let reference_pair = outbe_oracle::types::AddressPair::new_coen_to(978);
+                let issuance_pair =
+                    outbe_oracle::types::AddressPair::new_coen_to(pairs.issuance_iso);
+                let reference_pair =
+                    outbe_oracle::types::AddressPair::new_coen_to(pairs.reference_iso);
                 let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 let issuance_index = match oracle.pair_index_of(issuance_pair)? {
                     0 => outbe_oracle::api::register_pair(storage.clone(), issuance_pair)?,
@@ -103,24 +151,28 @@ impl Localnet {
                     .worldwide_day_vwap_end
                     .write(&worldwide_day, day.forming_end)?;
                 let values = oracle.worldwide_day_vwap_value.get_nested(&worldwide_day);
-                values.write(&issuance_index, U256::from(10_250_000_u64))?;
-                values.write(&reference_index, U256::from(250_000_u64))?;
+                values.write(&issuance_index, pairs.issuance_vwap)?;
+                values.write(&reference_index, pairs.reference_vwap)?;
                 outbe_oracle::scurve::store_scurve_entry(
                     &mut oracle,
                     reference_pair,
                     worldwide_day.to_timestamp_utc(),
-                    U256::from(320_000_u64),
+                    pairs.reference_scurve,
                 )?;
-                let inputs =
-                    outbe_oracle::api::tribute_pricing_inputs(storage, 949, 978, worldwide_day)?
-                        .ok_or_else(|| {
-                            outbe_primitives::error::PrecompileError::Fatal(
-                                "cross-currency issuance pair was not registered".into(),
-                            )
-                        })?;
-                if inputs.issuance_wwd_vwap_minor != U256::from(10_250_000_u64)
-                    || inputs.reference_wwd_vwap_minor != U256::from(250_000_u64)
-                    || inputs.reference_scurve_minor != U256::from(320_000_u64)
+                let inputs = outbe_oracle::api::tribute_pricing_inputs(
+                    storage,
+                    pairs.issuance_iso,
+                    pairs.reference_iso,
+                    worldwide_day,
+                )?
+                .ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::Fatal(
+                        "cross-currency issuance pair was not registered".into(),
+                    )
+                })?;
+                if inputs.issuance_wwd_vwap_minor != pairs.issuance_vwap
+                    || inputs.reference_wwd_vwap_minor != pairs.reference_vwap
+                    || inputs.reference_scurve_minor != pairs.reference_scurve
                 {
                     return Err(outbe_primitives::error::PrecompileError::Fatal(
                         "cross-currency fixture did not persist its exact Oracle inputs".into(),
@@ -358,6 +410,7 @@ fn seed_native_lysis_fixture(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     timestamp: u64,
+    prices: &[(u16, U256)],
 ) -> Result<()> {
     let projection =
         outbe_tribute::worldwideday::api::worldwide_day(storage.clone(), worldwide_day)?
@@ -384,8 +437,7 @@ fn seed_native_lysis_fixture(
         finalized <= last_closed_day,
         "Oracle fixture must not finalize a day after genesis"
     );
-    let prices = [(840, U256::from(1_000_000)), (978, U256::from(250_000))];
-    for (iso, price) in prices {
+    for &(iso, price) in prices {
         let index = oracle.pair_index_of(outbe_oracle::types::AddressPair::new_coen_to(iso))?;
         eyre::ensure!(
             index != 0,
@@ -396,7 +448,7 @@ fn seed_native_lysis_fixture(
     oracle
         .utc_day_vwap_last_finalized
         .write(finalized.max(price_day))?;
-    for (iso, price) in prices {
+    for &(iso, price) in prices {
         let actual = outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), price_day, iso)?;
         eyre::ensure!(
             actual == Some(price),
@@ -741,7 +793,12 @@ mod tests {
                 outbe_metadosis::api::emission_day(storage.clone(), 20261025)?.is_none(),
                 "ordinary Tribute fixture must stay unallocated"
             );
-            seed_native_lysis_fixture(storage, day.worldwide_day, TIMESTAMP)
+            seed_native_lysis_fixture(
+                storage,
+                day.worldwide_day,
+                TIMESTAMP,
+                &[(840, U256::from(1_000_000)), (978, U256::from(250_000))],
+            )
         })
         .unwrap();
         write_measurement_accounts(&mut genesis, &provider, keys).unwrap();

@@ -668,6 +668,7 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(header_artifact)),
         timestamp_millis_part: 0,
         late_finalize_credits: None,
+        enclave_witness: None,
     })
     .expect("extra_data encodes");
 
@@ -963,11 +964,9 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
     let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
 
     let error = super::run_atomic_storage_hooks(&mut state, ctx, |_hook_ctx| {
-        Err(
-            outbe_primitives::error::PrecompileError::BodyReadUnavailable(
-                "native historical state is temporarily unavailable".into(),
-            ),
-        )
+        Err(outbe_primitives::error::PrecompileError::Storage(
+            "native historical state is temporarily unavailable".into(),
+        ))
     })
     .expect_err("native state unavailability must abort this payload execution");
 
@@ -975,6 +974,6 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         error
             .as_internal()
             .and_then(|inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>()),
-        Some(outbe_primitives::error::PrecompileError::BodyReadUnavailable(_))
+        Some(outbe_primitives::error::PrecompileError::Storage(_))
     ));
 }

@@ -225,6 +225,14 @@ fn cast_yes_votes_on(world: &mut World, names: String, id: u64) {
 }
 
 fn cast_yes_votes_for(world: &mut World, names: &str, id: u64) {
+    let genesis = std::fs::read(world.localnet.scenario_dir().join("genesis.json"))
+        .expect("read executed genesis for ballot receipt budget");
+    let genesis: serde_json::Value = serde_json::from_slice(&genesis)
+        .expect("decode executed genesis for ballot receipt budget");
+    let receipt_budget = super::common::consensus_block_wait_budget(&genesis, 2)
+        .expect("derive ballot receipt budget from executed consensus timing");
+    let receipt_attempts = u32::try_from(receipt_budget.as_millis().div_ceil(500))
+        .expect("ballot receipt polling budget exceeds u32");
     for name in names.split(',') {
         let name = name.trim();
         let validator = world.validators.by_name(name).expect("resolve validator");
@@ -233,7 +241,7 @@ fn cast_yes_votes_for(world: &mut World, names: &str, id: u64) {
             .cast_vote(&validator, id, true)
             .expect("send vote");
         assert!(
-            world.rpc.wait_successful_receipt(&tx, 40),
+            world.rpc.wait_successful_receipt(&tx, receipt_attempts),
             "vote receipt for {name} was not successful ({tx})",
         );
     }

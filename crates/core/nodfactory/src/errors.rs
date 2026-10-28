@@ -40,9 +40,6 @@ pub enum NodFactoryError {
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
 
-    #[error(transparent)]
-    CreateNodForTest(#[from] outbe_tee::TransportError),
-
     #[error("Nod group {group_key} has an empty member slot during cleanup")]
     EmptyGroupMemberSlotDuringCleanup { group_key: B256 },
 
@@ -101,9 +98,6 @@ impl From<NodFactoryError> for PrecompileError {
             NodFactoryError::SettlementDeadlinePassed => {
                 revert_with(I::SettlementDeadlinePassed {})
             }
-            NodFactoryError::CreateNodForTest(err) => revert_with(I::CreateNodForTest {
-                reason: err.to_string(),
-            }),
             NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key } => {
                 revert_with(I::EmptyGroupMemberSlotDuringCleanup {
                     groupKey: group_key,

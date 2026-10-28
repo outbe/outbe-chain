@@ -2,7 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 
 use super::{
     EncryptedTributeOffer, FidelityCohortRequest, FidelityQueryRequest, FidelitySnapshotRequest,
-    GratisOpRequest, Ledger, ParticipantAnnounce, PromisOpRequest,
+    GramineDirectDevOnboardingContextV1, GratisOpRequest, Ledger, ParticipantAnnounce,
+    PromisOpRequest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -269,7 +270,7 @@ pub enum EnclaveRequest {
 
     /// Owner-authorized read of one account's RCFI/league over its encrypted
     /// cohorts (signed, expiring authorization, see [`FidelityQueryRequest`]).
-    /// NOT a consensus path. Served via `eth_call`.
+    /// Consensus path when executed by a transaction; also served via `eth_call`.
     QueryFidelityIndex {
         request: Box<FidelityQueryRequest>,
     },
@@ -340,11 +341,6 @@ pub enum EnclaveRequest {
         anchor_outcome: Vec<u8>,
         export: bool,
     },
-    CreateNodForTestV1 {
-        terms: outbe_primitives::nod_encryption::NodTermsV1,
-        creator_public: [u8; 32],
-        amount: U256,
-    },
     MineEncryptedNodV1 {
         request: Box<crate::nod_mine::MineEncryptedNodRequestV1>,
     },
@@ -389,6 +385,37 @@ pub enum EnclaveRequest {
     ExecuteLysis {
         request: Box<crate::lysis::LysisRequest>,
     },
+    /// Prepare a DirectDev onboarding artifact from the typed canonical context.
+    PrepareGramineDirectDevOnboardingArtifactV2 {
+        #[serde(with = "canonical_onboarding_context")]
+        context: GramineDirectDevOnboardingContextV1,
+    },
+}
+
+mod canonical_onboarding_context {
+    use super::GramineDirectDevOnboardingContextV1;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(
+        context: &GramineDirectDevOnboardingContextV1,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        context.encode_canonical().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<GramineDirectDevOnboardingContextV1, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = Vec::<u8>::deserialize(deserializer)?;
+        GramineDirectDevOnboardingContextV1::decode_canonical(&bytes)
+            .map_err(|error| serde::de::Error::custom(format!("{error:?}")))
+    }
 }
 
 impl EnclaveRequest {
@@ -396,7 +423,6 @@ impl EnclaveRequest {
     /// both the node client and the enclave server. Never wire data.
     pub const fn label(&self) -> &'static str {
         match self {
-            Self::CreateNodForTestV1 { .. } => "create_nod_for_test_v1",
             Self::ExecuteLysis { .. } => "execute_lysis",
             Self::MineEncryptedNodV1 { .. } => "mine_encrypted_nod_v1",
             Self::ReadNodAmountV1 { .. } => "read_nod_amount_v1",
@@ -464,6 +490,9 @@ impl EnclaveRequest {
             Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => {
                 "ingest_gramine_direct_dev_onboarding_artifact_v1"
             }
+            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
+                "prepare_gramine_direct_dev_onboarding_artifact_v2"
+            }
         }
     }
 
@@ -476,7 +505,6 @@ impl EnclaveRequest {
     /// choice.
     pub const fn is_idempotent(&self) -> bool {
         match self {
-            Self::CreateNodForTestV1 { .. } => true,
             Self::GetQuote { .. }
             | Self::ExecuteLysis { .. }
             | Self::MineEncryptedNodV1 { .. }
@@ -504,6 +532,7 @@ impl EnclaveRequest {
             | Self::QueryFidelityIndex { .. }
             | Self::Health
             | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
+            Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => true,
             Self::BeginUpgradeKeyTransferV1 { .. }
             | Self::GetInitializationChallenge
             | Self::Initialize { .. }
@@ -531,5 +560,148 @@ impl EnclaveRequest {
             | Self::FinishDcapOnboardingArtifactIngestV1 { .. }
             | Self::IngestGramineDirectDevOnboardingArtifactV1 { .. } => false,
         }
+    }
+
+    /// Classify each request for consensus witness recording. Stream fragments
+    /// are recorded only as their single logical completion response.
+    pub const fn consensus_witness_kind(&self) -> super::ConsensusWitnessKind {
+        use super::ConsensusWitnessKind::{NonConsensus, Recorded, StreamFrame};
+        match self {
+            Self::ApplyGratisOp { .. }
+            | Self::ApplyPromisOp { .. }
+            | Self::SnapshotFidelityLeagues { .. }
+            | Self::QueryFidelityIndex { .. }
+            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
+            | Self::MineEncryptedNodV1 { .. }
+            | Self::ReadNodAmountV1 { .. }
+            | Self::EncryptNodForTributeV1 { .. }
+            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
+            | Self::ReadTributeAmountsV2 { .. }
+            | Self::ApplyTributeDayOpV2 { .. }
+            | Self::ReadTributeDayAmountV2 { .. } => Recorded,
+            Self::BeginDcapVerificationV1 { .. }
+            | Self::BeginDcapOnboardingVerificationV1 { .. }
+            | Self::DcapVerificationChunkV1 { .. }
+            | Self::FinishDcapVerificationV1 { .. } => StreamFrame,
+            Self::DeriveAccountKeys { .. }
+            | Self::ApplyFidelityCohortOp { .. }
+            | Self::ProcessTributeOfferBatch { .. }
+            | Self::GetQuote { .. }
+            | Self::GetInitializationChallenge
+            | Self::Initialize { .. }
+            | Self::OpenSession
+            | Self::OpenRemoteSessionV1 { .. }
+            | Self::SessionHandshake { .. }
+            | Self::GetPublicKeys
+            | Self::AuthorizeRemoteSessionV1 { .. }
+            | Self::GenerateDcapQuote { .. }
+            | Self::SignRegistrationIntentDevV1 { .. }
+            | Self::DkgOpen { .. }
+            | Self::DkgStartDealer { .. }
+            | Self::DkgPlayerIngest { .. }
+            | Self::DkgDealerReceiveAck { .. }
+            | Self::DkgDealerFinalize { .. }
+            | Self::DkgPlayerFinalize { .. }
+            | Self::DkgTributeOfferPartial { .. }
+            | Self::DkgFinalizeTributeOffer { .. }
+            | Self::BeginDcapOnboardingArtifactIngestV1 { .. }
+            | Self::DcapOnboardingArtifactChunkV1 { .. }
+            | Self::CommitDcapOnboardingArtifactRecordV1 { .. }
+            | Self::FinishDcapOnboardingArtifactIngestV1 { .. }
+            | Self::Health
+            | Self::DkgParticipantAnnounceV1 { .. }
+            | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+            | Self::IngestGramineDirectDevOnboardingArtifactV1 { .. }
+            | Self::GenerateTransitionEvidenceDevV1 { .. }
+            | Self::RetireRemoteSessionsV1 { .. }
+            | Self::AuthorizeRemoteSessionV2 { .. }
+            | Self::BeginUpgradeKeyTransferV1 { .. }
+            | Self::NodTransferChunkV1 { .. }
+            | Self::ExecuteNodTransferV1 { .. }
+            | Self::ReadNodTransferV1 { .. }
+            | Self::DiscardNodTransferV1 { .. }
+            | Self::ExecuteLysis { .. } => NonConsensus,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ConsensusWitnessKind, FidelityQueryRequest};
+
+    fn onboarding_context() -> GramineDirectDevOnboardingContextV1 {
+        GramineDirectDevOnboardingContextV1 {
+            chain_id: [1; 32],
+            genesis_hash: B256::repeat_byte(2),
+            intent_hash: B256::repeat_byte(3),
+            node_id_hash: B256::repeat_byte(4),
+            enclave_id: B256::repeat_byte(5),
+            binding_id: B256::repeat_byte(6),
+            policy_hash: B256::repeat_byte(7),
+            recipient_x25519: [8; 32],
+            tribute_offer_public: [9; 32],
+            key_epoch: 10,
+            tribute_offer_epoch: 11,
+        }
+    }
+
+    #[test]
+    fn appended_request_preserves_wire_ordinals_and_round_trips_canonical_context() {
+        let legacy = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 {
+            request_hash: B256::ZERO,
+            context: vec![],
+        };
+        let appended = EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
+            context: onboarding_context(),
+        };
+        assert_eq!(postcard::to_allocvec(&legacy).unwrap()[0], 35);
+        assert_eq!(postcard::to_allocvec(&appended).unwrap()[0], 53);
+        let encoded = postcard::to_allocvec(&appended).unwrap();
+        assert_eq!(
+            postcard::from_bytes::<EnclaveRequest>(&encoded).unwrap(),
+            appended
+        );
+    }
+
+    #[test]
+    fn consensus_witness_classifier_marks_recorded_stream_and_non_consensus_requests() {
+        let query = EnclaveRequest::QueryFidelityIndex {
+            request: Box::new(FidelityQueryRequest {
+                chain_id: B256::ZERO,
+                account: Address::ZERO,
+                cohort_blob: vec![],
+                query_timestamp: 0,
+                block_timestamp: 0,
+                first_qualified_start: 0,
+                expiry: 0,
+                owner_sig: vec![],
+            }),
+        };
+        let stream = EnclaveRequest::DcapVerificationChunkV1 {
+            request_hash: B256::ZERO,
+            offset: 0,
+            bytes: vec![],
+        };
+        let non_consensus = EnclaveRequest::Health;
+        assert_eq!(
+            query.consensus_witness_kind(),
+            ConsensusWitnessKind::Recorded
+        );
+        assert_eq!(
+            stream.consensus_witness_kind(),
+            ConsensusWitnessKind::StreamFrame
+        );
+        assert_eq!(
+            non_consensus.consensus_witness_kind(),
+            ConsensusWitnessKind::NonConsensus
+        );
+        assert_eq!(
+            EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 {
+                context: onboarding_context(),
+            }
+            .consensus_witness_kind(),
+            ConsensusWitnessKind::Recorded
+        );
     }
 }

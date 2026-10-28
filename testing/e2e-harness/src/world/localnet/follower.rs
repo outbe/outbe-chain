@@ -339,7 +339,34 @@ impl Localnet {
         self.launch_certified_follower_with_args(name, index, args)
     }
 
-    /// Launch the real certified-follower command while deliberately omitting
+    /// Launch a keyless full node (`WitnessPolicy::ReplayOnly`) without
+    /// provisioning an enclave sidecar or passing `--tee-enclave-socket`.
+    pub fn launch_keyless_full_node(
+        &mut self,
+        name: &str,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<()> {
+        let node_dir = self.cfg.validator_dir(index);
+        fs::create_dir_all(node_dir.join("logs"))?;
+        let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
+        if !reth_secret_path.is_file() {
+            fs::write(&reth_secret_path, random_hex_32()?)?;
+        }
+        let p2p_secret_file = proc::normalized_secret_file(&reth_secret_path)?;
+        let mut args = self.reth_base_args(&node_dir, index);
+        args.extend(args![
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
+            "--upstream",
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
+        ]);
+        self.launch_certified_follower_with_args(name, index, args)
+    }
+
+    /// Launch a validator-role node command while deliberately omitting
     /// the mandatory enclave endpoint. This is a negative acceptance probe:
     /// production startup must fail before RPC/network service is available.
     pub fn launch_enclave_less_follower(
@@ -362,6 +389,11 @@ impl Localnet {
         let p2p_secret_file = proc::normalized_secret_file(&reth_secret_path)?;
         let mut args = self.reth_base_args(&node_dir, index);
         args.extend(args![
+            "--validator",
+            "--consensus.signing-key",
+            node_dir.join("signing-key.hex").display(),
+            "--validator.evm-key",
+            node_dir.join("evm-key.hex").display(),
             "--p2p-secret-key",
             p2p_secret_file.display(),
             "--upstream",
@@ -373,7 +405,14 @@ impl Localnet {
             &node_dir.join("node.log"),
             ([127, 0, 0, 1], self.cfg.http_port(index)).into(),
         )?;
-        self.launch_certified_follower_with_args(name, index, args)?;
+        let mut command = Command::new(&self.cfg.bin_chain);
+        command
+            .env("RUST_MIN_STACK", "16777216")
+            .env("RUST_LOG", "info,outbe_consensus=debug");
+        command.args(&args);
+        attach_log(&mut command, &node_dir)?;
+        let guard = self.spawn_node(name, index, &node_dir, command)?;
+        self.followers.insert(name.to_owned(), guard);
         self.follower_startup_probes
             .insert(name.to_owned(), (index, probe));
         Ok(())

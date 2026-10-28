@@ -145,17 +145,59 @@ fn query_fidelity(
     context: RequestContext<'_>,
     request: Box<outbe_tee::protocol::FidelityQueryRequest>,
 ) -> EnclaveResponse {
-    fidelity_request(context, "QueryFidelityIndex", |key| {
-        let mut result = crate::fidelity::query_index(key, context.chain_id, &request)?;
-        let preimage = outbe_tee::protocol::fidelity_query_attestation_preimage(
-            result.inputs_canonical_hash,
-            &result,
-        )?;
-        result.attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
-        Ok(EnclaveResponse::FidelityIndexQueried {
-            result: Box::new(result),
-        })
-    })
+    let inputs_canonical_hash = outbe_tee::protocol::fidelity_query_canonical_hash(&request);
+    let Some(derived) = context.offer_key.get() else {
+        return EnclaveResponse::Error {
+            message: "QueryFidelityIndex: no resident group key (DKG not complete)".into(),
+        };
+    };
+    let state_key = match crate::fidelity::derive_fidelity_state_key(
+        derived.group_sig(),
+        context.chain_id,
+        0,
+    ) {
+        Ok(key) => key,
+        Err(error) => {
+            return EnclaveResponse::Error {
+                message: error.to_string(),
+            }
+        }
+    };
+    match crate::fidelity::query_index(&state_key, context.chain_id, &request) {
+        Ok(mut result) => {
+            let preimage = match outbe_tee::protocol::fidelity_query_attestation_preimage(
+                result.inputs_canonical_hash,
+                &result,
+            ) {
+                Ok(preimage) => preimage,
+                Err(error) => return into_response(Err(crate::errors::TeeError::from(error))),
+            };
+            result.attestation_tag = context.keys.sign_attestation(&preimage).to_vec();
+            EnclaveResponse::FidelityIndexQueried {
+                result: Box::new(result),
+            }
+        }
+        Err(error) => {
+            let reason = error.to_string();
+            let preimage = match outbe_tee::response_auth::attestation(
+                b"outbe/fidelity/query-rejected/v1",
+                inputs_canonical_hash,
+                &reason,
+            ) {
+                Ok(preimage) => preimage,
+                Err(error) => {
+                    return EnclaveResponse::Error {
+                        message: error.to_string(),
+                    }
+                }
+            };
+            EnclaveResponse::FidelityQueryRejected {
+                inputs_canonical_hash,
+                reason,
+                attestation_tag: context.keys.sign_attestation(&preimage).to_vec(),
+            }
+        }
+    }
 }
 
 fn apply_promis(
@@ -278,4 +320,71 @@ fn fidelity_request(
         crate::fidelity::derive_fidelity_state_key(derived.group_sig(), context.chain_id, 0)
             .and_then(|key| apply(&key)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_fidelity_query_refusal_is_attested_to_canonical_inputs() {
+        let chain_id = alloy_primitives::B256::repeat_byte(0xA1);
+        let keys = EnclaveKeys::new([0xA2; 32], Some([0xA2; 32])).unwrap();
+        let offer_key: SharedTributeOfferKey = std::sync::Arc::new(std::sync::OnceLock::new());
+        assert!(offer_key
+            .set(DerivedTributeOfferKey::for_test(
+                [0xA3; 32],
+                vec![0xA4; 96],
+                0,
+                0,
+            ))
+            .is_ok());
+        let request = outbe_tee::protocol::FidelityQueryRequest {
+            chain_id,
+            account: alloy_primitives::Address::ZERO,
+            cohort_blob: vec![],
+            query_timestamp: 0,
+            block_timestamp: 0,
+            first_qualified_start: 0,
+            expiry: 0,
+            owner_sig: vec![],
+        };
+        let expected_hash = outbe_tee::protocol::fidelity_query_canonical_hash(&request);
+        let initialization = DispatchInitializationContext {
+            chain_id,
+            boot: None,
+            initialization: None,
+            quote_generator: crate::gramine::dcap_quote,
+        };
+        let response = query_fidelity(
+            RequestContext {
+                keys: &keys,
+                offer_key: &offer_key,
+                chain_id,
+                initialization,
+            },
+            Box::new(request),
+        );
+        let EnclaveResponse::FidelityQueryRejected {
+            inputs_canonical_hash,
+            reason,
+            attestation_tag,
+        } = response
+        else {
+            panic!("invalid query authorization was not a typed refusal: {response:?}");
+        };
+        assert_eq!(inputs_canonical_hash, expected_hash);
+        let preimage = outbe_tee::response_auth::attestation(
+            b"outbe/fidelity/query-rejected/v1",
+            inputs_canonical_hash,
+            &reason,
+        )
+        .unwrap();
+        outbe_tee::tribute_v2::verify_attestation(
+            &keys.attestation_pub(),
+            &preimage,
+            &attestation_tag,
+        )
+        .unwrap();
+    }
 }

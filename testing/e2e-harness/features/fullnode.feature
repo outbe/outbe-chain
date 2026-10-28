@@ -27,6 +27,14 @@ Feature: FullNode synchronization, failover, promotion, and replay
     Then the FullNode exits on the mandatory TEE guardrail before opening RPC
     And the committee finalizes two new blocks after the rejected FullNode startup
 
+  @sgx-no-attest @sudo @keyless-fullnode-replay
+  Scenario: A keyless FullNode without an enclave syncs across a reshare and serves public RPC
+    Given a fresh localnet with a short epoch
+    When the committee drives past a reshare
+    And a keyless FullNode without an enclave syncs from the committee
+    Then the follower reaches the committee finalized checkpoint with matching hash and state root
+    And the keyless FullNode reports an unconfigured enclave
+
   @pfs-008-06 @pfs-008-07 @pfs-008-08
   Scenario: Warm promotion survives duplicate readiness and boundary restarts
     Given a fresh localnet with a short epoch

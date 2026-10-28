@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
+pub(in crate::executor) const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
 
 pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 
@@ -37,7 +37,7 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
     Address::from(bytes)
 }
 
-pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
+pub(in crate::executor) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     use outbe_primitives::tee_test_utils::{
         gramine_direct_policy_v1, tee_attestation_v1_extra_field,
     };
@@ -55,11 +55,11 @@ pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     spec
 }
 
-pub(super) fn test_evm_signer() -> Arc<OutbeEvmSigner> {
+pub(in crate::executor) fn test_evm_signer() -> Arc<OutbeEvmSigner> {
     Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).unwrap())
 }
 
-pub(super) fn test_evm_env(block_number: u64, beneficiary: Address) -> EvmEnv {
+pub(in crate::executor) fn test_evm_env(block_number: u64, beneficiary: Address) -> EvmEnv {
     EvmEnv {
         cfg_env: CfgEnv::new()
             .with_chain_id(CHAIN_ID)
@@ -133,7 +133,7 @@ fn state_with_active_proposer_fixture(
         .build()
 }
 
-pub(super) fn state_with_active_proposer_and_funded_account(
+pub(in crate::executor) fn state_with_active_proposer_and_funded_account(
     proposer: Address,
     funded: Address,
 ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
@@ -193,7 +193,7 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
         .build()
 }
 
-pub(super) fn state_with_active_validators_seeded(
+pub(in crate::executor) fn state_with_active_validators_seeded(
     validators: &[(Address, [u8; 48])],
     seed_extra: impl FnOnce(StorageHandle),
 ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
@@ -343,7 +343,7 @@ pub(super) fn execution_ctx<'a>(
     }
 }
 
-pub(super) fn block_one_execution_ctx<'a>(
+pub(in crate::executor) fn block_one_execution_ctx<'a>(
     tx_count_hint: Option<usize>,
     extra_data: Bytes,
 ) -> OutbeBlockExecutionCtx<'a> {
@@ -360,7 +360,7 @@ pub(super) fn execution_ctx_with_tee_bootstrap<'a>(
     ctx
 }
 
-pub(super) enum BootstrapFixture {
+pub(in crate::executor) enum BootstrapFixture {
     StandardForBlock,
     Payload(Box<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>),
     Absent,
@@ -377,16 +377,16 @@ impl BootstrapFixture {
     }
 }
 
-pub(super) struct BeginBlockFixture<'a> {
-    pub(super) block_number: u64,
-    pub(super) parent_hash: B256,
-    pub(super) extra_data: &'a Bytes,
-    pub(super) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    pub(super) proposer: Address,
-    pub(super) bootstrap: BootstrapFixture,
+pub(in crate::executor) struct BeginBlockFixture<'a> {
+    pub(in crate::executor) block_number: u64,
+    pub(in crate::executor) parent_hash: B256,
+    pub(in crate::executor) extra_data: &'a Bytes,
+    pub(in crate::executor) parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+    pub(in crate::executor) proposer: Address,
+    pub(in crate::executor) bootstrap: BootstrapFixture,
 }
 
-pub(super) fn begin_system_txs_for_test(
+pub(in crate::executor) fn begin_system_txs_for_test(
     config: &OutbeEvmConfig,
     input: BeginBlockFixture<'_>,
 ) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
@@ -535,7 +535,7 @@ pub(super) fn test_metadata() -> CertifiedParentAccountingMetadata {
 // `outbe_rewards::runtime::check_and_record_metadata_fingerprint`
 // verify the remaining `validator_fee_sum` field.
 
-pub(super) fn dummy_pubkey(seed: u8) -> [u8; 48] {
+pub(in crate::executor) fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];
     pk[0] = seed;
     pk
@@ -899,7 +899,7 @@ pub(super) fn executor_inputs_with_bootstrap(
 }
 
 /// Independent trie-root projection of the executed test bundle.
-pub(super) fn post_state_root(state: &revm::database::BundleState) -> B256 {
+pub(in crate::executor) fn post_state_root(state: &revm::database::BundleState) -> B256 {
     use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
     let sorted = HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();

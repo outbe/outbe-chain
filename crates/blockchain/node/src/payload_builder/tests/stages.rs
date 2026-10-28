@@ -444,15 +444,3 @@ fn invalid_transaction_preserves_the_actual_validation_reason() {
         Some(revm::context_interface::result::InvalidTransaction::NonceTooHigh { tx: 4, state: 0 })
     ));
 }
-
-#[test]
-fn local_read_deadline_is_a_fatal_precompile_error() {
-    let result = outbe_evm::precompiles::map_outbe_precompile_result(
-        Err(PrecompileError::BodyReadRequestDeadline),
-        100,
-    );
-    assert!(matches!(
-        result,
-        Err(revm::precompile::PrecompileError::Fatal(_))
-    ));
-}

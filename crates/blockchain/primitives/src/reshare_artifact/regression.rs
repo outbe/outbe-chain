@@ -22,6 +22,7 @@ fn mixed_artifacts(consensus: ConsensusHeaderArtifact) -> OutbeBlockArtifacts {
                 aggregate_signature: [0x33; 96],
             }],
         }),
+        enclave_witness: None,
     }
 }
 
@@ -119,6 +120,7 @@ fn duplicate_checks_precede_record_payload_validation() {
             "duplicate timestamp_millis_part",
         ),
         (6, vec![0, 0], "duplicate late finalize credits artifact"),
+        (0x0A, vec![0x01], "duplicate enclave witness artifact"),
     ] {
         assert_fatal(&envelope(&[(tag, &payload), (tag, &[])]), message);
     }
@@ -155,6 +157,7 @@ fn malformed_record_lengths_and_unknown_tags_keep_exact_errors() {
         (6, "late finalize credits payload too short"),
         (7, "committee pre-announce payload too short for epoch"),
         (8, "unsupported block artifact tag: 8"),
+        (0x0A, "empty enclave witness payload"),
         (255, "unsupported block artifact tag: 255"),
     ] {
         assert_fatal(&envelope(&[(tag, &[])]), message);

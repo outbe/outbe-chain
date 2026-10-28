@@ -272,11 +272,15 @@ where
             return Ok(None);
         }
         self.proposer_evm_address
-            .or_else(|| self.evm_signer.as_ref().map(|signer| signer.address()))
             .or_else(|| {
                 self.expected_begin_system_txs
                     .first()
                     .map(|tx| Address::from(*tx.signer()))
+            })
+            .or_else(|| {
+                (!self.is_verifier_witness_mode())
+                    .then(|| self.evm_signer.as_ref().map(|signer| signer.address()))
+                    .flatten()
             })
             .ok_or_else(|| {
                 crate::errors::ExecutorValidationError::MissingBeginZoneProposerAddress.into()
