@@ -6,6 +6,8 @@
 //! `outbe-primitives` to avoid circular dependencies between `outbe-consensus`
 //! and `outbe-evm`.
 
+mod finalization;
+
 use alloy_primitives::{Address, Bytes, B256};
 use std::{
     collections::VecDeque,
@@ -14,8 +16,12 @@ use std::{
         Arc, Mutex, MutexGuard,
     },
 };
-use tokio::sync::{mpsc, oneshot};
 
+use self::finalization::FinalizationFetcherTx;
+pub use self::finalization::{
+    FinalizationFetcherRx, FinalizationRequestError, FinalizedBlockBytes, FINALIZATION_QUEUE_DEPTH,
+    FINALIZATION_REQUEST_TIMEOUT,
+};
 use crate::reshare_artifact::ExecutionSummaryArtifact;
 
 const EXECUTION_SUMMARY_CACHE_LIMIT: usize = 1024;
@@ -485,31 +491,6 @@ struct BridgeState {
     finalization_fetcher: Option<FinalizationFetcherTx>,
 }
 
-/// The marshal-backed answer to an `outbe_getFinalization` request. It holds
-/// the commonware-codec-encoded finalization certificate and the encoded
-/// `ConsensusBlock`, ready to hex and ship. A follower's resolver reconstructs
-/// `finalization.encode() || block.encode()` from exactly these two fields.
-#[derive(Clone, Debug)]
-pub struct FinalizedBlockBytes {
-    /// `commonware_codec::Encode` bytes of the direct `Finalization` certificate.
-    /// Empty for indirectly finalized ancestors; getFinalization must reject
-    /// that case while getFinalityProof can supply an authenticated descendant.
-    pub finalization: Bytes,
-    /// `commonware_codec::Encode` bytes of the finalized `ConsensusBlock`.
-    pub block: Bytes,
-}
-
-/// Sender half of the finalization fetch channel: a height plus a one-shot
-/// reply. It lives in the bridge so the `outbe-rpc` handler can request
-/// finalized bytes from the consensus thread. That handler cannot see the
-/// marshal or `ConsensusBlock`.
-type FinalizationFetcherTx =
-    mpsc::UnboundedSender<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
-
-/// Receiver half handed to the consensus-side drainer.
-pub type FinalizationFetcherRx =
-    mpsc::UnboundedReceiver<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
-
 #[derive(Clone, Copy)]
 struct ExecutionSummaryCacheEntry {
     block_number: u64,
@@ -695,6 +676,13 @@ impl ConsensusExecutionBridge {
         state.consensus_status = status;
     }
 
+    /// Applies `update` to the consensus status under a single lock so
+    /// concurrent writers of disjoint fields (such as DKG randomness status)
+    /// cannot overwrite `last_finalized_block` with a stale snapshot.
+    pub fn update_consensus_status(&self, update: impl FnOnce(&mut ConsensusStatus)) {
+        update(&mut self.lock_state().consensus_status);
+    }
+
     /// Returns a snapshot of the current consensus status.
     pub fn consensus_status(&self) -> ConsensusStatus {
         let state = self.lock_state();
@@ -725,36 +713,6 @@ impl ConsensusExecutionBridge {
             state.consensus_status.clone(),
             local_threshold_share_is_usable(&state),
         )
-    }
-
-    /// Installs the finalization fetcher channel and stores the sender. Called
-    /// once at marshal-start (validator and follower paths both register one).
-    /// The consensus thread drains the matching [`FinalizationFetcherRx`] and
-    /// answers from the marshal. Returns the receiver to hand to the drainer.
-    pub fn set_finalization_fetcher(&self) -> FinalizationFetcherRx {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.lock_state().finalization_fetcher = Some(tx);
-        rx
-    }
-
-    /// Requests the finalized certificate + block bytes for `height` from the
-    /// consensus thread (used by the `outbe_getFinalization` RPC handler).
-    ///
-    /// Returns `None` in these cases:
-    /// - No fetcher is installed (consensus not serving).
-    /// - The drainer dropped the reply (height not available).
-    /// - The channel is closed.
-    ///
-    /// The reply travels back over a one-shot so concurrent requests do not
-    /// interfere.
-    pub async fn request_finalization(&self, height: u64) -> Option<FinalizedBlockBytes> {
-        let sender = {
-            let state = self.lock_state();
-            state.finalization_fetcher.clone()?
-        };
-        let (reply_tx, reply_rx) = oneshot::channel();
-        sender.send((height, reply_tx)).ok()?;
-        reply_rx.await.ok().flatten()
     }
 }
 

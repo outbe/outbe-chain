@@ -2,9 +2,7 @@ use std::sync::Arc;
 
 use outbe_evm::OutbeEvmConfig;
 use outbe_primitives::{
-    error::PrecompileError,
-    runtime_audit_v1::{BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE},
-    system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
+    runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
@@ -245,19 +243,8 @@ where
     }
 }
 
-fn precompile_execution_error(error: &BlockExecutionError) -> Option<&PrecompileError> {
-    error.as_internal()?.downcast_other::<PrecompileError>()
-}
-
-fn payload_execution_failure_kind(error: &BlockExecutionError) -> &'static str {
-    if matches!(
-        precompile_execution_error(error),
-        Some(PrecompileError::BodyReadRequestDeadline)
-    ) {
-        BODY_READ_REQUEST_DEADLINE
-    } else {
-        OTHER_PAYLOAD_EXECUTION_FAILURE
-    }
+fn payload_execution_failure_kind(_error: &BlockExecutionError) -> &'static str {
+    OTHER_PAYLOAD_EXECUTION_FAILURE
 }
 
 #[cfg(test)]

@@ -137,6 +137,7 @@ fn only_method_not_found_selects_the_legacy_method() {
     );
     for error in [
         call(-32000),
+        call(-32005),
         call(-32603),
         ClientError::RequestTimeout,
         ClientError::Custom("transport".into()),

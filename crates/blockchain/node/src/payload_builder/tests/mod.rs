@@ -12,9 +12,7 @@ use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_primitives::{address, keccak256, Bytes, Signature, TxKind, B256, U256};
 use alloy_rpc_types_engine::PayloadId;
-use outbe_primitives::runtime_audit_v1::{
-    BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
-};
+use outbe_primitives::runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE;
 
 use outbe_evm::{
     system_tx::{split_system_layout, system_tx_intrinsic_gas, SystemTxKind},
@@ -50,13 +48,8 @@ const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
 
 #[test]
 fn payload_failure_kind_is_structural_and_stable() {
-    let deadline = BlockExecutionError::other(PrecompileError::BodyReadRequestDeadline);
     let other = BlockExecutionError::msg("unclassified payload failure");
 
-    assert_eq!(
-        payload_execution_failure_kind(&deadline),
-        BODY_READ_REQUEST_DEADLINE
-    );
     assert_eq!(
         payload_execution_failure_kind(&other),
         OTHER_PAYLOAD_EXECUTION_FAILURE

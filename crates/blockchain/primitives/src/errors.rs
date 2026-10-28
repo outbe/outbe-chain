@@ -20,14 +20,6 @@ pub enum PrecompileError {
     #[error("storage error: {0}")]
     Storage(String),
 
-    /// The local body backend could not serve this execution read.
-    #[error("body read unavailable: {0}")]
-    BodyReadUnavailable(String),
-
-    /// The local consensus request expired while waiting for a body read.
-    #[error("body read request deadline exceeded")]
-    BodyReadRequestDeadline,
-
     /// A body or body index broke deterministic repository invariants.
     #[error("body read corruption: {0}")]
     BodyReadCorruption(String),
@@ -784,11 +776,6 @@ impl PrecompileError {
         Self::Storage(error.to_string())
     }
 
-    /// Construct a [`PrecompileError::BodyReadUnavailable`] from a message.
-    pub fn body_read_unavailable(message: impl Into<String>) -> Self {
-        Self::BodyReadUnavailable(message.into())
-    }
-
     /// Construct a [`PrecompileError::BodyReadCorruption`] from a message.
     pub fn body_read_corruption(message: impl Into<String>) -> Self {
         Self::BodyReadCorruption(message.into())
@@ -822,8 +809,6 @@ impl PrecompileError {
                 "precompile reported Unsupported".into(),
             )),
             error @ (Self::Storage(_)
-            | Self::BodyReadUnavailable(_)
-            | Self::BodyReadRequestDeadline
             | Self::Fatal(_)
             | Self::FatalWithCause(_)
             | Self::EnclaveUnavailable(_)) => {
@@ -849,8 +834,6 @@ impl PrecompileError {
     pub fn is_node_local(&self) -> bool {
         match self {
             Self::Storage(_)
-            | Self::BodyReadUnavailable(_)
-            | Self::BodyReadRequestDeadline
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
             Self::OutOfGas
@@ -921,16 +904,6 @@ mod tests {
             (PrecompileError::OutOfGas, false, PassFailure::Stop),
             (
                 PrecompileError::Storage("x".into()),
-                true,
-                PassFailure::Propagate,
-            ),
-            (
-                PrecompileError::BodyReadUnavailable("x".into()),
-                true,
-                PassFailure::Propagate,
-            ),
-            (
-                PrecompileError::BodyReadRequestDeadline,
                 true,
                 PassFailure::Propagate,
             ),
