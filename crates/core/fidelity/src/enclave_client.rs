@@ -7,7 +7,7 @@
 //! (canonical-hash recheck), attestation (verify-then-discard), and
 //! `tee_sidecar_unavailable` failure mode.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::protocol::{
     fidelity_cohort_canonical_hash, fidelity_query_canonical_hash,
@@ -38,9 +38,10 @@ pub(crate) fn apply_cohort_op(req: FidelityCohortRequest) -> Result<FidelityCoho
 
 /// Batch-snapshot per-owner leagues inside the enclave.
 pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<FidelityLeagueEntry>> {
+    let owners: Vec<Address> = req.entries.iter().map(|entry| entry.owner).collect();
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(leagues) = test_enclave::try_snapshot(&req) {
-        return leagues;
+        return require_requested_owners(&owners, leagues?);
     }
 
     let expected_hash = fidelity_snapshot_canonical_hash(&req);
@@ -50,7 +51,23 @@ pub(crate) fn snapshot_leagues(req: FidelitySnapshotRequest) -> Result<Vec<Fidel
             request: Box::new(req),
         },
     )?;
-    Ok(snapshot.leagues)
+    require_requested_owners(&owners, snapshot.leagues)
+}
+
+/// Rejects a snapshot that is not one league per requested owner, in request order.
+pub(crate) fn require_requested_owners(
+    owners: &[Address],
+    leagues: Vec<FidelityLeagueEntry>,
+) -> Result<Vec<FidelityLeagueEntry>> {
+    let bound = leagues.len() == owners.len()
+        && leagues
+            .iter()
+            .zip(owners)
+            .all(|(entry, owner)| entry.owner == *owner);
+    if !bound {
+        return Err(FidelityFatalError::SnapshotUnbound.into());
+    }
+    Ok(leagues)
 }
 
 /// Owner-authorized RCFI/league query inside the enclave (eth_call path).
