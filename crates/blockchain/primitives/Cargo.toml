@@ -43,8 +43,9 @@ thiserror.workspace = true
 time.workspace = true
 # Async request/response channel for the bridge's finalization fetcher (the
 # follower-upstream `outbe_getFinalization` serving path crosses the
-# outbe-rpc -> consensus crate boundary through the bridge). `sync` only.
-tokio = { workspace = true, features = ["sync"] }
+# outbe-rpc -> consensus crate boundary through the bridge). `time` bounds
+# the wait for a reply.
+tokio = { workspace = true, features = ["sync", "time"] }
 # Validator EVM signer (system-tx signing key). Lives here so consensus does
 # not need an `outbe-evm` dep just for the signer type.
 k256.workspace = true
@@ -52,6 +53,7 @@ zeroize.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 outbe-primitives = { path = ".", features = ["test-utils", "tee-attestation-v1", "bench-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 ed25519-dalek.workspace = true

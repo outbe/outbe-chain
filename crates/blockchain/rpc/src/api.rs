@@ -421,15 +421,35 @@ pub trait OutbeApi {
     /// serve it. Otherwise, the call returns an error. The caller verifies the
     /// certificate against the epoch committee. This RPC is a bytes transport,
     /// not a trust root.
+    ///
+    /// Errors that a caller must handle:
+    /// - `-32602` when `height` is above the node's finalized height. The node
+    ///   does not enqueue the request.
+    /// - `-32005` when the finalization queue is full or the request does not
+    ///   complete within 5 s. Retry this error after a short delay.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 
     /// Canonical consensus block bytes for commitment-bound ancestor recovery.
     /// This endpoint conveys no finality authority. Consumers must authenticate
     /// the requested digest through an independently verified descendant.
+    ///
+    /// Errors that a caller must handle:
+    /// - `-32602` when `height` is above the node's finalized height. The node
+    ///   does not enqueue the request.
+    /// - `-32005` when the finalization queue is full or the request does not
+    ///   complete within 5 s. Retry this error after a short delay.
     #[method(name = "getConsensusBlock")]
     async fn get_consensus_block(&self, height: u64) -> jsonrpsee::core::RpcResult<Bytes>;
 
+    /// Returns the first block with a direct certificate at or up to 64 blocks
+    /// above `height`, plus the uncertified blocks before it.
+    ///
+    /// Errors that a caller must handle:
+    /// - `-32602` when `height` is above the node's finalized height. The node
+    ///   does not enqueue the request.
+    /// - `-32005` when the finalization queue is full or the whole walk does
+    ///   not complete within 5 s. Retry this error after a short delay.
     #[method(name = "getFinalityProof")]
     async fn get_finality_proof(
         &self,

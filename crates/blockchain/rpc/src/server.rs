@@ -8,7 +8,10 @@ use jsonrpsee::core::RpcResult;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{
-    consensus::{ConsensusExecutionBridge, ConsensusOperatingMode},
+    consensus::{
+        ConsensusExecutionBridge, ConsensusOperatingMode, FinalizationOutcome, FinalizedBlockBytes,
+        FINALIZATION_REQUEST_TIMEOUT,
+    },
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -20,6 +23,8 @@ use reth_ethereum::storage::{
 };
 use reth_provider::BlockIdReader;
 use std::sync::Arc;
+
+use crate::errors::{RpcFinalizationLimitError, RpcInternalError};
 
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
@@ -259,44 +264,133 @@ impl<P> OutbeApiHandler<P> {
         .await
     }
 
+    /// Returns the bridge when it can serve a finalization for `height`.
+    ///
+    /// Rejects a height above the local finalized height with invalid params.
+    /// This check occurs before any request enters the bridge queue, so a
+    /// request for a height that cannot exist costs no marshal lookup.
+    fn finalization_bridge(
+        &self,
+        height: u64,
+        not_serving: RpcInternalError,
+    ) -> RpcResult<&ConsensusExecutionBridge> {
+        let bridge = self
+            .bridge
+            .as_ref()
+            .ok_or_else(|| internal_err(not_serving))?;
+        let finalized = bridge.consensus_status().last_finalized_block;
+        if height > finalized {
+            return Err(invalid_params_err(
+                RpcFinalizationLimitError::HeightAboveFinalized { height, finalized },
+            ));
+        }
+        Ok(bridge)
+    }
+
+    pub(crate) async fn finalization_for_height(
+        &self,
+        height: u64,
+    ) -> RpcResult<FinalizationProof> {
+        // Only nodes running consensus (or a follower that has itself synced the
+        // height) can serve this. Both install a finalization fetcher on the
+        // bridge at marshal-start. A node without a bridge (pure EL full node)
+        // has no marshal and cannot answer.
+        let bridge =
+            self.finalization_bridge(height, RpcInternalError::NotServingConsensusFinalizations)?;
+        let proof = found_or_err(bridge.request_finalization(height).await, || {
+            RpcInternalError::NoFinalizationAvailable(height)
+        })?;
+        if proof.finalization.is_empty() {
+            return Err(internal_err(
+                RpcInternalError::NoDirectFinalizationAvailable(height),
+            ));
+        }
+        Ok(FinalizationProof {
+            finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
+            block_hex: format!("0x{}", hex::encode(&proof.block)),
+        })
+    }
+
+    pub(crate) async fn consensus_block_for_height(&self, height: u64) -> RpcResult<Bytes> {
+        let bridge =
+            self.finalization_bridge(height, RpcInternalError::NotServingConsensusBlocks)?;
+        found_or_err(bridge.request_finalization(height).await, || {
+            RpcInternalError::NoFinalizedConsensusBlockAvailable(height)
+        })
+        .map(|proof| proof.block)
+    }
+
+    /// Serves `outbe_getFinalityProof`. The height check applies to the
+    /// starting height only. The whole walk has one deadline of
+    /// [`FINALIZATION_REQUEST_TIMEOUT`].
     pub(crate) async fn finality_proof_for_height(
         &self,
         height: u64,
     ) -> RpcResult<crate::api::AncestorFinalizationProof> {
-        let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
+        let bridge =
+            self.finalization_bridge(height, RpcInternalError::NotServingConsensusFinalizations)?;
+        tokio::time::timeout(
+            FINALIZATION_REQUEST_TIMEOUT,
+            walk_to_certified_descendant(bridge, height),
+        )
+        .await
+        .unwrap_or_else(|_| Err(resource_exhausted_err(RpcFinalizationLimitError::TimedOut)))
+    }
+}
+
+/// Walks up to 64 blocks above `height` until it finds a block with a direct
+/// certificate. A Busy or TimedOut outcome stops the walk at once.
+async fn walk_to_certified_descendant(
+    bridge: &ConsensusExecutionBridge,
+    height: u64,
+) -> RpcResult<crate::api::AncestorFinalizationProof> {
+    let mut ancestors = Vec::new();
+    let mut total_bytes = 0usize;
+    for offset in 0..=64u64 {
+        let next = height
+            .checked_add(offset)
+            .ok_or_else(|| internal_err(RpcInternalError::ProofHeightOverflow))?;
+        let proof = found_or_err(bridge.request_finalization(next).await, || {
+            RpcInternalError::NoFinalityEvidenceAvailable(next)
         })?;
-        let mut ancestors = Vec::new();
-        let mut total_bytes = 0usize;
-        for offset in 0..=64u64 {
-            let next = height.checked_add(offset).ok_or_else(|| {
-                internal_err(crate::errors::RpcInternalError::ProofHeightOverflow)
-            })?;
-            let proof = bridge.request_finalization(next).await.ok_or_else(|| {
-                internal_err(crate::errors::RpcInternalError::NoFinalityEvidenceAvailable(next))
-            })?;
-            total_bytes = total_bytes.saturating_add(proof.block.len());
-            // Hex JSON doubles the block payload. Stay below the default
-            // upstream HTTP client's 10 MiB response bound with envelope room.
-            if total_bytes > 4 * 1024 * 1024 {
-                return Err(internal_err(
-                    crate::errors::RpcInternalError::AncestorFinalityProofExceedsByteLimit,
-                ));
-            }
-            if !proof.finalization.is_empty() {
-                return Ok(crate::api::AncestorFinalizationProof {
-                    certified: FinalizationProof {
-                        finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
-                        block_hex: format!("0x{}", hex::encode(proof.block)),
-                    },
-                    ancestor_blocks_hex: ancestors,
-                });
-            }
-            ancestors.push(format!("0x{}", hex::encode(proof.block)));
+        total_bytes = total_bytes.saturating_add(proof.block.len());
+        // Hex JSON doubles the block payload. Stay below the default
+        // upstream HTTP client's 10 MiB response bound with envelope room.
+        if total_bytes > 4 * 1024 * 1024 {
+            return Err(internal_err(
+                RpcInternalError::AncestorFinalityProofExceedsByteLimit,
+            ));
         }
-        Err(internal_err(
-            crate::errors::RpcInternalError::NoDescendantFinalizationWithin64Blocks,
-        ))
+        if !proof.finalization.is_empty() {
+            return Ok(crate::api::AncestorFinalizationProof {
+                certified: FinalizationProof {
+                    finalization_hex: format!("0x{}", hex::encode(proof.finalization)),
+                    block_hex: format!("0x{}", hex::encode(proof.block)),
+                },
+                ancestor_blocks_hex: ancestors,
+            });
+        }
+        ancestors.push(format!("0x{}", hex::encode(proof.block)));
+    }
+    Err(internal_err(
+        RpcInternalError::NoDescendantFinalizationWithin64Blocks,
+    ))
+}
+
+/// Maps a bridge outcome to the finalized bytes or to an RPC error. Busy and
+/// TimedOut map to a retryable resource error. NotFound maps to the internal
+/// error that `not_found` supplies.
+fn found_or_err(
+    outcome: FinalizationOutcome,
+    not_found: impl FnOnce() -> RpcInternalError,
+) -> RpcResult<FinalizedBlockBytes> {
+    match outcome {
+        FinalizationOutcome::Found(proof) => Ok(proof),
+        FinalizationOutcome::NotFound => Err(internal_err(not_found())),
+        FinalizationOutcome::Busy => Err(resource_exhausted_err(RpcFinalizationLimitError::Busy)),
+        FinalizationOutcome::TimedOut => {
+            Err(resource_exhausted_err(RpcFinalizationLimitError::TimedOut))
+        }
     }
 }
 
@@ -743,42 +837,11 @@ where
     }
 
     async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
-        // Only nodes running consensus (or a follower that has itself synced the
-        // height) can serve this. Both install a finalization fetcher on the
-        // bridge at marshal-start. A node without a bridge (pure EL full node)
-        // has no marshal and cannot answer.
-        let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::NotServingConsensusFinalizations)
-        })?;
-        let proof = bridge.request_finalization(height).await.ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::NoFinalizationAvailable(
-                height,
-            ))
-        })?;
-        if proof.finalization.is_empty() {
-            return Err(internal_err(
-                crate::errors::RpcInternalError::NoDirectFinalizationAvailable(height),
-            ));
-        }
-        Ok(FinalizationProof {
-            finalization_hex: format!("0x{}", hex::encode(&proof.finalization)),
-            block_hex: format!("0x{}", hex::encode(&proof.block)),
-        })
+        self.finalization_for_height(height).await
     }
 
     async fn get_consensus_block(&self, height: u64) -> RpcResult<Bytes> {
-        let bridge = self.bridge.as_ref().ok_or_else(|| {
-            internal_err(crate::errors::RpcInternalError::NotServingConsensusBlocks)
-        })?;
-        bridge
-            .request_finalization(height)
-            .await
-            .map(|proof| proof.block)
-            .ok_or_else(|| {
-                internal_err(
-                    crate::errors::RpcInternalError::NoFinalizedConsensusBlockAvailable(height),
-                )
-            })
+        self.consensus_block_for_height(height).await
     }
 
     async fn get_finality_proof(
@@ -796,6 +859,14 @@ fn internal_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'s
         msg.to_string(),
         None::<()>,
     )
+}
+
+/// JSON-RPC error code for "limit exceeded" (EIP-1474).
+const RESOURCE_EXHAUSTED_CODE: i32 = -32005;
+
+/// Create a retryable "limit exceeded" JSON-RPC error.
+fn resource_exhausted_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
+    jsonrpsee::types::ErrorObject::owned(RESOURCE_EXHAUSTED_CODE, msg.to_string(), None::<()>)
 }
 
 fn invalid_params(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
@@ -1073,6 +1144,7 @@ mod tests {
 
         // Overflow when walking from u64::MAX without a direct certificate at u64::MAX.
         let overflow_bridge = ConsensusExecutionBridge::new();
+        overflow_bridge.set_last_finalized_block_number(u64::MAX);
         let mut overflow_rx = overflow_bridge.set_finalization_fetcher();
         tokio::spawn(async move {
             if let Some((height, reply)) = overflow_rx.recv().await {
@@ -1093,6 +1165,7 @@ mod tests {
 
         // Exceeds 4 MiB total block payload limit.
         let oversize_bridge = ConsensusExecutionBridge::new();
+        oversize_bridge.set_last_finalized_block_number(10);
         let mut oversize_rx = oversize_bridge.set_finalization_fetcher();
         tokio::spawn(async move {
             if let Some((_, reply)) = oversize_rx.recv().await {
@@ -1112,6 +1185,7 @@ mod tests {
 
         // 65 consecutive uncertified blocks (offsets 0..=64) exhaust the 64-block descendant window.
         let window_bridge = ConsensusExecutionBridge::new();
+        window_bridge.set_last_finalized_block_number(100);
         let mut window_rx = window_bridge.set_finalization_fetcher();
         tokio::spawn(async move {
             while let Some((_, reply)) = window_rx.recv().await {
@@ -1128,5 +1202,210 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.message(), "no descendant finalization within 64 blocks");
+    }
+
+    /// A bridge whose drainer answers each height from `answer`.
+    fn bridge_with_drainer(
+        finalized: u64,
+        answer: fn(u64) -> Option<outbe_primitives::consensus::FinalizedBlockBytes>,
+    ) -> outbe_primitives::consensus::ConsensusExecutionBridge {
+        let bridge = outbe_primitives::consensus::ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(finalized);
+        let mut rx = bridge.set_finalization_fetcher();
+        tokio::spawn(async move {
+            while let Some((height, reply)) = rx.recv().await {
+                let _ = reply.send(answer(height));
+            }
+        });
+        bridge
+    }
+
+    fn direct_block(height: u64) -> Option<outbe_primitives::consensus::FinalizedBlockBytes> {
+        Some(outbe_primitives::consensus::FinalizedBlockBytes {
+            finalization: Bytes::from_static(&[0xf1, 0x0a]),
+            block: Bytes::from(height.to_be_bytes().to_vec()),
+        })
+    }
+
+    #[tokio::test]
+    async fn rejects_height_above_finalized() {
+        use outbe_primitives::consensus::ConsensusExecutionBridge;
+
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(10);
+        let mut rx = bridge.set_finalization_fetcher();
+        let handler = super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), bridge);
+        let expected = "height 11 is above the node's finalized height 10";
+
+        let errors = [
+            handler.finalization_for_height(11).await.unwrap_err(),
+            handler.consensus_block_for_height(11).await.unwrap_err(),
+            handler.finality_proof_for_height(11).await.unwrap_err(),
+        ];
+        for err in errors {
+            assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
+            assert_eq!(err.message(), expected);
+        }
+        // The rejected requests did not enter the queue.
+        assert!(matches!(
+            rx.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn busy_and_not_found_are_distinct_errors() {
+        use outbe_primitives::consensus::{ConsensusExecutionBridge, FINALIZATION_QUEUE_DEPTH};
+
+        // NotFound: the drainer has no block for the height.
+        let not_found = super::OutbeApiHandler::with_bridge(
+            std::sync::Arc::new(()),
+            bridge_with_drainer(50, |_| None),
+        );
+        let not_found_errors = [
+            (
+                not_found.finalization_for_height(5).await.unwrap_err(),
+                "no finalization available for height 5 (not finalized locally or pruned)",
+            ),
+            (
+                not_found.consensus_block_for_height(5).await.unwrap_err(),
+                "no finalized consensus block available for height 5",
+            ),
+            (
+                not_found.finality_proof_for_height(5).await.unwrap_err(),
+                "no finality evidence available at height 5",
+            ),
+        ];
+        for (err, message) in not_found_errors {
+            assert_eq!(err.code(), jsonrpsee::types::error::INTERNAL_ERROR_CODE);
+            assert_eq!(err.message(), message);
+        }
+
+        // Busy: the queue is full and nobody drains it.
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(50);
+        let rx = bridge.set_finalization_fetcher();
+        let mut fillers = Vec::new();
+        for height in 0..FINALIZATION_QUEUE_DEPTH as u64 {
+            let bridge = bridge.clone();
+            fillers.push(tokio::spawn(async move {
+                bridge.request_finalization(height).await
+            }));
+        }
+        while rx.len() < FINALIZATION_QUEUE_DEPTH {
+            tokio::task::yield_now().await;
+        }
+        let busy = super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), bridge);
+        let busy_errors = [
+            busy.finalization_for_height(5).await.unwrap_err(),
+            busy.consensus_block_for_height(5).await.unwrap_err(),
+            busy.finality_proof_for_height(5).await.unwrap_err(),
+        ];
+        for err in busy_errors {
+            assert_eq!(err.code(), -32005);
+            assert_eq!(err.message(), "finalization service is busy, retry shortly");
+        }
+        assert_eq!(rx.len(), FINALIZATION_QUEUE_DEPTH);
+        drop(rx);
+        for filler in fillers {
+            let _ = filler.await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_finalization_maps_to_resource_exhausted() {
+        use outbe_primitives::consensus::ConsensusExecutionBridge;
+
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(50);
+        let mut rx = bridge.set_finalization_fetcher();
+        // A drainer that holds each reply and never answers.
+        let drainer = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Some(request) = rx.recv().await {
+                held.push(request);
+            }
+        });
+        let handler = super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), bridge);
+        let errors = [
+            handler.finalization_for_height(5).await.unwrap_err(),
+            handler.consensus_block_for_height(5).await.unwrap_err(),
+            handler.finality_proof_for_height(5).await.unwrap_err(),
+        ];
+        for err in errors {
+            assert_eq!(err.code(), -32005);
+            assert_eq!(
+                err.message(),
+                "finalization request timed out, retry shortly"
+            );
+        }
+        drainer.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finality_proof_walk_has_one_total_deadline() {
+        use outbe_primitives::consensus::{
+            ConsensusExecutionBridge, FinalizedBlockBytes, FINALIZATION_REQUEST_TIMEOUT,
+        };
+
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(50);
+        let mut rx = bridge.set_finalization_fetcher();
+        // Each answer is fast enough for the per-request timeout, but the
+        // sum of 65 answers is longer than the total deadline.
+        let drainer = tokio::spawn(async move {
+            while let Some((_, reply)) = rx.recv().await {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                let _ = reply.send(Some(FinalizedBlockBytes {
+                    finalization: Bytes::new(),
+                    block: Bytes::from_static(&[0xbb]),
+                }));
+            }
+        });
+        let handler = super::OutbeApiHandler::with_bridge(std::sync::Arc::new(()), bridge);
+        let started = tokio::time::Instant::now();
+        let err = handler.finality_proof_for_height(5).await.unwrap_err();
+        assert_eq!(err.code(), -32005);
+        assert_eq!(
+            err.message(),
+            "finalization request timed out, retry shortly"
+        );
+        assert_eq!(started.elapsed(), FINALIZATION_REQUEST_TIMEOUT);
+        drainer.abort();
+    }
+
+    #[tokio::test]
+    async fn available_height_is_unchanged() {
+        let handler = super::OutbeApiHandler::with_bridge(
+            std::sync::Arc::new(()),
+            bridge_with_drainer(7, |height| {
+                if height == 7 {
+                    direct_block(height)
+                } else {
+                    Some(outbe_primitives::consensus::FinalizedBlockBytes {
+                        finalization: Bytes::new(),
+                        block: Bytes::from(height.to_be_bytes().to_vec()),
+                    })
+                }
+            }),
+        );
+
+        let finalization = handler.finalization_for_height(7).await.unwrap();
+        assert_eq!(
+            serde_json::to_string(&finalization).unwrap(),
+            r#"{"finalizationHex":"0xf10a","blockHex":"0x0000000000000007"}"#
+        );
+
+        let block = handler.consensus_block_for_height(7).await.unwrap();
+        assert_eq!(
+            serde_json::to_string(&block).unwrap(),
+            r#""0x0000000000000007""#
+        );
+
+        let proof = handler.finality_proof_for_height(6).await.unwrap();
+        assert_eq!(
+            serde_json::to_string(&proof).unwrap(),
+            r#"{"finalizationHex":"0xf10a","blockHex":"0x0000000000000007","ancestorBlocksHex":["0x0000000000000006"]}"#
+        );
     }
 }

@@ -119,6 +119,11 @@ impl ValidatorBootstrap {
 /// block is missing locally. The RPC maps `None` to a "not available" error.
 /// When it finds no certificate, it answers `Some` with an empty
 /// `finalization` field.
+///
+/// The drainer stays sequential on purpose. The bound is on the bridge queue,
+/// not on the number of concurrent marshal lookups. It skips a request whose
+/// caller stopped waiting (for example, after a timeout) and does no marshal
+/// lookup for it.
 pub(in crate::stack) fn spawn_finalization_drainer<E>(
     ctx: &E,
     marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
@@ -135,10 +140,18 @@ where
             let mut rx = rx;
             let serve = async {
                 while let Some((height, reply)) = rx.recv().await {
-                    let answer = finalization_bytes_for_height(
-                        &marshal_mailbox,
-                        &parent_store,
-                        Height::new(height),
+                    let span = tracing::debug_span!("finalization_request", height);
+                    if reply.is_closed() {
+                        tracing::debug!(parent: &span, "caller stopped waiting, skipping lookup");
+                        continue;
+                    }
+                    let answer = tracing::Instrument::instrument(
+                        finalization_bytes_for_height(
+                            &marshal_mailbox,
+                            &parent_store,
+                            Height::new(height),
+                        ),
+                        span,
                     )
                     .await;
                     let _ = reply.send(answer);

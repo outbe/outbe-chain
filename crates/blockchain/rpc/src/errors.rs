@@ -45,6 +45,25 @@ impl From<RpcStateReadError> for PrecompileError {
     }
 }
 
+/// Errors that keep the finalization RPC methods inside their resource bounds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
+pub enum RpcFinalizationLimitError {
+    /// The requested height is above the local finalized height.
+    #[error("height {height} is above the node's finalized height {finalized}")]
+    HeightAboveFinalized {
+        /// Requested height.
+        height: u64,
+        /// Local finalized height.
+        finalized: u64,
+    },
+    /// The finalization request queue is full.
+    #[error("finalization service is busy, retry shortly")]
+    Busy,
+    /// The finalization request did not complete within its deadline.
+    #[error("finalization request timed out, retry shortly")]
+    TimedOut,
+}
+
 /// Typed internal errors returned by Outbe JSON-RPC methods.
 #[derive(Debug, Error)]
 pub enum RpcInternalError {

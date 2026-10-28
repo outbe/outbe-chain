@@ -648,6 +648,10 @@ where
         );
     }
 
+    // Seed the bridge with the recovered finalized height. The finalization RPC
+    // rejects heights above this value. Without the seed it reads 0 after a
+    // restart until the next finalization.
+    bridge.set_last_finalized_block_number(recovery_anchor_height);
     let (_validator_drainer_cancel, validator_drainer_cancel_rx) =
         tokio::sync::watch::channel(false);
     let _finalization_drainer = spawn_finalization_drainer(

@@ -13,6 +13,7 @@ use std::{
         atomic::{AtomicU8, Ordering},
         Arc, Mutex, MutexGuard,
     },
+    time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -499,16 +500,44 @@ pub struct FinalizedBlockBytes {
     pub block: Bytes,
 }
 
+/// Depth of the finalization request queue. An unbounded queue does not
+/// protect the drainer. It only changes back-pressure into memory growth and
+/// latency. When the queue is full, the bridge sheds a new request, so an
+/// overloaded node answers quickly.
+pub const FINALIZATION_QUEUE_DEPTH: usize = 256;
+
+/// Maximum time that [`ConsensusExecutionBridge::request_finalization`] waits
+/// for the drainer to reply. The `outbe_getFinalityProof` walk also uses this
+/// value as its total deadline. It stays below the 10 s request timeout of the
+/// default upstream HTTP client.
+pub const FINALIZATION_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Sender half of the finalization fetch channel: a height plus a one-shot
 /// reply. It lives in the bridge so the `outbe-rpc` handler can request
 /// finalized bytes from the consensus thread. That handler cannot see the
 /// marshal or `ConsensusBlock`.
-type FinalizationFetcherTx =
-    mpsc::UnboundedSender<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
+type FinalizationFetcherTx = mpsc::Sender<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
 
 /// Receiver half handed to the consensus-side drainer.
 pub type FinalizationFetcherRx =
-    mpsc::UnboundedReceiver<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
+    mpsc::Receiver<(u64, oneshot::Sender<Option<FinalizedBlockBytes>>)>;
+
+/// The result of [`ConsensusExecutionBridge::request_finalization`].
+///
+/// "Too busy to look" and "looked and it is not here" are different facts.
+/// A caller must be able to tell them apart to retry correctly.
+#[derive(Clone, Debug)]
+pub enum FinalizationOutcome {
+    /// The drainer found the finalized block for the height.
+    Found(FinalizedBlockBytes),
+    /// The height is not available. Also returned when no fetcher is
+    /// installed or the drainer stopped.
+    NotFound,
+    /// The request queue is full. The request was not enqueued.
+    Busy,
+    /// The drainer did not reply within [`FINALIZATION_REQUEST_TIMEOUT`].
+    TimedOut,
+}
 
 #[derive(Clone, Copy)]
 struct ExecutionSummaryCacheEntry {
@@ -695,6 +724,15 @@ impl ConsensusExecutionBridge {
         state.consensus_status = status;
     }
 
+    /// Changes the consensus status in place under one lock. Use this to update
+    /// a subset of the fields. A separate read and write through
+    /// [`Self::consensus_status`] and [`Self::set_consensus_status`] can write
+    /// stale values back over newer values from a different writer.
+    pub fn update_consensus_status(&self, update: impl FnOnce(&mut ConsensusStatus)) {
+        let mut state = self.lock_state();
+        update(&mut state.consensus_status);
+    }
+
     /// Returns a snapshot of the current consensus status.
     pub fn consensus_status(&self) -> ConsensusStatus {
         let state = self.lock_state();
@@ -731,8 +769,9 @@ impl ConsensusExecutionBridge {
     /// once at marshal-start (validator and follower paths both register one).
     /// The consensus thread drains the matching [`FinalizationFetcherRx`] and
     /// answers from the marshal. Returns the receiver to hand to the drainer.
+    /// The channel holds at most [`FINALIZATION_QUEUE_DEPTH`] requests.
     pub fn set_finalization_fetcher(&self) -> FinalizationFetcherRx {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(FINALIZATION_QUEUE_DEPTH);
         self.lock_state().finalization_fetcher = Some(tx);
         rx
     }
@@ -740,21 +779,35 @@ impl ConsensusExecutionBridge {
     /// Requests the finalized certificate + block bytes for `height` from the
     /// consensus thread (used by the `outbe_getFinalization` RPC handler).
     ///
-    /// Returns `None` in these cases:
-    /// - No fetcher is installed (consensus not serving).
-    /// - The drainer dropped the reply (height not available).
-    /// - The channel is closed.
+    /// Returns:
+    /// - [`FinalizationOutcome::Busy`] when the queue is full. The request is
+    ///   not enqueued.
+    /// - [`FinalizationOutcome::TimedOut`] when the drainer does not reply
+    ///   within [`FINALIZATION_REQUEST_TIMEOUT`].
+    /// - [`FinalizationOutcome::NotFound`] when no fetcher is installed, the
+    ///   channel is closed, or the drainer has no block for the height.
     ///
     /// The reply travels back over a one-shot so concurrent requests do not
     /// interfere.
-    pub async fn request_finalization(&self, height: u64) -> Option<FinalizedBlockBytes> {
+    pub async fn request_finalization(&self, height: u64) -> FinalizationOutcome {
         let sender = {
             let state = self.lock_state();
-            state.finalization_fetcher.clone()?
+            state.finalization_fetcher.clone()
+        };
+        let Some(sender) = sender else {
+            return FinalizationOutcome::NotFound;
         };
         let (reply_tx, reply_rx) = oneshot::channel();
-        sender.send((height, reply_tx)).ok()?;
-        reply_rx.await.ok().flatten()
+        match sender.try_send((height, reply_tx)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => return FinalizationOutcome::Busy,
+            Err(mpsc::error::TrySendError::Closed(_)) => return FinalizationOutcome::NotFound,
+        }
+        match tokio::time::timeout(FINALIZATION_REQUEST_TIMEOUT, reply_rx).await {
+            Ok(Ok(Some(bytes))) => FinalizationOutcome::Found(bytes),
+            Ok(_) => FinalizationOutcome::NotFound,
+            Err(_) => FinalizationOutcome::TimedOut,
+        }
     }
 }
 
@@ -906,5 +959,108 @@ mod tests {
             let deserialized: ConsensusOperatingMode = serde_json::from_str(&serialized).unwrap();
             assert_eq!(deserialized, mode);
         }
+    }
+
+    #[tokio::test]
+    async fn finalization_queue_sheds_when_full() {
+        let bridge = ConsensusExecutionBridge::new();
+        let mut rx = bridge.set_finalization_fetcher();
+        let mut pending = Vec::new();
+        for height in 0..FINALIZATION_QUEUE_DEPTH as u64 {
+            let bridge = bridge.clone();
+            pending.push(tokio::spawn(async move {
+                bridge.request_finalization(height).await
+            }));
+        }
+        // Let every request task enqueue its request.
+        while rx.len() < FINALIZATION_QUEUE_DEPTH {
+            tokio::task::yield_now().await;
+        }
+
+        assert!(matches!(
+            bridge.request_finalization(u64::MAX).await,
+            FinalizationOutcome::Busy
+        ));
+        // The shed request did not enter the queue.
+        assert_eq!(rx.len(), FINALIZATION_QUEUE_DEPTH);
+        while let Ok((height, _reply)) = rx.try_recv() {
+            assert_ne!(height, u64::MAX);
+        }
+        for task in pending {
+            assert!(matches!(task.await.unwrap(), FinalizationOutcome::NotFound));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn finalization_request_times_out() {
+        let bridge = ConsensusExecutionBridge::new();
+        let mut rx = bridge.set_finalization_fetcher();
+        // A drainer that receives each request and never replies.
+        let drainer = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Some(request) = rx.recv().await {
+                held.push(request);
+            }
+        });
+
+        let started = tokio::time::Instant::now();
+        assert!(matches!(
+            bridge.request_finalization(7).await,
+            FinalizationOutcome::TimedOut
+        ));
+        assert_eq!(started.elapsed(), FINALIZATION_REQUEST_TIMEOUT);
+        drainer.abort();
+    }
+
+    #[tokio::test]
+    async fn finalization_request_maps_reply_and_closed_channel() {
+        let bridge = ConsensusExecutionBridge::new();
+        assert!(matches!(
+            bridge.request_finalization(1).await,
+            FinalizationOutcome::NotFound
+        ));
+
+        let mut rx = bridge.set_finalization_fetcher();
+        let drainer = tokio::spawn(async move {
+            while let Some((height, reply)) = rx.recv().await {
+                let answer = (height == 1).then(|| FinalizedBlockBytes {
+                    finalization: Bytes::from_static(&[0x01]),
+                    block: Bytes::from_static(&[0x02]),
+                });
+                let _ = reply.send(answer);
+            }
+        });
+        match bridge.request_finalization(1).await {
+            FinalizationOutcome::Found(bytes) => {
+                assert_eq!(bytes.finalization.as_ref(), &[0x01]);
+                assert_eq!(bytes.block.as_ref(), &[0x02]);
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+        assert!(matches!(
+            bridge.request_finalization(2).await,
+            FinalizationOutcome::NotFound
+        ));
+
+        drainer.abort();
+        let _ = drainer.await;
+        assert!(matches!(
+            bridge.request_finalization(1).await,
+            FinalizationOutcome::NotFound
+        ));
+    }
+
+    #[test]
+    fn update_consensus_status_keeps_fields_it_does_not_change() {
+        let bridge = ConsensusExecutionBridge::new();
+        bridge.set_last_finalized_block_number(42);
+        bridge.update_consensus_status(|status| {
+            status.randomness_status = RandomnessStatus::Healthy;
+            status.vrf_material_version = 3;
+        });
+        let status = bridge.consensus_status();
+        assert_eq!(status.last_finalized_block, 42);
+        assert_eq!(status.randomness_status, RandomnessStatus::Healthy);
+        assert_eq!(status.vrf_material_version, 3);
     }
 }
