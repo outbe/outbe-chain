@@ -55,7 +55,7 @@ pub(crate) fn call_if_breached(
     for &series_id in &members {
         crate::notify::enqueue_notice(
             factory,
-            crate::notify::pack_called_notice(series_id, called_at),
+            crate::notify::pack_call_notice(series_id, called_at),
         )?;
     }
 

@@ -1,4 +1,4 @@
-//! Coalescing of Called notices when a block sends the queue.
+//! Coalescing of call notices when a block sends the queue.
 //!
 //! The harness cannot observe outbound calls, so these tests pin the grouping rule as a predicate.
 //! The rest covers the queue walk: what each firing consumes and where it resumes.
@@ -6,7 +6,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
-use outbe_intexfactory::notify::{joins_run, pack_called_notice, send_call_notices};
+use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_call_notices};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
@@ -35,7 +35,7 @@ fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
     let tail = factory.notify_tail.read().unwrap();
     factory
         .notify_at
-        .write(&tail, pack_called_notice(series(index), called_at))
+        .write(&tail, pack_call_notice(series(index), called_at))
         .unwrap();
     factory.notify_tail.write(tail + 1).unwrap();
 }

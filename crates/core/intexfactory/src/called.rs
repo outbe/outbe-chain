@@ -217,7 +217,7 @@ pub(crate) fn notify_called(
                     called_at,
                     series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     error = ?error,
-                    "called notice: refused"
+                    "call notice: refused"
                 );
                 refused.extend_from_slice(chunk);
             }

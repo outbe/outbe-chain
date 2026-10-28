@@ -1,4 +1,4 @@
-//! Queue mechanics of the Called notices each block sends after the call slice.
+//! Queue mechanics of the call notices each block sends after the call slice.
 //!
 //! The router accepts every send unless a test says otherwise. So these tests pin
 //! the queue walk itself:
@@ -13,7 +13,7 @@ use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS};
 use outbe_intexfactory::notify::{
-    called_notice_attempts, notice_retry_at, pack_called_notice, send_call_notices, with_retry_at,
+    call_notice_attempts, notice_retry_at, pack_call_notice, send_call_notices, with_retry_at,
 };
 use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use outbe_intexfactory::IntexFactoryContract;
@@ -39,7 +39,7 @@ fn seed(handle: &StorageHandle<'_>, count: u32) {
     for index in 0..count {
         factory
             .notify_at
-            .write(&index, pack_called_notice(series(index), CALLED_AT))
+            .write(&index, pack_call_notice(series(index), CALLED_AT))
             .unwrap();
     }
     factory.notify_tail.write(count).unwrap();
@@ -113,13 +113,13 @@ fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
         let factory = IntexFactoryContract::new(handle.clone());
         factory
             .notify_at
-            .write(&0, pack_called_notice(due, CALLED_AT))
+            .write(&0, pack_call_notice(due, CALLED_AT))
             .unwrap();
         factory
             .notify_at
             .write(
                 &1,
-                with_retry_at(pack_called_notice(paused, CALLED_AT), NOW + 1),
+                with_retry_at(pack_call_notice(paused, CALLED_AT), NOW + 1),
             )
             .unwrap();
         factory.notify_tail.write(2).unwrap();
@@ -138,13 +138,13 @@ fn a_fresh_entry_behind_a_paused_head_waits_one_pause_at_most() {
     StorageHandle::enter(&mut storage, |handle| {
         let factory = IntexFactoryContract::new(handle.clone());
         let paused = with_retry_at(
-            pack_called_notice(series(0), CALLED_AT),
+            pack_call_notice(series(0), CALLED_AT),
             NOW + NOTICE_RETRY_SECONDS,
         );
         factory.notify_at.write(&0, paused).unwrap();
         factory
             .notify_at
-            .write(&1, pack_called_notice(series(1), CALLED_AT))
+            .write(&1, pack_call_notice(series(1), CALLED_AT))
             .unwrap();
         factory.notify_tail.write(2).unwrap();
 
@@ -222,7 +222,7 @@ fn a_refused_notice_is_requeued_with_one_more_attempt() {
         );
         assert_eq!(queued(&handle, 0), U256::ZERO);
         let entry = queued(&handle, 1);
-        assert_eq!(called_notice_attempts(entry), 1);
+        assert_eq!(call_notice_attempts(entry), 1);
         assert_eq!(notice_retry_at(entry), NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(SeriesId::from_word(entry), series(0));
         assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
@@ -261,7 +261,7 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
         }
         let (head, tail) = queue_bounds(&handle);
         assert_eq!(tail - head, 1, "still queued below the cap");
-        assert_eq!(called_notice_attempts(queued(&handle, head)), 7);
+        assert_eq!(call_notice_attempts(queued(&handle, head)), 7);
     });
     assert!(failed_notices(&storage).is_empty());
 
@@ -286,7 +286,7 @@ fn a_notice_accepted_at_the_last_send_is_not_dropped() {
         }
         let (head, tail) = queue_bounds(&handle);
         assert_eq!(tail - head, 1, "still queued below the cap");
-        assert_eq!(called_notice_attempts(queued(&handle, head)), 7);
+        assert_eq!(call_notice_attempts(queued(&handle, head)), 7);
     });
 
     accept_sends(&mut storage);
@@ -309,7 +309,7 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
             let entry = queued(&handle, slot);
             assert_eq!(SeriesId::from_word(entry), series(index));
             assert_eq!(
-                called_notice_attempts(entry),
+                call_notice_attempts(entry),
                 1,
                 "every entry got its own call in the block"
             );
@@ -343,7 +343,7 @@ fn every_entry_of_a_refused_run_is_requeued() {
                 .notify_at
                 .write(
                     &u32::from(index),
-                    pack_called_notice(same_day_series(index), CALLED_AT),
+                    pack_call_notice(same_day_series(index), CALLED_AT),
                 )
                 .unwrap();
         }
@@ -354,7 +354,7 @@ fn every_entry_of_a_refused_run_is_requeued() {
         for index in 0..3u8 {
             let entry = queued(&handle, 3 + u32::from(index));
             assert_eq!(SeriesId::from_word(entry), same_day_series(index));
-            assert_eq!(called_notice_attempts(entry), 1);
+            assert_eq!(call_notice_attempts(entry), 1);
         }
     });
 
@@ -387,7 +387,7 @@ fn a_router_refusing_every_run_ends_the_block_early() {
             "the block stops after the refusals in a row"
         );
         assert_eq!(
-            called_notice_attempts(queued(&handle, MAX_REFUSED_RUNS_PER_BLOCK)),
+            call_notice_attempts(queued(&handle, MAX_REFUSED_RUNS_PER_BLOCK)),
             0,
             "an entry the block never reached keeps its count"
         );

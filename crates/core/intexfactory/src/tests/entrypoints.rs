@@ -233,9 +233,9 @@ fn send_notices_in_block(
 }
 
 #[test]
-fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
+fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
     use super::router_fault::RouterFaultProvider;
-    use crate::notify::{enqueue_notice, pack_called_notice};
+    use crate::notify::{enqueue_notice, pack_call_notice};
     use crate::sol_ext::IOriginRouter;
 
     let mut provider = RouterFaultProvider::new(
@@ -243,8 +243,8 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
         IOriginRouter::sendMarkCalledCall::SELECTOR,
     );
     let queued = [
-        pack_called_notice(sid(7), ISSUED_AT),
-        pack_called_notice(sid(8), ISSUED_AT),
+        pack_call_notice(sid(7), ISSUED_AT),
+        pack_call_notice(sid(8), ISSUED_AT),
     ];
     StorageHandle::enter(&mut provider, |s| {
         let factory = IntexFactoryContract::new(s);
