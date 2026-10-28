@@ -73,7 +73,7 @@ fn config_dev_profile_drives_issuance() {
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = outbe_intex::config::IntexParams::DEV;
-        let r = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(
             r.call_price_minor,
@@ -120,7 +120,7 @@ fn the_parked_sweep_is_a_no_op_without_a_router() {
             BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
             s.clone(),
         );
-        crate::parked::drain(&ctx).expect("a silent router is not a failed block");
+        crate::parked::resend_parked_messages(&ctx).expect("a silent router is not a failed block");
 
         let factory = IntexFactoryContract::new(s.clone());
         assert_eq!(factory.parked_message_cursor.read().unwrap(), 0);
@@ -145,7 +145,7 @@ fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::erro
             BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
             s,
         );
-        crate::parked::drain(&ctx)
+        crate::parked::resend_parked_messages(&ctx)
     })
 }
 
@@ -229,14 +229,14 @@ fn send_notices_in_block(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::send_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_call_notices(&ctx))
     })
 }
 
 #[test]
-fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
+fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
     use super::router_fault::RouterFaultProvider;
-    use crate::notify::{enqueue_notice, pack_called_notice};
+    use crate::notify::{enqueue_notice, pack_call_notice};
     use crate::sol_ext::IOriginRouter;
 
     let mut provider = RouterFaultProvider::new(
@@ -244,8 +244,8 @@ fn a_node_local_failure_inside_the_called_notice_send_fails_the_drain() {
         IOriginRouter::sendMarkCalledCall::SELECTOR,
     );
     let queued = [
-        pack_called_notice(sid(7), ISSUED_AT),
-        pack_called_notice(sid(8), ISSUED_AT),
+        pack_call_notice(sid(7), ISSUED_AT),
+        pack_call_notice(sid(8), ISSUED_AT),
     ];
     StorageHandle::enter(&mut provider, |s| {
         let factory = IntexFactoryContract::new(s);

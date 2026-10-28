@@ -347,13 +347,13 @@ pub fn call_group_of(
     registry.record_group_called(group, called_at, close_at)
 }
 
-/// Read a series record; errors if the series does not exist.
-pub fn read_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<SeriesRecord> {
+/// Get a series record; errors if the series does not exist.
+pub fn get_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<SeriesRecord> {
     IntexContract::new(storage.clone()).load_series(series_id)
 }
 
-/// Read a series record; `None` if the series does not exist.
-pub fn get_series(
+/// Get a series record; `None` if the series does not exist.
+pub fn find_series(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
 ) -> Result<Option<SeriesRecord>> {

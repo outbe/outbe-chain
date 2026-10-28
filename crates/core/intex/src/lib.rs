@@ -19,7 +19,7 @@ pub use schema::{
     CallStamp, CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesId,
     SeriesRecord, SERIES_ID_LEN,
 };
-pub use state::{CallBins, CleanupDays, ExpiryDays};
+pub use state::{CallBins, CleanupQueue, ForfeitQueue};
 
 #[cfg(test)]
 mod tests;

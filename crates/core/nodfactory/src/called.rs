@@ -6,7 +6,7 @@
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
 //! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
-//! (`expired::sweep_expired`).
+//! (`forfeited::sweep_expired`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
@@ -20,23 +20,20 @@
 //! Calls count only days from the group's `full_day_after_issue`.
 
 use alloy_primitives::{B256, U256};
-use outbe_oracle::call_sweep::{self, CallSweep};
+use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins,
     call_breach::{BreachTerms, ScanTerms},
-    daily_sweep::{PinnedDay, Progress},
-    error::{PrecompileError, Result, SweepFailure},
+    day_pass::{PinnedDay, Progress},
+    error::{PassFailure, PrecompileError, Result},
+    pass_budget::PassBudget,
     storage::dsl::Value,
-    sweep_budget::SweepBudget,
 };
 
 use outbe_nod::state::CallBins;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
-
-use crate::precompile::INodFactory;
-use crate::runtime::emit_event;
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
@@ -44,32 +41,32 @@ use crate::runtime::emit_event;
 /// a handler error out of the `CycleTick` system transaction, which fails the
 /// block. An unregistered pair, an unpriced currency or an unfinalized day
 /// therefore each degrade to "no transition" instead.
-pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::schedule(ctx, &mut NodCallSweep::new(ctx))
+pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
+    call_pass::schedule(ctx, &mut NodCallPass::new(ctx))
 }
 
 /// This function initializes the first eligible daily pass from the chain initialization day.
 pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_sweep::initialize(ctx, &mut NodCallSweep::new(ctx))
+    call_pass::initialize(ctx, &mut NodCallPass::new(ctx))
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
+    call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
 /// The return value counts called groups, not forfeited groups.
-pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_sweep::continue_day(ctx, &mut NodCallSweep::new(ctx))
+pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }
 
-struct NodCallSweep<'storage> {
+struct NodCallPass<'storage> {
     nod: NodContract<'storage>,
 }
 
-impl<'storage> NodCallSweep<'storage> {
+impl<'storage> NodCallPass<'storage> {
     fn new(ctx: &BlockRuntimeContext<'storage>) -> Self {
         Self {
             nod: NodContract::new(ctx.storage.clone()),
@@ -77,7 +74,7 @@ impl<'storage> NodCallSweep<'storage> {
     }
 }
 
-impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
+impl<'storage> CallPass<'storage> for NodCallPass<'storage> {
     const CONSUMER: &'static str = "nod";
     const FORFEIT_PHASES: u8 = 1;
 
@@ -96,12 +93,12 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
         _phase: u8,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<Progress> {
-        let through_day = outbe_primitives::expiry_queue::deadline_day(
+        let through_day = outbe_primitives::deadline_queue::deadline_day(
             outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
         )?;
-        crate::expired::sweep_through(ctx, through_day, budget)
+        crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 
     type Bins<'a>
@@ -124,15 +121,15 @@ impl<'storage> CallSweep<'storage> for NodCallSweep<'storage> {
         &self.nod.call_currency_cursor
     }
 
-    fn classify(error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
     fn slice(
         &mut self,
         ctx: &BlockRuntimeContext,
         pinned_day: u32,
-        budget: &mut SweepBudget,
+        budget: &mut PassBudget,
     ) -> Result<(u32, bool)> {
         let (called, finished) = call_slice(ctx, &self.nod, pinned_day, budget)?;
         // A group holds Nods of several Worldwide Days, so a call refreshes the whole range.
@@ -160,28 +157,19 @@ fn call_slice(
     ctx: &BlockRuntimeContext,
     nod: &NodContract<'_>,
     pinned_day: u32,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<(u32, bool)> {
     let params = outbe_nod::config::read(&ctx.storage)?;
     let mut caller = NodContract::new(ctx.storage.clone());
     let mut called: u32 = 0;
-    let finished = call_sweep::walk_day(
+    let finished = call_pass::walk_day(
         ctx,
         pinned_day,
         budget,
-        call_sweep::CallIndex {
+        call_pass::CallIndex {
             currency_cursor: &nod.call_currency_cursor,
             bins: |iso_code| CallBins(nod, iso_code),
             scan_terms: |iso_code| scan_terms(nod, iso_code, &params),
-            skipped: |iso_code| {
-                emit_event(
-                    &ctx.storage,
-                    INodFactory::CallScanSkipped {
-                        referenceCurrency: iso_code,
-                        utcDay: pinned_day,
-                    },
-                )
-            },
         },
         |iso_code, window, ceiling, budget| {
             let scan = CurrencyScan {
@@ -217,7 +205,7 @@ pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     nod: &mut NodContract<'_>,
     scan: CurrencyScan<'_>,
-    budget: &mut SweepBudget,
+    budget: &mut PassBudget,
 ) -> Result<(u32, bool)> {
     let CurrencyScan {
         iso_code,
@@ -231,7 +219,7 @@ pub(crate) fn call_currency(
         ceiling,
         budget,
         |group_key, budget| {
-            call_sweep::call_entry::<NodCallSweep>(&ctx.storage, budget, group_key, || {
+            call_pass::call_entry::<NodCallPass>(&ctx.storage, budget, group_key, || {
                 if retire_paid_group(nod, group_key, ctx.block.timestamp)? {
                     return Ok(1);
                 }

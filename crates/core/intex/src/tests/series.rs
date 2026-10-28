@@ -10,7 +10,7 @@ fn create_then_read_round_trip() {
         p.worldwide_day = 20260101.into();
         api::create_series(&s, p).unwrap();
 
-        let r = api::read_series(&s, sid(7)).unwrap();
+        let r = api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.series_id, sid(7));
         // u128 -> U256 widening preserved.
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
@@ -59,8 +59,8 @@ fn create_rejects_zero_issued_at() {
 #[test]
 fn reads_on_missing_series() {
     with_registry(|s| {
-        assert!(api::read_series(&s, sid(42)).is_err());
-        assert_eq!(api::get_series(&s, sid(42)).unwrap(), None);
+        assert!(api::get_series(&s, sid(42)).is_err());
+        assert_eq!(api::find_series(&s, sid(42)).unwrap(), None);
         assert!(!api::series_exists(&s, sid(42)).unwrap());
     });
 }
@@ -103,7 +103,7 @@ fn a_forfeited_series_is_spent_once_its_group_returned_its_units() {
             "the group's expiry has not returned its units yet"
         );
 
-        let group = api::read_series(&s, sid(11))
+        let group = api::get_series(&s, sid(11))
             .unwrap()
             .group_key()
             .expect("date step");

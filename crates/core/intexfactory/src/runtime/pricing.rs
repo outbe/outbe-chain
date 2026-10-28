@@ -45,7 +45,7 @@ pub fn quote_settlement(
     asset: Address,
     units: U256,
 ) -> Result<(u16, U256, U256)> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+    let series = outbe_intex::api::get_series(storage, series_id)?;
     let quote = settlement::quote(
         storage,
         asset,

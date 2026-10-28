@@ -3,9 +3,9 @@ pragma solidity ^0.8.30;
 
 /// @title IPromisFactory - Promis mint/burn orchestration entry point (0x2337).
 interface IPromisFactory {
-    /// @notice Emitted when `sender` converts protocol-6 promis to native-18 COEN.
-    /// @param coenMinor Native COEN atomic units minted to `sender`.
-    event CoenMined(address indexed sender, uint256 coenMinor);
+    /// @notice Emitted when `account` converts protocol-6 promis to native-18 COEN.
+    /// @param coenMinor Native COEN atomic units minted to `account`.
+    event CoenMined(address indexed account, uint256 coenMinor);
 
     /// @notice Convert `promisMinor` protocol-6 promis to the same whole-token amount of
     ///         native-18 COEN (burns the caller's confidential promis). The returned

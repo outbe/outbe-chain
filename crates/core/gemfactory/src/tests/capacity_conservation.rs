@@ -23,7 +23,8 @@ const REMAINDER: u64 = 3_000_007;
 fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
     use crate::state::{position_queue_entry, position_queue_hour};
     let max_deadline =
-        outbe_primitives::expiry_queue::day_end(outbe_primitives::math::constants::MAX_BIN_ID) - 1;
+        outbe_primitives::deadline_queue::day_end(outbe_primitives::math::constants::MAX_BIN_ID)
+            - 1;
     for hour in [
         0,
         1,
@@ -89,7 +90,7 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
 fn daily_pass_shares_series_and_position_allowance_across_reentry() {
     use alloy_primitives::B256;
     use outbe_gem::GemContract;
-    use outbe_primitives::{sweep_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
+    use outbe_primitives::{pass_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
     let mut p = world();
     StorageHandle::enter(&mut p, |s| {
         let genesis =
@@ -109,13 +110,13 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         }
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, DAY_CLOSED, 1), s.clone());
-        crate::called::run_call_slice(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
         );
         assert_eq!(gem.daily_phase.read().unwrap(), 1);
-        crate::called::run_call_slice(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
@@ -124,7 +125,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             BlockContext::empty_for_tests(2, DAY_CLOSED + 1, 1),
             s.clone(),
         );
-        crate::called::run_call_slice(&next).unwrap();
+        crate::called::process_call_pass(&next).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)
@@ -137,7 +138,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
                 .unwrap(),
             U256::ZERO
         );
-        crate::called::run_call_slice(&next).unwrap();
+        crate::called::process_call_pass(&next).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)
@@ -173,7 +174,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(at, at, 1), s);
         let expired = positions_expired::sweep_expired_positions(&ctx)?;
-        positions_expired::sweep_position_cleanup(&ctx)?;
+        positions_expired::cleanup_positions(&ctx)?;
         Ok(expired)
     })
 }

@@ -655,15 +655,6 @@ fn assert_mining_receipt(
             encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),
         },
     );
-    assert_receipt_event(
-        &minted.receipt,
-        addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodBurned {
-            owner: scenario.owner,
-            nodId: scenario.id.to_u256(),
-            encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),
-        },
-    );
 }
 
 fn assert_mined_ledgers(

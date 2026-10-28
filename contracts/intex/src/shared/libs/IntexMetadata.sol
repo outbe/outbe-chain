@@ -91,9 +91,17 @@ library IntexMetadata {
         );
     }
 
-    /// @dev The series id verbatim. It is already the readable `20260212-TRY-U`.
+    /// @dev The readable series id: `20260212-TRY-U`, or `20261102-EUR` without its two
+    ///      `0x00` padding bytes.
     function _displayId(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
-        return string(abi.encodePacked(data.seriesId));
+        bytes14 id = data.seriesId;
+        uint256 len = 14;
+        while (len > 0 && id[len - 1] == 0) --len;
+        bytes memory out = new bytes(len);
+        for (uint256 i = 0; i < len; ++i) {
+            out[i] = id[i];
+        }
+        return string(out);
     }
 
     function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool forfeited)

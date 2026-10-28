@@ -199,7 +199,7 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
 /// This helper runs one block of the raw expiry and deletion workers, independent of Oracle scheduling.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     crate::hooks::sweep_forfeits(ctx)?;
-    crate::hooks::sweep_cleanup(ctx)?;
+    crate::hooks::cleanup(ctx)?;
     Ok(())
 }
 
@@ -224,14 +224,14 @@ fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     crate::called::scan_and_call(ctx)
 }
 
-fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
+fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     prepare_daily(ctx);
-    crate::called::run_daily(ctx)
+    crate::called::schedule_call_pass(ctx)
 }
 
-fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     prepare_daily(ctx);
-    crate::called::run_call_slice(ctx)
+    crate::called::process_call_pass(ctx)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

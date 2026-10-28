@@ -3,16 +3,16 @@
 
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result, SweepFailure},
-    expiry_queue::{self, Due, ExpiryHandler},
+    deadline_queue::{self, DeadlineHandler, Due},
+    error::{PassFailure, PrecompileError, Result},
+    pass_budget::PassBudget,
     storage::StorageHandle,
-    sweep_budget::SweepBudget,
 };
 
 use crate::errors::GemFactoryError;
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
-use crate::state::{PositionCleanupDays, PositionExpiryDays};
+use crate::state::{PositionCleanupQueue, PositionExpiryQueue};
 use alloy_primitives::U256;
 
 /// Returns the unissued capacity of the hours whose positions expired. Returns the
@@ -21,18 +21,18 @@ use alloy_primitives::U256;
 pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut expiry = PositionExpiry::new(ctx);
-    expiry_queue::sweep_block(&PositionExpiryDays(&queue), ctx, &mut expiry)?;
+    deadline_queue::process_block(&PositionExpiryQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.expired)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn expire_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+    budget: &mut PassBudget,
+) -> Result<deadline_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
-        &PositionExpiryDays(&queue),
+    deadline_queue::process_day(
+        &PositionExpiryQueue(&queue),
         ctx,
         through_day,
         budget,
@@ -41,14 +41,14 @@ pub(crate) fn sweep_through(
 }
 
 /// Deletes the positions of the expired hours. Returns the positions deleted.
-pub fn sweep_position_cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn cleanup_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     let mut cleanup = PositionCleanup {
         factory: GemFactoryContract::new(ctx.storage.clone()),
         deleted: 0,
     };
-    expiry_queue::sweep_cleanup(
-        &PositionCleanupDays(&queue),
+    deadline_queue::process_cleanup(
+        &PositionCleanupQueue(&queue),
         ctx,
         &queue.cleanup_budget,
         &mut cleanup,
@@ -73,14 +73,14 @@ impl<'a, 's> PositionExpiry<'a, 's> {
 }
 
 /// An hour expires as one: it is its own and only member.
-impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
+impl DeadlineHandler<u64> for PositionExpiry<'_, '_> {
     type Member = u64;
 
     fn due(&mut self, hour: u64) -> Result<Due> {
         let hour = crate::state::position_queue_hour(hour)?;
         Ok(match self.factory.hour_position_count(hour)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -93,7 +93,7 @@ impl ExpiryHandler<u64> for PositionExpiry<'_, '_> {
     }
 
     /// Nobody issued the capacity, so it goes back to the Promis reserve.
-    fn expire_member(&mut self, hour: u64, _member: u64) -> Result<()> {
+    fn process_member(&mut self, hour: u64, _member: u64) -> Result<()> {
         let hour = crate::state::position_queue_hour(hour)?;
         let positions = self.factory.hour_position_count(hour)?;
         let returned = self.factory.hour_capacity_minor.read(&hour)?;
@@ -128,14 +128,14 @@ struct PositionCleanup<'s> {
 }
 
 /// An expired hour's members are its positions.
-impl ExpiryHandler<u64> for PositionCleanup<'_> {
+impl DeadlineHandler<u64> for PositionCleanup<'_> {
     type Member = U256;
 
     fn due(&mut self, hour: u64) -> Result<Due> {
         let hour = crate::state::position_queue_hour(hour)?;
         Ok(match self.factory.hour_position_count(hour)? {
             0 => Due::Drop,
-            _ => Due::Expire,
+            _ => Due::Process,
         })
     }
 
@@ -149,11 +149,11 @@ impl ExpiryHandler<u64> for PositionCleanup<'_> {
             .hour_position(crate::state::position_queue_hour(hour)?, index)
     }
 
-    fn classify(&self, error: &PrecompileError) -> SweepFailure {
-        error.record_sweep_failure()
+    fn classify(&self, error: &PrecompileError) -> PassFailure {
+        error.record_pass_failure()
     }
 
-    fn expire_member(&mut self, _hour: u64, position_id: U256) -> Result<()> {
+    fn process_member(&mut self, _hour: u64, position_id: U256) -> Result<()> {
         let record = self
             .factory
             .positions

@@ -2,53 +2,47 @@
 //! and hands their Credis to the cleanup.
 
 use alloy_primitives::B256;
-use alloy_sol_types::SolEvent;
 use outbe_credis::precompile::ICredis;
-use outbe_credis::{CredisContract, ExpiryDays};
+use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
-    addresses::CREDIS_FACTORY_ADDRESS,
     block::BlockRuntimeContext,
+    deadline_queue::{self, DeadlineHandler, Due},
     error::Result,
-    expiry_queue::{self, Due, ExpiryHandler},
-    sweep_budget::SweepBudget,
+    pass_budget::PassBudget,
 };
-
-use crate::precompile::ICredisFactory::ExpiryDeferred;
 
 /// Runs from CycleTick every block. Returns the groups forfeited.
 #[cfg(test)]
 pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = CredisContract::new(ctx.storage.clone());
-    let mut expiry = CredisExpiry::new(ctx);
-    expiry_queue::sweep_block(&ExpiryDays(&queue), ctx, &mut expiry)?;
+    let mut expiry = CredisForfeit::new(ctx);
+    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
     Ok(expiry.forfeited)
 }
 
-pub(crate) fn sweep_through(
+pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
-    budget: &mut SweepBudget,
-) -> Result<expiry_queue::Progress> {
+    budget: &mut PassBudget,
+) -> Result<deadline_queue::Progress> {
     let queue = CredisContract::new(ctx.storage.clone());
-    expiry_queue::sweep_day(
-        &ExpiryDays(&queue),
+    deadline_queue::process_day(
+        &ForfeitQueue(&queue),
         ctx,
         through_day,
         budget,
-        &mut CredisExpiry::new(ctx),
+        &mut CredisForfeit::new(ctx),
     )
 }
 
-struct CredisExpiry<'a, 'storage> {
-    ctx: &'a BlockRuntimeContext<'storage>,
+struct CredisForfeit<'storage> {
     credis: CredisContract<'storage>,
     forfeited: u32,
 }
 
-impl<'a, 's> CredisExpiry<'a, 's> {
-    fn new(ctx: &'a BlockRuntimeContext<'s>) -> Self {
+impl<'s> CredisForfeit<'s> {
+    fn new(ctx: &BlockRuntimeContext<'s>) -> Self {
         Self {
-            ctx,
             credis: CredisContract::new(ctx.storage.clone()),
             forfeited: 0,
         }
@@ -56,14 +50,14 @@ impl<'a, 's> CredisExpiry<'a, 's> {
 }
 
 /// A called group forfeits as one: it is its own and only member.
-impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
+impl DeadlineHandler<B256> for CredisForfeit<'_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.credis.group_called_at.read(&group)? != 0;
         Ok(
             match called && self.credis.group_member_count(group)? != 0 {
-                true => Due::Expire,
+                true => Due::Process,
                 false => Due::Drop,
             },
         )
@@ -79,7 +73,7 @@ impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
 
     /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
     /// Promis reserve together, in the cleanup.
-    fn expire_member(&mut self, group: B256, _member: B256) -> Result<()> {
+    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let credis = self.credis.group_member_count(group)?;
         self.credis.hand_to_cleanup(group)?;
         self.credis.emit(ICredis::CredisGroupForfeited {
@@ -91,13 +85,7 @@ impl ExpiryHandler<B256> for CredisExpiry<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "expiry sweep: forfeit deferred");
-        self.ctx.storage.emit_event(
-            CREDIS_FACTORY_ADDRESS,
-            SolEvent::encode_log_data(&ExpiryDeferred {
-                groupKey: group,
-                retryAt: retry_at,
-            }),
-        )
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
     }
 }

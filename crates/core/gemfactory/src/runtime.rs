@@ -161,7 +161,7 @@ pub fn issue_gem_position(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    let series = outbe_intex::api::get_series(storage, source_intex_id)?
+    let series = outbe_intex::api::find_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
     if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());

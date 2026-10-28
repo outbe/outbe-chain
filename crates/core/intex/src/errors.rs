@@ -35,6 +35,12 @@ pub enum IntexError {
     DateStep { kind: u8, date_key: u32 },
 }
 
+impl From<outbe_primitives::series_id::InvalidSeriesId> for IntexError {
+    fn from(_: outbe_primitives::series_id::InvalidSeriesId) -> Self {
+        Self::InvalidSeriesId
+    }
+}
+
 pub(crate) fn date_step_error(
     err: outbe_primitives::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {

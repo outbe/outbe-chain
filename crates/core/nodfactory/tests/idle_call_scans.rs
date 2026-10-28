@@ -48,8 +48,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             storage.clone(),
         ))
         .unwrap();
-        called::run_daily(&ctx).unwrap();
-        called::run_call_slice(&ctx).unwrap();
+        called::schedule_call_pass(&ctx).unwrap();
+        called::process_call_pass(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -63,28 +63,27 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             BlockContext::empty_for_tests(2, midnight, 1),
             storage.clone(),
         );
-        called::run_call_slice(&ctx).unwrap();
-        hooks::sweep_cleanup(&ctx).unwrap();
+        called::process_call_pass(&ctx).unwrap();
+        hooks::cleanup(&ctx).unwrap();
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         assert_eq!(nod.call_latest_day.read().unwrap(), 20260715);
-        let allowance = outbe_primitives::sweep_budget::BlockAllowance::unpack(
-            nod.daily_budget.read().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        let allowance =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
+                .unwrap()
+                .unwrap();
         assert_eq!(allowance.height, 2);
         assert_eq!(allowance.day, 0);
         assert_eq!(
             allowance.budget,
-            outbe_primitives::sweep_budget::SweepBudget::per_block()
+            outbe_primitives::pass_budget::PassBudget::per_block()
         );
     });
     let before = provider.storage.clone();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        called::run_call_slice(&ctx).unwrap();
-        hooks::sweep_cleanup(&ctx).unwrap();
+        called::process_call_pass(&ctx).unwrap();
+        hooks::cleanup(&ctx).unwrap();
     });
     assert_eq!(
         provider.storage, before,

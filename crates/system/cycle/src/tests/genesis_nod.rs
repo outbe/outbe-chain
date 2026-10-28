@@ -115,7 +115,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
                     block_ctx(height, late),
                     storage.clone(),
                 ))?;
@@ -176,7 +176,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::run_call_slice(&BlockRuntimeContext::new(
+                outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
                     block_ctx(height, restart),
                     storage.clone(),
                 ))?;
@@ -370,6 +370,6 @@ fn issue_nod(
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
 fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
     crate::runtime::dispatch_triggers(ctx)?;
-    outbe_nodfactory::called::run_call_slice(ctx)?;
+    outbe_nodfactory::called::process_call_pass(ctx)?;
     Ok(())
 }

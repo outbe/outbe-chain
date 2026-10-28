@@ -731,7 +731,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
         let nonce = StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             runtime::issue_intex(&s, sample(7)).unwrap();
-            let promis_amount = outbe_intex::api::read_series(&s, sid(7))
+            let promis_amount = outbe_intex::api::get_series(&s, sid(7))
                 .unwrap()
                 .promis_load_minor;
             (0u64..)
@@ -844,7 +844,7 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
         assert_eq!((live.minedUnits, live.gemFactoryUnits), (15, 10));
         assert_eq!(live.ownerUnits, 6);
-        let series = outbe_intex::api::read_series(&s, sid(7)).unwrap();
+        let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         outbe_intex::api::call_stamp(&s, &series).unwrap()
     });
 

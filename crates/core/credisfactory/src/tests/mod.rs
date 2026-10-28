@@ -336,7 +336,7 @@ fn block_at<'storage>(
             .unwrap();
     }
     let height =
-        outbe_primitives::sweep_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
+        outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
             .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
@@ -347,7 +347,7 @@ fn block_at<'storage>(
 
 /// The daily trigger alone: it schedules the closed day and walks nothing.
 pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
-    crate::called::run_daily(&block_at(storage, timestamp)).unwrap()
+    crate::called::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
@@ -356,7 +356,7 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::run_call_slice(&block_at(storage, timestamp)).unwrap()
+    crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 /// One block's forfeit sweep over the lapsed called groups, then its cleanup. Returns
@@ -366,8 +366,8 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
         BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
         storage.clone(),
     );
-    let forfeited = crate::expired::sweep_expired(&ctx).unwrap();
-    crate::cleanup::sweep_cleanup(&ctx).unwrap();
+    let forfeited = crate::forfeited::sweep_expired(&ctx).unwrap();
+    crate::cleanup::cleanup(&ctx).unwrap();
     forfeited
 }
 
@@ -375,8 +375,8 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
     let ctx = block_at(storage, timestamp);
     crate::hooks::sweep_forfeits(&ctx).unwrap();
-    crate::called::run_call_slice(&ctx).unwrap();
-    crate::hooks::sweep_cleanup(&ctx).unwrap();
+    crate::called::process_call_pass(&ctx).unwrap();
+    crate::hooks::cleanup(&ctx).unwrap();
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.

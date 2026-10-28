@@ -484,11 +484,11 @@ fn leaving_called_frees_the_expiry_slot() {
         let gem = GemContract::new(storage.clone());
         call_gem(storage, gem_id, T_NOW);
         let day = GemContract::deadline_day(T_NOW + 7 * SECONDS_PER_DAY);
-        assert_eq!(gem.expiry_day_live.read(&day).unwrap(), 1);
+        assert_eq!(gem.forfeit_day_live.read(&day).unwrap(), 1);
 
         settle(storage, gem_id);
         burn_settled(storage, gem_id);
-        assert_eq!(gem.expiry_day_live.read(&day).unwrap(), 0);
+        assert_eq!(gem.forfeit_day_live.read(&day).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);
     });
 }

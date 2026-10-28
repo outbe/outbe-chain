@@ -35,18 +35,8 @@ interface INodFactory {
 
     event NodMined(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
 
-    event NodBurned(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
-
     /// @notice Emitted when a Nod is settled.
     event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
-
-    /// @notice A reference currency was left out of one day's Call scan because its
-    ///         window price could not be indexed. The next daily pass tries it again.
-    event CallScanSkipped(uint16 indexed referenceCurrency, uint32 indexed utcDay);
-
-    /// @notice A lapsed group could not be forfeited. The forfeit sweep comes back to it
-    ///         at `retryAt`.
-    event ExpiryDeferred(bytes32 indexed groupKey, uint64 retryAt);
 
     /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays

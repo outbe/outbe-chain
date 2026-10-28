@@ -34,7 +34,7 @@ pub(crate) fn call_if_breached(
     let Some(&first) = members.first() else {
         return Ok(0);
     };
-    let series = outbe_intex::api::read_series(storage, first)?;
+    let series = outbe_intex::api::get_series(storage, first)?;
     let breached = window.breached(&BreachTerms {
         call_price: series.call_price_minor,
         window_seconds: intex.call_group_window_seconds.read(&group)?,
@@ -55,7 +55,7 @@ pub(crate) fn call_if_breached(
     for &series_id in &members {
         crate::notify::enqueue_notice(
             factory,
-            crate::notify::pack_called_notice(series_id, called_at),
+            crate::notify::pack_call_notice(series_id, called_at),
         )?;
     }
 

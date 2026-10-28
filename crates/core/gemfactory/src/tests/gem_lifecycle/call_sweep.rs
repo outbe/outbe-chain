@@ -4,9 +4,9 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
+use outbe_primitives::addresses::GEM_ADDRESS;
+use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::sweep_budget::{SweepBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
@@ -38,7 +38,7 @@ fn walk(
     budget: u32,
 ) -> (u32, bool) {
     let ctx = block_ctx(storage);
-    let mut budget = SweepBudget::new(budget, u32::MAX);
+    let mut budget = PassBudget::new(budget, u32::MAX);
     crate::called::call_currency(
         &ctx,
         USD,
@@ -124,7 +124,7 @@ fn a_finished_sweep_closes_itself_and_idle_blocks_do_nothing() {
 
         // A gem that breaches just as hard is left alone: no sweep is open.
         let second_id = callable_gem_of(storage, USD, 1, issued_at, U256::from(100_000u64));
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
         assert_eq!(gem_state(storage, second_id), GemState::Issued as u8);
     });
 }
@@ -295,7 +295,7 @@ fn call_skips_below_threshold() {
 
 #[test]
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
-    use outbe_primitives::daily_sweep::currency_position;
+    use outbe_primitives::day_pass::currency_position;
     let currencies = [USD, EUR];
     assert_eq!(
         currency_position(&currencies, u32::from(EUR)),
@@ -352,9 +352,9 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
 }
 
 #[test]
-fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
+fn an_unindexable_price_skips_its_currency_for_the_day() {
     let mut provider = provider_at(T_NOW);
-    let pinned_day = StorageHandle::enter(&mut provider, |storage| {
+    StorageHandle::enter(&mut provider, |storage| {
         let gem_id = mature_gem(&storage);
         // A price no bin can hold, on enough days to be the window's ceiling. A
         // begin-block error would fail the whole block.
@@ -387,20 +387,8 @@ fn an_unindexable_price_skips_its_currency_for_the_day_and_says_so() {
 
         // Another slice of the same pass skips it instead of re-reading the window.
         gem.call_sweep_day.write(last_closed_day).unwrap();
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
-        last_closed_day
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
     });
-
-    let skipped: Vec<_> = provider
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|log| {
-            crate::precompile::IGemFactory::CallScanSkipped::decode_log_data(log).ok()
-        })
-        .collect();
-    assert_eq!(skipped.len(), 1, "one event for the day, not one per slice");
-    assert_eq!(skipped[0].referenceCurrency, USD);
-    assert_eq!(skipped[0].utcDay, pinned_day);
 }
 
 /// Gem ids carry no order, so a slice refreshes the whole range once, however many
@@ -462,7 +450,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         let next_day = previous_date_key(timestamp_to_date_key(next_ts)).expect("date step");
         priced_window(storage, pair, next_day, U256::from(300_000u64));
         let next = block_ctx_at(storage, next_ts);
-        run_daily(&next).unwrap();
+        schedule_call_pass(&next).unwrap();
         assert_eq!(gem.call_sweep_day.read().unwrap(), day);
         assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
@@ -472,7 +460,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
         );
 
         // The next slice finishes the old day and hands the sweep to the queued one.
-        run_call_slice(&next).unwrap();
+        process_call_pass(&next).unwrap();
         assert_eq!(gem_state(storage, above), GemState::Called as u8);
         assert_eq!(gem.call_sweep_day.read().unwrap(), next_day);
         assert_eq!(gem.call_latest_day.read().unwrap(), next_day);
@@ -504,7 +492,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             let ctx = block_ctx_at(storage, ts);
             match offset {
                 0 => scan_and_call(&ctx).map(drop),
-                _ => run_daily(&ctx),
+                _ => schedule_call_pass(&ctx),
             }
             .unwrap();
             closed.push(day);
@@ -519,7 +507,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
                 break;
             }
             let ctx = block_ctx_at(storage, T_NOW + 2 * SECONDS_PER_DAY + block);
-            run_call_slice(&ctx).unwrap();
+            process_call_pass(&ctx).unwrap();
             let day = gem.call_sweep_day.read().unwrap();
             if walked.last() != Some(&day) {
                 walked.push(day);
@@ -556,7 +544,7 @@ fn a_call_sweep_over_several_currencies_always_ends() {
         let ctx = block_ctx_at(storage, T_NOW);
         scan_and_call(&ctx).unwrap();
         for block in 1..=3 {
-            run_call_slice(&block_ctx_at(storage, T_NOW + block)).unwrap();
+            process_call_pass(&block_ctx_at(storage, T_NOW + block)).unwrap();
         }
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0, "the sweep closed");
     });
@@ -612,7 +600,7 @@ fn only_a_slice_that_calls_groups_emits_a_batch_metadata_update() {
         let ctx = block_ctx_at(&storage, T_NOW);
 
         assert_eq!(scan_and_call(&ctx).unwrap(), 1);
-        assert_eq!(run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(process_call_pass(&ctx).unwrap(), 0);
     });
 
     let updates: Vec<_> = provider
@@ -643,12 +631,12 @@ fn idle_daily_scans_emit_nothing() {
 /// A corrupt gem record read is this node's store: the call sweep fails the block.
 #[test]
 fn a_corrupt_record_read_fails_the_call_sweep() {
-    use outbe_oracle::call_sweep::CallSweep;
-    use outbe_primitives::error::{PrecompileError, SweepFailure};
+    use outbe_oracle::call_pass::CallPass;
+    use outbe_primitives::error::{PassFailure, PrecompileError};
     assert_eq!(
-        <crate::called::GemCallSweep as CallSweep>::classify(&PrecompileError::BodyReadCorruption(
+        <crate::called::GemCallPass as CallPass>::classify(&PrecompileError::BodyReadCorruption(
             "x".into()
         )),
-        SweepFailure::Propagate
+        PassFailure::Propagate
     );
 }

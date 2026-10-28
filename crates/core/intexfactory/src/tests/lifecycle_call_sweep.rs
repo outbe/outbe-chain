@@ -16,7 +16,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use crate::tests::called;
 use crate::tests::owner;
 use outbe_intex::IntexContract;
-use outbe_primitives::sweep_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
+use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 
 pub(super) const CHAIN_ID: u64 = 1;
 pub(super) const REFERENCE_ISO: u16 = 840;
@@ -95,12 +95,12 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
         let day = IntexContract::deadline_day(close_at);
         assert_eq!(
             factory
-                .expiry_day_at
+                .forfeit_day_at
                 .read(&IntexContract::day_slot_key(day, 0))
                 .unwrap(),
             key
         );
-        assert_eq!(factory.expiry_day_live.read(&day).unwrap(), 1);
+        assert_eq!(factory.forfeit_day_live.read(&day).unwrap(), 1);
         assert_eq!(factory.called_deadline.read(&key).unwrap(), close_at);
         assert_eq!(
             factory.group_members(key).unwrap(),
@@ -135,7 +135,7 @@ fn due(deadline: u64) -> u64 {
 
 fn sweep_at(s: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, now, CHAIN_ID), s.clone());
-    crate::expired::sweep_expired(&ctx).unwrap();
+    crate::forfeited::sweep_expired(&ctx).unwrap();
 }
 
 fn unallocated(s: &StorageHandle<'_>) -> U256 {
@@ -391,7 +391,7 @@ fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
-        called::run_call_slice(&at_height(&ctx, 2)).unwrap();
+        called::process_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
             0
@@ -444,11 +444,11 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         // The next block's slice finishes it and closes the sweep.
         assert_eq!(
-            called::run_call_slice(&ctx).unwrap(),
+            called::process_call_pass(&ctx).unwrap(),
             0,
             "same-height entry retains the spent allowance"
         );
-        let second = called::run_call_slice(&at_height(&ctx, 2)).unwrap();
+        let second = called::process_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(first + second, groups);
         assert_eq!(called_count(&s, days), groups);
         assert_eq!(
@@ -503,7 +503,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             BlockContext::empty_for_tests(2, scan_ts + DAY, CHAIN_ID),
             s.clone(),
         );
-        assert_eq!(called::run_call_slice(&next_day).unwrap(), 1);
+        assert_eq!(called::process_call_pass(&next_day).unwrap(), 1);
         assert_eq!(called_count(&s, days), groups);
     });
 }
@@ -550,9 +550,9 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
             s.clone(),
         );
         // Every block retries scheduling, independently of daily trigger success.
-        assert_eq!(called::run_call_slice(&ctx).unwrap(), 1);
+        assert_eq!(called::process_call_pass(&ctx).unwrap(), 1);
         assert_eq!(called_count(&s, 20260101..20260102), 1);
-        assert_eq!(called::run_call_slice(&ctx).unwrap(), 0);
+        assert_eq!(called::process_call_pass(&ctx).unwrap(), 0);
     });
 }
 
@@ -616,7 +616,7 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
 
         // The next slices must reach the end of the range and close the sweep.
         for height in 2..=5 {
-            called::run_call_slice(&at_height(&ctx, height)).unwrap();
+            called::process_call_pass(&at_height(&ctx, height)).unwrap();
         }
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -708,7 +708,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
             if factory.call_sweep_day.read().unwrap() == 0 {
                 break;
             }
-            called::run_call_slice(&at_height(&later, height)).unwrap();
+            called::process_call_pass(&at_height(&later, height)).unwrap();
         }
         assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 
