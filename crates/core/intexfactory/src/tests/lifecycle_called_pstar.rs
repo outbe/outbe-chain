@@ -201,6 +201,7 @@ fn seed_series(s: &StorageHandle<'_>, issued_at: u32, trigger: U256) -> SeriesId
                 call_window_seconds: WINDOW * DAY_SECS as u32,
                 call_threshold_seconds: THRESHOLD * DAY_SECS as u32,
                 call_notice_period_seconds: 7 * DAY_SECS as u32,
+                transit_margin_seconds: 3_600,
             },
             issued_at,
             issuance_currency: 840,

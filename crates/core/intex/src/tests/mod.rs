@@ -27,6 +27,7 @@ const ISSUED_AT: u32 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+const TRANSIT_MARGIN: u32 = 3_600;
 
 const ENTRY_PRICE_MINOR: u64 = 2_000_000;
 
@@ -60,6 +61,7 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
             call_window_seconds: 30 * SECONDS_PER_DAY_U32,
             call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
             call_notice_period_seconds: CALL_NOTICE_PERIOD,
+            transit_margin_seconds: TRANSIT_MARGIN,
         },
         issued_at: ISSUED_AT,
         issuance_currency: 840,

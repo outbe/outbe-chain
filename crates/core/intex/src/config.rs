@@ -10,6 +10,7 @@ use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
+    TRANSIT_MARGIN,
 };
 use crate::errors::IntexError;
 use crate::schema::IntexContract;
@@ -23,6 +24,7 @@ pub struct IntexParams {
     pub call_window_seconds: u32,
     pub call_threshold_seconds: u32,
     pub call_notice_period_seconds: u32,
+    pub transit_margin_seconds: u32,
     pub call_rate: u16,
     /// Commit-entry bond on the target-chain auction in protocol units.
     pub commit_bond_minor: u128,
@@ -34,6 +36,7 @@ impl IntexParams {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
+        transit_margin_seconds: TRANSIT_MARGIN,
         call_rate: CALL_RATE_PCT,
         commit_bond_minor: COMMIT_BOND_MINOR,
     };
@@ -48,6 +51,10 @@ impl IntexParams {
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
         #[cfg(feature = "e2e-test")]
         call_notice_period_seconds: 600,
+        #[cfg(not(feature = "e2e-test"))]
+        transit_margin_seconds: TRANSIT_MARGIN,
+        #[cfg(feature = "e2e-test")]
+        transit_margin_seconds: 60,
         call_rate: 4,
         commit_bond_minor: 100 * SCALE_1E6_U128,
     };

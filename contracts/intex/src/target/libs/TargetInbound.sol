@@ -313,7 +313,8 @@ library TargetInbound {
                         callTrigger: IIntexNFT1155.IntexCallTrigger({
                             callWindow: payload.callWindow,
                             callThreshold: payload.callThreshold,
-                            callNoticePeriod: payload.callNoticePeriod
+                            callNoticePeriod: payload.callNoticePeriod,
+                            transitMargin: payload.transitMargin
                         })
                     })
                 );
@@ -332,7 +333,8 @@ library TargetInbound {
             && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
             && a.callPriceMinor == b.callPriceMinor && a.callWindow == b.callWindow
-            && a.callThreshold == b.callThreshold && a.callNoticePeriod == b.callNoticePeriod;
+            && a.callThreshold == b.callThreshold && a.callNoticePeriod == b.callNoticePeriod
+            && a.transitMargin == b.transitMargin;
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
@@ -347,7 +349,8 @@ library TargetInbound {
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
             && d.callPriceMinor == payload.callPriceMinor && d.callTrigger.callWindow == payload.callWindow
             && d.callTrigger.callThreshold == payload.callThreshold
-            && d.callTrigger.callNoticePeriod == payload.callNoticePeriod;
+            && d.callTrigger.callNoticePeriod == payload.callNoticePeriod
+            && d.callTrigger.transitMargin == payload.transitMargin;
     }
 
     function _ignore(uint32 srcChainId, uint8 msgType, bytes32 key, uint8 reason) private {

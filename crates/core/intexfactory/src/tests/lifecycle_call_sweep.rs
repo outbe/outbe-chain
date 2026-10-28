@@ -89,9 +89,10 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
         let factory = IntexContract::new(s.clone());
         let key = group_of(&s, series_of(20260101));
 
-        // The group left its bin and keeps its members for the expiry sweep.
+        // The group left its bin and waits for the expiry sweep on its transit close.
         assert_eq!(factory.call_group_slot.read(&key).unwrap(), 0);
-        let day = IntexContract::deadline_day(scan_ts + 7 * DAY);
+        let close_at = scan_ts + 7 * DAY + 3_600;
+        let day = IntexContract::deadline_day(close_at);
         assert_eq!(
             factory
                 .forfeit_day_at
@@ -100,10 +101,7 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
             key
         );
         assert_eq!(factory.forfeit_day_live.read(&day).unwrap(), 1);
-        assert_eq!(
-            factory.called_deadline.read(&key).unwrap(),
-            scan_ts + 7 * DAY
-        );
+        assert_eq!(factory.called_deadline.read(&key).unwrap(), close_at);
         assert_eq!(
             factory.group_members(key).unwrap(),
             vec![series_of(20260101)]
@@ -237,6 +235,7 @@ fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId
                 call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
+                transit_margin_seconds: 3_600,
             },
             issued_at: ISSUED_AT,
             issuance_currency: issuance,
@@ -276,6 +275,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
                 call_window_seconds: WINDOW_DAYS * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
+                transit_margin_seconds: 3_600,
             },
             issued_at: ISSUED_AT,
             issuance_currency: issuance,

@@ -429,7 +429,7 @@ impl Lifecycle for IntexLifecycle {
         }
     }
 
-    /// Waiting past the notice is the only way to reach expiry. The deadline is
+    /// Waiting past the notice and its transit margin is the only way to reach expiry. It is
     /// derived against the clock, and neither side writes anything when it passes.
     fn lapse_notice(&self, world: &mut World) {
         let port = world.validators.primary_port();
@@ -463,7 +463,9 @@ impl Lifecycle for IntexLifecycle {
             deadline > 0,
             "series {series} has no deadline, so it was never Called"
         );
-        wait_for_chain_time(world, port, deadline + EXPIRY_MARGIN_SECS);
+        let close_at = venue_probes::series_transit_close(&url, nft, series)
+            .expect("the expiring series carries a transit close");
+        wait_for_chain_time(world, port, close_at + EXPIRY_MARGIN_SECS);
 
         // Prepare the test pass for a closed deadline day after the exact notice expires.
         test_issuance::close_call_notice(
@@ -884,8 +886,8 @@ fn unsettled_series_forfeited(world: &mut World) {
     let target_url = target_rpc_url(world);
     let nft = intex_nft(world);
     let target_nft = target_intex_nft(world);
-    // No message carries expiry across: each chain derives it from the same calledAt
-    // and notice, so both have to agree on their own.
+    // No message carries expiry across: each chain derives it from the same calledAt,
+    // notice and transit margin, so both have to agree on their own.
     let target_router = world
         .state
         .target_contracts
@@ -918,6 +920,8 @@ fn unsettled_series_forfeited(world: &mut World) {
             .expect("committee expiry deadline");
         let target_deadline = venue_probes::series_call_deadline(&target_url, target_nft, series)
             .expect("target expiry deadline");
+        let target_close = venue_probes::series_transit_close(&target_url, target_nft, series)
+            .expect("target transit close");
         let target_timestamp =
             eth::latest_block_timestamp(&target_url).expect("target expiry observation timestamp");
         assert_eq!(
@@ -925,8 +929,8 @@ fn unsettled_series_forfeited(world: &mut World) {
             "series {series} expiry deadline parity"
         );
         assert!(
-            target_timestamp > target_deadline,
-            "series {series} target clock did not pass expiry"
+            target_timestamp > target_close,
+            "series {series} target clock did not pass the transit close"
         );
         eprintln!(
             "INTEX_EXPIRY_CLOCK series={series} committee_timestamp={now} \

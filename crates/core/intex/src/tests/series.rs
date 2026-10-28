@@ -22,6 +22,7 @@ fn create_then_read_round_trip() {
                 call_window_seconds: 30 * SECONDS_PER_DAY_U32,
                 call_threshold_seconds: 5 * SECONDS_PER_DAY_U32,
                 call_notice_period_seconds: CALL_NOTICE_PERIOD,
+                transit_margin_seconds: 3_600,
             }
         );
         assert_eq!(api::state(&s, &r).unwrap(), IntexState::Issued);

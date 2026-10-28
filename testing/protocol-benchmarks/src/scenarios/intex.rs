@@ -78,6 +78,7 @@ fn params(index: usize) -> IssuanceParams {
             call_window_seconds: prod.call_window_seconds,
             call_threshold_seconds: prod.call_threshold_seconds,
             call_notice_period_seconds: prod.call_notice_period_seconds,
+            transit_margin_seconds: prod.transit_margin_seconds,
         },
         issuance_currency: 840,
         reference_currency: 840,

@@ -38,6 +38,7 @@ fn trigger_of(profile: IntexParams) -> IntexCallTrigger {
         call_window_seconds: profile.call_window_seconds,
         call_threshold_seconds: profile.call_threshold_seconds,
         call_notice_period_seconds: profile.call_notice_period_seconds,
+        transit_margin_seconds: profile.transit_margin_seconds,
     }
 }
 
@@ -181,6 +182,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             call_window_seconds: message.callWindow,
             call_threshold_seconds: message.callThreshold,
             call_notice_period_seconds: message.callNoticePeriod,
+            transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
         };
         let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
@@ -244,6 +246,7 @@ fn the_day_config_round_trips_with_its_call_prices() {
                 call_window_seconds: 11,
                 call_threshold_seconds: 7,
                 call_notice_period_seconds: 5,
+                transit_margin_seconds: 0,
             },
             min_intex_bid_rate: 3,
             min_intex_bid_quantity: 2,

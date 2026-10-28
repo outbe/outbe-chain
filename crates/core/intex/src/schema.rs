@@ -10,7 +10,7 @@ use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
 use crate::errors::IntexError;
 
 /// Series lifecycle state: `Issued -> Called -> Forfeited`, derived from the series' group.
-/// A Called series becomes Forfeited after its notice-period deadline.
+/// A Called series becomes Forfeited once the transit margin past its settlement deadline ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
@@ -37,21 +37,24 @@ pub struct IntexCallTrigger {
     pub call_threshold_seconds: u32,
     /// Seconds between `called_at` and the settlement deadline.
     pub call_notice_period_seconds: u32,
+    /// Seconds past the settlement deadline a Called unit may still arrive and settle.
+    pub transit_margin_seconds: u32,
 }
 
-/// When a series' group was called and the last second it may still settle. Both are
-/// zero while the group is uncalled.
+/// When a series' group was called, its settlement deadline, and the last second a Called
+/// unit may still land and settle. All are zero while the group is uncalled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CallStamp {
     pub called_at: u32,
     pub deadline: u64,
+    pub close_at: u64,
 }
 
 impl CallStamp {
-    /// The state as of `now`: derived, because no transaction arrives at the deadline
+    /// The state as of `now`: derived, because no transaction arrives at the transit close
     /// to write it.
     pub const fn state(&self, now: u64) -> IntexState {
-        match (self.called_at, now > self.deadline) {
+        match (self.called_at, now > self.close_at) {
             (0, _) => IntexState::Issued,
             (_, false) => IntexState::Called,
             (_, true) => IntexState::Forfeited,
@@ -127,6 +130,9 @@ pub struct SeriesRecord {
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
     #[attribute(order = 10, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
+
+    #[attribute(order = 11)]
+    pub transit_margin_seconds: u32,
 }
 
 impl SeriesRecord {
@@ -145,6 +151,7 @@ impl SeriesRecord {
             call_window_seconds: self.call_window_seconds,
             call_threshold_seconds: self.call_threshold_seconds,
             call_notice_period_seconds: self.call_notice_period_seconds,
+            transit_margin_seconds: self.transit_margin_seconds,
         }
     }
 }
@@ -240,7 +247,7 @@ pub struct IntexContract {
     pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
     pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Group key -> when the group's settlement window closes.
+    /// Group key -> when the group's transit margin past its settlement deadline ends.
     #[attribute(order = 47)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     // Widest terms ever issued in a currency. Both only move outwards, so the range
@@ -321,6 +328,8 @@ pub struct IntexContract {
     pub call_group_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
     #[attribute(order = 72)]
     pub call_group_notice_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 77)]
+    pub call_group_transit_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexContract<'_> {

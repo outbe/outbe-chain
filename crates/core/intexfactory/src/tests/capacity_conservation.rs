@@ -42,6 +42,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
                     call_window_seconds: 28 * SECONDS_PER_DAY_U32,
                     call_threshold_seconds: 21 * SECONDS_PER_DAY_U32,
                     call_notice_period_seconds: 7 * SECONDS_PER_DAY_U32,
+                    transit_margin_seconds: 3_600,
                 },
                 issued_at: ISSUED,
                 issuance_currency: 840,
