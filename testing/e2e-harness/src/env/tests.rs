@@ -135,6 +135,16 @@ fn chained_followers_keep_all_twelve_live_handoff_and_restart_steps() {
     assert_eq!(unmet(&feature, scenario, &env), None);
     assert_eq!(decide(&feature, scenario, &env), Decision::Run);
     assert_registered_steps(&feature, scenario);
+
+    let keyless = feature
+        .scenarios
+        .iter()
+        .find(|scenario| has_tag(&feature, scenario, "keyless-fullnode-replay"))
+        .expect("keyless fullnode replay scenario");
+    assert_eq!(keyless.steps.len(), 5);
+    assert_eq!(unmet(&feature, keyless, &env), None);
+    assert_eq!(decide(&feature, keyless, &env), Decision::Run);
+    assert_registered_steps(&feature, keyless);
 }
 
 #[test]
