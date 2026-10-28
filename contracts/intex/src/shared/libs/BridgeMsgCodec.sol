@@ -366,7 +366,6 @@ library BridgeMsgCodec {
         uint32 callWindow;
         uint32 callThreshold;
         uint64 callPriceMinor;
-        /// @notice Seconds past the settlement deadline a Called unit may still arrive and settle.
         uint32 transitMargin;
     }
 

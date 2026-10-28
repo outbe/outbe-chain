@@ -503,7 +503,6 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), mintAmount);
     }
 
-    /// @dev Calls series 1 with a 14-day notice and returns its settlement deadline and transit close.
     function _callWithNotice() internal returns (uint32 deadline, uint32 closeAt) {
         uint32 callPeriod = uint32(14 days);
         _createSeries(SERIES_ID_1_DAY, callPeriod);
@@ -732,7 +731,6 @@ contract IntexNFT1155Test is Test {
         nft.settleIntex(SERIES_ID_1, user, 4);
     }
 
-    /// A unit that lands within the transit margin past the deadline still settles.
     function test_Settle_AllowedUntilTransitClose() public {
         (uint32 deadline, uint32 closeAt) = _callWithNotice();
         _grantSettlementRole(address(this));

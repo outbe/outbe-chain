@@ -741,8 +741,7 @@ pub(crate) fn series_call_deadline(
         .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
 }
 
-/// When a Called series stops taking arrivals and settlements: the deadline plus the transit
-/// margin. A scenario has to wait past this one to read Forfeited.
+/// The deadline plus the transit margin: a scenario waits past it to read Forfeited.
 pub(crate) fn series_transit_close(
     url: &str,
     nft: Address,

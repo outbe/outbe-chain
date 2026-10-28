@@ -303,7 +303,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         IIntexNFT1155.SeriesData storage data = $.seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
-        // A called series settles until the transit margin past its deadline ends.
         if (data.state == IIntexNFT1155.IntexState.Called) {
             uint256 closeAt = _transitCloseAt(data);
             if (block.timestamp > closeAt) {

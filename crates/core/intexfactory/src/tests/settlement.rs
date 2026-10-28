@@ -492,8 +492,6 @@ fn settle_rejects_expired_deadline() {
     });
 }
 
-/// A unit that lands within the transit margin past the deadline still reaches settlement: the
-/// call passes the deadline gate and stops only at the owner's empty balance.
 #[test]
 fn settle_stays_open_through_the_transit_margin() {
     let mut storage = factory_provider();

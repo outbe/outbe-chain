@@ -452,7 +452,6 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     });
 }
 
-/// A deadline in the last hour of a day moves the forfeit to the day the transit margin ends in.
 #[test]
 fn a_group_waits_for_its_transit_close_before_it_forfeits() {
     with_factory(|s| {
