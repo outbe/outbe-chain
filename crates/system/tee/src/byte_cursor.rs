@@ -31,6 +31,10 @@ impl<'a, E> ByteCursor<'a, E> {
         }
     }
 
+    pub(crate) const fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
     /// Returns the next `len` bytes. The offset first checks for overflow and
     /// then for the end of the input. A failed read does not move the offset.
     pub(crate) fn take(&mut self, len: usize) -> Result<&'a [u8], E> {

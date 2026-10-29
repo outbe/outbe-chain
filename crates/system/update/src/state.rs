@@ -119,7 +119,7 @@ impl Update<'_> {
 
         let len = ids.len();
         if removed_idx != len - 1 {
-            let last = list.get(len as u32 - 1)?.unwrap_or(U256::ZERO);
+            let last = ids[len - 1];
             list.set(removed_idx as u32, last)?;
         }
         let _ = list.pop()?;
