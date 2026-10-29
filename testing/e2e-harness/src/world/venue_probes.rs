@@ -598,7 +598,7 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IWinClaim {
         function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
-        function issueIntex(uint32 worldwideDay, address bidder) external;
+        function redeemWinNote(uint32 worldwideDay, address bidder) external;
     }
 }
 /// The series the target chain was told to issue, read back from its own log so

@@ -557,7 +557,7 @@
     },
     {
       "type": "function",
-      "name": "issueIntex",
+      "name": "redeemWinNote",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -918,7 +918,7 @@
     },
     {
       "type": "event",
-      "name": "WinExpired",
+      "name": "WinNoteRedeemed",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -937,43 +937,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "units",
-          "type": "uint16",
-          "indexed": false,
-          "internalType": "uint16"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "WinIssued",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "units",
-          "type": "uint16",
-          "indexed": false,
-          "internalType": "uint16"
         }
       ],
       "anonymous": false

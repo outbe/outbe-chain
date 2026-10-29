@@ -207,7 +207,7 @@ contract EscrowAdapterWinnersTest is Test {
 
     function _close(address who) internal returns (uint16) {
         vm.prank(auction);
-        return escrow.closeWin(DAY, who);
+        return escrow.redeemWinNote(DAY, who);
     }
 
     function test_ClosingAWinPaysTheChangeAndReturnsTheUnits() public {
@@ -265,7 +265,7 @@ contract EscrowAdapterWinnersTest is Test {
 
         vm.prank(auction);
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-        escrow.closeWin(DAY, alice);
+        escrow.redeemWinNote(DAY, alice);
 
         uint256 balance = token.balanceOf(alice);
         vm.prank(auction);
@@ -314,7 +314,7 @@ contract EscrowAdapterWinnersTest is Test {
 
         vm.expectRevert(IEscrowAdapter.NothingToRefund.selector);
         escrow.claimAbandonedRefund(DAY, alice);
-        assertEq(_close(alice), 3, "the win still closes");
+        assertEq(_close(alice), 3, "the WinNote is still redeemed");
     }
 
     function test_OnlyTheAuctionClosesAWin() public {
@@ -323,10 +323,10 @@ contract EscrowAdapterWinnersTest is Test {
 
         vm.prank(alice);
         vm.expectRevert();
-        escrow.closeWin(DAY, alice);
+        escrow.redeemWinNote(DAY, alice);
     }
 
-    /// @dev Only a payment the escrow took makes a win. Every winner the chunk skipped has none.
+    /// @dev Only a payment the escrow took makes a WinNote. Every winner the chunk skipped has none.
     function test_AWinnerTheEscrowCouldNotChargeHasNoWin() public {
         address carol = address(7);
         _lock(alice, 500_000, 1); // bid below the clearing rate: the payment exceeds the lock
@@ -344,7 +344,7 @@ contract EscrowAdapterWinnersTest is Test {
         for (uint256 i = 0; i < winners.length; i++) {
             vm.prank(auction);
             vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
-            escrow.closeWin(DAY, winners[i]);
+            escrow.redeemWinNote(DAY, winners[i]);
         }
     }
 

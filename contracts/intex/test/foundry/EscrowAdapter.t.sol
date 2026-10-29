@@ -624,15 +624,15 @@ contract EscrowAdapterTest is Test {
     function test_Wire_TheAuctionChangesOnlyOnceNothingIsLeft() public {
         uint128 locked = _lockBid(bidder1, CLEARING_RATE, 2);
         _finalize(_winners(bidder1));
-        assertEq(locked, _paidAtClearing(2), "the win holds no money");
-        assertTrue(escrow.hasOutstandingLocks(), "an open win still counts");
+        assertEq(locked, _paidAtClearing(2), "the WinNote holds no money");
+        assertTrue(escrow.hasOutstandingLocks(), "an open WinNote still counts");
 
         vm.prank(admin);
         vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
         escrow.wire(address(0xBEEF), address(compact), address(paymentToken));
 
         vm.prank(auction);
-        escrow.closeWin(worldwideDay1, bidder1);
+        escrow.redeemWinNote(worldwideDay1, bidder1);
         assertFalse(escrow.hasOutstandingLocks(), "closed");
 
         vm.prank(admin);
