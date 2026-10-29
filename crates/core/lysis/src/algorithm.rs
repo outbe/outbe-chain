@@ -1,6 +1,7 @@
 use alloy_primitives::ruint::UintTryTo;
 use alloy_primitives::{Uint, I256, U256};
 use outbe_primitives::error::Result;
+use outbe_primitives::math::scaled_math::checked_mul_div_floor;
 use outbe_primitives::units::{SCALE_1E6_U128, SCALE_1E6_U256};
 
 use crate::errors::LysisError;
@@ -22,6 +23,8 @@ const POLICY_A_DEN: u32 = 5; // a = 1/5 -> x^(1/5)
 const POLICY_B_NUM: u32 = 1;
 const POLICY_B_DEN: u32 = 10; // b = 1/10 -> x^(1/10)
 const POLICY_C: U256 = u256_from_u128(SCALE_U128 * 2 / 10); // 0.2 * SCALE
+const ONE_MINUS_POLICY_C: U256 = u256_from_u128(SCALE_U128 - (SCALE_U128 * 2 / 10)); // 0.8 * SCALE
+const SCALE_SQ: U256 = u256_from_u128(SCALE_U128 * SCALE_U128); // SCALE^2 = 10^12
 
 // ---------------------------------------------------------------------------
 // Fixed-point nth root
@@ -96,30 +99,43 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
 /// tau[0] = c * sum_middle, tau[N] = (1-c) * sum_middle
 fn policy_tau_fp(p: &[u64], nt: usize) -> Result<Vec<U256>> {
     let ng = p.len();
-    let mut tau = vec![U256::ZERO; ng + 1];
+    let len = ng
+        .checked_add(1)
+        .ok_or(LysisError::KernelArithmeticOverflow)?;
+    let mut tau = vec![U256::ZERO; len];
 
     for i in 1..ng {
         let pi = p[i];
         let pi_prev = p[i - 1];
 
         if pi != 0 && pi_prev != 0 {
-            // (i - 0.5) in fixed-point: (2*i - 1) * SCALE / 2
-            let i_minus_half_fp = U256::from(2 * i as u64 - 1) * SCALE / U256::from(2u64);
+            let odd_index = u64::try_from(i)
+                .ok()
+                .and_then(|idx| idx.checked_mul(2))
+                .and_then(|doubled| doubled.checked_sub(1))
+                .ok_or(LysisError::KernelArithmeticOverflow)?;
+            // Rounds down (floor): (i - 0.5) in fixed-point = floor((2 * i - 1) * SCALE / 2).
+            let i_minus_half_fp =
+                checked_mul_div_floor(U256::from(odd_index), SCALE, U256::from(2u64))?;
 
             // (i-0.5)^(1/5) in fixed-point
             let numerator = fp_root(i_minus_half_fp, POLICY_A_NUM, POLICY_A_DEN)?;
 
             // pi^(1/10) and pi_prev^(1/10) in fixed-point
-            let pi_fp = U256::from(pi) * SCALE;
-            let pi_prev_fp = U256::from(pi_prev) * SCALE;
+            let pi_fp = U256::from(pi)
+                .checked_mul(SCALE)
+                .ok_or(LysisError::KernelArithmeticOverflow)?;
+            let pi_prev_fp = U256::from(pi_prev)
+                .checked_mul(SCALE)
+                .ok_or(LysisError::KernelArithmeticOverflow)?;
             let pi_root = fp_root(pi_fp, POLICY_B_NUM, POLICY_B_DEN)?;
             let pi_prev_root = fp_root(pi_prev_fp, POLICY_B_NUM, POLICY_B_DEN)?;
 
             let min_val = pi_root.min(pi_prev_root);
 
             if !min_val.is_zero() {
-                // tau[i] = numerator / min_val (both in SCALE)
-                tau[i] = numerator * SCALE / min_val;
+                // Rounds down (floor): tau[i] = floor(numerator * SCALE / min_val).
+                tau[i] = checked_mul_div_floor(numerator, SCALE, min_val)?;
             } else {
                 // Fallback: ng^a * nt^b
                 tau[i] = fallback_tau(ng, nt)?;
@@ -130,9 +146,14 @@ fn policy_tau_fp(p: &[u64], nt: usize) -> Result<Vec<U256>> {
         }
     }
 
-    let sum_middle: U256 = tau[1..ng].iter().copied().sum();
-    tau[0] = POLICY_C * sum_middle / SCALE;
-    tau[ng] = (SCALE - POLICY_C) * sum_middle / SCALE;
+    let sum_middle = tau[1..ng].iter().copied().try_fold(U256::ZERO, |acc, v| {
+        acc.checked_add(v)
+            .ok_or(LysisError::KernelArithmeticOverflow)
+    })?;
+    // Rounds down (floor): tau[0] = floor(c * sum_middle / SCALE).
+    tau[0] = checked_mul_div_floor(POLICY_C, sum_middle, SCALE)?;
+    // Rounds down (floor): tau[ng] = floor((1 - c) * sum_middle / SCALE).
+    tau[ng] = checked_mul_div_floor(ONE_MINUS_POLICY_C, sum_middle, SCALE)?;
 
     Ok(tau)
 }
@@ -141,11 +162,18 @@ fn policy_tau_fp(p: &[u64], nt: usize) -> Result<Vec<U256>> {
 /// population or a zero root divisor. It is a separate function so the two call
 /// sites share one implementation (the overflow-safe [`fp_root`] computes both roots).
 fn fallback_tau(ng: usize, nt: usize) -> Result<U256> {
-    let ng_fp = U256::from(ng as u64) * SCALE;
-    let nt_fp = U256::from(nt as u64) * SCALE;
+    let ng_u64 = u64::try_from(ng).map_err(|_| LysisError::KernelArithmeticOverflow)?;
+    let nt_u64 = u64::try_from(nt).map_err(|_| LysisError::KernelArithmeticOverflow)?;
+    let ng_fp = U256::from(ng_u64)
+        .checked_mul(SCALE)
+        .ok_or(LysisError::KernelArithmeticOverflow)?;
+    let nt_fp = U256::from(nt_u64)
+        .checked_mul(SCALE)
+        .ok_or(LysisError::KernelArithmeticOverflow)?;
     let ng_root = fp_root(ng_fp, POLICY_A_NUM, POLICY_A_DEN)?;
     let nt_root = fp_root(nt_fp, POLICY_B_NUM, POLICY_B_DEN)?;
-    Ok(ng_root * nt_root / SCALE)
+    // Rounds down (floor): floor(ng_root * nt_root / SCALE).
+    checked_mul_div_floor(ng_root, nt_root, SCALE)
 }
 
 // ---------------------------------------------------------------------------
@@ -159,21 +187,32 @@ struct MomentsFp {
     var_y: U256,      // Var[Y] in SCALE (may be 0)
 }
 
-fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
-    let t_total: U256 = tau.iter().copied().sum();
+fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> Result<MomentsFp> {
+    let t_total = tau.iter().copied().try_fold(U256::ZERO, |acc, v| {
+        acc.checked_add(v)
+            .ok_or(LysisError::KernelArithmeticOverflow)
+    })?;
 
-    // m[i] = tau[i] * SCALE / t_total (normalized mass)
+    // Rounds down (floor): m[i] = floor(tau[i] * SCALE / t_total) (normalized mass).
     let m: Vec<U256> = if !t_total.is_zero() {
-        tau.iter().map(|&t| t * SCALE / t_total).collect()
+        tau.iter()
+            .map(|&t| checked_mul_div_floor(t, SCALE, t_total))
+            .collect::<Result<Vec<_>>>()?
     } else {
         vec![U256::ZERO; tau.len()]
     };
 
     // Y cumulative sum of y_fp (y_fp sums to SCALE)
-    let mut y_cum = vec![U256::ZERO; y_fp.len() + 1];
+    let y_cum_len = y_fp
+        .len()
+        .checked_add(1)
+        .ok_or(LysisError::KernelArithmeticOverflow)?;
+    let mut y_cum = vec![U256::ZERO; y_cum_len];
     let mut cum = U256::ZERO;
     for (i, &val) in y_fp.iter().enumerate() {
-        cum += val;
+        cum = cum
+            .checked_add(val)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
         y_cum[i + 1] = cum;
     }
     // Ensure last = SCALE
@@ -186,20 +225,32 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
     for i in 0..m.len() {
         let mi = m[i];
         let yi = y_cum[i];
-        ey += mi * yi / SCALE;
-        ey2 += mi * yi * yi / (SCALE * SCALE);
+        // Rounds down (floor): floor(mi * yi / SCALE).
+        let ey_term = checked_mul_div_floor(mi, yi, SCALE)?;
+        ey = ey
+            .checked_add(ey_term)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+
+        let yi_sq = yi
+            .checked_mul(yi)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+        // Rounds down (floor) at a single rounding point: floor(mi * yi^2 / SCALE^2).
+        let ey2_term = checked_mul_div_floor(mi, yi_sq, SCALE_SQ)?;
+        ey2 = ey2
+            .checked_add(ey2_term)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
     }
 
-    // var_y = E[Y^2] - E[Y]^2 / SCALE
-    let ey_sq = ey * ey / SCALE;
+    // Rounds down (floor): floor(ey * ey / SCALE); saturating_sub clamps rounding-induced negative variance to 0.
+    let ey_sq = checked_mul_div_floor(ey, ey, SCALE)?;
     let var_y = ey2.saturating_sub(ey_sq);
 
-    MomentsFp {
+    Ok(MomentsFp {
         m,
         y_cum,
         ey,
         var_y,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -219,19 +270,20 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> MomentsFp {
 /// - `fmax_fp`: maximum fraction in fixed-point (SCALE-based)
 ///
 /// # Returns
-/// Fraction per FI group in fixed-point (SCALE-based).
+/// Fraction per FI group in fixed-point (SCALE-based), each bounded in `[0, fmax_fp]`.
 ///
 /// # Post-condition
-/// `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` - weighted expenditure never exceeds
-/// the target allocation. If the raw algorithm output would overshoot, the
-/// function scales the fractions down monotonically. The scaling keeps the
-/// relative ratios between groups.
+/// Each returned fraction `f1[i]` satisfies `0 <= f1[i] <= fmax_fp`. When the raw
+/// weighted sum `sum(floor(f1[i] * y_fp[i] / SCALE))` exceeds `f_fp`, the function
+/// scales the fractions down monotonically by `floor(f1[i] * f_fp / weighted_total)`
+/// (subject to per-term floor rounding up to `n - 1` least-significant units in
+/// share space; real-nominal budget enforcement is owned by `program_v1`'s projection
+/// normalization).
 ///
 /// # Errors
 /// Returns `PrecompileError::Revert` if `y_fp` and `p` have different lengths.
-/// Returns `PrecompileError::Revert` if a signed-int conversion fails at a
-/// boundary. This is impossible under current bounds (see the overflow analysis
-/// in tests).
+/// Returns `PrecompileError::Revert` if a fixed-point arithmetic operation or
+/// signed-int conversion overflows.
 pub fn calc_fraction_distribution_fp(
     y_fp: &[U256],
     p: &[u64],
@@ -250,11 +302,11 @@ pub fn calc_fraction_distribution_fp(
         return Ok(vec![U256::ZERO]);
     }
     if p.len() == 1 {
-        return Ok(vec![f_fp]);
+        return Ok(vec![f_fp.min(fmax_fp)]);
     }
 
     let tau = policy_tau_fp(p, nt)?;
-    let moments = compute_moments_fp(y_fp, &tau);
+    let moments = compute_moments_fp(y_fp, &tau)?;
 
     // With kappa=0: alpha=0, so:
     // beta = (f/fmax - E[Y]) / Var[Y]
@@ -264,57 +316,116 @@ pub fn calc_fraction_distribution_fp(
     // All unsigned inputs are <= SCALE (10^6), far under I256::MAX (~5.8*10^76),
     // so try_from conversions cannot fail in practice. Conversion overflow
     // returns `PrecompileError::Revert` rather than causing a panic.
-    let f_over_fmax = (f_fp * SCALE).checked_div(fmax_fp).unwrap_or(U256::ZERO);
+    // Rounds down (floor): floor(f_fp * SCALE / fmax_fp), or 0 when fmax_fp is zero.
+    let f_over_fmax = if fmax_fp.is_zero() {
+        U256::ZERO
+    } else {
+        checked_mul_div_floor(f_fp, SCALE, fmax_fp)?
+    };
     let scale_i = u256_to_i256(SCALE)?;
     let ey_i = u256_to_i256(moments.ey)?;
-    let beta_num_i = u256_to_i256(f_over_fmax)? - ey_i;
+    let beta_num_i = u256_to_i256(f_over_fmax)?
+        .checked_sub(ey_i)
+        .ok_or(LysisError::KernelArithmeticOverflow)?;
     let beta_den_i = u256_to_i256(moments.var_y)?;
     let fmax_i = u256_to_i256(fmax_fp)?;
+    let beta_ctx = SignedBetaContext {
+        scale_i,
+        ey_i,
+        beta_num_i,
+        beta_den_i,
+    };
 
     let n = y_fp.len();
     let mut f1 = vec![U256::ZERO; n];
 
     for i in 1..=n {
-        let mut sum_i = I256::ZERO;
-        for j in i..moments.m.len() {
-            let y_cum_i = u256_to_i256(moments.y_cum[j])?;
-            let y_diff = y_cum_i - ey_i;
-            let beta_term = if beta_den_i > I256::ZERO {
-                beta_num_i * y_diff / beta_den_i
-            } else {
-                I256::ZERO
-            };
-            // factor = SCALE + beta_term (in SCALE units) - exact, no scale-down.
-            let factor = scale_i + beta_term;
-            let mj_i = u256_to_i256(moments.m[j])?;
-            sum_i += mj_i * factor / scale_i;
-        }
+        let sum_i = compute_tail_factor_sum(&moments, i, &beta_ctx)?;
 
-        // f1[i] = fmax * sum / SCALE - exact; clamp negative to 0.
-        let result = fmax_i * sum_i / scale_i;
+        // Signed I256 division truncates toward zero; clamp negative to 0 and cap at fmax_fp.
+        let result = fmax_i
+            .checked_mul(sum_i)
+            .and_then(|prod| prod.checked_div(scale_i))
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
         f1[i - 1] = if result <= I256::ZERO {
             U256::ZERO
         } else {
-            i256_to_u256_clamped(result)
+            i256_to_u256_clamped(result).min(fmax_fp)
         };
     }
 
-    // Raw output can exceed the allocation: `sum(f1[i] * y_fp[i]) / SCALE > f_fp`.
-    // Proportional normalization preserves ratios and never increases fractions.
-    // `program_v1::execute::calculate_gratis_load` then uses `fraction * nominal / SCALE`.
-    // This bound prevents overspending and omission of the tribute list's tail.
-    let weighted_total: U256 = f1
-        .iter()
-        .zip(y_fp.iter())
-        .map(|(f, y)| *f * *y / SCALE)
-        .sum();
-    if weighted_total > f_fp {
-        for f in f1.iter_mut() {
-            *f = *f * f_fp / weighted_total;
-        }
-    }
+    normalize_weighted_fractions(&mut f1, y_fp, f_fp)?;
 
     Ok(f1)
+}
+
+struct SignedBetaContext {
+    scale_i: I256,
+    ey_i: I256,
+    beta_num_i: I256,
+    beta_den_i: I256,
+}
+
+fn compute_tail_factor_sum(
+    moments: &MomentsFp,
+    start_idx: usize,
+    ctx: &SignedBetaContext,
+) -> Result<I256> {
+    let mut sum_i = I256::ZERO;
+    for j in start_idx..moments.m.len() {
+        let y_cum_i = u256_to_i256(moments.y_cum[j])?;
+        let y_diff = y_cum_i
+            .checked_sub(ctx.ey_i)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+        let beta_term = if ctx.beta_den_i > I256::ZERO {
+            // Signed I256 division truncates toward zero; divisor beta_den_i > 0.
+            ctx.beta_num_i
+                .checked_mul(y_diff)
+                .and_then(|prod| prod.checked_div(ctx.beta_den_i))
+                .ok_or(LysisError::KernelArithmeticOverflow)?
+        } else {
+            I256::ZERO
+        };
+        // factor = SCALE + beta_term (in SCALE units) - exact, no scale-down.
+        let factor = ctx
+            .scale_i
+            .checked_add(beta_term)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+        let mj_i = u256_to_i256(moments.m[j])?;
+        // Signed I256 division truncates toward zero; divisor scale_i > 0.
+        let term = mj_i
+            .checked_mul(factor)
+            .and_then(|prod| prod.checked_div(ctx.scale_i))
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+        sum_i = sum_i
+            .checked_add(term)
+            .ok_or(LysisError::KernelArithmeticOverflow)?;
+    }
+    Ok(sum_i)
+}
+
+fn normalize_weighted_fractions(f1: &mut [U256], y_fp: &[U256], f_fp: U256) -> Result<()> {
+    // Raw output can exceed the allocation: `sum(floor(f1[i] * y_fp[i] / SCALE)) > f_fp`.
+    // Proportional normalization preserves ratios and never increases fractions (up to
+    // `n - 1` least-significant units of per-term floor rounding in share space;
+    // `program_v1::execute` enforces the exact real-nominal day budget).
+    // Rounds down (floor) per group: sum(floor(f1[i] * y_fp[i] / SCALE)).
+    let weighted_total =
+        f1.iter()
+            .zip(y_fp.iter())
+            .try_fold(U256::ZERO, |acc, (&f, &y)| -> Result<U256> {
+                let term = checked_mul_div_floor(f, y, SCALE)?;
+                Ok(acc
+                    .checked_add(term)
+                    .ok_or(LysisError::KernelArithmeticOverflow)?)
+            })?;
+    if weighted_total > f_fp {
+        for f in f1.iter_mut() {
+            // Rounds down (floor): floor(f * f_fp / weighted_total); weighted_total > f_fp >= 0.
+            *f = checked_mul_div_floor(*f, f_fp, weighted_total)?;
+        }
+    }
+    Ok(())
 }
 
 fn u256_to_i256(value: U256) -> Result<I256> {
