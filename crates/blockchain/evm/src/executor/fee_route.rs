@@ -100,6 +100,7 @@ where
                 timestamp,
                 chain_id: self.inner.evm.chain_id(),
                 genesis_hash: self.genesis_hash,
+                genesis_timestamp: self.genesis_timestamp,
                 proposer: self.inner.evm.block().beneficiary(),
                 validators: Vec::new(),
             },

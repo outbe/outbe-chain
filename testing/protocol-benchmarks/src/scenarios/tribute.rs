@@ -346,17 +346,6 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
     oracle
         .store_worldwide_day_vwap_snapshot(TARGET_WWD, start, start + 50 * 60 * 60)
         .unwrap();
-    let binding = outbe_primitives::storage::metadosis_process_ready_binding(
-        storage.chain_id().unwrap(),
-        storage.block_number().unwrap(),
-        storage.now_secs().unwrap(),
-    );
-    storage
-        .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
-            binding,
-            || TributeContract::new(storage.clone()).unseal_day(TARGET_WWD),
-        )
-        .unwrap();
 }
 
 fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {

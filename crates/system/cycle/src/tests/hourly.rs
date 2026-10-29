@@ -21,7 +21,12 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
         (ed, ed.metadosis_start.div_ceil(3_600) * 3_600)
     });
 
-    storage.enter(|handle| seed_trigger_clock(&handle, fire_at));
+    storage.enter(|handle| {
+        seed_trigger_clock(&handle, fire_at);
+        let prev_day =
+            outbe_primitives::time::previous_date_key(emission_day.day).expect("date step");
+        outbe_emission::api::record_failed_day_allocation(handle, prev_day, U256::ZERO).unwrap();
+    });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.set_block_number(20);
     storage.enter(|handle| {
@@ -64,8 +69,4 @@ pub(super) fn seed_trigger_clock(handle: &StorageHandle<'_>, fire_at: u64) {
         };
         cycle.last_executed_at.write(&spec.id, last).unwrap();
     }
-    cycle
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
-        .unwrap();
 }

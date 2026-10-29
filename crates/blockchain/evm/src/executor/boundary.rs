@@ -33,7 +33,7 @@ pub mod marker_addresses {
         DESIS_ADDRESS,
         AGENT_REWARD_ADDRESS,
         FIDELITY_ADDRESS,
-        EMISSION_LIMIT_ADDRESS,
+        EMISSION_ADDRESS,
         METADOSIS_ADDRESS,
         PROMIS_LIMIT_ADDRESS,
         CYCLE_ADDRESS,
@@ -305,6 +305,7 @@ where
             timestamp,
             chain_id,
             genesis_hash: self.genesis_hash,
+            genesis_timestamp: self.genesis_timestamp,
             proposer,
             validators: Vec::new(),
         });

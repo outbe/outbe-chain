@@ -238,7 +238,10 @@ pub(crate) fn call_currency(
 /// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
 /// it did.
 fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
-    if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
+    if nod.group_nod_count.read(&group_key)? != 0
+        || nod.group_unclaimed_tribute_count.read(&group_key)? != 0
+        || nod.group_called_at.read(&group_key)? != 0
+    {
         return Ok(false);
     }
     let start_day = nod
@@ -260,7 +263,10 @@ fn call_if_breached(
     group_key: B256,
     now: u64,
 ) -> Result<bool> {
-    if nod.group_nod_count.read(&group_key)? == 0 || nod.group_called_at.read(&group_key)? != 0 {
+    if (nod.group_nod_count.read(&group_key)? == 0
+        && nod.group_unclaimed_tribute_count.read(&group_key)? == 0)
+        || nod.group_called_at.read(&group_key)? != 0
+    {
         return Ok(false);
     }
     let start_day = nod

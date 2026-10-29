@@ -56,12 +56,14 @@ outbe-genesis-cli.workspace = true
 outbe-consensus.workspace = true
 outbe-credis = { workspace = true }
 outbe-desis.workspace = true
+outbe-emission.workspace = true
 outbe-gem = { workspace = true }
 outbe-intexfactory = { workspace = true }
 outbe-metadosis.workspace = true
 outbe-nod = { workspace = true }
 outbe-oracle = { workspace = true }
 outbe-tribute = { workspace = true, features = ["test-utils"] }
+outbe-tributefactory = { workspace = true, features = ["test-utils"] }
 outbe-tee-enclave = { workspace = true }
 rand.workspace = true
 reth-ethereum.workspace = true

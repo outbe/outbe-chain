@@ -106,7 +106,7 @@ tee:
 # ProtocolCycle dies with `MissedOffering requires an immutable formed day
 # limit`. No blocks are produced at all.
 #
-# The live testnet sets schemaVersion 1 and metadosis.lookbackDelaySeconds 0,
+# The live testnet sets schemaVersion 1 and metadosis.lookbackDelaySeconds 79200 (22h),
 # and nothing else - the rest stays on the built-in schedule (50h forming /
 # 50h offering), which covers a start at any time of day. Copy that shape.
 #
@@ -115,11 +115,8 @@ tee:
 # protocol_constants:
 #   schemaVersion: 1
 #   metadosis:
-#     formingPeriodSeconds: 180000
-#     lookbackDelaySeconds: 1807200
-#     offeringPeriodSeconds: 180000
-#     bootstrapDurationSeconds: 300
-#     advanceIntervalSeconds: 10
+#     lookbackDelaySeconds: 79200
+#     advanceIntervalSeconds: 3600
 #   oracle:
 #     vwapLookbackSeconds: 21600
 #     vwapUpdateIntervalSeconds: 3600   # whole hours only

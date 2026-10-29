@@ -332,6 +332,10 @@ where
         self.ctx.genesis_hash
     }
 
+    fn genesis_timestamp(&self) -> u64 {
+        self.ctx.genesis_timestamp
+    }
+
     fn timestamp(&self) -> U256 {
         U256::from(self.ctx.timestamp)
     }

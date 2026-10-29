@@ -391,6 +391,15 @@ pub fn store_worldwide_day_vwap_snapshot(
     oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
 }
 
+/// Returns `true` if a non-empty WorldwideDay VWAP snapshot has been stored for `worldwide_day`.
+pub fn has_worldwide_day_vwap_snapshot(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+) -> Result<bool> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.worldwide_day_vwap_exists.read(&worldwide_day)
+}
+
 /// Returns the stored VWAP for `pair` on that UTC calendar day, or `None`
 /// when the day has no entry. `utc_day` is a yyyymmdd UTC date key.
 /// A day above `utc_day_vwap_last_finalized` is not finalized.

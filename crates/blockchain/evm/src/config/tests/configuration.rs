@@ -36,11 +36,19 @@ fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
 fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
     let chain_spec = test_chain_spec();
     let expected = chain_spec.genesis_hash();
-    let config = OutbeEvmConfig::new(chain_spec);
+    let config = OutbeEvmConfig::new(chain_spec.clone());
 
     assert_eq!(
         config.inner.executor_factory.evm_factory().genesis_hash(),
         expected
+    );
+    assert_eq!(
+        config
+            .inner
+            .executor_factory
+            .evm_factory()
+            .genesis_timestamp(),
+        chain_spec.genesis_timestamp()
     );
 }
 

@@ -305,4 +305,20 @@ pub struct NodContract {
     pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 103)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// Count of unclaimed Tributes belonging to a Lysis-sealed series group.
+    #[attribute(order = 104)]
+    pub group_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    /// Exact sum of `gratis_load_minor` across unclaimed Tributes in a Lysis-sealed series group.
+    #[attribute(order = 105)]
+    pub group_unclaimed_tribute_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// Set to `true` when the group's call notice deadline lapses and its unpaid/unclaimed load is forfeited.
+    #[attribute(order = 106)]
+    pub group_is_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
+
+    /// Entry price sealed on a Lysis series group (`emission_day` VWAP).
+    #[attribute(order = 107)]
+    pub group_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }

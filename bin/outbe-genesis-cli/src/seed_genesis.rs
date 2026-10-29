@@ -12,14 +12,13 @@ use crate::seed_alloc::{
     seed_external_contracts, seed_protocol_constants, validate_stablecoin_namespace_alloc,
 };
 use crate::seed_codec::{
-    parse_header_timestamp, seed_profile_selector, timestamp_to_utc_date_key, StorageBuilder,
-    ALL_PRECOMPILE_ADDRESSES, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, CYCLE_ADDRESS, GEM_ADDRESS,
-    GEM_PROFILE_SLOT, INTEX_ADDRESS, INTEX_PROFILE_SLOT, MARKER_CODE, NOD_ADDRESS,
-    NOD_PROFILE_SLOT,
+    seed_profile_selector, StorageBuilder, ALL_PRECOMPILE_ADDRESSES, CREDIS_ADDRESS,
+    CREDIS_PROFILE_SLOT, GEM_ADDRESS, GEM_PROFILE_SLOT, INTEX_ADDRESS, INTEX_PROFILE_SLOT,
+    MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
 };
 use crate::seed_economy::{
     clear_seeded_metadosis_days, merge_storage_into_alloc, override_worldwide_day, seed_coen,
-    seed_cycle, seed_economic_state,
+    seed_economic_state,
 };
 use crate::seed_system::seed_system_state;
 use crate::seed_validators::seed_founders;
@@ -65,18 +64,6 @@ pub fn apply_seed(
         validate_stablecoin_namespace_alloc(alloc, false)?;
         ensure_precompile_markers(alloc);
     }
-
-    let header_timestamp = parse_header_timestamp(genesis)?;
-    let mut cycle_storage = StorageBuilder::new();
-    seed_cycle(&mut cycle_storage, header_timestamp);
-    {
-        let alloc = ensure_object_field(genesis, "alloc")?;
-        merge_storage_into_alloc(alloc, CYCLE_ADDRESS, &cycle_storage)?;
-    }
-    println!(
-        "  Cycle: active_utc_day={}, slot 2 seeded",
-        timestamp_to_utc_date_key(header_timestamp)
-    );
 
     if let Some(balances) = seed_owned.get("balance").and_then(Value::as_object) {
         let alloc = ensure_object_field(genesis, "alloc")?;

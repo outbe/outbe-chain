@@ -7,13 +7,6 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
 pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
-    let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
-    cycle
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(
-            TEST_BLOCK_TIMESTAMP_BASE,
-        ))
-        .unwrap();
     // These fixtures use an established parent state. This state includes the factory watermark.
     // The lifecycle needs this watermark to resume processing for the first closed day of that parent state.
     let ctx = BlockRuntimeContext::new(
@@ -38,6 +31,12 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
 }
 
 pub(in crate::executor) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
+    test_chain_spec_with_genesis_timestamp(1)
+}
+
+pub(in crate::executor) fn test_chain_spec_with_genesis_timestamp(
+    genesis_timestamp: u64,
+) -> Arc<ChainSpec<OutbeHeader>> {
     use outbe_primitives::tee_test_utils::{
         gramine_direct_policy_v1, tee_attestation_v1_extra_field,
     };
@@ -45,6 +44,7 @@ pub(in crate::executor) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     let mut spec = MAINNET.as_ref().clone();
     spec.chain = CHAIN_ID.into();
     spec.genesis.config.chain_id = CHAIN_ID;
+    spec.genesis.timestamp = genesis_timestamp;
     let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
         .expect("test GramineDirectDev policy is canonical");
     spec.genesis.config.extra_fields.insert(
@@ -931,9 +931,6 @@ pub(super) fn seed_cycle_tick_genesis(
     );
     outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
     let cycle = outbe_cycle::schema::Cycle::new(storage);
-    cycle
-        .active_utc_day
-        .write(outbe_primitives::time::timestamp_to_date_key(genesis_ts))?;
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
     Ok(())

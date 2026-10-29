@@ -398,19 +398,26 @@ fn read_local_tee_admission_at_block<P>(
     (finalized, timestamp): (alloy_eips::BlockNumHash, u64),
 ) -> eyre::Result<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>
 where
-    P: StateProviderFactory,
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
+    let genesis_timestamp = provider
+        .header_by_number(0)
+        .wrap_err("read genesis header for TEE lease admission")?
+        .map(|header| header.inner.timestamp)
+        .filter(|timestamp| *timestamp != 0)
+        .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?;
     let state = provider
         .state_by_block_hash(finalized.hash)
         .wrap_err("read exact state for TEE lease admission")?;
     outbe_engine::validators::read_local_tee_runtime_admission_from_state(
         &state,
-        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
-            chain_id: chain.chain_id,
-            genesis_hash: chain.genesis_hash,
-            block_number: finalized.number,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext::try_new(
+            chain.chain_id,
+            chain.genesis_hash,
+            genesis_timestamp,
+            finalized.number,
             timestamp,
-        },
+        )?,
         identity,
     )
 }

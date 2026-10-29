@@ -135,6 +135,21 @@ impl Storable for U256 {
     }
 }
 
+impl StorableType for u128 {
+    const SLOTS: usize = 1;
+}
+
+impl Storable for u128 {
+    const BYTES: usize = 16;
+
+    fn from_word(word: U256) -> Self {
+        word.to::<u128>()
+    }
+    fn to_word(&self) -> U256 {
+        U256::from(*self)
+    }
+}
+
 impl StorableType for u64 {
     const SLOTS: usize = 1;
 }

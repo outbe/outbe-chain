@@ -1698,7 +1698,7 @@ fn policy_rate_precompile_enumerates_and_rejects_absence() {
 /// `None` distinguishes "this chain cannot price that currency at all" from
 /// `Some(0)`, "the pair exists but the day has no data yet". TributeFactory maps
 /// the first to `IssuanceCurrencyNotRegistered` and the second to
-/// `NominalPriceUnavailable`, so the two must not collapse.
+/// `CurrencyPriceUnavailable`, so the two must not collapse.
 #[test]
 fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
     let day = 20260302u32.into();

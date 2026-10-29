@@ -107,6 +107,10 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| Ok(provider.genesis_hash()))
     }
 
+    pub fn genesis_timestamp(&self) -> Result<u64> {
+        self.with_provider(|provider| Ok(provider.genesis_timestamp()))
+    }
+
     pub fn timestamp(&self) -> Result<U256> {
         self.with_provider(|provider| Ok(provider.timestamp()))
     }

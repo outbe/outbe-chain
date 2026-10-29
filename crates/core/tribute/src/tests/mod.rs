@@ -99,9 +99,7 @@ fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay)
     tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day).unwrap();
 }
 
-fn open_sample_day(tc: &mut TributeContract) {
-    tc.unseal_day(20241220u32.into()).unwrap();
-}
+fn open_sample_day(_tc: &mut TributeContract) {}
 
 #[test]
 fn test_initial_state() {
@@ -115,14 +113,19 @@ fn test_initial_state() {
 }
 
 #[test]
-fn test_issue_requires_initialized_unsealed_day() {
+fn test_issue_accepts_unsealed_day_and_rejects_sealed_day() {
     with_tribute(|tc| {
         let tribute = sample_tribute();
-        assert!(tc.issue(&tribute).is_err());
-
-        open_sample_day(tc);
         tc.issue(&tribute).unwrap();
         assert_eq!(tc.total_supply().unwrap(), 1);
+
+        tc.seal_day(tribute.worldwide_day).unwrap();
+        let mut second = sample_tribute();
+        set_owner(
+            &mut second,
+            address!("0x2222222222222222222222222222222222222222"),
+        );
+        assert!(tc.issue(&second).is_err());
     });
 }
 
@@ -367,10 +370,6 @@ fn test_seal_day() {
             totals_after_rejected_mutations.tribute_nominal_total_minor,
             totals_before_seal.tribute_nominal_total_minor
         );
-
-        tc.unseal_day(day).unwrap();
-        assert!(!tc.is_day_sealed(day).unwrap());
-        tc.burn(tribute.tribute_id).unwrap();
     });
 }
 
@@ -424,7 +423,6 @@ fn test_balance_of_tracks_live_owner_tributes() {
         set_day(&mut t2, 20241221u32.into());
 
         open_sample_day(tc);
-        tc.unseal_day(t2.worldwide_day).unwrap();
         tc.issue(&t1).unwrap();
         tc.issue(&t2).unwrap();
         assert_eq!(tc.balance_of(alice).unwrap(), 2);
@@ -467,7 +465,6 @@ fn test_get_tribute_ids_by_owner() {
         set_owner(&mut t3, bob);
 
         open_sample_day(tc);
-        tc.unseal_day(t2.worldwide_day).unwrap();
         tc.issue(&t1).unwrap();
         tc.issue(&t2).unwrap();
         tc.issue(&t3).unwrap();
@@ -558,7 +555,6 @@ fn test_get_tributes_by_owner_sparse_after_burn() {
         set_day(&mut t2, 20241221u32.into());
 
         open_sample_day(tc);
-        tc.unseal_day(t2.worldwide_day).unwrap();
         tc.issue(&t1).unwrap();
         tc.issue(&t2).unwrap();
         tc.burn(t1.tribute_id).unwrap();
@@ -651,13 +647,12 @@ fn test_events_emitted_for_issue_and_burn() {
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let mut contract = TributeContract::new(storage.clone());
-            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
             contract.issue(&tribute).unwrap();
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         let issued =
-            crate::precompile::ITribute::TributeIssued::decode_log_data(&events[1]).unwrap();
+            crate::precompile::ITribute::TributeIssued::decode_log_data(&events[0]).unwrap();
         assert_eq!(issued.tributeId, tribute.tribute_id.to_u256());
         assert_eq!(issued.owner, tribute.owner);
         assert_eq!(issued.worldwideDay, tribute.worldwide_day.value());
@@ -669,9 +664,9 @@ fn test_events_emitted_for_issue_and_burn() {
                 .unwrap();
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 2);
         let burned =
-            crate::precompile::ITribute::TributeBurned::decode_log_data(&events[2]).unwrap();
+            crate::precompile::ITribute::TributeBurned::decode_log_data(&events[1]).unwrap();
         assert_eq!(burned.tributeId, tribute.tribute_id.to_u256());
         assert_eq!(burned.owner, tribute.owner);
     });
@@ -681,11 +676,6 @@ fn test_events_emitted_for_issue_and_burn() {
 fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
     with_provider(|provider| {
         let tribute = sample_tribute();
-        StorageHandle::enter(&mut *provider, |storage| {
-            let _enclave = crate::enclave_client::test_enclave::scope();
-            let mut contract = TributeContract::new(storage.clone());
-            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
-        });
         provider.clear_events(TRIBUTE_ADDRESS);
 
         StorageHandle::enter(&mut *provider, |storage| {
@@ -787,7 +777,6 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let mut contract = TributeContract::new(storage.clone());
-            in_process_ready(&storage, || contract.unseal_day(tribute.worldwide_day));
             contract.issue(&tribute).unwrap();
         });
         provider.clear_events(TRIBUTE_ADDRESS);
@@ -851,7 +840,6 @@ fn encrypted_retirement_preserves_frozen_nominal_after_live_total_is_zero() {
             },
         )
         .unwrap();
-        tc.unseal_day(plain.worldwide_day).unwrap();
         tc.issue_encrypted(&encrypted).unwrap();
         tc.seal_day(plain.worldwide_day).unwrap();
         tc.freeze_day_nominal(&tc.get_day_totals(plain.worldwide_day).unwrap())

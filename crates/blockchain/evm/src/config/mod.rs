@@ -124,6 +124,7 @@ impl OutbeEvmConfig {
                 chain_spec.clone(),
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
@@ -150,6 +151,7 @@ impl OutbeEvmConfig {
                 chain_spec.clone(),
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
@@ -177,6 +179,7 @@ impl OutbeEvmConfig {
                 chain_spec.clone(),
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),
@@ -209,6 +212,7 @@ impl OutbeEvmConfig {
                 chain_spec.clone(),
                 OutbeEvmFactory::default()
                     .with_genesis_hash(chain_spec.genesis_hash())
+                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
                     .with_tee_attestation_v1(tee_attestation_v1.clone()),
             ),
             block_assembler: OutbeBlockAssembler::new(chain_spec),

@@ -3,11 +3,12 @@
 use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::TributeContract;
+use crate::schema::TributeFactoryContract;
 
 use super::{
-    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
-    schema::WorldwideDay as WorldwideDayRecord,
+    aggregate::ValidatedWwdAggregate,
+    errors::WwdStorageCorruptionError,
+    schema::{wwd_state, WorldwideDay as WorldwideDayRecord},
 };
 
 /// One invariant-valid active WWD included in a fresh-devnet genesis artifact.
@@ -26,14 +27,15 @@ impl GenesisWorldwideDay {
         if !self.worldwide_day.is_valid() {
             return Err(WwdStorageCorruptionError::GenesisWwdNotValidCalendarDay.into());
         }
-        if ![
-            self.forming_start,
-            self.forming_end,
-            self.offerings_start,
-            self.offering_end,
-        ]
-        .windows(2)
-        .all(|pair| pair[0] <= pair[1])
+        if self.offerings_start == 0
+            || ![
+                self.forming_start,
+                self.forming_end,
+                self.offerings_start,
+                self.offering_end,
+            ]
+            .windows(2)
+            .all(|pair| pair[0] <= pair[1])
         {
             return Err(WwdStorageCorruptionError::GenesisWwdPhaseOrderInvalid.into());
         }
@@ -102,7 +104,7 @@ impl FreshDevnetGenesisBuilder {
             );
         }
         let mut changed = false;
-        let contract = TributeContract::new(storage.clone());
+        let contract = TributeFactoryContract::new(storage.clone());
         for operation in self.operations {
             let Some(operation_changed) = operation.apply(&contract)? else {
                 continue;
@@ -115,7 +117,7 @@ impl FreshDevnetGenesisBuilder {
 }
 
 impl GenesisOperation {
-    fn apply(self, contract: &TributeContract<'_>) -> Result<Option<bool>> {
+    fn apply(self, contract: &TributeFactoryContract<'_>) -> Result<Option<bool>> {
         match self {
             Self::SeedActive(day) => Self::seed(contract, day),
             Self::RetimeOffering {
@@ -128,25 +130,28 @@ impl GenesisOperation {
         }
     }
 
-    fn seed(contract: &TributeContract<'_>, day: GenesisWorldwideDay) -> Result<Option<bool>> {
+    fn seed(
+        contract: &TributeFactoryContract<'_>,
+        day: GenesisWorldwideDay,
+    ) -> Result<Option<bool>> {
         let day = day.validate()?;
         if contract.worldwide_days.get(day.worldwide_day)?.is_some() {
             return Err(WwdStorageCorruptionError::GenesisWwdAlreadyExists.into());
         }
         contract.worldwide_days.create(&WorldwideDayRecord {
             wwd: day.worldwide_day,
-            day: day.day,
-            forming_start: day.forming_start,
-            forming_end: day.forming_end,
-            offerings_start: day.offerings_start,
+            emission_day: day.day,
+            offering_start: day.offerings_start,
             offering_end: day.offering_end,
+            state: wwd_state::ACTIVE,
         })?;
         contract.active_wwd.insert(day.worldwide_day)?;
+        contract.pipeline_wwd.insert(day.worldwide_day)?;
         Ok(Some(true))
     }
 
     fn retime(
-        contract: &TributeContract<'_>,
+        contract: &TributeFactoryContract<'_>,
         worldwide_day: WorldwideDay,
         offering_end: u64,
     ) -> Result<Option<bool>> {
@@ -154,7 +159,7 @@ impl GenesisOperation {
             .worldwide_days
             .get(worldwide_day)?
             .ok_or(WwdStorageCorruptionError::GenesisOfferingWwdMissing)?;
-        if day.forming_end > offering_end || day.offerings_start > offering_end {
+        if day.forming_end() > offering_end || day.offering_start > offering_end {
             return Err(WwdStorageCorruptionError::GenesisWwdPhasesEndAfterOfferingDeadline.into());
         }
         let operation_changed = day.offering_end != offering_end;
@@ -164,7 +169,7 @@ impl GenesisOperation {
     }
 
     fn clear(
-        contract: &TributeContract<'_>,
+        contract: &TributeFactoryContract<'_>,
         expected_worldwide_day: WorldwideDay,
     ) -> Result<Option<bool>> {
         let active = contract.active_wwd.read_all()?;
@@ -188,6 +193,7 @@ impl GenesisOperation {
         if !active.is_empty() {
             contract.active_wwd.remove(&expected_worldwide_day)?;
         }
+        contract.pipeline_wwd.remove(&expected_worldwide_day)?;
         contract.worldwide_days.delete(expected_worldwide_day)?;
         Ok(Some(true))
     }

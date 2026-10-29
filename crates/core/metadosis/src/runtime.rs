@@ -12,6 +12,8 @@ pub fn start_metadosis(ctx: &BlockRuntimeContext) -> Result<()> {
         lifecycle::init_genesis_day_inner(&mut metadosis, ctx)?;
     }
 
+    lifecycle::advance_active_worldwide_days(ctx)?;
+
     lifecycle::create_lookahead_days(&mut metadosis, ctx, timestamp)?;
 
     lifecycle::advance_active_worldwide_days(ctx)?;

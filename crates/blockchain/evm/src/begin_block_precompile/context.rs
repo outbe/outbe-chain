@@ -96,6 +96,7 @@ pub(super) fn block_runtime_context_from_storage(
             timestamp,
             chain_id,
             genesis_hash,
+            genesis_timestamp: storage.genesis_timestamp()?,
             proposer,
             validators,
         }),

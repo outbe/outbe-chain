@@ -80,7 +80,7 @@ pub(crate) fn process_ready_candidate(
     emission_day: &EmissionDay,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
-    let limit_amount = emission_day.emission_limit_minor;
+    let limit_amount = emission_day.metadosis_limit_minor();
     if limit_amount.is_zero() {
         return fail_emission_day(
             metadosis,
@@ -89,6 +89,10 @@ pub(crate) fn process_ready_candidate(
             wwd,
             "emission limit is zero",
         );
+    }
+
+    if wwd.value() == 0 {
+        return settle_empty_day(metadosis, ctx, emission_day);
     }
 
     let mut tribute = TributeContract::new(metadosis.storage.clone());
@@ -123,14 +127,17 @@ fn settle_empty_day(
     emission_day: &EmissionDay,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
-    let day_limit = emission_day.emission_limit_minor;
+    let day_limit = emission_day.metadosis_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let to_promis = dispatch_brief(ctx, wwd, U256::ZERO)?;
-    let returned = to_promis
-        .checked_add(day_limit)
-        .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
-    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
-    TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
+    let returned = day_limit;
+    let updated = outbe_emission::api::record_empty_day_metadosis_completed(
+        metadosis.storage.clone(),
+        emission_day.day,
+    )?;
+    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
+    if wwd.value() != 0 {
+        TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
+    }
     metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
         worldwideDay: wwd.into(),
         metadosisLimitMinor: day_limit,
@@ -149,23 +156,33 @@ fn settle_zero_allocation(
     calculation: MetadosisCalculation,
 ) -> Result<()> {
     let wwd = emission_day.wwd;
+    let day_limit = emission_day.metadosis_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
     let desis_limit_minor = desis_limit(
         tribute_nominal_total,
         calculation.lysis_limit_minor,
-        emission_day.emission_limit_minor,
+        day_limit,
         U256::ZERO,
     )
     .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
     let to_promis = dispatch_brief(ctx, wwd, desis_limit_minor)?;
-    let returned = emission_day
-        .emission_limit_minor
+    let returned = day_limit
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
         .and_then(|headroom| headroom.checked_add(to_promis))
         .ok_or(crate::errors::MetadosisStorageCorruptionError::SplitExceedsDayLimit)?;
     promis_limit.checked_credit(returned)?;
-    complete_emission_day(metadosis, emission_day, emission_day_state::SUCCEEDED)?;
+    let updated = outbe_emission::api::record_metadosis_completed(
+        metadosis.storage.clone(),
+        emission_day.day,
+        outbe_emission::api::MetadosisCompletedAmounts {
+            lysis_limit: U256::ZERO,
+            desis_limit: desis_limit_minor,
+            nods: U256::ZERO,
+            promis_limit_added: day_limit,
+        },
+    )?;
+    complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
     metadosis.emit(IMetadosis::MetadosisExecuted {
         worldwideDay: wwd.into(),

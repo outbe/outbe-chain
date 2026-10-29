@@ -15,6 +15,9 @@ pub(crate) const STK_ADDR: Address = address!("0x0000000000000000000000000000000
 pub(crate) const SLASH_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
 /// Tribute precompile (`totalSupply()`).
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
+/// TributeFactory precompile (`offerTribute`, `getWorldwideDay`, `getActiveWorldwideDays`).
+pub(crate) const TRIBUTE_FACTORY_ADDR: Address =
+    address!("0x0000000000000000000000000000000000001100");
 /// Nod precompile (`totalSupply()`).
 pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
 /// NodFactory precompile (`mineGratis`).
@@ -41,6 +44,8 @@ pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x00000000000000000000000
 
 pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
+/// Emission precompile (`getEmissionDay(uint32)`).
+pub(crate) const EMISSION_ADDR: Address = address!("0x000000000000000000000000000000000000100D");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// Promis Limit (`promisLimit()`).

@@ -25,13 +25,10 @@ fn contiguous_transition_crosses_month_and_year_boundaries() {
 }
 
 #[test]
-fn three_day_halt_forfeits_every_missed_day() {
+fn three_day_halt_settles_oldest_unallocated_day_first() {
     assert_eq!(
         protocol_day_action(20_260_817, 20_260_820).unwrap(),
-        ProtocolDayAction::SkipMissed {
-            from: 20_260_817,
-            to: 20_260_820,
-        }
+        ProtocolDayAction::SettlePrevious { day: 20_260_817 }
     );
 }
 

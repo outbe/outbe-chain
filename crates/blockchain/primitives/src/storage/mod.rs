@@ -241,6 +241,14 @@ pub trait PrecompileStorageProvider {
     /// never accept it from transaction calldata or mutable contract storage.
     fn genesis_hash(&self) -> B256;
 
+    /// Returns the immutable genesis block timestamp in Unix seconds.
+    ///
+    /// Production providers source this from the canonical chain specification.
+    /// The default is `0` until a provider is bound to a genesis time.
+    fn genesis_timestamp(&self) -> u64 {
+        0
+    }
+
     /// Returns the current block timestamp.
     fn timestamp(&self) -> U256;
 
