@@ -28,6 +28,7 @@ pub(crate) fn exchange(
     let request: LysisRequest = serde_json::from_slice(&encoded).unwrap();
     let result = outbe_tee_enclave::lysis::execute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
+        &outbe_nod::test_support::NETWORK_SECRET,
         &outbe_fidelity::enclave_client::test_enclave::state_key(),
         &request,
     );

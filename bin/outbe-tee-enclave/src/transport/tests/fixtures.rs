@@ -194,14 +194,16 @@ pub(in crate::transport::tests) fn evm_signer(
 
 /// EIP-191 owner signature over the shared derive-keys message - the exact
 /// preimage the enclave arm recomputes.
-pub(in crate::transport::tests) fn owner_sig(
+pub(in crate::transport::tests) fn owner_sig_for_ledger(
+    ledger: outbe_tee::protocol::Ledger,
     sk: &k256::ecdsa::SigningKey,
     account: alloy_primitives::Address,
     ephemeral: [u8; 32],
 ) -> Vec<u8> {
     use k256::ecdsa::signature::hazmat::PrehashSigner;
     let prehash =
-        outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_gratis_keys_message(
+        outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_account_keys_message(
+            ledger,
             account,
             alloy_primitives::B256::from(ephemeral),
         ));
@@ -211,4 +213,12 @@ pub(in crate::transport::tests) fn owner_sig(
     sig65[..64].copy_from_slice(sig.to_bytes().as_slice());
     sig65[64] = recid.to_byte();
     sig65.to_vec()
+}
+
+pub(in crate::transport::tests) fn owner_sig(
+    sk: &k256::ecdsa::SigningKey,
+    account: alloy_primitives::Address,
+    ephemeral: [u8; 32],
+) -> Vec<u8> {
+    owner_sig_for_ledger(outbe_tee::protocol::Ledger::Gratis, sk, account, ephemeral)
 }

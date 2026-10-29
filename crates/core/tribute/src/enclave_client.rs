@@ -13,7 +13,7 @@ pub(crate) fn apply_day_operation(
 ) -> Result<EncryptedTributeDayAmountV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::tribute_day::apply_day_operation(key, &request)
+        outbe_tee_enclave::tribute_day::apply_day_operation(key, key, &request)
     }) {
         return result.map_err(crate::errors::enclave_transport_error);
     }
@@ -55,6 +55,7 @@ pub(crate) fn encrypt_nod_for_tribute(
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::with_key(|key| {
         outbe_tee_enclave::nod_encryption::encrypt_nod_for_tribute(
+            key,
             key,
             tribute,
             terms.clone(),
@@ -143,7 +144,6 @@ pub mod test_enclave {
         use outbe_primitives::tribute_encryption::{TributeAmountsV2, TributeContextV2};
         outbe_tee_enclave::tribute_encryption::encrypt_tribute(
             &NETWORK_SECRET,
-            &outbe_tee_enclave::crypto::x25519_public(&[0x77; 32]),
             TributeContextV2 {
                 chain_id,
                 tribute_id: tribute.tribute_id,

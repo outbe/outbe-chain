@@ -27,8 +27,6 @@ pub struct StoredTribute {
     #[attribute(order = 6)]
     pub offer_input_hash: B256,
     #[attribute(order = 7)]
-    pub encrypted_creator_public_key: Vec<u8>,
-    #[attribute(order = 8)]
     pub encrypted_amounts: Vec<u8>,
 }
 
@@ -44,7 +42,6 @@ impl From<&outbe_primitives::tribute_encryption::EncryptedTributeV2> for StoredT
             reference_currency: context.reference_currency,
             tribute_price_minor: context.tribute_price_minor,
             offer_input_hash: context.offer_input_hash,
-            encrypted_creator_public_key: body.encrypted_creator_public_key.clone(),
             encrypted_amounts: body.encrypted_amounts.clone(),
         }
     }
@@ -63,7 +60,6 @@ impl From<StoredTribute> for outbe_primitives::tribute_encryption::EncryptedTrib
                 tribute_price_minor: body.tribute_price_minor,
                 offer_input_hash: body.offer_input_hash,
             },
-            encrypted_creator_public_key: body.encrypted_creator_public_key,
             encrypted_amounts: body.encrypted_amounts,
         }
     }
@@ -218,7 +214,6 @@ mod tests {
         record.reference_currency = 978;
         record.tribute_price_minor = U256::from(1_250_000u64);
         record.offer_input_hash = B256::repeat_byte(0x44);
-        record.encrypted_creator_public_key = vec![0xa5; 56];
         record.encrypted_amounts = vec![0x5a; 88];
         record
     }
@@ -269,11 +264,6 @@ mod tests {
             assert!(both_indexes_empty(&contract, &record));
             let entry = contract.records.entry(id);
             assert!(entry.encrypted_amounts().read().unwrap().is_empty());
-            assert!(entry
-                .encrypted_creator_public_key()
-                .read()
-                .unwrap()
-                .is_empty());
             assert!(contract.records.update(&record).is_err());
         });
     }

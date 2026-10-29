@@ -1,22 +1,21 @@
-//! Owner-local NOD decryption using the owner's X25519 private key.
+//! Owner-local NOD decryption using the owner's NOD view key.
 use crate::errors::LocalCryptoError;
-use crate::owner_local_open::{open_owner_amount_blob, owner_x25519_shared, OwnerAmountBlob};
+use crate::owner_local_open::{open_owner_amount_blob, OwnerAmountBlob};
 use alloy_primitives::U256;
 use outbe_primitives::nod_encryption::{EncryptedNodV1, NOD_AMOUNT_NONCE_INFO};
+
 pub fn decrypt_nod_for_owner(
-    secret: &[u8; 32],
-    enclave_public: &[u8; 32],
+    view_key: &[u8; 32],
     nod: &EncryptedNodV1,
 ) -> Result<U256, LocalCryptoError> {
     if !nod.has_valid_encoding() {
         return Err(LocalCryptoError::InvalidNodEncoding);
     }
-    let (public, shared) = owner_x25519_shared(secret, enclave_public)?;
     let opened = open_owner_amount_blob(
-        &shared,
+        view_key,
         OwnerAmountBlob {
             context_digest: nod.context_digest().as_slice(),
-            key_info: &nod.amount_key_info(enclave_public, &public),
+            key_info: &nod.amount_key_info(),
             crypto_slot: nod.crypto_slot().as_slice(),
             nonce_info: NOD_AMOUNT_NONCE_INFO,
             blob: &nod.encrypted_gratis_amount,

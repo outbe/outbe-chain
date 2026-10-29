@@ -123,8 +123,11 @@ fn mcp_modify_macs_match_the_enclave() {
 
 #[test]
 fn mcp_opens_the_balances_the_enclave_writes() {
-    use outbe_tee_enclave::confidential::{FIELD_BALANCE, PROMIS};
-    use outbe_tee_enclave::gratis_cipher::{read_amount, write_amount, BalanceTransition};
+    use outbe_tee::gratis_decrypt::decrypt_gratis_balance;
+    use outbe_tee::promis_decrypt::decrypt_promis_balance;
+    use outbe_tee_enclave::gratis_cipher::{
+        read_amount, read_promis_amount, write_amount, write_promis_amount, BalanceTransition,
+    };
 
     let all = vectors();
     let v = &all["balances"];
@@ -134,16 +137,27 @@ fn mcp_opens_the_balances_the_enclave_writes() {
     let version = |value: &Value| value.as_str().unwrap().parse::<u64>().unwrap();
 
     let promis = &v["promis"];
-    let slot = PROMIS.cipher.slot(&view, account, FIELD_BALANCE);
-    let blob = slot
-        .write_amount(
-            version(&promis["previousVersion"]),
-            decimal(&promis["amount"]),
-        )
-        .unwrap();
+    let promis_field = promis["field"].as_u64().unwrap() as u8;
+    let blob = write_promis_amount(
+        &view,
+        BalanceTransition {
+            account,
+            field: promis_field,
+            previous_version: version(&promis["previousVersion"]),
+            amount: decimal(&promis["amount"]),
+            input_hash: B256::from(word(&promis["inputHash"])),
+        },
+    )
+    .unwrap();
     assert_eq!(blob, bytes(&promis["blob"]));
     assert_eq!(
-        slot.read_amount(&blob).unwrap().1,
+        read_promis_amount(&view, account, promis_field, &blob)
+            .unwrap()
+            .1,
+        decimal(&promis["amount"])
+    );
+    assert_eq!(
+        decrypt_promis_balance(&view, account, &blob).unwrap(),
         decimal(&promis["amount"])
     );
 
@@ -165,6 +179,12 @@ fn mcp_opens_the_balances_the_enclave_writes() {
             read_amount(&view, account, field, &blob).unwrap().1,
             decimal(&gratis["amount"])
         );
+        if field == 0 {
+            assert_eq!(
+                decrypt_gratis_balance(&view, account, &blob).unwrap(),
+                decimal(&gratis["amount"])
+            );
+        }
     }
 }
 
@@ -174,16 +194,12 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
     };
     use outbe_tee::nod_decrypt::decrypt_nod_for_owner;
-    use outbe_tee_enclave::nod_encryption::encrypt_nod;
+    use outbe_tee_enclave::nod_encryption::{derive_view_key, encrypt_nod};
 
     let all = vectors();
     let v = &all["nod"];
     let decimal = |value: &Value| U256::from_str_radix(value.as_str().unwrap(), 10).unwrap();
-    let creator = word(&v["creatorSecret"]);
-    let creator_public = PublicKey::from(&StaticSecret::from(creator)).to_bytes();
-    let network = word(&v["networkSecret"]);
-    let network_public = PublicKey::from(&StaticSecret::from(network)).to_bytes();
-    assert_eq!(network_public, word(&v["networkPublicKey"]));
+    let nod_state_key = word(&v["nodStateKey"]);
     let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
         nod_id: WwdEntityId::from(decimal(&v["nodId"])),
@@ -194,27 +210,19 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         issuance_currency: v["issuanceCurrency"].as_u64().unwrap() as u16,
         reference_currency: v["referenceCurrency"].as_u64().unwrap() as u16,
     };
-    let nod = encrypt_nod(
-        &network,
-        &creator_public,
-        terms,
-        decimal(&v["gratisAmount"]),
-    )
-    .unwrap();
+    let view_key = derive_view_key(&nod_state_key, terms.owner).unwrap();
+    assert_eq!(view_key, word(&v["viewKey"]));
+    let nod = encrypt_nod(&nod_state_key, terms, decimal(&v["gratisAmount"])).unwrap();
     assert_eq!(
         nod.encryption_binding,
         B256::from(word(&v["encryptionBinding"]))
-    );
-    assert_eq!(
-        nod.encrypted_creator_public_key,
-        bytes(&v["encryptedCreatorPublicKey"])
     );
     assert_eq!(
         nod.encrypted_gratis_amount,
         bytes(&v["encryptedGratisAmount"])
     );
     assert_eq!(
-        decrypt_nod_for_owner(&creator, &network_public, &nod).unwrap(),
+        decrypt_nod_for_owner(&view_key, &nod).unwrap(),
         decimal(&v["gratisAmount"])
     );
 }

@@ -13,6 +13,7 @@ use outbe_tee_enclave::{
 #[test]
 fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
     let secret = [7; 32];
+    let tribute_key = [11; 32];
     let day = WorldwideDay::new(20250115);
     let context = TributeContextV2 {
         chain_id: 54322345,
@@ -25,8 +26,7 @@ fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
         offer_input_hash: B256::repeat_byte(0x44),
     };
     let tribute = encrypt_tribute(
-        &secret,
-        &outbe_tee_enclave::crypto::x25519_public(&[11; 32]),
+        &tribute_key,
         context,
         &TributeAmountsV2 {
             issuance_amount_minor: U256::from(100_000_000),
@@ -44,21 +44,25 @@ fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
             add: true,
         },
     };
-    let issued = apply_day_operation(&secret, &request).unwrap();
+    let issued = apply_day_operation(&secret, &tribute_key, &request).unwrap();
     assert_eq!(
         read_day_amount(&secret, &issued).unwrap(),
         U256::from(50_000_000)
     );
-    assert_eq!(apply_day_operation(&secret, &request).unwrap(), issued);
+    assert_eq!(
+        apply_day_operation(&secret, &tribute_key, &request).unwrap(),
+        issued
+    );
     request.previous = Some(issued.clone());
     request.operation = TributeDayOperationV2::Adjust {
         tribute: Box::new(tribute),
         add: false,
     };
-    let burned = apply_day_operation(&secret, &request).unwrap();
+    let burned = apply_day_operation(&secret, &tribute_key, &request).unwrap();
     assert_eq!(read_day_amount(&secret, &burned).unwrap(), U256::ZERO);
     assert!(apply_day_operation(
         &secret,
+        &tribute_key,
         &TributeDayOpRequestV2 {
             previous: Some(burned),
             ..request.clone()
@@ -67,7 +71,7 @@ fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
     .is_err());
     request.previous = Some(issued.clone());
     request.operation = TributeDayOperationV2::Freeze;
-    let frozen = apply_day_operation(&secret, &request).unwrap();
+    let frozen = apply_day_operation(&secret, &tribute_key, &request).unwrap();
     assert_eq!(
         read_day_amount(&secret, &frozen).unwrap(),
         U256::from(50_000_000)
@@ -75,14 +79,14 @@ fn encrypted_day_issue_burn_freeze_and_retirement_preserve_frozen_history() {
     request.operation = TributeDayOperationV2::Reset {
         expected_total: U256::from(50_000_000),
     };
-    let retired = apply_day_operation(&secret, &request).unwrap();
+    let retired = apply_day_operation(&secret, &tribute_key, &request).unwrap();
     assert_eq!(read_day_amount(&secret, &retired).unwrap(), U256::ZERO);
     assert_eq!(
         read_day_amount(&secret, &frozen).unwrap(),
         U256::from(50_000_000)
     );
     request.previous = Some(frozen);
-    assert!(apply_day_operation(&secret, &request).is_err());
+    assert!(apply_day_operation(&secret, &tribute_key, &request).is_err());
 }
 
 fn day_request(amount: U256) -> TributeDayOpRequestV2 {
@@ -101,7 +105,7 @@ fn day_request(amount: U256) -> TributeDayOpRequestV2 {
 #[test]
 fn encrypted_day_rejects_wrong_key_and_modified_context_or_ciphertext() {
     let secret = [7; 32];
-    let record = apply_day_operation(&secret, &day_request(U256::from(71))).unwrap();
+    let record = apply_day_operation(&secret, &secret, &day_request(U256::from(71))).unwrap();
     assert!(read_day_amount(&[8; 32], &record).is_err());
     for change in [
         (|record: &mut outbe_primitives::tribute_day_encryption::EncryptedTributeDayAmountV2| {
@@ -126,8 +130,9 @@ fn encrypted_day_rejects_wrong_key_and_modified_context_or_ciphertext() {
 fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
     let secret = [7; 32];
     let request = day_request(U256::from(71));
-    let record = apply_day_operation(&secret, &request).unwrap();
+    let record = apply_day_operation(&secret, &secret, &request).unwrap();
     let branch = apply_day_operation(
+        &secret,
         &secret,
         &TributeDayOpRequestV2 {
             public_state_hash: B256::repeat_byte(0x56),
@@ -146,8 +151,9 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
         operation: TributeDayOperationV2::Freeze,
         ..request.clone()
     };
-    let first = apply_day_operation(&secret, &freeze).unwrap();
+    let first = apply_day_operation(&secret, &secret, &freeze).unwrap();
     let second = apply_day_operation(
+        &secret,
         &secret,
         &TributeDayOpRequestV2 {
             previous: Some(branch),
@@ -166,7 +172,7 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
             ..request.clone()
         };
         change(&mut wrong);
-        assert!(apply_day_operation(&secret, &wrong).is_err());
+        assert!(apply_day_operation(&secret, &secret, &wrong).is_err());
     }
 }
 
@@ -174,7 +180,7 @@ fn exact_predecessor_and_public_state_change_the_deterministic_write_context() {
 fn overflow_and_mismatched_retirement_fail_without_replacing_previous_state() {
     let secret = [7; 32];
     let request = day_request(U256::MAX);
-    let previous = apply_day_operation(&secret, &request).unwrap();
+    let previous = apply_day_operation(&secret, &secret, &request).unwrap();
     for operation in [
         TributeDayOperationV2::AdjustTransient {
             nominal_amount_minor: U256::from(1),
@@ -185,6 +191,7 @@ fn overflow_and_mismatched_retirement_fail_without_replacing_previous_state() {
         },
     ] {
         assert!(apply_day_operation(
+            &secret,
             &secret,
             &TributeDayOpRequestV2 {
                 previous: Some(previous.clone()),

@@ -15,8 +15,8 @@ mod session;
 
 use fixtures::{
     evm_signer, honest_announces, install_tribute_offer_key, open_on, owner_sig,
-    production_dcap_state, sealed_test_binding, signed_initialization_manifest,
-    signed_initialization_manifest_for_mode, testnet_chain_word,
+    owner_sig_for_ledger, production_dcap_state, sealed_test_binding,
+    signed_initialization_manifest, signed_initialization_manifest_for_mode, testnet_chain_word,
 };
 
 use harness::{persist_test_offer_key, resident_enclave, spawn_production_connection, Enclave};

@@ -38,6 +38,7 @@ pub fn read_day_amount(
 
 pub fn apply_day_operation(
     network_secret: &[u8; 32],
+    tribute_state_key: &[u8; 32],
     request: &TributeDayOpRequestV2,
 ) -> Result<EncryptedTributeDayAmountV2> {
     let (previous_version, amount) = match &request.previous {
@@ -55,7 +56,7 @@ pub fn apply_day_operation(
             )
         }
     };
-    let next = apply_amount(network_secret, request, amount)?;
+    let next = apply_amount(tribute_state_key, request, amount)?;
     let inputs_hash = day_operation_inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
     // A keyed context prevents the public operation hash from becoming a
     // guessing oracle for temporary plaintext calculation inputs.
@@ -80,7 +81,7 @@ pub fn apply_day_operation(
 }
 
 fn apply_amount(
-    network_secret: &[u8; 32],
+    tribute_state_key: &[u8; 32],
     request: &TributeDayOpRequestV2,
     amount: U256,
 ) -> Result<U256> {
@@ -91,7 +92,7 @@ fn apply_amount(
             {
                 return Err(TributeDayRejectReason::TributeWrongDayOrChain.into());
             }
-            let amounts = decrypt_tribute(network_secret, tribute)?;
+            let amounts = decrypt_tribute(tribute_state_key, tribute)?;
             if amounts.issuance_amount_minor.is_zero() {
                 return Err(TributeDayRejectReason::IssuanceAmountMustBePositive.into());
             }

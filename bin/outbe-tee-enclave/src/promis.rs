@@ -54,11 +54,7 @@ fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &
 /// (the key delivered by `DeriveAccountKeys`). Same primitive the enclave uses, so
 /// a client reproduces the plaintext without ever touching the state key.
 pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
-    PROMIS
-        .cipher
-        .slot(view_key, account, FIELD_BALANCE)
-        .read_amount(blob)
-        .map(|(_, v)| v)
+    crate::gratis_cipher::read_promis_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
 fn base_result() -> PromisOpResult {
@@ -121,14 +117,17 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
     let view_key = PROMIS
         .account_keys
         .derive_view_key(state_key, req.account)?;
-    let (bver, balance) = PROMIS
-        .cipher
-        .slot(&view_key, req.account, FIELD_BALANCE)
-        .read_amount(&req.current_balance)?;
+    let (bver, balance) = crate::gratis_cipher::read_promis_amount(
+        &view_key,
+        req.account,
+        FIELD_BALANCE,
+        &req.current_balance,
+    )?;
 
     let mut r = base_result();
     r.event_amount = req.amount;
     r.next_op_nonce = req.modify_auth.op_nonce.saturating_add(1);
+    let input_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
 
     match req.op {
         PromisOp::Mint => {
@@ -136,19 +135,31 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
                 Some(v) => v,
                 None => return Ok(rejected_promis_op(PromisRejectReason::BalanceOverflow)),
             };
-            r.new_balance = PROMIS
-                .cipher
-                .slot(&view_key, req.account, FIELD_BALANCE)
-                .write_amount(bver, new_balance)?;
+            r.new_balance = crate::gratis_cipher::write_promis_amount(
+                &view_key,
+                crate::gratis_cipher::BalanceTransition {
+                    account: req.account,
+                    field: FIELD_BALANCE,
+                    previous_version: bver,
+                    amount: new_balance,
+                    input_hash,
+                },
+            )?;
         }
         PromisOp::Burn => {
             if balance < req.amount {
                 return Ok(rejected_promis_op(PromisRejectReason::InsufficientBalance));
             }
-            r.new_balance = PROMIS
-                .cipher
-                .slot(&view_key, req.account, FIELD_BALANCE)
-                .write_amount(bver, balance - req.amount)?;
+            r.new_balance = crate::gratis_cipher::write_promis_amount(
+                &view_key,
+                crate::gratis_cipher::BalanceTransition {
+                    account: req.account,
+                    field: FIELD_BALANCE,
+                    previous_version: bver,
+                    amount: balance - req.amount,
+                    input_hash,
+                },
+            )?;
         }
     }
     Ok(r)

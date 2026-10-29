@@ -302,18 +302,14 @@ where
             Ok(out) => C::abi_decode_returns(&out)
                 .map(ViewCallOutcome::Returned)
                 .map_err(|error| format!("ABI decode failed: {error}")),
-            Err(error) => {
-                if let Some(payload) = error.as_error_resp() {
-                    if payload.code == 3 {
-                        if let Some(Ok(data)) = payload.try_data_as::<Bytes>() {
-                            if !data.is_empty() {
-                                return Ok(ViewCallOutcome::Reverted(data));
-                            }
-                        }
-                    }
-                }
-                Err(format!("eth_call failed: {error}"))
-            }
+            Err(error) => error
+                .as_error_resp()
+                .filter(|payload| payload.code == 3)
+                .and_then(|payload| payload.try_data_as::<Bytes>())
+                .and_then(std::result::Result::ok)
+                .filter(|data| !data.is_empty())
+                .map(ViewCallOutcome::Reverted)
+                .ok_or_else(|| format!("eth_call failed: {error}")),
         }
     })
 }
@@ -659,7 +655,7 @@ pub(crate) fn derive_account_keys(
     key: &str,
     ledger: outbe_tee::protocol::Ledger,
 ) -> Result<ConfidentialAccountKeys> {
-    use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+    use outbe_tee::protocol::{derive_account_keys_message, eip191_hash};
     use outbe_tee_enclave::crypto::{decrypt_share, x25519_public, EncryptedShare};
     use rand_core::RngCore as _;
 
@@ -678,16 +674,11 @@ pub(crate) fn derive_account_keys(
     let signature = signer
         .sign_hash_sync(&digest)
         .map_err(|error| eyre!("sign confidential key request: {error}"))?;
-    let ledger_name = match ledger {
-        Ledger::Gratis => "Gratis",
-        Ledger::Promis => "Promis",
-        Ledger::Fidelity => "Fidelity",
-    };
     let response = raw_json_result(
         url,
         "outbe_deriveKeys",
         serde_json::json!([
-            ledger_name,
+            ledger,
             format!("{account:#x}"),
             format!("{:#x}", B256::from(ephemeral_public)),
             format!("0x{}", hex::encode(signature.as_bytes())),
@@ -716,7 +707,7 @@ pub(crate) fn derive_account_keys(
             ciphertext: decode("sealed")?,
         },
     )
-    .map_err(|error| eyre!("open sealed {ledger_name} keys: {error}"))?;
+    .map_err(|error| eyre!("open sealed {ledger:?} keys: {error}"))?;
     if plaintext.len() != 64 {
         return Err(eyre!(
             "outbe_deriveKeys plaintext is {} bytes instead of 64",
@@ -726,10 +717,10 @@ pub(crate) fn derive_account_keys(
     Ok(ConfidentialAccountKeys {
         view: plaintext[..32]
             .try_into()
-            .map_err(|_| eyre!("{ledger_name} view key is not 32 bytes"))?,
+            .map_err(|_| eyre!("{ledger:?} view key is not 32 bytes"))?,
         modify: plaintext[32..]
             .try_into()
-            .map_err(|_| eyre!("{ledger_name} modify key is not 32 bytes"))?,
+            .map_err(|_| eyre!("{ledger:?} modify key is not 32 bytes"))?,
     })
 }
 

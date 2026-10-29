@@ -29,7 +29,8 @@ fn calculation_error(error: ProgramErrorV1) -> TeeError {
 }
 
 pub fn execute(
-    secret: &[u8; 32],
+    tribute_state_key: &[u8; 32],
+    nod_state_key: &[u8; 32],
     fidelity_key: &[u8; 32],
     request: &LysisRequest,
 ) -> Result<LysisResult> {
@@ -75,8 +76,8 @@ pub fn execute(
         {
             return Err(rejected());
         }
-        let amounts =
-            crate::tribute_encryption::decrypt_tribute(secret, tribute).map_err(|_| rejected())?;
+        let amounts = crate::tribute_encryption::decrypt_tribute(tribute_state_key, tribute)
+            .map_err(|_| rejected())?;
         let price = prices
             .get(&context.reference_currency)
             .ok_or_else(rejected)?;
@@ -110,7 +111,8 @@ pub fn execute(
             outbe_primitives::nod_rules::settlement_cost_minor(action.entry_price_minor, load)
                 .map_err(|_| rejected())?;
         let nod = crate::nod_encryption::encrypt_nod_for_tribute(
-            secret,
+            tribute_state_key,
+            nod_state_key,
             tribute,
             NodTermsV1 {
                 chain_id: request.chain_id,
@@ -150,14 +152,22 @@ pub(crate) mod tests {
     };
     use outbe_tee::protocol::{FidelitySnapshotEntry, FidelitySnapshotRequest};
 
-    const SECRET: [u8; 32] = [0x5a; 32];
-    const OWNER_SECRET: [u8; 32] = [0x37; 32];
+    const GROUP_SIG: [u8; 48] = [9; 48];
     const FIDELITY_KEY: [u8; 32] = [0x63; 32];
+
+    pub(crate) fn tribute_state_key() -> [u8; 32] {
+        crate::tribute_encryption::derive_tribute_state_key(&GROUP_SIG, B256::from(U256::ONE), 0)
+            .unwrap()
+    }
+
+    pub(crate) fn nod_state_key() -> [u8; 32] {
+        crate::nod_encryption::derive_nod_state_key(&GROUP_SIG, B256::from(U256::ONE), 0).unwrap()
+    }
 
     pub(crate) fn fixture() -> LysisRequest {
         let day = WorldwideDay::new(20261015);
         let timestamp = day.start_timestamp() + 3600;
-        let creator = crate::crypto::x25519_public(&OWNER_SECRET);
+        let tribute_key = tribute_state_key();
         let mut tributes = Vec::new();
         for (index, nominal, currency) in [
             (1, 1_234_u64, 840),
@@ -167,8 +177,7 @@ pub(crate) mod tests {
             let owner = Address::repeat_byte(index);
             tributes.push(
                 crate::tribute_encryption::encrypt_tribute(
-                    &SECRET,
-                    &creator,
+                    &tribute_key,
                     TributeContextV2 {
                         chain_id: 1,
                         tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
@@ -216,7 +225,9 @@ pub(crate) mod tests {
     #[test]
     fn ready_nods_preserve_ecdh_access_and_exact_sequential_math() {
         let request = fixture();
-        let output = execute(&SECRET, &FIDELITY_KEY, &request).unwrap();
+        let tribute_key = tribute_state_key();
+        let nod_key = nod_state_key();
+        let output = execute(&tribute_key, &nod_key, &FIDELITY_KEY, &request).unwrap();
         let leagues = crate::fidelity::snapshot_leagues(&FIDELITY_KEY, &request.fidelity).unwrap();
         let observed = request
             .tributes
@@ -233,7 +244,8 @@ pub(crate) mod tests {
                         reference_currency: context.reference_currency,
                         tribute_price_minor: context.tribute_price_minor,
                         nominal_amount_minor: crate::tribute_encryption::decrypt_tribute(
-                            &SECRET, tribute,
+                            &tribute_key,
+                            tribute,
                         )
                         .unwrap()
                         .nominal_amount_minor,
@@ -265,15 +277,12 @@ pub(crate) mod tests {
             output.unused_lysis_limit_minor,
             expected.remaining_lysis_limit_minor
         );
-        let enclave_public = crate::crypto::x25519_public(&SECRET);
         for (output, expected_load) in output.nods.iter().zip(loads) {
-            let enclave_load = crate::nod_encryption::decrypt_nod(&SECRET, &output.nod).unwrap();
-            let owner_load = outbe_tee::nod_decrypt::decrypt_nod_for_owner(
-                &OWNER_SECRET,
-                &enclave_public,
-                &output.nod,
-            )
-            .unwrap();
+            let enclave_load = crate::nod_encryption::decrypt_nod(&nod_key, &output.nod).unwrap();
+            let nod_view_key =
+                crate::nod_encryption::derive_view_key(&nod_key, output.nod.terms.owner).unwrap();
+            let owner_load =
+                outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &output.nod).unwrap();
             assert_eq!(enclave_load, expected_load);
             assert_eq!(owner_load, expected_load);
             assert_eq!(
@@ -285,15 +294,16 @@ pub(crate) mod tests {
                 .unwrap()
             );
         }
-        let restarted_secret = SECRET;
         assert_eq!(
             output,
-            execute(&restarted_secret, &FIDELITY_KEY, &request).unwrap()
+            execute(&tribute_key, &nod_key, &FIDELITY_KEY, &request).unwrap()
         );
     }
 
     #[test]
     fn invalid_sources_and_observations_are_rejected_without_private_error_values() {
+        let tribute_key = tribute_state_key();
+        let nod_key = nod_state_key();
         for fault in 0..8 {
             let mut request = fixture();
             match fault {
@@ -307,7 +317,7 @@ pub(crate) mod tests {
                 7 => request.lysis_limit_minor = U256::ONE,
                 _ => unreachable!(),
             }
-            let error = execute(&SECRET, &FIDELITY_KEY, &request)
+            let error = execute(&tribute_key, &nod_key, &FIDELITY_KEY, &request)
                 .unwrap_err()
                 .to_string();
             assert_eq!(
@@ -325,6 +335,8 @@ pub(crate) mod tests {
 
     #[test]
     fn calculation_rejection_requires_authenticating_every_source() {
+        let tribute_key = tribute_state_key();
+        let nod_key = nod_state_key();
         for corrupt_fidelity in [false, true] {
             let mut request = fixture();
             request.lysis_limit_minor = U256::ONE;
@@ -334,7 +346,7 @@ pub(crate) mod tests {
                 request.tributes.last_mut().unwrap().encrypted_amounts[20] ^= 1;
             }
             assert_eq!(
-                execute(&SECRET, &FIDELITY_KEY, &request)
+                execute(&tribute_key, &nod_key, &FIDELITY_KEY, &request)
                     .unwrap_err()
                     .to_string(),
                 rejected().to_string()

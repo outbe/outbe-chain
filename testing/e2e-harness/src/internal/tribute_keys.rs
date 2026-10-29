@@ -1,40 +1,69 @@
-//! Independent creator encryption keys for reproducible E2E fixtures only.
+//! Owner view-key derivation for reproducible E2E fixtures.
 
 use alloy_primitives::Address;
 use outbe_primitives::entity_codec::{
     decode_stored_tribute_v1, decode_stored_tribute_v2, TributeBodyV1,
 };
-use sha2::{Digest, Sha256};
-use x25519_dalek::{PublicKey, StaticSecret};
+use outbe_tee::protocol::Ledger;
 
-pub(crate) fn secret(creator: Address) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(b"outbe-e2e-creator-encryption-key-v2");
-    hash.update(creator);
-    hash.finalize().into()
+use crate::internal::eth;
+use crate::world::World;
+
+pub(crate) const CREATOR_KEY: &str =
+    "0x7979797979797979797979797979797979797979797979797979797979797979";
+
+const NOD_HOLDER_SEED: u64 = 0x0e0d_0000;
+
+pub(crate) fn owner_private_key(world: &World, owner: Address) -> String {
+    if eth::address_of(CREATOR_KEY) == Some(owner) {
+        return CREATOR_KEY.to_owned();
+    }
+    if eth::address_of(crate::world::forge::DEPLOYER_KEY) == Some(owner) {
+        return crate::world::forge::DEPLOYER_KEY.to_owned();
+    }
+    for index in 0..world.validators.size() {
+        if let Ok(key) = world.validators.get(index).evm_key() {
+            if eth::address_of(&key) == Some(owner) {
+                return key;
+            }
+        }
+    }
+    for index in 0..16 {
+        let key = crate::features::entity_lifecycle::holders::key(NOD_HOLDER_SEED, index);
+        if eth::address_of(&key) == Some(owner) {
+            return key;
+        }
+    }
+    panic!("no E2E private key registered for owner {owner:#x}");
 }
 
-pub(crate) fn public_hex(creator: Address) -> String {
-    let public = PublicKey::from(&StaticSecret::from(secret(creator)));
-    format!("0x{}", hex::encode(public.as_bytes()))
+pub(crate) fn tribute_view_key(world: &World, owner: Address) -> [u8; 32] {
+    let url = world.rpc.url(world.validators.primary_port());
+    let key = owner_private_key(world, owner);
+    eth::derive_account_keys(&url, &key, Ledger::Tribute)
+        .expect("derive owner Tribute view key")
+        .view
+}
+
+pub(crate) fn nod_view_key(world: &World, owner: Address) -> [u8; 32] {
+    let url = world.rpc.url(world.validators.primary_port());
+    let key = owner_private_key(world, owner);
+    eth::derive_account_keys(&url, &key, Ledger::Nod)
+        .expect("derive owner Nod view key")
+        .view
 }
 
 /// Authenticate the canonical body before using this local numerical view.
-/// This helper never calls a node or enclave to obtain decrypted amounts.
-pub(crate) fn calculation_view(
-    stored: &[u8],
-    network_public: &[u8; 32],
-) -> Result<TributeBodyV1, String> {
+/// Uses the owner's derived `view_key` to open the ciphertext client-side.
+pub(crate) fn calculation_view(world: &World, stored: &[u8]) -> Result<TributeBodyV1, String> {
     let encrypted = match decode_stored_tribute_v2(stored) {
         Ok(body) => body,
         Err(_) => return decode_stored_tribute_v1(stored).map_err(|error| error.to_string()),
     };
     let context = &encrypted.context;
-    let amounts = outbe_tee::tribute_decrypt::decrypt_tribute_for_creator(
-        &secret(context.owner),
-        network_public,
-        &encrypted,
-    )?;
+    let view_key = tribute_view_key(world, context.owner);
+    let amounts = outbe_tee::tribute_decrypt::decrypt_tribute_for_owner(&view_key, &encrypted)
+        .map_err(|error| error.to_string())?;
     Ok(TributeBodyV1 {
         tribute_id: context.tribute_id,
         owner: context.owner,

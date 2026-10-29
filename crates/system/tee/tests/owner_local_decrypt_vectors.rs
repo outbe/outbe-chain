@@ -10,28 +10,20 @@ use outbe_primitives::{
 };
 use outbe_tee::{
     fidelity_decrypt::decrypt_fidelity_cohorts, gratis_decrypt::decrypt_gratis_balance,
-    nod_decrypt::decrypt_nod_for_owner, tribute_decrypt::decrypt_tribute_for_creator,
+    nod_decrypt::decrypt_nod_for_owner, promis_decrypt::decrypt_promis_balance,
+    tribute_decrypt::decrypt_tribute_for_owner,
 };
 
 const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
 const GRATIS_BLOB: &str = "111213141516171847524132515151515151515151515151515151515151515151515151515151515151515146185e002fe9d80f2f80daea54dcfbd2faa5ce7014252c82b2d6dccd3455cc7a79fdb10771779339ce5f26d6aa2f2027";
-// Independently generated with Python cryptography 41.0.7 and Foundry cast keccak.
-// The public-key blobs are encrypted literal 32-byte X25519 public keys; their
-// full versioned bytes are committed into each amount HKDF info string.
-const ENCLAVE_PUBLIC: &str = "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20";
+const PROMIS_BLOB: &str = "111213141516171850524f325151515151515151515151515151515151515151515151515151515151515151950f76eb13183701977ca3510b80c426f3dacad91248fa9961b5857074a00025091a5da1a6224be9617c475e65c22d71";
 const NOD_CONTEXT_DIGEST: &str = "9f5ed554cb633715b10ef9300eee7572dd8d7bd9b7ee96f47b23f87152ae6720";
-const NOD_CREATOR_BLOB: &str = "0000000000000001e61bd19649c699bec83af492872209e7c8097b19f8c2e2cecf425c57db99a5958b012576f5015e4e70e289169abb62a9";
-const NOD_AMOUNT_BLOB: &str = "000000000000000180659b0633bd77c6b51dea420ff70bb2288cd6a1f282a9cf7fdbedcc651c41f1afc6d3e21537750cde151f4ca9c10c0d";
-const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001a850187c31ee54d13f4586dd8e1917c06c8f657fdbd6d09cb7f7d60f0df86b0209349a0265f21b1b90e38d68733853ca";
+const NOD_AMOUNT_BLOB: &str = "000000000000000137f1780dda06389d4099f641acdc47b29f3834a3915aebccfda1eeb5cb1be0eb266f7e6a40d529099d3ea3df0ee44c17";
+const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001b4cb27b25a97fb3f37dc0a8ee5525ce83bce9c4fdd1efb170fd412e8a76ea5bcd8feaf71b8df565d8b0d2b7d838b26cd";
 const TRIBUTE_CONTEXT_DIGEST: &str =
     "79d19e3d69598d12698496e748a6ddef52b72392b6722778db2de3c2ef493d8a";
-const TRIBUTE_CREATOR_BLOB: &str = "000000000000000151d8b0ba9ed9c55483aa2ae2997845f050a185b3e57e09bc8c29e163a15af42504e0f20c819ac698c3fd5537f699c07e";
-const TRIBUTE_AMOUNT_BLOB: &str = "0000000000000001395c8e08d20d9a182e5aab594ecbca1615f313c70e0f8160102d5f2bed8e9e4babca50c1a1ada7af4d2e17fe3fe4233ffbfe9807a7e40992ba967fc713558030605443292bdb530bcd0dd0977a8497a3";
-const TRIBUTE_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001e6f78fde2189ee83c6817b391fcf2d27cc558b5dbedb4e53bb236cf49a14fd0b8a0e1ff9bbf2885018411a2f7f91050b57b4df509e6b2c4f5aba17572e58e078ccaa07196a6689cac6570cbe6ac80e95";
-
-fn enclave_public() -> [u8; 32] {
-    hex::decode(ENCLAVE_PUBLIC).unwrap().try_into().unwrap()
-}
+const TRIBUTE_AMOUNT_BLOB: &str = "000000000000000179a55ad0e1010fe5e34697e51f7cd2437e3825a0b0fd20c9095ca5186559021c48a5068d2190e57034954031961c1261d83647abd7ca0081e6c6d3f80aa4dcde6ef60e38fb95d1696d93c830a06309f3";
+const TRIBUTE_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001ba08d886d9013e403c4668ff1ddad52207e01f20700ba87fbb3f49751b47325443f62a6997f16843e213f5e0ce6a52dc508fde6afd0c84511998055fb26ae1f70db5ce08a32f5cfc5217bdd630937bc0";
 
 fn fixed_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20_260_824);
@@ -47,7 +39,6 @@ fn fixed_nod() -> EncryptedNodV1 {
             reference_currency: 978,
         },
         encryption_binding: B256::repeat_byte(0xa5),
-        encrypted_creator_public_key: hex::decode(NOD_CREATOR_BLOB).unwrap(),
         encrypted_gratis_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
     };
     assert_eq!(
@@ -70,7 +61,6 @@ fn fixed_tribute() -> EncryptedTributeV2 {
             tribute_price_minor: U256::from(7_654_321u64),
             offer_input_hash: B256::repeat_byte(0xb6),
         },
-        encrypted_creator_public_key: hex::decode(TRIBUTE_CREATOR_BLOB).unwrap(),
         encrypted_amounts: hex::decode(TRIBUTE_AMOUNT_BLOB).unwrap(),
     };
     assert_eq!(
@@ -86,12 +76,17 @@ fn fixed_owner_local_view_vectors_open_exact_plaintext() {
     let account = Address::repeat_byte(0x42);
     let fidelity = hex::decode(FIDELITY_BLOB).unwrap();
     let gratis = hex::decode(GRATIS_BLOB).unwrap();
+    let promis = hex::decode(PROMIS_BLOB).unwrap();
     assert_eq!(
         decrypt_fidelity_cohorts(&key, account, &fidelity).unwrap(),
         b"cohort-v2-golden".to_vec()
     );
     assert_eq!(
         decrypt_gratis_balance(&key, account, &gratis).unwrap(),
+        U256::from(123_456_789_u64)
+    );
+    assert_eq!(
+        decrypt_promis_balance(&key, account, &promis).unwrap(),
         U256::from(123_456_789_u64)
     );
 }
@@ -102,6 +97,7 @@ fn owner_local_views_reject_wrong_context_and_tampered_tag() {
     let account = Address::repeat_byte(0x42);
     let mut fidelity = hex::decode(FIDELITY_BLOB).unwrap();
     let mut gratis = hex::decode(GRATIS_BLOB).unwrap();
+    let mut promis = hex::decode(PROMIS_BLOB).unwrap();
     assert_eq!(
         decrypt_fidelity_cohorts(&key, Address::repeat_byte(0x43), &fidelity).unwrap_err(),
         "Fidelity cohort decryption failed"
@@ -110,8 +106,13 @@ fn owner_local_views_reject_wrong_context_and_tampered_tag() {
         decrypt_gratis_balance(&key, Address::repeat_byte(0x43), &gratis).unwrap_err(),
         "Gratis balance decryption failed"
     );
+    assert_eq!(
+        decrypt_promis_balance(&key, Address::repeat_byte(0x43), &promis).unwrap_err(),
+        "Promis balance decryption failed"
+    );
     *fidelity.last_mut().unwrap() ^= 1;
     *gratis.last_mut().unwrap() ^= 1;
+    *promis.last_mut().unwrap() ^= 1;
     assert_eq!(
         decrypt_fidelity_cohorts(&key, account, &fidelity).unwrap_err(),
         "Fidelity cohort decryption failed"
@@ -120,18 +121,21 @@ fn owner_local_views_reject_wrong_context_and_tampered_tag() {
         decrypt_gratis_balance(&key, account, &gratis).unwrap_err(),
         "Gratis balance decryption failed"
     );
+    assert_eq!(
+        decrypt_promis_balance(&key, account, &promis).unwrap_err(),
+        "Promis balance decryption failed"
+    );
 }
 
 #[test]
 fn fixed_nod_and_tribute_ciphertexts_open_exact_amounts() {
-    let owner_secret = [0x11; 32];
-    let enclave_public = enclave_public();
+    let view_key = [0x11; 32];
     assert_eq!(
-        decrypt_nod_for_owner(&owner_secret, &enclave_public, &fixed_nod()).unwrap(),
+        decrypt_nod_for_owner(&view_key, &fixed_nod()).unwrap(),
         U256::from(987_654_321u64)
     );
     assert_eq!(
-        decrypt_tribute_for_creator(&owner_secret, &enclave_public, &fixed_tribute()).unwrap(),
+        decrypt_tribute_for_owner(&view_key, &fixed_tribute()).unwrap(),
         TributeAmountsV2 {
             issuance_amount_minor: U256::from(123_456_789u64),
             nominal_amount_minor: U256::from(9_876_543_210u64),
@@ -141,65 +145,62 @@ fn fixed_nod_and_tribute_ciphertexts_open_exact_amounts() {
 
 #[test]
 fn nod_rejects_wrong_owner_context_and_nonce_domain() {
-    let secret = [0x11; 32];
-    let enclave_public = enclave_public();
+    let view_key = [0x11; 32];
     let nod = fixed_nod();
     assert_eq!(
-        decrypt_nod_for_owner(&[0x12; 32], &enclave_public, &nod).unwrap_err(),
+        decrypt_nod_for_owner(&[0x12; 32], &nod).unwrap_err(),
         "NOD amount decryption failed"
     );
     let mut wrong_context = nod.clone();
     wrong_context.terms.owner = Address::repeat_byte(0x43);
     assert_eq!(
-        decrypt_nod_for_owner(&secret, &enclave_public, &wrong_context).unwrap_err(),
+        decrypt_nod_for_owner(&view_key, &wrong_context).unwrap_err(),
         "NOD amount decryption failed"
     );
     let mut wrong_binding = nod.clone();
     wrong_binding.encryption_binding = B256::repeat_byte(0xa6);
     assert_eq!(
-        decrypt_nod_for_owner(&secret, &enclave_public, &wrong_binding).unwrap_err(),
+        decrypt_nod_for_owner(&view_key, &wrong_binding).unwrap_err(),
         "NOD amount decryption failed"
     );
     let mut wrong_domain = nod;
     wrong_domain.encrypted_gratis_amount = hex::decode(NOD_WRONG_NONCE_DOMAIN_BLOB).unwrap();
     assert_eq!(
-        decrypt_nod_for_owner(&secret, &enclave_public, &wrong_domain).unwrap_err(),
+        decrypt_nod_for_owner(&view_key, &wrong_domain).unwrap_err(),
         "NOD amount decryption failed"
     );
 }
 
 #[test]
 fn tribute_rejects_wrong_owner_context_and_nonce_domain() {
-    let secret = [0x11; 32];
-    let enclave_public = enclave_public();
+    let view_key = [0x11; 32];
     let tribute = fixed_tribute();
     assert_eq!(
-        decrypt_tribute_for_creator(&[0x12; 32], &enclave_public, &tribute).unwrap_err(),
+        decrypt_tribute_for_owner(&[0x12; 32], &tribute).unwrap_err(),
         "Tribute amount decryption failed"
     );
     let mut wrong_context = tribute.clone();
     wrong_context.context.owner = Address::repeat_byte(0x54);
     assert_eq!(
-        decrypt_tribute_for_creator(&secret, &enclave_public, &wrong_context).unwrap_err(),
+        decrypt_tribute_for_owner(&view_key, &wrong_context).unwrap_err(),
         "Tribute amount decryption failed"
     );
     let mut wrong_offer = tribute.clone();
     wrong_offer.context.offer_input_hash = B256::repeat_byte(0xb7);
     assert_eq!(
-        decrypt_tribute_for_creator(&secret, &enclave_public, &wrong_offer).unwrap_err(),
+        decrypt_tribute_for_owner(&view_key, &wrong_offer).unwrap_err(),
         "Tribute amount decryption failed"
     );
     let mut wrong_domain = tribute;
     wrong_domain.encrypted_amounts = hex::decode(TRIBUTE_WRONG_NONCE_DOMAIN_BLOB).unwrap();
     assert_eq!(
-        decrypt_tribute_for_creator(&secret, &enclave_public, &wrong_domain).unwrap_err(),
+        decrypt_tribute_for_owner(&view_key, &wrong_domain).unwrap_err(),
         "Tribute amount decryption failed"
     );
 }
 
 struct MalformedCiphertextCase<T> {
     amount_blob: fn(&mut T) -> &mut Vec<u8>,
-    creator_blob: fn(&mut T) -> &mut Vec<u8>,
     invalid_encoding: &'static str,
     decryption_failed: &'static str,
 }
@@ -208,7 +209,6 @@ impl MalformedCiphertextCase<EncryptedNodV1> {
     fn nod() -> Self {
         Self {
             amount_blob: |value| &mut value.encrypted_gratis_amount,
-            creator_blob: |value| &mut value.encrypted_creator_public_key,
             invalid_encoding: "invalid encrypted NOD encoding",
             decryption_failed: "NOD amount decryption failed",
         }
@@ -219,7 +219,6 @@ impl MalformedCiphertextCase<EncryptedTributeV2> {
     fn tribute() -> Self {
         Self {
             amount_blob: |value| &mut value.encrypted_amounts,
-            creator_blob: |value| &mut value.encrypted_creator_public_key,
             invalid_encoding: "invalid encrypted Tribute encoding",
             decryption_failed: "Tribute amount decryption failed",
         }
@@ -228,42 +227,21 @@ impl MalformedCiphertextCase<EncryptedTributeV2> {
 
 fn assert_malformed_ciphertext_cases<T: Clone, R: std::fmt::Debug>(
     original: &T,
-    decrypt: impl Fn(&[u8; 32], &T) -> Result<R, outbe_tee::LocalCryptoError>,
-    enclave_public: &[u8; 32],
+    decrypt: impl Fn(&T) -> Result<R, outbe_tee::LocalCryptoError>,
     case: MalformedCiphertextCase<T>,
 ) {
     let mut short = original.clone();
     (case.amount_blob)(&mut short).pop();
-    assert_eq!(
-        decrypt(enclave_public, &short).unwrap_err(),
-        case.invalid_encoding
-    );
+    assert_eq!(decrypt(&short).unwrap_err(), case.invalid_encoding);
 
     let mut bad_version = original.clone();
     (case.amount_blob)(&mut bad_version)[7] = 2;
-    assert_eq!(
-        decrypt(enclave_public, &bad_version).unwrap_err(),
-        case.invalid_encoding
-    );
-
-    let mut bad_creator_version = original.clone();
-    (case.creator_blob)(&mut bad_creator_version)[7] = 2;
-    assert_eq!(
-        decrypt(enclave_public, &bad_creator_version).unwrap_err(),
-        case.invalid_encoding
-    );
-
-    let mut bad_creator_ciphertext = original.clone();
-    (case.creator_blob)(&mut bad_creator_ciphertext)[8] ^= 1;
-    assert_eq!(
-        decrypt(enclave_public, &bad_creator_ciphertext).unwrap_err(),
-        case.decryption_failed
-    );
+    assert_eq!(decrypt(&bad_version).unwrap_err(), case.invalid_encoding);
 
     let mut bad_ciphertext = original.clone();
     (case.amount_blob)(&mut bad_ciphertext)[8] ^= 1;
     assert_eq!(
-        decrypt(enclave_public, &bad_ciphertext).unwrap_err(),
+        decrypt(&bad_ciphertext).unwrap_err(),
         case.decryption_failed
     );
 
@@ -272,39 +250,27 @@ fn assert_malformed_ciphertext_cases<T: Clone, R: std::fmt::Debug>(
     assert!(!tag_blob.is_empty(), "golden ciphertext must have a tag");
     let tag_index = tag_blob.len() - 1;
     tag_blob[tag_index] ^= 1;
-    assert_eq!(
-        decrypt(enclave_public, &bad_tag).unwrap_err(),
-        case.decryption_failed
-    );
-
-    assert_eq!(
-        decrypt(&[0; 32], original).unwrap_err(),
-        "invalid network X25519 public key"
-    );
+    assert_eq!(decrypt(&bad_tag).unwrap_err(), case.decryption_failed);
 }
 
 #[test]
-fn nod_rejects_malformed_length_version_tag_and_network_key() {
-    let secret = [0x11; 32];
-    let enclave_public = enclave_public();
+fn nod_rejects_malformed_length_version_and_tag() {
+    let view_key = [0x11; 32];
     let nod = fixed_nod();
     assert_malformed_ciphertext_cases(
         &nod,
-        |public, value| decrypt_nod_for_owner(&secret, public, value),
-        &enclave_public,
+        |value| decrypt_nod_for_owner(&view_key, value),
         MalformedCiphertextCase::nod(),
     );
 }
 
 #[test]
-fn tribute_rejects_malformed_length_version_tag_and_network_key() {
-    let secret = [0x11; 32];
-    let enclave_public = enclave_public();
+fn tribute_rejects_malformed_length_version_and_tag() {
+    let view_key = [0x11; 32];
     let tribute = fixed_tribute();
     assert_malformed_ciphertext_cases(
         &tribute,
-        |public, value| decrypt_tribute_for_creator(&secret, public, value),
-        &enclave_public,
+        |value| decrypt_tribute_for_owner(&view_key, value),
         MalformedCiphertextCase::tribute(),
     );
 }

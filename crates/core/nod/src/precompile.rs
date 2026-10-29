@@ -129,7 +129,6 @@ fn to_abi_data(
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
         encryptedGratisAmount: item.encrypted.encrypted_gratis_amount.clone().into(),
-        encryptedCreatorPublicKey: item.encrypted.encrypted_creator_public_key.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,
         chainId: item.encrypted.terms.chain_id,
         entryPriceMinor: item.entry_price_minor(),

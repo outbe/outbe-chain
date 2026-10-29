@@ -147,15 +147,14 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             nod_item.encrypted.terms.entry_price_minor,
             U256::from(1_234_567u64)
         );
-        let network_pub = outbe_tee_enclave::crypto::x25519_public(
+        let nod_view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
-        );
-        let owner_decrypted = outbe_tee::nod_decrypt::decrypt_nod_for_owner(
-            &[0x77; 32],
-            &network_pub,
-            &nod_item.encrypted,
+            owner1,
         )
-        .expect("owner must decrypt real encrypted Nod");
+        .unwrap();
+        let owner_decrypted =
+            outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &nod_item.encrypted)
+                .expect("owner must decrypt real encrypted Nod");
         let enclave_decrypted = outbe_tee_enclave::nod_encryption::decrypt_nod(
             &crate::enclave_client::test_enclave::NETWORK_SECRET,
             &nod_item.encrypted,
@@ -164,13 +163,9 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert!(!owner_decrypted.is_zero());
         assert_eq!(owner_decrypted, enclave_decrypted);
         assert!(
-            outbe_tee::nod_decrypt::decrypt_nod_for_owner(
-                &[0x78; 32],
-                &network_pub,
-                &nod_item.encrypted,
-            )
-            .is_err(),
-            "wrong secret key must fail ChaCha20-Poly1305 authentication"
+            outbe_tee::nod_decrypt::decrypt_nod_for_owner(&[0x78; 32], &nod_item.encrypted,)
+                .is_err(),
+            "wrong view key must fail ChaCha20-Poly1305 authentication"
         );
         let raw_amount_be = owner_decrypted.to_be_bytes::<32>();
         assert!(

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
 
-pub const TRIBUTE_PUBLIC_KEY_BLOB_LEN: usize = 8 + 32 + 16;
 pub const TRIBUTE_AMOUNTS_BLOB_LEN: usize = 8 + 64 + 16;
 pub const TRIBUTE_AMOUNT_KEY_INFO: &[u8] = b"outbe/tribute/amount-key/v2";
 pub const TRIBUTE_AMOUNT_NONCE_INFO: &[u8] = b"outbe/tribute/amount-nonce/v2";
@@ -45,17 +44,9 @@ impl TributeContextV2 {
         Address::from_slice(&self.digest().as_slice()[..20])
     }
 
-    pub fn amount_key_info(
-        &self,
-        enclave_public: &[u8; 32],
-        creator_public: &[u8; 32],
-        encrypted_creator_public_key: &[u8],
-    ) -> Vec<u8> {
+    pub fn amount_key_info(&self) -> Vec<u8> {
         let mut info = TRIBUTE_AMOUNT_KEY_INFO.to_vec();
         info.extend_from_slice(self.digest().as_slice());
-        info.extend_from_slice(enclave_public);
-        info.extend_from_slice(creator_public);
-        info.extend_from_slice(encrypted_creator_public_key);
         info
     }
 }
@@ -65,7 +56,6 @@ impl TributeContextV2 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EncryptedTributeV2 {
     pub context: TributeContextV2,
-    pub encrypted_creator_public_key: Vec<u8>,
     pub encrypted_amounts: Vec<u8>,
 }
 
@@ -73,10 +63,6 @@ impl EncryptedTributeV2 {
     /// Immutable Tribute blobs always use version one, unlike mutable ledgers.
     pub fn has_valid_encoding(&self) -> bool {
         self.context.tribute_id.worldwide_day() == self.context.worldwide_day
-            && valid_immutable_blob(
-                &self.encrypted_creator_public_key,
-                TRIBUTE_PUBLIC_KEY_BLOB_LEN,
-            )
             && valid_immutable_blob(&self.encrypted_amounts, TRIBUTE_AMOUNTS_BLOB_LEN)
     }
 }

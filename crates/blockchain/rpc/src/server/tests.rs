@@ -180,6 +180,21 @@ fn radicle_rpc_evidence() {
     assert_eq!(info.valid_until_height, 80);
 }
 
+fn sample_recoverable_sig(prehash: &B256, exclude: Option<Address>) -> ([u8; 65], Address) {
+    (1u8..=16)
+        .find_map(|r_byte| {
+            let mut sig = [0u8; 65];
+            sig[31] = r_byte;
+            sig[63] = 1;
+            sig[64] = 27;
+            outbe_primitives::tee_signatures::recover_signer(prehash, &sig)
+                .ok()
+                .filter(|addr| exclude != Some(*addr))
+                .map(|addr| (sig, addr))
+        })
+        .expect("should find a recoverable secp256k1 point")
+}
+
 #[tokio::test]
 async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
     let handler = super::OutbeApiHandler::new(std::sync::Arc::new(()));
@@ -216,50 +231,138 @@ async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures()
         .message()
         .starts_with("signature recovery failed:"));
 
-    let prehash =
-        outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_account_keys_message(
-            outbe_tee::protocol::Ledger::Gratis,
-            account,
-            ephemeral_pubkey,
-        ));
-    let (foreign_sig, recovered) = (1u8..=16)
-        .find_map(|r_byte| {
-            let mut sig = [0u8; 65];
-            sig[31] = r_byte;
-            sig[63] = 1;
-            sig[64] = 27;
-            outbe_primitives::tee_signatures::recover_signer(&prehash, &sig)
-                .ok()
-                .filter(|addr| *addr != account)
-                .map(|addr| (sig, addr))
-        })
-        .expect("should find a recoverable secp256k1 point");
-
-    for err in [
-        handler
-            .derive_keys_checked(
-                outbe_tee::protocol::Ledger::Gratis,
-                account,
-                ephemeral_pubkey,
-                Bytes::copy_from_slice(&foreign_sig),
-            )
-            .await
-            .unwrap_err(),
-        handler
-            .derive_gratis_keys_checked(
-                account,
-                ephemeral_pubkey,
-                Bytes::copy_from_slice(&foreign_sig),
-            )
-            .await
-            .unwrap_err(),
+    for ledger in [
+        outbe_tee::protocol::Ledger::Gratis,
+        outbe_tee::protocol::Ledger::Promis,
+        outbe_tee::protocol::Ledger::Fidelity,
+        outbe_tee::protocol::Ledger::Tribute,
+        outbe_tee::protocol::Ledger::Nod,
     ] {
+        let prehash = outbe_tee::protocol::eip191_hash(
+            &outbe_tee::protocol::derive_account_keys_message(ledger, account, ephemeral_pubkey),
+        );
+        let (foreign_sig, recovered) = sample_recoverable_sig(&prehash, Some(account));
+
+        let err = handler
+            .derive_keys_checked(
+                ledger,
+                account,
+                ephemeral_pubkey,
+                Bytes::copy_from_slice(&foreign_sig),
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
         assert_eq!(
             err.message(),
             format!("signature signer {recovered} does not control account {account}")
         );
     }
+
+    let gratis_prehash =
+        outbe_tee::protocol::eip191_hash(&outbe_tee::protocol::derive_account_keys_message(
+            outbe_tee::protocol::Ledger::Gratis,
+            account,
+            ephemeral_pubkey,
+        ));
+    let (foreign_sig, recovered) = sample_recoverable_sig(&gratis_prehash, Some(account));
+
+    let err = handler
+        .derive_gratis_keys_checked(
+            account,
+            ephemeral_pubkey,
+            Bytes::copy_from_slice(&foreign_sig),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
+    assert_eq!(
+        err.message(),
+        format!("signature signer {recovered} does not control account {account}")
+    );
+}
+
+#[tokio::test]
+async fn derive_keys_rejects_cross_domain_signature_replay() {
+    use outbe_primitives::signer::OutbeEvmSigner;
+    use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+
+    let handler = super::OutbeApiHandler::new(std::sync::Arc::new(()));
+    let signer = OutbeEvmSigner::from_secret_bytes([0x42; 32]).expect("signer");
+    let owner = signer.address();
+    let ephemeral_pubkey = B256::repeat_byte(0x22);
+
+    let gratis_prehash = eip191_hash(&derive_account_keys_message(
+        Ledger::Gratis,
+        owner,
+        ephemeral_pubkey,
+    ));
+    let gratis_sig = signer.sign_hash(&gratis_prehash).expect("sign gratis");
+
+    // In the matching domain (`Ledger::Gratis`), `gratis_sig` passes signature
+    // verification (`recovered == owner`) and reaches the enclave query boundary.
+    let same_domain_err = handler
+        .derive_keys_checked(
+            Ledger::Gratis,
+            owner,
+            ephemeral_pubkey,
+            Bytes::copy_from_slice(&gratis_sig),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        same_domain_err.code(),
+        jsonrpsee::types::error::INTERNAL_ERROR_CODE
+    );
+
+    // Replaying the valid `owner` signature from `Ledger::Gratis` into any other
+    // ledger domain (`Promis`, `Fidelity`, `Tribute`, `Nod`) is rejected at the
+    // RPC boundary with `INVALID_PARAMS_CODE`.
+    for target_ledger in [
+        Ledger::Promis,
+        Ledger::Fidelity,
+        Ledger::Tribute,
+        Ledger::Nod,
+    ] {
+        let err = handler
+            .derive_keys_checked(
+                target_ledger,
+                owner,
+                ephemeral_pubkey,
+                Bytes::copy_from_slice(&gratis_sig),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), jsonrpsee::types::error::INVALID_PARAMS_CODE);
+        assert!(err
+            .message()
+            .contains(&format!("does not control account {owner}")));
+    }
+
+    // Likewise, a valid `owner` signature for `Ledger::Tribute` cannot be replayed
+    // to derive `Ledger::Nod` keys.
+    let tribute_prehash = eip191_hash(&derive_account_keys_message(
+        Ledger::Tribute,
+        owner,
+        ephemeral_pubkey,
+    ));
+    let tribute_sig = signer.sign_hash(&tribute_prehash).expect("sign tribute");
+    let cross_err = handler
+        .derive_keys_checked(
+            Ledger::Nod,
+            owner,
+            ephemeral_pubkey,
+            Bytes::copy_from_slice(&tribute_sig),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        cross_err.code(),
+        jsonrpsee::types::error::INVALID_PARAMS_CODE
+    );
+    assert!(cross_err
+        .message()
+        .contains(&format!("does not control account {owner}")));
 }
 
 #[tokio::test]

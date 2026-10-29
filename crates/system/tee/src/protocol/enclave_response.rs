@@ -126,6 +126,8 @@ pub fn derive_account_keys_message(
         Ledger::Gratis => b"outbe/gratis/derive-keys/v1",
         Ledger::Promis => b"outbe/promis/derive-keys/v1",
         Ledger::Fidelity => b"outbe/fidelity/derive-keys/v1",
+        Ledger::Tribute => b"outbe/tribute/derive-keys/v1",
+        Ledger::Nod => b"outbe/nod/derive-keys/v1",
     };
     let mut m = Vec::with_capacity(tag.len() + 20 + 32);
     m.extend_from_slice(tag);

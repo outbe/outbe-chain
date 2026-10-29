@@ -1,4 +1,4 @@
-//! Creator-local decryption. No enclave secret is used or exported here.
+//! Owner-local Tribute decryption using the owner's Tribute view key.
 
 use outbe_primitives::tribute_encryption::{
     EncryptedTributeV2, TributeAmountsV2, TRIBUTE_AMOUNT_NONCE_INFO,
@@ -6,27 +6,21 @@ use outbe_primitives::tribute_encryption::{
 
 use crate::{
     errors::LocalCryptoError,
-    owner_local_open::{open_owner_amount_blob, owner_x25519_shared, OwnerAmountBlob},
+    owner_local_open::{open_owner_amount_blob, OwnerAmountBlob},
 };
 
-/// Open a public Tribute record with the creator's own X25519 private key.
-pub fn decrypt_tribute_for_creator(
-    creator_secret: &[u8; 32],
-    enclave_public: &[u8; 32],
+/// Open a public Tribute record with the owner's `Ledger::Tribute` `view_key`.
+pub fn decrypt_tribute_for_owner(
+    view_key: &[u8; 32],
     tribute: &EncryptedTributeV2,
 ) -> Result<TributeAmountsV2, LocalCryptoError> {
     if !tribute.has_valid_encoding() {
         return Err(LocalCryptoError::InvalidTributeEncoding);
     }
-    let (creator_public, shared) = owner_x25519_shared(creator_secret, enclave_public)?;
     let context = &tribute.context;
-    let info = context.amount_key_info(
-        enclave_public,
-        &creator_public,
-        &tribute.encrypted_creator_public_key,
-    );
+    let info = context.amount_key_info();
     let opened = open_owner_amount_blob(
-        &shared,
+        view_key,
         OwnerAmountBlob {
             context_digest: context.digest().as_slice(),
             key_info: &info,

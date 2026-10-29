@@ -9,10 +9,12 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 /// that can decrypt them (and the account's view-key holder, client-side). Only
 /// the non-attributable `total_supply` aggregate is kept in plaintext.
 ///
-/// Blob layout for the ciphertext balance slot: `version(8, big-endian) || AEAD-ct`
-/// (a fixed 56 bytes). The enclave produces the version, and the slot stores it
-/// verbatim. The version feeds the deterministic nonce, so a slot overwrite never
-/// reuses a `(key, nonce)` pair.
+/// Blob layout for the ciphertext balance slot:
+/// `version(8, big-endian) || "PRO2"(4) || binding(32) || AEAD-ct(48)`
+/// (a fixed 92 bytes). The enclave produces the version and transition binding,
+/// and the slot stores the envelope verbatim. The version and binding feed the
+/// deterministic amount key and nonce, so a slot overwrite never reuses a
+/// `(key, nonce)` pair.
 ///
 /// Storage slots:
 ///   0: total_supply (U256, plaintext aggregate - feeds `PromisMinted/Burned`)

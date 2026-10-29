@@ -679,7 +679,6 @@ fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNod
     let day = WorldwideDay::new(20250115);
     outbe_tee_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
-        &[9; 32],
         NodTermsV1 {
             chain_id: CHAIN_ID,
             nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),

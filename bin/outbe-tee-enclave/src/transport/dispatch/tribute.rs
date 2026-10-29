@@ -24,10 +24,16 @@ pub(super) fn process_offers(
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         let chain_id = resident_chain_id(chain)?;
+        let tribute_state_key =
+            crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
+                .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
         let key = keys.tribute_offer_key_material_with(derived.secret());
         let (results, inputs_canonical_hash) =
             crate::encrypted_tribute_offer::process_encrypted_tribute_offer_batch(
-                &key, chain_id, offers,
+                &key,
+                &tribute_state_key,
+                chain_id,
+                offers,
             );
         let preimage =
             tribute_v2::encrypted_offer_attestation_preimage(inputs_canonical_hash, &results)
@@ -52,13 +58,16 @@ pub(super) fn read_amounts(
             .get()
             .ok_or(TransportDispatchError::NoResidentNetworkKey)?;
         let chain_id = resident_chain_id(chain)?;
+        let tribute_state_key =
+            crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
+                .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
         let amounts = tributes
             .iter()
             .map(|tribute| -> EnclaveResult<_> {
                 if tribute.context.chain_id != chain_id {
                     return Err(TransportDispatchError::TributeChainDiffersFromResident.into());
                 }
-                crate::tribute_encryption::decrypt_tribute(derived.secret(), tribute)
+                crate::tribute_encryption::decrypt_tribute(&tribute_state_key, tribute)
                     .map_err(|_| TransportDispatchError::TributeDecryptionFailed.into())
             })
             .collect::<EnclaveResult<Vec<_>>>()?;

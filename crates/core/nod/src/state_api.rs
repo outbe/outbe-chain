@@ -44,11 +44,8 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
         return Ok(None);
     }
     if !entry
-        .encrypted_creator_public_key()
+        .encrypted_gratis_amount()
         .has_exact_length(NOD_BLOB_LEN)?
-        || !entry
-            .encrypted_gratis_amount()
-            .has_exact_length(NOD_BLOB_LEN)?
     {
         return Err(PrecompileError::fatal(
             "invalid stored Nod ciphertext length",
@@ -253,9 +250,8 @@ mod tests {
         record.owner = Address::repeat_byte(1);
         record.chain_id = 1;
         record.worldwide_day = day;
-        record.encrypted_creator_public_key = vec![0; NOD_BLOB_LEN];
-        record.encrypted_creator_public_key[..8].copy_from_slice(&1u64.to_be_bytes());
-        record.encrypted_gratis_amount = record.encrypted_creator_public_key.clone();
+        record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
+        record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
         record
     }
 
@@ -275,7 +271,6 @@ mod tests {
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
-            encrypted_creator_public_key: vec![11; NOD_BLOB_LEN],
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
         };
         let item = NodItemState::from(stored.clone());
@@ -293,16 +288,10 @@ mod tests {
             record.is_settled = true;
             contract.records.create(&record).unwrap();
             assert!(load_item(&storage, id).unwrap().unwrap().body().is_settled);
-            for key_field in [true, false] {
-                let mut invalid = record.clone();
-                if key_field {
-                    invalid.encrypted_creator_public_key[0] = 2;
-                } else {
-                    invalid.encrypted_gratis_amount[0] = 2;
-                }
-                contract.records.update(&invalid).unwrap();
-                assert!(load_item(&storage, id).is_err());
-            }
+            let mut invalid = record.clone();
+            invalid.encrypted_gratis_amount[0] = 2;
+            contract.records.update(&invalid).unwrap();
+            assert!(load_item(&storage, id).is_err());
             record.worldwide_day = WorldwideDay::new(20261016);
             contract.records.update(&record).unwrap();
             assert!(load_item(&storage, id).is_err());
@@ -318,27 +307,21 @@ mod tests {
             let record = stored_fixture();
             let id = record.nod_id;
             contract.records.create(&record).unwrap();
-            for field_offset in [11, 12] {
-                let entry = contract.records.entry(id);
-                let field = if field_offset == 11 {
-                    entry.encrypted_creator_public_key()
-                } else {
-                    entry.encrypted_gratis_amount()
-                };
-                for length in [55, 57] {
-                    field.write(&vec![0; length]).unwrap();
-                    assert!(load_item(&storage, id).is_err());
-                }
-                let slot = id.mapping_slot(entry.base_slot() + U256::from(field_offset));
-                for raw in [U256::MAX, U256::from(112)] {
-                    storage.sstore(entry.address(), slot, raw).unwrap();
-                    assert!(load_item(&storage, id).is_err());
-                }
-                storage
-                    .sstore(entry.address(), slot, U256::from(113))
-                    .unwrap();
-                field.write(&record.encrypted_creator_public_key).unwrap();
+            let entry = contract.records.entry(id);
+            let field = entry.encrypted_gratis_amount();
+            for length in [55, 57] {
+                field.write(&vec![0; length]).unwrap();
+                assert!(load_item(&storage, id).is_err());
             }
+            let slot = id.mapping_slot(entry.base_slot() + U256::from(11));
+            for raw in [U256::MAX, U256::from(112)] {
+                storage.sstore(entry.address(), slot, raw).unwrap();
+                assert!(load_item(&storage, id).is_err());
+            }
+            storage
+                .sstore(entry.address(), slot, U256::from(113))
+                .unwrap();
+            field.write(&record.encrypted_gratis_amount).unwrap();
             assert!(load_item(&storage, id).unwrap().is_some());
         });
     }

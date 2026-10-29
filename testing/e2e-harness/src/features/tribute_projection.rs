@@ -242,11 +242,7 @@ fn projected_cross_currency_golden(world: &mut World) {
         .projection
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
-    let network = world
-        .rpc
-        .tribute_network_public_key(world.validators.primary_port())
-        .expect("installed network public key");
-    let body = crate::internal::tribute_keys::calculation_view(&projected.stored_body, &network)
+    let body = crate::internal::tribute_keys::calculation_view(world, &projected.stored_body)
         .expect("creator-local read of canonical projected Tribute");
     assert_eq!(body.issuance_amount_minor, U256::from(410_000u64));
     assert_eq!(body.issuance_currency, 949);

@@ -97,11 +97,6 @@
             "internalType": "bytes"
           },
           {
-            "name": "encryptedCreatorPublicKey",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
             "name": "encryptionBinding",
             "type": "bytes32",
             "internalType": "bytes32"

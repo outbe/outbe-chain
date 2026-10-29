@@ -19,7 +19,7 @@ fn encrypted_nod() -> EncryptedNodV1 {
         issuance_currency: 840,
         reference_currency: 978,
     };
-    crate::nod_encryption::encrypt_nod(&[7; 32], &[11; 32], terms, U256::from(123)).unwrap()
+    crate::nod_encryption::encrypt_nod(&[7; 32], terms, U256::from(123)).unwrap()
 }
 
 #[test]

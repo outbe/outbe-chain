@@ -43,7 +43,6 @@ fn fixture(count: u8, invalid_word: bool) -> Fixture {
             let tribute_id = derive_poseidon_entity_id(owner, subject.worldwide_day).unwrap();
             let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
                 &[0x52; 32],
-                &[index + 0x35; 32],
                 TributeContextV2 {
                     chain_id: subject.chain_id,
                     tribute_id,
@@ -160,7 +159,6 @@ fn wrong_context_ciphertext_checkpoint_and_limits_are_rejected() {
         |body| body.context.worldwide_day = WorldwideDay::new(20261016),
         |body| body.context.owner = Address::repeat_byte(7),
         |body| body.context.reference_currency = 978,
-        |body| body.encrypted_creator_public_key[20] ^= 1,
         |body| body.encrypted_amounts[40] ^= 1,
         |body| body.encrypted_amounts.pop().map(|_| ()).unwrap(),
     ] {
@@ -178,7 +176,7 @@ fn wrong_context_ciphertext_checkpoint_and_limits_are_rejected() {
         .verify(
             &fixture.subject,
             StateProofLimits {
-                max_slots: 16,
+                max_slots: 13,
                 ..limits()
             }
         )

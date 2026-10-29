@@ -2,8 +2,8 @@
 //! the record context, key inputs, nonce domain, envelope and result type.
 
 use crate::{errors::LocalCryptoError, offer_encrypt::hkdf_sha256};
+use alloy_primitives::{Address, U256};
 use ring::aead;
-use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 pub(crate) struct LocalOpen<'a> {
@@ -63,19 +63,6 @@ pub(crate) fn owner_amount_nonce_context(crypto_slot: &[u8]) -> Vec<u8> {
     input
 }
 
-pub(crate) fn owner_x25519_shared(
-    owner_secret: &[u8; 32],
-    enclave_public: &[u8; 32],
-) -> Result<([u8; 32], Zeroizing<[u8; 32]>), LocalCryptoError> {
-    let secret = StaticSecret::from(*owner_secret);
-    let owner_public = PublicKey::from(&secret).to_bytes();
-    let shared = secret.diffie_hellman(&PublicKey::from(*enclave_public));
-    if !shared.was_contributory() {
-        return Err(LocalCryptoError::InvalidNetworkX25519PublicKey);
-    }
-    Ok((owner_public, Zeroizing::new(*shared.as_bytes())))
-}
-
 /// Domain inputs for an immutable owner amount with its first-counter envelope.
 /// Check the record encoding before this input is passed to the opener.
 pub(crate) struct OwnerAmountBlob<'a> {
@@ -90,10 +77,10 @@ pub(crate) struct OwnerAmountBlob<'a> {
 
 /// Derive the immutable amount key and open its first-counter envelope.
 pub(crate) fn open_owner_amount_blob(
-    shared: &[u8; 32],
+    view_key: &[u8; 32],
     input: OwnerAmountBlob<'_>,
 ) -> Result<OpenedLocalBytes, LocalCryptoError> {
-    let key = Zeroizing::new(hkdf_sha256(input.context_digest, shared, input.key_info)?);
+    let key = Zeroizing::new(hkdf_sha256(input.context_digest, view_key, input.key_info)?);
     let nonce_context = owner_amount_nonce_context(input.crypto_slot);
     open_local_ciphertext(LocalOpen {
         key: &key,
@@ -103,4 +90,68 @@ pub(crate) fn open_owner_amount_blob(
         invalid_key_error: input.invalid_key_error,
         decryption_error: input.decryption_error,
     })
+}
+
+/// Domain constants and typed errors for a 92-byte V2 balance envelope (`GRA2` / `PRO2`).
+pub(crate) struct V2BalanceSpec<'a> {
+    pub marker: &'a [u8; 4],
+    pub key_info: &'a [u8],
+    pub nonce_info: &'a [u8],
+    pub invalid_balance_error: LocalCryptoError,
+    pub invalid_key_error: LocalCryptoError,
+    pub decryption_error: LocalCryptoError,
+    pub invalid_length_error: LocalCryptoError,
+}
+
+pub(crate) const GRATIS_V2_SPEC: V2BalanceSpec<'static> = V2BalanceSpec {
+    marker: b"GRA2",
+    key_info: b"outbe/gratis/amount-key/v2",
+    nonce_info: b"outbe/gratis/amount-nonce/v2",
+    invalid_balance_error: LocalCryptoError::InvalidGratisBalance,
+    invalid_key_error: LocalCryptoError::InvalidGratisViewKey,
+    decryption_error: LocalCryptoError::GratisBalanceDecryptionFailed,
+    invalid_length_error: LocalCryptoError::InvalidGratisAmountLength,
+};
+
+pub(crate) const PROMIS_V2_SPEC: V2BalanceSpec<'static> = V2BalanceSpec {
+    marker: b"PRO2",
+    key_info: b"outbe/promis/amount-key/v2",
+    nonce_info: b"outbe/promis/amount-nonce/v2",
+    invalid_balance_error: LocalCryptoError::InvalidPromisBalance,
+    invalid_key_error: LocalCryptoError::InvalidPromisViewKey,
+    decryption_error: LocalCryptoError::PromisBalanceDecryptionFailed,
+    invalid_length_error: LocalCryptoError::InvalidPromisAmountLength,
+};
+
+/// Open a 92-byte V2 balance envelope (`version(8) || marker(4) || binding(32) || ct(48)`).
+pub(crate) fn open_v2_balance_blob(
+    view_key: &[u8; 32],
+    account: Address,
+    blob: &[u8],
+    spec: V2BalanceSpec<'_>,
+) -> Result<U256, LocalCryptoError> {
+    if blob.is_empty() {
+        return Ok(U256::ZERO);
+    }
+    if blob.len() != 92 || &blob[8..12] != spec.marker || blob[..8] == [0; 8] {
+        return Err(spec.invalid_balance_error);
+    }
+    let mut context = account.as_slice().to_vec();
+    context.push(0);
+    context.extend_from_slice(&blob[..8]);
+    context.extend_from_slice(&blob[12..44]);
+    let key = Zeroizing::new(hkdf_sha256(view_key, &context, spec.key_info)?);
+    let opened = open_local_ciphertext(LocalOpen {
+        key: &key,
+        nonce_context: &context,
+        nonce_info: spec.nonce_info,
+        ciphertext: &blob[44..],
+        invalid_key_error: spec.invalid_key_error,
+        decryption_error: spec.decryption_error,
+    })?;
+    let amount: &[u8; 32] = opened
+        .as_slice()
+        .try_into()
+        .map_err(|_| spec.invalid_length_error)?;
+    Ok(U256::from_be_bytes(*amount))
 }
