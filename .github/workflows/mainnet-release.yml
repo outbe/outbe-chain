@@ -5,7 +5,7 @@ on:
   # `dispatch-mainnet-release` job in release.yml invokes this workflow with
   # `--ref main`. The workflow ref must stay `refs/heads/main` because the
   # published Sigstore certificate identity is pinned to it, both here and in
-  # xtask/src/release/sgx.rs + release/release-manifest-v1.schema.json.
+  # xtask/src/release/sgx/spec.rs + release/release-manifest-v1.schema.json.
   workflow_dispatch:
     inputs:
       release_tag:
@@ -105,7 +105,7 @@ jobs:
             "${RUNNER_TEMP}/release-inputs/mainnet-seeded-genesis.json")" = 'false'
 
       - name: Upload the approved seeded Mainnet genesis
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: approved-mainnet-seeded-genesis
           path: ${{ runner.temp }}/release-inputs
@@ -134,7 +134,7 @@ jobs:
       - name: Install pinned Noir build tools
         run: release/scripts/install-zk-build-tools.sh
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: approved-mainnet-seeded-genesis
           path: ${{ runner.temp }}/release-inputs
@@ -174,7 +174,7 @@ jobs:
           sha256sum elf.tar unsigned.tar > SHA256SUMS
 
       - name: Upload the regional release candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reproducible-builder-${{ matrix.region }}
           path: ${{ runner.temp }}/builder-output
@@ -199,17 +199,17 @@ jobs:
       - name: Install pinned Noir build tools
         run: release/scripts/install-zk-build-tools.sh
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: approved-mainnet-seeded-genesis
           path: ${{ runner.temp }}/release-inputs
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reproducible-builder-fr
           path: ${{ runner.temp }}/builder-fr
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reproducible-builder-mum
           path: ${{ runner.temp }}/builder-mum
@@ -267,7 +267,7 @@ jobs:
             deploy/validator/systemd
 
       - name: Upload exact unsigned release inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: reproducible-release-inputs
           path: ${{ runner.temp }}/release-inputs
@@ -308,7 +308,7 @@ jobs:
           test "${remote_tag_object}" = \
             "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reproducible-release-inputs
           path: ${{ runner.temp }}/release-inputs
@@ -360,7 +360,7 @@ jobs:
             | grep -E '(^|/)(.*private.*|.*key.*\.pem)$'
 
       - name: Upload signed bundle without the signing key
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-sgx-bundle
           path: ${{ runner.temp }}/signed-output
@@ -406,7 +406,7 @@ jobs:
           test "${remote_tag_object}" = \
             "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-sgx-bundle
           path: ${{ runner.temp }}/package
@@ -508,7 +508,7 @@ jobs:
             "${RUNNER_TEMP}/published/"
 
       - name: Upload published-image evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: published-sgx-image
           path: ${{ runner.temp }}/published
@@ -544,12 +544,12 @@ jobs:
           test "${remote_tag_object}" = \
             "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: published-sgx-image
           path: ${{ runner.temp }}/published
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reproducible-release-inputs
           path: ${{ runner.temp }}/release-inputs
@@ -592,7 +592,7 @@ jobs:
 
       - name: Upload hardware-SGX evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hardware-sgx-evidence
           path: ${{ runner.temp }}/hardware-sgx.json
@@ -622,7 +622,7 @@ jobs:
 
       - name: Upload fresh Processor-CA evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hardware-dcap-processor-evidence
           path: ${{ runner.temp }}/hardware-dcap-processor
@@ -666,22 +666,22 @@ jobs:
           test "${remote_tag_object}" = \
             "${{ needs.build-and-compare.outputs.verified_tag_object }}"
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: reproducible-release-inputs
           path: ${{ runner.temp }}/release-inputs
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: published-sgx-image
           path: ${{ runner.temp }}/published
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hardware-sgx-evidence
           path: ${{ runner.temp }}/hardware
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hardware-dcap-processor-evidence
           path: ${{ runner.temp }}/hardware-dcap-processor
