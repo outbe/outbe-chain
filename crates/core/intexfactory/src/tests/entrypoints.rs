@@ -248,6 +248,24 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
         pack_call_notice(sid(8), ISSUED_AT),
     ];
     StorageHandle::enter(&mut provider, |s| {
+        for day in [7, 8] {
+            outbe_intex::api::create_series(
+                &s,
+                outbe_intex::CreateSeriesParams {
+                    series_id: sid(day),
+                    worldwide_day: WorldwideDay::new(day),
+                    issued_units: 1,
+                    promis_load_minor: 1,
+                    entry_price_minor: U256::from(1u64),
+                    call_price_minor: U256::from(2u64),
+                    call_trigger: prod_trigger(),
+                    issued_at: ISSUED_AT,
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                },
+            )
+            .unwrap();
+        }
         let factory = IntexFactoryContract::new(s);
         for entry in queued {
             enqueue_notice(&factory, entry).unwrap();

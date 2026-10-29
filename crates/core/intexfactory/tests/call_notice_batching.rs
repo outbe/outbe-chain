@@ -30,7 +30,37 @@ fn series(index: u32) -> SeriesId {
     SeriesId::pack(DAY, iso, b'U').expect("well-formed series id")
 }
 
+/// A notice goes out only while its series exists. Its auction ran on the day the id names.
+fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
+    let worldwide_day = WorldwideDay::new(series_id.day());
+    if outbe_intex::api::series_exists(handle, series_id).unwrap() {
+        return;
+    }
+    outbe_intex::api::create_series(
+        handle,
+        outbe_intex::CreateSeriesParams {
+            series_id,
+            worldwide_day,
+            issued_units: 1,
+            promis_load_minor: 1,
+            entry_price_minor: U256::from(1u64),
+            call_price_minor: U256::from(2u64),
+            call_trigger: outbe_intex::IntexCallTrigger {
+                call_window_seconds: 1,
+                call_threshold_seconds: 1,
+                call_notice_period_seconds: 1,
+                transit_margin_seconds: 0,
+            },
+            issued_at: CALLED_AT,
+            issuance_currency: 840,
+            reference_currency: 840,
+        },
+    )
+    .unwrap();
+}
+
 fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
+    record(handle, series(index));
     let factory = IntexFactoryContract::new(handle.clone());
     let tail = factory.notify_tail.read().unwrap();
     factory
@@ -109,21 +139,20 @@ fn a_run_never_reaches_past_the_chunk_limit() {
 fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
     let day = WorldwideDay::new(DAY);
     assert!(
-        joins_run(day, CALLED_AT, series(1), CALLED_AT),
+        joins_run(day, CALLED_AT, day, CALLED_AT),
         "same day and stamp ride together"
     );
     assert!(
-        !joins_run(day, CALLED_AT, series(1), CALLED_AT + 1),
+        !joins_run(day, CALLED_AT, day, CALLED_AT + 1),
         "a later stamp starts its own message"
     );
     assert!(
-        !joins_run(day, CALLED_AT, series(1), CALLED_AT - 1),
+        !joins_run(day, CALLED_AT, day, CALLED_AT - 1),
         "an earlier stamp does too"
     );
 
-    let other_day = SeriesId::pack(DAY + 1, *b"840", b'U').expect("well-formed series id");
     assert!(
-        !joins_run(day, CALLED_AT, other_day, CALLED_AT),
+        !joins_run(day, CALLED_AT, WorldwideDay::new(DAY + 1), CALLED_AT),
         "the wire carries one day per message"
     );
 }
