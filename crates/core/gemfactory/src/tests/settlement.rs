@@ -752,7 +752,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
 
 #[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
-    let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
+    let series = SeriesId::pack(7, *b"USD", b'U').unwrap();
     let block = 1u64;
     assert_ne!(
         GemFactoryContract::generate_position_id(ALICE, series, block),

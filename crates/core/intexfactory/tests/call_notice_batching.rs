@@ -27,7 +27,7 @@ fn series(index: u32) -> SeriesId {
         b'0' + ((index / 10) % 10) as u8,
         b'0' + (index % 10) as u8,
     ];
-    SeriesId::pack(WorldwideDay::new(DAY), iso, b'U').expect("well-formed series id")
+    SeriesId::pack(DAY, iso, b'U').expect("well-formed series id")
 }
 
 fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
@@ -121,8 +121,7 @@ fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
         "an earlier stamp does too"
     );
 
-    let other_day =
-        SeriesId::pack(WorldwideDay::new(DAY + 1), *b"840", b'U').expect("well-formed series id");
+    let other_day = SeriesId::pack(DAY + 1, *b"840", b'U').expect("well-formed series id");
     assert!(
         !joins_run(day, CALLED_AT, other_day, CALLED_AT),
         "the wire carries one day per message"

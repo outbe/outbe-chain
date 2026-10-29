@@ -40,7 +40,7 @@ pub(super) fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
 }
 
 fn series_of(worldwide_day: u32) -> SeriesId {
-    SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, REFERENCE_ISO).unwrap()
+    SeriesId::for_pair(worldwide_day, 840, REFERENCE_ISO).unwrap()
 }
 
 fn seed_young_candidate_at(
@@ -64,7 +64,7 @@ fn seed_candidate_at(
 
 pub(super) fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
     days.filter(|d| {
-        let series_id = SeriesId::for_pair(WorldwideDay::new(*d), 840, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(*d, 840, REFERENCE_ISO).unwrap();
         series_state(s, series_id) == outbe_intex::IntexState::Called
     })
     .count() as u32
@@ -184,8 +184,7 @@ fn expiry_returns_only_the_load_nobody_realized() {
         let scan_ts = ISSUED_AT as u64 + 60 * DAY;
         priced_window(&s, scan_ts);
         seed_called_candidate(&s, 20260101);
-        let series_id =
-            SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(20260101, 840, REFERENCE_ISO).unwrap();
         outbe_intex::api::record_settled_units(&s, series_id, owner(), 30).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
@@ -223,7 +222,7 @@ fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
-        let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             worldwide_day: day,
@@ -263,7 +262,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for &issuance in ISO_4217_NUMERIC_CODES.iter().take(width.into()) {
-        let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             worldwide_day: day,

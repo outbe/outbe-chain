@@ -27,7 +27,7 @@ const WWD: u32 = 20_240_101;
 fn world() -> (HashMapStorageProvider, SeriesId) {
     let mut p = HashMapStorageProvider::new(1);
     p.set_timestamp(U256::from(ISSUED));
-    let id = SeriesId::pack(WorldwideDay::new(WWD), *b"USD", b'U').unwrap();
+    let id = SeriesId::pack(WWD, *b"USD", b'U').unwrap();
     StorageHandle::enter(&mut p, |s| {
         api::create_series(
             &s,

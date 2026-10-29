@@ -196,7 +196,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
     use revm::context::{BlockEnv, CfgEnv, TxEnv};
     let sender = Address::repeat_byte(0xc0);
     let proxy = Address::repeat_byte(0xac);
-    let series = SeriesId::pack(WorldwideDay::new(20_261_008), *b"USD", b'U').unwrap();
+    let series = SeriesId::pack(20_261_008, *b"USD", b'U').unwrap();
     let data = IGemFactory::issueGemPositionCall {
         sourceIntexId: series.into(),
         units: U256::ONE,

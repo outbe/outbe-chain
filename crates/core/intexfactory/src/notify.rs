@@ -47,7 +47,7 @@ pub fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries
 /// one day and one call time for the whole batch, so both must match for a series to ride along.
 pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bool {
-    ts == called_at && id.worldwide_day() == day
+    ts == called_at && id.day() == day.value()
 }
 
 fn unpack_call_notice(entry: U256) -> (SeriesId, u32) {
@@ -120,7 +120,7 @@ impl NoticeSend<'_, '_> {
         let first = factory.notify_at.read(&at)?;
         let calls_left = self.budget.writes_left();
         let (first_id, called_at) = unpack_call_notice(first);
-        let worldwide_day = first_id.worldwide_day();
+        let worldwide_day = WorldwideDay::new(first_id.day());
         let mut run = vec![first_id];
         let mut entries = vec![first];
 

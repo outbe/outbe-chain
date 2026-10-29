@@ -187,7 +187,7 @@ fn day_start(date_key: u32) -> u64 {
 
 /// A series with the protocol call parameters and the given trigger.
 fn seed_series(s: &StorageHandle<'_>, issued_at: u32, trigger: U256) -> SeriesId {
-    let series_id = SeriesId::for_pair(WorldwideDay::new(LAST_DAY), 840, REFERENCE_ISO).unwrap();
+    let series_id = SeriesId::for_pair(LAST_DAY, 840, REFERENCE_ISO).unwrap();
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {

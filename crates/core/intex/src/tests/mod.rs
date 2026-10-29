@@ -47,7 +47,7 @@ fn owner() -> Address {
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
+    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
 }
 
 fn sample_params(worldwide_day: u32) -> CreateSeriesParams {

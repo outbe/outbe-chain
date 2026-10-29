@@ -7,7 +7,6 @@ use std::fmt;
 
 use crate::stablecoin::iso_4217_alpha;
 use crate::storage::types::{Storable, StorableType, StorageKey};
-use crate::time::WorldwideDay;
 
 pub const SERIES_ID_LEN: usize = 14;
 
@@ -27,12 +26,7 @@ pub struct SeriesId([u8; SERIES_ID_LEN]);
 
 impl SeriesId {
     /// Rejects a day outside eight digits and code bytes outside `A-Z` / `0-9`.
-    pub fn pack(
-        worldwide_day: WorldwideDay,
-        issuance: [u8; 3],
-        reference: u8,
-    ) -> Result<Self, InvalidSeriesId> {
-        let mut day = worldwide_day.value();
+    pub fn pack(mut day: u32, issuance: [u8; 3], reference: u8) -> Result<Self, InvalidSeriesId> {
         if day == 0 || day > 99_999_999 {
             return Err(InvalidSeriesId);
         }
@@ -50,8 +44,8 @@ impl SeriesId {
     }
 
     /// The one-currency form: `YYYYMMDD-CCC` with two `0x00` bytes at the end.
-    pub fn pack_same(worldwide_day: WorldwideDay, code: [u8; 3]) -> Result<Self, InvalidSeriesId> {
-        let mut id = Self::pack(worldwide_day, code, b'0')?;
+    pub fn pack_same(day: u32, code: [u8; 3]) -> Result<Self, InvalidSeriesId> {
+        let mut id = Self::pack(day, code, b'0')?;
         id.0[SHORT_LEN..].fill(0);
         Ok(id)
     }
@@ -81,10 +75,11 @@ impl SeriesId {
         Some(Self(bytes))
     }
 
-    pub fn worldwide_day(&self) -> WorldwideDay {
-        WorldwideDay::new(self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
+    /// The date the id leads with, as `YYYYMMDD`.
+    pub fn day(&self) -> u32 {
+        self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
             acc * 10 + u32::from(byte.wrapping_sub(b'0'))
-        }))
+        })
     }
 
     /// How a currency is spelled inside an id: its ISO 4217 alpha-3 code.
@@ -93,16 +88,12 @@ impl SeriesId {
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
-    pub fn for_pair(
-        worldwide_day: WorldwideDay,
-        issuance: u16,
-        reference: u16,
-    ) -> Result<Self, InvalidSeriesId> {
+    pub fn for_pair(day: u32, issuance: u16, reference: u16) -> Result<Self, InvalidSeriesId> {
         let code = Self::currency_code(issuance)?;
         if issuance == reference {
-            return Self::pack_same(worldwide_day, code);
+            return Self::pack_same(day, code);
         }
-        Self::pack(worldwide_day, code, Self::currency_code(reference)?[0])
+        Self::pack(day, code, Self::currency_code(reference)?[0])
     }
 }
 
@@ -168,12 +159,12 @@ impl From<FixedBytes<SERIES_ID_LEN>> for SeriesId {
 mod tests {
     use super::*;
 
-    const DAY: WorldwideDay = WorldwideDay::new(20_260_212);
+    const DAY: u32 = 20_260_212;
 
     #[test]
     fn packs_and_unpacks_every_component() {
         let id = SeriesId::pack(DAY, *b"TRY", b'U').unwrap();
-        assert_eq!(id.worldwide_day(), DAY);
+        assert_eq!(id.day(), DAY);
         assert_eq!(id.as_bytes(), b"20260212-TRY-U");
         assert_eq!(SeriesId::from_bytes(*id.as_bytes()), id);
     }
@@ -199,8 +190,8 @@ mod tests {
 
     #[test]
     fn rejects_a_zero_day_and_lowercase_or_symbol_codes() {
-        assert!(SeriesId::pack(WorldwideDay::new(0), *b"USD", b'U').is_err());
-        assert!(SeriesId::pack(WorldwideDay::new(100_000_000), *b"USD", b'U').is_err());
+        assert!(SeriesId::pack(0, *b"USD", b'U').is_err());
+        assert!(SeriesId::pack(100_000_000, *b"USD", b'U').is_err());
         assert!(SeriesId::pack(DAY, *b"usd", b'U').is_err());
         assert!(SeriesId::pack(DAY, *b"US-", b'U').is_err());
         assert!(SeriesId::pack(DAY, *b"USD", b'u').is_err());
@@ -212,7 +203,7 @@ mod tests {
         // Dense enumeration and the bin-tree range scans both walk ids in order,
         // so a later day must never sort before an earlier one.
         let early_z = SeriesId::pack(DAY, *b"ZWL", b'Z').unwrap();
-        let late_a = SeriesId::pack(WorldwideDay::new(DAY.value() + 1), *b"AED", b'A').unwrap();
+        let late_a = SeriesId::pack(DAY + 1, *b"AED", b'A').unwrap();
         assert!(early_z < late_a);
 
         let same_day_a = SeriesId::pack(DAY, *b"AED", b'U').unwrap();
@@ -224,7 +215,7 @@ mod tests {
         let id = SeriesId::for_pair(DAY, 840, 840).unwrap();
         assert_eq!(id.as_bytes(), b"20260212-USD\0\0");
         assert_eq!(id.to_string(), "20260212-USD");
-        assert_eq!(id.worldwide_day(), DAY);
+        assert_eq!(id.day(), DAY);
         assert_eq!(SeriesId::pack_same(DAY, *b"USD").unwrap(), id);
         assert_ne!(id, SeriesId::pack(DAY, *b"USD", b'U').unwrap());
         assert!(SeriesId::pack_same(DAY, *b"usd").is_err());

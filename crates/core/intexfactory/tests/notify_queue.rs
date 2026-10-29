@@ -30,8 +30,7 @@ const NOW: u64 = 1_700_000_000;
 const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_101 + index), *b"USD", b'U')
-        .expect("well-formed series id")
+    SeriesId::pack(20_260_101 + index, *b"USD", b'U').expect("well-formed series id")
 }
 
 fn seed(handle: &StorageHandle<'_>, count: u32) {
@@ -108,8 +107,8 @@ fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let day = WorldwideDay::new(20_260_101);
-        let due = SeriesId::pack(day, *b"USD", b'U').unwrap();
-        let paused = SeriesId::pack(day, *b"EUR", b'U').unwrap();
+        let due = SeriesId::pack(day.value(), *b"USD", b'U').unwrap();
+        let paused = SeriesId::pack(day.value(), *b"EUR", b'U').unwrap();
         let factory = IntexFactoryContract::new(handle.clone());
         factory
             .notify_at
@@ -325,12 +324,7 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
 }
 
 fn same_day_series(index: u8) -> SeriesId {
-    SeriesId::pack(
-        WorldwideDay::new(20_260_101),
-        [b'0', b'0', b'0' + index],
-        b'U',
-    )
-    .expect("well-formed series id")
+    SeriesId::pack(20_260_101, [b'0', b'0', b'0' + index], b'U').expect("well-formed series id")
 }
 
 #[test]

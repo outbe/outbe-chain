@@ -358,7 +358,7 @@ pub(crate) fn issuance_groups(
                     .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
                 groups.push(IssuanceParams {
                     series_id: SeriesId::for_pair(
-                        worldwide_day,
+                        worldwide_day.value(),
                         issuance_currency,
                         reference_currency,
                     )

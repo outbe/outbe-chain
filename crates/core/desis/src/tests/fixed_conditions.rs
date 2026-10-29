@@ -184,7 +184,8 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             call_notice_period_seconds: message.callNoticePeriod,
             transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
         };
-        let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
+        let series_id =
+            SeriesId::for_pair(WORLDWIDE_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(
             series.promis_load_minor,

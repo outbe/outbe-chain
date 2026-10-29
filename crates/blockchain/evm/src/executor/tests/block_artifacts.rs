@@ -10,8 +10,8 @@ mod withdrawals;
 fn proposer_and_validator_state_matches_after_a_gem_issue() {
     use outbe_gem::precompile::IGem;
     use outbe_gemfactory::{precompile::IGemFactory, schema::GemPosition, GemFactoryContract};
+    use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
     use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
-    use outbe_primitives::{addresses::GEM_FACTORY_ADDRESS, time::WorldwideDay};
 
     outbe_chain_constants::initialize(None).unwrap();
     // The minimal parity variant issues a Gem from a seeded merchant position.
@@ -53,9 +53,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         position_id,
                         merchant: Address(*user.signer()),
                         source_intex_id: outbe_intex::SeriesId::pack(
-                            WorldwideDay::new(outbe_primitives::time::timestamp_to_date_key(
-                                block_ts,
-                            )),
+                            outbe_primitives::time::timestamp_to_date_key(block_ts),
                             *b"USD",
                             b'U',
                         )

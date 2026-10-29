@@ -1245,7 +1245,8 @@ fn the_price_chosen_at_start_is_the_one_the_series_carries() {
         relay_bids(&s, SRC_CHAIN, 2, 200);
         assert_eq!(clear(&s).issued_units, 2);
 
-        let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
+        let series_id =
+            SeriesId::for_pair(WORLDWIDE_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(series.entry_price_minor, U256::from(ENTRY_PRICE));
     });
@@ -2438,8 +2439,8 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         let result = clear(&s);
         assert_eq!(result.issued_units, 3);
 
-        let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
-        let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
+        let usd = SeriesId::for_pair(WORLDWIDE_DAY.value(), 840, 840).unwrap();
+        let lira = SeriesId::for_pair(WORLDWIDE_DAY.value(), 949, 978).unwrap();
         assert_eq!(usd.to_string(), "20260101-USD");
         assert_eq!(lira.to_string(), "20260101-TRY-E");
 

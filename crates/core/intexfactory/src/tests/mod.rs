@@ -122,7 +122,7 @@ fn select_prod_profile(storage: &StorageHandle<'_>) {
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
+    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
 }
 
 /// The series' state as of this block.

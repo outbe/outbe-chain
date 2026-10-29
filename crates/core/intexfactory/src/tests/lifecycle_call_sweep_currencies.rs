@@ -224,8 +224,7 @@ pub(super) fn seed_series(
     trigger_minor: u64,
     reference_currency: u16,
 ) {
-    let series_id =
-        SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, reference_currency).unwrap();
+    let series_id = SeriesId::for_pair(worldwide_day, 840, reference_currency).unwrap();
     let trigger = U256::from(trigger_minor);
     outbe_intex::api::create_series(
         s,

@@ -262,7 +262,7 @@ fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
 // --- Merchant gems ---
 
 fn source_intex_id() -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U').unwrap()
+    SeriesId::pack(20_260_212, *b"USD", b'U').unwrap()
 }
 
 fn six_decimal_u128() -> u128 {
