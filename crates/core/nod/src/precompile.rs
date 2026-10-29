@@ -10,7 +10,6 @@ use outbe_primitives::error::Result;
 use crate::api;
 use crate::errors::NodError;
 use crate::schema::{NodContract, NodItemState};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -53,7 +52,7 @@ pub fn dispatch(
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             clean(c) => mutate(&storage, c, caller, |_, c| {
-                api::clean(&storage, WwdEntityId::from(c.nodId))?;
+                api::clean(&storage, c.nodId)?;
                 Ok(INod::cleanReturn {})
             }),
             call @ (balanceOf(_)
@@ -86,13 +85,13 @@ fn dispatch_entity(
     match call {
         balanceOf(c) => view(c, |c| api::balance_of(&storage, c.owner).map(U256::from)),
         ownerOf(c) => view(c, |c| {
-            let nod_id = WwdEntityId::from(c.nodId);
+            let nod_id = c.nodId;
             Ok(api::get_item(&storage, nod_id)?
                 .ok_or(NodError::NodNotFound)?
                 .owner)
         }),
         tokenURI(c) => view(c, |c| {
-            let nod_id = WwdEntityId::from(c.nodId);
+            let nod_id = c.nodId;
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
             crate::metadata::token_uri(nod, &item, storage.timestamp()?)
         }),
@@ -106,7 +105,7 @@ fn dispatch_entity(
                 .ok_or_else(|| NodError::IndexOutOfBounds.into())
         }),
         getNod(c) => view(c, |c| {
-            let nod_id = WwdEntityId::from(c.nodId);
+            let nod_id = c.nodId;
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
             to_abi_data(&storage, &item)
         }),
@@ -132,7 +131,7 @@ fn to_abi_data(
         api::effective_state(item, called_at, deadline, storage.timestamp()?)
     };
     Ok(INod::NodData {
-        nodId: item.nod_id.to_u256(),
+        nodId: item.nod_id,
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,

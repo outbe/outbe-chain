@@ -85,7 +85,9 @@ fn matches_tribute_terms(
 ) -> bool {
     let basic_match =
         terms.chain_id == request.chain_id && terms.worldwide_day == request.worldwide_day;
-    let identity_match = terms.owner == context.owner && terms.nod_id == context.tribute_id;
+    let identity_match = terms.owner == context.owner
+        && terms.nod_id
+            == outbe_primitives::nod_rules::derive_nod_id(context.owner, context.worldwide_day);
     let currency_match = terms.issuance_currency == context.issuance_currency
         && terms.reference_currency == context.reference_currency;
     basic_match && identity_match && currency_match

@@ -5,14 +5,13 @@ use alloy_primitives::U256;
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
-    wwd_entity_id::WwdEntityId,
 };
 
 pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
     EncryptedNodV1 {
         terms: NodTermsV1 {
             chain_id: data.chainId,
-            nod_id: WwdEntityId::from(data.nodId),
+            nod_id: data.nodId,
             owner: data.owner,
             worldwide_day: WorldwideDay::new(data.worldwideDay),
             league_id: data.leagueId,

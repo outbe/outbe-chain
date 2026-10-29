@@ -1,13 +1,13 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
-use outbe_primitives::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use outbe_primitives::time::WorldwideDay;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[storage_record(exists_field = owner)]
 pub struct StoredNod {
     #[key]
-    pub nod_id: WwdEntityId,
+    pub nod_id: U256,
     #[attribute(order = 0)]
     pub owner: Address,
     #[attribute(order = 1)]
@@ -118,7 +118,7 @@ impl<'storage> crate::NodContract<'storage> {
             .collect()
     }
 
-    fn record_indexes(&self, record: &StoredNod) -> [IndexedList<'storage, WwdEntityId>; 2] {
+    fn record_indexes(&self, record: &StoredNod) -> [IndexedList<'storage, U256>; 2] {
         [
             IndexedList::new(
                 self.owner_ids.list(&record.owner),
@@ -132,7 +132,7 @@ impl<'storage> crate::NodContract<'storage> {
         create_indexed(&self.records, record, self.record_indexes(record))
     }
 
-    pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
+    pub fn delete_state_record(&self, id: U256) -> outbe_primitives::error::Result<()> {
         delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 }
@@ -147,8 +147,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::NodContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
+            let id = U256::from_be_bytes([7; 32]);
             let mut record = StoredNod::with_key(id);
             record.owner = Address::repeat_byte(1);
             contract.owner_id_position.write(&id, 9).unwrap();
@@ -164,12 +163,11 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::NodContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
+            let id = U256::MAX;
             let mut record = StoredNod::with_key(id);
             record.owner = Address::repeat_byte(1);
             record.chain_id = 54322345;
-            record.worldwide_day = id.worldwide_day();
+            record.worldwide_day = WorldwideDay::new(20261015);
             record.encrypted_gratis_amount = vec![0x5a; 88];
             assert!(contract.records.get(id).unwrap().is_none());
             contract.records.create(&record).unwrap();

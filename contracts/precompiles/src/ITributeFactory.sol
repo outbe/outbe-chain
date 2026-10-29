@@ -38,7 +38,6 @@ interface ITributeFactory {
     error CreatedTributeMissingBody();
     error EncryptedOfferReturnedLegacyBody();
     error ZkVerifierUnavailable(string value);
-    error EntityIdDerivation(string value);
     error CalculationView(string value);
     error AttestationPreimageEncode(string value);
     error FormingWindowOverflow();

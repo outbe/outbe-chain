@@ -41,7 +41,11 @@ fn validate_encrypted_tribute(
     let source = &encrypted.context;
     let valid_source = source.chain_id == ctx.block.chain_id && encrypted.has_valid_encoding();
     let unique_owner = owners.insert(source.owner)
-        && outbe_nod::api::get_item(&ctx.storage, source.tribute_id)?.is_none();
+        && outbe_nod::api::get_item(
+            &ctx.storage,
+            outbe_primitives::nod_rules::derive_nod_id(source.owner, source.worldwide_day),
+        )?
+        .is_none();
     if valid_source && unique_owner {
         Ok(())
     } else {

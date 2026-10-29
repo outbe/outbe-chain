@@ -110,8 +110,7 @@ impl TributeFactoryContract<'_> {
             .tribute
             .as_ref()
             .ok_or(TributeFactoryError::CreatedTributeMissingBody)?;
-        let expected_digest = derive_poseidon_digest(record.owner, worldwide_day)
-            .map_err(TributeFactoryError::EntityIdDerivation)?;
+        let expected_digest = derive_poseidon_digest(record.owner, worldwide_day);
         let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.token_id != expected_digest || record.tribute_id != tribute_id {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());

@@ -22,7 +22,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
     let nod = EncryptedNodV1 {
         terms: NodTermsV1 {
             chain_id: 1,
-            nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::new(20261028), B256::ZERO),
+            nod_id: U256::ZERO,
             owner: Default::default(),
             worldwide_day: WorldwideDay::new(20261028),
             league_id: 2,

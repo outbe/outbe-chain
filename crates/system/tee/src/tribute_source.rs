@@ -100,7 +100,7 @@ impl TributeStateSource {
             && context.worldwide_day == subject.worldwide_day
             && !context.owner.is_zero();
         Ok(identity_matches
-            && derive_poseidon_entity_id(context.owner, context.worldwide_day).map_err(rejected)?
+            && derive_poseidon_entity_id(context.owner, context.worldwide_day)
                 == context.tribute_id)
     }
 

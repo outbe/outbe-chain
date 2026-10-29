@@ -9,7 +9,7 @@ use outbe_tribute::{TributeContract, TributeData};
 fn tribute(owner: Address, day: u32) -> TributeData {
     let worldwide_day = WorldwideDay::from(day);
     TributeData {
-        tribute_id: derive_poseidon_entity_id(owner, worldwide_day).unwrap(),
+        tribute_id: derive_poseidon_entity_id(owner, worldwide_day),
         owner,
         worldwide_day,
         issuance_amount_minor: U256::from(200),

@@ -50,9 +50,6 @@ pub enum LysisArithmeticErrorV1 {
     ProjectedGratisAllocationOverflow,
 
     #[error("{0}")]
-    EntityIdDerivation(String),
-
-    #[error("{0}")]
     Math(String),
 }
 
@@ -129,15 +126,6 @@ impl From<LysisArithmeticErrorV1> for ProgramErrorV1 {
 }
 
 impl ProgramErrorV1 {
-    /// Creates an entity-ID derivation arithmetic error.
-    pub fn entity_id_derivation(
-        err: outbe_primitives::wwd_entity_id::EntityIdDerivationError,
-    ) -> Self {
-        Self::Arithmetic {
-            reason: LysisArithmeticErrorV1::EntityIdDerivation(err.to_string()),
-        }
-    }
-
     /// Creates a math error from a precompile math failure.
     pub fn math(err: PrecompileError) -> Self {
         Self::Arithmetic {

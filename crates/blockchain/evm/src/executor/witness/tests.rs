@@ -567,7 +567,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         entry_price_minor,
         840,
     );
-    let nod_id = outbe_nod::identity::generate_nod_id(proposer, worldwide_day).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(proposer, worldwide_day);
     let nod_item = {
         let _enclave = outbe_nod::test_support::scope();
         outbe_nod::test_support::item(
@@ -596,11 +596,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         max_priority_fee_per_gas: 0,
         to: TxKind::Call(NOD_ADDRESS),
         value: U256::ZERO,
-        input: INod::getNodCall {
-            nodId: nod_id.to_u256(),
-        }
-        .abi_encode()
-        .into(),
+        input: INod::getNodCall { nodId: nod_id }.abi_encode().into(),
         access_list: Default::default(),
     }
     .into_signed(Signature::test_signature())

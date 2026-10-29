@@ -69,7 +69,7 @@ pub fn dispatch(
             }),
             createNod(c) => mutate(&storage, c, caller, |sender, c| {
                 let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
-                Ok(nod_id.to_u256())
+                Ok(nod_id)
             }),
             clean(c) => mutate(&storage, c, caller, |_, c| {
                 tribute.clean(WwdEntityId::from(c.tributeId))?;

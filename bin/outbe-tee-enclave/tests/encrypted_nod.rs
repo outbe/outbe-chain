@@ -37,7 +37,7 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
     .unwrap();
     let terms = NodTermsV1 {
         chain_id: 54322345,
-        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(6)),
+        nod_id: outbe_primitives::nod_rules::derive_nod_id(owner_address, day),
         owner: owner_address,
         worldwide_day: day,
         league_id: 0,
@@ -45,6 +45,22 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
         issuance_currency: 840,
         reference_currency: 978,
     };
+    for invalid_id in [
+        outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner_address, day).to_u256(),
+        outbe_primitives::nod_rules::derive_nod_id(Address::repeat_byte(9), day),
+        outbe_primitives::nod_rules::derive_nod_id(owner_address, WorldwideDay::new(20250116)),
+    ] {
+        let mut invalid = terms.clone();
+        invalid.nod_id = invalid_id;
+        assert!(encrypt_nod_for_tribute(
+            &tribute_key,
+            &nod_key,
+            &tribute,
+            invalid,
+            U256::from(123)
+        )
+        .is_err());
+    }
     let first = encrypt_nod_for_tribute(
         &tribute_key,
         &nod_key,

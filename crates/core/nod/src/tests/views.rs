@@ -23,10 +23,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         .unwrap();
         let data = dispatch(
             storage.clone(),
-            &INod::getNodCall {
-                nodId: item.nod_id.to_u256(),
-            }
-            .abi_encode(),
+            &INod::getNodCall { nodId: item.nod_id }.abi_encode(),
             item.owner,
             U256::ZERO,
         )
@@ -38,10 +35,7 @@ fn settled_state_is_exposed_in_nod_data_and_metadata() {
         );
         let data = dispatch(
             storage,
-            &INod::tokenURICall {
-                nodId: item.nod_id.to_u256(),
-            }
-            .abi_encode(),
+            &INod::tokenURICall { nodId: item.nod_id }.abi_encode(),
             item.owner,
             U256::ZERO,
         )
@@ -81,9 +75,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                     notice,
                 },
             );
-            let call = INod::getNodCall {
-                nodId: item.nod_id.to_u256(),
-            };
+            let call = INod::getNodCall { nodId: item.nod_id };
             let bytes =
                 dispatch(storage.clone(), &call.abi_encode(), item.owner, U256::ZERO).unwrap();
             let data = INod::getNodCall::abi_decode_returns(&bytes).unwrap();
@@ -94,10 +86,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             assert_sealed_call_terms(&data, notice);
             let bytes = dispatch(
                 storage.clone(),
-                &INod::tokenURICall {
-                    nodId: item.nod_id.to_u256(),
-                }
-                .abi_encode(),
+                &INod::tokenURICall { nodId: item.nod_id }.abi_encode(),
                 item.owner,
                 U256::ZERO,
             )
@@ -198,7 +187,7 @@ fn settlement_updates_only_the_settled_nod() {
         .map(|event| event._tokenId)
         .collect();
     assert!(batches.is_empty(), "a settlement announces no batch");
-    assert_eq!(updates, vec![first.nod_id.to_u256()]);
+    assert_eq!(updates, vec![first.nod_id]);
 }
 
 #[test]
@@ -215,10 +204,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         seed_production_nod_genesis(&storage);
         crate::test_support::add(&storage, &body).unwrap();
         let read = || {
-            let data = INod::tokenURICall {
-                nodId: body.nod_id.to_u256(),
-            }
-            .abi_encode();
+            let data = INod::tokenURICall { nodId: body.nod_id }.abi_encode();
             let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = engine
@@ -252,8 +238,8 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(row("Gratis Load") < row("Entry Price"));
         assert!(row("Entry Price") < row("Call Price"));
 
-        let hex = format!("{:064x}", body.nod_id.to_u256());
-        let id = format!("{}-{}", body.worldwide_day, &hex[8..16]);
+        let hex = format!("{:064x}", body.nod_id);
+        let id = format!("{}-{}", body.worldwide_day, &hex[..8]);
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
@@ -315,10 +301,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
         nod.group_called_at.write(&item.group_key, 100).unwrap();
         let out = dispatch(
             storage.clone(),
-            &INod::tokenURICall {
-                nodId: item.nod_id.to_u256(),
-            }
-            .abi_encode(),
+            &INod::tokenURICall { nodId: item.nod_id }.abi_encode(),
             item.owner,
             U256::ZERO,
         )

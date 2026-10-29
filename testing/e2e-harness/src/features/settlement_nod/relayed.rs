@@ -8,7 +8,7 @@ struct RelayedNod {
     url: String,
     owner: Address,
     payer: Address,
-    id: WwdEntityId,
+    id: U256,
     issued: NodSnapshot,
     head: u64,
     body: eth::INod::NodData,
@@ -71,7 +71,7 @@ pub(in super::super) fn run_relayed_mining(
     eprintln!("settlement_evidence kind=controlled_mac_pair rejected_tx={} accepted_tx={} negative_status=0 positive_status=1 only_call_mac_changed=true guard_state_preserved=true gas_limit={NOD_CALL_GAS_LIMIT}",
         rejected.transaction_hash, minted.transaction_hash);
     eprintln!("settlement_evidence kind=erc20_relayed_nod owner={owner:#x} payer={payer:#x} nod={} settle={} duplicate={} wrong_mac={} mine={}",
-        id.to_u256(), settled.transaction_hash, duplicate.transaction_hash, rejected.transaction_hash, minted.transaction_hash);
+        id, settled.transaction_hash, duplicate.transaction_hash, rejected.transaction_hash, minted.transaction_hash);
 }
 
 fn wait_materialized_nod(
@@ -117,7 +117,7 @@ fn prepare_relayed_nod(
         .expect("fund payer gas");
     assert!(world.rpc.wait_successful_receipt(&funding, 120));
     let (id_bytes, initial) = wait_materialized_nod(world, port, owner);
-    let id = WwdEntityId::try_from(id_bytes.as_slice()).expect("public Nod identity");
+    let id = U256::from_be_slice(&id_bytes);
     assert_eq!(initial.worldwideDay, day);
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
@@ -188,7 +188,7 @@ fn prepare_relayed_nod(
 
 fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
     let pay = eth::INodFactory::settleNodCall {
-        nodId: scenario.id.to_u256(),
+        nodId: scenario.id,
         asset: scenario.asset,
         snapshotId: U256::ZERO,
     };
@@ -214,7 +214,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
         addresses::NOD_FACTORY_ADDR,
         &eth::INodFactory::NodSettled {
             owner: scenario.owner,
-            nodId: scenario.id.to_u256(),
+            nodId: scenario.id,
             asset: scenario.asset,
             paymentMinor: scenario.body.settlementCostMinor,
         },
@@ -261,7 +261,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
     assert_index_transition(
         &before_indexes.index,
         &paid_indexes.index,
-        scenario.id.to_u256(),
+        scenario.id,
         false,
     );
     let duplicate_before = nod_snapshot(world, scenario.owner, scenario.id, settled_height);
@@ -347,7 +347,7 @@ fn prepare_mining_attempt(
     .expect("owner mint nonce");
     let pow = find_mining_pow_nonce(
         outbe_common::pow::MiningDomain::Nod,
-        scenario.id.to_u256(),
+        scenario.id,
         scenario.owner,
     );
     let pair_chain_id = chain_id_b256(world);
@@ -363,7 +363,7 @@ fn prepare_mining_attempt(
         },
     );
     let mine = eth::INodFactory::mineGratisCall {
-        nodId: scenario.id.to_u256(),
+        nodId: scenario.id,
         nonce: pow,
         mac: B256::from(wrong_mac),
         opNonce: nonce,
@@ -597,12 +597,7 @@ fn mine_nod(
     );
     assert_mining_gas(world, scenario, &minted);
     let minted_after = nod_snapshot(world, scenario.owner, scenario.id, minted_height);
-    assert_index_transition(
-        &minted_before.index,
-        &minted_after.index,
-        scenario.id.to_u256(),
-        true,
-    );
+    assert_index_transition(&minted_before.index, &minted_after.index, scenario.id, true);
     assert!(
         minted_after.body.is_none(),
         "mined Nod left the live owner index"
@@ -651,7 +646,7 @@ fn assert_mining_receipt(
         addresses::NOD_FACTORY_ADDR,
         &eth::INodFactory::NodMined {
             owner: scenario.owner,
-            nodId: scenario.id.to_u256(),
+            nodId: scenario.id,
             encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),
         },
     );

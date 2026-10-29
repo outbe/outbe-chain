@@ -2,7 +2,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key, WorldwideDay,
 };
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     math::constants::REAL_ID_SHIFT,
@@ -20,7 +19,7 @@ fn item(owner: Address) -> NodItemState {
     crate::test_support::item(
         crate::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: crate::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            nod_id: crate::identity::generate_nod_id(owner, worldwide_day),
             owner,
             gratis_load_minor: U256::from(11),
             worldwide_day,
@@ -70,7 +69,7 @@ fn reverted_issuance_rolls_back_nod_state() {
 #[test]
 fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     let body = item(Address::repeat_byte(0x33));
-    let encoded = body.nod_id.to_string();
+    let encoded = format!("{:064x}", body.nod_id);
     assert_eq!(
         crate::identity::parse_nod_id(&encoded).unwrap(),
         body.nod_id
@@ -80,9 +79,9 @@ fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     // The ABI carries the identity as one word, so a wrong-width id is no
     // longer representable. The round trip through `uint256` is total. The old
     // "invalid bytes length" revert has no input that can reach it.
-    let word = body.nod_id.to_u256();
-    assert_eq!(WwdEntityId::from(word), body.nod_id);
-    assert_eq!(word.to_be_bytes::<32>(), body.nod_id.0 .0);
+    let word = body.nod_id;
+    assert_eq!(word, body.nod_id);
+    assert_eq!(word.to_be_bytes::<32>(), body.nod_id.to_be_bytes::<32>());
 }
 
 #[test]
@@ -159,6 +158,36 @@ fn entry_price_day_is_the_last_closed_utc_day() {
         crate::openings::entry_price_day(new_year - 1).expect("date step"),
         20_251_230
     );
+}
+
+#[test]
+fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
+    let body = item(Address::repeat_byte(0x42));
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        super::seed_production_nod_genesis(&storage);
+        let legacy = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+            body.owner,
+            body.worldwide_day,
+        )
+        .to_u256();
+        assert_ne!(body.nod_id, legacy);
+        for invalid_id in [
+            legacy,
+            crate::identity::generate_nod_id(Address::repeat_byte(0x43), body.worldwide_day),
+            crate::identity::generate_nod_id(body.owner, WorldwideDay::new(20_260_716)),
+        ] {
+            let mut invalid = body.clone();
+            invalid.nod_id = invalid_id;
+            invalid.encrypted.terms.nod_id = invalid_id;
+            assert!(crate::test_support::add(&storage, &invalid).is_err());
+            assert!(api::get_item(&storage, invalid_id).unwrap().is_none());
+            assert_eq!(api::balance_of(&storage, body.owner).unwrap(), 0);
+            assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+        }
+        crate::test_support::add(&storage, &body).unwrap();
+        assert!(api::get_item(&storage, body.nod_id).unwrap().is_some());
+    });
 }
 
 #[test]

@@ -1,10 +1,7 @@
 //! A third party pays the successor public Nod by ERC20. Its owner paid the original.
 use super::*;
 use alloy_sol_types::{SolCall as _, SolValue as _};
-use outbe_primitives::{
-    entity_codec::{NodGroupBodyV1, NodItemBodyV1},
-    wwd_entity_id::WwdEntityId,
-};
+use outbe_primitives::entity_codec::{NodGroupBodyV1, NodItemBodyV1};
 
 const NOD_CALL_GAS_LIMIT: u64 = 10_000_000;
 
@@ -479,7 +476,7 @@ fn live_checkpoint(world: &World, port: u16) -> crate::world::rpc::FinalizedChec
     }
 }
 
-fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) -> NodSnapshot {
+fn nod_snapshot(world: &World, owner: Address, id: U256, minimum: u64) -> NodSnapshot {
     let mut expected = None;
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
@@ -514,16 +511,14 @@ fn nod_snapshot(world: &World, owner: Address, id: WwdEntityId, minimum: u64) ->
             );
             let total_supply =
                 eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})?;
-            let body = if owner_ids.contains(&id.to_u256()) {
+            let body = if owner_ids.contains(&id) {
                 let body = eth::read_call_result(
                     &url,
                     addresses::NOD_ADDR,
-                    &eth::INod::getNodCall {
-                        nodId: id.to_u256(),
-                    },
+                    &eth::INod::getNodCall { nodId: id },
                 )?;
                 assert_eq!(body.owner, owner);
-                assert_eq!(body.nodId, id.to_u256());
+                assert_eq!(body.nodId, id);
                 Some(body)
             } else {
                 None
@@ -611,7 +606,7 @@ fn assert_index_transition(
 fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodGroupBodyV1)) {
     let body = snapshot.body.as_ref().expect("live Nod body present");
     let item = &bodies.0;
-    assert_eq!(body.nodId, item.encrypted.terms.nod_id.to_u256());
+    assert_eq!(body.nodId, item.encrypted.terms.nod_id);
     assert_eq!(body.owner, item.encrypted.terms.owner);
     assert_eq!(
         body.worldwideDay,
@@ -650,7 +645,7 @@ fn gratis_at(url: &str, owner: Address, view: &[u8; 32], height: u64) -> U256 {
     })
 }
 
-fn nod_bodies(world: &World, id: WwdEntityId, minimum: u64) -> (NodItemBodyV1, NodGroupBodyV1) {
+fn nod_bodies(world: &World, id: U256, minimum: u64) -> (NodItemBodyV1, NodGroupBodyV1) {
     let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&world.validators.committee_ports(), minimum, 120)
@@ -792,7 +787,7 @@ mod tests {
             encrypted: outbe_primitives::nod_encryption::EncryptedNodV1 {
                 terms: outbe_primitives::nod_encryption::NodTermsV1 {
                     chain_id: 1,
-                    nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(1)),
+                    nod_id: U256::from_be_bytes([1; 32]),
                     owner: Address::repeat_byte(3),
                     worldwide_day: day,
                     league_id: 0,

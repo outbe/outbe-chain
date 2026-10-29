@@ -6,7 +6,6 @@ use outbe_nod::{
     api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
 };
 use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     error::PrecompileError,
@@ -101,7 +100,7 @@ fn cost_of(input: &NodIssueParams) -> u128 {
     u128::try_from(cost).expect("test Nod cost fits u128")
 }
 
-fn find_valid_nonce(nod_id: WwdEntityId, owner: Address) -> u64 {
+fn find_valid_nonce(nod_id: U256, owner: Address) -> u64 {
     (0_u64..1_000_000)
         .find(|nonce| runtime::validate_pow(nod_id, owner, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
@@ -150,7 +149,7 @@ impl World {
         StorageHandle::enter(&mut self.provider, call)
     }
 
-    fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
+    fn issue(&mut self, input: &NodIssueParams) -> U256 {
         self.enter(|storage| {
             api::issue_nod(
                 &storage,
@@ -175,7 +174,7 @@ impl World {
         })
     }
 
-    fn pow_nonce(&mut self, nod_id: WwdEntityId) -> u64 {
+    fn pow_nonce(&mut self, nod_id: U256) -> u64 {
         let owner = self.enter(|storage| {
             nod_api::get_item(&storage, nod_id)
                 .unwrap()
@@ -186,7 +185,7 @@ impl World {
     }
 
     /// Settles by ERC20 in the reference currency; a free Nod moves no tokens.
-    fn settle(&mut self, nod_id: WwdEntityId, caller: Address) -> Result<(), PrecompileError> {
+    fn settle(&mut self, nod_id: U256, caller: Address) -> Result<(), PrecompileError> {
         self.register_reference_currency_asset(SETTLEMENT_ASSET);
         self.enter(|storage| {
             api::settle_nod(
@@ -274,7 +273,7 @@ impl World {
     /// Stamps the group's call directly. `tests::nod_lifecycle` covers the
     /// scan that decides *when* to stamp. What matters here is the gate
     /// `settle_nod` applies once it is stamped.
-    fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
+    fn mark_called(&mut self, nod_id: U256, at: u64) {
         self.enter(|storage| {
             let item = nod_api::get_item(&storage, nod_id).unwrap().unwrap();
             let nod = NodContract::new(storage);
@@ -297,14 +296,11 @@ const CHAIN_ID: u64 = 1;
 const SETTLEMENT_ASSET: Address = Address::new([0x71; 20]);
 const SETTLEMENT_ASSET_EUR: Address = Address::new([0x72; 20]);
 
-fn public_nod_data(world: &mut World, nod_id: WwdEntityId) -> INod::NodData {
+fn public_nod_data(world: &mut World, nod_id: U256) -> INod::NodData {
     world.enter(|storage| {
         let bytes = outbe_nod::precompile::dispatch(
             storage,
-            &INod::getNodCall {
-                nodId: nod_id.to_u256(),
-            }
-            .abi_encode(),
+            &INod::getNodCall { nodId: nod_id }.abi_encode(),
             Address::ZERO,
             U256::ZERO,
         )
@@ -331,7 +327,7 @@ fn paid_event(world: &World) -> INodFactory::NodSettled {
         .expect("NodSettled event")
 }
 
-fn is_settled(world: &mut World, nod_id: WwdEntityId) -> bool {
+fn is_settled(world: &mut World, nod_id: U256) -> bool {
     world
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
@@ -343,7 +339,7 @@ fn is_settled(world: &mut World, nod_id: WwdEntityId) -> bool {
 /// snapshot check stops at the balance delta instead.
 fn settle_erc20(
     world: &mut World,
-    nod_id: WwdEntityId,
+    nod_id: U256,
     owner: Address,
     asset: Address,
     snapshot: U256,

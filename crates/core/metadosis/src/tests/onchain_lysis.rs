@@ -103,6 +103,11 @@ fn attest(
             result.unused_lysis_limit_minor = request.lysis_limit_minor + U256::ONE;
             return signed_response(request, result, &keys);
         }
+        12 => {
+            // A valid signature must not authorize a noncanonical target identity.
+            result.nods[0].nod.terms.nod_id = request.tributes[0].context.tribute_id.to_u256();
+            return signed_response(request, result, &keys);
+        }
         _ => {}
     }
     let response = EnclaveResponse::LysisExecuted {
@@ -191,7 +196,9 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);
                         tribute.issue(&outbe_tribute::TributeData {
-                            tribute_id: outbe_nod::identity::generate_nod_id(owner, WWD).unwrap(),
+                            tribute_id: outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+                                owner, WWD,
+                            ),
                             owner,
                             worldwide_day: WWD,
                             issuance_amount_minor: amount,
@@ -333,6 +340,15 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         assert!(tribute.retired_days.read(&WWD).unwrap());
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
+        let owner = Address::repeat_byte(1);
+        assert_eq!(
+            nods[0].nod_id,
+            outbe_primitives::nod_rules::derive_nod_id(owner, WWD)
+        );
+        assert_ne!(
+            nods[0].nod_id,
+            outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, WWD).to_u256()
+        );
         let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
             .unwrap();
         assert_eq!(load, U256::from(LIMIT / 1024));
@@ -367,8 +383,33 @@ fn local_identity_does_not_change_ciphertexts_state_or_events() {
 }
 
 #[test]
+fn existing_full_digest_target_rejects_lysis_before_mutation() {
+    let _transport = outbe_tee::lysis::test_transport::scope(exchange);
+    let _nod_enclave = outbe_nod::test_support::scope();
+    let mut provider = fixture();
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), WWD);
+        let terms =
+            outbe_nod::test_support::sealed_terms(&storage, &item, item.entry_price_minor())
+                .unwrap();
+        item.group_key = outbe_nod::identity::group_key(
+            item.issued_at,
+            terms.call_price_minor,
+            item.reference_currency,
+        )
+        .unwrap();
+        outbe_nod::test_support::add(&storage, &item).unwrap();
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    assert!(run(&mut provider).is_err());
+    assert_eq!(provider.storage, before);
+    assert_eq!(provider.get_ordered_events(), events);
+}
+
+#[test]
 fn failed_enclave_and_invalid_results_leave_all_state_unchanged() {
-    for fault in 0..=7 {
+    for fault in (0..=7).chain([12]) {
         let mut provider = fixture();
         CORRUPTION.set(fault);
         let before = provider.storage.clone();

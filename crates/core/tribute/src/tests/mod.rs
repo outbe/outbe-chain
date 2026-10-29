@@ -74,7 +74,7 @@ fn sample_tribute() -> TributeData {
     let worldwide_day = 20241220u32.into();
     let owner = address!("0x1111111111111111111111111111111111111111");
     TributeData {
-        tribute_id: derive_poseidon_entity_id(owner, worldwide_day).unwrap(),
+        tribute_id: derive_poseidon_entity_id(owner, worldwide_day),
         owner,
         worldwide_day,
         issuance_amount_minor: U256::from(1_000_000u64),
@@ -86,17 +86,17 @@ fn sample_tribute() -> TributeData {
 }
 
 fn entity_id(seed: u64, day: outbe_primitives::time::WorldwideDay) -> WwdEntityId {
-    derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day).unwrap()
+    derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day)
 }
 
 fn set_owner(tribute: &mut TributeData, owner: alloy_primitives::Address) {
     tribute.owner = owner;
-    tribute.tribute_id = derive_poseidon_entity_id(owner, tribute.worldwide_day).unwrap();
+    tribute.tribute_id = derive_poseidon_entity_id(owner, tribute.worldwide_day);
 }
 
 fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay) {
     tribute.worldwide_day = day;
-    tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day).unwrap();
+    tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, day);
 }
 
 fn open_sample_day(_tc: &mut TributeContract) {}
@@ -879,8 +879,7 @@ fn old_digest_is_rejected_without_issuing_a_tribute() {
         tribute.tribute_id = WwdEntityId::from_day_and_digest(tribute.worldwide_day, digest);
         assert!(tc.issue(&tribute).is_err());
         assert_eq!(tc.total_supply().unwrap(), 0);
-        tribute.tribute_id =
-            derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day).unwrap();
+        tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day);
         tc.issue(&tribute).unwrap();
         assert_eq!(tc.total_supply().unwrap(), 1);
     });

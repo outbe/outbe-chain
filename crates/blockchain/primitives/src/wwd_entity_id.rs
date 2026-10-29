@@ -11,34 +11,22 @@ use alloy_primitives::private::derive_more;
 /// Byte width of the WorldwideDay prefix.
 const WWD_PREFIX_LEN: usize = 4;
 
-#[derive(Debug, thiserror::Error)]
-#[error("Poseidon2-BN254 entity identity derivation failed: {0}")]
-pub struct EntityIdDerivationError(String);
-
-pub fn derive_poseidon_digest(
-    owner: Address,
-    worldwide_day: WorldwideDay,
-) -> Result<B256, EntityIdDerivationError> {
+pub fn derive_poseidon_digest(owner: Address, worldwide_day: WorldwideDay) -> B256 {
     let digest = Poseidon2::<Fr>::new()
         .hash(&[
             Fr::from_be_bytes_mod_order(owner.as_slice()),
             Fr::from(worldwide_day.value()),
         ])
-        .map_err(|error| EntityIdDerivationError(error.to_string()))?;
+        // PoseidonError is Infallible, so this boundary cannot fail.
+        .unwrap();
     let encoded = digest.into_bigint().to_bytes_be();
     let mut bytes = [0u8; 32];
     bytes[32 - encoded.len()..].copy_from_slice(&encoded);
-    Ok(B256::new(bytes))
+    B256::new(bytes)
 }
 
-pub fn derive_poseidon_entity_id(
-    owner: Address,
-    worldwide_day: WorldwideDay,
-) -> Result<WwdEntityId, EntityIdDerivationError> {
-    Ok(WwdEntityId::from_day_and_digest(
-        worldwide_day,
-        derive_poseidon_digest(owner, worldwide_day)?,
-    ))
+pub fn derive_poseidon_entity_id(owner: Address, worldwide_day: WorldwideDay) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(worldwide_day, derive_poseidon_digest(owner, worldwide_day))
 }
 
 wrap_fixed_bytes!(
@@ -156,11 +144,11 @@ mod tests {
             let owner = Address::repeat_byte(owner);
             let day = WorldwideDay::new(day);
             assert_eq!(
-                derive_poseidon_digest(owner, day).unwrap(),
+                derive_poseidon_digest(owner, day),
                 digest.parse::<B256>().unwrap(),
             );
             assert_eq!(
-                derive_poseidon_entity_id(owner, day).unwrap(),
+                derive_poseidon_entity_id(owner, day),
                 identity.parse::<WwdEntityId>().unwrap(),
             );
         }

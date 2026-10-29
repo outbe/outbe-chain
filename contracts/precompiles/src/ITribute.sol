@@ -10,7 +10,6 @@ interface ITribute {
     error OwnerBalanceOverflow();
     error QueryLimitExceeded();
     error DayResponseScopeMismatch();
-    error EntityIdDerivation(string value);
     error CalculationView(string value);
     error WorldwideDayNotCompletedAndEmpty();
     error PrivateAmountReadFailed(string value);
