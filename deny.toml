@@ -25,6 +25,9 @@ ignore = [
     { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is pinned upstream; no dependency calls the affected with_context constructors" },
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is pinned upstream; no dependency uses the seekable API" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is pinned upstream; the fix needs zstd-safe 8.2" },
+    # libz-sys <= 1.1.30 only leaks build environment variables when compiled
+    # with cc >= 1.6.0; the workspace resolves cc 1.4.5.
+    { id = "RUSTSEC-2026-0418", reason = "libz-sys 1.1.28 is only affected when built with cc >= 1.6.0; the workspace resolves cc 1.4.5" },
 ]
 
 [licenses]
