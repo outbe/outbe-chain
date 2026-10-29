@@ -1,5 +1,4 @@
-use alloy_primitives::Address;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
+use alloy_primitives::{Address, U256};
 
 use crate::GemItemState;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
@@ -33,7 +32,7 @@ impl<'storage> crate::GemContract<'storage> {
             .collect()
     }
 
-    fn record_indexes(&self, record: &GemItemState) -> [IndexedList<'storage, WwdEntityId>; 1] {
+    fn record_indexes(&self, record: &GemItemState) -> [IndexedList<'storage, U256>; 1] {
         [IndexedList::new(
             self.owner_ids.list(&record.owner),
             self.owner_id_position.clone(),
@@ -47,7 +46,7 @@ impl<'storage> crate::GemContract<'storage> {
         create_indexed(&self.records, record, self.record_indexes(record))
     }
 
-    pub fn delete_state_record(&self, id: WwdEntityId) -> outbe_primitives::error::Result<()> {
+    pub fn delete_state_record(&self, id: U256) -> outbe_primitives::error::Result<()> {
         delete_indexed(&self.records, id, |record| self.record_indexes(record))
     }
 }
@@ -60,12 +59,95 @@ mod tests {
     use outbe_primitives::time::WorldwideDay;
 
     #[test]
+    fn legacy_wwd_storage_is_read_by_native_u256_records_and_owner_indexes() {
+        use outbe_primitives::storage::dsl::{List, Map};
+        use outbe_primitives::storage::types::{Mapping, Storable, StorageKey};
+        use outbe_primitives::wwd_entity_id::WwdEntityId;
+
+        let mut provider = HashMapStorageProvider::new(54322345);
+        StorageHandle::enter(&mut provider, |storage| {
+            let contract = crate::GemContract::new(storage.clone());
+            let owner = Address::repeat_byte(1);
+            let low = U256::from(7);
+            let high = (U256::ONE << 255) | U256::from(19);
+            let legacy_owners = Map::<Address, List<WwdEntityId>>::new(
+                contract.owner_ids.base_slot(),
+                contract.owner_ids.address(),
+                storage.clone(),
+            );
+            let legacy_positions = Map::<WwdEntityId, u32>::new(
+                contract.owner_id_position.base_slot(),
+                contract.owner_id_position.address(),
+                storage.clone(),
+            );
+            let legacy_records = Mapping::<WwdEntityId, Address>::new(
+                contract.records.base_slot(),
+                contract.records.address(),
+                storage.clone(),
+            );
+            // Write the old record's existence field and indexes, not new U256 records.
+            // Other record fields remain zero, as in GemItemState::with_key.
+            for (id, position) in [(high, 1), (low, 2)] {
+                let legacy = WwdEntityId::from(id.to_be_bytes::<32>());
+                assert_eq!(legacy.to_word(), id.to_word());
+                assert_eq!(legacy.key_bytes(), id.key_bytes());
+                for base in [contract.records.base_slot(), legacy_positions.base_slot()] {
+                    assert_eq!(legacy.mapping_slot(base), id.mapping_slot(base));
+                }
+                legacy_records.write(&legacy, owner).unwrap();
+                legacy_owners.list(&owner).push(legacy).unwrap();
+                legacy_positions.write(&legacy, position).unwrap();
+
+                let mut expected = GemItemState::with_key(id);
+                expected.owner = owner;
+                assert_eq!(contract.records.get(id).unwrap(), Some(expected.clone()));
+                assert_eq!(crate::api::get_item(&storage, id).unwrap(), Some(expected));
+                assert_eq!(contract.owner_id_position.read(&id).unwrap(), position);
+            }
+            assert_eq!(
+                contract.owner_ids.list(&owner).read_all().unwrap(),
+                vec![high, low]
+            );
+            assert_eq!(crate::api::balance_of(&storage, owner).unwrap(), 2);
+            assert_eq!(
+                crate::api::token_of_owner_by_index(&storage, owner, 0).unwrap(),
+                Some(high)
+            );
+            assert_eq!(
+                crate::api::token_of_owner_by_index(&storage, owner, 1).unwrap(),
+                Some(low)
+            );
+            assert_eq!(
+                contract
+                    .state_records(owner)
+                    .unwrap()
+                    .iter()
+                    .map(|item| item.gem_id)
+                    .collect::<Vec<_>>(),
+                vec![low, high]
+            );
+
+            contract.delete_state_record(high).unwrap();
+            assert!(contract.records.get(high).unwrap().is_none());
+            assert_eq!(
+                contract.owner_ids.list(&owner).read_all().unwrap(),
+                vec![low]
+            );
+            assert_eq!(contract.owner_id_position.read(&low).unwrap(), 1);
+            assert_eq!(legacy_positions.read(&WwdEntityId::from(high)).unwrap(), 0);
+            assert_eq!(
+                legacy_owners.list(&owner).read_all().unwrap(),
+                vec![WwdEntityId::from(low)]
+            );
+        });
+    }
+
+    #[test]
     fn indexed_record_creation_reverts_if_an_index_rejects_it() {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::GemContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
+            let id = U256::from_be_bytes([7; 32]);
             let mut record = GemItemState::with_key(id);
             record.owner = Address::repeat_byte(1);
             contract.owner_id_position.write(&id, 9).unwrap();
@@ -81,8 +163,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(54322345);
         StorageHandle::enter(&mut provider, |storage| {
             let contract = crate::GemContract::new(storage);
-            let id =
-                WwdEntityId::from_day_and_digest(WorldwideDay::new(20261015), B256::repeat_byte(7));
+            let id = U256::from_be_bytes([7; 32]);
             let mut record = GemItemState::with_key(id);
             record.owner = Address::repeat_byte(1);
             record.promis_load_minor = U256::from(123);

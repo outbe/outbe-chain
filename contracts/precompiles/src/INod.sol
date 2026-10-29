@@ -58,7 +58,8 @@ interface INod {
     event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
-        // Opaque full Poseidon2 digest of owner and day; the day is stored separately.
+        // Full Keccak256 of raw owner (20 bytes) || worldwide_day (u32 big-endian).
+        // The day is stored separately.
         uint256 nodId;
         address owner;
         uint32 worldwideDay;
