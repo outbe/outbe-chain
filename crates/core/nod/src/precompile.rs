@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, metadata, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
 use outbe_primitives::erc::{
     ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
     ERC721_METADATA_INTERFACE_ID,
@@ -34,7 +34,7 @@ sol!(
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
     data: &[u8],
-    _caller: Address,
+    caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
@@ -52,6 +52,10 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(NodError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
+            clean(c) => mutate(&storage, c, caller, |_, c| {
+                api::clean(&storage, WwdEntityId::from(c.nodId))?;
+                Ok(INod::cleanReturn {})
+            }),
             call @ (balanceOf(_)
             | ownerOf(_)
             | tokenURI(_)
@@ -122,7 +126,11 @@ fn to_abi_data(
     } else {
         api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
-    let state = api::effective_state(item, called_at, deadline, storage.timestamp()?);
+    let state = if !item.is_settled && nod.group_is_forfeited.read(&item.group_key)? {
+        crate::schema::EffectiveState::Forfeited
+    } else {
+        api::effective_state(item, called_at, deadline, storage.timestamp()?)
+    };
     Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,

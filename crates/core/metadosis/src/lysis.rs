@@ -149,6 +149,7 @@ fn execute_onchain_fractions(
     let wwd = emission_day.wwd;
     let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
     tribute.freeze_day_nominal(&totals)?;
+    tribute.day_emission_day.write(&wwd, emission_day.day)?;
     let (_, onchain_allocated_minor) = tribute.compute_and_record_metadosis_fractions(
         wwd,
         calculation.lysis_limit_minor,

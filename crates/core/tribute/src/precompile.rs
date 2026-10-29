@@ -71,6 +71,10 @@ pub fn dispatch(
                 let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
                 Ok(nod_id.to_u256())
             }),
+            clean(c) => mutate(&storage, c, caller, |_, c| {
+                tribute.clean(WwdEntityId::from(c.tributeId))?;
+                Ok(ITribute::cleanReturn {})
+            }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)

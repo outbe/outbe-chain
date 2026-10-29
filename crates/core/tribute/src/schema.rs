@@ -118,6 +118,8 @@ pub struct TributeContract {
     pub day_lysis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
     #[attribute(order = 21)]
     pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+    #[attribute(order = 22)]
+    pub day_emission_day: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 }
 
 pub const fn day_league_key(day: WorldwideDay, league: u16) -> u64 {

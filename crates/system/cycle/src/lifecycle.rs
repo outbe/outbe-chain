@@ -69,7 +69,6 @@ impl BlockLifecycle for CycleLifecycle {
         outbe_intexfactory::notify::send_call_notices(&ctx.runtime)?;
         // These final sweeps only delete state after value accounting completes.
         // Credis moves value during cleanup, so its coupled pass above performs that cleanup instead.
-        outbe_nodfactory::hooks::cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::cleanup(&ctx.runtime)?;
         outbe_intexfactory::hooks::cleanup(&ctx.runtime)?;
         outbe_gemfactory::hooks::cleanup_positions(&ctx.runtime)?;

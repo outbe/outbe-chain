@@ -23,6 +23,8 @@ interface ITribute {
     error TributeStateChangedAfterLoading();
     error LysisArithmetic(string reason);
     error DateStep(uint8 kind, uint32 dateKey);
+    error TributeForfeited();
+    error TributeNotForfeited();
 
     event TributeIssued(
         address indexed owner,
@@ -65,5 +67,6 @@ interface ITribute {
     function getLeague(uint256 tributeId) external view returns (uint16 league);
     function getDayLeagueFraction(uint32 worldwideDay, uint16 league) external view returns (uint64 fraction);
     function createNod(uint256 tributeId) external returns (uint256 nodId);
+    function clean(uint256 tributeId) external;
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

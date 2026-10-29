@@ -109,6 +109,12 @@ pub enum NodError {
 
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
+
+    #[error("nod is not forfeited")]
+    NodNotForfeited,
+
+    #[error("nod is already settled")]
+    NodAlreadySettled,
 }
 
 pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
@@ -221,6 +227,8 @@ impl From<NodError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
+            NodError::NodNotForfeited => revert_with(I::NodNotForfeited {}),
+            NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
         }
     }
 }
