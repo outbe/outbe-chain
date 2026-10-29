@@ -76,7 +76,7 @@ pub(crate) fn owned(storage: &StorageHandle, owner: Address) -> Vec<U256> {
     api::list_by_owner(storage, owner)
         .unwrap()
         .into_iter()
-        .map(|item| item.gem_id.to_u256())
+        .map(|item| item.gem_id)
         .collect()
 }
 

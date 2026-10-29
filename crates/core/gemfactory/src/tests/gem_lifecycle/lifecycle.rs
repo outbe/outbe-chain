@@ -39,7 +39,7 @@ fn add_gem_mints_the_gem_and_its_group_and_bumps_counters() {
         let stored = item(storage, gem_id).unwrap();
         assert_eq!(stored.owner, ALICE);
         assert_eq!(stored.state, GemState::Issued as u8);
-        assert_eq!(stored.gem_id.to_u256(), gem_id);
+        assert_eq!(stored.gem_id, gem_id);
         let gem = view(storage, gem_id);
         assert_eq!(gem.item.entry_price_minor, U256::from(500_000u64));
         assert_eq!(gem.group.settled_gems, 0);
@@ -69,7 +69,7 @@ fn same_block_issue_is_visible_to_point_and_owner_list_reads() {
     StorageHandle::enter(&mut provider, |storage| {
         let stored = GemContract::new(storage)
             .records
-            .get(outbe_primitives::wwd_entity_id::WwdEntityId::from(gem_id))
+            .get(gem_id)
             .unwrap()
             .unwrap();
         assert_eq!(stored.owner, ALICE);
@@ -537,7 +537,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             )
         );
         let stored = item(storage, gem_id).unwrap();
-        assert_eq!(WwdEntityId::from(gem_id), stored.gem_id);
+        assert_eq!(gem_id, stored.gem_id);
         assert_eq!(
             stored.group_id().expect("date step"),
             WwdEntityId::from_day_and_digest(
