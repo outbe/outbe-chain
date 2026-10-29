@@ -233,6 +233,7 @@ pub struct RadicleStatusInfo {
     pub last_converged_finalized_number: Option<u64>,
     pub last_converged_finalized_hash: Option<B256>,
     pub desired_repository_count: u64,
+    pub observed_repository_count: u64,
     pub available_repository_count: u64,
     pub pending_repository_count: u64,
     pub resolved_peer_count: u64,
@@ -467,6 +468,7 @@ mod tests {
             last_converged_finalized_number: Some(7),
             last_converged_finalized_hash: Some(B256::repeat_byte(0x22)),
             desired_repository_count: 2,
+            observed_repository_count: 2,
             available_repository_count: 1,
             pending_repository_count: 1,
             resolved_peer_count: 3,
@@ -481,6 +483,7 @@ mod tests {
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["phase"], "ready");
+        assert_eq!(json["observedRepositoryCount"], 2);
         assert_eq!(
             json["localNodeId"],
             format!("{:#x}", B256::repeat_byte(0x11))

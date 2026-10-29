@@ -347,6 +347,7 @@ pub(crate) fn radicle_status_info(
         last_converged_finalized_number: manager.last_converged_finalized.map(|block| block.number),
         last_converged_finalized_hash: manager.last_converged_finalized.map(|block| block.hash),
         desired_repository_count: count(manager.desired_repository_count)?,
+        observed_repository_count: count(manager.observed_repository_count)?,
         available_repository_count: count(manager.available_repository_count)?,
         pending_repository_count: count(manager.pending_repository_count)?,
         resolved_peer_count: count(manager.resolved_peer_count)?,

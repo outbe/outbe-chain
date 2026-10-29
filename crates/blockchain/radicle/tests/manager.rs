@@ -1,4 +1,5 @@
 mod manager_support;
+mod manager_window;
 
 use manager_support::*;
 use outbe_radicle::manager::{
@@ -367,6 +368,7 @@ async fn repos() {
 
     let status = wait_for(&handle, 60).await;
     assert_eq!(status.desired_repository_count, 2);
+    assert_eq!(status.observed_repository_count, 2);
     assert_eq!(status.available_repository_count, 1);
     assert_eq!(status.pending_repository_count, 1);
     assert_eq!(status.last_converged_finalized, Some(block(60)));
@@ -621,6 +623,21 @@ async fn binding_mismatch() {
     handle.shutdown().await.unwrap();
 }
 
+async fn wait_for_provider_failures(
+    handle: &outbe_radicle::manager::RadicleManagerHandle,
+    failures: u64,
+) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while handle.status().provider_failures < failures {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for provider_failures >= {failures}"
+        );
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+}
+
 #[tokio::test(start_paused = true)]
 async fn retry_backoff() {
     let feed = Feed::new(block(82));
@@ -644,17 +661,17 @@ async fn retry_backoff() {
             repository_status: Arc::new(Availability::default()),
         },
     );
-    tokio::task::yield_now().await;
+    wait_for_provider_failures(&handle, 1).await;
     assert_eq!(snapshots.reads().len(), 1);
     tokio::time::advance(Duration::from_millis(999)).await;
     assert_eq!(snapshots.reads().len(), 1);
     tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    wait_for_provider_failures(&handle, 2).await;
     assert_eq!(snapshots.reads().len(), 2);
     tokio::time::advance(Duration::from_millis(1_999)).await;
     assert_eq!(snapshots.reads().len(), 2);
     tokio::time::advance(Duration::from_millis(1)).await;
-    tokio::task::yield_now().await;
+    wait_for_provider_failures(&handle, 3).await;
     assert_eq!(snapshots.reads().len(), 3);
     handle.shutdown().await.unwrap();
 }

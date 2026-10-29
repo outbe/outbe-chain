@@ -42,6 +42,10 @@ impl RadicleMetrics {
         metrics::gauge!("outbe_radicle_connected_peers").set(manager.connected_peer_count as f64);
         metrics::gauge!("outbe_radicle_desired_repositories")
             .set(manager.desired_repository_count as f64);
+        // Observed/available/pending describe the current reconcile window, while
+        // `RadicleStatusSnapshot::repositories` retains last-known per-repo states.
+        metrics::gauge!("outbe_radicle_observed_repositories")
+            .set(manager.observed_repository_count as f64);
         metrics::gauge!("outbe_radicle_available_repositories")
             .set(manager.available_repository_count as f64);
         metrics::gauge!("outbe_radicle_pending_repositories")

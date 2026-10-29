@@ -73,6 +73,21 @@ fn radicle_rpc_reads_immutable_status() {
     assert_eq!(status.phase, crate::api::RadiclePhaseInfo::Disabled);
     assert!(status.local_node_id.is_none());
     assert_eq!(status.desired_repository_count, 0);
+    assert_eq!(status.observed_repository_count, 0);
+
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
+    publisher.observe_manager(outbe_radicle::manager::ManagerStatus {
+        desired_repository_count: 40,
+        observed_repository_count: 16,
+        available_repository_count: 10,
+        pending_repository_count: 6,
+        ..outbe_radicle::manager::ManagerStatus::default()
+    });
+    let active = radicle_status_info(&handle.snapshot()).unwrap();
+    assert_eq!(active.desired_repository_count, 40);
+    assert_eq!(active.observed_repository_count, 16);
+    assert_eq!(active.available_repository_count, 10);
+    assert_eq!(active.pending_repository_count, 6);
 }
 
 #[test]
