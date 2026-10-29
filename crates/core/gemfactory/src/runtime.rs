@@ -38,13 +38,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
-    if iso_4217_alpha(issuance_currency).is_none() {
-        return Err(GemFactoryError::InvalidCurrency {
-            currency: issuance_currency,
-        }
-        .into());
-    }
-    outbe_oracle::api::check_reference_currency(reference_currency)?;
+    check_gem_currencies(issuance_currency, reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
@@ -489,6 +483,17 @@ pub fn mine_promis(
 
         Ok(item.promis_load_minor)
     })
+}
+
+/// Any ISO 4217 code issues a gem; only an oracle reference currency can call and price it.
+fn check_gem_currencies(issuance_currency: u16, reference_currency: u16) -> Result<()> {
+    if iso_4217_alpha(issuance_currency).is_none() {
+        return Err(GemFactoryError::InvalidCurrency {
+            currency: issuance_currency,
+        }
+        .into());
+    }
+    outbe_oracle::api::check_reference_currency(reference_currency)
 }
 
 /// COEN price of `iso_code` from the last closed UTC day.
