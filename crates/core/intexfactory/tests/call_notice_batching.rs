@@ -17,7 +17,7 @@ use outbe_primitives::time::WorldwideDay;
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
 const DAY: u32 = 20_260_101;
-const CALLED_AT: u32 = NOW as u32 - 3_600;
+const CALLED_AT: u64 = NOW - 3_600;
 
 fn series(index: u32) -> SeriesId {
     // Three digits of currency, so a long queue wraps. These tests measure the walk.
@@ -59,7 +59,7 @@ fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
     .unwrap();
 }
 
-fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u32) {
+fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u64) {
     record(handle, series(index));
     let factory = IntexFactoryContract::new(handle.clone());
     let tail = factory.notify_tail.read().unwrap();
@@ -180,7 +180,7 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
     StorageHandle::enter(&mut storage, |handle| {
         let queued = SWEEP_WRITES_PER_BLOCK + 5;
         for index in 0..queued {
-            push_called(&handle, index, CALLED_AT + index);
+            push_called(&handle, index, CALLED_AT + u64::from(index));
         }
 
         drain(&handle);

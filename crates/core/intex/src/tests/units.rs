@@ -105,7 +105,7 @@ fn with_registry_at<R>(now: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
     StorageHandle::enter(&mut storage, f)
 }
 
-const NOTICE_END: u64 = ISSUED_AT as u64 + CALL_NOTICE_PERIOD as u64;
+const NOTICE_END: u64 = ISSUED_AT + CALL_NOTICE_PERIOD as u64;
 const TRANSIT_CLOSE: u64 = NOTICE_END + TRANSIT_MARGIN as u64;
 
 #[test]

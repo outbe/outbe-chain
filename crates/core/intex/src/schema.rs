@@ -45,7 +45,7 @@ pub struct IntexCallTrigger {
 /// unit may still land and settle. All are zero while the group is uncalled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CallStamp {
-    pub called_at: u32,
+    pub called_at: u64,
     pub deadline: u64,
     pub close_at: u64,
 }
@@ -82,7 +82,7 @@ pub struct CreateSeriesParams {
     pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
     /// Creation timestamp (UNIX seconds). Non-zero. It is also the existence sentinel.
-    pub issued_at: u32,
+    pub issued_at: u64,
     pub issuance_currency: u16,
     pub reference_currency: u16,
 }
@@ -125,7 +125,7 @@ pub struct SeriesRecord {
     pub call_notice_period_seconds: u32,
 
     #[attribute(order = 9)]
-    pub issued_at: u32,
+    pub issued_at: u64,
 
     /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
     #[attribute(order = 10, default = WorldwideDay::new(0))]
@@ -139,7 +139,7 @@ impl SeriesRecord {
     /// The call group the series belongs to.
     pub fn group_key(&self) -> Result<B256, TimeError> {
         Ok(group_key(
-            first_full_day(u64::from(self.issued_at))?,
+            first_full_day(self.issued_at)?,
             self.call_price_minor,
             self.reference_currency,
         ))
@@ -290,7 +290,7 @@ pub struct IntexContract {
     pub call_group_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     /// Group key -> when the group was called. 0 = uncalled.
     #[attribute(order = 59)]
-    pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub call_group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // This queue stores expired groups whose spent series await deletion.
     // It schedules groups by day, like the forfeit queue.

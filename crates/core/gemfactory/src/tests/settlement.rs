@@ -326,7 +326,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 entry_price_minor: six_decimal_unit(),
                 call_price_minor: U256::ZERO,
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
-                issued_at: T_NOW as u32,
+                issued_at: T_NOW,
                 issuance_currency: 840,
                 // 756 (CHF) is not a reference currency.
                 reference_currency: 756,

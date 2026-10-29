@@ -35,9 +35,7 @@ pub fn issue_intex(
         return Ok(Vec::new());
     }
 
-    // u32 timestamp. It is bounded until 2106.
-    let issued_at = u32::try_from(storage.now_secs()?)
-        .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
+    let issued_at = storage.now_secs()?;
 
     let mut intex = IntexContract::new(storage.clone());
     let call_price_minor = params.call_price_minor;
@@ -75,7 +73,7 @@ pub fn issue_intex(
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
-                issuedAt: u64::from(issued_at),
+                issuedAt: issued_at,
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,

@@ -138,7 +138,7 @@ fn issue_source_series(world: &mut World) {
         url: &url,
         sender_key: DEPLOYER_KEY,
         worldwide_day: day,
-        issued_at: now,
+        issued_at: head,
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),

@@ -153,7 +153,7 @@ fn the_uri_shows_the_series_settled_card() {
 #[test]
 fn settlement_mints_and_mining_burns_the_settled_units() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     StorageHandle::enter(&mut storage, |s| {
         api::create_series(&s, sample_params(7)).unwrap();
         api::record_settled_units(&s, sid(7), owner(), 30).unwrap();

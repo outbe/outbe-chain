@@ -3,47 +3,28 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 #[test]
-fn issue_distinguishes_timestamp_narrowing_from_protocol_width() {
+fn issue_keeps_a_timestamp_past_u32() {
     with_factory(|storage| {
-        for (timestamp, expected) in [
-            (
-                U256::from(u32::MAX) + U256::ONE,
-                outbe_primitives::error::PrecompileError::from(
-                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
-                ),
-            ),
-            (
-                U256::from(u64::MAX),
-                outbe_primitives::error::PrecompileError::from(
-                    crate::errors::IntexFactoryError::BlockTimestampExceedsU32,
-                ),
-            ),
-            (
-                U256::from(u64::MAX) + U256::ONE,
-                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
-            ),
-            (
-                U256::MAX,
-                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into()),
-            ),
-        ] {
+        for timestamp in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
             storage.set_block_timestamp(timestamp).unwrap();
             assert_eq!(
                 runtime::issue_intex(&storage, sample(7))
                     .err()
                     .unwrap()
                     .to_string(),
-                expected.to_string()
+                outbe_primitives::error::PrecompileError::Revert("timestamp exceeds u64".into())
+                    .to_string()
             );
             assert!(!outbe_intex::api::series_exists(&storage, sid(7)).unwrap());
         }
-        storage.set_block_timestamp(U256::from(u32::MAX)).unwrap();
+        let past_u32 = u64::from(u32::MAX) + 1;
+        storage.set_block_timestamp(U256::from(past_u32)).unwrap();
         runtime::issue_intex(&storage, sample(7)).unwrap();
         assert_eq!(
             outbe_intex::api::get_series(&storage, sid(7))
                 .unwrap()
                 .issued_at,
-            u32::MAX
+            past_u32
         );
     });
 }
@@ -148,7 +129,7 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
             leg.callNoticePeriod,
             params.call_trigger.call_notice_period_seconds
         );
-        assert_eq!(leg.issuedAt, u64::from(ISSUED_AT));
+        assert_eq!(leg.issuedAt, ISSUED_AT);
     });
 }
 
@@ -236,7 +217,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
         seriesId: sid(series).into(),
         worldwideDay: day,
-        issuedAt: u64::from(ISSUED_AT),
+        issuedAt: ISSUED_AT,
         issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,
@@ -370,7 +351,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
     use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -434,7 +415,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         write_day_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
+        let day = previous_date_key(timestamp_to_date_key(ISSUED_AT)).expect("date step");
         oracle
             .record_utc_day_vwap(day, EUR_PAIR_ID, U256::from(4u64) * COEN_ISO_RATE_SCALE)
             .unwrap();
@@ -662,7 +643,7 @@ fn the_hourly_rollover_at_the_transit_close_grants_no_grace() {
         let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         let terms =
             u64::from(series.call_notice_period_seconds) + u64::from(series.transit_margin_seconds);
-        outbe_intex::api::call_group_of(&s, sid(7), (close_at - terms) as u32).unwrap();
+        outbe_intex::api::call_group_of(&s, sid(7), close_at - terms).unwrap();
     });
 
     storage.set_timestamp(U256::from(close_at));

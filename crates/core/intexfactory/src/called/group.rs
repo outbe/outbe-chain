@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use outbe_intex::precompile::IIntex;
 use outbe_intex::IntexContract;
 
-use crate::errors::{date_step_error, IntexFactoryError};
+use crate::errors::date_step_error;
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     call_breach::BreachTerms, error::Result, storage::StorageHandle, time::first_full_day,
@@ -39,30 +39,24 @@ pub(crate) fn call_if_breached(
         call_price: series.call_price_minor,
         window_seconds: intex.call_group_window_seconds.read(&group)?,
         threshold_seconds: intex.call_group_threshold_seconds.read(&group)?,
-        start_day: first_full_day(u64::from(series.issued_at)).map_err(date_step_error)?,
+        start_day: first_full_day(series.issued_at).map_err(date_step_error)?,
     });
     if !breached {
         return Ok(0);
     }
 
-    // u32 timestamp. It is bounded until 2106 (matches issued_at).
-    let called_at =
-        u32::try_from(now_ts).map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
-    let stamp = intex.group_stamp(group, called_at)?;
-    intex.record_group_called(group, called_at, stamp.close_at)?;
+    let stamp = intex.group_stamp(group, now_ts)?;
+    intex.record_group_called(group, now_ts, stamp.close_at)?;
 
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
-        crate::notify::enqueue_notice(
-            factory,
-            crate::notify::pack_call_notice(series_id, called_at),
-        )?;
+        crate::notify::enqueue_notice(factory, crate::notify::pack_call_notice(series_id, now_ts))?;
     }
 
     intex.emit(IIntex::IntexGroupCalled {
         groupKey: group,
         seriesIds: members.iter().map(|id| (*id).into()).collect(),
-        calledAt: called_at,
+        calledAt: now_ts,
         settlementDeadline: stamp.deadline,
     })?;
     Ok(members.len() as u32)

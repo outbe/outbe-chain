@@ -186,7 +186,7 @@ fn call_currency(
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
-    called_at: u32,
+    called_at: u64,
     members: &[SeriesId],
 ) -> Result<Vec<SeriesId>> {
     let mut refused = Vec::new();
@@ -199,7 +199,7 @@ pub(crate) fn notify_called(
                 U256::ZERO,
                 IOriginRouter::sendMarkCalledCall {
                     worldwideDay: worldwide_day.value(),
-                    calledAt: u64::from(called_at),
+                    calledAt: called_at,
                     seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
                 }
                 .abi_encode()

@@ -38,9 +38,6 @@ pub enum IntexFactoryError {
     #[error("issueForTest: a currency per series")]
     IssueForTestCurrencyCountMismatch,
 
-    #[error("block timestamp exceeds u32")]
-    BlockTimestampExceedsU32,
-
     #[error("issuance chunk count exceeds u16")]
     IssuanceChunkCountExceedsU16,
 
@@ -121,9 +118,6 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::NoCalledGroupForTest => revert_with(I::NoCalledGroupForTest {}),
             IntexFactoryError::IssueForTestCurrencyCountMismatch => {
                 revert_with(I::IssueForTestCurrencyCountMismatch {})
-            }
-            IntexFactoryError::BlockTimestampExceedsU32 => {
-                revert_with(I::BlockTimestampExceedsU32 {})
             }
             IntexFactoryError::IssuanceChunkCountExceedsU16 => {
                 revert_with(I::IssuanceChunkCountExceedsU16 {})

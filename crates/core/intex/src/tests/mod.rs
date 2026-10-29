@@ -23,7 +23,7 @@ mod units;
 
 const CHAIN_ID: u64 = 1;
 
-const ISSUED_AT: u32 = 1_700_000_000;
+const ISSUED_AT: u64 = 1_700_000_000;
 
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 
@@ -36,7 +36,7 @@ const CALL_PRICE_MINOR: u64 = 900_000;
 
 fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     StorageHandle::enter(&mut storage, f)
 }
 

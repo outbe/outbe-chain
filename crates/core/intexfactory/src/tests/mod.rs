@@ -71,7 +71,7 @@ fn settlement_asset() -> Address {
 }
 
 const CHAIN_ID: u64 = 1;
-const ISSUED_AT: u32 = 1_700_000_000;
+const ISSUED_AT: u64 = 1_700_000_000;
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 const TRANSIT_MARGIN: u32 = 3_600;
@@ -97,7 +97,7 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn factory_provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     // Stub IntexNFT1155: void calls succeed, and balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -215,7 +215,7 @@ impl SeedCalledGroup for IntexContract<'_> {
         let called_at = deadline.saturating_sub(u64::from(record.call_notice_period_seconds));
         self.record_group_called(
             record.group_key().expect("date step"),
-            called_at as u32,
+            called_at,
             deadline + u64::from(record.transit_margin_seconds),
         )
     }
@@ -250,7 +250,7 @@ fn word(value: u64) -> alloy_primitives::Bytes {
 fn write_day_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) {
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
-    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).expect("date step");
+    let day = previous_date_key(timestamp_to_date_key(ISSUED_AT)).expect("date step");
     oracle.record_utc_day_vwap(day, pair_id, rate).unwrap();
     // Unit volume keeps the window sums of an extreme rate in range.
     outbe_oracle::test_support::seed_covered_trailing_window(
@@ -268,6 +268,6 @@ fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) 
     oracle.exchange_rate.write(&pair_id, rate).unwrap();
     oracle
         .exchange_rate_timestamp
-        .write(&pair_id, ISSUED_AT as u64)
+        .write(&pair_id, ISSUED_AT)
         .unwrap();
 }

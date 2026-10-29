@@ -199,7 +199,7 @@ fn with_payment_token<R>(
     use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
@@ -310,7 +310,7 @@ fn with_erc20_series<R>(
     use outbe_vaultrouter::api::IVaultRouter;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -454,7 +454,7 @@ fn settle_rejects_missing_series() {
 #[test]
 fn settle_rejects_expired_deadline() {
     // Late block timestamp so the transit close past the Called deadline is already in the past.
-    let now = (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000;
+    let now = ISSUED_AT + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
@@ -500,7 +500,7 @@ fn settle_stays_open_through_the_transit_margin() {
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
-        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + 59 * 60,
+        ISSUED_AT + (CALL_NOTICE_PERIOD as u64) + 59 * 60,
     ));
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
@@ -533,7 +533,7 @@ fn a_series_called_past_its_deadline_stays_closed() {
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
     });
     storage.set_timestamp(U256::from(
-        (ISSUED_AT as u64) + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000,
+        ISSUED_AT + (CALL_NOTICE_PERIOD as u64) + (TRANSIT_MARGIN as u64) + 1_000,
     ));
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(

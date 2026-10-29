@@ -117,7 +117,7 @@ fn intex_factory_slot_layout_is_pinned() {
 fn the_parked_sweep_is_a_no_op_without_a_router() {
     with_factory(|s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID),
             s.clone(),
         );
         crate::parked::resend_parked_messages(&ctx).expect("a silent router is not a failed block");
@@ -141,10 +141,8 @@ fn parked_router(
 
 fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
-            s,
-        );
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID), s);
         crate::parked::resend_parked_messages(&ctx)
     })
 }
@@ -225,7 +223,7 @@ fn send_notices_in_block(
 ) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID),
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.

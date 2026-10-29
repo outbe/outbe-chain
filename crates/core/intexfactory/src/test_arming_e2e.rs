@@ -17,7 +17,7 @@ sol! {
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
             uint32 worldwideDay,
-            uint32 issuedAt,
+            uint64 issuedAt,
             uint32 issuedUnits,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
@@ -44,8 +44,7 @@ fn requeue_called(storage: &StorageHandle<'_>, series_id: SeriesId, close_at: u6
     // Members read the deadline from the call, so the call moves with the queue.
     let terms = u64::from(intex.call_group_notice_seconds.read(&group)?)
         + u64::from(intex.call_group_transit_seconds.read(&group)?);
-    let called_at = u32::try_from(close_at.saturating_sub(terms).max(1))
-        .map_err(|_| crate::errors::IntexFactoryError::BlockTimestampExceedsU32)?;
+    let called_at = close_at.saturating_sub(terms).max(1);
     intex.call_group_called_at.write(&group, called_at)?;
     intex.requeue_called(group, close_at)?;
     reopen_day(storage, close_at)
@@ -166,7 +165,7 @@ fn issue_for_test(
             outbe_intex::api::set_issued_at(storage, SeriesId::from(series_id), call.issuedAt)?;
         }
         for leg in &mut legs {
-            leg.payload.issuedAt = u64::from(call.issuedAt);
+            leg.payload.issuedAt = call.issuedAt;
         }
     }
     crate::api::send_issuance(storage, legs)

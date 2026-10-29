@@ -33,7 +33,7 @@ fn setup_second_pair(oracle: &OracleContract) -> AddressPair {
 /// Seeds one callable group of `iso`, priced so its trigger sits under the window.
 /// Each day's series is issued on its own day, so it opens its own group.
 fn seed_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32) {
-    let issued_at = ISSUED_AT - (worldwide_day % 1000) * SECONDS_PER_DAY_U32;
+    let issued_at = ISSUED_AT - u64::from((worldwide_day % 1000) * SECONDS_PER_DAY_U32);
     seed_series(s, worldwide_day, issued_at, TRIGGER, iso);
 }
 
@@ -46,7 +46,7 @@ fn a_slice_resumes_at_the_currency_it_gave_out_on() {
         let oracle = OracleContract::new(s.clone());
         let first = setup_pair(&oracle);
         let second = setup_second_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, first, U256::from(TRIGGER + 1));
         fill_window(&oracle, last_closed_day, second, U256::from(TRIGGER + 1));
@@ -83,7 +83,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
         let groups = SWEEP_WRITES_PER_BLOCK + SWEEP_WRITES_PER_BLOCK / 2;
@@ -137,7 +137,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         }
         let mut closed = Vec::new();
         for offset in 0..3 {
-            let ts = ISSUED_AT as u64 + (60 + offset) * DAY;
+            let ts = ISSUED_AT + (60 + offset) * DAY;
             let day = previous_date_key(timestamp_to_date_key(ts)).expect("date step");
             fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
             let ctx = BlockRuntimeContext::new(
@@ -157,7 +157,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         assert_eq!(factory.call_latest_day.read().unwrap(), closed[2]);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(4, ISSUED_AT as u64 + 62 * DAY, CHAIN_ID),
+            BlockContext::empty_for_tests(4, ISSUED_AT + 62 * DAY, CHAIN_ID),
             s.clone(),
         );
         let mut walked = vec![closed[0]];
@@ -184,13 +184,13 @@ fn a_sweep_over_several_currencies_always_ends() {
         let oracle = OracleContract::new(s.clone());
         let first = setup_pair(&oracle);
         let second = setup_second_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, day, first, U256::from(TRIGGER + 1));
         fill_window(&oracle, day, second, U256::from(TRIGGER + 1));
 
         // Issued five days ago: every group is decided and left where it is.
-        let young_at = (scan_ts - 5 * DAY) as u32;
+        let young_at = scan_ts - 5 * DAY;
         for d in 20260101..20260101 + SWEEP_VISITS_PER_BLOCK + 1 {
             seed_young_candidate_for(&s, REFERENCE_ISO, d, young_at);
             seed_young_candidate_for(&s, SECOND_ISO, d, young_at);
@@ -213,14 +213,14 @@ fn a_sweep_over_several_currencies_always_ends() {
 }
 
 /// A group of `iso` issued at `issued_at`, its trigger under the window.
-fn seed_young_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32, issued_at: u32) {
+fn seed_young_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32, issued_at: u64) {
     seed_series(s, worldwide_day, issued_at, TRIGGER, iso)
 }
 
 pub(super) fn seed_series(
     s: &StorageHandle<'_>,
     worldwide_day: u32,
-    issued_at: u32,
+    issued_at: u64,
     trigger_minor: u64,
     reference_currency: u16,
 ) {

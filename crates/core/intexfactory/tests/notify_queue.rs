@@ -27,7 +27,7 @@ use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
-const CALLED_AT: u32 = NOW as u32 - 3_600;
+const CALLED_AT: u64 = NOW - 3_600;
 
 fn series(index: u32) -> SeriesId {
     SeriesId::pack(20_260_101 + index, *b"USD", b'U').expect("well-formed series id")
@@ -261,7 +261,7 @@ fn a_refused_notice_is_requeued_with_one_more_attempt() {
         assert_eq!(call_notice_attempts(entry), 1);
         assert_eq!(notice_retry_at(entry), NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(SeriesId::from_word(entry), series(0));
-        assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
+        assert_eq!((entry & U256::from(u64::MAX)).to::<u64>(), CALLED_AT);
     });
     assert!(failed_notices(&storage).is_empty());
 }
@@ -308,7 +308,7 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let dropped = failed_notices(&storage);
     assert_eq!(dropped.len(), 1);
     assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
-    assert_eq!(dropped[0].calledAt, u64::from(CALLED_AT));
+    assert_eq!(dropped[0].calledAt, CALLED_AT);
 }
 
 #[test]
