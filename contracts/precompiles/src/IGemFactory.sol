@@ -33,9 +33,17 @@ interface IGemFactory {
     ///         via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
     function issueGemPosition(bytes14 sourceIntexId, uint256 units) external returns (uint256 positionId);
-    /// @notice Issue one Merchant gem to `owner`, draining the position's
-    ///         capacity. Only the position's merchant (the caller) may call.
-    function issueGem(uint256 positionId, address owner, uint256 promisLoadMinor) external returns (uint256 gemId);
+    /// @notice Issue one Merchant gem to `owner` in the currencies the merchant names,
+    ///         draining the position's capacity. Only the position's merchant (the caller)
+    ///         may call. `issuanceCurrency` is any ISO 4217 code, `referenceCurrency` an
+    ///         oracle reference currency.
+    function issueGem(
+        uint256 positionId,
+        address owner,
+        uint256 promisLoadMinor,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency
+    ) external returns (uint256 gemId);
 
     /// @notice Settle a gem paying its cost in `asset`. Any caller may pay. The
     ///         gem stays with its owner.
@@ -92,8 +100,6 @@ interface IGemFactory {
         bytes14 sourceIntexId;
         /// @notice 0 once the position expired.
         uint256 remainingCapacityMinor;
-        uint16 issuanceCurrency;
-        uint16 referenceCurrency;
         /// @notice When the position was issued.
         uint64 issuedAt;
         /// @notice When the position stops issuing and returns its remainder.
@@ -119,7 +125,8 @@ interface IGemFactory {
         uint256 positionId,
         bytes32 indexed groupKey
     );
-    /// @notice A merchant sent Intex units into a new position.
+    /// @notice A merchant sent Intex units into a new position. The currencies are the source
+    ///         series', and each gem drawn from it names its own.
     event GemPositionIssued(
         uint256 indexed positionId,
         address indexed merchant,

@@ -244,6 +244,8 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 position_id,
                 owner: BOB,
                 promis_load_minor: U256::from(10) * six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .map_err(|error| error.to_string()),

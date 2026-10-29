@@ -55,16 +55,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
@@ -115,6 +105,16 @@
         "name": "promisLoadMinor",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "outputs": [

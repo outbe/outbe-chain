@@ -403,6 +403,8 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
             position_id: id,
             owner: BOB,
             promis_load_minor: six_decimal_unit(),
+            issuance_currency: 840,
+            reference_currency: 840,
         },
     )
     .unwrap();

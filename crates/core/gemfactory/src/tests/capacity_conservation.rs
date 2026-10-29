@@ -49,8 +49,6 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
                     merchant: Address::repeat_byte(1),
                     source_intex_id: SeriesId::pack(1, *b"USD", b'U').unwrap(),
                     remaining_capacity_minor: U256::from(REMAINDER),
-                    issuance_currency: 840,
-                    reference_currency: 840,
                     issued_at: 0,
                     expires_at,
                 })
@@ -154,8 +152,6 @@ fn world() -> HashMapStorageProvider {
                 merchant: Address::repeat_byte(1),
                 source_intex_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                 remaining_capacity_minor: U256::from(REMAINDER),
-                issuance_currency: 840,
-                reference_currency: 840,
                 issued_at: EXPIRES - SECONDS_PER_DAY,
                 expires_at: EXPIRES,
             })

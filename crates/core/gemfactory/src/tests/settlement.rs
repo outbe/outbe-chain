@@ -312,8 +312,9 @@ fn issue_rejects_an_issuance_code_that_is_not_an_iso_code() {
     });
 }
 
+/// A gem names its own reference currency, so the source series' one is never read.
 #[test]
-fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
+fn a_series_in_any_reference_currency_can_be_sent() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         outbe_intex::api::create_series(
@@ -333,15 +334,8 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
             },
         )
         .unwrap();
-        let res =
-            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
-        assert_eq!(
-            res.unwrap_err().to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 756 }
-            )
-            .to_string()
-        );
+        runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+            .unwrap();
     });
 }
 

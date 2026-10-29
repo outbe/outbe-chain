@@ -22,6 +22,8 @@ pub struct MerchantGemIssueParams {
     pub position_id: U256,
     pub owner: Address,
     pub promis_load_minor: U256,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
 }
 
 /// The proof of work submitted for a settled Gem.
@@ -50,20 +52,14 @@ pub struct GemPosition {
     #[attribute(order = 2)]
     pub remaining_capacity_minor: U256,
 
-    #[attribute(order = 3)]
-    pub issuance_currency: u16,
-
-    #[attribute(order = 4)]
-    pub reference_currency: u16,
-
     /// When the position was issued.
-    #[attribute(order = 5)]
+    #[attribute(order = 3)]
     pub issued_at: u64,
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue. Positions
     /// expire in groups by its hour.
-    #[attribute(order = 6)]
+    #[attribute(order = 4)]
     pub expires_at: u64,
 }
 

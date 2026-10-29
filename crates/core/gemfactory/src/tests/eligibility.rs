@@ -7,8 +7,6 @@ fn a_position_reports_its_full_terms() {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         let data = runtime::position_data(storage, id).unwrap();
         assert_eq!(data.merchant, ALICE);
-        assert_eq!(data.issuanceCurrency, 840);
-        assert_eq!(data.referenceCurrency, 840);
         assert_eq!(data.issuedAt, T_NOW);
         assert_eq!(data.expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
         assert_eq!(

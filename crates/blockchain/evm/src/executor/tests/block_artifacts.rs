@@ -29,6 +29,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             positionId: position_id,
             owner: OWNER,
             promisLoadMinor: U256::from(1_000_000),
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
         }
         .abi_encode()
         .into(),
@@ -59,8 +61,6 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         )
                         .unwrap(),
                         remaining_capacity_minor: U256::from(2_000_000),
-                        issuance_currency: 840,
-                        reference_currency: 840,
                         issued_at: block_ts - 1,
                         expires_at: block_ts + SECONDS_PER_DAY,
                     })
