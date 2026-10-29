@@ -21,6 +21,8 @@ const CHAIN_ID: u64 = 1;
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
+/// The emission day the production pipeline sells on `WORLDWIDE_DAY`.
+const EMISSION_DAY: u32 = 20260122;
 const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// Registry indices of the seeded oracle pairs: the reference currency, and one
@@ -260,6 +262,7 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: brief.worldwide_day,
+                emission_day: brief.worldwide_day.value(),
                 desis_limit_minor: U256::from(brief.desis_limit_minor),
                 has_limit: brief.has_limit,
             },
@@ -432,6 +435,7 @@ fn dispatch_auction_brief_records_the_brief() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
@@ -453,6 +457,10 @@ fn dispatch_auction_brief_records_the_brief() {
             U256::from(10 * PROMIS_LOAD_MINOR)
         );
         assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(
+            contract.brief_emission_day.read(&WORLDWIDE_DAY).unwrap(),
+            EMISSION_DAY
+        );
         assert_eq!(
             u64::from(contract.auction_at.read(&WORLDWIDE_DAY).unwrap()),
             NOW - NOW % SECONDS_PER_DAY
@@ -478,6 +486,7 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: false,
             },
@@ -515,6 +524,7 @@ fn strict_request_desis_limit_commits_the_exact_live_brief() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
@@ -552,6 +562,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
@@ -563,6 +574,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
                 has_limit: true
             },
@@ -589,6 +601,7 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
@@ -646,6 +659,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 storage,
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
@@ -668,6 +682,7 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
                 storage,
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
@@ -693,6 +708,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             storage.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(7 * LOAD_MINOR),
                 has_limit: true,
             },
@@ -713,6 +729,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
             storage.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(9 * LOAD_MINOR),
                 has_limit: true
             },
@@ -759,6 +776,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 s.clone(),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
                     has_limit: true
                 },
@@ -772,6 +790,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true
             },
@@ -808,6 +827,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
                 s.clone(),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::MAX,
                     has_limit: true
                 },
@@ -850,6 +870,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(u128::MAX),
                     has_limit: true
                 },
@@ -869,6 +890,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: supply,
                     has_limit: true
                 },
@@ -905,6 +927,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
@@ -918,6 +941,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
@@ -930,6 +954,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage,
             crate::api::AuctionBrief {
                 worldwide_day: NEXT_WORLDWIDE_DAY,
+                emission_day: NEXT_WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
@@ -952,6 +977,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
@@ -972,6 +998,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
@@ -994,6 +1021,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             storage,
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },
@@ -1018,6 +1046,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                 s.clone(),
                 crate::api::AuctionBrief {
                     worldwide_day: WORLDWIDE_DAY,
+                    emission_day: WORLDWIDE_DAY.value(),
                     desis_limit_minor: U256::from(LOAD_MINOR),
                     has_limit: true
                 },
@@ -1159,6 +1188,7 @@ fn native_brief_at_now(s: &StorageHandle) {
         s.clone(),
         crate::api::AuctionBrief {
             worldwide_day: WORLDWIDE_DAY,
+            emission_day: WORLDWIDE_DAY.value(),
             desis_limit_minor: U256::from(10 * LOAD_MINOR),
             has_limit: true,
         },
@@ -2906,6 +2936,7 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WORLDWIDE_DAY,
+                emission_day: WORLDWIDE_DAY.value(),
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },

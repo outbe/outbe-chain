@@ -54,6 +54,7 @@ pub(crate) fn preflight_brief(
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
+    emission_day: u32,
     desis_limit_minor: u128,
     has_limit: bool,
     anchor: u32,
@@ -66,6 +67,9 @@ pub(crate) fn record_preflighted_brief(
     contract
         .brief_has_limit
         .write(&worldwide_day, u8::from(has_limit))?;
+    contract
+        .brief_emission_day
+        .write(&worldwide_day, emission_day)?;
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
     Ok(())

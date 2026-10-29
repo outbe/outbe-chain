@@ -65,6 +65,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: DAY,
+                emission_day: DAY.value(),
                 desis_limit_minor: U256::from(LIMIT),
                 has_limit: true,
             },

@@ -127,7 +127,7 @@ pub struct SeriesRecord {
     #[attribute(order = 9)]
     pub issued_at: u64,
 
-    /// Worldwide day whose tributes fed this series. It is also the id's leading digits.
+    /// Worldwide day of the auction that issued this series. The id leads with its emission day.
     #[attribute(order = 10, default = WorldwideDay::new(0))]
     pub worldwide_day: WorldwideDay,
 

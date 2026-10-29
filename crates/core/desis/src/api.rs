@@ -52,6 +52,8 @@ pub enum AuctionBriefReceipt {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuctionBrief {
     pub worldwide_day: WorldwideDay,
+    /// The emission day the auction sells, as `YYYYMMDD`. Its series ids carry it.
+    pub emission_day: u32,
     pub desis_limit_minor: U256,
     pub has_limit: bool,
 }
@@ -68,6 +70,7 @@ pub fn dispatch_auction_brief(
 ) -> Result<AuctionBriefReceipt> {
     let AuctionBrief {
         worldwide_day,
+        emission_day,
         desis_limit_minor,
         has_limit,
     } = brief;
@@ -95,6 +98,7 @@ pub fn dispatch_auction_brief(
         runtime::record_preflighted_brief(
             storage.clone(),
             worldwide_day,
+            emission_day,
             desis_limit_u128,
             has_limit,
             anchor,

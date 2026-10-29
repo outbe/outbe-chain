@@ -311,6 +311,16 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
 }
 
 #[test]
+fn native_completion_briefs_the_emission_day() {
+    let mut provider = fixture();
+    run(&mut provider).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
+        let desis = outbe_desis::schema::DesisContract::new(storage);
+        assert_eq!(desis.brief_emission_day.read(&WWD).unwrap(), DAY);
+    });
+}
+
+#[test]
 fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     // Issuing a Lysis Nod reads its Gratis load for the group's unpaid total.
