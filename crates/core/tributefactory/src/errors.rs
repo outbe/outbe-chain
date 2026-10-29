@@ -159,9 +159,6 @@ pub enum TributeFactoryError {
     ZkVerifierUnavailable(String),
 
     #[error(transparent)]
-    EntityIdDerivation(#[from] outbe_primitives::wwd_entity_id::EntityIdDerivationError),
-
-    #[error(transparent)]
     CalculationView(#[from] outbe_tee::TransportError),
 
     #[error("{0}")]
@@ -327,9 +324,6 @@ impl From<TributeFactoryError> for PrecompileError {
             TributeFactoryError::ZkVerifierUnavailable(value) => {
                 revert_with(I::ZkVerifierUnavailable { value })
             }
-            TributeFactoryError::EntityIdDerivation(err) => revert_with(I::EntityIdDerivation {
-                value: err.to_string(),
-            }),
             TributeFactoryError::CalculationView(err) => revert_with(I::CalculationView {
                 value: err.to_string(),
             }),

@@ -50,7 +50,10 @@ pub fn encrypt_nod_for_tribute(
         terms.issuance_currency,
         terms.reference_currency,
     );
-    if issued_terms != source_terms || terms.nod_id.worldwide_day() != terms.worldwide_day {
+    if issued_terms != source_terms
+        || terms.nod_id
+            != outbe_primitives::nod_rules::derive_nod_id(terms.owner, terms.worldwide_day)
+    {
         return Err(TeeError::TributeOfferReject(
             "NOD source terms mismatch".into(),
         ));

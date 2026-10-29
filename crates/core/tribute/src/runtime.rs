@@ -331,7 +331,7 @@ impl TributeContract<'_> {
         &mut self,
         caller: alloy_primitives::Address,
         tribute_id: WwdEntityId,
-    ) -> Result<WwdEntityId> {
+    ) -> Result<U256> {
         forfeiture::create_nod_from_tribute(self, caller, tribute_id)
     }
 

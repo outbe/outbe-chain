@@ -4,8 +4,7 @@ use super::*;
 fn nod_pow_binds_owner_and_zero_sequence() {
     let owner = Address::repeat_byte(0x11);
     let other = Address::repeat_byte(0x22);
-    let nod_id =
-        outbe_nod::identity::generate_nod_id(owner, WorldwideDay::new(20_241_201)).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(owner, WorldwideDay::new(20_241_201));
     let nonce = 42;
     let bound = runtime::compute_pow_hash(nod_id, owner, nonce);
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
@@ -13,7 +12,7 @@ fn nod_pow_binds_owner_and_zero_sequence() {
         bound,
         outbe_common::pow::compute_mining_pow_hash(
             outbe_common::pow::MiningDomain::Nod,
-            nod_id.to_u256(),
+            nod_id,
             owner,
             1,
             nonce,
@@ -153,7 +152,7 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     );
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
-    let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day).unwrap();
+    let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day);
     assert!(world
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
@@ -301,7 +300,7 @@ fn a_stranger_can_mine_with_the_owners_auth() {
 
     let auth = mine_auth(input.owner, input.gratis_load_minor);
     let call = INodFactory::mineGratisCall {
-        nodId: nod_id.to_u256(),
+        nodId: nod_id,
         nonce,
         mac: B256::from(auth.mac),
         opNonce: auth.op_nonce,
@@ -342,5 +341,5 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         .last()
         .expect("NodMined event");
     assert_eq!(mined.owner, input.owner);
-    assert_eq!(mined.nodId, nod_id.to_u256());
+    assert_eq!(mined.nodId, nod_id);
 }

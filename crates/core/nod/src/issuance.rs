@@ -5,14 +5,13 @@ use crate::{
 };
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
-use outbe_primitives::wwd_entity_id::derive_poseidon_entity_id;
+use outbe_primitives::nod_rules::derive_nod_id;
 pub(crate) fn validate_item(
     item: &NodItemState,
     call_price_minor: U256,
     expected_group_key: Option<alloy_primitives::B256>,
 ) -> Result<()> {
-    let canonical_id = derive_poseidon_entity_id(item.owner, item.worldwide_day)
-        .map_err(NodError::entity_id_derivation)?;
+    let canonical_id = derive_nod_id(item.owner, item.worldwide_day);
     if item.nod_id != canonical_id {
         return Err(NodError::CanonicalIdentityMismatch {
             expected: canonical_id,

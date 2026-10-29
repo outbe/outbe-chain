@@ -352,8 +352,7 @@ fn boundary_record_counts_keep_raw_id_order() {
                 let owner = Address::repeat_byte(
                     u8::try_from(ordinal).expect("boundary count fits an owner seed"),
                 );
-                let tribute_id =
-                    derive_poseidon_entity_id(owner, day).expect("bounded identity derives");
+                let tribute_id = derive_poseidon_entity_id(owner, day);
                 ObservedTributeV1 {
                     tribute: TributeInputV1 {
                         tribute_id,

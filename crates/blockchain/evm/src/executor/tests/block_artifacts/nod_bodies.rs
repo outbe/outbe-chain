@@ -169,7 +169,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
         outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
                 is_settled: false,
-                nod_id: outbe_nod::identity::generate_nod_id(proposer, worldwide_day).unwrap(),
+                nod_id: outbe_nod::identity::generate_nod_id(proposer, worldwide_day),
                 owner: proposer,
                 gratis_load_minor: U256::from(1_000_000u64),
                 worldwide_day,
@@ -234,11 +234,9 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
     let tribute_owner = Address::repeat_byte(0x31);
-    let tribute_id =
-        outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(tribute_owner, day).unwrap();
+    let tribute_id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(tribute_owner, day);
     let nod_owner = Address::repeat_byte(0x32);
-    let nod_id =
-        outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(nod_owner, day).unwrap();
+    let nod_id = outbe_primitives::nod_rules::derive_nod_id(nod_owner, day);
     let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,

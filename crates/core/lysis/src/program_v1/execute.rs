@@ -236,8 +236,8 @@ impl ProgramExecutionV1 {
             });
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
-        let nod_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::entity_id_derivation)?;
+        let nod_id =
+            outbe_primitives::nod_rules::derive_nod_id(tribute.owner, tribute.worldwide_day);
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
@@ -443,8 +443,7 @@ pub(crate) fn validate_canonical_tributes(
             }
         }
         previous = Some(tribute.tribute_id);
-        let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-            .map_err(ProgramErrorV1::entity_id_derivation)?;
+        let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day);
         if tribute.tribute_id != expected {
             return Err(ProgramErrorV1::InvalidTributeIdentity { ordinal });
         }

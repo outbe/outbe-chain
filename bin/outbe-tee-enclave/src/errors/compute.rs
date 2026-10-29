@@ -13,9 +13,6 @@ pub enum ComputeError {
     /// The decoded `tribute_draft_id` length is not 32 bytes.
     #[error("tribute_draft_id must be 32 bytes, got {len}")]
     DraftIdLength { len: usize },
-    /// Poseidon token ID derivation failed.
-    #[error("{0}")]
-    PoseidonDigest(String),
     /// The issuance WorldwideDay VWAP is zero.
     #[error("issuance WorldwideDay VWAP is zero")]
     IssuanceVwapZero,
@@ -40,12 +37,6 @@ pub enum ComputeError {
     /// Combining base and micro amounts overflowed.
     #[error("amount overflow")]
     AmountOverflow,
-}
-
-impl From<outbe_primitives::wwd_entity_id::EntityIdDerivationError> for ComputeError {
-    fn from(err: outbe_primitives::wwd_entity_id::EntityIdDerivationError) -> Self {
-        Self::PoseidonDigest(err.to_string())
-    }
 }
 
 /// Error from decrypted Tribute JSON payload parsing and validation.

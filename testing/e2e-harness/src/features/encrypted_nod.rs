@@ -66,7 +66,7 @@ fn verify_encrypted_nod(world: &mut World) {
     let issued_in = world
         .state
         .nod_creation_blocks
-        .get(&encrypted.terms.nod_id.to_u256())
+        .get(&encrypted.terms.nod_id)
         .copied()
         .expect("creator createNod block");
     let (item, _) = world
@@ -104,7 +104,7 @@ fn assert_nod_state(
             .expect("canonical encrypted Nod");
     let view = world
         .rpc
-        .nod_data_on(peer, id.as_slice())
+        .nod_data_on(peer, &id.to_be_bytes::<32>())
         .expect("encrypted NOD public view");
     assert_eq!(&nod_keys::encrypted(&view), encrypted);
     assert_eq!(
@@ -126,7 +126,7 @@ fn assert_encrypted_metadata(
         url,
         addresses::NOD_ADDR,
         &eth::INod::tokenURICall {
-            nodId: encrypted.terms.nod_id.to_u256(),
+            nodId: encrypted.terms.nod_id,
         },
     )
     .expect("encrypted NOD metadata");
@@ -212,7 +212,7 @@ fn assert_native_issuance(
         let data: alloy_primitives::Bytes = log["data"].as_str().unwrap().parse().unwrap();
         let issued =
             eth::INodFactory::NodIssued::decode_raw_log(topics, &data).expect("native NodIssued");
-        if issued.nodId == encrypted.terms.nod_id.to_u256() {
+        if issued.nodId == encrypted.terms.nod_id {
             assert_eq!(issued.owner, encrypted.terms.owner);
             assert_eq!(
                 issued.encryptedGratisAmount.as_ref(),
@@ -238,7 +238,7 @@ fn verify_full_node_nod(world: &mut World) {
         .nod_for_owner(primary, owner(world))
         .expect("Nod owner read")
         .expect("created Nod");
-    let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(U256::from_be_slice(&id));
+    let id = U256::from_be_slice(&id);
     let expected = world
         .rpc
         .nod_state_at(primary, checkpoint, id)

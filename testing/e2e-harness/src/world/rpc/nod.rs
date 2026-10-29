@@ -112,11 +112,7 @@ pub(in crate::world::rpc) fn classify_owner_index_result(
     result: std::result::Result<eth::ViewCallOutcome<Vec<u8>>, String>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     match result {
-        Ok(eth::ViewCallOutcome::Returned(nod_id))
-            if nod_id.len() == outbe_primitives::wwd_entity_id::WwdEntityId::len_bytes() =>
-        {
-            Ok(Some(nod_id))
-        }
+        Ok(eth::ViewCallOutcome::Returned(nod_id)) if nod_id.len() == 32 => Ok(Some(nod_id)),
         Ok(eth::ViewCallOutcome::Returned(nod_id)) => Err(format!(
             "tokenOfOwnerByIndex returned a {}-byte NOD id",
             nod_id.len()

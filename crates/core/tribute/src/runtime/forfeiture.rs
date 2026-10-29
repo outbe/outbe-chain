@@ -136,7 +136,7 @@ pub(super) fn create_nod_from_tribute(
     contract: &mut TributeContract<'_>,
     caller: alloy_primitives::Address,
     tribute_id: WwdEntityId,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     let storage = contract.storage_handle();
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     storage.with_checkpoint(|| {
@@ -185,7 +185,10 @@ pub(super) fn create_nod_from_tribute(
             encrypted_tribute,
             outbe_primitives::nod_encryption::NodTermsV1 {
                 chain_id: storage.chain_id()?,
-                nod_id: tribute_id,
+                nod_id: outbe_primitives::nod_rules::derive_nod_id(
+                    record.owner,
+                    record.worldwide_day,
+                ),
                 owner: record.owner,
                 worldwide_day: day,
                 league_id: league,
@@ -196,14 +199,15 @@ pub(super) fn create_nod_from_tribute(
             gratis_load_minor,
         )
         .map_err(TributeError::private_amount_read_failed)?;
-        outbe_nodfactory::api::issue_tribute_nod_in_series(
+        let nod_id = outbe_nodfactory::api::issue_tribute_nod_in_series(
             &storage,
             &encrypted_nod,
             gratis_load_minor,
             group_key,
         )?;
 
-        burn_live_tribute_record(contract, &record, raw_league, nominal)
+        burn_live_tribute_record(contract, &record, raw_league, nominal)?;
+        Ok(nod_id)
     })
 }
 

@@ -361,7 +361,7 @@ fn quote_settlement_dispatch() {
             crate::precompile::dispatch(
                 storage,
                 &INodFactory::quoteSettlementCall {
-                    nodId: nod_id.to_u256(),
+                    nodId: nod_id,
                     asset: SETTLEMENT_ASSET_EUR,
                 }
                 .abi_encode(),

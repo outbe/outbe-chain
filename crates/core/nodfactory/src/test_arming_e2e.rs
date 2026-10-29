@@ -8,7 +8,6 @@ use alloy_sol_types::SolCall;
 use outbe_nod::schema::NodContract;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::NodFactoryError;
 
@@ -61,7 +60,7 @@ fn backdate_nod(
     issued_at: u64,
     gratis_load_minor: U256,
 ) -> Result<()> {
-    let id = WwdEntityId::from(nod_id);
+    let id = nod_id;
     let item = outbe_nod::api::load_item(storage, id)?.ok_or(NodFactoryError::NodNotFound)?;
     let group = outbe_nod::api::load_group(storage, item.body().group_key)?
         .ok_or(NodFactoryError::GroupNotFound)?;

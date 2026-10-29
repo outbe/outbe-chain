@@ -10,7 +10,6 @@ use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::pass_budget::{PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
@@ -99,7 +98,7 @@ fn nod_item_issued(
     outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day),
             owner,
             gratis_load_minor: U256::from(11),
             worldwide_day,
@@ -1251,14 +1250,11 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
 fn failing_members_do_not_hold_the_cleanup() {
     harness(|storage| {
         let specs: Vec<(u8, u64, bool)> = (0..5u8).map(|n| (0x60 + n, 5, false)).collect();
-        let (group_key, items) = arm_lapsed(storage, &specs);
+        let (group_key, _items) = arm_lapsed(storage, &specs);
         let nod = NodContract::new(storage.clone());
         // The top member slots name Nods with no body, each reverting on its own.
         for index in 3..specs.len() as u32 {
-            let ghost = WwdEntityId::from_day_and_digest(
-                items[0].worldwide_day,
-                B256::repeat_byte(index as u8),
-            );
+            let ghost = U256::from_be_bytes([index as u8; 32]);
             nod.group_nods
                 .write(
                     &outbe_nod::index_keys::group_nod_key(group_key, index),
@@ -2009,10 +2005,7 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     let json_at = |provider: &mut HashMapStorageProvider, timestamp: u64| {
         provider.set_timestamp(U256::from(timestamp));
         StorageHandle::enter(provider, |storage| {
-            let data = INod::tokenURICall {
-                nodId: item.nod_id.to_u256(),
-            }
-            .abi_encode();
+            let data = INod::tokenURICall { nodId: item.nod_id }.abi_encode();
             let out = dispatch(storage, &data, Address::ZERO, U256::ZERO).unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&out).unwrap();
             let json = base64::engine::general_purpose::STANDARD
