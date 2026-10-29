@@ -297,6 +297,14 @@ fn seed_source_series(
         },
     )
     .unwrap();
+    // A merchant gem is floored at this price: the source's emission-day VWAP.
+    if let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840).unwrap() {
+        if !entry.is_zero() {
+            OracleContract::new(storage.clone())
+                .record_utc_day_vwap(source_intex_id().day(), index, entry)
+                .unwrap();
+        }
+    }
 }
 
 /// Seed an Intex series and send the merchant's whole holding into a GemPosition

@@ -138,6 +138,11 @@ fn issue_source_series(world: &mut World) {
         url: &url,
         sender_key: DEPLOYER_KEY,
         worldwide_day: day,
+        // A closed day, so the merchant gems can read its price.
+        emission_day: outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(head),
+        )
+        .expect("date step"),
         issued_at: head,
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
@@ -366,6 +371,18 @@ impl Lifecycle for GemLifecycle {
             (MYR_ISO, USD_ISO),
             "the position does not carry the parked series' currencies"
         );
+        // Never below the source Intex, valued on its emission day.
+        let source_floor = eth::read_call(
+            &world_url(world),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getUtcDayVwapCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(position.referenceCurrency),
+                utcDay: outbe_primitives::series_id::SeriesId::from_bytes(position.sourceIntexId.0)
+                    .day(),
+            },
+        )
+        .expect("the source emission day is priced");
         let first = read_gem(world, gem(world, 0));
         for index in 0..HOLDERS {
             let id = gem(world, index);
@@ -383,9 +400,8 @@ impl Lifecycle for GemLifecycle {
                 (position.issuanceCurrency, position.referenceCurrency),
                 "gem {id} does not inherit the position's currencies"
             );
-            // The anti-dilution floor: never below the Intex the position came from.
             assert!(
-                data.entryPriceMinor >= position.sourceEntryPriceMinor,
+                data.entryPriceMinor >= source_floor,
                 "gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(

@@ -55,11 +55,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "sourceEntryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"
@@ -467,12 +462,6 @@
       },
       {
         "name": "capacityMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "sourceEntryPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

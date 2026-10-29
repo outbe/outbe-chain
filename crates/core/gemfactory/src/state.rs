@@ -148,12 +148,11 @@ impl<'s> GemFactoryContract<'s> {
             .ok_or(GemFactoryError::PositionNotFound)?;
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_intex_id\",\"value\":{}}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"source_entry_price\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}}]}}",
+            "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_intex_id\",\"value\":{}}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}}]}}",
             position_id,
             pos.merchant,
             pos.source_intex_id,
             self.remaining_capacity(&pos)?,
-            pos.source_entry_price_minor,
             pos.issuance_currency,
             pos.reference_currency,
             pos.issued_at,

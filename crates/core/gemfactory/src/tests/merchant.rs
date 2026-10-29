@@ -59,7 +59,6 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         assert_eq!(rec.merchant, ALICE);
         assert_eq!(rec.source_intex_id, source_intex_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
-        assert_eq!(rec.source_entry_price_minor, six_decimal_unit());
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
@@ -324,6 +323,61 @@ fn issue_merchant_gem_over_capacity_rejects() {
 }
 
 #[test]
+fn an_unpriced_source_emission_day_issues_nothing() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        // A zero source entry leaves the source's emission day without a VWAP.
+        let id = seed_and_send(storage, U256::ZERO, six_decimal_u128());
+        let r = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: six_decimal_unit(),
+            },
+        );
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::OracleUnavailable
+            )
+            .to_string()
+        );
+        let position = GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            position.remaining_capacity_minor,
+            sent_capacity(six_decimal_u128())
+        );
+    });
+}
+
+#[test]
+fn equal_prices_take_the_market_price() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        let id = seed_and_send(storage, rate, six_decimal_u128());
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: six_decimal_unit(),
+            },
+        )
+        .unwrap();
+        assert_eq!(gem_view(storage, gem_id).item.entry_price_minor, rate);
+    });
+}
+
+#[test]
 fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -336,7 +390,6 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 merchant: ALICE,
                 source_intex_id: source_intex_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
-                source_entry_price_minor: six_decimal_unit(),
                 issuance_currency: 840,
                 reference_currency: 840,
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,

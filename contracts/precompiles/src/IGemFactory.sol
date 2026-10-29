@@ -92,7 +92,6 @@ interface IGemFactory {
         bytes14 sourceIntexId;
         /// @notice 0 once the position expired.
         uint256 remainingCapacityMinor;
-        uint256 sourceEntryPriceMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         /// @notice When the position was issued.
@@ -126,7 +125,6 @@ interface IGemFactory {
         address indexed merchant,
         bytes14 sourceIntexId,
         uint256 capacityMinor,
-        uint256 sourceEntryPriceMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt,
