@@ -51,14 +51,19 @@ pub(crate) fn preflight_brief(
     u32::try_from(midnight).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
 }
 
+/// `desis_limit_minor` is the brief's limit, already narrowed to the auction domain.
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    emission_day: u32,
+    brief: crate::api::AuctionBrief,
     desis_limit_minor: u128,
-    has_limit: bool,
     anchor: u32,
 ) -> Result<()> {
+    let crate::api::AuctionBrief {
+        worldwide_day,
+        emission_day,
+        has_limit,
+        ..
+    } = brief;
     let mut contract = storage.contract::<DesisContract>();
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract

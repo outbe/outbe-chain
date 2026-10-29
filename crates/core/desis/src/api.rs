@@ -70,9 +70,8 @@ pub fn dispatch_auction_brief(
 ) -> Result<AuctionBriefReceipt> {
     let AuctionBrief {
         worldwide_day,
-        emission_day,
         desis_limit_minor,
-        has_limit,
+        ..
     } = brief;
     storage.clone().with_checkpoint(|| {
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
@@ -95,14 +94,7 @@ pub fn dispatch_auction_brief(
                 max_accepted,
             });
         };
-        runtime::record_preflighted_brief(
-            storage.clone(),
-            worldwide_day,
-            emission_day,
-            desis_limit_u128,
-            has_limit,
-            anchor,
-        )?;
+        runtime::record_preflighted_brief(storage.clone(), brief, desis_limit_u128, anchor)?;
         Ok(AuctionBriefReceipt::Accepted)
     })
 }
