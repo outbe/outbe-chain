@@ -554,9 +554,10 @@ sol! {
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
         uint64 callPriceMinor;
+        bytes14 seriesId;
         IntexCallTrigger callTrigger;
-        uint32 issuedAt;
-        uint32 calledAt;
+        uint64 issuedAt;
+        uint64 calledAt;
         uint32 totalSupply;
         uint8 state;
         uint32 worldwideDay;
@@ -567,7 +568,7 @@ sol! {
         function seriesExists(bytes14 seriesId) external view returns (bool);
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
         function readData(bytes14 seriesId) external view returns (SeriesData);
-        function parkedMark(bytes14 seriesId) external view returns (uint32);
+        function parkedMark(bytes14 seriesId) external view returns (uint64);
         function applyParkedMark(bytes14 seriesId) external;
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
@@ -718,7 +719,7 @@ pub(crate) fn series_called_at(
     url: &str,
     nft: Address,
     series: alloy_primitives::FixedBytes<14>,
-) -> Option<u32> {
+) -> Option<u64> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
         .map(|data| data.calledAt)
 }
@@ -731,7 +732,7 @@ pub(crate) fn series_call_deadline(
     series: alloy_primitives::FixedBytes<14>,
 ) -> Option<u64> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
-        .map(|data| u64::from(data.calledAt) + u64::from(data.callTrigger.callNoticePeriod))
+        .map(|data| data.calledAt + u64::from(data.callTrigger.callNoticePeriod))
 }
 
 /// The deadline plus the transit margin: a scenario waits past it to read Forfeited.
@@ -741,7 +742,7 @@ pub(crate) fn series_transit_close(
     series: alloy_primitives::FixedBytes<14>,
 ) -> Option<u64> {
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
-        u64::from(data.calledAt)
+        data.calledAt
             + u64::from(data.callTrigger.callNoticePeriod)
             + u64::from(data.callTrigger.transitMargin)
     })

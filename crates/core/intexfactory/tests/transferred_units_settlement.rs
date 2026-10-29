@@ -177,7 +177,7 @@ impl World {
                 params: IIntexNFT1155::CreateSeriesParams {
                     seriesId: FixedBytes(SERIES),
                     worldwideDay: 20_241_220,
-                    issuedAt: TIMESTAMP as u32,
+                    issuedAt: TIMESTAMP,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,
                     issuedUnits: ISSUED_UNITS as u32,

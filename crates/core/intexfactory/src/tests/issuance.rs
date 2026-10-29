@@ -148,7 +148,7 @@ fn issuance_seals_the_given_conditions_not_the_live_profile() {
             leg.callNoticePeriod,
             params.call_trigger.call_notice_period_seconds
         );
-        assert_eq!(leg.issuedAt, ISSUED_AT);
+        assert_eq!(leg.issuedAt, u64::from(ISSUED_AT));
     });
 }
 
@@ -236,7 +236,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
         seriesId: sid(series).into(),
         worldwideDay: day,
-        issuedAt: ISSUED_AT,
+        issuedAt: u64::from(ISSUED_AT),
         issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,
         entryPriceMinor: 0,

@@ -212,6 +212,22 @@ contract IntexNFT1155Test is Test {
         assertEq(data.calledAt + data.callTrigger.callNoticePeriod, calledAt + customCallPeriod);
     }
 
+    function test_TimesPastUint32MaxKeepTheirValue() public {
+        vm.warp(uint256(type(uint32).max) + 1 days);
+        uint32 period = uint32(14 days);
+        _createSeries(SERIES_ID_1_DAY, period);
+        uint64 calledAt = uint64(block.timestamp);
+
+        vm.expectEmit(true, false, false, true);
+        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, calledAt, calledAt + period);
+        vm.prank(bridger);
+        nft.markCalled(SERIES_ID_1, calledAt);
+
+        IIntexNFT1155.SeriesData memory data = nft.readData(SERIES_ID_1);
+        assertEq(data.issuedAt, calledAt);
+        assertEq(data.calledAt, calledAt);
+    }
+
     function test_OnlyBridgeCanMarkCalled() public {
         _createSeries(SERIES_ID_1_DAY, 0);
 
@@ -359,7 +375,7 @@ contract IntexNFT1155Test is Test {
     function test_Events() public {
         uint256 quantity = 10;
         uint32 customCallPeriod = uint32(14 days);
-        uint32 settlementDeadline = uint32(block.timestamp + 14 days);
+        uint64 settlementDeadline = uint64(block.timestamp + 14 days);
 
         vm.startPrank(bridger);
         vm.expectEmit();
@@ -370,16 +386,9 @@ contract IntexNFT1155Test is Test {
         emit IIntexNFT1155.IntexIssued(bridger, TOKEN_ID_1, user, quantity);
         nft.issueIntex(user, quantity, SERIES_ID_1);
 
-        vm.expectEmit(true, true, false, true);
-        emit IIntexNFT1155.IntexStatusUpdated(
-            bridger,
-            TOKEN_ID_1,
-            IIntexNFT1155.IntexState.Issued,
-            IIntexNFT1155.IntexState.Called,
-            uint32(block.timestamp),
-            settlementDeadline
-        );
-        nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
+        vm.expectEmit(true, false, false, true);
+        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, uint64(block.timestamp), settlementDeadline);
+        nft.markCalled(SERIES_ID_1, uint64(block.timestamp));
         vm.stopPrank();
     }
 

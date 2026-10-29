@@ -944,7 +944,7 @@ fn apply_parked_mark(
     target_url: &str,
     target_router: Address,
     series: FixedBytes<14>,
-) -> Option<u32> {
+) -> Option<u64> {
     let parked = eth::read_call(
         target_url,
         target_router,

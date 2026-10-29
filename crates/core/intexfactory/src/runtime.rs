@@ -75,7 +75,7 @@ pub fn issue_intex(
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
                 worldwideDay: params.worldwide_day.into(),
-                issuedAt: issued_at,
+                issuedAt: u64::from(issued_at),
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
                 entryPriceMinor: entry_price_minor_u64,

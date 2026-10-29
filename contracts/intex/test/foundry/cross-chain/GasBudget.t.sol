@@ -283,7 +283,7 @@ contract GasBurningIntex {
         return true;
     }
 
-    function markCalled(bytes14 seriesId, uint32) external {
+    function markCalled(bytes14 seriesId, uint64) external {
         if (seriesId == poison) {
             // Spin until the frame's gas is gone.
             while (true) {

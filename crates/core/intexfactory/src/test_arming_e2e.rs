@@ -166,7 +166,7 @@ fn issue_for_test(
             outbe_intex::api::set_issued_at(storage, SeriesId::from(series_id), call.issuedAt)?;
         }
         for leg in &mut legs {
-            leg.payload.issuedAt = call.issuedAt;
+            leg.payload.issuedAt = u64::from(call.issuedAt);
         }
     }
     crate::api::send_issuance(storage, legs)

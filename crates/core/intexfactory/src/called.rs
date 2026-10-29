@@ -199,7 +199,7 @@ pub(crate) fn notify_called(
                 U256::ZERO,
                 IOriginRouter::sendMarkCalledCall {
                     worldwideDay: worldwide_day.value(),
-                    calledAt: called_at,
+                    calledAt: u64::from(called_at),
                     seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
                 }
                 .abi_encode()

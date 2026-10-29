@@ -106,8 +106,8 @@
             },
             {
               "name": "issuedAt",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "uint64",
+              "internalType": "uint64"
             },
             {
               "name": "issuanceCurrency",
@@ -300,8 +300,8 @@
         },
         {
           "name": "calledAt",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ],
       "outputs": [],
@@ -367,6 +367,11 @@
               "internalType": "uint64"
             },
             {
+              "name": "seriesId",
+              "type": "bytes14",
+              "internalType": "bytes14"
+            },
+            {
               "name": "callTrigger",
               "type": "tuple",
               "internalType": "struct IIntexNFT1155.IntexCallTrigger",
@@ -395,13 +400,13 @@
             },
             {
               "name": "issuedAt",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "uint64",
+              "internalType": "uint64"
             },
             {
               "name": "calledAt",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "uint64",
+              "internalType": "uint64"
             },
             {
               "name": "totalSupply",
@@ -417,11 +422,6 @@
               "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
-            },
-            {
-              "name": "seriesId",
-              "type": "bytes14",
-              "internalType": "bytes14"
             }
           ]
         }
@@ -758,43 +758,25 @@
     },
     {
       "type": "event",
-      "name": "IntexStatusUpdated",
+      "name": "IntexSeriesCalled",
       "inputs": [
         {
-          "name": "operator",
-          "type": "address",
+          "name": "seriesId",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "address"
+          "internalType": "bytes14"
         },
         {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "fromState",
-          "type": "uint8",
+          "name": "calledAt",
+          "type": "uint64",
           "indexed": false,
-          "internalType": "enum IIntexNFT1155.IntexState"
-        },
-        {
-          "name": "toState",
-          "type": "uint8",
-          "indexed": false,
-          "internalType": "enum IIntexNFT1155.IntexState"
-        },
-        {
-          "name": "at",
-          "type": "uint32",
-          "indexed": false,
-          "internalType": "uint32"
+          "internalType": "uint64"
         },
         {
           "name": "settlementDeadline",
-          "type": "uint32",
+          "type": "uint64",
           "indexed": false,
-          "internalType": "uint32"
+          "internalType": "uint64"
         }
       ],
       "anonymous": false
@@ -916,8 +898,8 @@
         },
         {
           "name": "closedAt",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ]
     },
@@ -927,13 +909,13 @@
       "inputs": [
         {
           "name": "calledAt",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         },
         {
           "name": "nowTs",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ]
     },
@@ -943,8 +925,8 @@
       "inputs": [
         {
           "name": "issuedAt",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ]
     },
@@ -975,8 +957,8 @@
         },
         {
           "name": "closedAt",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ]
     },
@@ -1039,8 +1021,8 @@
         },
         {
           "name": "deadline",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "uint64",
+          "internalType": "uint64"
         }
       ]
     },

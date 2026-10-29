@@ -40,10 +40,10 @@ contract IntexNFT1155ForfeitedTest is Test {
     }
 
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
-    /// and `state` into the record's fourth slot, `state` at byte 12.
+    /// and `state` into the record's fourth slot, `state` at byte 20.
     function _storedState() internal view returns (uint8) {
         bytes32 base = keccak256(abi.encode(iTok, STORAGE_SLOT));
-        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 96);
+        return uint8(uint256(vm.load(address(token), bytes32(uint256(base) + 3))) >> 160);
     }
 
     function test_ReadsCalledUpToTheTransitCloseAndForfeitedAfterIt() public {

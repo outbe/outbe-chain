@@ -24,7 +24,7 @@ library CreateSeriesLib {
         return IIntexNFT1155.CreateSeriesParams({
             seriesId: seriesId(worldwideDay),
             worldwideDay: worldwideDay,
-            issuedAt: uint32(block.timestamp),
+            issuedAt: uint64(block.timestamp),
             issuanceCurrency: 840,
             referenceCurrency: 840,
             issuedUnits: issuedUnits,
