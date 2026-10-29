@@ -189,15 +189,6 @@ pub enum OracleCmd {
         #[arg(long)]
         timestamp: Option<u64>,
     },
-    /// Show active S-curve entries for a pair
-    ScurveEntries {
-        /// Base currency
-        #[arg(value_parser = parse_asset)]
-        base: Address,
-        /// Quote currency
-        #[arg(value_parser = parse_asset)]
-        quote: Address,
-    },
     /// Show S-curve values for a pair at a timestamp
     ScurveValues {
         /// Base currency
@@ -302,7 +293,6 @@ impl OracleCmd {
                 quote,
                 timestamp,
             } => timestamped_oracle_metric(client, false, base, quote, timestamp).await,
-            Self::ScurveEntries { base, quote } => scurve_entries(client, base, quote).await,
             Self::ScurveValues {
                 base,
                 quote,
@@ -787,31 +777,6 @@ async fn timestamped_oracle_metric(
     Ok(())
 }
 
-async fn scurve_entries(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Result<()> {
-    let ret = call_oracle(client, IOracle::getScurveEntriesCall { base, quote }).await?;
-
-    println!("=== Active S-curve Entries: {base}/{quote} ===");
-    println!(
-        "{:<12} {:<20} {:<20}",
-        "PeakDay", "PeakPrice", "CurrentValue"
-    );
-    println!("{}", "-".repeat(58));
-    for ((peak_day, peak_price), current_value) in ret
-        .peakDays
-        .iter()
-        .zip(ret.peakPrices.iter())
-        .zip(ret.currentValues.iter())
-    {
-        println!(
-            "{:<12} {:<20} {:<20}",
-            peak_day,
-            format_oracle_market_quantity(base, quote, *peak_price),
-            format_oracle_market_quantity(base, quote, *current_value)
-        );
-    }
-    Ok(())
-}
-
 async fn scurve_values(
     client: &(impl Rpc + Sync),
     base: Address,
@@ -919,7 +884,7 @@ async fn nominal_components(
     );
     println!(
         "MaxCurve:  {}",
-        format_oracle_market_quantity(base, quote, ret.maxScurve)
+        format_oracle_market_quantity(base, quote, ret.scurveValue)
     );
     println!("Source:    {}", ret.source);
     Ok(())
@@ -1060,9 +1025,6 @@ mod tests {
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "scurve", "COEN", "840", "--timestamp", "123"]);
-        assert!(cli.is_ok());
-
-        let cli = TestCli::try_parse_from(["test", "scurve-entries", "COEN", "840"]);
         assert!(cli.is_ok());
 
         let cli = TestCli::try_parse_from(["test", "scurve-values", "COEN", "840", "123"]);

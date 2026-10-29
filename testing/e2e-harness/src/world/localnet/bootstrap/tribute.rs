@@ -159,7 +159,7 @@ impl Localnet {
                 outbe_oracle::scurve::store_scurve_entry(
                     &mut oracle,
                     reference_pair,
-                    worldwide_day.to_timestamp_utc(),
+                    worldwide_day,
                     pairs.reference_scurve,
                 )?;
                 let inputs = outbe_oracle::api::tribute_pricing_inputs(
@@ -376,7 +376,7 @@ fn seed_public_measurement_day(
     write_measurement_vwaps(storage.clone(), day)?;
     let stored_current = outbe_oracle::api::day_type_pair_vwap(storage.clone(), worldwide_day)?
         .ok_or_else(|| fatal("native Tribute fixture current VWAP is missing"))?;
-    let entry_price = stored_current.max(outbe_oracle::api::get_max_active_scurve_value(
+    let entry_price = stored_current.max(outbe_oracle::api::get_scurve_value(
         storage.clone(),
         worldwide_day,
         pair,
@@ -518,13 +518,6 @@ fn write_measurement_vwaps(
     let current_vwap_minor = U256::from(2);
     let volume = U256::from(1_000_000_u64);
     let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
-    let inherited_scurve_expiry = day
-        .genesis_timestamp
-        .checked_add(
-            (outbe_oracle::scurve::PERIOD as u64 + 1) * outbe_primitives::time::SECONDS_PER_DAY,
-        )
-        .ok_or_else(|| fatal("native Tribute fixture S-curve expiry overflow"))?;
-    outbe_oracle::scurve::evict_expired_scurves(&mut oracle, inherited_scurve_expiry)?;
     oracle.write_snapshot(day.forming_start, &[(pair, current_vwap_minor, volume)])?;
     let pair_index = oracle.pair_index_of(pair)?;
     if pair_index == 0 {

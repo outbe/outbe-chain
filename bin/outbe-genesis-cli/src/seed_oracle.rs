@@ -8,8 +8,8 @@ use serde_json::Value;
 use crate::error::GenesisError;
 use crate::seed_codec::{
     address_as_u256, address_bytes, address_pair, asset_address, data_slot, is_iso_asset_address,
-    parse_u256, parse_u32, parse_u64, u32_bytes, wwd_to_day_timestamp, StorageBuilder,
-    SECONDS_PER_DAY,
+    nested_mapping_key, parse_u256, parse_u32, parse_u64, u32_bytes, u64_bytes,
+    wwd_to_day_timestamp, StorageBuilder, SECONDS_PER_DAY,
 };
 
 /// The reference currencies. The Oracle code defines them as
@@ -264,6 +264,14 @@ fn seed_oracle_registry(
     Ok(pair_ids)
 }
 
+/// The S-curve ring of the Oracle: curves per pair, then the start WWD and the
+/// peak price per ring slot. Mirrors `scurve_len`, `scurve_peak_wwd`,
+/// `scurve_peak_price` and `SCURVE_RING_SLOTS` in crates/system/oracle.
+const SCURVE_LEN_SLOT: u64 = 82;
+const SCURVE_PEAK_WWD_SLOT: u64 = 83;
+const SCURVE_PEAK_PRICE_SLOT: u64 = 84;
+const SCURVE_RING_SLOTS: u64 = 32;
+
 fn seed_oracle_scurves(
     storage: &mut StorageBuilder,
     config: &Value,
@@ -272,12 +280,8 @@ fn seed_oracle_scurves(
     let Some(scurve_seeds) = config.get("scurve_seeds").and_then(Value::as_array) else {
         return Ok(());
     };
-    if scurve_seeds.is_empty() {
-        return Ok(());
-    }
-    storage.set_slot(34u64, scurve_seeds.len());
-    storage.set_slot(38u64, 0u64);
-    for (idx, sc) in scurve_seeds.iter().enumerate() {
+    let mut curves: BTreeMap<[u8; 40], u64> = BTreeMap::new();
+    for sc in scurve_seeds {
         let base = value_to_string(sc.get("pair_base"))?;
         let quote = value_to_string(sc.get("pair_quote"))?;
         if !pair_ids.contains_key(&(base.clone(), quote.clone())) {
@@ -289,15 +293,31 @@ fn seed_oracle_scurves(
             .get("peak_day")
             .ok_or_else(|| GenesisError::validation("missing scurve peak_day"))
             .and_then(parse_u32)?;
-        let peak_day_ts = wwd_to_day_timestamp(peak_day)?;
+        wwd_to_day_timestamp(peak_day)?;
         let peak_price = sc
             .get("peak_price")
             .ok_or_else(|| GenesisError::validation("missing scurve peak_price"))
             .and_then(parse_u256)?;
-        let idx_u32 = idx as u32;
-        storage.set_mapping_pair(35, &u32_bytes(idx_u32), &base, &quote)?;
-        storage.set_mapping(36, &u32_bytes(idx_u32), peak_day_ts);
-        storage.set_mapping(37, &u32_bytes(idx_u32), peak_price);
+        let key = address_pair(&base, &quote)?;
+        let slot = curves.entry(key).or_default();
+        if *slot == SCURVE_RING_SLOTS {
+            return Err(GenesisError::validation(format!(
+                "more than {SCURVE_RING_SLOTS} scurve seeds for {base}/{quote}"
+            )));
+        }
+        let ring_slot = u64_bytes(*slot);
+        storage.set_raw_slot(
+            nested_mapping_key(&key, &ring_slot, SCURVE_PEAK_WWD_SLOT),
+            U256::from(peak_day),
+        );
+        storage.set_raw_slot(
+            nested_mapping_key(&key, &ring_slot, SCURVE_PEAK_PRICE_SLOT),
+            peak_price,
+        );
+        *slot += 1;
+    }
+    for (key, len) in curves {
+        storage.set_mapping(SCURVE_LEN_SLOT, &key, len);
     }
     Ok(())
 }

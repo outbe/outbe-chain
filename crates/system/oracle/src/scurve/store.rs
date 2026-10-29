@@ -1,170 +1,110 @@
-//! Writes of the S-curve chains and daily peak detection over closed days.
+//! Writes of the per-pair S-curve ring.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use super::query::entry_pair;
-use super::{compute_scurve_value, truncate_to_day};
+use super::query::{curve_at, curve_value};
 use crate::errors::OracleError;
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 
-/// Stores or replaces the single S-curve chain for a pair.
+/// Curves each pair keeps. The next curve overwrites the oldest one.
+pub const SCURVE_RING_SLOTS: u64 = 32;
+
+// A Tribute reads the curve in force at the oldest WWD still in an offering
+// window, and every newer curve. That WWD started at most forming + lookback
+// delay + offering ago, and a pair starts at most one curve for each WWD.
+// The ring holds those curves plus the one in force before them.
+// Genesis can only shorten these periods, so the defaults bound them.
+const _: () = assert!(
+    (outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
+        + outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
+        + outbe_chain_constants::DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS)
+        .div_ceil(SECONDS_PER_DAY)
+        < SCURVE_RING_SLOTS
+);
+
+/// Starts a curve of `pair` at `wwd` with `peak_price` when the price is above
+/// the newest curve at `wwd`. A `wwd` at or before the newest curve start is
+/// ignored. Returns `true` when it stored the curve.
 pub fn store_scurve_entry(
     oracle: &mut OracleContract,
     pair: AddressPair,
-    peak_day: u64,
+    wwd: WorldwideDay,
     peak_price: U256,
-) -> Result<()> {
+) -> Result<bool> {
     let storage = oracle.storage.clone();
-    storage
-        .with_checkpoint(|| store_scurve_entry_inner(oracle, pair, peak_day, peak_price))
-        .map(|_| ())
+    storage.with_checkpoint(|| store_scurve_entry_inner(oracle, pair, wwd, peak_price))
 }
 
 fn store_scurve_entry_inner(
     oracle: &mut OracleContract,
     pair: AddressPair,
-    peak_day: u64,
+    wwd: WorldwideDay,
     peak_price: U256,
 ) -> Result<bool> {
-    let count = oracle.scurve_count.read()?;
-    let next_idx = count
+    let len = oracle.scurve_len.read(&pair)?;
+    let next_len = len
         .checked_add(1)
         .ok_or(OracleError::ScurveWriteIndexOverflow)?;
-    let oldest = oracle.scurve_oldest_idx.read()?;
-    for idx in oldest..count {
-        if entry_pair(oracle, idx)? != pair {
-            continue;
-        }
-
-        let current_peak_day = oracle.scurve_peak_day.read(&idx)?;
-        if peak_day < current_peak_day {
+    if let Some(newest) = len.checked_sub(1) {
+        let start = oracle
+            .scurve_peak_wwd
+            .get_nested(&pair)
+            .read(&(newest % SCURVE_RING_SLOTS))?;
+        if wwd <= start {
             return Ok(false);
         }
-        let days_since = ((peak_day - current_peak_day) / SECONDS_PER_DAY) as usize;
-        let current_value = compute_scurve_value(oracle.scurve_peak_price.read(&idx)?, days_since);
-        if peak_price <= current_value {
-            return Ok(false);
-        }
-
-        oracle.scurve_peak_day.write(&idx, peak_day)?;
-        oracle.scurve_peak_price.write(&idx, peak_price)?;
-        return Ok(true);
     }
-
-    let idx = count;
-    oracle.scurve_pair.write_pair(&idx, pair)?;
-    oracle.scurve_peak_day.write(&idx, peak_day)?;
-    oracle.scurve_peak_price.write(&idx, peak_price)?;
-    oracle.scurve_count.write(next_idx)?;
+    if let Some((start, price)) = curve_at(oracle, pair, wwd)? {
+        if peak_price <= curve_value(start, price, wwd) {
+            return Ok(false);
+        }
+    }
+    let slot = len % SCURVE_RING_SLOTS;
+    oracle.scurve_peak_wwd.get_nested(&pair).write(&slot, wwd)?;
+    oracle
+        .scurve_peak_price
+        .get_nested(&pair)
+        .write(&slot, peak_price)?;
+    oracle.scurve_len.write(&pair, next_len)?;
     Ok(true)
 }
 
-/// Retained public seam. Continuous chains never expire or advance `oldest`.
-pub fn evict_expired_scurves(_oracle: &mut OracleContract, _current_timestamp: u64) -> Result<()> {
-    Ok(())
-}
-
-/// Detects peaks from the last 3 *closed* daily close prices for a pair
-/// and stores new S-curve entries.
-///
-/// A peak occurs when: close[D-3] < close[D-2] > close[D-1], i.e. D-2 is the
-/// peak. The function never uses the current (just-started) day as a close.
-/// Thus the function confirms the peak of a day X at the start of X+2.
-///
-/// The daily hook calls this function on the first block of each UTC day.
-pub fn process_daily_scurve(
+/// Starts a curve at `wwd` for each pair in `wwd_vwaps` whose UTC day of the
+/// same date has a VWAP. That UTC day is the middle 24 h of the forming window,
+/// and it has a VWAP only when it passed the round coverage check.
+pub(crate) fn process_wwd_scurves(
     oracle: &mut OracleContract,
-    pair: AddressPair,
-    timestamp: u64,
+    wwd: WorldwideDay,
+    wwd_vwaps: &[(AddressPair, U256)],
 ) -> Result<()> {
-    let storage = oracle.storage.clone();
-    storage.with_checkpoint(|| process_daily_scurve_inner(oracle, pair, timestamp))
-}
-
-fn process_daily_scurve_inner(
-    oracle: &mut OracleContract,
-    pair: AddressPair,
-    timestamp: u64,
-) -> Result<()> {
-    let current_day = truncate_to_day(timestamp);
-
-    // The daily hook fires on the first block of `current_day`, so
-    // `current_day` itself has no close yet. Detect peaks only over fully
-    // CLOSED UTC days. At this point the most recent closed day is D-1, so
-    // the latest peak we can confirm is D-2. To confirm a peak, we need the
-    // close of the day that follows it.
-    //
-    //   day_minus_3 (close before peak) < day_minus_2 (peak) > day_minus_1 (close after peak)
-    let day_minus_1 = current_day.saturating_sub(SECONDS_PER_DAY);
-    let day_minus_2 = current_day.saturating_sub(2 * SECONDS_PER_DAY);
-    let day_minus_3 = current_day.saturating_sub(3 * SECONDS_PER_DAY);
-
-    // Last snapshot rate within each fully-closed UTC day.
-    let close_d1 = get_daily_close(oracle, pair, day_minus_1)?;
-    let close_d2 = get_daily_close(oracle, pair, day_minus_2)?;
-    let close_d3 = get_daily_close(oracle, pair, day_minus_3)?;
-
-    // Need all three closed-day prices to detect a peak.
-    if close_d1.is_zero() || close_d2.is_zero() || close_d3.is_zero() {
-        return Ok(());
-    }
-
-    // Peak detection: D-3 < D-2 > D-1 (i.e., D-2 is the peak).
-    if close_d3 < close_d2
-        && close_d2 > close_d1
-        && store_scurve_entry_inner(oracle, pair, day_minus_2, close_d2)?
-    {
-        let event = IOracle::ScurvePeakDetected {
-            base: pair.address1(),
-            quote: pair.address2(),
-            peakPrice: close_d2,
-            peakDay: day_minus_2,
-        };
-        let event_result = oracle
-            .storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data());
-        event_result?;
-    }
-
-    Ok(())
-}
-
-/// Gets the closest exchange rate snapshot for a pair on a given day.
-///
-/// Scans snapshots backwards from the day end to find the last rate for that day.
-fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -> Result<U256> {
-    let day_end = day_start + SECONDS_PER_DAY;
-    let write_idx = oracle.snapshot_write_idx.read()?;
-    let oldest_idx = oracle.snapshot_oldest_idx.read()?;
-
-    let mut idx = write_idx;
-    while idx > oldest_idx {
-        idx -= 1;
-        let ts = oracle.snapshot_timestamp.read(&idx)?;
-        if ts < day_start {
-            break;
-        }
-        if ts >= day_end {
+    for &(pair, vwap) in wwd_vwaps {
+        if !crate::constants::REFERENCE_CURRENCIES
+            .iter()
+            .any(|&iso_code| AddressPair::new_coen_to(iso_code) == pair)
+        {
             continue;
         }
-
-        // This snapshot is in the day. Look for our pair in it.
-        let pc = oracle.snapshot_pair_count.read(&idx)?;
-        let pair_map = oracle.snapshot_pair.get_nested(&idx);
-        let rate_map = oracle.snapshot_rate.get_nested(&idx);
-
-        for p in 0..pc {
-            if pair_map.read_pair(&p)?.same_market(&pair) {
-                return rate_map.read(&p);
-            }
+        let index = oracle.pair_index_of(pair)?;
+        let covered = oracle
+            .get_utc_day_vwap_for_pair(wwd.value(), index)?
+            .is_some_and(|day_vwap| !day_vwap.is_zero());
+        if covered && store_scurve_entry(oracle, pair, wwd, vwap)? {
+            let event = IOracle::ScurvePeakDetected {
+                base: pair.address1(),
+                quote: pair.address2(),
+                peakPrice: vwap,
+                peakDay: wwd.into(),
+            };
+            oracle
+                .storage
+                .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
         }
     }
-
-    Ok(U256::ZERO)
+    Ok(())
 }

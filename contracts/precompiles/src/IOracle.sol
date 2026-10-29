@@ -74,8 +74,7 @@ interface IOracle {
     event TallyCompleted(uint64 blockNumber, uint32 pairsUpdated);
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
     event ValidatorForcedExit(address indexed validator);
-    /// @dev `peakDay` is the UTC midnight of the peak, in Unix seconds.
-    ///      It is not a yyyymmdd date key.
+    /// @dev `peakDay` is the WorldwideDay the curve starts at, as a yyyymmdd date key.
     event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
     /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
     /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
@@ -140,9 +139,12 @@ interface IOracle {
         view
         returns (uint256 vwap);
 
-    /// @notice Returns the maximum active S-curve value at `timestamp`.
-    /// @dev A COEN/ISO S-curve value uses 6 decimals.
+    /// @notice Returns the S-curve value at the WorldwideDay that contains `timestamp`.
+    /// @dev The value comes from the newest curve that starts at that WorldwideDay or earlier.
+    ///      A COEN/ISO S-curve value uses 6 decimals.
     ///      The coefficient table is the COEN/840 six-decimal table.
+    ///      A pair keeps its 32 newest curves. When it holds 32, a WorldwideDay before the
+    ///      first `peakDay` of `getAllScurveDataForPair` can return 0.
     function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
 
     /// @notice Returns oracle parameters.
@@ -342,36 +344,27 @@ interface IOracle {
             uint64[] memory lookbackSeconds
         );
 
-    /// @notice Returns the active S-curve entry for a pair.
-    /// @dev Each `peakDay` is the UTC midnight of that peak, in Unix seconds.
-    ///      It is not a yyyymmdd date key.
-    ///      A COEN/ISO peak price and current value use 6 decimals.
-    function getScurveEntries(address base, address quote)
-        external
-        view
-        returns (uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory currentValues);
-
-    /// @notice Returns S-curve values for a pair at `timestamp`.
-    /// @return targetDay UTC midnight of `timestamp`, in Unix seconds.
-    /// @dev Each `peakDay` uses that same UTC-midnight unit.
+    /// @notice Returns S-curve values for a pair at the WorldwideDay that contains `timestamp`.
+    /// @return targetDay That WorldwideDay, as a yyyymmdd date key.
+    /// @dev Each `peakDay` uses that same yyyymmdd unit.
     ///      A COEN/ISO price and value use 6 decimals.
+    ///      A pair keeps its 32 newest curves. When it holds 32, a WorldwideDay before the
+    ///      first `peakDay` of `getAllScurveDataForPair` can return 0.
     function getScurveValues(address base, address quote, uint64 timestamp)
         external
         view
         returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
 
-    /// @notice Returns the S-curve peak for every stored pair.
-    /// @dev Each `peakDay` is a UTC midnight in Unix seconds.
-    ///      It is not a yyyymmdd date key.
+    /// @notice Returns every stored S-curve of every registered pair.
+    /// @dev Each `peakDay` is the WorldwideDay a curve starts at, as a yyyymmdd date key.
     ///      A COEN/ISO peak price uses 6 decimals.
     function getAllScurveData()
         external
         view
         returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
 
-    /// @notice Returns the stored S-curve peak for one pair.
-    /// @dev Each `peakDay` is a UTC midnight in Unix seconds.
-    ///      It is not a yyyymmdd date key.
+    /// @notice Returns the stored S-curves of one pair, oldest first.
+    /// @dev Each `peakDay` is the WorldwideDay a curve starts at, as a yyyymmdd date key.
     ///      A COEN/ISO peak price uses 6 decimals.
     function getAllScurveDataForPair(address base, address quote)
         external
@@ -387,18 +380,19 @@ interface IOracle {
     function getNominalPrice(address base, address quote, uint64 timestamp) external view returns (uint256 price);
 
     /// @notice Returns the parts of the nominal price at `timestamp`.
-    /// @dev Nominal price is the larger of `vwap` and `maxScurve`.
+    /// @dev Nominal price is the larger of `vwap` and `scurveValue`.
     ///      `vwap` uses the pair's registered scale.
     ///      COEN/ISO VWAP uses 6 decimals. A generic pair VWAP uses 18 decimals.
     ///      A COEN/ISO S-curve value uses 6 decimals.
-    ///      Policy rate uses a separate 1e6 scale. It is not `maxScurve`.
-    /// @return nominalPrice The larger of `vwap` and `maxScurve`.
+    ///      Policy rate uses a separate 1e6 scale. It is not `scurveValue`.
+    /// @return nominalPrice The larger of `vwap` and `scurveValue`.
     /// @return vwap VWAP for the UTC day that contains `timestamp`.
-    /// @return maxScurve Active S-curve value. A COEN/ISO value uses 6 decimals.
+    /// @return scurveValue Value of the S-curve in force at the WorldwideDay that contains `timestamp`.
+    ///         A COEN/ISO value uses 6 decimals.
     function getNominalPriceComponents(address base, address quote, uint64 timestamp)
         external
         view
-        returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string memory source);
+        returns (uint256 nominalPrice, uint256 vwap, uint256 scurveValue, string memory source);
 
     /// @notice Returns all registered reference currencies as ISO 4217 numeric codes.
     function getReferenceCurrencies() external view returns (uint16[] memory isoCodes);

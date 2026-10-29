@@ -35,7 +35,7 @@ impl Rpc {
                 timestamp: outbe_primitives::time::date_key_to_utc_timestamp(worldwide_day),
             },
         )?;
-        Some((vwap, curve.values.into_iter().max().unwrap_or(U256::ZERO)))
+        Some((vwap, curve.values.last().copied().unwrap_or(U256::ZERO)))
     }
 
     /// Read one canonical COEN/ISO rate together with its publication point.

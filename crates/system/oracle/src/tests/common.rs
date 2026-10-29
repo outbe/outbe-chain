@@ -162,31 +162,6 @@ pub(super) fn seed_native_oracle_with_covered_day(provider: &mut HashMapStorageP
     });
 }
 
-pub(super) const SCURVE_CURRENT_DAY: u64 = ATOMIC_DAY_START + 3 * SECONDS_PER_DAY;
-
-pub(super) fn seed_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
-    StorageHandle::enter(provider, |storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
-        for (day, price) in [
-            (SCURVE_CURRENT_DAY - 3 * SECONDS_PER_DAY, 100_u64),
-            (SCURVE_CURRENT_DAY - 2 * SECONDS_PER_DAY, 150_u64),
-            (SCURVE_CURRENT_DAY - SECONDS_PER_DAY, 120_u64),
-        ] {
-            oracle
-                .write_snapshot(
-                    day + 100,
-                    &[(pair_key(COEN, usd()), coen_iso(price), coen_iso(2))],
-                )
-                .unwrap();
-        }
-    });
-}
-
-pub(super) fn seed_native_oracle_with_peak_history(provider: &mut HashMapStorageProvider) {
-    seed_oracle_with_peak_history(provider);
-}
-
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
@@ -215,17 +190,10 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
     crate::scurve::store_scurve_entry(
         &mut OracleContract::new(storage),
         pair_key(COEN, usd()),
-        ATOMIC_DAY_START,
+        outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
         coen_iso(125),
     )
-}
-
-pub(super) fn process_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
-    crate::scurve::process_daily_scurve(
-        &mut OracleContract::new(storage),
-        pair_key(COEN, usd()),
-        SCURVE_CURRENT_DAY,
-    )
+    .map(|_| ())
 }
 
 pub(super) fn assert_oracle_mutation_is_atomic(

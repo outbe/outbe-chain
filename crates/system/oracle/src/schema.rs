@@ -133,21 +133,9 @@ pub struct OracleContract {
     // Slots 32 (`protected_validator`) and 33 (`config_allow_protected`) are
     // retired holes. Do not reuse them.
 
-    // === S-Curve Active Entries (slots 34-39) ===
-    // slot 34 - pinned: without this anchor the running slot counter would
-    // slide it down into the retired 32-33 hole.
-    #[slot(34)]
-    pub scurve_count: Slot<u32>,
-    // slot 35: mapping(entry_idx => pair) for which pair
-    pub scurve_pair: Mapping<u32, AddressPair>,
-    // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
-    pub scurve_peak_day: Mapping<u32, u64>,
-    // slot 37: mapping(entry_idx => peak_price), pair-registered scale
-    pub scurve_peak_price: Mapping<u32, U256>,
-    // slot 38: oldest non-evicted entry index (head pointer for cleanup)
-    pub scurve_oldest_idx: Slot<u32>,
-    // slot 39: last UTC day (truncated timestamp) when S-curve processing ran
-    pub scurve_last_processed_day: Slot<u64>,
+    // Slots 34-39 held the single S-curve entry of each pair, keyed by a
+    // global entry index with a UTC-midnight peak day. They are retired holes
+    // since the per-pair curve ring (slots 82-84). Do not reuse them.
 
     // === Settlement Currencies - retired (slots 40-42) ===
     // The settlement pair is derived, not stored: `AddressPair::new_coen_to(iso)`
@@ -265,6 +253,14 @@ pub struct OracleContract {
     // raw protocol version of the last file it registered. See `sources.rs`.
     #[slot(81)]
     pub(crate) sources_synced: Slot<u64>,
+
+    // === S-curve ring (slots 82-84) ===
+    // Curves each pair ever started. Curve `n` sits in slot `n % SCURVE_RING_SLOTS`.
+    pub(crate) scurve_len: Mapping<AddressPair, u64>,
+    // The WorldwideDay a curve starts at.
+    pub(crate) scurve_peak_wwd: Mapping<AddressPair, Mapping<u64, WorldwideDay>>,
+    // The WWD VWAP of that day, in the pair-registered scale.
+    pub(crate) scurve_peak_price: Mapping<AddressPair, Mapping<u64, U256>>,
 }
 
 #[cfg(test)]
@@ -308,12 +304,6 @@ mod tests {
         assert_eq!(c.snapshot_pair.base_slot(), U256::from(29));
         assert_eq!(c.snapshot_rate.base_slot(), U256::from(30));
         assert_eq!(c.snapshot_volume.base_slot(), U256::from(31));
-        assert_eq!(c.scurve_count.slot(), U256::from(34));
-        assert_eq!(c.scurve_pair.base_slot(), U256::from(35));
-        assert_eq!(c.scurve_peak_day.base_slot(), U256::from(36));
-        assert_eq!(c.scurve_peak_price.base_slot(), U256::from(37));
-        assert_eq!(c.scurve_oldest_idx.slot(), U256::from(38));
-        assert_eq!(c.scurve_last_processed_day.slot(), U256::from(39));
         assert_eq!(c.pair_by_index.base_slot(), U256::from(43));
         assert_eq!(c.worldwide_day_vwap_exists.base_slot(), U256::from(47));
         assert_eq!(c.worldwide_day_vwap_start.base_slot(), U256::from(48));
@@ -335,5 +325,8 @@ mod tests {
         assert_eq!(c.hourly_snapshot_count.base_slot(), U256::from(79));
         assert_eq!(c.hour_first_block.base_slot(), U256::from(80));
         assert_eq!(c.sources_synced.slot(), U256::from(81));
+        assert_eq!(c.scurve_len.base_slot(), U256::from(82));
+        assert_eq!(c.scurve_peak_wwd.base_slot(), U256::from(83));
+        assert_eq!(c.scurve_peak_price.base_slot(), U256::from(84));
     }
 }
