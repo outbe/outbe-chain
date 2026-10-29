@@ -141,3 +141,23 @@ fn gem_pow_binds_the_owner_and_its_own_domain() {
         "a Nod nonce must not settle a Gem"
     );
 }
+
+#[test]
+fn the_position_uri_quotes_its_source_series() {
+    use base64::Engine;
+
+    with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
+        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        let uri = GemFactoryContract::new(storage.clone())
+            .token_uri(id)
+            .unwrap();
+        let json = base64::engine::general_purpose::STANDARD
+            .decode(uri.trim_start_matches("data:application/json;base64,"))
+            .unwrap();
+        let json = String::from_utf8(json).unwrap();
+        assert!(json.contains(&format!(
+            "{{\"trait_type\":\"source_intex_id\",\"value\":\"{}\"}}",
+            source_intex_id()
+        )));
+    });
+}
