@@ -1,6 +1,6 @@
 //! Tribute commands.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use clap::{Args, Subcommand};
 use eyre::Result;
@@ -118,9 +118,6 @@ pub struct TributeOfferArgs {
     /// Tribute owner from the encrypted payload; defaults to the transaction signer.
     #[arg(long)]
     creator: Option<Address>,
-    /// Owner's 32-byte X25519 public key for local amount decryption.
-    #[arg(long)]
-    creator_public_key: B256,
 }
 
 impl TributeCmd {
@@ -259,7 +256,6 @@ async fn offer(
         su_hash,
         signature,
         creator,
-        creator_public_key,
     } = args;
     let signer = crate::commands::require_signer(private_key)?;
     let creator = creator.unwrap_or_else(|| signer.address());
@@ -301,7 +297,6 @@ async fn offer(
     // (it denominates the rights' entry and call prices), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
-        "creator_public_key": format!("{creator_public_key:#x}"),
         "tribute_draft_id": tribute_draft_id,
         "amount_base": amount_base,
         "amount_micro": amount_micro,
@@ -538,13 +533,11 @@ mod tests {
     }
 
     /// Required proof inputs, in `flag, value` pairs; the L2 is selected below.
-    const REQUIRED_OFFER_FLAGS: [&str; 16] = [
+    const REQUIRED_OFFER_FLAGS: [&str; 14] = [
         "--issuance-currency",
         "949",
         "--reference-currency",
         "840",
-        "--creator-public-key",
-        "0x3333333333333333333333333333333333333333333333333333333333333333",
         "--zk-proof",
         "0x01",
         "--zk-merkle-root",
@@ -574,7 +567,6 @@ mod tests {
         for missing in [
             "--issuance-currency",
             "--reference-currency",
-            "--creator-public-key",
             "--zk-proof",
             "--zk-merkle-root",
             "--signature",

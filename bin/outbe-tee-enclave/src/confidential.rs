@@ -7,14 +7,11 @@ use ring::hmac;
 
 /// Every ledger uses field zero for its primary balance.
 pub const FIELD_BALANCE: u8 = 0;
-/// Eight version bytes, 32 amount bytes, and a 16-byte authentication tag.
-pub const AMOUNT_BLOB_LEN: usize = 8 + 32 + 16;
 
 /// Immutable labels separate each ledger from the other confidential ledgers.
 pub struct Domain {
     state_info: &'static [u8],
     pub account_keys: AccountKeyDerivation,
-    pub cipher: SlotCipherDomain,
     pub authorization: ModifyDomain,
 }
 
@@ -90,9 +87,6 @@ pub const GRATIS: Domain = Domain {
         view_info: b"outbe/gratis/view-key/v1",
         modify_info: b"outbe/gratis/modify-key/v1",
     },
-    cipher: SlotCipherDomain {
-        nonce_info: b"outbe/gratis/nonce/v1",
-    },
     authorization: ModifyDomain {
         modify_tag: b"outbe/gratis/modify/v1",
     },
@@ -103,9 +97,6 @@ pub const PROMIS: Domain = Domain {
     account_keys: AccountKeyDerivation {
         view_info: b"outbe/promis/view-key/v1",
         modify_info: b"outbe/promis/modify-key/v1",
-    },
-    cipher: SlotCipherDomain {
-        nonce_info: b"outbe/promis/nonce/v1",
     },
     authorization: ModifyDomain {
         modify_tag: b"outbe/promis/modify/v1",
@@ -118,11 +109,30 @@ pub const FIDELITY: Domain = Domain {
         view_info: b"outbe/fidelity/view-key/v1",
         modify_info: b"outbe/fidelity/modify-key/v1",
     },
-    cipher: SlotCipherDomain {
-        nonce_info: b"outbe/fidelity/nonce/v1",
-    },
     authorization: ModifyDomain {
         modify_tag: b"outbe/fidelity/modify/v1",
+    },
+};
+
+pub const TRIBUTE: Domain = Domain {
+    state_info: b"outbe/tribute/state-key/v1/",
+    account_keys: AccountKeyDerivation {
+        view_info: b"outbe/tribute/view-key/v1",
+        modify_info: b"outbe/tribute/modify-key/v1",
+    },
+    authorization: ModifyDomain {
+        modify_tag: b"outbe/tribute/modify/v1",
+    },
+};
+
+pub const NOD: Domain = Domain {
+    state_info: b"outbe/nod/state-key/v1/",
+    account_keys: AccountKeyDerivation {
+        view_info: b"outbe/nod/view-key/v1",
+        modify_info: b"outbe/nod/modify-key/v1",
+    },
+    authorization: ModifyDomain {
+        modify_tag: b"outbe/nod/modify/v1",
     },
 };
 
@@ -131,6 +141,8 @@ pub fn domain_for(ledger: Ledger) -> &'static Domain {
         Ledger::Gratis => &GRATIS,
         Ledger::Promis => &PROMIS,
         Ledger::Fidelity => &FIDELITY,
+        Ledger::Tribute => &TRIBUTE,
+        Ledger::Nod => &NOD,
     }
 }
 
@@ -182,48 +194,6 @@ impl SlotCipherDomain {
 }
 
 impl SlotCipher<'_> {
-    pub fn read_amount(&self, blob: &[u8]) -> Result<(u64, U256)> {
-        let view_key = self.view_key;
-        let account = self.account;
-        let field = self.field;
-        if blob.is_empty() {
-            return Ok((0, U256::ZERO));
-        }
-        if blob.len() < 8 {
-            return Err(TeeError::DecryptFailed);
-        }
-        let mut vbytes = [0u8; 8];
-        vbytes.copy_from_slice(&blob[..8]);
-        let version = u64::from_be_bytes(vbytes);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.domain.slot_nonce(view_key, &ikm, version)?;
-        let pt = chacha20poly1305_decrypt(view_key, &nonce, &blob[8..])?;
-        if pt.len() != 32 {
-            return Err(TeeError::DecryptFailed);
-        }
-        Ok((version, U256::from_be_slice(&pt)))
-    }
-
-    pub fn write_amount(&self, prev_version: u64, amount: U256) -> Result<Vec<u8>> {
-        let view_key = self.view_key;
-        let account = self.account;
-        let field = self.field;
-        let version = prev_version.saturating_add(1);
-        let mut ikm = account.as_slice().to_vec();
-        ikm.push(field);
-        let nonce = self.domain.slot_nonce(view_key, &ikm, version)?;
-        let ct = chacha20poly1305_encrypt(view_key, &nonce, &amount.to_be_bytes::<32>())?;
-        let mut blob = version.to_be_bytes().to_vec();
-        blob.extend_from_slice(&ct);
-        debug_assert_eq!(
-            blob.len(),
-            AMOUNT_BLOB_LEN,
-            "amount blob must be a fixed {AMOUNT_BLOB_LEN} bytes"
-        );
-        Ok(blob)
-    }
-
     pub fn read_blob(&self, blob: &[u8]) -> Result<(u64, Vec<u8>)> {
         let view_key = self.view_key;
         let account = self.account;

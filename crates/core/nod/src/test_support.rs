@@ -26,14 +26,7 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
 }
 fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
     install();
-    let public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x6b; 32]));
-    outbe_tee_enclave::nod_encryption::encrypt_nod(
-        &NETWORK_SECRET,
-        public.as_bytes(),
-        terms,
-        amount,
-    )
-    .unwrap()
+    outbe_tee_enclave::nod_encryption::encrypt_nod(&NETWORK_SECRET, terms, amount).unwrap()
 }
 /// Test-only plaintext inputs; never accepted by a production writer.
 pub struct NodItemFixture {

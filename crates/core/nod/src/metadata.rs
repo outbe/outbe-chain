@@ -66,15 +66,11 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     ))
 }
 
-fn encrypted_traits(item: &NodItemState) -> [Trait; 4] {
+fn encrypted_traits(item: &NodItemState) -> [Trait; 3] {
     [
         Trait::text(
             "Encrypted Gratis Load",
             alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_gratis_amount),
-        ),
-        Trait::text(
-            "Encrypted Creator Public Key",
-            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_creator_public_key),
         ),
         Trait::text(
             "Encryption Binding",

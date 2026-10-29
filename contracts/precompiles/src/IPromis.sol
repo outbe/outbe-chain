@@ -15,10 +15,11 @@ interface IPromis {
     function decimals() external view returns (uint8);
     function totalSupply() external view returns (uint256);
     // Confidential balance: returns the account's ciphertext blob, a fixed
-    // 56 bytes = version(8, big-endian) || ChaCha20Poly1305 ct (32-byte U256
-    // amount + 16-byte tag). The length is constant regardless of the balance,
-    // so it never leaks magnitude. A never-written account returns empty bytes.
-    // Decrypt off-chain with the account's Promis view key (outbe_deriveKeys).
+    // 92 bytes = version(8, big-endian) || "PRO2"(4) || binding(32) ||
+    // ChaCha20Poly1305 ct (32-byte U256 amount + 16-byte tag). The length is
+    // constant regardless of the balance, so it never leaks magnitude. A
+    // never-written account returns empty bytes. Decrypt off-chain with the
+    // account's Promis view key (outbe_deriveKeys).
     function balanceOf(address account) external view returns (bytes memory);
 
     // Current modify-auth replay counter for `account` - the value a write's

@@ -622,10 +622,6 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodGr
         body.encryptedGratisAmount.as_ref(),
         item.encrypted.encrypted_gratis_amount
     );
-    assert_eq!(
-        body.encryptedCreatorPublicKey.as_ref(),
-        item.encrypted.encrypted_creator_public_key
-    );
     assert_eq!(body.encryptionBinding, item.encrypted.encryption_binding);
     assert_eq!(body.chainId, item.encrypted.terms.chain_id);
     assert_eq!(
@@ -806,7 +802,6 @@ mod tests {
                 },
                 encryption_binding: B256::repeat_byte(4),
                 encrypted_gratis_amount: vec![0x23; 56],
-                encrypted_creator_public_key: vec![0x24; 56],
             },
             group_key,
             issued_at: 1,

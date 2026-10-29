@@ -31,7 +31,6 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             reference_currency: 5,
         },
         encryption_binding: B256::ZERO,
-        encrypted_creator_public_key: vec![6],
         encrypted_gratis_amount: vec![7],
     };
     let tribute = EncryptedTributeV2 {
@@ -45,7 +44,6 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             tribute_price_minor: U256::from(4),
             offer_input_hash: B256::ZERO,
         },
-        encrypted_creator_public_key: vec![8],
         encrypted_amounts: vec![9],
     };
     let tag = vec![0xAA; 64];

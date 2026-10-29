@@ -317,9 +317,9 @@ pub trait OutbeApi {
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
 
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, or `Fidelity`) inside the enclave and return them sealed to `ephemeralPubkey`
-    /// (a client X25519 public key). This is off-chain key delivery. It never
-    /// touches consensus state.
+    /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
+    /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
+    /// delivery. It never touches consensus state.
     ///
     /// The caller MUST prove control of `account`: `signature` is an EIP-191
     /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account ||

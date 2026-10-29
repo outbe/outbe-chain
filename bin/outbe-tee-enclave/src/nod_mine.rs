@@ -6,7 +6,7 @@ use outbe_tee::{
     protocol::{FidelityCohortOp, GratisOp, GratisOpRequest, GratisOpStatus},
 };
 pub fn apply(
-    network_secret: &[u8; 32],
+    nod_state_key: &[u8; 32],
     gratis_key: &[u8; 32],
     fidelity_key: &[u8; 32],
     request: &MineEncryptedNodRequestV1,
@@ -14,7 +14,7 @@ pub fn apply(
     if request.fidelity.op != FidelityCohortOp::In {
         return Err(TeeError::DecryptFailed);
     }
-    let amount = crate::nod_encryption::decrypt_nod(network_secret, &request.nod)?;
+    let amount = crate::nod_encryption::decrypt_nod(nod_state_key, &request.nod)?;
     let inputs = outbe_tee::nod_mine::inputs_hash(request).map_err(|_| TeeError::EncryptFailed)?;
     let operation = GratisOpRequest {
         op: GratisOp::Mint,

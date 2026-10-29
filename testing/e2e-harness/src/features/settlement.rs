@@ -87,7 +87,7 @@ fn promis_balance_at(url: &str, owner: Address, view_key: &[u8; 32], height: u64
     )
     .expect("finalized Promis ciphertext");
     decrypted_balance_or_zero(blob.as_ref(), |ciphertext| {
-        outbe_tee_enclave::promis::decrypt_balance(view_key, owner, ciphertext)
+        outbe_tee::decrypt_promis_balance(view_key, owner, ciphertext)
             .expect("decrypt finalized Promis balance")
     })
 }
@@ -592,7 +592,7 @@ pub(crate) fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> 
     if blob.is_empty() {
         U256::ZERO
     } else {
-        outbe_tee_enclave::promis::decrypt_balance(view_key, owner, blob.as_ref())
+        outbe_tee::decrypt_promis_balance(view_key, owner, blob.as_ref())
             .expect("decrypt Promis balance")
     }
 }

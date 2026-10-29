@@ -92,6 +92,12 @@ pub enum TransportDispatchError {
     /// Deriving the Fidelity state key failed.
     #[error("Fidelity key unavailable")]
     FidelityKeyUnavailable,
+    /// Deriving the Tribute state key failed.
+    #[error("Tribute key unavailable")]
+    TributeKeyUnavailable,
+    /// Deriving the NOD state key failed.
+    #[error("NOD key unavailable")]
+    NodKeyUnavailable,
     /// Hashing the NOD mint request inputs failed.
     #[error("invalid NOD mint inputs")]
     InvalidNodMintInputs,

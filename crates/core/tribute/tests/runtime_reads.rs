@@ -40,7 +40,6 @@ fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 
     let plain = tribute(Address::repeat_byte(0x73), 20_260_723);
     outbe_tee_enclave::tribute_encryption::encrypt_tribute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
-        &outbe_tee_enclave::crypto::x25519_public(&[0x75; 32]),
         TributeContextV2 {
             chain_id: 1,
             tribute_id: plain.tribute_id,

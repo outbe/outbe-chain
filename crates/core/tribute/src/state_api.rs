@@ -2,9 +2,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
     time::WorldwideDay,
-    tribute_encryption::{
-        EncryptedTributeV2, TRIBUTE_AMOUNTS_BLOB_LEN, TRIBUTE_PUBLIC_KEY_BLOB_LEN,
-    },
+    tribute_encryption::{EncryptedTributeV2, TRIBUTE_AMOUNTS_BLOB_LEN},
     wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId},
 };
 
@@ -33,11 +31,8 @@ pub fn get_retained_record(
         return Ok(None);
     }
     if !entry
-        .encrypted_creator_public_key()
-        .has_exact_length(TRIBUTE_PUBLIC_KEY_BLOB_LEN)?
-        || !entry
-            .encrypted_amounts()
-            .has_exact_length(TRIBUTE_AMOUNTS_BLOB_LEN)?
+        .encrypted_amounts()
+        .has_exact_length(TRIBUTE_AMOUNTS_BLOB_LEN)?
     {
         return Err(PrecompileError::fatal(
             "invalid stored Tribute ciphertext length",
@@ -233,39 +228,29 @@ mod tests {
             record.owner = Address::repeat_byte(1);
             record.chain_id = 1;
             record.worldwide_day = day;
-            record.encrypted_creator_public_key = vec![0; TRIBUTE_PUBLIC_KEY_BLOB_LEN];
-            record.encrypted_creator_public_key[..8].copy_from_slice(&1u64.to_be_bytes());
             record.encrypted_amounts = vec![0; TRIBUTE_AMOUNTS_BLOB_LEN];
             record.encrypted_amounts[..8].copy_from_slice(&1u64.to_be_bytes());
             assert!(get_retained_record(&storage, id).unwrap().is_none());
             contract.records.create(&record).unwrap();
             assert!(get_retained_record(&storage, id).unwrap().is_some());
-            for (offset, expected) in [
-                (7, TRIBUTE_PUBLIC_KEY_BLOB_LEN),
-                (8, TRIBUTE_AMOUNTS_BLOB_LEN),
-            ] {
-                let entry = contract.records.entry(id);
-                let field = if offset == 7 {
-                    entry.encrypted_creator_public_key()
-                } else {
-                    entry.encrypted_amounts()
-                };
-                for length in [expected - 1, expected + 1] {
-                    field.write(&vec![0; length]).unwrap();
-                    assert!(get_retained_record(&storage, id).is_err());
-                }
-                let slot = id.mapping_slot(entry.base_slot() + U256::from(offset));
-                for raw in [U256::MAX, U256::from(expected * 2)] {
-                    storage.sstore(entry.address(), slot, raw).unwrap();
-                    assert!(get_retained_record(&storage, id).is_err());
-                }
-                storage
-                    .sstore(entry.address(), slot, U256::from(expected * 2 + 1))
-                    .unwrap();
-                let mut blob = vec![0; expected];
-                blob[..8].copy_from_slice(&1u64.to_be_bytes());
-                field.write(&blob).unwrap();
+            let entry = contract.records.entry(id);
+            let field = entry.encrypted_amounts();
+            let expected = TRIBUTE_AMOUNTS_BLOB_LEN;
+            for length in [expected - 1, expected + 1] {
+                field.write(&vec![0; length]).unwrap();
+                assert!(get_retained_record(&storage, id).is_err());
             }
+            let slot = id.mapping_slot(entry.base_slot() + U256::from(7));
+            for raw in [U256::MAX, U256::from(expected * 2)] {
+                storage.sstore(entry.address(), slot, raw).unwrap();
+                assert!(get_retained_record(&storage, id).is_err());
+            }
+            storage
+                .sstore(entry.address(), slot, U256::from(expected * 2 + 1))
+                .unwrap();
+            let mut blob = vec![0; expected];
+            blob[..8].copy_from_slice(&1u64.to_be_bytes());
+            field.write(&blob).unwrap();
             assert!(get_retained_record(&storage, id).unwrap().is_some());
         });
     }
@@ -288,7 +273,6 @@ mod tests {
             };
             let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
                 &crate::enclave_client::test_enclave::NETWORK_SECRET,
-                &[7; 32],
                 TributeContextV2 {
                     chain_id: 1,
                     tribute_id: id,

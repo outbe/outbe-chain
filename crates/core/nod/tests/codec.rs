@@ -159,11 +159,9 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
         is_settled: false,
     };
     let payload = encode_nod_item_v1(&body).unwrap();
-    let creator = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([0x6b; 32]));
     assert!(!payload
         .windows(32)
         .any(|bytes| bytes == amount.to_be_bytes::<32>()));
-    assert!(!payload.windows(32).any(|bytes| bytes == creator.as_bytes()));
     let stored = outbe_primitives::entity_codec::StoredBody::new(
         outbe_primitives::entity_codec::NOD_BODY_SCHEMA_V1,
         payload,

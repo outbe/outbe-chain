@@ -35,6 +35,8 @@ pub mod nod_transport;
 pub mod node_host;
 pub mod offer_encrypt;
 mod owner_local_open;
+pub mod promis_decrypt;
+pub use promis_decrypt::decrypt_promis_balance;
 pub mod protocol;
 pub mod quote;
 pub mod release_dcap_artifacts;

@@ -8149,7 +8149,6 @@ dependencies = [
  "time",
  "tokio",
  "walkdir",
- "x25519-dalek 2.0.1",
  "xshell",
  "yaml_serde",
 ]
@@ -8691,7 +8690,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "x25519-dalek 2.0.1",
 ]
 
 [[package]]

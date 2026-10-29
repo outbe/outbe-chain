@@ -155,11 +155,6 @@ pub fn expected_record_words(
     ];
     words.extend(
         entry
-            .encrypted_creator_public_key()
-            .encoded_words(&tribute.encrypted_creator_public_key),
-    );
-    words.extend(
-        entry
             .encrypted_amounts()
             .encoded_words(&tribute.encrypted_amounts),
     );

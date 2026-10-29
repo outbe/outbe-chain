@@ -502,7 +502,7 @@ mod tests {
     use super::*;
     use crate::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
     use crate::tribute_encryption::{
-        EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN, TRIBUTE_PUBLIC_KEY_BLOB_LEN,
+        EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN,
     };
 
     fn sample_day() -> WorldwideDay {
@@ -548,8 +548,6 @@ mod tests {
         ));
 
         // V2 Tribute roundtrip + invalid blob rejection.
-        let mut pk_blob = vec![0xaa; TRIBUTE_PUBLIC_KEY_BLOB_LEN];
-        pk_blob[..8].copy_from_slice(&1u64.to_be_bytes());
         let mut amt_blob = vec![0xbb; TRIBUTE_AMOUNTS_BLOB_LEN];
         amt_blob[..8].copy_from_slice(&1u64.to_be_bytes());
         let tribute_v2 = EncryptedTributeV2 {
@@ -563,7 +561,6 @@ mod tests {
                 tribute_price_minor: U256::from(1_000_000u64),
                 offer_input_hash: B256::repeat_byte(0x33),
             },
-            encrypted_creator_public_key: pk_blob,
             encrypted_amounts: amt_blob,
         };
         let encoded_tribute_v2 = encode_tribute_v2(&tribute_v2).unwrap();
@@ -577,8 +574,6 @@ mod tests {
         );
 
         // V1 encrypted Nod roundtrip.
-        let mut nod_pk_blob = vec![0xcc; NOD_BLOB_LEN];
-        nod_pk_blob[..8].copy_from_slice(&1u64.to_be_bytes());
         let mut nod_amt_blob = vec![0xdd; NOD_BLOB_LEN];
         nod_amt_blob[..8].copy_from_slice(&1u64.to_be_bytes());
         let nod_v1 = NodItemBodyV1 {
@@ -594,7 +589,6 @@ mod tests {
                     reference_currency: 840,
                 },
                 encryption_binding: B256::repeat_byte(0x55),
-                encrypted_creator_public_key: nod_pk_blob,
                 encrypted_gratis_amount: nod_amt_blob,
             },
             group_key: B256::repeat_byte(0x44),

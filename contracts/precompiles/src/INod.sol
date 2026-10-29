@@ -63,7 +63,6 @@ interface INod {
         uint16 leagueId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
-        bytes encryptedCreatorPublicKey;
         bytes32 encryptionBinding;
         uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.

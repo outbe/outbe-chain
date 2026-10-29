@@ -37,10 +37,6 @@ fn verify_encrypted_nod(world: &mut World) {
     let created_at = world.state.nod_creation_height.expect("created Nods");
     let port = world.validators.primary_port();
     let owner = owner(world);
-    let public = world
-        .rpc
-        .tribute_network_public_key(port)
-        .expect("network encryption public key");
     let (_, data) = settlement_read(|| {
         world
             .rpc
@@ -51,9 +47,7 @@ fn verify_encrypted_nod(world: &mut World) {
     let encrypted = nod_keys::encrypted(&data);
     let amount = nod_keys::decrypt(world, &data);
     assert!(!amount.is_zero());
-    assert!(
-        outbe_tee::nod_decrypt::decrypt_nod_for_owner(&[0x19; 32], &public, &encrypted).is_err()
-    );
+    assert!(outbe_tee::nod_decrypt::decrypt_nod_for_owner(&[0x19; 32], &encrypted).is_err());
     assert_eq!(data.owner, owner);
     world
         .rpc
@@ -141,23 +135,14 @@ fn assert_encrypted_metadata(
         .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let attributes = json["attributes"].as_array().unwrap();
-    for (name, value) in [
-        (
-            "Encrypted Gratis Load",
-            alloy_primitives::hex::encode_prefixed(&encrypted.encrypted_gratis_amount),
-        ),
-        (
-            "Encrypted Creator Public Key",
-            alloy_primitives::hex::encode_prefixed(&encrypted.encrypted_creator_public_key),
-        ),
-    ] {
-        assert!(
-            attributes
-                .iter()
-                .any(|attribute| attribute["trait_type"] == name && attribute["value"] == value),
-            "encrypted attribute missing: {name}"
-        );
-    }
+    let name = "Encrypted Gratis Load";
+    let value = alloy_primitives::hex::encode_prefixed(&encrypted.encrypted_gratis_amount);
+    assert!(
+        attributes
+            .iter()
+            .any(|attribute| attribute["trait_type"] == name && attribute["value"] == value),
+        "encrypted attribute missing: {name}"
+    );
     assert!(
         !attributes
             .iter()
