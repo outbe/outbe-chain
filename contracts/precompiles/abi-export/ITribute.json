@@ -473,6 +473,11 @@
   },
   {
     "type": "error",
+    "name": "IssuanceAmountMustBePositive",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LysisArithmetic",
     "inputs": [
       {
@@ -511,11 +516,6 @@
   {
     "type": "error",
     "name": "QueryLimitExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SettlementAmountMustBePositive",
     "inputs": []
   },
   {

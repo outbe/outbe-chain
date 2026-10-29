@@ -22,6 +22,7 @@ pub struct StoredTribute {
     pub issuance_currency: u16,
     #[attribute(order = 4)]
     pub reference_currency: u16,
+    /// Public effective reference price, in six-decimal minor units.
     #[attribute(order = 5)]
     pub tribute_price_minor: U256,
     #[attribute(order = 6)]
