@@ -18,6 +18,50 @@ use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
+fn maintenance_context<'s>(
+    storage: &StorageHandle<'s>,
+) -> Result<outbe_primitives::block::BlockRuntimeContext<'s>> {
+    use outbe_primitives::block::{BlockContext, BlockContextInput, BlockRuntimeContext};
+    Ok(BlockRuntimeContext::new(
+        BlockContext::new_with_genesis_hash(BlockContextInput {
+            block_number: storage.block_number()?,
+            timestamp: storage.now_secs()?,
+            chain_id: storage.chain_id()?,
+            genesis_hash: storage.genesis_hash()?,
+            genesis_timestamp: storage.genesis_timestamp()?,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        }),
+        storage.clone(),
+    ))
+}
+
+pub fn maintain(
+    storage: &StorageHandle<'_>,
+    selection: outbe_oracle::call_pass::Selection,
+) -> Result<()> {
+    outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
+    // TODO: Reward callers for maintenance work performed.
+    if !selection.process_call && !selection.process_forfeit && !selection.process_cleanup {
+        return Ok(());
+    }
+    let ctx = maintenance_context(storage)?;
+    crate::called::maintain(&ctx, selection)?;
+    if selection.process_cleanup {
+        crate::cleanup::cleanup(&ctx)?;
+        crate::positions_expired::cleanup_positions(&ctx)?;
+    }
+    Ok(())
+}
+
+pub fn has_maintenance_work(storage: &StorageHandle<'_>) -> Result<(bool, bool, bool)> {
+    let ctx = maintenance_context(storage)?;
+    let (call, forfeit, _) = crate::called::pending_work(&ctx)?;
+    let records = crate::cleanup::pending_work(&ctx)?;
+    let positions = crate::positions_expired::cleanup_pending(&ctx)?;
+    Ok((call, forfeit, records || positions))
+}
+
 /// Issues one reward gem priced at `entry_price`, with its call price on
 /// `call_anchor_price_minor`. The caller resolves both for the gem's own day.
 pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {

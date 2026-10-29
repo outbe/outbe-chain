@@ -30,7 +30,7 @@ use crate::ICycle;
 pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
     let triggers =
         active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds())?;
-    // Ids are 0..=6 and 8. Id 7 is unused.
+    // Active ids are 0, 2, 4, and 8. Retired ids must not be reused.
     let mut failed = [false; 9];
 
     for spec in &triggers {

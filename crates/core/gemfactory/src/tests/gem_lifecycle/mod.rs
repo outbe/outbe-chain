@@ -1,6 +1,7 @@
 //! The Gem lifecycle as GemFactory runs it: issuance on the live profile, settlement and
 //! burn rules, the daily call sweep and the forfeit sweep in EVM storage.
 
+use super::ALL_PHASES;
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
@@ -221,7 +222,7 @@ fn prepare_daily(ctx: &BlockRuntimeContext) {
 
 fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     prepare_daily(ctx);
-    crate::called::scan_and_call(ctx)
+    crate::called::scan_and_call(ctx, ALL_PHASES)
 }
 
 fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -231,7 +232,7 @@ fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
 
 fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     prepare_daily(ctx);
-    crate::called::process_call_pass(ctx)
+    crate::called::process_call_pass(ctx, ALL_PHASES)
 }
 
 pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {

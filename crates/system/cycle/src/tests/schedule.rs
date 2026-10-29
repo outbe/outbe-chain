@@ -31,12 +31,17 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     use crate::triggers::{active_triggers, TriggerHandler, TriggerSpec};
 
     assert!(matches!(
-        TriggerSpec::new(1, "zero", 0, 0, TriggerHandler::IntexCallDaily),
+        TriggerSpec::new(8, "zero", 0, 0, TriggerHandler::IntexDrainParked),
         Err(CycleError::ZeroTriggerPeriod)
     ));
-    let wide_offset =
-        TriggerSpec::new(1, "wide-offset", 600, 5_000, TriggerHandler::IntexCallDaily)
-            .expect("offset at or above the period");
+    let wide_offset = TriggerSpec::new(
+        8,
+        "wide-offset",
+        600,
+        5_000,
+        TriggerHandler::IntexDrainParked,
+    )
+    .expect("offset at or above the period");
     assert_eq!(wide_offset.period_seconds(), 600);
     assert_eq!(wide_offset.start_offset_seconds, 5_000);
     assert!(wide_offset.depends_on.is_empty());
@@ -133,13 +138,9 @@ fn only_the_two_auction_edges_declare_a_dependency() {
 
     let specs = active_triggers(3_600).expect("nonzero interval");
     assert!(specs[0].depends_on.is_empty());
-    assert!(specs[1].depends_on.is_empty());
-    assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);
+    assert_eq!(specs[1].depends_on, &[TriggerId::ProtocolCycle]);
+    assert_eq!(specs[2].depends_on, &[TriggerId::AuctionAdvance]);
     assert!(specs[3].depends_on.is_empty());
-    assert_eq!(specs[4].depends_on, &[TriggerId::AuctionAdvance]);
-    assert!(specs[5].depends_on.is_empty());
-    assert!(specs[6].depends_on.is_empty());
-    assert!(specs[7].depends_on.is_empty());
 }
 
 #[test]

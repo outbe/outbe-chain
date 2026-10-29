@@ -589,7 +589,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             .unwrap();
         nod_contract.daily_genesis_day.write(latest_closed).unwrap();
 
-        // Run automatic call scan (`schedule_call_pass` + `scan_and_call`) with 0 minted Nods!
+        // Run explicit call maintenance with no minted Nods.
         let call_ts = date_key_to_utc_timestamp(cursor_day) + 3_600;
         storage.set_block_timestamp(U256::from(call_ts)).unwrap();
         let call_ctx = outbe_primitives::block::BlockRuntimeContext::new(
@@ -597,14 +597,22 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             storage.clone(),
         );
         outbe_nodfactory::called::schedule_call_pass(&call_ctx).unwrap();
-        let called = outbe_nodfactory::called::scan_and_call(&call_ctx).unwrap();
+        let called = outbe_nodfactory::called::scan_and_call(
+            &call_ctx,
+            outbe_oracle::call_pass::Selection {
+                process_call: true,
+                process_forfeit: true,
+                process_cleanup: true,
+            },
+        )
+        .unwrap();
         assert_eq!(called, 1);
         assert_eq!(
             nod_contract.group_called_at.read(&group_key).unwrap(),
             call_ts
         );
 
-        // Advance past call notice period and run automatic `NodForfeit` (`sweep_expired`)
+        // Advance past the call notice period and explicitly process forfeiture.
         let terms = nod_contract.read_call_terms(group_key).unwrap();
         let deadline =
             outbe_nod::api::settlement_deadline_of(call_ts, terms.call_notice_period_seconds);

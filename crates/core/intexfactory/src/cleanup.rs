@@ -10,6 +10,11 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
+pub(crate) fn has_cleanup_work(ctx: &BlockRuntimeContext) -> Result<bool> {
+    let intex = IntexContract::new(ctx.storage.clone());
+    deadline_queue::has_cleanup_work(&CleanupQueue(&intex), ctx.block.timestamp)
+}
+
 /// Walks the expired groups and deletes each series nothing is left in. Returns the
 /// series deleted.
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {

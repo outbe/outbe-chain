@@ -86,7 +86,8 @@ pub struct PinnedDay<'a, 'storage> {
 }
 
 impl PinnedDay<'_, '_> {
-    fn days(&self) -> std::result::Result<PassDays, DayPassError> {
+    /// Reads the scheduling state without opening or queuing a day.
+    pub fn days(&self) -> std::result::Result<PassDays, DayPassError> {
         Ok(PassDays {
             current: self.current.read().map_err(DayPassError::Storage)?,
             latest: self.latest.read().map_err(DayPassError::Storage)?,

@@ -204,6 +204,16 @@ pub fn first_day<'s, Q: DeadlineQueueStore<'s>>(queue: &Q) -> Result<Option<u32>
     tree_math::find_first_left_inclusive(queue, 0)
 }
 
+/// Reports whether a closed scheduling day needs inspection, without walking entries.
+/// Retry days, holes, and future-deadline leftovers use the same cutoff as [`process`].
+pub fn has_cleanup_work<'s, Q: DeadlineQueueStore<'s>>(queue: &Q, now: u64) -> Result<bool> {
+    let Some(closed_timestamp) = now.checked_sub(SECONDS_PER_DAY) else {
+        return Ok(false);
+    };
+    let cutoff = deadline_day(closed_timestamp)?;
+    Ok(first_day(queue)?.is_some_and(|day| day <= cutoff))
+}
+
 fn retire_day<'s, Q: DeadlineQueueStore<'s>>(queue: &Q, day: u32) -> Result<()> {
     queue.day_len().clear(&day)?;
     queue.day_live().clear(&day)?;
@@ -491,6 +501,64 @@ mod tests {
 
     fn id(n: u64) -> U256 {
         U256::from(n)
+    }
+
+    #[test]
+    fn cleanup_work_uses_scheduling_days_including_holes_and_retries() {
+        with_queue(|queue, storage| {
+            assert!(!has_cleanup_work(queue, 0).unwrap());
+            assert!(!has_cleanup_work(queue, 11 * DAY).unwrap());
+            push(queue, id(1), 10 * DAY).unwrap();
+            push(queue, id(2), 10 * DAY).unwrap();
+            remove(queue, id(1)).unwrap();
+            // The indexed day still requires inspection even if its remaining deadline moved.
+            queue.entry_deadline().write(&id(2), 20 * DAY).unwrap();
+            assert!(!has_cleanup_work(queue, 11 * DAY - 1).unwrap());
+            assert!(has_cleanup_work(queue, 11 * DAY).unwrap());
+            let mut handler = recorder();
+            run(
+                queue,
+                storage,
+                11 * DAY,
+                &mut PassBudget::new(10, 10),
+                &mut handler,
+            );
+            assert_eq!(first_day(queue).unwrap(), Some(20));
+            assert!(!has_cleanup_work(queue, 11 * DAY).unwrap());
+            remove(queue, id(2)).unwrap();
+            push(queue, id(3), 10 * DAY).unwrap();
+            handler.refused.push(id(3));
+            run(
+                queue,
+                storage,
+                12 * DAY + 30,
+                &mut PassBudget::new(10, 10),
+                &mut handler,
+            );
+            assert_eq!(first_day(queue).unwrap(), Some(12));
+            assert!(!has_cleanup_work(queue, 13 * DAY - 1).unwrap());
+            assert!(has_cleanup_work(queue, 13 * DAY).unwrap());
+            assert!(has_cleanup_work(queue, u64::MAX).is_err());
+        });
+    }
+
+    #[test]
+    fn cleanup_work_queries_do_not_write_queue_or_cursor_state() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let columns = Columns::new(storage);
+            push(&Queue(&columns), id(1), 10 * DAY).unwrap();
+        });
+        let before = provider.storage.clone();
+        provider.set_static(true);
+        StorageHandle::enter(&mut provider, |storage| {
+            let columns = Columns::new(storage);
+            let queue = Queue(&columns);
+            assert!(!has_cleanup_work(&queue, 11 * DAY - 1).unwrap());
+            assert!(has_cleanup_work(&queue, 11 * DAY).unwrap());
+        });
+        assert_eq!(provider.storage, before);
+        assert!(provider.events.is_empty());
     }
 
     fn run<'s>(

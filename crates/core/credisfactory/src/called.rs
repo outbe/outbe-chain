@@ -1,6 +1,5 @@
 //! Daily price-path scan: calls Credis off the Oracle's finalized per-UTC-day
-//! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
-//! walks a slice of it.
+//! VWAPs. Permissionless maintenance schedules the closed UTC day and walks a slice.
 //!
 //! A group of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
 //! currency sat strictly above its call price on `call_threshold_seconds` of the
@@ -20,7 +19,7 @@ use outbe_credis::config::CredisParams;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CallBins, CredisContract};
 
-use outbe_oracle::call_pass::{self, CallPass};
+use outbe_oracle::call_pass::{self, CallPass, Selection};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     addresses::CREDIS_FACTORY_ADDRESS,
@@ -33,7 +32,7 @@ use outbe_primitives::{
     storage::{dsl::Value, StorageHandle},
 };
 
-/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
+/// Schedules the day the Oracle has just finalized without executing its phases.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut CredisCallPass::new(ctx))
 }
@@ -45,14 +44,18 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
-pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
+pub fn scan_and_call(ctx: &BlockRuntimeContext, selection: Selection) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx), selection)
 }
 
 /// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
 /// The return value counts called groups, not forfeited groups or deleted members.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
+pub fn process_call_pass(ctx: &BlockRuntimeContext, selection: Selection) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx), selection)
+}
+
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<(bool, bool, bool)> {
+    call_pass::pending_work(ctx, &CredisCallPass::new(ctx))
 }
 
 struct CredisCallPass<'storage> {
@@ -70,6 +73,7 @@ impl<'storage> CredisCallPass<'storage> {
 impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
     const CONSUMER: &'static str = "credis";
     const FORFEIT_PHASES: u8 = 2;
+    const CLEANUP_PHASE: Option<u8> = Some(2);
 
     fn phase(&self) -> &Value<'storage, u8> {
         &self.credis.daily_phase

@@ -12,6 +12,11 @@ use outbe_primitives::{
 
 use crate::errors::GemFactoryError;
 
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<bool> {
+    let queue = GemContract::new(ctx.storage.clone());
+    deadline_queue::has_cleanup_work(&CleanupQueue(&queue), ctx.block.timestamp)
+}
+
 /// Deletes the unpaid gems of the forfeited groups. Returns the gems deleted.
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = GemContract::new(ctx.storage.clone());

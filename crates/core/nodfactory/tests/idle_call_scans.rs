@@ -13,6 +13,12 @@ fn provider() -> HashMapStorageProvider {
     HashMapStorageProvider::new(1)
 }
 
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
+    process_call: true,
+    process_forfeit: true,
+    process_cleanup: true,
+};
+
 #[test]
 fn idle_daily_scans_do_not_reopen_a_completed_day() {
     let mut provider = provider();
@@ -49,7 +55,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         ))
         .unwrap();
         called::schedule_call_pass(&ctx).unwrap();
-        called::process_call_pass(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -63,7 +69,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             BlockContext::empty_for_tests(2, midnight, 1),
             storage.clone(),
         );
-        called::process_call_pass(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         hooks::cleanup(&ctx).unwrap();
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
@@ -82,7 +88,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     let before = provider.storage.clone();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
-        called::process_call_pass(&ctx).unwrap();
+        called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         hooks::cleanup(&ctx).unwrap();
     });
     assert_eq!(

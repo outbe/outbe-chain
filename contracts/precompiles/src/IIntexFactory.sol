@@ -9,6 +9,15 @@ pragma solidity ^0.8.30;
 ///         live in Intex. This precompile runs settlement, mining and the call and
 ///         expiry sweeps over the Intex call-price index.
 interface IIntexFactory {
+    /// Permissionless maintenance. Calls queue notices; delivery remains separate.
+    function maintain(bool process_call, bool process_forfeit, bool process_cleanup) external;
+
+    /// Pending obligations, independent of this block's remaining allowance.
+    function hasMaintenanceWork()
+        external
+        view
+        returns (bool call_pending, bool forfeit_pending, bool cleanup_pending);
+
     error ZeroAddress();
     error ZeroAmount();
     error ZeroUnits();

@@ -453,7 +453,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         assert!(cycle_failure(&storage, id).is_none());
         assert!(cycle_executed(&storage, id).is_none());
     }
-    let independent = cycle_executed(&storage, TriggerId::IntexCallDaily.as_u32())
+    let independent = cycle_executed(&storage, TriggerId::IntexDrainParked.as_u32())
         .expect("an independent trigger still runs");
     assert_eq!(independent.scheduledAt, recorded_at);
     storage.enter(|handle| {
@@ -485,7 +485,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         for id in [
             TriggerId::AuctionAdvance.as_u32(),
             TriggerId::AuctionClearing.as_u32(),
-            TriggerId::IntexCallDaily.as_u32(),
+            TriggerId::IntexDrainParked.as_u32(),
         ] {
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), recorded_at);
         }

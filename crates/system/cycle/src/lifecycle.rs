@@ -56,22 +56,9 @@ impl BlockLifecycle for CycleLifecycle {
             outbe_intexfactory::called::initialize_daily(&ctx.runtime)?;
             outbe_credisfactory::called::initialize_daily(&ctx.runtime)?;
         }
-        // ProtocolCycle does not wait for multi-block factory passes.
-        // Factories return capacity below. Subsequent reserve consumers can use this capacity.
         crate::runtime::dispatch_triggers(&ctx.runtime)?;
         crate::handler::credit_reward_slice(&ctx.runtime)?;
-        // Each factory finishes calls before forfeits for its pinned closed day.
-        // Gem includes position expiry. Credis includes collateral-return cleanup.
-        outbe_nodfactory::called::process_call_pass(&ctx.runtime)?;
-        outbe_gemfactory::called::process_call_pass(&ctx.runtime)?;
-        outbe_intexfactory::called::process_call_pass(&ctx.runtime)?;
-        outbe_credisfactory::called::process_call_pass(&ctx.runtime)?;
         outbe_intexfactory::notify::send_call_notices(&ctx.runtime)?;
-        // These final sweeps only delete state after value accounting completes.
-        // Credis moves value during cleanup, so its coupled pass above performs that cleanup instead.
-        outbe_gemfactory::hooks::cleanup(&ctx.runtime)?;
-        outbe_intexfactory::hooks::cleanup(&ctx.runtime)?;
-        outbe_gemfactory::hooks::cleanup_positions(&ctx.runtime)?;
         Ok(())
     }
 

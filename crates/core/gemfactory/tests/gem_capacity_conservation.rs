@@ -23,6 +23,11 @@ use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const CALLED: u64 = ISSUED + 29 * DAY;
 const DEADLINE: u64 = CALLED + 7 * DAY;
 const GEMS: u8 = 5;
+const ALL_PHASES: outbe_oracle::call_pass::Selection = outbe_oracle::call_pass::Selection {
+    process_call: true,
+    process_forfeit: true,
+    process_cleanup: true,
+};
 
 /// The PROD call terms a group opened at `entry` seals.
 fn prod_terms(entry: U256) -> CallTerms {
@@ -83,7 +88,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         ))
         .unwrap();
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
-        called::scan_and_call(&ctx).unwrap();
+        called::scan_and_call(&ctx, ALL_PHASES).unwrap();
         for (id, _) in &rights {
             assert_eq!(
                 api::get_view(&s, *id)
@@ -118,7 +123,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                     BlockContext::empty_for_tests(at * 32 + block, at, 1),
                     s.clone(),
                 );
-                called::process_call_pass(&ctx)?;
+                called::process_call_pass(&ctx, ALL_PHASES)?;
                 if GemContract::new(s.clone()).call_sweep_day.read()? == 0 {
                     break;
                 }

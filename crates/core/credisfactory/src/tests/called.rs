@@ -22,6 +22,111 @@ const AFTER_WINDOW: u64 = (CALL_LOOKBACK_DAYS as u64 + 2) * DAY;
 /// An ISO code the fixture registers no `COEN/<iso>` pair for.
 const UNPRICED_ISO: u16 = 392; // JPY
 
+#[test]
+fn maintenance_abi_is_permissionless_nonpayable_and_read_only_when_queried() {
+    use crate::precompile::{dispatch, ICredisFactory};
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(CREATED_AT));
+    StorageHandle::enter(&mut provider, |s| {
+        crate::called::initialize_daily(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(0, CREATED_AT - DAY, CHAIN_ID),
+            s.clone(),
+        ))
+        .unwrap();
+        OracleContract::new(s)
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day(CREATED_AT))
+            .unwrap();
+    });
+    provider.fail_mutation_at(0);
+    StorageHandle::enter(&mut provider, |s| {
+        let data = ICredisFactory::maintainCall {
+            process_call: false,
+            process_forfeit: false,
+            process_cleanup: false,
+        }
+        .abi_encode();
+        assert!(dispatch(s.clone(), &data, bob(), U256::ZERO)
+            .unwrap()
+            .is_empty());
+        assert!(dispatch(s, &data, bob(), U256::from(1)).is_err());
+    });
+    assert_eq!(
+        provider.clear_mutation_failure(),
+        0,
+        "all-false performs no writes"
+    );
+    provider.set_static(true);
+    StorageHandle::enter(&mut provider, |s| {
+        let data = ICredisFactory::hasMaintenanceWorkCall {}.abi_encode();
+        let result = dispatch(s.clone(), &data, bob(), U256::ZERO).unwrap();
+        let pending = ICredisFactory::hasMaintenanceWorkCall::abi_decode_returns(&result).unwrap();
+        assert!(pending.call_pending && pending.forfeit_pending && pending.cleanup_pending);
+        let data = ICredisFactory::maintainCall {
+            process_call: false,
+            process_forfeit: false,
+            process_cleanup: false,
+        }
+        .abi_encode();
+        assert!(matches!(
+            dispatch(s, &data, bob(), U256::ZERO),
+            Err(outbe_primitives::error::PrecompileError::WriteProtection)
+        ));
+    });
+    assert!(provider.get_events(CREDIS_FACTORY_ADDRESS).is_empty());
+}
+
+#[test]
+fn maintenance_cleanup_waits_for_forfeiture_then_resumes_without_calls() {
+    let (mut provider, ids) = lapsed_group_of_three();
+    StorageHandle::enter(&mut provider, |s| {
+        let at = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
+        finalize_through(&s, at);
+        let ctx = block_at(&s, at);
+        let selection = outbe_oracle::call_pass::Selection {
+            process_call: true,
+            process_forfeit: false,
+            process_cleanup: true,
+        };
+        crate::called::process_call_pass(&ctx, selection).unwrap();
+        assert_eq!(
+            CredisContract::new(s.clone()).daily_phase.read().unwrap(),
+            1
+        );
+        assert!(ids.iter().all(|id| !is_deleted(&s, *id)));
+        crate::called::process_call_pass(
+            &ctx,
+            outbe_oracle::call_pass::Selection {
+                process_call: false,
+                process_forfeit: true,
+                process_cleanup: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            crate::called::pending_work(&ctx).unwrap(),
+            (false, false, true)
+        );
+        assert!(ids.iter().all(|id| !is_deleted(&s, *id)));
+        crate::called::process_call_pass(
+            &ctx,
+            outbe_oracle::call_pass::Selection {
+                process_call: false,
+                process_forfeit: false,
+                process_cleanup: true,
+            },
+        )
+        .unwrap();
+        assert!(ids.iter().all(|id| is_deleted(&s, *id)));
+        assert_eq!(
+            crate::called::pending_work(&ctx).unwrap(),
+            (false, false, false)
+        );
+    });
+    teardown();
+}
+
 fn state_of(storage: &StorageHandle<'_>, credis_id: U256) -> CredisState {
     CredisContract::new(storage.clone())
         .get_credis(credis_id)
@@ -212,7 +317,7 @@ fn a_node_local_failure_while_calling_a_credis_fails_the_scan() {
             outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::scan_and_call(&ctx)
+        crate::called::scan_and_call(&ctx, ALL_PHASES)
     });
     storage.clear_mutation_failure();
     assert!(matches!(
@@ -1191,7 +1296,10 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         };
         let before = reserve();
 
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(
             credis.daily_phase.read().unwrap(),
             2,
@@ -1210,7 +1318,10 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
             pledge_cost() * U256::from(2)
         );
         let saved = credis.daily_budget.read().unwrap();
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
         let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
@@ -1226,20 +1337,26 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         );
 
         let next = block_at(&storage, at);
-        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&next, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(credis.call_sweep_day.read().unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         for id in &ids {
             assert!(is_deleted(&storage, *id));
         }
-        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&next, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
     });
     teardown();
 }
 
-/// One block's forfeit and cleanup under one checkpoint, as the CycleTick transaction runs them.
+/// One maintenance slice's forfeit and cleanup under the same checkpoint.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,

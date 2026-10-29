@@ -1,6 +1,6 @@
 //! Daily call sweep: calls the Gem groups whose reference price breached their call
-//! price on enough days of their window. The daily trigger schedules the closed day,
-//! and every CycleTick walks a slice of it.
+//! price on enough days of their window. Permissionless maintenance schedules the
+//! closed day and walks a slice of it.
 
 use alloy_primitives::{B256, U256};
 use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
@@ -21,7 +21,7 @@ use outbe_primitives::{
     storage::dsl::Value,
 };
 
-/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
+/// Schedules the day the Oracle has just finalized without executing its phases.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut GemCallPass::new(ctx))
 }
@@ -32,14 +32,25 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// This function runs the coupled daily pass, including forfeits and position expiry after calls.
 /// It returns the number of called groups, not the pass completion state.
-pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut GemCallPass::new(ctx))
+pub fn scan_and_call(ctx: &BlockRuntimeContext, selection: call_pass::Selection) -> Result<u32> {
+    maintain(ctx, selection)
 }
 
 /// This function resumes the coupled daily pass under this block height's shared allowance.
 /// It returns the number of called groups.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut GemCallPass::new(ctx))
+pub fn process_call_pass(
+    ctx: &BlockRuntimeContext,
+    selection: call_pass::Selection,
+) -> Result<u32> {
+    maintain(ctx, selection)
+}
+
+pub(crate) fn maintain(ctx: &BlockRuntimeContext, selection: call_pass::Selection) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut GemCallPass::new(ctx), selection)
+}
+
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<(bool, bool, bool)> {
+    call_pass::pending_work(ctx, &GemCallPass::new(ctx))
 }
 
 pub(crate) struct GemCallPass<'storage> {

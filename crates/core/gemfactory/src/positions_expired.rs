@@ -15,6 +15,11 @@ use crate::schema::GemFactoryContract;
 use crate::state::{PositionCleanupQueue, PositionExpiryQueue};
 use alloy_primitives::U256;
 
+pub(crate) fn cleanup_pending(ctx: &BlockRuntimeContext) -> Result<bool> {
+    let queue = GemFactoryContract::new(ctx.storage.clone());
+    deadline_queue::has_cleanup_work(&PositionCleanupQueue(&queue), ctx.block.timestamp)
+}
+
 /// Returns the unissued capacity of the hours whose positions expired. Returns the
 /// hours expired.
 #[cfg(any(test, feature = "test-utils"))]

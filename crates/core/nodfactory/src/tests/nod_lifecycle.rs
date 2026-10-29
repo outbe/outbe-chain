@@ -4,6 +4,7 @@
 //! queue through [`scan`] against seeded oracle history, so the breach count is
 //! recomputed from the finalized daily VWAP series exactly as it is in a block.
 
+use super::ALL_PHASES;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
@@ -1149,7 +1150,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
         .map(|item| item.group_key)
         .collect();
     let ctx = block_at(storage, timestamp);
-    let called = crate::called::process_call_pass(&ctx).unwrap();
+    let called = crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap();
     crate::cleanup::cleanup(&ctx).unwrap();
     called
         + groups
@@ -1335,7 +1336,10 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             .unwrap();
 
         let ctx = block_at(storage, past);
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
@@ -1347,7 +1351,10 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             "forfeits wait for all calls in the pinned day"
         );
         let allowance = nod.daily_budget.read().unwrap();
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(
+            crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap(),
+            0
+        );
         assert_eq!(
             nod.daily_budget.read().unwrap(),
             allowance,
@@ -1571,7 +1578,7 @@ fn a_running_call_sweep_keeps_its_day() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::process_call_pass(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
@@ -1595,7 +1602,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         let ctx = block_at(storage, past);
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::called::process_call_pass(&ctx).unwrap();
+        crate::called::process_call_pass(&ctx, ALL_PHASES).unwrap();
         crate::hooks::cleanup(&ctx).unwrap();
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert!(!is_queued(storage, group_key));
@@ -1634,7 +1641,7 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
             storage.clone(),
         );
-        crate::called::process_call_pass(&ctx)
+        crate::called::process_call_pass(&ctx, ALL_PHASES)
     });
     provider.clear_mutation_failure();
     assert!(matches!(

@@ -1,12 +1,12 @@
 //! Daily call scan: force-calls Nod groups off the Oracle's finalized
-//! per-UTC-day VWAPs. The Cycle daily trigger schedules the closed UTC day, and every
-//! CycleTick walks a slice of it.
+//! per-UTC-day VWAPs. Permissionless maintenance schedules the closed UTC day and
+//! walks a slice of it.
 //!
 //! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and every
-//! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
-//! (`forfeited::sweep_expired`).
+//! maintenance forfeits the groups whose `call_notice_period_seconds` lapsed
+//! (`forfeited::forfeit_through`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
@@ -35,12 +35,8 @@ use outbe_primitives::{
 use outbe_nod::state::CallBins;
 use outbe_nod::{api, precompile::INod, schema::NodContract};
 
-/// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
-///
-/// Never returns `Err` for missing market data. The Cycle dispatcher propagates
-/// a handler error out of the `CycleTick` system transaction, which fails the
-/// block. An unregistered pair, an unpriced currency or an unfinalized day
-/// therefore each degrade to "no transition" instead.
+/// Schedules the day the Oracle has just finalized without executing its phases.
+/// Missing market data holds the pass without changing its economic state.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut NodCallPass::new(ctx))
 }
@@ -52,14 +48,25 @@ pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
-pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
+pub fn scan_and_call(ctx: &BlockRuntimeContext, selection: call_pass::Selection) -> Result<u32> {
+    maintain(ctx, selection)
 }
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
 /// The return value counts called groups, not forfeited groups.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
-    call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
+pub fn process_call_pass(
+    ctx: &BlockRuntimeContext,
+    selection: call_pass::Selection,
+) -> Result<u32> {
+    maintain(ctx, selection)
+}
+
+pub(crate) fn maintain(ctx: &BlockRuntimeContext, selection: call_pass::Selection) -> Result<u32> {
+    call_pass::continue_day(ctx, &mut NodCallPass::new(ctx), selection)
+}
+
+pub(crate) fn pending_work(ctx: &BlockRuntimeContext) -> Result<(bool, bool, bool)> {
+    call_pass::pending_work(ctx, &NodCallPass::new(ctx))
 }
 
 struct NodCallPass<'storage> {

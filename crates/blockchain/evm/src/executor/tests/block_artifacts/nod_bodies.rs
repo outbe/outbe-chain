@@ -1,7 +1,11 @@
 //! Independent EVM states produce identical full-block results on both execution roles.
 
 use super::*;
+use outbe_nodfactory::precompile::INodFactory;
+use outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
+
+const MAINTENANCE_GAS_LIMIT: u64 = 3_000_000;
 
 /// A non-midnight second on 2020-01-01. `first_full_day` can step that day.
 fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
@@ -52,6 +56,15 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
             })),
         "fixture must forfeit a Nod during the block"
     );
+    assert!(
+        receipts[..expected_count - 1].iter().all(|receipt| {
+            receipt.logs.iter().all(|log| {
+                log.address != NOD_ADDRESS
+                    || log.data.topics().first() != Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
+            })
+        }),
+        "Cycle and the other begin system transactions must not forfeit Nods"
+    );
 }
 
 fn execute_nod_block(
@@ -60,9 +73,44 @@ fn execute_nod_block(
 ) -> Result<NodBlockObservation, alloy_evm::block::BlockExecutionError> {
     outbe_chain_constants::initialize(None).unwrap();
     let proposer = fixture.proposer;
+    let gratis_load_minor =
+        outbe_nod::api::calculation_amount(&fixture.item).expect("fixture Nod amount");
 
     let signer = test_evm_signer();
     let (mut state, seed_hash) = seed_nod_body_state(fixture).expect("seed Nod body fixture");
+    let maintenance: reth_ethereum::TransactionSigned = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: MAINTENANCE_GAS_LIMIT,
+        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+        max_priority_fee_per_gas: 0,
+        to: TxKind::Call(NOD_FACTORY_ADDRESS),
+        value: U256::ZERO,
+        input: INodFactory::maintainCall {
+            process_call: true,
+            process_forfeit: true,
+            process_cleanup: true,
+        }
+        .abi_encode()
+        .into(),
+        access_list: Default::default(),
+    }
+    .into_signed(Signature::test_signature())
+    .into();
+    let maintenance = maintenance.try_into_recovered().unwrap();
+    let caller = Address(*maintenance.signer());
+    assert_ne!(
+        caller, proposer,
+        "maintenance caller need not be a validator"
+    );
+    let funded_balance = U256::from(10u64).pow(U256::from(18));
+    state.database.insert_account_info(
+        caller,
+        AccountInfo {
+            balance: funded_balance,
+            ..Default::default()
+        },
+    );
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
     let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
     parent_metadata.finalized_block_number = 1;
@@ -79,9 +127,10 @@ fn execute_nod_block(
         },
     );
     let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
-    let signed_body = system_txs.clone();
+    let mut signed_body = system_txs.clone();
+    signed_body.push(maintenance.clone());
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-    let execution = nod_execution_context(
+    let mut execution = nod_execution_context(
         proposer,
         seed_hash,
         parent_metadata,
@@ -91,6 +140,7 @@ fn execute_nod_block(
             Vec::new()
         },
     );
+    execution.inner.tx_count_hint = Some(signed_body.len());
     let mut executor = config.create_executor(evm, execution);
     super::with_phase1_verify_disabled(|| {
         executor
@@ -122,14 +172,94 @@ fn execute_nod_block(
                 "CycleTick storage work must consume internal gas beyond intrinsic gas"
             );
             cycle_internal_gas = Some(internal_gas);
+            let index = executor.receipts().len() - 1;
+            let previous_cumulative = index.checked_sub(1).map_or(0, |previous| {
+                executor.receipts()[previous].cumulative_gas_used
+            });
+            assert_eq!(
+                executor.receipts()[index].cumulative_gas_used - previous_cumulative,
+                intrinsic,
+                "CycleTick native work must retain receipt-visible envelope gas"
+            );
+            assert!(intrinsic <= visible_envelopes[index]);
         }
         assert!(
             executor.system_tx_execution_gas
                 <= outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
         );
     }
+    let block = BlockContext::empty_for_tests(2, TEST_BLOCK_TIMESTAMP_BASE + 2, CHAIN_ID);
+    let capacity_before = {
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.inner.evm.db_mut(),
+            block.clone(),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let nod = NodContract::new(storage.clone());
+            assert_eq!(nod.group_nod_count.read(&fixture.group_key)?, 1);
+            assert_eq!(
+                nod.group_unpaid_load.read(&fixture.group_key)?,
+                gratis_load_minor,
+                "CycleTick must leave the group's unpaid capacity intact"
+            );
+            assert!(outbe_nod::api::load_item(&storage, fixture.item.nod_id)?.is_some());
+            outbe_promislimit::PromisLimitContract::new(storage).promis_limit()
+        })
+        .unwrap()
+    };
+    let system_gas_before = executor.system_tx_execution_gas;
+    let cumulative_before = executor.receipts().last().unwrap().cumulative_gas_used;
+    let caller_before = signer_balance(executor.inner.evm.db_mut(), caller);
+    assert_eq!(caller_before, funded_balance);
+    let maintenance_gas = executor.execute_transaction(maintenance)?.tx_gas_used();
+    assert_eq!(
+        executor.system_tx_execution_gas, system_gas_before,
+        "ordinary maintenance must not consume the system gas budget"
+    );
+    assert_eq!(
+        caller_before - signer_balance(executor.inner.evm.db_mut(), caller),
+        U256::from(maintenance_gas) * U256::from(MIN_PROTOCOL_BASE_FEE),
+        "the maintenance caller must pay ordinary transaction gas"
+    );
+    assert_eq!(
+        executor.receipts().last().unwrap().cumulative_gas_used,
+        cumulative_before + maintenance_gas,
+        "paid maintenance gas must contribute to receipt and header gas"
+    );
+    assert!(executor.receipts().last().unwrap().success);
+    {
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.inner.evm.db_mut(),
+            block,
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(outbe_nod::api::load_item(&storage, fixture.item.nod_id)?.is_none());
+            assert!(outbe_nod::api::load_group(&storage, fixture.group_key)?.is_none());
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(storage).promis_limit()?,
+                capacity_before + gratis_load_minor,
+                "maintenance must return the forfeited load exactly once before cleanup"
+            );
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })
+        .unwrap();
+    }
     let receipts = executor.receipts().to_vec();
     assert_group_mutation_receipts(&receipts, signed_body.len());
+    let forfeited = receipts
+        .last()
+        .unwrap()
+        .logs
+        .iter()
+        .find_map(|log| {
+            (log.address == NOD_ADDRESS)
+                .then(|| INod::NodGroupForfeited::decode_log_data(&log.data).ok())
+                .flatten()
+        })
+        .expect("external maintenance must emit forfeiture");
+    assert_eq!(forfeited.groupKey, fixture.group_key);
+    assert_eq!(forfeited.nods, 1);
+    assert_eq!(forfeited.gratisLoadMinor, gratis_load_minor);
     executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
@@ -192,10 +322,10 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
         execute_nod_block(&fixture, false).expect("proposer block execution succeeds");
     let validator_result = execute_nod_block(&fixture, true).expect("canonical replay succeeds");
     assert_eq!(proposer_result, validator_result);
-    assert_cycle_tick_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
+    assert_maintenance_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
 }
 
-fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes: &[u64]) {
+fn assert_maintenance_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes: &[u64]) {
     let body_receipt_index = receipts
         .iter()
         .position(|receipt| {
@@ -204,7 +334,9 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
                     && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
             })
         })
-        .expect("CycleTick body mutation receipt");
+        .expect("external maintenance body mutation receipt");
+    assert_eq!(body_receipt_index, envelopes.len());
+    assert_eq!(receipts.len(), envelopes.len() + 1);
     let previous_cumulative = body_receipt_index
         .checked_sub(1)
         .map_or(0, |index| receipts[index].cumulative_gas_used);
@@ -213,13 +345,13 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .saturating_sub(previous_cumulative);
     let cycle_intrinsic_gas =
         system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref()).unwrap();
-    assert_eq!(
-        body_receipt_gas, cycle_intrinsic_gas,
-        "native storage work uses the internal budget"
+    assert!(
+        body_receipt_gas > cycle_intrinsic_gas,
+        "ordinary maintenance must expose its execution work, not just system envelope gas"
     );
     assert!(
-        body_receipt_gas <= envelopes[body_receipt_index],
-        "receipt-visible CycleTick gas must not exceed its signed gas limit"
+        body_receipt_gas <= MAINTENANCE_GAS_LIMIT,
+        "receipt-visible maintenance gas must not exceed its signed gas limit"
     );
     assert_eq!(
         gas_used,
@@ -385,7 +517,7 @@ fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent
 fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre::Result<()> {
     let group_key = fixture.group_key;
     outbe_nod::test_support::add(&storage, &fixture.item)?;
-    // CycleTick forfeits the lapsed called group and deletes both bodies.
+    // External maintenance forfeits the lapsed called group and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;
@@ -394,15 +526,12 @@ fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre
         group_key,
         outbe_nod::api::settlement_deadline_of(1, notice),
     )?;
-    seed_nod_daily_trigger(storage, fixture)?;
+    seed_nod_daily_pass(storage)?;
 
     Ok(())
 }
 
-fn seed_nod_daily_trigger(
-    storage: StorageHandle<'_>,
-    _fixture: &NodBodyFixture,
-) -> eyre::Result<()> {
+fn seed_nod_daily_pass(storage: StorageHandle<'_>) -> eyre::Result<()> {
     let (.., pair_index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840)?;
     let previous_day = outbe_primitives::time::previous_date_key(
         outbe_primitives::time::timestamp_to_date_key(TEST_BLOCK_TIMESTAMP_BASE + 2),
@@ -411,12 +540,14 @@ fn seed_nod_daily_trigger(
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     oracle.record_utc_day_vwap(previous_day, pair_index, U256::from(1_000_000u64))?;
     oracle.utc_day_vwap_last_finalized.write(previous_day)?;
-    outbe_cycle::schema::Cycle::new(storage.clone())
-        .last_executed_at
-        .write(
-            &outbe_cycle::triggers::TriggerId::NodCallDaily.as_u32(),
-            TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY,
-        )?;
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(1, TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY, CHAIN_ID),
+        storage.clone(),
+    );
+    outbe_nodfactory::called::initialize_daily(&ctx)?;
+    let nod = NodContract::new(storage);
+    nod.call_sweep_day.write(previous_day)?;
+    nod.call_latest_day.write(previous_day)?;
 
     Ok(())
 }

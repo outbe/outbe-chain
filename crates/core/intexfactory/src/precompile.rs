@@ -47,6 +47,25 @@ pub fn dispatch(
         |call| {
             use IIntexFactory::IIntexFactoryCalls::*;
             match call {
+                maintain(c) => mutate_void(&storage, c, caller, |_sender, c| {
+                    runtime::maintain(
+                        &storage,
+                        outbe_oracle::call_pass::Selection {
+                            process_call: c.process_call,
+                            process_forfeit: c.process_forfeit,
+                            process_cleanup: c.process_cleanup,
+                        },
+                    )
+                }),
+                hasMaintenanceWork(c) => view(c, |_| {
+                    let (call_pending, forfeit_pending, cleanup_pending) =
+                        runtime::has_maintenance_work(&storage)?;
+                    Ok(IIntexFactory::hasMaintenanceWorkReturn {
+                        call_pending,
+                        forfeit_pending,
+                        cleanup_pending,
+                    })
+                }),
                 settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,

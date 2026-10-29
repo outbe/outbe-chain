@@ -17,6 +17,42 @@ use outbe_primitives::{
 };
 use outbe_vaultrouter::LiquidityReservation;
 
+fn maintenance_context<'s>(
+    storage: &StorageHandle<'s>,
+) -> Result<outbe_primitives::block::BlockRuntimeContext<'s>> {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    Ok(BlockRuntimeContext::new(
+        BlockContext {
+            block_number: storage.block_number()?,
+            timestamp: storage.now_secs()?,
+            chain_id: storage.chain_id()?,
+            genesis_hash: storage.genesis_hash()?,
+            genesis_timestamp: storage.genesis_timestamp()?,
+            ..Default::default()
+        },
+        storage.clone(),
+    ))
+}
+
+/// Run selected phases in pinned-day order with the shared per-height allowance.
+pub fn maintain(
+    storage: &StorageHandle<'_>,
+    selection: outbe_oracle::call_pass::Selection,
+) -> Result<()> {
+    outbe_primitives::dispatch::ensure_mutation_allowed(storage)?;
+    // TODO: Reward callers for maintenance work performed.
+    if selection == outbe_oracle::call_pass::Selection::default() {
+        return Ok(());
+    }
+    crate::called::process_call_pass(&maintenance_context(storage)?, selection)?;
+    Ok(())
+}
+
+/// Read pending daily obligations without scheduling or changing economic state.
+pub fn has_maintenance_work(storage: &StorageHandle<'_>) -> Result<(bool, bool, bool)> {
+    crate::called::pending_work(&maintenance_context(storage)?)
+}
+
 /// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,

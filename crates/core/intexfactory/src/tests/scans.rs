@@ -7,6 +7,59 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 const MATURE_TS: u64 = ISSUED_AT as u64 + 21 * DAY + 1;
 
 #[test]
+fn maintenance_abi_is_permissionless_nonpayable_and_static_safe() {
+    let mut provider = factory_provider();
+    StorageHandle::enter(&mut provider, |s| {
+        crate::called::initialize_daily(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(0, ISSUED_AT as u64 - DAY, CHAIN_ID),
+            s.clone(),
+        ))
+        .unwrap();
+        OracleContract::new(s)
+            .utc_day_vwap_last_finalized
+            .write(previous_date_key(timestamp_to_date_key(ISSUED_AT as u64)).unwrap())
+            .unwrap();
+    });
+    provider.fail_mutation_at(0);
+    StorageHandle::enter(&mut provider, |s| {
+        let data = IIntexFactory::maintainCall {
+            process_call: false,
+            process_forfeit: false,
+            process_cleanup: false,
+        }
+        .abi_encode();
+        assert!(precompile::dispatch(s.clone(), &data, owner(), U256::ZERO)
+            .unwrap()
+            .is_empty());
+        assert!(precompile::dispatch(s, &data, owner(), U256::from(1)).is_err());
+    });
+    assert_eq!(
+        provider.clear_mutation_failure(),
+        0,
+        "all-false performs no writes"
+    );
+    provider.set_static(true);
+    StorageHandle::enter(&mut provider, |s| {
+        let data = IIntexFactory::hasMaintenanceWorkCall {}.abi_encode();
+        let result = precompile::dispatch(s.clone(), &data, owner(), U256::ZERO).unwrap();
+        let pending = IIntexFactory::hasMaintenanceWorkCall::abi_decode_returns(&result).unwrap();
+        assert!(pending.call_pending && pending.forfeit_pending);
+        assert!(!pending.cleanup_pending);
+        let data = IIntexFactory::maintainCall {
+            process_call: true,
+            process_forfeit: true,
+            process_cleanup: true,
+        }
+        .abi_encode();
+        assert!(matches!(
+            precompile::dispatch(s, &data, owner(), U256::ZERO),
+            Err(outbe_primitives::error::PrecompileError::WriteProtection)
+        ));
+    });
+    assert!(provider.get_events(INTEX_FACTORY_ADDRESS).is_empty());
+}
+
+#[test]
 fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
@@ -688,7 +741,7 @@ fn a_short_notice_waits_for_its_deadline_day_to_close() {
 }
 
 #[test]
-fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
+fn maintenance_cleanup_runs_behind_blocked_calls_and_does_not_count_retained_rights() {
     with_factory(|s| {
         let now = ISSUED_AT as u64;
         let deadline = now + DAY;
@@ -705,9 +758,38 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
         crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::hooks::cleanup(&ctx).unwrap();
-
         let f = IntexContract::new(s.clone());
+        // An unfinished daily call pass is blocked by Oracle lag. Independent cleanup
+        // must still run, and the query must report the stored phase obligations.
+        let pinned = timestamp_to_date_key(now);
+        f.daily_genesis_day.write(pinned).unwrap();
+        f.call_sweep_day.write(pinned).unwrap();
+        f.call_latest_day.write(pinned).unwrap();
+        s.set_block_timestamp(U256::from(due - DAY)).unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&s).unwrap(),
+            (true, true, false)
+        );
+        s.set_block_timestamp(U256::from(due)).unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&s).unwrap(),
+            (true, true, true)
+        );
+        runtime::maintain(
+            &s,
+            outbe_oracle::call_pass::Selection {
+                process_call: false,
+                process_forfeit: false,
+                process_cleanup: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            runtime::has_maintenance_work(&s).unwrap(),
+            (true, true, false)
+        );
+        assert_eq!(f.call_sweep_day.read().unwrap(), pinned);
+        assert_eq!(f.daily_phase.read().unwrap(), 0);
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());
         assert!(outbe_intex::api::series_exists(&s, kept).unwrap());
         assert_eq!(f.group_members(group).unwrap(), vec![kept]);
