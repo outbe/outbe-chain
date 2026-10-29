@@ -72,6 +72,13 @@ pub fn dispatch_auction_brief(
         has_limit,
     } = brief;
     storage.clone().with_checkpoint(|| {
+        if worldwide_day.value() == 0 && !has_limit && desis_limit_minor.is_zero() {
+            let mut contract = storage.contract::<DesisContract>();
+            contract.emit(IDesis::AuctionCancelledNoLimit {
+                worldwideDay: worldwide_day.into(),
+            })?;
+            return Ok(AuctionBriefReceipt::Accepted);
+        }
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
         let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
