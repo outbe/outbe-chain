@@ -65,8 +65,8 @@ pub enum TributeFactoryError {
     #[error("amount must be positive")]
     AmountMustBePositive,
 
-    #[error("nominal price is zero: no VWAP or S-curve data available for worldwide_day {worldwide_day}")]
-    NominalPriceUnavailable { worldwide_day: WorldwideDay },
+    #[error("currency price is zero: no VWAP or S-curve data available for worldwide_day {worldwide_day}")]
+    CurrencyPriceUnavailable { worldwide_day: WorldwideDay },
 
     #[error("nominal amount overflow")]
     NominalAmountOverflow,
@@ -258,8 +258,8 @@ impl From<TributeFactoryError> for PrecompileError {
                 })
             }
             TributeFactoryError::AmountMustBePositive => revert_with(I::AmountMustBePositive {}),
-            TributeFactoryError::NominalPriceUnavailable { worldwide_day } => {
-                revert_with(I::NominalPriceUnavailable {
+            TributeFactoryError::CurrencyPriceUnavailable { worldwide_day } => {
+                revert_with(I::CurrencyPriceUnavailable {
                     worldwideDay: worldwide_day.value(),
                 })
             }

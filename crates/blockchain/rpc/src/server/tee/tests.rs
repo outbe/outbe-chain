@@ -142,6 +142,7 @@ fn check(
             genesis_hash: GENESIS,
             block_number: 10,
             timestamp: 100,
+            genesis_timestamp: 1_700_000_000,
         },
     );
     let result = live_upgrade_candidate(

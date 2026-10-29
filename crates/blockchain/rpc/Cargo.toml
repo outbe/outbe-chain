@@ -18,7 +18,7 @@ outbe-tribute.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-staking.workspace = true
-outbe-emissionlimit.workspace = true
+outbe-emission.workspace = true
 outbe-slashindicator.workspace = true
 
 # Reth
@@ -48,6 +48,7 @@ outbe-update.workspace = true
 outbe-vote.workspace = true
 alloy-sol-types.workspace = true
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [lints]
 workspace = true

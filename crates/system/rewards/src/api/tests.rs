@@ -1,7 +1,5 @@
 use super::*;
 
-mod retention;
-
 use crate::test_support::{
     meta_with_hash, record_genesis_day_parent, with_funded_genesis_block, with_genesis_block,
     FB_HASH_A, FB_HASH_B, VAL_X, VAL_Y, VAL_Z,

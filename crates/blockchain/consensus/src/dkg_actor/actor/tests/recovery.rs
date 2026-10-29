@@ -13,12 +13,12 @@ fn dealer_retry_snapshot_round_trips_and_is_ceremony_scoped() {
     assert!(store.load_dealer(ceremony).unwrap().is_none());
     let snapshot = DkgDealerRetrySnapshot {
         ceremony_id: ceremony,
-        seed,
+        seed: zeroize::Zeroizing::new(seed),
         accepted_acks: BTreeMap::new(),
     };
     store.save_dealer(&snapshot).unwrap();
     let recovered = store.load_dealer(ceremony).unwrap().unwrap();
-    assert_eq!(recovered.seed, seed);
+    assert_eq!(*recovered.seed, seed);
     assert!(recovered.accepted_acks.is_empty());
     assert!(store
         .load_dealer(DkgCeremonyId {
@@ -100,7 +100,7 @@ fn recovered_seed_reconstructs_identical_dealer_transcript() {
     };
     let snapshot = DkgDealerRetrySnapshot {
         ceremony_id,
-        seed,
+        seed: zeroize::Zeroizing::new(seed),
         accepted_acks: BTreeMap::from([(player_pk.clone(), ack)]),
     };
     let recovered_snapshot =

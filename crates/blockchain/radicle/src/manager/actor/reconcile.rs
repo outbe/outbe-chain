@@ -10,7 +10,8 @@ struct ReconciliationPass {
 impl Runtime {
     pub(super) async fn reconcile_control(
         &mut self,
-        snapshot: &FinalizedSnapshot,
+        window: &[RepoId],
+        next_cursor: usize,
         desired: &BTreeMap<[u8; 32], VerifiedEndpoint>,
     ) -> ControlReconciliation {
         let Ok(sessions) = self.dependencies.control.sessions().await else {
@@ -28,7 +29,7 @@ impl Runtime {
         self.observe_outbound_sessions(&pass.sessions);
         self.disconnect_stale(desired, &mut pass).await;
         self.connect_desired(desired, &mut pass).await;
-        self.seed_repositories(snapshot, &mut pass).await;
+        self.seed_repositories(window, next_cursor, &mut pass).await;
         self.probe_convergence(desired, pass.converged).await
     }
 
@@ -114,10 +115,12 @@ impl Runtime {
     }
     async fn seed_repositories(
         &mut self,
-        snapshot: &FinalizedSnapshot,
+        window: &[RepoId],
+        next_cursor: usize,
         pass: &mut ReconciliationPass,
     ) {
-        for repo in &snapshot.repositories {
+        self.repository_cursor = next_cursor;
+        for repo in window {
             if self.dependencies.control.seed(*repo).await.is_err() {
                 pass.converged = false;
             }

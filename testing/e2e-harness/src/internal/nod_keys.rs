@@ -21,22 +21,11 @@ pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
             reference_currency: data.referenceCurrency,
         },
         encryption_binding: data.encryptionBinding,
-        encrypted_creator_public_key: data.encryptedCreatorPublicKey.to_vec(),
         encrypted_gratis_amount: data.encryptedGratisAmount.to_vec(),
     }
 }
 pub(crate) fn decrypt(world: &World, data: &eth::INod::NodData) -> U256 {
-    let public = world
-        .rpc
-        .tribute_network_public_key(world.validators.primary_port())
-        .expect("network encryption public key");
-    decrypt_with_public(data, &public)
-}
-pub(crate) fn decrypt_with_public(data: &eth::INod::NodData, public: &[u8; 32]) -> U256 {
-    outbe_tee::nod_decrypt::decrypt_nod_for_owner(
-        &tribute_keys::secret(data.owner),
-        public,
-        &encrypted(data),
-    )
-    .expect("owner-local NOD decryption")
+    let view_key = tribute_keys::nod_view_key(world, data.owner);
+    outbe_tee::nod_decrypt::decrypt_nod_for_owner(&view_key, &encrypted(data))
+        .expect("owner-local NOD decryption")
 }

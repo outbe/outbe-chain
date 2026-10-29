@@ -16,12 +16,10 @@ serde.workspace = true
 thiserror.workspace = true
 
 outbe-tee-enclave = { workspace = true, optional = true }
-x25519-dalek = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-nod = { path = ".", features = ["test-enclave"] }
 outbe-tee-enclave.workspace = true
-x25519-dalek.workspace = true
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 serde_json.workspace = true
@@ -30,7 +28,7 @@ tempfile.workspace = true
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
-test-enclave = ["dep:outbe-tee-enclave", "dep:x25519-dalek"]
+test-enclave = ["dep:outbe-tee-enclave"]
 # Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
 e2e-test = []
 

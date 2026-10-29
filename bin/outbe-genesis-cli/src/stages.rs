@@ -15,7 +15,7 @@ use crate::launch_bundle;
 use crate::network::{
     base_profile_path, deep_merge, default_canon_dir, default_contracts_dir, profiles_dir,
     DEFAULT_CHAIN_ID, DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS, DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
-    DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS,
+    DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS, MAINNET_CHAIN_ID,
     MAX_GENESIS_AGE_SECONDS, SEED_SECTIONS,
 };
 use crate::seed_codec::{parse_u256, parse_u64, timestamp_to_utc_date_key};
@@ -151,8 +151,13 @@ pub fn prefund_validators(
 /// Build the protocol seed sections by merging the network's overrides on top of `testnet.yaml`.
 pub fn build_seed(config: &Value) -> Result<Value, GenesisError> {
     let baseline = load_yaml(&base_profile_path())?;
+    let is_mainnet = config.get("chain_id").and_then(Value::as_u64) == Some(MAINNET_CHAIN_ID)
+        || config.get("network").and_then(Value::as_str) == Some("mainnet");
     let mut seed_map = Map::new();
     for section in SEED_SECTIONS {
+        if is_mainnet && section == "protocol_constants" {
+            continue;
+        }
         if let Some(val) = baseline.get(section) {
             seed_map.insert(section.to_owned(), val.clone());
         }

@@ -15,7 +15,7 @@ import {Iso4217} from "./Iso4217.sol";
 ///      passes a SeriesData snapshot whose state already carries the derived Forfeited.
 library IntexMetadata {
     string internal constant COLLECTION_DESCRIPTION =
-        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Unsettled units stay transferable until the series is called; settled units move to a separate Settled token class that can be mined with no deadline.";
+        "Intex is the mining right of the Outbe network, issued in series through a Worldwide Day auction across all connected chains. Units stay transferable until the settlement deadline of a called series. A settlement on Outbe burns them here and moves them to the Settled Intex collection of the Outbe Intex precompile.";
 
     /// @dev First row baseline of the card and the step between rows.
     uint256 private constant ROW_TOP = 265;
@@ -30,25 +30,22 @@ library IntexMetadata {
     /// @notice Build the `data:application/json;base64,...` URI for a token.
     /// @param data Series record for the token id, with its effective state. The
     ///        caller derives `Forfeited`, so this library never re-derives it.
-    /// @param settled Whether the token id is the series' Settled class.
     /// @return Token URI, or the collection document when the record does not exist
     ///         (`issuedAt == 0`).
-    function tokenURI(IIntexNFT1155.SeriesData memory data, bool settled) external pure returns (string memory) {
+    function tokenURI(IIntexNFT1155.SeriesData memory data) external pure returns (string memory) {
         if (data.issuedAt == 0) return _collectionURI();
 
-        bool forfeited = !settled && data.state == IIntexNFT1155.IntexState.Forfeited;
         string memory displayId = _displayId(data);
 
         string memory json = string.concat(
             "{\"name\":\"Intex ",
             displayId,
-            settled ? " - Settled" : "",
             "\",\"description\":\"",
-            _tokenDescription(data, displayId, settled),
+            _tokenDescription(data, displayId),
             "\",\"image\":\"data:image/svg+xml;base64,",
-            Base64.encode(bytes(_generateSVG(data, displayId, settled))),
+            Base64.encode(bytes(_generateSVG(data, displayId))),
             "\",\"attributes\":",
-            _buildAttributes(data, settled, forfeited),
+            _buildAttributes(data),
             "}"
         );
 
@@ -67,27 +64,18 @@ library IntexMetadata {
         );
     }
 
-    /// @dev Unsettled classes share one text. The settled class has no auction or deadline to name.
-    function _tokenDescription(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
+    function _tokenDescription(IIntexNFT1155.SeriesData memory data, string memory displayId)
         private
         pure
         returns (string memory)
     {
-        if (settled) {
-            return string.concat(
-                "Settled units of Intex series ",
-                displayId,
-                ". Settled units are never transferable and can be mined with no deadline;",
-                " mining one mints its Promis load."
-            );
-        }
         return string.concat(
-            "Unsettled units of Intex series ",
+            "Units of Intex series ",
             displayId,
             " from the Worldwide Day ",
             Strings.toString(data.worldwideDay),
             " auction. A unit is a mining right: its owner pays the settlement cost at the series'",
-            " fixed entry price. Unsettled units stay transferable until the series is called."
+            " fixed entry price. Units stay transferable until the settlement deadline of a called series."
         );
     }
 
@@ -104,18 +92,11 @@ library IntexMetadata {
         return string(out);
     }
 
-    function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool forfeited)
-        private
-        pure
-        returns (string memory)
-    {
+    function _buildAttributes(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
         string memory head = string.concat(
-            "[{\"trait_type\":\"Token Status\",\"value\":\"",
-            settled ? "Settled" : "Issued",
+            "[{\"trait_type\":\"Series State\",\"value\":\"",
+            _stateString(data.state),
             "\"},",
-            settled
-                ? ""
-                : string.concat("{\"trait_type\":\"Series State\",\"value\":\"", _stateString(data.state), "\"},"),
             "{\"trait_type\":\"Worldwide Day\",\"value\":",
             Strings.toString(data.worldwideDay),
             ",\"display_type\":\"number\"},",
@@ -138,7 +119,7 @@ library IntexMetadata {
         );
 
         string memory callRows = "";
-        if (!settled && data.calledAt != 0) {
+        if (data.calledAt != 0) {
             callRows = string.concat(
                 ",{\"trait_type\":\"Called At\",\"value\":",
                 Strings.toString(data.calledAt),
@@ -161,20 +142,13 @@ library IntexMetadata {
         return string.concat("{\"trait_type\":\"", name, "\",\"value\":", value, "}");
     }
 
-    function _generateSVG(IIntexNFT1155.SeriesData memory data, string memory displayId, bool settled)
+    function _generateSVG(IIntexNFT1155.SeriesData memory data, string memory displayId)
         private
         pure
         returns (string memory)
     {
-        string memory statusText;
-        string memory statusColor;
-        if (settled) {
-            (statusText, statusColor) = ("SETTLED", "#a855f7");
-        } else {
-            (statusText, statusColor) = _stateInfo(data.state);
-        }
-
-        return string.concat(_svgHeader(displayId, statusText, statusColor), _svgData(data, settled), "</svg>");
+        (string memory statusText, string memory statusColor) = _stateInfo(data.state);
+        return string.concat(_svgHeader(displayId, statusText, statusColor), _svgData(data), "</svg>");
     }
 
     function _stateInfo(IIntexNFT1155.IntexState state_) private pure returns (string memory, string memory) {
@@ -210,7 +184,7 @@ library IntexMetadata {
         );
     }
 
-    function _svgData(IIntexNFT1155.SeriesData memory data, bool settled) private pure returns (string memory) {
+    function _svgData(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
         uint256 y = ROW_TOP;
         string memory rows = _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), y);
         y += ROW_STEP;
@@ -222,7 +196,7 @@ library IntexMetadata {
             rows, _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), y)
         );
         y += ROW_STEP;
-        if (!settled && data.calledAt != 0) {
+        if (data.calledAt != 0) {
             uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;
             rows = string.concat(rows, _generateField("Call Deadline", _formatTimestamp(deadline), y));
         }

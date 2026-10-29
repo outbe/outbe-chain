@@ -25,8 +25,12 @@ pub(super) fn apply(
         if request.chain_id != resident_chain_id(chain)? {
             return Err(TransportDispatchError::TributeDayChainDiffersFromResident.into());
         }
-        let record = crate::tribute_day::apply_day_operation(derived.secret(), request)
-            .map_err(|_| TransportDispatchError::TributeDayOperationFailed)?;
+        let tribute_state_key =
+            crate::tribute_encryption::derive_tribute_state_key(derived.group_sig(), chain, 0)
+                .map_err(|_| TransportDispatchError::TributeKeyUnavailable)?;
+        let record =
+            crate::tribute_day::apply_day_operation(derived.secret(), &tribute_state_key, request)
+                .map_err(|_| TransportDispatchError::TributeDayOperationFailed)?;
         let inputs_canonical_hash = tribute_day::day_operation_inputs_hash(request)
             .map_err(|_| TransportDispatchError::CannotEncodeTributeDayInputs)?;
         let preimage =

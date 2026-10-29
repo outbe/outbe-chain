@@ -59,7 +59,6 @@ impl BlockLifecycle for CycleLifecycle {
         crate::runtime::dispatch_triggers(&ctx.runtime)?;
         crate::handler::credit_reward_slice(&ctx.runtime)?;
         outbe_intexfactory::notify::send_call_notices(&ctx.runtime)?;
-        outbe_rewards::api::prune_settled_days(&ctx.runtime)?;
         Ok(())
     }
 

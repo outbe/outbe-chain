@@ -18,6 +18,7 @@ mod layout;
 mod precompile;
 mod series;
 mod series_id;
+mod settled;
 mod units;
 
 const CHAIN_ID: u64 = 1;

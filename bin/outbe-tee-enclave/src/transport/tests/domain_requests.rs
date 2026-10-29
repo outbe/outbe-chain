@@ -22,16 +22,23 @@ fn account_key_authorization_cannot_cross_ledger_domains() {
     let (owner, account) = evm_signer(7);
     let ephemeral = [0x24; 32];
     let signature = owner_sig(&owner, account, ephemeral);
-    assert!(matches!(
-        enclave.call(EnclaveRequest::DeriveAccountKeys {
-            ledger: outbe_tee::protocol::Ledger::Promis,
-            account,
-            requester_ephemeral_pubkey: ephemeral,
-            owner_sig: signature,
-        }),
-        EnclaveResponse::Error { message }
-            if message == "DeriveAccountKeys: owner signature does not control account"
-    ));
+    for ledger in [
+        outbe_tee::protocol::Ledger::Promis,
+        outbe_tee::protocol::Ledger::Fidelity,
+        outbe_tee::protocol::Ledger::Tribute,
+        outbe_tee::protocol::Ledger::Nod,
+    ] {
+        assert!(matches!(
+            enclave.call(EnclaveRequest::DeriveAccountKeys {
+                ledger,
+                account,
+                requester_ephemeral_pubkey: ephemeral,
+                owner_sig: signature.clone(),
+            }),
+            EnclaveResponse::Error { message }
+                if message == "DeriveAccountKeys: owner signature does not control account"
+        ));
+    }
 }
 
 #[test]
@@ -179,4 +186,148 @@ fn derive_account_keys_ephemeral_binding() {
         ),
         "owner_sig must bind the requester ephemeral (no cross-target replay)"
     );
+}
+
+fn unseal_derived_view_key(
+    enclave: &mut Enclave,
+    ledger: outbe_tee::protocol::Ledger,
+    owner: &k256::ecdsa::SigningKey,
+    account: alloy_primitives::Address,
+    secret_seed: u8,
+) -> [u8; 32] {
+    let secret = [secret_seed; 32];
+    let ephemeral =
+        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(secret)).to_bytes();
+    let owner_sig = owner_sig_for_ledger(ledger, owner, account, ephemeral);
+    let EnclaveResponse::AccountKeysSealed {
+        sealed,
+        nonce,
+        enclave_ephemeral_pubkey,
+        ..
+    } = enclave.call(EnclaveRequest::DeriveAccountKeys {
+        ledger,
+        account,
+        requester_ephemeral_pubkey: ephemeral,
+        owner_sig,
+    })
+    else {
+        panic!("expected AccountKeysSealed for {ledger:?}");
+    };
+    let plaintext = crate::crypto::decrypt_share(
+        &secret,
+        &crate::crypto::EncryptedShare {
+            ephemeral_pub: enclave_ephemeral_pubkey,
+            nonce,
+            ciphertext: sealed,
+        },
+    )
+    .expect("unseal account keys");
+    assert_eq!(plaintext.len(), 64);
+    plaintext[..32].try_into().unwrap()
+}
+
+fn sample_encrypted_offer(
+    recipient_pub: &[u8; 32],
+    owner: alloy_primitives::Address,
+    day: outbe_primitives::time::WorldwideDay,
+) -> outbe_tee::protocol::EncryptedTributeOffer {
+    use alloy_primitives::U256;
+    let payload = serde_json::json!({
+        "creator": owner,
+        "tribute_draft_id": B256::repeat_byte(0x11),
+        "amount_base": "100",
+        "amount_micro": "0",
+        "su_hashes": [B256::repeat_byte(0x22)],
+    });
+    let cipher_text = outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+        recipient_pub,
+        [9; 32],
+        [1; 12],
+        &serde_json::to_vec(&payload).unwrap(),
+    )
+    .unwrap();
+    let eph = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([9; 32])).to_bytes();
+    outbe_tee::protocol::EncryptedTributeOffer {
+        owner,
+        cipher_text,
+        nonce: vec![1; 12],
+        ephemeral_pubkey: U256::from_be_bytes(eph),
+        worldwide_day: day,
+        tribute_currency: 840,
+        reference_currency: 978,
+        issuance_wwd_vwap_minor: U256::from(2_000_000),
+        reference_wwd_vwap_minor: U256::from(2_000_000),
+        reference_scurve_minor: U256::ZERO,
+        zk_context: None,
+    }
+}
+
+#[test]
+fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
+    use alloy_primitives::U256;
+    use outbe_primitives::{
+        nod_encryption::NodTermsV1, time::WorldwideDay, tribute_encryption::TributeAmountsV2,
+        wwd_entity_id::WwdEntityId,
+    };
+
+    let mut enclave = resident_enclave(4);
+    let (owner_sk, owner_addr) = evm_signer(7);
+    let day = WorldwideDay::new(20250115);
+    let recipient_pub = enclave.offer_key.get().expect("resident").public();
+    let offer = sample_encrypted_offer(&recipient_pub, owner_addr, day);
+
+    let EnclaveResponse::EncryptedTributeOfferBatchV2 { results, .. } =
+        enclave.call(EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
+            offers: vec![offer],
+        })
+    else {
+        panic!("expected EncryptedTributeOfferBatchV2");
+    };
+    let tribute = results[0].tribute.clone().expect("created tribute");
+    let tribute_view = unseal_derived_view_key(
+        &mut enclave,
+        outbe_tee::protocol::Ledger::Tribute,
+        &owner_sk,
+        owner_addr,
+        0x41,
+    );
+    assert_eq!(
+        outbe_tee::tribute_decrypt::decrypt_tribute_for_owner(&tribute_view, &tribute).unwrap(),
+        TributeAmountsV2 {
+            issuance_amount_minor: U256::from(100_000_000),
+            nominal_amount_minor: U256::from(50_000_000),
+        }
+    );
+
+    let terms = NodTermsV1 {
+        chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,
+        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x66)),
+        owner: owner_addr,
+        worldwide_day: day,
+        league_id: 0,
+        entry_price_minor: U256::from(700),
+        issuance_currency: 840,
+        reference_currency: 978,
+    };
+    let EnclaveResponse::NodEncryptedForTributeV1 { nod, .. } =
+        enclave.call(EnclaveRequest::EncryptNodForTributeV1 {
+            tribute: Box::new(tribute),
+            terms,
+            amount: U256::from(777),
+        })
+    else {
+        panic!("expected NodEncryptedForTributeV1");
+    };
+    let nod_view = unseal_derived_view_key(
+        &mut enclave,
+        outbe_tee::protocol::Ledger::Nod,
+        &owner_sk,
+        owner_addr,
+        0x42,
+    );
+    assert_eq!(
+        outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view, &nod).unwrap(),
+        U256::from(777)
+    );
+    assert!(outbe_tee::nod_decrypt::decrypt_nod_for_owner(&tribute_view, &nod).is_err());
 }

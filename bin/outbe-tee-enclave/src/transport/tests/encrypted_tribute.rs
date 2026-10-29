@@ -33,9 +33,12 @@ fn tribute_v2_commands_require_the_installed_network_key() {
 #[test]
 fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_response() {
     let secret = [7; 32];
-    let creator_public = crate::crypto::x25519_public(&[11; 32]);
+    let group_sig = [0x55; 96];
     let day = WorldwideDay::new(20250115);
     let chain_id = 54322345u64;
+    let chain = B256::from(alloy_primitives::U256::from(chain_id));
+    let tribute_state_key =
+        crate::tribute_encryption::derive_tribute_state_key(&group_sig, chain, 0).unwrap();
     let context = TributeContextV2 {
         chain_id,
         tribute_id: WwdEntityId::from_day_and_digest(day, [0x22; 32]),
@@ -51,11 +54,10 @@ fn private_reads_use_the_common_key_across_enclave_identities_and_bind_the_respo
         nominal_amount_minor: alloy_primitives::U256::from(50_000_000),
     };
     let encrypted =
-        crate::tribute_encryption::encrypt_tribute(&secret, &creator_public, context, &expected)
-            .unwrap();
+        crate::tribute_encryption::encrypt_tribute(&tribute_state_key, context, &expected).unwrap();
     for seed in [0x51, 0x61] {
         let keys = EnclaveKeys::new([seed; 32], Some([seed; 32])).unwrap();
-        let (offer_key, _) = install_tribute_offer_key(secret, vec![0x55; 96]);
+        let (offer_key, _) = install_tribute_offer_key(secret, group_sig.to_vec());
         let response = dispatch(
             EnclaveRequest::ReadTributeAmountsV2 {
                 tributes: vec![encrypted.clone()],
@@ -151,7 +153,8 @@ fn day_request() -> outbe_tee::tribute_day::TributeDayOpRequestV2 {
 #[test]
 fn private_day_commands_require_ready_local_authority_and_installed_network_key() {
     let enclave = Enclave::new(0x51);
-    let record = crate::tribute_day::apply_day_operation(&[7; 32], &day_request()).unwrap();
+    let record =
+        crate::tribute_day::apply_day_operation(&[7; 32], &[8; 32], &day_request()).unwrap();
     for request in [
         EnclaveRequest::ApplyTributeDayOpV2 {
             request: Box::new(day_request()),

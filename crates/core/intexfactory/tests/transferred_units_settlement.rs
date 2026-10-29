@@ -4,10 +4,13 @@
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
+use outbe_intex::precompile::IIntex;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_primitives::{
-    addresses::{INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS},
+    addresses::{
+        INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
+    },
     storage::{SubCallOutput, SubCallStatus},
     time::WorldwideDay,
 };
@@ -52,10 +55,6 @@ const SETTLED_UNITS: u64 = 3;
 
 fn issued_id() -> U256 {
     U256::from_be_slice(&SERIES)
-}
-
-fn settled_id() -> U256 {
-    issued_id() | (U256::ONE << 112)
 }
 
 struct World {
@@ -148,7 +147,7 @@ impl World {
     }
 
     /// Initialized in place: the admin grants the relayer and auction roles to the issuer
-    /// and the settlement role to the factory precompile.
+    /// and the burner role to the factory precompile.
     fn install_nft(&mut self) {
         self.ok(
             ADMIN,
@@ -160,7 +159,7 @@ impl World {
         for (role, account) in [
             ("RELAYER_ROLE", RELAYER),
             ("AUCTION_ROLE", RELAYER),
-            ("SETTLEMENT_ROLE", INTEX_FACTORY_ADDRESS),
+            ("BURNER_ROLE", INTEX_FACTORY_ADDRESS),
         ] {
             self.ok(
                 ADMIN,
@@ -268,24 +267,46 @@ impl World {
             .to::<u64>()
     }
 
+    fn settled_balance(&mut self, account: Address) -> u64 {
+        self.view(
+            INTEX_ADDRESS,
+            IIntex::balanceOfCall {
+                account,
+                id: issued_id(),
+            },
+        )
+        .to::<u64>()
+    }
+
     /// `[issued Alice, issued Bob, settled Alice, settled Bob]`.
     fn holdings(&mut self) -> [u64; 4] {
         [
             self.nft_balance(ALICE, issued_id()),
             self.nft_balance(BOB, issued_id()),
-            self.nft_balance(ALICE, settled_id()),
-            self.nft_balance(BOB, settled_id()),
+            self.settled_balance(ALICE),
+            self.settled_balance(BOB),
         ]
     }
 
+    /// `[issued supply on the NFT, settled units in the Intex registry]`.
     fn supplies(&mut self) -> [u64; 2] {
-        [issued_id(), settled_id()].map(|token_id| {
-            self.view(
+        let issued = self
+            .view(
                 INTEX_NFT1155_ADDRESS,
-                INft::totalSupplyCall { tokenId: token_id },
+                INft::totalSupplyCall {
+                    tokenId: issued_id(),
+                },
             )
-            .to::<u64>()
-        })
+            .to::<u64>();
+        let settled = self
+            .view(
+                INTEX_ADDRESS,
+                IIntex::getIntexSeriesCall {
+                    seriesId: FixedBytes(SERIES),
+                },
+            )
+            .settledUnits;
+        [issued, u64::from(settled)]
     }
 
     fn asset_balance(&mut self, account: Address) -> U256 {

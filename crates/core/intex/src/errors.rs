@@ -33,6 +33,10 @@ pub enum IntexError {
     CalledGroupMemberOutOfRange,
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
+    #[error("settled intex is not transferable")]
+    NonTransferable,
+    #[error("balanceOfBatch accounts and ids differ in length")]
+    BatchLengthMismatch,
 }
 
 impl From<outbe_primitives::series_id::InvalidSeriesId> for IntexError {
@@ -75,6 +79,8 @@ impl From<IntexError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
+            IntexError::NonTransferable => revert_with(I::NonTransferable {}),
+            IntexError::BatchLengthMismatch => revert_with(I::BatchLengthMismatch {}),
         }
     }
 }

@@ -141,23 +141,28 @@ pub(super) fn assert_dense_agent_settlement(
     );
     let promis_limit =
         outbe_promislimit::PromisLimitContract::new(storage.clone()).promis_limit()?;
-    let emission_day = outbe_metadosis::api::emission_day(storage.clone(), prev_day)?
+    let emission_day = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
         .expect("GAS-05: previous-day emission allocation must exist");
     assert!(
-        !emission_day.emission_limit_minor.is_zero(),
+        !emission_day.metadosis_limit_minor().is_zero(),
         "GAS-05: previous-day emission allocation must be nonzero"
     );
     assert_eq!(
         emission_day.state,
-        outbe_metadosis::emission_day_state::SUCCEEDED,
+        outbe_emission::schema::emission_day_state::COMPLETED,
         "GAS-05: empty Tribute day must settle successfully"
     );
     // The empty Tribute day returns its terminal allocation before WAA/SRA residue arrives.
     let rounding_residue = promis_limit
-        .checked_sub(emission_day.emission_limit_minor)
+        .checked_sub(emission_day.metadosis_limit_minor())
         .expect(
             "GAS-05: the Promis Limit must include the empty Tribute day's returned allocation",
         );
+    assert_eq!(
+        U256::from(emission_day.promis_limit),
+        promis_limit,
+        "GAS-05: EmissionDay.promis_limit must match the Promis Limit after accrual completion"
+    );
     assert!(
         rounding_residue < U256::from(2 * address_count),
         "GAS-05: the Promis Limit beyond the returned allocation must contain only WAA/SRA rounding residue"

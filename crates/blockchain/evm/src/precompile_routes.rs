@@ -324,6 +324,7 @@ define_exact_routes! {
     STAKING_ADDRESS => (outbe_staking::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_staking::precompile::PAYABLE_SELECTORS),
     REWARDS_ADDRESS => (outbe_rewards::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_rewards::precompile::PAYABLE_SELECTORS),
     AGENT_REWARD_ADDRESS => (outbe_agentreward::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
+    EMISSION_ADDRESS => (outbe_emission::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_emission::precompile::PAYABLE_SELECTORS),
     METADOSIS_ADDRESS => (outbe_metadosis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_metadosis::precompile::PAYABLE_SELECTORS),
     FIDELITY_ADDRESS => (outbe_fidelity::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_fidelity::precompile::PAYABLE_SELECTORS),
     PROMIS_LIMIT_ADDRESS => (outbe_promislimit::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),

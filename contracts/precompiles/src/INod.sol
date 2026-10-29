@@ -32,6 +32,8 @@ interface INod {
     error AmountReadFailed(string reason);
     error NodStateChangedAfterLoading();
     error DateStep(uint8 kind, uint32 dateKey);
+    error NodNotForfeited();
+    error NodAlreadySettled();
 
     /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -63,7 +65,6 @@ interface INod {
         uint16 leagueId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
-        bytes encryptedCreatorPublicKey;
         bytes32 encryptionBinding;
         uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.
@@ -123,4 +124,5 @@ interface INod {
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);
+    function clean(uint256 nodId) external;
 }

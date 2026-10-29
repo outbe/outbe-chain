@@ -290,8 +290,6 @@ impl From<StablecoinVoteTargetError> for PrecompileError {
 /// Errors that occur when a route dispatches a precompile call.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PrecompileRouteError {
-    #[error("execution body read authority was not supplied")]
-    MissingBodyReadAuthority,
     #[error("unregistered stablecoin address")]
     UnregisteredStablecoinAddress,
     #[error("stablecoin token cannot receive native value")]
@@ -311,9 +309,6 @@ pub enum PrecompileRouteError {
 impl From<PrecompileRouteError> for PrecompileError {
     fn from(error: PrecompileRouteError) -> Self {
         match error {
-            PrecompileRouteError::MissingBodyReadAuthority => {
-                Self::BodyReadUnavailable(error.to_string())
-            }
             PrecompileRouteError::UnregisteredStablecoinAddress
             | PrecompileRouteError::StablecoinCannotReceiveNativeValue
             | PrecompileRouteError::StablecoinRegistryUnavailable
@@ -361,16 +356,12 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("Cycle execution body read authority was not supplied")]
-    MissingCycleBodyReadAuthority,
     #[error("proposer is not a current consensus participant: {proposer}")]
     ProposerNotConsensusParticipant { proposer: Address },
     #[error(
         "missing preloaded execution summary for finalized block {block_number} ({block_hash})"
     )]
     MissingPreloadedExecutionSummary { block_number: u64, block_hash: B256 },
-    #[error("certified Metadosis finality requires the verified parent state root")]
-    MissingVerifiedParentStateRoot,
     #[error(
         "CertifiedParentAccounting identical replay at unexpected progress: last_accounted={last_accounted}, expected={expected}"
     )]
@@ -542,10 +533,8 @@ impl BeginBlockPrecompileError {
 impl From<BeginBlockPrecompileError> for PrecompileError {
     fn from(error: BeginBlockPrecompileError) -> Self {
         match error {
-            BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. }
-            | BeginBlockPrecompileError::MissingCycleBodyReadAuthority
-            | BeginBlockPrecompileError::MissingVerifiedParentStateRoot => {
-                Self::BodyReadUnavailable(error.to_string())
+            BeginBlockPrecompileError::MissingPreloadedExecutionSummary { .. } => {
+                Self::Storage(error.to_string())
             }
             BeginBlockPrecompileError::InvalidTeeChainSpecAuthority(_)
             | BeginBlockPrecompileError::InvalidActiveTeePolicy(_)

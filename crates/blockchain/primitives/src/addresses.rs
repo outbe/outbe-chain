@@ -60,8 +60,11 @@ pub const AGENT_REWARD_ADDRESS: Address = address!("0x00000000000000000000000000
 /// Fidelity precompile address.
 pub const FIDELITY_ADDRESS: Address = address!("0x000000000000000000000000000000000000100C");
 
-/// Emission limit precompile address (system-only, no user-facing precompile).
-pub const EMISSION_LIMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000100D");
+/// Emission precompile address (`IEmission`).
+pub const EMISSION_ADDRESS: Address = address!("0x000000000000000000000000000000000000100D");
+
+/// Legacy alias for [`EMISSION_ADDRESS`].
+pub const EMISSION_LIMIT_ADDRESS: Address = EMISSION_ADDRESS;
 
 /// Metadosis precompile address. Its registered dispatch serves public view
 /// methods (for example `getWorldwideDay`) to any caller. It also routes the

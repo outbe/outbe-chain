@@ -124,6 +124,12 @@ pub enum TributeError {
 
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
+
+    #[error("tribute series is forfeited")]
+    TributeForfeited,
+
+    #[error("tribute is not forfeited")]
+    TributeNotForfeited,
 }
 
 pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
@@ -220,6 +226,8 @@ impl From<TributeError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
+            TributeError::TributeForfeited => revert_with(I::TributeForfeited {}),
+            TributeError::TributeNotForfeited => revert_with(I::TributeNotForfeited {}),
         }
     }
 }

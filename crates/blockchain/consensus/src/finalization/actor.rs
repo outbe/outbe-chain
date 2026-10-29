@@ -313,6 +313,8 @@ impl FinalizationActor {
         // remains fatal.
         let cycle_budget = FINALIZE_RESOLUTION_TIMEOUT * FINALIZE_MAX_RETRIES
             + FINALIZE_RETRY_DELAY * (FINALIZE_MAX_RETRIES - 1);
+        let stall_started = clock.current();
+        let mut divergence_alarmed = false;
         let mut stall_cycles: u64 = 0;
         loop {
             let marshal = marshal.clone();
@@ -339,10 +341,34 @@ impl FinalizationActor {
             )
             .await
             {
-                Ok(block) => return self.process_finalization(finalized, (*block).clone()).await,
+                Ok(block) => {
+                    let result = self.process_finalization(finalized, (*block).clone()).await;
+                    if result.is_ok() {
+                        crate::metrics::record_finalization_divergence_cleared();
+                    }
+                    return result;
+                }
                 Err(failure) => {
                     stall_cycles += 1;
                     crate::metrics::record_finalization_resolution_stalled();
+                    let elapsed = clock
+                        .current()
+                        .duration_since(stall_started)
+                        .unwrap_or_default();
+                    if !divergence_alarmed && elapsed >= crate::config::STALL_DIVERGENCE_ALARM {
+                        divergence_alarmed = true;
+                        crate::metrics::record_finalization_divergence_suspected();
+                        tracing::error!(
+                            %digest,
+                            ?round,
+                            view,
+                            stall_cycles,
+                            elapsed_secs = elapsed.as_secs(),
+                            alarm_secs = crate::config::STALL_DIVERGENCE_ALARM.as_secs(),
+                            "suspected local divergence: marshal resolution has stalled \
+                             past the alarm threshold"
+                        );
+                    }
                     let last_finalized_number = self.deps.view.read().last_finalized_number;
                     tracing::warn!(
                         %digest,
@@ -680,12 +706,16 @@ impl FinalizationActor {
     ) {
         if let Some(ref bridge) = self.deps.bridge {
             let vrf_safety = self.deps.vrf_safety.snapshot();
-            let connected_peers = consensus_data
-                .finalized_certificate
-                .signer_bitmap
-                .iter()
-                .filter(|signed| **signed != 0)
-                .count() as u32;
+            // Committee size is bounded by MAX_COMMITTEE_MEMBERS (256 << u32::MAX).
+            let connected_peers = u32::try_from(
+                consensus_data
+                    .finalized_certificate
+                    .signer_bitmap
+                    .iter()
+                    .filter(|signed| **signed != 0)
+                    .count(),
+            )
+            .unwrap_or(u32::MAX);
             bridge.set_consensus_status(ConsensusStatus {
                 current_view: finalized.round.view().get(),
                 connected_peers,
@@ -791,124 +821,4 @@ impl FinalizationActorBuilder for (FinalizationActor, Mailbox) {
 }
 
 #[cfg(test)]
-mod tests {
-
-    use crate::block::ConsensusBlock;
-    use crate::digest::Digest;
-    use alloy_primitives::B256;
-    use outbe_primitives::OutbeHeader;
-    use reth_ethereum::{primitives::SealedBlock, Block};
-
-    /// Build a minimal `ConsensusBlock` with the given height and a salt
-    /// stored in `extra_data` so distinct salts produce distinct sealed
-    /// hashes (and therefore distinct `Digest`s).
-    fn make_block(number: u64, salt: u64) -> ConsensusBlock {
-        let mut block = Block::default();
-        block.header.number = number;
-        block.header.extra_data = salt.to_le_bytes().to_vec().into();
-        let block = block.map_header(OutbeHeader::new);
-        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
-    }
-
-    fn digest_of(block: &ConsensusBlock) -> Digest {
-        block.digest()
-    }
-
-    /// `FinalizationActor::process_finalization` rekeys the
-    /// reporter-buffered (view-keyed) late finalize votes to the now-known block
-    /// number. Drives the real actor method directly with an already-resolved
-    /// block (no marshal needed - the deps carry `marshal_mailbox: None`).
-    #[test]
-    fn rekey_via_finalization_actor() {
-        use super::{FinalizationActor, FinalizationActorDeps};
-        use crate::finalization::ingress::Finalized;
-        use crate::finalization::late_sig_store;
-        use crate::finalization::parent_cert_store::FinalizedParentCertStore;
-        use crate::finalization::state::new_finalization_view;
-        use crate::hybrid::HybridSchemeProvider;
-        use crate::vrf_safety::VrfSafetyGate;
-        use alloy_primitives::{Address, Bytes};
-        use commonware_consensus::types::{Epoch, Round, View};
-        use commonware_cryptography::{bls12381, Signer as _};
-        use commonware_math::algebra::Random as _;
-        use commonware_runtime::Runner as _;
-        use outbe_primitives::consensus::{ConsensusData, FinalizedParentCertificateData};
-
-        const WINDOW_K: u64 = 3;
-        let (epoch, view, parent_view, fb_number) = (0u64, 9u64, 8u64, 10u64);
-
-        // Shared store + a buffered (view-keyed) vote, as the reporter would have
-        // recorded it before the block number was known. The signature value is
-        // arbitrary here. The rekey path never verifies it.
-        let block = make_block(fb_number, 7);
-        let digest = digest_of(&block);
-        let fb_hash = digest.0;
-
-        let store = late_sig_store::shared(WINDOW_K);
-        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-            rand_commonware::rngs::SysRng,
-        ));
-        let sig = key.sign(b"x", b"y");
-        store.lock().expect("store").record_bound_individual_vote(
-            late_sig_store::FinalizeVoteTarget {
-                epoch,
-                view,
-                parent_view,
-                fb_hash,
-            },
-            0,
-            &sig,
-        );
-        assert_eq!(store.lock().expect("store").pending_vote_count(fb_hash), 1);
-
-        let committee: Vec<Address> = (0..4).map(|i| Address::with_last_byte(i + 1)).collect();
-        let finalized = Finalized {
-            round: Round::new(Epoch::new(epoch), View::new(view)),
-            digest,
-            vrf_seed: None,
-            consensus_data: ConsensusData {
-                finalized_block_number: fb_number,
-                finalized_block_hash: digest.0,
-                finalized_certificate: FinalizedParentCertificateData {
-                    epoch,
-                    view,
-                    parent_view,
-                    ordered_committee: committee,
-                    signer_bitmap: vec![1, 0, 0, 0],
-                    encoded_certificate: Bytes::new(),
-                },
-                vrf_seed: None,
-                missed_proposers: Vec::new(),
-            },
-        };
-
-        let deps = FinalizationActorDeps {
-            view: new_finalization_view(B256::ZERO, 0, None),
-            block_cache: crate::finalization::block_cache::BlockCache::new(),
-            marshal_mailbox: None,
-            bridge: None,
-            dkg_manager: crate::dkg_manager::Mailbox::new(),
-            vrf_safety: VrfSafetyGate::new(0, 0, 1_000, 100),
-            parent_cert_store: FinalizedParentCertStore::new(),
-            certificate_scheme_provider: HybridSchemeProvider::default(),
-            late_sig_store: store.clone(),
-        };
-        let (actor, _mailbox) = FinalizationActor::new(deps);
-
-        commonware_runtime::tokio::Runner::default().start(|_ctx| async move {
-            actor
-                .process_finalization(finalized, block)
-                .await
-                .expect("process_finalization should rekey without error");
-        });
-
-        // The fb_hash-keyed buffer was rekeyed to the finalized block number.
-        let s = store.lock().expect("store");
-        assert_eq!(
-            s.pending_vote_count(fb_hash),
-            0,
-            "pending buffer must be drained after rekey"
-        );
-        assert_eq!(s.resolved_len(), 1, "exactly one target resolved by number");
-    }
-}
+mod tests;

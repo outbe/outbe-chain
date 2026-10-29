@@ -9,7 +9,6 @@ use outbe_tee::{
     protocol::{EncryptedTributeOffer, TributeOfferStatus},
     tribute_v2::{encrypted_offer_inputs_hash, EncryptedTributeOfferResultV2},
 };
-use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use crate::{
@@ -22,22 +21,16 @@ use crate::{
     zk_claim::derive_expected_hashes,
 };
 
-#[derive(Deserialize)]
-struct PayloadV2 {
-    #[serde(flatten)]
-    input: TributeInputPayload,
-    creator_public_key: B256,
-}
-
 pub fn process_encrypted_tribute_offer_batch(
     key: &TributeOfferKeyMaterial<'_>,
+    tribute_state_key: &[u8; 32],
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
 ) -> (Vec<EncryptedTributeOfferResultV2>, B256) {
     let results = offers
         .iter()
         .map(|offer| {
-            process_one(key, chain_id, offer)
+            process_one(key, tribute_state_key, chain_id, offer)
                 .unwrap_or_else(|e| EncryptedTributeOfferResultV2::rejected(e.to_string()))
         })
         .collect();
@@ -47,7 +40,7 @@ pub fn process_encrypted_tribute_offer_batch(
 fn decrypt_payload(
     key: &TributeOfferKeyMaterial<'_>,
     offer: &EncryptedTributeOffer,
-) -> EnclaveResult<PayloadV2> {
+) -> EnclaveResult<TributeInputPayload> {
     let plaintext = Zeroizing::new(
         ecdhe_tribute_offer_decrypt(
             key.tribute_offer_private_key,
@@ -58,14 +51,15 @@ fn decrypt_payload(
         )
         .map_err(ProcessError::decryption_failed)?,
     );
-    let payload: PayloadV2 = serde_json::from_slice(&plaintext)
+    let payload: TributeInputPayload = serde_json::from_slice(&plaintext)
         .map_err(PayloadError::parse_encrypted_tribute_payload)?;
-    payload::validate(&payload.input)?;
+    payload::validate(&payload)?;
     Ok(payload)
 }
 
 fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
+    tribute_state_key: &[u8; 32],
     chain_id: u64,
     offer: &EncryptedTributeOffer,
 ) -> EnclaveResult<EncryptedTributeOfferResultV2> {
@@ -78,22 +72,21 @@ fn process_one(
     }
     let payload = decrypt_payload(key, offer)?;
     let owner = payload
-        .input
         .creator
         .parse::<Address>()
         .map_err(|_| ProcessError::InvalidCreatorAddress)?;
-    let amount = parse_canonical_amount(&payload.input.amount_base, &payload.input.amount_micro)?;
+    let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_micro)?;
     if amount.amount_minor.is_zero() {
         return Err(ProcessError::AmountNotPositive.into());
     }
-    let zk_expected_hashes = derive_expected_hashes(offer, &payload.input, &amount)?;
+    let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
     let (nominal_amount_minor, tribute_price_minor) = compute_nominal(
         amount.amount_minor,
         offer.issuance_wwd_vwap_minor,
         offer.reference_wwd_vwap_minor,
         offer.reference_scurve_minor,
     )?;
-    let token_id = compute_token_id(owner, offer.worldwide_day, &payload.input.tribute_draft_id)?;
+    let token_id = compute_token_id(owner, offer.worldwide_day, &payload.tribute_draft_id)?;
     let context = TributeContextV2 {
         chain_id,
         tribute_id: WwdEntityId::from_day_and_digest(offer.worldwide_day, token_id),
@@ -108,19 +101,14 @@ fn process_one(
         issuance_amount_minor: amount.amount_minor,
         nominal_amount_minor,
     };
-    let tribute = encrypt_tribute(
-        key.tribute_offer_private_key,
-        &payload.creator_public_key.0,
-        context,
-        &amounts,
-    )
-    .map_err(ProcessError::tribute_encryption_failed)?;
+    let tribute = encrypt_tribute(tribute_state_key, context, &amounts)
+        .map_err(ProcessError::tribute_encryption_failed)?;
     Ok(EncryptedTributeOfferResultV2 {
         token_id,
         tribute: Some(tribute),
-        su_hashes: payload.input.su_hashes,
-        wallet_addresses: payload.input.wallet_addresses,
-        sra_addresses: payload.input.sra_addresses,
+        su_hashes: payload.su_hashes,
+        wallet_addresses: payload.wallet_addresses,
+        sra_addresses: payload.sra_addresses,
         zk_expected_hashes,
         status: TributeOfferStatus::Created,
     })

@@ -40,7 +40,6 @@ fn encrypted_body() -> outbe_primitives::tribute_encryption::EncryptedTributeV2 
     let plain = tribute(Address::repeat_byte(0x73), 20_260_723);
     outbe_tee_enclave::tribute_encryption::encrypt_tribute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
-        &outbe_tee_enclave::crypto::x25519_public(&[0x75; 32]),
         TributeContextV2 {
             chain_id: 1,
             tribute_id: plain.tribute_id,
@@ -71,7 +70,6 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
     );
     StorageHandle::enter(&mut provider, |storage| {
         let mut contract = TributeContract::new(storage.clone());
-        in_process_ready(&storage, || contract.unseal_day(body.context.worldwide_day));
         {
             let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
             contract.issue_encrypted(&body).unwrap();
@@ -154,7 +152,6 @@ fn encrypted_issue_rejects_tampering_without_mutating_supply_or_day_amount() {
     StorageHandle::enter(&mut provider, |storage| {
         let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
         let mut contract = TributeContract::new(storage.clone());
-        in_process_ready(&storage, || contract.unseal_day(body.context.worldwide_day));
         let mut modified = body.clone();
         modified.encrypted_amounts[9] ^= 1;
         assert!(contract.issue_encrypted(&modified).is_err());

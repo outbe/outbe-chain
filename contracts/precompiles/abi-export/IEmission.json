@@ -1,0 +1,240 @@
+[
+  {
+    "type": "function",
+    "name": "getEmissionDay",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IEmission.EmissionDayData",
+        "components": [
+          {
+            "name": "day",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "wwd",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "metadosisStart",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "metadosisState",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "emissionLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "metadosisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lysisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "desisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "validators",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "waa",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "sra",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "cca",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "nods",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "promisLimit",
+            "type": "uint128",
+            "internalType": "uint128"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "AmountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ConflictingWwdLink",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "existingWwd",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "attemptedWwd",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ConservationInvariantViolated",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "expectedLimit",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "landedSum",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DateStep",
+    "inputs": [
+      {
+        "name": "kind",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "dateKey",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "DayAlreadyAllocated",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EmissionDayNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidEmissionDay",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidMetadosisStateTransition",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromState",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "toState",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidStateTransition",
+    "inputs": [
+      {
+        "name": "day",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "fromState",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "toState",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "WaitingWindowOverflow",
+    "inputs": []
+  }
+]

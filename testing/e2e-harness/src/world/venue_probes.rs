@@ -566,8 +566,6 @@ sol! {
     interface IIssuedSeries {
         function seriesExists(bytes14 seriesId) external view returns (bool);
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
-        function settledTokenId(bytes14 seriesId) external pure returns (uint256);
-        function statusOf(uint256 tokenId) external view returns (uint8);
         function readData(bytes14 seriesId) external view returns (SeriesData);
         function parkedMark(bytes14 seriesId) external view returns (uint32);
         function applyParkedMark(bytes14 seriesId) external;
@@ -655,32 +653,27 @@ pub(crate) fn series_balances(
     series: alloy_primitives::FixedBytes<14>,
     owner: Address,
 ) -> Option<(u64, u64)> {
-    let issued_id = eth::read_call(
+    let id = eth::read_call(
         url,
         nft,
         &IIssuedSeries::issuedTokenIdCall { seriesId: series },
     )?;
-    let settled_id = eth::read_call(
-        url,
-        nft,
-        &IIssuedSeries::settledTokenIdCall { seriesId: series },
-    )?;
     let issued = eth::read_call(
         url,
         nft,
-        &IIssuedSeries::balanceOfCall {
-            account: owner,
-            id: issued_id,
-        },
+        &IIssuedSeries::balanceOfCall { account: owner, id },
     )?;
-    let settled = eth::read_call(
-        url,
-        nft,
-        &IIssuedSeries::balanceOfCall {
-            account: owner,
-            id: settled_id,
-        },
-    )?;
+    // Settled units live only in the Outbe Intex precompile; a target chain has no code there.
+    let intex = outbe_primitives::addresses::INTEX_ADDRESS;
+    let settled = if eth::code(url, intex)?.is_empty() {
+        U256::ZERO
+    } else {
+        eth::read_call(
+            url,
+            intex,
+            &eth::IIntex::balanceOfCall { account: owner, id },
+        )?
+    };
     Some((issued.to::<u64>(), settled.to::<u64>()))
 }
 

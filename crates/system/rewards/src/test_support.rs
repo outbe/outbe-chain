@@ -26,6 +26,7 @@ pub(crate) const VAL_Z: Address = address!("0x0000000000000000000000000000000000
 
 pub(crate) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
+        .with_genesis_timestamp(GENESIS_TS)
 }
 
 /// Finalized-block metadata of block `fb_number` with hash `fb_hash`, an empty

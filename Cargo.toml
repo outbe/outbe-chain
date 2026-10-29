@@ -21,7 +21,7 @@ members = [
     "crates/system/rewards",
     "crates/system/oracle",
     "crates/system/zerofee",
-    "crates/system/emissionlimit",
+    "crates/system/emission",
     "crates/system/cycle",
     "crates/system/tee",
     "crates/system/teeregistry",
@@ -124,7 +124,7 @@ outbe-staking = { path = "crates/system/staking" }
 outbe-rewards = { path = "crates/system/rewards" }
 outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
-outbe-emissionlimit = { path = "crates/system/emissionlimit" }
+outbe-emission = { path = "crates/system/emission" }
 outbe-cycle = { path = "crates/system/cycle" }
 outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }

@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 thiserror.workspace = true
 outbe-ccaregistry.workspace = true
+outbe-emission.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true

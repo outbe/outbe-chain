@@ -7777,6 +7777,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-ccaregistry",
+ "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
@@ -7995,6 +7996,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]
@@ -8047,7 +8049,7 @@ dependencies = [
  "outbe-chain-constants",
  "outbe-credisfactory",
  "outbe-desis",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-intexfactory",
@@ -8059,6 +8061,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
+ "outbe-tributefactory",
  "outbe-validatorset",
  "proptest",
  "thiserror 2.0.18",
@@ -8118,6 +8121,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-desis",
+ "outbe-emission",
  "outbe-evm",
  "outbe-gem",
  "outbe-genesis-cli",
@@ -8132,6 +8136,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-tributefactory",
  "outbe-update",
  "outbe-zk",
  "outbe-zk-backend",
@@ -8148,17 +8153,17 @@ dependencies = [
  "time",
  "tokio",
  "walkdir",
- "x25519-dalek 2.0.1",
  "xshell",
  "yaml_serde",
 ]
 
 [[package]]
-name = "outbe-emissionlimit"
+name = "outbe-emission"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
- "outbe-metadosis",
+ "alloy-sol-types",
+ "outbe-macros",
  "outbe-primitives",
  "serde_json",
  "thiserror 2.0.18",
@@ -8252,6 +8257,7 @@ dependencies = [
  "outbe-credisfactory",
  "outbe-cycle",
  "outbe-desis",
+ "outbe-emission",
  "outbe-evm",
  "outbe-fidelity",
  "outbe-gem",
@@ -8523,8 +8529,11 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "base64 0.22.1",
+ "outbe-common",
  "outbe-macros",
  "outbe-primitives",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8652,8 +8661,10 @@ dependencies = [
  "alloy-sol-types",
  "k256 0.13.4",
  "num-bigint",
+ "outbe-agentreward",
  "outbe-chain-constants",
  "outbe-desis",
+ "outbe-emission",
  "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
@@ -8664,6 +8675,7 @@ dependencies = [
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
+ "outbe-tributefactory",
  "proptest",
  "serde_json",
  "thiserror 2.0.18",
@@ -8687,7 +8699,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
- "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -9086,9 +9097,8 @@ dependencies = [
  "commonware-consensus",
  "commonware-cryptography",
  "outbe-consensus",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-macros",
- "outbe-metadosis",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -9110,7 +9120,7 @@ dependencies = [
  "eyre",
  "hex",
  "jsonrpsee",
- "outbe-emissionlimit",
+ "outbe-emission",
  "outbe-primitives",
  "outbe-radicle",
  "outbe-slashindicator",
@@ -9334,6 +9344,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-chain-constants",
+ "outbe-emission",
  "outbe-fidelity",
  "outbe-lysis",
  "outbe-macros",
@@ -9341,6 +9352,7 @@ dependencies = [
  "outbe-nodfactory",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
@@ -9368,6 +9380,8 @@ dependencies = [
  "eyre",
  "hex",
  "outbe-agentreward",
+ "outbe-chain-constants",
+ "outbe-emission",
  "outbe-l2registry",
  "outbe-lysis",
  "outbe-macros",

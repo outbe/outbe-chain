@@ -28,8 +28,7 @@ pub fn create_worldwide_day(
     storage.with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
         binding,
         || {
-            crate::lifecycle::create_worldwide_day_for_date(
-                &mut crate::schema::MetadosisContract::new(storage.clone()),
+            outbe_tributefactory::worldwideday::create_worldwide_day_for_date(
                 &context,
                 worldwide_day,
             )

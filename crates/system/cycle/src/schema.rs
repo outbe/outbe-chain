@@ -13,7 +13,6 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// Storage slots:
 ///   0:  last_executed_at             - mapping(uint32 => uint64)
 ///   1:  last_executed_block_number   - mapping(uint32 => uint64)
-///   2:  active_utc_day                - uint32
 #[contract(addr = CYCLE_ADDRESS)]
 pub struct Cycle {
     /// Per-trigger timestamp of the last dispatch record.
@@ -27,11 +26,6 @@ pub struct Cycle {
     /// auditing which block dispatched which slot. The scheduling math does not
     /// consult it.
     pub last_executed_block_number: Mapping<u32, u64>,
-
-    /// UTC calendar day currently owned by ProtocolCycle. Genesis seeds this
-    /// from the consensus header timestamp. A contiguous transition settles it.
-    /// A multi-day halt advances it without synthesizing missed-day economics.
-    pub active_utc_day: Slot<u32>,
 }
 
 /// V2 Phase 1 accounting-progress storage facade (`ACCOUNTING_PROGRESS_ADDRESS`).
@@ -68,7 +62,6 @@ mod tests {
         let cycle = Cycle::new(handle.clone());
         assert_eq!(cycle.last_executed_at.base_slot(), U256::from(0));
         assert_eq!(cycle.last_executed_block_number.base_slot(), U256::from(1));
-        assert_eq!(cycle.active_utc_day.slot(), U256::from(2));
 
         let accounting = Accounting::new(handle);
         assert_eq!(accounting.last_accounted_block_number.slot(), U256::from(0));

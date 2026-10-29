@@ -221,6 +221,22 @@ impl Control {
         self.calls.lock().unwrap().clone()
     }
 
+    pub fn clear_calls(&self) {
+        self.calls.lock().unwrap().clear();
+    }
+
+    pub fn seed_calls(&self) -> Vec<RepoId> {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|call| match call {
+                Call::Seed(repo) => Some(*repo),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn fail_sessions(&self, fail: bool) {
         *self.fail_sessions.lock().unwrap() = fail;
     }
@@ -329,6 +345,7 @@ impl HeartwoodControl for Control {
 #[derive(Clone, Default)]
 pub struct Availability {
     available: Arc<Mutex<BTreeSet<RepoId>>>,
+    calls: Arc<Mutex<Vec<RepoId>>>,
     fail: Arc<Mutex<bool>>,
 }
 
@@ -341,6 +358,14 @@ impl Availability {
         }
     }
 
+    pub fn calls(&self) -> Vec<RepoId> {
+        self.calls.lock().unwrap().clone()
+    }
+
+    pub fn clear_calls(&self) {
+        self.calls.lock().unwrap().clear();
+    }
+
     pub fn fail(&self, fail: bool) {
         *self.fail.lock().unwrap() = fail;
     }
@@ -349,6 +374,7 @@ impl Availability {
 impl RepositoryStatus for Availability {
     fn available(&self, repo: RepoId) -> BoxFuture<'_, Result<bool, ManagerError>> {
         Box::pin(async move {
+            self.calls.lock().unwrap().push(repo);
             if *self.fail.lock().unwrap() {
                 Err(ManagerError::Status("offline".into()))
             } else {
@@ -384,6 +410,12 @@ pub fn pending_outbound(index: u8, anchor: u64, port: u16) -> ControlSession {
 
 pub fn repo(byte: u8) -> RepoId {
     RepoId::repeat_byte(byte)
+}
+
+pub fn repo_id(index: u16) -> RepoId {
+    let mut bytes = [0_u8; 20];
+    bytes[..2].copy_from_slice(&(index + 1).to_be_bytes());
+    RepoId::from(bytes)
 }
 
 pub fn pop_call(calls: &mut VecDeque<Call>) -> Call {

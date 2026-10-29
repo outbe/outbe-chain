@@ -747,7 +747,7 @@ fn maintenance_cleanup_runs_behind_blocked_calls_and_does_not_count_retained_rig
         let deadline = now + DAY;
         let spent = grouped_series(&s, 20260101);
         let kept = series_in(&s, 20260102, 20260101);
-        outbe_intex::api::record_settled_units(&s, kept, 1).unwrap();
+        outbe_intex::api::record_settled_units(&s, kept, owner(), 1).unwrap();
         IntexContract::new(s.clone())
             .seed_called_group(spent, deadline)
             .unwrap();

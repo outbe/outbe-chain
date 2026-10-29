@@ -28,6 +28,7 @@ pub(crate) fn exchange(
     let request: LysisRequest = serde_json::from_slice(&encoded).unwrap();
     let result = outbe_tee_enclave::lysis::execute(
         &outbe_tribute::enclave_client::test_enclave::NETWORK_SECRET,
+        &outbe_nod::test_support::NETWORK_SECRET,
         &outbe_fidelity::enclave_client::test_enclave::state_key(),
         &request,
     );
@@ -174,29 +175,18 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
             .with_metadosis_mutation::<outbe_primitives::storage::MetadosisCycleLifecycle, _>(
                 binding,
                 || {
+                    let mut factory = TributeFactoryContract::new(storage.clone());
                     let mut tribute = TributeContract::new(storage.clone());
-                    outbe_tribute::worldwideday::create_worldwide_day(
-                        &mut tribute,
-                        WWD,
-                        outbe_tribute::worldwideday::NewWwdSchedule {
-                            day: DAY,
-                            forming_start,
-                            forming_end,
-                            offerings_start,
-                            offering_end,
-                        },
-                    )?;
-                    tribute.unseal_day(WWD)?;
                     let metadosis = MetadosisContract::new(storage.clone());
-                    metadosis
-                        .emission_days
-                        .create(&crate::schema::EmissionDay {
-                            day: DAY,
-                            emission_limit_minor: U256::from(limit),
-                            wwd: WWD,
-                            metadosis_start: 50,
-                            state: emission_day_state::NONE,
-                        })?;
+                    let mut ed = crate::schema::EmissionDay::new_with_limit(
+                        DAY,
+                        WWD,
+                        50,
+                        u128::from(limit),
+                        emission_day_state::NONE,
+                    );
+                    ed.state = outbe_emission::schema::emission_day_state::PROCESSING;
+                    metadosis.emission_days().create(&ed)?;
                     for (index, amount) in amounts.iter().enumerate() {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
                         let amount = U256::from(*amount);
@@ -211,7 +201,17 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
-                    tribute.seal_day(WWD)?;
+                    outbe_tributefactory::worldwideday::create_worldwide_day(
+                        &mut factory,
+                        WWD,
+                        outbe_tributefactory::worldwideday::NewWwdSchedule {
+                            day: DAY,
+                            forming_start,
+                            forming_end,
+                            offerings_start,
+                            offering_end,
+                        },
+                    )?;
                     Ok(())
                 },
             )
@@ -240,7 +240,12 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+            metadosis
+                .emission_days()
+                .get(DAY)
+                .unwrap()
+                .unwrap()
+                .metadosis_state,
             emission_day_state::SUCCEEDED
         );
 
@@ -280,11 +285,11 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
     assert!(!unused.is_zero());
     StorageHandle::enter(&mut provider, |storage| {
         let emission = MetadosisContract::new(storage.clone())
-            .emission_days
+            .emission_days()
             .get(DAY)
             .unwrap()
             .unwrap()
-            .emission_limit_minor;
+            .emission_limit_minor();
         let desis = outbe_desis::schema::DesisContract::new(storage.clone())
             .pending_desis_limit_minor
             .read(&WWD)
@@ -315,7 +320,12 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
     StorageHandle::enter(&mut provider, |storage| {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(
-            metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+            metadosis
+                .emission_days()
+                .get(DAY)
+                .unwrap()
+                .unwrap()
+                .metadosis_state,
             emission_day_state::SUCCEEDED
         );
         let tribute = TributeContract::new(storage.clone());
@@ -384,7 +394,12 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
             assert_eq!(
-                metadosis.emission_days.get(DAY).unwrap().unwrap().state,
+                metadosis
+                    .emission_days()
+                    .get(DAY)
+                    .unwrap()
+                    .unwrap()
+                    .metadosis_state,
                 emission_day_state::FAILED
             );
             let tribute = TributeContract::new(storage.clone());

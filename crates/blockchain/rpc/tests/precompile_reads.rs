@@ -156,6 +156,7 @@ fn eth_call_active_version_reflects_the_selected_state_snapshot() {
                 genesis_hash,
                 block_number,
                 timestamp: block_number,
+                genesis_timestamp: 1_700_000_000,
             },
         );
         let storage = StorageHandle::new(&mut provider);

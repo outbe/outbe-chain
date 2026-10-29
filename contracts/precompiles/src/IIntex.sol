@@ -2,11 +2,12 @@
 pragma solidity ^0.8.30;
 
 /// @title IIntex
-/// @notice View surface and lifecycle events of the Intex runtime module: the
-///         canonical, cross-chain Intex series ledger (identity + lifecycle).
+/// @notice The Intex runtime module: the canonical, cross-chain Intex series ledger
+///         (identity + lifecycle), and the Settled Intex ERC-1155 collection on Outbe.
 /// @dev Writes are Rust-to-Rust only (IntexFactory). Its call and expiry sweeps emit
-///      the group events here. `promisLoadMinor` is returned as uint256
-///      (its storage representation). The Origin `uint128` bounds it.
+///      the group events here, and its settlement and mining emit `TransferSingle`.
+///      `promisLoadMinor` is returned as uint256 (its storage representation). The
+///      Origin `uint128` bounds it.
 interface IIntex {
     error SeriesNotFound();
     error ZeroIssuedAt();
@@ -18,6 +19,8 @@ interface IIntex {
     error UnknownProfileSelector(uint8 value);
     error CalledGroupMemberOutOfRange();
     error DateStep(uint8 kind, uint32 dateKey);
+    error NonTransferable();
+    error BatchLengthMismatch();
 
     struct SeriesData {
         bytes14 seriesId;
@@ -74,10 +77,40 @@ interface IIntex {
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
     /// @notice Number of live series (dense-enumeration length).
-    function totalSeries() external view returns (uint64);
+    function totalSeries() external view returns (uint256);
 
     /// @notice The series id at a dense-enumeration index.
-    function seriesAt(uint64 index) external view returns (bytes14);
+    function seriesAt(uint256 index) external view returns (bytes14);
+
+    // ERC-165
+    function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
+    // ERC-1155: a series' Settled units, token id = `uint256(uint112(seriesId))`.
+    function balanceOf(address account, uint256 id) external view returns (uint256);
+    function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
+        external
+        view
+        returns (uint256[] memory);
+    // Settled units are soulbound: transfers and approvals always revert NonTransferable.
+    function setApprovalForAll(address operator, bool approved) external;
+    function safeTransferFrom(address from, address to, uint256 id, uint256 value, bytes calldata data) external;
+    function safeBatchTransferFrom(
+        address from,
+        address to,
+        uint256[] calldata ids,
+        uint256[] calldata values,
+        bytes calldata data
+    ) external;
+    // No approval can exist: this reads false.
+    function isApprovedForAll(address account, address operator) external view returns (bool);
+
+    // ERC-1155 Metadata URI
+    function uri(uint256 id) external view returns (string memory);
+    function name() external view returns (string memory);
+    function symbol() external view returns (string memory);
+
+    /// @notice Emitted when a settlement mints Settled units and when mining burns them.
+    event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
 
     /// @notice The call group was force-called. Each of its series settles until
     ///         `settlementDeadline`, inclusive.

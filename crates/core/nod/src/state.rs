@@ -170,7 +170,103 @@ impl NodContract<'_> {
         self.group_call_notice_period_seconds.clear(&group_key)?;
         self.group_called_at.clear(&group_key)?;
         self.group_unpaid_load.clear(&group_key)?;
+        self.group_unclaimed_tribute_count.clear(&group_key)?;
+        self.group_unclaimed_tribute_load.clear(&group_key)?;
+        self.group_is_forfeited.clear(&group_key)?;
+        self.group_entry_price_minor.clear(&group_key)?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
+    }
+
+    /// Seals or updates a Lysis series group with its unclaimed tribute count and exact load sum.
+    pub(crate) fn seal_lysis_series_state(
+        &mut self,
+        seal: crate::api::LysisSeriesSeal,
+    ) -> Result<()> {
+        let crate::api::LysisSeriesSeal {
+            group_key,
+            full_day_after_issue,
+            reference_currency,
+            entry_price_minor,
+            call_terms,
+            unclaimed_tribute_count,
+            unclaimed_tribute_load,
+        } = seal;
+        if reference_currency == 0 {
+            return Err(NodError::ZeroReferenceCurrency.into());
+        }
+        if unclaimed_tribute_count == 0 {
+            return Ok(());
+        }
+        let current_group = self.groups.get(group_key)?;
+        let prev_count = self.group_unclaimed_tribute_count.read(&group_key)?;
+        let next_count = prev_count
+            .checked_add(unclaimed_tribute_count)
+            .ok_or(NodError::GroupMemberIndexOverflow { group_key })?;
+        let prev_load = self.group_unclaimed_tribute_load.read(&group_key)?;
+        let next_load = prev_load
+            .checked_add(unclaimed_tribute_load)
+            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key })?;
+        self.group_unclaimed_tribute_count
+            .write(&group_key, next_count)?;
+        self.group_unclaimed_tribute_load
+            .write(&group_key, next_load)?;
+        self.group_currency.write(&group_key, reference_currency)?;
+        if !entry_price_minor.is_zero() {
+            self.group_entry_price_minor
+                .write(&group_key, entry_price_minor)?;
+        }
+        if current_group.is_none() {
+            if let Some(terms) = call_terms {
+                self.seal_group_call_terms(group_key, terms)?;
+                self.insert_call_bin(group_key)?;
+            }
+            self.groups.create(&crate::schema::NodGroupState {
+                group_key,
+                full_day_after_issue,
+                reference_currency,
+                settled_nods: 0,
+            })?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn consume_unclaimed_tribute_from_series(
+        &mut self,
+        group_key: B256,
+        gratis_load_minor: U256,
+    ) -> Result<()> {
+        let count = self.group_unclaimed_tribute_count.read(&group_key)?;
+        if count > 0 {
+            self.group_unclaimed_tribute_count
+                .write(&group_key, count - 1)?;
+            let load = self.group_unclaimed_tribute_load.read(&group_key)?;
+            let next_load = load
+                .checked_sub(gratis_load_minor)
+                .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
+            self.group_unclaimed_tribute_load
+                .write(&group_key, next_load)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_unclaimed_tribute_cleaned_state(&mut self, group_key: B256) -> Result<()> {
+        let count = self.group_unclaimed_tribute_count.read(&group_key)?;
+        if count == 0 {
+            return Ok(());
+        }
+        let remaining_unclaimed = count - 1;
+        self.group_unclaimed_tribute_count
+            .write(&group_key, remaining_unclaimed)?;
+        if remaining_unclaimed == 0 && self.group_nod_count.read(&group_key)? == 0 {
+            if let Some(group) = self.groups.get(group_key)? {
+                if group.settled_nods == 0 {
+                    self.group_nod_count.clear(&group_key)?;
+                    self.close_group(group_key)?;
+                    self.groups.delete(group_key)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     // --- Unpaid load ----------------------------------------------------------

@@ -67,6 +67,72 @@ pub fn add_nod(
     crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
+/// Inserts a Nod item claimed from a Lysis series, moving `gratis_load_minor` from
+/// `group_unclaimed_tribute_load` to `group_unpaid_load` and decrementing `group_unclaimed_tribute_count`.
+pub fn add_series_nod(
+    storage: &StorageHandle<'_>,
+    item: &NodItemState,
+    call_terms: Option<CallTerms>,
+    gratis_load_minor: U256,
+    series_group_key: B256,
+) -> Result<()> {
+    crate::state_api::add_series_item(
+        storage,
+        item,
+        call_terms,
+        gratis_load_minor,
+        series_group_key,
+    )
+}
+
+/// Parameters for sealing a Lysis series group `(E, issuance_currency, reference_currency)`.
+#[derive(Debug, Clone, Copy)]
+pub struct LysisSeriesSeal {
+    pub group_key: B256,
+    pub full_day_after_issue: outbe_primitives::time::WorldwideDay,
+    pub reference_currency: u16,
+    pub entry_price_minor: U256,
+    pub call_terms: Option<CallTerms>,
+    pub unclaimed_tribute_count: u64,
+    pub unclaimed_tribute_load: U256,
+}
+
+/// Seals a Lysis series group `(E, issuance_currency, reference_currency)` with its
+/// initial `unclaimed_tribute_count` and exact `unclaimed_tribute_load`.
+pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> Result<()> {
+    storage.with_checkpoint(|| NodContract::new(storage.clone()).seal_lysis_series_state(seal))
+}
+
+/// Returns whether `group_key` has been forfeited after its call notice period lapsed.
+pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    NodContract::new(storage.clone())
+        .group_is_forfeited
+        .read(&group_key)
+}
+
+/// Reads the entry price sealed on `group_key` at Lysis, or `U256::ZERO` if none.
+pub fn group_entry_price_minor(storage: &StorageHandle<'_>, group_key: B256) -> Result<U256> {
+    NodContract::new(storage.clone())
+        .group_entry_price_minor
+        .read(&group_key)
+}
+
+/// Decrements `group_unclaimed_tribute_count` when a forfeited Tribute is cleaned,
+/// deleting the group if all counters (`group_nod_count`, `settled_nods`, `unclaimed_tribute_count`) reach zero.
+pub fn record_unclaimed_tribute_cleaned(
+    storage: &StorageHandle<'_>,
+    group_key: B256,
+) -> Result<()> {
+    storage.with_checkpoint(|| {
+        NodContract::new(storage.clone()).record_unclaimed_tribute_cleaned_state(group_key)
+    })
+}
+
+/// Permissionless cleanup of an unpaid forfeited Nod (`INod.clean(uint256)`).
+pub fn clean(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<()> {
+    crate::state_api::clean_item(storage, nod_id)
+}
+
 /// Removes `load` from the group's unpaid total.
 ///
 /// `remove_nod` leaves an unsettled Nod's load on the old group. A storage-only

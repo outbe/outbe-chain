@@ -132,7 +132,7 @@ fn iso8601(since_epoch: std::time::Duration) -> String {
 
 /// Returns the worldwide day key for a unix timestamp (UTC+14).
 pub fn worldwide_day_from_timestamp(timestamp: u64) -> u32 {
-    timestamp_to_date_key(timestamp + UTC_PLUS_14_OFFSET)
+    timestamp_to_date_key(timestamp.saturating_add(UTC_PLUS_14_OFFSET))
 }
 
 /// Returns the unix timestamp for midnight UTC of a yyyymmdd date key.
@@ -290,7 +290,7 @@ impl WorldwideDay {
 
     /// Returns the worldwide day key for a unix timestamp (UTC+14).
     pub fn from_timestamp(timestamp: u64) -> Self {
-        Self(timestamp_to_date_key(timestamp + UTC_PLUS_14_OFFSET))
+        Self(worldwide_day_from_timestamp(timestamp))
     }
 
     /// Returns the forming-start timestamp for this worldwide day.
@@ -357,7 +357,7 @@ impl Storable for WorldwideDay {
     const BYTES: usize = 4;
 
     fn from_word(word: U256) -> Self {
-        Self(word.to::<u32>())
+        Self(word.saturating_to::<u32>())
     }
 
     fn to_word(&self) -> U256 {
@@ -431,6 +431,21 @@ mod tests {
     #[test]
     fn worldwide_day_uses_utc_plus_14_boundary() {
         assert_eq!(worldwide_day_from_timestamp(1_734_706_800), 20241221);
+        assert_eq!(
+            WorldwideDay::from_timestamp(1_734_706_800),
+            WorldwideDay::new(20241221)
+        );
+        for ts in [
+            u64::MAX - UTC_PLUS_14_OFFSET,
+            u64::MAX - UTC_PLUS_14_OFFSET + 1,
+            u64::MAX,
+        ] {
+            let raw = worldwide_day_from_timestamp(ts);
+            let typed = WorldwideDay::from_timestamp(ts);
+            assert_eq!(raw, u32::MAX, "expected saturated day key at ts={ts}");
+            assert_eq!(typed, WorldwideDay::new(u32::MAX));
+            assert!(!typed.is_valid());
+        }
     }
 
     #[test]
@@ -568,10 +583,29 @@ mod tests {
 
     #[test]
     fn storage_word_roundtrip() {
-        let wwd = WorldwideDay::new(20251231);
-        let word = wwd.to_word();
-        let decoded = WorldwideDay::from_word(word);
-        assert_eq!(decoded, wwd);
+        for raw in [0u32, 1, 20_240_230, 20_251_231, u32::MAX] {
+            let wwd = WorldwideDay::new(raw);
+            let word = wwd.to_word();
+            let decoded = WorldwideDay::from_word(word);
+            assert_eq!(decoded, wwd, "roundtrip failed for {raw}");
+        }
+    }
+
+    #[test]
+    fn from_word_above_u32_max_does_not_panic() {
+        let zero = WorldwideDay::from_word(U256::ZERO);
+        assert_eq!(zero, WorldwideDay::new(0));
+        assert!(!zero.is_valid());
+
+        for word in [
+            U256::from(u32::MAX) + U256::ONE,
+            U256::MAX,
+            (U256::from(1u64) << 32) | U256::from(20_250_101u32),
+        ] {
+            let decoded = WorldwideDay::from_word(word);
+            assert_eq!(decoded, WorldwideDay::new(u32::MAX));
+            assert!(!decoded.is_valid());
+        }
     }
 
     #[test]

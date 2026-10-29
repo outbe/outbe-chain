@@ -25,10 +25,6 @@ pub enum LocalCryptoError {
     #[error("aead seal")]
     AeadSeal,
 
-    /// Peer X25519 public key produced a non-contributory shared secret.
-    #[error("invalid network X25519 public key")]
-    InvalidNetworkX25519PublicKey,
-
     /// Encrypted Fidelity cohort blob failed envelope validation.
     #[error("invalid encrypted Fidelity cohort envelope")]
     InvalidFidelityCohortEnvelope,
@@ -56,6 +52,22 @@ pub enum LocalCryptoError {
     /// Opened Gratis plaintext did not have the 32-byte U256 length.
     #[error("invalid Gratis amount length")]
     InvalidGratisAmountLength,
+
+    /// Encrypted Promis balance blob failed envelope validation.
+    #[error("invalid encrypted Promis balance")]
+    InvalidPromisBalance,
+
+    /// Promis view key failed AEAD key initialization.
+    #[error("invalid Promis view key")]
+    InvalidPromisViewKey,
+
+    /// Promis balance ciphertext failed AEAD tag verification.
+    #[error("Promis balance decryption failed")]
+    PromisBalanceDecryptionFailed,
+
+    /// Opened Promis plaintext did not have the 32-byte U256 length.
+    #[error("invalid Promis amount length")]
+    InvalidPromisAmountLength,
 
     /// Encrypted NOD record failed structural encoding validation.
     #[error("invalid encrypted NOD encoding")]
@@ -100,7 +112,6 @@ impl LocalCryptoError {
             Self::HkdfFill => "hkdf fill",
             Self::AeadKey => "aead key",
             Self::AeadSeal => "aead seal",
-            Self::InvalidNetworkX25519PublicKey => "invalid network X25519 public key",
             Self::InvalidFidelityCohortEnvelope => "invalid encrypted Fidelity cohort envelope",
             Self::InvalidFidelityViewKey => "invalid Fidelity view key",
             Self::FidelityCohortDecryptionFailed => "Fidelity cohort decryption failed",
@@ -108,6 +119,10 @@ impl LocalCryptoError {
             Self::InvalidGratisViewKey => "invalid Gratis view key",
             Self::GratisBalanceDecryptionFailed => "Gratis balance decryption failed",
             Self::InvalidGratisAmountLength => "invalid Gratis amount length",
+            Self::InvalidPromisBalance => "invalid encrypted Promis balance",
+            Self::InvalidPromisViewKey => "invalid Promis view key",
+            Self::PromisBalanceDecryptionFailed => "Promis balance decryption failed",
+            Self::InvalidPromisAmountLength => "invalid Promis amount length",
             Self::InvalidNodEncoding => "invalid encrypted NOD encoding",
             Self::InvalidNodAmountKey => "invalid NOD amount key",
             Self::NodAmountDecryptionFailed => "NOD amount decryption failed",
@@ -147,6 +162,11 @@ impl LocalCryptoError {
     /// Map a slice conversion error to [`Self::InvalidGratisAmountLength`].
     pub const fn invalid_gratis_amount_length(_: std::array::TryFromSliceError) -> Self {
         Self::InvalidGratisAmountLength
+    }
+
+    /// Map a slice conversion error to [`Self::InvalidPromisAmountLength`].
+    pub const fn invalid_promis_amount_length(_: std::array::TryFromSliceError) -> Self {
+        Self::InvalidPromisAmountLength
     }
 
     /// Map a slice conversion error to [`Self::InvalidNodAmountLength`].

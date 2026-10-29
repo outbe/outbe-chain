@@ -291,4 +291,86 @@ mod tests {
             },
         );
     }
+
+    use std::cmp::Ordering;
+
+    use proptest::prelude::*;
+
+    /// Independent partition of [`ReplayClassification`]. This is the spec.
+    /// It does not call [`classify_finalization`].
+    fn spec_classify(
+        block_number: u64,
+        digest: B256,
+        last_finalized_number: u64,
+        finalized_head_hash: B256,
+    ) -> ReplayClassification {
+        match block_number.cmp(&last_finalized_number) {
+            Ordering::Less => ReplayClassification::HistoricalReplay,
+            Ordering::Greater => ReplayClassification::New,
+            Ordering::Equal if digest == finalized_head_hash => {
+                ReplayClassification::DuplicateReplay
+            }
+            Ordering::Equal => ReplayClassification::FatalInconsistency,
+        }
+    }
+
+    /// Heights biased toward `bn < lf`, `bn == lf`, and `bn > lf`.
+    fn arb_heights() -> impl Strategy<Value = (u64, u64)> {
+        prop_oneof![
+            (1u64..=u64::MAX).prop_flat_map(|lf| (0..lf, Just(lf))),
+            any::<u64>().prop_map(|height| (height, height)),
+            (0..u64::MAX).prop_flat_map(|lf| {
+                (1u64..=(u64::MAX - lf)).prop_map(move |delta| (lf + delta, lf))
+            }),
+        ]
+    }
+
+    /// Digests biased toward equality with the finalized head.
+    fn arb_digests() -> impl Strategy<Value = (B256, B256)> {
+        any::<[u8; 32]>().prop_flat_map(|head| {
+            prop_oneof![Just(head), any::<[u8; 32]>()]
+                .prop_map(move |digest| (B256::from(digest), B256::from(head)))
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 64,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn prop_classify_is_total(
+            (bn, lf) in arb_heights(),
+            (digest, head) in arb_digests(),
+        ) {
+            let class = classify_finalization(bn, digest, lf, head);
+            prop_assert_eq!(class, spec_classify(bn, digest, lf, head));
+        }
+
+        #[test]
+        fn prop_only_equal_height_conflict_is_fatal(
+            (bn, lf) in arb_heights(),
+            (digest, head) in arb_digests(),
+        ) {
+            let fatal = matches!(
+                classify_finalization(bn, digest, lf, head),
+                ReplayClassification::FatalInconsistency
+            );
+            prop_assert_eq!(fatal, bn == lf && digest != head);
+        }
+
+        #[test]
+        fn prop_monotone_new_above(
+            (bn, lf) in arb_heights(),
+            (digest, head) in arb_digests(),
+        ) {
+            let class = classify_finalization(bn, digest, lf, head);
+            prop_assert_eq!(matches!(class, ReplayClassification::New), bn > lf);
+            if bn > lf && bn < u64::MAX {
+                let above = classify_finalization(bn + 1, digest, lf, head);
+                prop_assert!(matches!(above, ReplayClassification::New));
+            }
+        }
+    }
 }

@@ -776,6 +776,15 @@ fn build_tee_admission_mock_provider(
         provider.add_header(hash, header);
         hashes.push((number, hash));
     }
+    if !blocks.iter().any(|(number, _)| *number == 0) {
+        let header = OutbeHeader::new(Header {
+            number: 0,
+            timestamp: 1_700_000_000,
+            ..Default::default()
+        });
+        let hash = alloy_consensus::Sealable::hash_slow(&header);
+        provider.add_header(hash, header);
+    }
 
     let finalized = hashes
         .last()

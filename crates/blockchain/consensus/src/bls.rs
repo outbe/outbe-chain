@@ -143,32 +143,15 @@ fn save_encrypted(path: &Path, data: &[u8], passphrase: &str) -> Result<()> {
 
 use outbe_primitives::crypto::OneNonce;
 
-/// Save `data` to OS keychain and write a marker file at `path`.
-fn save_to_keychain(path: &Path, data: &[u8]) -> Result<()> {
-    let service = "outbe-chain";
-    let account_prefix = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
-    // A content-addressed account keeps the old marker + old secret valid until
-    // the new marker is atomically installed. Reusing one account would expose
-    // a cross-backend crash window where the marker still names a secret whose
-    // contents have already changed.
-    let account = format!(
-        "{account_prefix}-{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, data,))
-    );
+mod keychain;
 
-    let entry = keyring::Entry::new(service, &account)
-        .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
-    entry
-        .set_password(&hex::encode(data))
-        .map_err(|e| BlsKeyError::KeychainStore(format!("{e}")))?;
-
-    // Write marker file on disk (pointer to keychain entry)
-    let marker = format!("{KEYCHAIN_MARKER}{service}\n{account}\n");
-    atomic_write_secret(path, marker.as_bytes(), "keychain marker")
-}
+#[cfg(test)]
+pub(crate) use keychain::install_test_keychain;
+#[cfg(test)]
+use keychain::keychain_set_password;
+use keychain::{
+    keychain_delete_credential, keychain_get_password, parse_keychain_marker, save_to_keychain,
+};
 
 /// Save raw bytes using the specified backend.
 pub fn save_raw(path: &Path, data: &[u8], backend: &KeyBackend) -> Result<()> {
@@ -315,20 +298,8 @@ pub fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
             .open_in_place(aead::Aad::empty(), &mut in_out)
             .map_err(|_| BlsKeyError::DecryptionFailed)?;
         Ok(plaintext.to_vec())
-    } else if raw.starts_with(KEYCHAIN_MARKER.as_bytes()) {
-        // OS keychain reference
-        let text = String::from_utf8(raw).wrap_err("keychain marker not UTF-8")?;
-        let lines: Vec<&str> = text.trim().lines().collect();
-        if lines.len() < 3 {
-            return Err(BlsKeyError::InvalidKeychainMarker.into());
-        }
-        let service = lines[1];
-        let account = lines[2];
-        let entry = keyring::Entry::new(service, account)
-            .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
-        let hex_str = entry
-            .get_password()
-            .map_err(|e| BlsKeyError::KeychainRead(format!("{e}")))?;
+    } else if let Some((service, account)) = parse_keychain_marker(&raw)? {
+        let hex_str = keychain_get_password(&service, &account)?;
         hex::decode(&hex_str).wrap_err("invalid hex in keychain entry")
     } else {
         // Legacy/plaintext hex
@@ -403,16 +374,8 @@ pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
     let keychain_entry = if matches!(backend, KeyBackend::OsLevel) {
         let raw = std::fs::read(path)
             .wrap_err_with(|| format!("failed to read keychain marker: {}", path.display()))?;
-        if raw.starts_with(KEYCHAIN_MARKER.as_bytes()) {
-            let text = String::from_utf8(raw).wrap_err("keychain marker not UTF-8")?;
-            let lines: Vec<&str> = text.trim().lines().collect();
-            if lines.len() < 3 {
-                return Err(BlsKeyError::InvalidKeychainMarker.into());
-            }
-            Some((lines[1].to_owned(), lines[2].to_owned()))
-        } else {
-            None
-        }
+        // A malformed marker fails closed before the file is removed.
+        parse_keychain_marker(&raw)?
     } else {
         None
     };
@@ -426,11 +389,7 @@ pub(crate) fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
     }
 
     if let Some((service, account)) = keychain_entry {
-        let entry = keyring::Entry::new(&service, &account)
-            .map_err(|e| BlsKeyError::KeychainEntry(format!("{e}")))?;
-        entry
-            .delete_credential()
-            .map_err(|e| BlsKeyError::KeychainCleanup(format!("{e}")))?;
+        keychain_delete_credential(&service, &account)?;
     }
     Ok(())
 }
@@ -648,290 +607,4 @@ pub fn validate_dkg_triplet(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::NamedTempFile;
-
-    #[test]
-    fn test_bootstrap_dkg_3_validators() {
-        let result = bootstrap_dkg(3).unwrap();
-        assert_eq!(result.shares.len(), 3);
-
-        // Each share should validate against the polynomial
-        for share in &result.shares {
-            assert!(validate_share(share, &result.polynomial).unwrap());
-        }
-    }
-
-    #[test]
-    fn test_bootstrap_dkg_128_validators() {
-        let result = bootstrap_dkg(128).unwrap();
-        assert_eq!(result.shares.len(), 128);
-
-        // Spot-check first and last share
-        assert!(validate_share(&result.shares[0], &result.polynomial).unwrap());
-        assert!(validate_share(&result.shares[127], &result.polynomial).unwrap());
-    }
-
-    #[test]
-    fn test_individual_key_roundtrip_file() {
-        use commonware_math::algebra::Random;
-        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-            rand_commonware::rngs::SysRng,
-        ));
-        let backend = KeyBackend::Plaintext;
-
-        let file = NamedTempFile::new().unwrap();
-        save_individual_key(file.path(), &key, &backend).unwrap();
-        let loaded = load_individual_key(file.path(), &backend).unwrap();
-
-        assert_eq!(key, loaded);
-    }
-
-    #[test]
-    fn test_individual_key_sign_verify() {
-        use commonware_cryptography::{Signer as _, Verifier as _};
-        use commonware_math::algebra::Random;
-
-        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-            rand_commonware::rngs::SysRng,
-        ));
-        let pk = key.public_key();
-
-        let sig = key.sign(b"test-ns", b"hello");
-        assert!(pk.verify(b"test-ns", b"hello", &sig));
-        assert!(!pk.verify(b"test-ns", b"wrong", &sig));
-    }
-
-    #[test]
-    fn test_polynomial_roundtrip_file() {
-        let result = bootstrap_dkg(3).unwrap();
-        let backend = KeyBackend::Plaintext;
-
-        let file = NamedTempFile::new().unwrap();
-        save_public_polynomial(file.path(), &result.polynomial, &backend).unwrap();
-        let loaded = load_public_polynomial(file.path(), &backend).unwrap();
-
-        // Loaded polynomial should produce the same partial public keys
-        for share in &result.shares {
-            assert!(validate_share(share, &loaded).unwrap());
-        }
-    }
-
-    #[test]
-    fn encrypted_backend_atomically_replaces_existing_secret() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("retry.hex");
-        let backend = KeyBackend::Encrypted("replacement-password".into());
-
-        save_raw(&path, b"first", &backend).unwrap();
-        save_raw(&path, b"second", &backend).unwrap();
-
-        assert_eq!(load_raw(&path, &backend).unwrap(), b"second");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-    }
-
-    #[test]
-    fn test_plaintext_backend_roundtrip() {
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let backend = KeyBackend::Plaintext;
-
-        let file = NamedTempFile::new().unwrap();
-        save_signing_share(file.path(), share, &backend).unwrap();
-
-        // File should be hex text
-        let content = std::fs::read_to_string(file.path()).unwrap();
-        assert!(
-            hex::decode(content.trim()).is_ok(),
-            "plaintext file should be valid hex"
-        );
-
-        let loaded = load_signing_share(file.path(), &backend).unwrap();
-        assert_eq!(share.index, loaded.index);
-        assert!(validate_share(&loaded, &result.polynomial).unwrap());
-
-        // Legacy raw hex string without trailing newline also loads cleanly.
-        let legacy_file = NamedTempFile::new().unwrap();
-        std::fs::write(legacy_file.path(), hex::encode(share.encode())).unwrap();
-        let legacy_loaded = load_signing_share(legacy_file.path(), &KeyBackend::Plaintext).unwrap();
-        assert_eq!(share.index, legacy_loaded.index);
-        assert!(validate_share(&legacy_loaded, &result.polynomial).unwrap());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_plaintext_backend_writes_owner_only_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let result = bootstrap_dkg(3).unwrap();
-        let share = &result.shares[0];
-        let backend = KeyBackend::Plaintext;
-
-        let file = NamedTempFile::new().unwrap();
-        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
-        save_signing_share(file.path(), share, &backend).unwrap();
-
-        let mode = std::fs::metadata(file.path()).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600);
-    }
-
-    #[test]
-    fn test_encrypted_individual_key_roundtrip() {
-        use commonware_math::algebra::Random;
-        let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-            rand_commonware::rngs::SysRng,
-        ));
-        let backend = KeyBackend::Encrypted("key-secret".into());
-
-        let file = NamedTempFile::new().unwrap();
-        save_individual_key(file.path(), &key, &backend).unwrap();
-        let loaded = load_individual_key(file.path(), &backend).unwrap();
-
-        assert_eq!(key, loaded);
-    }
-
-    /// Runtime-level test: save and load full threshold material (share + polynomial)
-    /// through the encrypted backend. This is the same flow as save_dkg_state() /
-    /// obtain_threshold_material().
-    #[test]
-    fn test_encrypted_threshold_material_full_flow() {
-        let result = bootstrap_dkg(3).unwrap();
-        let backend = KeyBackend::Encrypted("threshold-secret-123".into());
-
-        let dir = tempfile::tempdir().unwrap();
-        let share_path = dir.path().join("dkg_share.hex");
-        let poly_path = dir.path().join("dkg_polynomial.hex");
-
-        // Save (same calls as `save_dkg_state` in `outbe-engine` `stack::dkg::persistence`).
-        save_signing_share(&share_path, &result.shares[0], &backend).unwrap();
-        save_public_polynomial(&poly_path, &result.polynomial, &backend).unwrap();
-
-        // Files must be encrypted (not plaintext hex).
-        let share_raw = std::fs::read(&share_path).unwrap();
-        let poly_raw = std::fs::read(&poly_path).unwrap();
-        assert!(share_raw.starts_with(ENC_MAGIC), "share must be encrypted");
-        assert!(
-            poly_raw.starts_with(ENC_MAGIC),
-            "polynomial must be encrypted"
-        );
-
-        // Load (same calls as `obtain_threshold_material` Path 2 in
-        // `outbe-engine` `stack::dkg::startup`).
-        let loaded_share = load_signing_share(&share_path, &backend).unwrap();
-        let loaded_poly = load_public_polynomial(&poly_path, &backend).unwrap();
-
-        // Validate roundtrip across all shares.
-        assert_eq!(result.shares[0].index, loaded_share.index);
-        assert!(validate_share(&loaded_share, &loaded_poly).unwrap());
-        for share in &result.shares {
-            assert!(validate_share(share, &loaded_poly).unwrap());
-        }
-
-        // Cannot load with wrong passphrase.
-        let wrong_backend = KeyBackend::Encrypted("wrong-password".into());
-        assert!(load_signing_share(&share_path, &wrong_backend).is_err());
-        assert!(load_public_polynomial(&poly_path, &wrong_backend).is_err());
-
-        // Cannot load with plaintext backend (encrypted file).
-        assert!(load_signing_share(&share_path, &KeyBackend::Plaintext).is_err());
-    }
-
-    fn assert_bls_key_error(error: eyre::Report, expected: BlsKeyError) {
-        let actual = error
-            .downcast_ref::<BlsKeyError>()
-            .unwrap_or_else(|| panic!("expected BlsKeyError, got {error}"));
-        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
-    }
-
-    #[test]
-    fn bootstrap_dkg_rejects_count_above_load_ceiling() {
-        let Err(error) = bootstrap_dkg(MAX_VALIDATORS + 1) else {
-            panic!("count above the ceiling must fail before generation");
-        };
-        assert_bls_key_error(
-            error,
-            BlsKeyError::ValidatorCountExceedsMax {
-                count: MAX_VALIDATORS + 1,
-                max: MAX_VALIDATORS,
-            },
-        );
-    }
-
-    #[test]
-    fn bootstrap_dkg_for_participants_rejects_count_above_load_ceiling() {
-        use commonware_cryptography::Signer as _;
-        use commonware_math::algebra::Random;
-        use commonware_utils::ordered::Set;
-
-        let keys = (0..=MAX_VALIDATORS)
-            .map(|_| {
-                bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-                    rand_commonware::rngs::SysRng,
-                ))
-                .public_key()
-            })
-            .collect::<Vec<_>>();
-        let participants = Set::from_iter_dedup(keys);
-        let count = u32::try_from(participants.len()).unwrap();
-        let Err(error) = bootstrap_dkg_for_participants(participants) else {
-            panic!("count above the ceiling must fail before generation");
-        };
-        assert_bls_key_error(
-            error,
-            BlsKeyError::ValidatorCountExceedsMax {
-                count,
-                max: MAX_VALIDATORS,
-            },
-        );
-    }
-
-    #[test]
-    fn foreign_share_and_foreign_output_keep_distinct_rejections() {
-        use commonware_cryptography::Signer as _;
-        use commonware_math::algebra::Random;
-        use commonware_utils::ordered::Set;
-
-        let random_key = || {
-            bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
-                rand_commonware::rngs::SysRng,
-            ))
-            .public_key()
-        };
-        let left_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
-        let right_keys = (0..2).map(|_| random_key()).collect::<Vec<_>>();
-        let left = bootstrap_dkg_for_participants(Set::from_iter_dedup(left_keys)).unwrap();
-        let right = bootstrap_dkg_for_participants(Set::from_iter_dedup(right_keys)).unwrap();
-
-        let share_error =
-            validate_dkg_triplet(&right.shares[0], &left.polynomial, &left.output).unwrap_err();
-        assert_bls_key_error(share_error, BlsKeyError::SigningSharePolynomialMismatch);
-
-        let output_error =
-            validate_dkg_triplet(&left.shares[0], &left.polynomial, &right.output).unwrap_err();
-        assert_bls_key_error(output_error, BlsKeyError::DkgOutputPolynomialMismatch);
-    }
-
-    #[test]
-    fn encrypted_backend_debug_redacts_passphrase() {
-        let secret = "passphrase-should-not-appear";
-        let backend = KeyBackend::Encrypted(secret.to_string());
-        let rendered = format!("{backend:?}");
-        assert!(
-            !rendered.contains(secret),
-            "Debug rendered the passphrase: {rendered}"
-        );
-        assert!(
-            rendered.contains("Encrypted"),
-            "Debug dropped the backend name: {rendered}"
-        );
-    }
-}
+mod tests;

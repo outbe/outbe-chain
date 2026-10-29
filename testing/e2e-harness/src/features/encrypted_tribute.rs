@@ -10,7 +10,7 @@ use crate::internal::{addresses, eth, tribute_keys};
 use crate::world::World;
 
 fn creator() -> Address {
-    Address::repeat_byte(0x79)
+    eth::address_of(tribute_keys::CREATOR_KEY).expect("creator address")
 }
 
 #[when("the operator offers a Tribute owned by a different creator")]
@@ -179,12 +179,9 @@ fn verify_readers(world: &mut World) {
         .tribute_network_public_key(port)
         .expect("installed common public key");
     assert_eq!(body.context.owner, creator());
-    let amounts = outbe_tee::tribute_decrypt::decrypt_tribute_for_creator(
-        &tribute_keys::secret(creator()),
-        &network,
-        &body,
-    )
-    .expect("creator local decryption");
+    let view_key = tribute_keys::tribute_view_key(world, creator());
+    let amounts = outbe_tee::tribute_decrypt::decrypt_tribute_for_owner(&view_key, &body)
+        .expect("creator local decryption");
     assert_eq!(amounts.issuance_amount_minor, U256::from(100_000_000));
     let (nominal, price) = super::tribute_expectations::usd_offer_terms_at(
         world,
@@ -194,10 +191,7 @@ fn verify_readers(world: &mut World) {
     );
     assert_eq!(amounts.nominal_amount_minor, nominal);
     assert_eq!(body.context.tribute_price_minor, price);
-    assert!(
-        outbe_tee::tribute_decrypt::decrypt_tribute_for_creator(&[0x78; 32], &network, &body)
-            .is_err()
-    );
+    assert!(outbe_tee::tribute_decrypt::decrypt_tribute_for_owner(&[0x78; 32], &body).is_err());
     for index in 0..world.validators.size() {
         let port = world.validators.committee_ports()[index];
         assert_eq!(world.rpc.tribute_network_public_key(port).unwrap(), network);

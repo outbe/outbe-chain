@@ -132,16 +132,16 @@ impl Rpc {
         let now = eth::latest_block_timestamp(&self.cfg.rpc0)?;
         let active_days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getActiveWorldwideDaysCall {},
+            addresses::TRIBUTE_FACTORY_ADDR,
+            &ITributeFactory::getActiveWorldwideDaysCall {},
         )?;
         let days: Vec<u32> = active_days
             .into_iter()
             .filter(|&wwd| {
                 eth::read_call(
                     &self.cfg.rpc0,
-                    addresses::TRIBUTE_ADDR,
-                    &ITribute::getWorldwideDayCall { wwd },
+                    addresses::TRIBUTE_FACTORY_ADDR,
+                    &ITributeFactory::getWorldwideDayCall { wwd },
                 )
                 .is_some_and(|r| now >= r.offeringsStart && now < r.offeringEnd)
             })
@@ -277,8 +277,6 @@ impl Rpc {
             "tribute".to_owned(),
             "offer".to_owned(),
             wwd.to_owned(),
-            "--creator-public-key".to_owned(),
-            crate::internal::tribute_keys::public_hex(creator),
             "--creator".to_owned(),
             format!("{creator:#x}"),
             "--amount".to_owned(),
@@ -460,7 +458,6 @@ impl Rpc {
         });
         let plaintext = serde_json::to_vec(&serde_json::json!({
             "creator": format!("{creator:?}"),
-            "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
             "tribute_draft_id": format!("{tribute_draft_id:#x}"),
             "amount_base": amount_base,
             "amount_micro": amount_micro,
@@ -613,8 +610,6 @@ impl Rpc {
             "tribute".to_owned(),
             "offer".to_owned(),
             wwd.to_owned(),
-            "--creator-public-key".to_owned(),
-            crate::internal::tribute_keys::public_hex(eth::address_of(key)?),
             "--tribute-draft-id".to_owned(),
             zk.tribute_draft_id_hex.to_owned(),
             "--su-hash".to_owned(),
@@ -703,7 +698,6 @@ pub(in crate::world::rpc) fn encode_reward_bearing_tribute_plaintext(
     } = input;
     serde_json::to_vec(&serde_json::json!({
         "creator": format!("{creator:#x}"),
-        "creator_public_key": crate::internal::tribute_keys::public_hex(creator),
         "tribute_draft_id": format!("{tribute_draft_id:#x}"),
         "amount_base": amount_base,
         "amount_micro": amount_micro,

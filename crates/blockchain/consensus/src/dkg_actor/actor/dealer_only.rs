@@ -202,7 +202,7 @@ impl DealerOnlyState {
 
         let (mut dealer, my_pub_msg, priv_msgs) =
             Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
-                rand_commonware::rngs::ChaCha20Rng::from_seed(dealer_retry_snapshot.seed),
+                rand_commonware::rngs::ChaCha20Rng::from_seed(*dealer_retry_snapshot.seed),
                 info.clone(),
                 signing_key,
                 Some(previous_share),
@@ -384,7 +384,9 @@ impl DealerOnlyState {
             .map_err(|_| DkgError::PublishDealerOnlyLocalDealerLog)?;
 
         if !send_finalized_log(sender, self.ceremony_id, signed_log) {
-            debug!("dealer-only finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the retry tick");
+            debug!(
+                "dealer-only finalized-log broadcast had no accepting recipients this attempt (rate-limited/backpressure); recovered by the retry tick"
+            );
         }
 
         info!(

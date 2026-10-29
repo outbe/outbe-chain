@@ -8,8 +8,8 @@ import {IERC1155Bridgeable} from "./IERC1155Bridgeable.sol";
  * @title IntexNFT1155 Contract Interface
  * @author Outbe
  * @notice Public API, events, errors, and data types for `IntexNFT1155`.
- * @dev Series are keyed by `seriesId` (bytes14). Each series has two ERC1155 token ids:
- * issued = `uint112(seriesId)`, settled = the same with bit 112 set.
+ * @dev Series are keyed by `seriesId` (bytes14). A series' Issued units are the ERC1155 token id
+ * `uint112(seriesId)`. Settled units live in the Intex precompile on Outbe.
  * Also implements `IERC1155Bridgeable` for ERC-7786 cross-chain compatibility.
  * @dev Keep continuation lines flush against the leading `*`. The Rust
  * precompiles bind this interface with `sol!`, which re-emits this block as a
@@ -35,21 +35,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         Issued,
         Called,
         Forfeited
-    }
-
-    /// @notice Per-token classification within a series.
-    /// @dev Each series has an Issued token (transferable, gated by series state) and a
-    ///      Settled token (soulbound, minted on settle, burned on Promis mining).
-    enum IntexStatus {
-        Issued,
-        Settled
-    }
-
-    /// @notice Per-owner, per-series balance pair. Widths match the `uint32` supply counters so a
-    ///         balance accumulated above `type(uint16).max` is reported without truncation.
-    struct OwnerBalances {
-        uint32 issuedUnits;
-        uint32 settledUnits;
     }
 
     /// @notice Forced-call trigger parameters (window/threshold/period).
@@ -128,18 +113,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param tokenId Token id whose metadata changed.
     event MetadataUpdate(uint256 tokenId);
 
-    /// @notice Emitted when settled Intex units are mined: they burn to mine Promis.
-    /// @param seriesId Series identifier.
-    /// @param owner Owner whose Settled tokens were burned.
-    /// @param units Settled units burned.
-    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units);
-
-    /// @notice Emitted when Issued Intex are burned on being sent to the Gem Factory.
-    /// @param seriesId Series identifier.
-    /// @param owner Owner whose Issued tokens were burned.
-    /// @param units Issued units burned.
-    event IntexSentToGemFactory(bytes14 indexed seriesId, address indexed owner, uint256 units);
-
     // --- Errors ---
 
     /// @notice Zero address provided.
@@ -154,22 +127,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     error ZeroIssuedUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
     error InvalidIssuedAt(uint32 issuedAt);
-    /// @notice A settlement or burn of zero units.
+    /// @notice A burn of zero units.
     error ZeroUnits();
     /// @notice A mint or crosschainMint exceeds the units its packed storage field can hold.
     error UnitsTooLarge(uint256 units);
-    /// @notice Transfer or bridge attempted on a Settled (soulbound) token.
-    error SoulboundSettled(uint256 tokenId);
-    /// @notice Owner-to-owner transfer attempted while the series is Called.
-    error TransferOnCalledForbidden(uint256 tokenId);
-    /// @notice Bridge crosschainBurn/crosschainMint attempted on a Settled token.
-    error BridgeOnSettledForbidden(uint256 tokenId);
+    /// @notice Owner-to-owner transfer attempted on a `Called` series after its settlement deadline.
+    error TransferAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice Bridge attempted on a `Called` series after it closed: crosschainBurn after the
     ///         settlement deadline, crosschainMint after the transit margin past it.
     error BridgeAfterDeadline(uint256 tokenId, uint32 closedAt);
-    /// @notice Settle attempted on a `Called` series after the transit margin past its settlement
-    ///         deadline ended.
-    error SettleAfterDeadline(uint256 tokenId, uint32 closedAt);
     /// @notice Issue attempted on a `Called` series after the transit margin past its settlement
     ///         deadline ended.
     error IssueAfterDeadline(uint256 tokenId, uint32 closedAt);
@@ -179,6 +145,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
+    /// @notice Series index past the end of the series list.
+    error SeriesIndexOutOfRange();
 
     // --- Writes ---
 
@@ -217,31 +185,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
     function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
-    /// @notice Burn `units` of `owner`'s Issued Intex and mint the same `units` of Settled Intex to
-    ///         `owner`.
-    /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. A Called series settles only
-    ///      until the transit margin past its deadline ends.
-    /// @param seriesId Series identifier.
-    /// @param owner Owner whose Issued tokens are burned and who receives the Settled tokens.
-    /// @param units Issued units burned and Settled units minted.
-    function settleIntex(bytes14 seriesId, address owner, uint256 units) external;
-
-    /// @notice Burn `units` Settled Intex from `owner`.
-    /// @dev Promis-facade entry point under PROMIS_ROLE.
-    /// @param owner Owner whose Settled tokens are burned.
-    /// @param seriesId Series identifier.
-    /// @param units Settled units to burn.
-    function burnSettled(address owner, bytes14 seriesId, uint256 units) external;
-
-    /// @notice Burn `units` Issued Intex from `owner` when the tokens are sent to the Gem Factory.
-    /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
-    ///      (Issued - no Call Event yet). The capacity record lives in the
-    ///      Gem Factory. The burned Intex is thereby non-tradable, call-exempt and Outbe-only.
+    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe: settled, or sent to the Gem Factory.
+    /// @dev Entry point of the IntexFactory and GemFactory precompiles under BURNER_ROLE. They own
+    ///      the series state, so this burn checks none.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
-    /// @return The units burned.
-    function sendToGemFactory(address owner, bytes14 seriesId, uint256 units) external returns (uint256);
+    function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
 
     // --- Reads ---
 
@@ -254,12 +204,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
-
-    /// @notice Settled (soulbound) token id for a series (= the series id with bit 112 set). Pure
-    ///         helper.
-    /// @param seriesId Series identifier.
-    /// @return The Settled token id.
-    function settledTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Worldwide day whose tributes fed the series (0 if the series does not exist).
     /// @param seriesId Series identifier.
@@ -281,28 +225,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         view
         returns (bytes14);
 
-    /// @notice Both token ids for a series in one call.
-    /// @param seriesId Series identifier.
-    /// @return issued The Issued token id.
-    /// @return settled The Settled token id.
-    function tokenIds(bytes14 seriesId) external pure returns (uint256 issued, uint256 settled);
-
-    /// @notice Token classification (Issued/Settled) for a token id, read off the id itself.
-    /// @param tokenId Token id to classify.
-    /// @return The token classification.
-    function statusOf(uint256 tokenId) external pure returns (IntexStatus);
-
     /// @notice Read series data by series id. `state` derives Forfeited, as the card renders it.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);
-
-    /// @notice Issued and Settled balances for an owner in a given series: this chain's raw
-    ///         ERC-1155 balances, with no expiry applied and no other chain counted.
-    /// @param seriesId Series identifier.
-    /// @param owner Owner address to read.
-    /// @return The owner's Issued and Settled balance pair.
-    function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.
@@ -328,21 +254,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     // --- Series reads ---
 
-    /// @notice All series (token ids) that have been created.
-    /// @return The Issued token ids of every created series.
-    function getAllSeries() external view returns (uint256[] memory);
-
-    /// @notice Series with pagination.
-    /// @param offset Index into the full series array.
-    /// @param limit Maximum slice length to return.
-    /// @return series The requested slice of Issued token ids.
-    /// @return total Total number of series created.
-    function getSeriesPaginated(uint256 offset, uint256 limit)
-        external
-        view
-        returns (uint256[] memory series, uint256 total);
-
-    /// @notice Total number of series created.
+    /// @notice Number of series ever created on this chain; a series stays listed after its supply reaches zero.
     /// @return The count of created series.
     function totalSeries() external view returns (uint256);
+
+    /// @notice The series id at an index of the creation-ordered series list.
+    /// @param index Position in the list, below `totalSeries()`.
+    /// @return The series id.
+    function seriesAt(uint256 index) external view returns (bytes14);
 }

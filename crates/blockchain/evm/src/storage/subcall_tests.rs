@@ -46,6 +46,7 @@ fn provider<DB: Database + Debug>(
             reentrancy_stack: ReentrancyStack,
             spec: SpecId::PRAGUE,
             genesis_hash: B256::ZERO,
+            genesis_timestamp: 0,
 
             abort_bridge: Default::default(),
 

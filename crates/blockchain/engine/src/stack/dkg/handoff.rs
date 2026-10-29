@@ -42,12 +42,6 @@ pub(in crate::stack) fn publish_randomness_status(
     vrf_safety: &VrfSafetyGate,
 ) {
     let snapshot = vrf_safety.snapshot();
-    let mut status = bridge.consensus_status();
-    status.randomness_status = snapshot.randomness_status;
-    status.vrf_material_version = snapshot.vrf_material_version;
-    status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
-    status.next_planned_activation_height = snapshot.next_planned_activation_height;
-    status.vrf_expiry_height = snapshot.vrf_expiry_height;
     info!(
         randomness_status = ?snapshot.randomness_status,
         vrf_material_version = snapshot.vrf_material_version,
@@ -56,7 +50,13 @@ pub(in crate::stack) fn publish_randomness_status(
         vrf_expiry_height = snapshot.vrf_expiry_height,
         "VRF/DKG safety status updated"
     );
-    bridge.set_consensus_status(status);
+    bridge.update_consensus_status(|status| {
+        status.randomness_status = snapshot.randomness_status;
+        status.vrf_material_version = snapshot.vrf_material_version;
+        status.last_dkg_activation_height = snapshot.last_dkg_activation_height;
+        status.next_planned_activation_height = snapshot.next_planned_activation_height;
+        status.vrf_expiry_height = snapshot.vrf_expiry_height;
+    });
 }
 
 /// Couples the active VRF provider transition with the bridge's process-local

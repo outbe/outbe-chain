@@ -367,9 +367,9 @@ pub struct GratisOpResult {
 }
 
 /// The confidential ledger that a key-derivation / op request targets. It selects
-/// the enclave key domain (state/view/modify HKDF labels). Thus Gratis and Promis
-/// derive cryptographically independent keys from the same resident group
-/// signature.
+/// the enclave key domain (state/view/modify HKDF labels). Thus Gratis, Promis,
+/// Fidelity, Tribute, and Nod derive cryptographically independent keys from the
+/// same resident group signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Ledger {
     Gratis,
@@ -378,6 +378,12 @@ pub enum Ledger {
     /// cohort blob client-side. There is no user-held modify capability (the chain
     /// initiates cohort ops inside Gratis ops).
     Fidelity,
+    /// The encrypted Tribute entity domain. View keys decrypt `EncryptedTributeV2`
+    /// amounts client-side.
+    Tribute,
+    /// The encrypted NOD entity domain. View keys decrypt `EncryptedNodV1`
+    /// amounts client-side.
+    Nod,
 }
 
 /// A Promis write operation the enclave applies over the encrypted per-account
@@ -392,8 +398,8 @@ pub enum PromisOp {
 }
 
 /// Inputs for a single `ApplyPromisOp`. The host reads the current balance
-/// ciphertext (`version(8 BE) || ct`, empty for a fresh account) from committed
-/// storage and forwards it verbatim. The enclave then:
+/// ciphertext (`version(8 BE) || PRO2 || binding(32) || ct`, empty for a fresh account)
+/// from committed storage and forwards it verbatim. The enclave then:
 /// 1. decrypts the ciphertext.
 /// 2. enforces the balance invariant + modify-key authorization.
 /// 3. re-encrypts deterministically.
@@ -403,8 +409,8 @@ pub struct PromisOpRequest {
     pub chain_id: B256,
     pub account: Address,
     pub amount: U256,
-    /// Current balance blob (`version(8 BE) || ciphertext`). Empty when the account
-    /// has no state yet.
+    /// Current balance blob (`version(8 BE) || PRO2 || binding(32) || ciphertext`).
+    /// Empty when the account has no state yet.
     pub current_balance: Vec<u8>,
     /// Modify-key authorization (required for both Mint and Burn).
     pub modify_auth: ModifyAuth,
@@ -423,7 +429,7 @@ pub enum PromisOpStatus {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PromisOpResult {
     pub status: PromisOpStatus,
-    /// New balance blob (`version || ct`) to store verbatim.
+    /// New balance blob (`version || PRO2 || binding || ct`) to store verbatim.
     pub new_balance: Vec<u8>,
     /// Amount for the emitted event (mint/burn magnitude).
     pub event_amount: U256,

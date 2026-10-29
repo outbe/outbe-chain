@@ -18,7 +18,7 @@ pub fn encode_tribute_v2(body: &EncryptedTributeV2) -> Result<Vec<u8>, Canonical
     // One ciphertext holds issuance BE32 followed by nominal BE32.
     encode_bytes_field(4, &body.encrypted_amounts, &mut output);
     encode_optional_varint_field(5, u64::from(context.issuance_currency), &mut output);
-    encode_bytes_field(6, &body.encrypted_creator_public_key, &mut output);
+    // Field 6 is retired (formerly encrypted_creator_public_key); never reuse tag 6.
     encode_optional_varint_field(7, u64::from(context.reference_currency), &mut output);
     encode_bytes_field(
         8,
@@ -37,7 +37,6 @@ pub fn decode_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBo
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 3)?);
     let encrypted_amounts = required_bytes(&mut fields, 4)?.to_vec();
     let issuance_currency = optional_u16(&mut fields, 5)?;
-    let encrypted_creator_public_key = required_bytes(&mut fields, 6)?.to_vec();
     let reference_currency = optional_u16(&mut fields, 7)?;
     let tribute_price_minor = decode_u256(required_bytes(&mut fields, 8)?, 8)?;
     let chain_id = optional_varint(&mut fields, 9)?;
@@ -54,7 +53,6 @@ pub fn decode_tribute_v2(bytes: &[u8]) -> Result<EncryptedTributeV2, CanonicalBo
             tribute_price_minor,
             offer_input_hash,
         },
-        encrypted_creator_public_key,
         encrypted_amounts,
     };
     if encode_tribute_v2(&body)? != bytes {

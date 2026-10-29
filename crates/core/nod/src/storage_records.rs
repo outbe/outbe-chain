@@ -31,8 +31,6 @@ pub struct StoredNod {
     #[attribute(order = 10)]
     pub encryption_binding: B256,
     #[attribute(order = 11)]
-    pub encrypted_creator_public_key: Vec<u8>,
-    #[attribute(order = 12)]
     pub encrypted_gratis_amount: Vec<u8>,
 }
 
@@ -51,7 +49,6 @@ impl From<&crate::NodItemState> for StoredNod {
             issued_at: item.issued_at,
             is_settled: item.is_settled,
             encryption_binding: item.encrypted.encryption_binding,
-            encrypted_creator_public_key: item.encrypted.encrypted_creator_public_key.clone(),
             encrypted_gratis_amount: item.encrypted.encrypted_gratis_amount.clone(),
         }
     }
@@ -81,7 +78,6 @@ impl From<StoredNod> for crate::NodItemState {
                     reference_currency: item.reference_currency,
                 },
                 encryption_binding: item.encryption_binding,
-                encrypted_creator_public_key: item.encrypted_creator_public_key,
                 encrypted_gratis_amount: item.encrypted_gratis_amount,
             },
         }
@@ -174,7 +170,6 @@ mod tests {
             record.owner = Address::repeat_byte(1);
             record.chain_id = 54322345;
             record.worldwide_day = id.worldwide_day();
-            record.encrypted_creator_public_key = vec![0xa5; 56];
             record.encrypted_gratis_amount = vec![0x5a; 88];
             assert!(contract.records.get(id).unwrap().is_none());
             contract.records.create(&record).unwrap();

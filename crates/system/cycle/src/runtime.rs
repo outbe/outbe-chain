@@ -241,19 +241,24 @@ fn slot_deferred(ctx: &BlockRuntimeContext, spec: &TriggerSpec, cycle: &Cycle<'_
 fn protocol_cycle_awaits_late_window(
     ctx: &BlockRuntimeContext,
     spec: &TriggerSpec,
-    cycle: &Cycle<'_>,
+    _cycle: &Cycle<'_>,
 ) -> Result<bool> {
     if spec.id != TriggerId::ProtocolCycle.as_u32() {
         return Ok(false);
     }
+    let active_utc_day = crate::handler::derive_active_utc_day(
+        ctx.storage.clone(),
+        ctx.block.genesis_timestamp,
+        ctx.block.timestamp,
+    )?;
     let day_action = protocol_day_action(
-        cycle.active_utc_day.read()?,
+        active_utc_day,
         outbe_primitives::time::timestamp_to_date_key(ctx.block.timestamp),
     )?;
     match day_action {
         ProtocolDayAction::SettlePrevious { day } => {
             Ok(!outbe_rewards::api::day_participation_complete(ctx, day)?)
         }
-        ProtocolDayAction::SameDay | ProtocolDayAction::SkipMissed { .. } => Ok(false),
+        ProtocolDayAction::SameDay => Ok(false),
     }
 }

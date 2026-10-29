@@ -5,13 +5,15 @@ use super::{
     types::{
         DisconnectDisposition, FinalizedBlock, FinalizedSnapshot, ManagerConfig,
         ManagerDependencies, ManagerError, ManagerPhase, ManagerStatus, PhaseError,
-        SessionDirection,
+        SessionDirection, MAX_REPOSITORIES_PER_RECONCILE,
     },
 };
 use crate::endpoint::{EndpointAddress, VerifiedEndpoint};
 use alloy_primitives::Address;
+use outbe_coderegistry::RepoId;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ops::Range,
     time::Duration,
 };
 use tokio::{
@@ -36,6 +38,7 @@ struct Runtime {
     pending: Option<FinalizedBlock>,
     endpoint_cache: BTreeMap<Address, VerifiedEndpoint>,
     managed: BTreeMap<[u8; 32], EndpointAddress>,
+    repository_cursor: usize,
     was_ready: bool,
     retry_attempt: u32,
     next_retry: Option<Instant>,
@@ -72,6 +75,7 @@ impl RadicleManager {
             pending: None,
             endpoint_cache: BTreeMap::new(),
             managed: BTreeMap::new(),
+            repository_cursor: 0,
             was_ready: false,
             retry_attempt: 0,
             next_retry: None,
@@ -226,14 +230,17 @@ impl Runtime {
         let Some(target) = self.pending else {
             return false;
         };
-        match self.dependencies.snapshots.read_exact(target) {
-            Ok(snapshot) if snapshot.block == target => {
+        let snapshots = self.dependencies.snapshots.clone();
+        let read = tokio::task::spawn_blocking(move || snapshots.read_exact(target)).await;
+        match read {
+            Ok(Ok(snapshot)) if snapshot.block == target => {
                 self.pending = None;
                 self.status.last_seen_finalized = Some(target);
                 self.current = Some(snapshot);
                 self.reconcile().await
             }
-            Ok(_) | Err(_) => {
+            // A JoinError is a provider failure like any other: same arm, same retry.
+            Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
                 self.status.provider_failures += 1;
                 self.publish();
                 true
@@ -291,6 +298,18 @@ impl Runtime {
             .saturating_sub(desired.len());
         self.status.signed_peers = desired.values().cloned().collect();
 
+        let repo_len = snapshot.repositories.len();
+        if repo_len == 0 {
+            self.repository_cursor = 0;
+        }
+        let range = self.repository_window_range(repo_len);
+        let next_cursor = if repo_len == 0 {
+            0
+        } else {
+            range.end % repo_len
+        };
+        let window = &snapshot.repositories[range];
+
         let phase = match self.binding_phase(self_binding).await {
             Ok(phase) => {
                 self.status.phase_error = None;
@@ -298,15 +317,15 @@ impl Runtime {
             }
             Err(error) => {
                 self.set_phase_error(error);
-                self.observe_repositories(&snapshot).await;
+                self.observe_repositories(&snapshot, window).await;
                 self.publish();
                 return true;
             }
         };
         self.status.phase = phase;
 
-        let control = self.reconcile_control(&snapshot, &desired).await;
-        retry |= self.observe_repositories(&snapshot).await;
+        let control = self.reconcile_control(window, next_cursor, &desired).await;
+        retry |= self.observe_repositories(&snapshot, window).await;
         if control.converged {
             self.status.last_converged_finalized = Some(snapshot.block);
             self.status.phase = phase;
@@ -314,9 +333,10 @@ impl Runtime {
             self.was_ready |= self.status.phase == ManagerPhase::Ready;
         } else if control.sidecar_available {
             // A live local Heartwood runtime can be temporarily unable to dial
-            // or seed a remote target. Keep the binding-derived phase and retry
-            // the incomplete desired state without misclassifying the sidecar
-            // itself as unavailable.
+            // or seed a remote target. Keep the binding-derived phase and
+            // schedule a retry pass (which advances to the next repository
+            // window while periodic repair revisits the failed entry) without
+            // misclassifying the sidecar itself as unavailable.
             self.status.phase = phase;
             self.status.phase_error = None;
             self.was_ready |= self.status.phase == ManagerPhase::Ready;
@@ -412,10 +432,30 @@ impl Runtime {
             .collect()
     }
 
-    async fn observe_repositories(&mut self, snapshot: &FinalizedSnapshot) -> bool {
+    // Relies on CodeRegistry's append-only index order (stable prefix across snapshots);
+    // a swap-remove mutation would invalidate index-based cursor tiling.
+    fn repository_window_range(&self, len: usize) -> Range<usize> {
+        if len == 0 {
+            return 0..0;
+        }
+        let width = MAX_REPOSITORIES_PER_RECONCILE.min(len);
+        let start = if self.repository_cursor >= len {
+            0
+        } else {
+            self.repository_cursor
+        };
+        let end = (start + width).min(len);
+        start..end
+    }
+
+    async fn observe_repositories(
+        &mut self,
+        snapshot: &FinalizedSnapshot,
+        window: &[RepoId],
+    ) -> bool {
         let mut available = 0;
         let mut retry = false;
-        for repo in &snapshot.repositories {
+        for repo in window {
             match self.dependencies.repository_status.available(*repo).await {
                 Ok(true) => available += 1,
                 Ok(false) => {}
@@ -426,8 +466,9 @@ impl Runtime {
             }
         }
         self.status.desired_repository_count = snapshot.repositories.len();
+        self.status.observed_repository_count = window.len();
         self.status.available_repository_count = available;
-        self.status.pending_repository_count = snapshot.repositories.len() - available;
+        self.status.pending_repository_count = window.len() - available;
         retry
     }
 

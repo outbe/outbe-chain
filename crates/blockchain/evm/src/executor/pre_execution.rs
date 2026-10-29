@@ -134,14 +134,17 @@ where
                 let db = self.inner.evm.db_mut();
                 let ctx = build_block_context(
                     db,
-                    BlockContext {
-                        block_number,
-                        timestamp,
-                        chain_id,
-                        genesis_hash: self.genesis_hash,
-                        proposer,
-                        validators: Vec::new(),
-                    },
+                    BlockContext::new_with_genesis_hash(
+                        outbe_primitives::block::BlockContextInput {
+                            block_number,
+                            timestamp,
+                            chain_id,
+                            genesis_hash: self.genesis_hash,
+                            genesis_timestamp: self.genesis_timestamp,
+                            proposer,
+                            validators: Vec::new(),
+                        },
+                    ),
                 )?;
                 hooks::run_atomic_storage_hooks_with_pre_flush(
                     db,

@@ -317,6 +317,7 @@ fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
         .build();
     spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
     spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    spec.genesis.timestamp = 1;
     let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
         .expect("test GramineDirectDev policy is canonical");
     spec.genesis.config.extra_fields.insert(

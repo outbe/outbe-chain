@@ -210,12 +210,17 @@ fn precompile_balance_of_returns_ciphertext() {
         )
         .unwrap();
         let blob = IPromis::balanceOfCall::abi_decode_returns(&out).unwrap();
-        // The ABI surface returns the raw ciphertext blob (fixed 56 bytes), not a
+        // The ABI surface returns the raw ciphertext blob (fixed 92 bytes), not a
         // plaintext balance; decrypting it with the view key recovers the amount.
-        assert_eq!(blob.len(), 56);
+        assert_eq!(blob.len(), 92);
+        assert_eq!(&blob[8..12], b"PRO2");
         let sk = test_enclave::state_key();
         let vk = derive_view_key(&sk, alice()).unwrap();
         assert_eq!(decrypt_balance(&vk, alice(), &blob).unwrap(), amount);
+        assert_eq!(
+            outbe_tee::promis_decrypt::decrypt_promis_balance(&vk, alice(), &blob).unwrap(),
+            amount
+        );
 
         // opNonceOf reflects the advanced replay counter.
         let call = IPromis::opNonceOfCall { account: alice() };

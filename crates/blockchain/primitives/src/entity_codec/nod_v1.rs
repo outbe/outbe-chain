@@ -19,7 +19,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(1, t.nod_id.as_slice(), &mut out);
     encode_bytes_field(2, t.owner.as_slice(), &mut out);
     encode_bytes_field(3, &body.encrypted.encrypted_gratis_amount, &mut out);
-    encode_bytes_field(4, &body.encrypted.encrypted_creator_public_key, &mut out);
+    // Field 4 is retired (formerly encrypted_creator_public_key); never reuse tag 4.
     encode_optional_varint_field(5, t.chain_id, &mut out);
     encode_optional_varint_field(6, u64::from(t.worldwide_day.value()), &mut out);
     encode_optional_varint_field(7, u64::from(t.league_id), &mut out);
@@ -37,7 +37,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let nod_id = WwdEntityId::try_from(required_bytes(&mut f, 1)?)?;
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut f, 2)?, 2)?);
     let encrypted_gratis_amount = required_bytes(&mut f, 3)?.to_vec();
-    let encrypted_creator_public_key = required_bytes(&mut f, 4)?.to_vec();
     let chain_id = optional_varint(&mut f, 5)?;
     let worldwide_day = WorldwideDay::new(optional_u32(&mut f, 6)?);
     let league_id = optional_u16(&mut f, 7)?;
@@ -62,7 +61,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
                 reference_currency,
             },
             encryption_binding,
-            encrypted_creator_public_key,
             encrypted_gratis_amount,
         },
         group_key,

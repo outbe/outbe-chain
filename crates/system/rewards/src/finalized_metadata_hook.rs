@@ -369,33 +369,6 @@ mod tests {
     }
 
     #[test]
-    fn metadata_for_settled_day_is_not_fatal_under_sync_phase_ordering() {
-        with_genesis_block(|ctx| {
-            // `daily_settled` is a Cycle-owned completion marker.
-            // makes finalized metadata synchronous Phase 1 input before Cycle
-            // runs, so the old late-after-settle fatal guard is gone.
-            ctx.storage
-                .contract::<Rewards>()
-                .daily_settled
-                .write(&20240101, true)
-                .unwrap();
-
-            record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 0, &[VAL_X]);
-
-            let rewards = ctx.storage.contract::<Rewards>();
-            assert!(rewards.block_metadata_counted.read(&FB_HASH_A).unwrap());
-            assert_eq!(
-                rewards
-                    .daily_participation
-                    .get_nested(&20240101)
-                    .read(&VAL_X)
-                    .unwrap(),
-                1
-            );
-        });
-    }
-
-    #[test]
     fn no_voters_escrows_full_fee_with_no_base_seed() {
         with_genesis_block(|ctx| {
             record_genesis_day_parent(&ctx, &meta_with_hash(FB_HASH_A, 1), 100, &[]);
@@ -435,11 +408,11 @@ mod tests {
             .unwrap();
 
             let rewards = ctx.storage.contract::<Rewards>();
-            // No settle: every day's marker stays false until the
+            // No settle: every day's participation stays open until the
             // orchestrator runs.
-            assert!(!rewards.daily_settled.read(&20240101).unwrap());
-            assert!(!rewards.daily_settled.read(&20240102).unwrap());
-            assert!(!rewards.daily_settled.read(&20240103).unwrap());
+            assert!(!rewards.daily_participation_closed.read(&20240101).unwrap());
+            assert!(!rewards.daily_participation_closed.read(&20240102).unwrap());
+            assert!(!rewards.daily_participation_closed.read(&20240103).unwrap());
         });
     }
 

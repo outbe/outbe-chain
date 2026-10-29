@@ -559,25 +559,6 @@ fn a_series_called_past_its_deadline_stays_closed() {
 }
 
 #[test]
-fn settled_token_id_tags_the_series_id() {
-    let series_id = sid(7);
-    let issued = U256::from_be_slice(series_id.as_bytes());
-    let settled = runtime::settled_token_id(series_id);
-    // A series id is 14 bytes, so its space ends at bit 112. This bound does not
-    // come from either constant under test.
-    let tag: U256 = U256::from(1u8) << 112;
-    const SOL: &str = include_str!("../../../../../contracts/intex/src/shared/IntexNFT1155.sol");
-    let bit = outbe_primitives::test_utils::sol_interface::sol_constant_shift(SOL, "_SETTLED_TAG")
-        .expect("_SETTLED_TAG is 1 << N");
-
-    assert!(issued < tag);
-    assert_eq!(settled, issued | tag);
-    assert_eq!(settled & !tag, issued);
-    assert_eq!(U256::from(1u8) << bit, tag);
-    assert_eq!(crate::constants::SETTLED_TAG, tag);
-}
-
-#[test]
 fn compute_pow_hash_matches_manual_sha256() {
     // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
     let promis_amount = U256::from(1_000u64);
@@ -731,6 +712,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
         let nonce = StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             runtime::issue_intex(&s, sample(7)).unwrap();
+            outbe_intex::api::record_settled_units(&s, sid(7), owner(), 1).unwrap();
             let promis_amount = outbe_intex::api::get_series(&s, sid(7))
                 .unwrap()
                 .promis_load_minor;
@@ -780,7 +762,7 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
 fn the_unit_counts_view_reports_the_disjoint_classes() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
 
@@ -835,15 +817,15 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
     let stamp = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
-        outbe_intex::api::record_settled_units(&s, sid(7), 40).unwrap();
+        outbe_intex::api::record_settled_units(&s, sid(7), owner(), 40).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, sid(7), owner(), 10).unwrap();
         outbe_intex::api::record_mined_units(&s, sid(7), owner(), 15).unwrap();
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
 
         let live = read(&s);
-        assert_eq!((live.issuedUnits, live.settledUnits), (3, 3));
+        assert_eq!((live.issuedUnits, live.settledUnits), (3, 25));
         assert_eq!((live.minedUnits, live.gemFactoryUnits), (15, 10));
-        assert_eq!(live.ownerUnits, 6);
+        assert_eq!(live.ownerUnits, 28);
         let series = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         outbe_intex::api::call_stamp(&s, &series).unwrap()
     });
@@ -851,14 +833,14 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
     storage.set_timestamp(U256::from(stamp.deadline + 1));
     StorageHandle::enter(&mut storage, |s| {
         let in_transit = read(&s);
-        assert_eq!((in_transit.issuedUnits, in_transit.settledUnits), (3, 3));
+        assert_eq!((in_transit.issuedUnits, in_transit.settledUnits), (3, 25));
     });
 
     storage.set_timestamp(U256::from(stamp.close_at + 1));
     StorageHandle::enter(&mut storage, |s| {
         let forfeited = read(&s);
-        assert_eq!((forfeited.issuedUnits, forfeited.settledUnits), (0, 3));
+        assert_eq!((forfeited.issuedUnits, forfeited.settledUnits), (0, 25));
         assert_eq!((forfeited.minedUnits, forfeited.gemFactoryUnits), (15, 10));
-        assert_eq!(forfeited.ownerUnits, 3);
+        assert_eq!(forfeited.ownerUnits, 25);
     });
 }

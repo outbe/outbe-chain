@@ -20,8 +20,6 @@ pub struct BootstrapProfile {
     pub(super) unbonding_period_secs: Option<NonZeroU64>,
     pub(super) slashed_withdrawal_delay_secs: Option<NonZeroU64>,
     pub(super) validator_balance_coen: Option<u64>,
-    pub(super) metadosis_forming_seconds: Option<u64>,
-    pub(super) metadosis_offering_seconds: u64,
     pub(super) governance_voting_window_blocks: u64,
     pub(super) governments: bool,
     pub(super) oracle_vote_period_blocks: NonZeroU64,
@@ -46,8 +44,6 @@ impl Default for BootstrapProfile {
             unbonding_period_secs: None,
             slashed_withdrawal_delay_secs: None,
             validator_balance_coen: None,
-            metadosis_forming_seconds: None,
-            metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
             governance_voting_window_blocks: 6,
             governments: false,
             oracle_vote_period_blocks: NonZeroU64::new(E2E_ORACLE_VOTE_PERIOD_BLOCKS)
@@ -242,12 +238,6 @@ impl BootstrapProfile {
                 }
                 "TESTNET_ORACLE_VOTE_PERIOD_BLOCKS" => {
                     profile = profile.with_oracle_vote_period(parsed()?)?;
-                }
-                "TESTNET_METADOSIS_FORMING_SECONDS" => {
-                    profile.metadosis_forming_seconds = Some(parsed()?);
-                }
-                "TESTNET_METADOSIS_OFFERING_SECONDS" => {
-                    profile.metadosis_offering_seconds = parsed()?;
                 }
                 other => {
                     bail!("unsupported localnet tuning key {other}");

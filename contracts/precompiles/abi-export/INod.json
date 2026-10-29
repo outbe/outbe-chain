@@ -38,6 +38,19 @@
   },
   {
     "type": "function",
+    "name": "clean",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getApproved",
     "inputs": [
       {
@@ -93,11 +106,6 @@
           },
           {
             "name": "encryptedGratisAmount",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "encryptedCreatorPublicKey",
             "type": "bytes",
             "internalType": "bytes"
           },
@@ -798,6 +806,16 @@
   {
     "type": "error",
     "name": "NodAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodAlreadySettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotForfeited",
     "inputs": []
   },
   {

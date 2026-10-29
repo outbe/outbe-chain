@@ -41,10 +41,10 @@ tracing.workspace = true
 thiserror.workspace = true
 # `WorldwideDay::is_valid` calendar checks.
 time.workspace = true
-# Async request/response channel for the bridge's finalization fetcher (the
-# follower-upstream `outbe_getFinalization` serving path crosses the
-# outbe-rpc -> consensus crate boundary through the bridge). `sync` only.
-tokio = { workspace = true, features = ["sync"] }
+# Async request/response channel and timeout primitives for the bridge's
+# finalization fetcher (the follower-upstream `outbe_getFinalization` serving
+# path crosses the outbe-rpc -> consensus crate boundary through the bridge).
+tokio = { workspace = true, features = ["sync", "time"] }
 # Validator EVM signer (system-tx signing key). Lives here so consensus does
 # not need an `outbe-evm` dep just for the signer type.
 k256.workspace = true
@@ -59,6 +59,7 @@ proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 trybuild = "1"
+tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]
 default = []

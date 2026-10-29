@@ -71,6 +71,20 @@ pub fn record_finalization_resolution_stalled() {
     counter!("outbe_finalization_resolution_stalled_total").increment(1);
 }
 
+/// Raise the suspected-local-divergence alarm for one stall episode.
+///
+/// The counter counts episodes. The gauge stays at `1.0` until
+/// [`record_finalization_divergence_cleared`] runs.
+pub fn record_finalization_divergence_suspected() {
+    counter!("outbe_finalization_divergence_suspected_total").increment(1);
+    gauge!("outbe_finalization_divergence_suspected").set(1.0);
+}
+
+/// Clear the suspected-divergence gauge after the stalled block resolves.
+pub fn record_finalization_divergence_cleared() {
+    gauge!("outbe_finalization_divergence_suspected").set(0.0);
+}
+
 /// Record a pre-finalization canonical-head reorg at the same height.
 ///
 /// This is expected on view timeout / leader rotation. A sustained non-zero rate

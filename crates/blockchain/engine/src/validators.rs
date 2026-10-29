@@ -867,6 +867,7 @@ mod tests {
                     genesis_hash: B256::repeat_byte(0x41),
                     block_number: 9,
                     timestamp: deadline - 1,
+                    genesis_timestamp: 1_700_000_000,
                 },
                 identity,
             )
@@ -884,6 +885,7 @@ mod tests {
                     genesis_hash: B256::repeat_byte(0x41),
                     block_number: 9,
                     timestamp: deadline,
+                    genesis_timestamp: 1_700_000_000,
                 },
                 identity,
             )
@@ -905,6 +907,7 @@ mod tests {
                     genesis_hash: B256::repeat_byte(0x41),
                     block_number: 9,
                     timestamp: deadline - 1,
+                    genesis_timestamp: 1_700_000_000,
                 },
                 wrong_enclave,
             )
@@ -962,6 +965,7 @@ mod tests {
                         genesis_hash: B256::repeat_byte(0x41),
                         block_number: height,
                         timestamp: 10_000,
+                        genesis_timestamp: 1_700_000_000,
                     },
                     identity,
                 )
@@ -1006,6 +1010,7 @@ mod tests {
                 genesis_hash: B256::repeat_byte(0x41),
                 block_number: 10,
                 timestamp: deadline - 1,
+                genesis_timestamp: 1_700_000_000,
             },
             LocalTeeRuntimeIdentityV1 {
                 reth_p2p_public,
@@ -1036,6 +1041,7 @@ mod tests {
             genesis_hash: B256::repeat_byte(0x42),
             block_number,
             timestamp: 100,
+            genesis_timestamp: 1_700_000_000,
         };
 
         assert_eq!(

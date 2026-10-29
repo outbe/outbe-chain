@@ -70,15 +70,30 @@ fn precompile_total_and_at() {
         let out = dispatch(s.clone(), &total, Address::ZERO, U256::ZERO).unwrap();
         assert_eq!(
             IIntex::totalSeriesCall::abi_decode_returns(&out).unwrap(),
-            2
+            U256::from(2)
         );
 
-        let at1 = IIntex::seriesAtCall { index: 1 }.abi_encode();
+        let at1 = IIntex::seriesAtCall {
+            index: U256::from(1),
+        }
+        .abi_encode();
         let out = dispatch(s.clone(), &at1, Address::ZERO, U256::ZERO).unwrap();
         assert_eq!(
             IIntex::seriesAtCall::abi_decode_returns(&out).unwrap(),
             alloy_primitives::FixedBytes::from(sid(22))
         );
+    });
+}
+
+#[test]
+fn precompile_series_at_past_the_end_reverts() {
+    with_registry(|s| {
+        api::create_series(&s, sample_params(11)).unwrap();
+
+        for index in [U256::from(1), U256::MAX] {
+            let call = IIntex::seriesAtCall { index }.abi_encode();
+            assert!(dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).is_err());
+        }
     });
 }
 

@@ -30,7 +30,7 @@ fn expiry_forfeits_every_unrealized_unit() {
 fn expiry_forfeits_only_what_was_left_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 41);
-        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
@@ -48,7 +48,7 @@ fn expiry_forfeits_only_what_was_left_unrealized() {
 fn a_fully_realized_series_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
-        api::record_settled_units(&s, id, 60).unwrap();
+        api::record_settled_units(&s, id, owner(), 60).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 40).unwrap();
 
         assert_eq!(
@@ -64,7 +64,7 @@ fn a_fully_realized_series_forfeits_nothing() {
 fn the_view_carries_the_whole_split() {
     with_registry(|s| {
         let id = called_series(&s, 46);
-        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_mined_units(&s, id, owner(), 5).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
 
@@ -145,7 +145,7 @@ fn a_called_series_reads_forfeited_from_its_transit_close_not_from_the_sweep() {
 fn realized_units_can_never_exceed_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 45);
-        api::record_settled_units(&s, id, 100).unwrap();
+        api::record_settled_units(&s, id, owner(), 100).unwrap();
         // One unit past the cap means the two ledgers disagree. The forfeit
         // arithmetic would underflow later, so this call refuses it here instead.
         assert!(api::record_gem_factory_units(&s, id, owner(), 1).is_err());
@@ -162,7 +162,7 @@ fn realized_units_can_never_exceed_the_issued_count() {
 fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 50);
-        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
         api::record_mined_units(&s, id, owner(), 15).unwrap();
 
@@ -184,7 +184,7 @@ fn the_unit_classes_are_disjoint_and_sum_to_the_issued_count() {
 fn expiry_moves_the_active_units_into_forfeited() {
     with_registry_at(TRANSIT_CLOSE + 1, |s| {
         let id = called_series(&s, 51);
-        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 25).unwrap();
         api::record_mined_units(&s, id, owner(), 30).unwrap();
 
@@ -204,7 +204,7 @@ fn expiry_moves_the_active_units_into_forfeited() {
 fn settled_units_alone_count_nothing_as_mined() {
     with_registry(|s| {
         let id = called_series(&s, 52);
-        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_settled_units(&s, id, owner(), 40).unwrap();
 
         let counts = api::unit_counts(&s, id).unwrap();
         assert_eq!(counts.mined, 0);
@@ -217,7 +217,7 @@ fn settled_units_alone_count_nothing_as_mined() {
 fn mining_more_than_was_settled_is_refused() {
     with_registry(|s| {
         let id = called_series(&s, 53);
-        api::record_settled_units(&s, id, 10).unwrap();
+        api::record_settled_units(&s, id, owner(), 10).unwrap();
 
         assert!(api::record_mined_units(&s, id, owner(), 11).is_err());
         api::record_mined_units(&s, id, owner(), 10).unwrap();
@@ -227,10 +227,27 @@ fn mining_more_than_was_settled_is_refused() {
 }
 
 #[test]
+fn each_owner_mines_only_what_it_settled() {
+    with_registry(|s| {
+        let id = called_series(&s, 55);
+        let other = Address::repeat_byte(0xB2);
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
+        api::record_settled_units(&s, id, other, 10).unwrap();
+
+        assert!(api::record_mined_units(&s, id, other, 11).is_err());
+        api::record_mined_units(&s, id, owner(), 12).unwrap();
+
+        assert_eq!(api::owner_settled_units(&s, id, owner()).unwrap(), 18);
+        assert_eq!(api::owner_settled_units(&s, id, other).unwrap(), 10);
+        assert_eq!(api::settled_units(&s, id).unwrap(), 28);
+    });
+}
+
+#[test]
 fn mining_moves_units_out_of_the_settled_ledger() {
     with_registry(|s| {
         let id = called_series(&s, 54);
-        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_settled_units(&s, id, owner(), 40).unwrap();
         api::record_mined_units(&s, id, owner(), 15).unwrap();
 
         // The ledger holds what is still settled, not what was ever paid.
@@ -245,7 +262,7 @@ fn mining_moves_units_out_of_the_settled_ledger() {
 fn the_unpaid_remainder_excludes_settled_mined_and_gem_factory_units() {
     with_registry(|s| {
         let id = called_series(&s, 55);
-        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_settled_units(&s, id, owner(), 30).unwrap();
         api::record_mined_units(&s, id, owner(), 10).unwrap();
         api::record_gem_factory_units(&s, id, owner(), 15).unwrap();
 
@@ -272,7 +289,7 @@ fn the_per_owner_ledgers_record_who_burned_the_units() {
     with_registry(|s| {
         let other = Address::repeat_byte(0xB2);
         let id = called_series(&s, 56);
-        api::record_settled_units(&s, id, 40).unwrap();
+        api::record_settled_units(&s, id, owner(), 40).unwrap();
         api::record_mined_units(&s, id, owner(), 10).unwrap();
         api::record_gem_factory_units(&s, id, other, 5).unwrap();
 

@@ -34,7 +34,6 @@ impl NodTermsV1 {
 pub struct EncryptedNodV1 {
     pub terms: NodTermsV1,
     pub encryption_binding: B256,
-    pub encrypted_creator_public_key: Vec<u8>,
     pub encrypted_gratis_amount: Vec<u8>,
 }
 impl EncryptedNodV1 {
@@ -47,21 +46,14 @@ impl EncryptedNodV1 {
     pub fn crypto_slot(&self) -> Address {
         Address::from_slice(&self.context_digest().as_slice()[..20])
     }
-    pub fn amount_key_info(&self, enclave_public: &[u8; 32], creator_public: &[u8; 32]) -> Vec<u8> {
+    pub fn amount_key_info(&self) -> Vec<u8> {
         let mut info = NOD_AMOUNT_KEY_INFO.to_vec();
         info.extend_from_slice(self.context_digest().as_slice());
-        info.extend_from_slice(enclave_public);
-        info.extend_from_slice(creator_public);
-        info.extend_from_slice(&self.encrypted_creator_public_key);
         info
     }
     pub fn has_valid_encoding(&self) -> bool {
         self.terms.nod_id.worldwide_day() == self.terms.worldwide_day
-            && [
-                &self.encrypted_creator_public_key,
-                &self.encrypted_gratis_amount,
-            ]
-            .iter()
-            .all(|blob| blob.len() == NOD_BLOB_LEN && blob[..8] == 1u64.to_be_bytes())
+            && self.encrypted_gratis_amount.len() == NOD_BLOB_LEN
+            && self.encrypted_gratis_amount[..8] == 1u64.to_be_bytes()
     }
 }

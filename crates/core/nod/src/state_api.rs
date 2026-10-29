@@ -44,11 +44,8 @@ pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<
         return Ok(None);
     }
     if !entry
-        .encrypted_creator_public_key()
+        .encrypted_gratis_amount()
         .has_exact_length(NOD_BLOB_LEN)?
-        || !entry
-            .encrypted_gratis_amount()
-            .has_exact_length(NOD_BLOB_LEN)?
     {
         return Err(PrecompileError::fatal(
             "invalid stored Nod ciphertext length",
@@ -75,7 +72,43 @@ pub fn add_item(
     gratis_load_minor: U256,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(item, terms, gratis_load_minor)
+        NodContract::new(storage.clone()).record_nod_issued_state(
+            item,
+            terms,
+            gratis_load_minor,
+            None,
+        )
+    })
+}
+pub fn add_series_item(
+    storage: &StorageHandle<'_>,
+    item: &NodItemState,
+    terms: Option<CallTerms>,
+    gratis_load_minor: U256,
+    series_group_key: B256,
+) -> Result<()> {
+    storage.with_checkpoint(|| {
+        NodContract::new(storage.clone()).record_nod_issued_state(
+            item,
+            terms,
+            gratis_load_minor,
+            Some(series_group_key),
+        )
+    })
+}
+pub fn clean_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<()> {
+    storage.with_checkpoint(|| {
+        let item = load_item(storage, nod_id)?.ok_or(NodError::NodNotFound)?;
+        if item.body().is_settled {
+            return Err(NodError::NodAlreadySettled.into());
+        }
+        let group_key = item.body().group_key;
+        let contract = NodContract::new(storage.clone());
+        if !contract.group_is_forfeited.read(&group_key)? {
+            return Err(NodError::NodNotForfeited.into());
+        }
+        let group = load_group(storage, group_key)?.ok_or(NodError::GroupNotFound)?;
+        NodContract::new(storage.clone()).record_nod_removed_state(item, group)
     })
 }
 pub fn record_settled(
@@ -114,10 +147,12 @@ impl NodContract<'_> {
         item: &NodItemState,
         call_terms: Option<CallTerms>,
         gratis_load_minor: U256,
+        series_group_key: Option<B256>,
     ) -> Result<()> {
         crate::issuance::validate_item(
             item,
             call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+            series_group_key,
         )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
@@ -127,7 +162,9 @@ impl NodContract<'_> {
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
-        if current_group.is_some() != (member_count > 0 || settled_count > 0) {
+        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
+        if current_group.is_some() != (member_count > 0 || settled_count > 0 || unclaimed_count > 0)
+        {
             return Err(NodError::GroupExistenceDisagreesWithMemberCount {
                 group_id,
                 member_count,
@@ -157,6 +194,9 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
+        if series_group_key.is_some() {
+            self.consume_unclaimed_tribute_from_series(item.group_key, gratis_load_minor)?;
+        }
         self.add_unpaid_load(item.group_key, gratis_load_minor)?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
@@ -222,7 +262,8 @@ impl NodContract<'_> {
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
-        if remaining == 0 && group.settled_nods == 0 {
+        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
+        if remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0 {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
@@ -253,9 +294,8 @@ mod tests {
         record.owner = Address::repeat_byte(1);
         record.chain_id = 1;
         record.worldwide_day = day;
-        record.encrypted_creator_public_key = vec![0; NOD_BLOB_LEN];
-        record.encrypted_creator_public_key[..8].copy_from_slice(&1u64.to_be_bytes());
-        record.encrypted_gratis_amount = record.encrypted_creator_public_key.clone();
+        record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
+        record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
         record
     }
 
@@ -275,7 +315,6 @@ mod tests {
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
-            encrypted_creator_public_key: vec![11; NOD_BLOB_LEN],
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
         };
         let item = NodItemState::from(stored.clone());
@@ -293,16 +332,10 @@ mod tests {
             record.is_settled = true;
             contract.records.create(&record).unwrap();
             assert!(load_item(&storage, id).unwrap().unwrap().body().is_settled);
-            for key_field in [true, false] {
-                let mut invalid = record.clone();
-                if key_field {
-                    invalid.encrypted_creator_public_key[0] = 2;
-                } else {
-                    invalid.encrypted_gratis_amount[0] = 2;
-                }
-                contract.records.update(&invalid).unwrap();
-                assert!(load_item(&storage, id).is_err());
-            }
+            let mut invalid = record.clone();
+            invalid.encrypted_gratis_amount[0] = 2;
+            contract.records.update(&invalid).unwrap();
+            assert!(load_item(&storage, id).is_err());
             record.worldwide_day = WorldwideDay::new(20261016);
             contract.records.update(&record).unwrap();
             assert!(load_item(&storage, id).is_err());
@@ -318,27 +351,21 @@ mod tests {
             let record = stored_fixture();
             let id = record.nod_id;
             contract.records.create(&record).unwrap();
-            for field_offset in [11, 12] {
-                let entry = contract.records.entry(id);
-                let field = if field_offset == 11 {
-                    entry.encrypted_creator_public_key()
-                } else {
-                    entry.encrypted_gratis_amount()
-                };
-                for length in [55, 57] {
-                    field.write(&vec![0; length]).unwrap();
-                    assert!(load_item(&storage, id).is_err());
-                }
-                let slot = id.mapping_slot(entry.base_slot() + U256::from(field_offset));
-                for raw in [U256::MAX, U256::from(112)] {
-                    storage.sstore(entry.address(), slot, raw).unwrap();
-                    assert!(load_item(&storage, id).is_err());
-                }
-                storage
-                    .sstore(entry.address(), slot, U256::from(113))
-                    .unwrap();
-                field.write(&record.encrypted_creator_public_key).unwrap();
+            let entry = contract.records.entry(id);
+            let field = entry.encrypted_gratis_amount();
+            for length in [55, 57] {
+                field.write(&vec![0; length]).unwrap();
+                assert!(load_item(&storage, id).is_err());
             }
+            let slot = id.mapping_slot(entry.base_slot() + U256::from(11));
+            for raw in [U256::MAX, U256::from(112)] {
+                storage.sstore(entry.address(), slot, raw).unwrap();
+                assert!(load_item(&storage, id).is_err());
+            }
+            storage
+                .sstore(entry.address(), slot, U256::from(113))
+                .unwrap();
+            field.write(&record.encrypted_gratis_amount).unwrap();
             assert!(load_item(&storage, id).unwrap().is_some());
         });
     }

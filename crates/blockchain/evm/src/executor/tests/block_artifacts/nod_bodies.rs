@@ -417,7 +417,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 let tribute = tribute_fixture();
                 let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                 with_process_ready_frame(&hook_ctx.storage, || {
-                    tribute_contract.unseal_day(day)?;
                     tribute_contract.issue(&tribute)?;
                     outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
                     Ok(())
@@ -456,7 +455,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         let tribute = tribute_fixture();
         let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
         with_process_ready_frame(&hook_ctx.storage, || {
-            tribute_contract.unseal_day(day)?;
             tribute_contract.issue(&tribute)?;
             outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
             Err(outbe_primitives::error::PrecompileError::Fatal(

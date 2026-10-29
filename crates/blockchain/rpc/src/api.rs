@@ -233,6 +233,7 @@ pub struct RadicleStatusInfo {
     pub last_converged_finalized_number: Option<u64>,
     pub last_converged_finalized_hash: Option<B256>,
     pub desired_repository_count: u64,
+    pub observed_repository_count: u64,
     pub available_repository_count: u64,
     pub pending_repository_count: u64,
     pub resolved_peer_count: u64,
@@ -317,9 +318,9 @@ pub trait OutbeApi {
     async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
 
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, or `Fidelity`) inside the enclave and return them sealed to `ephemeralPubkey`
-    /// (a client X25519 public key). This is off-chain key delivery. It never
-    /// touches consensus state.
+    /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
+    /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
+    /// delivery. It never touches consensus state.
     ///
     /// The caller MUST prove control of `account`: `signature` is an EIP-191
     /// `personal_sign` over `"outbe/<ledger>/derive-keys/v1" || account ||
@@ -421,15 +422,30 @@ pub trait OutbeApi {
     /// serve it. Otherwise, the call returns an error. The caller verifies the
     /// certificate against the epoch committee. This RPC is a bytes transport,
     /// not a trust root.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Returns JSON-RPC `-32005` when the bounded finalization
+    /// request queue is full or the request exceeds its 5s timeout.
     #[method(name = "getFinalization")]
     async fn get_finalization(&self, height: u64) -> jsonrpsee::core::RpcResult<FinalizationProof>;
 
     /// Canonical consensus block bytes for commitment-bound ancestor recovery.
     /// This endpoint conveys no finality authority. Consumers must authenticate
     /// the requested digest through an independently verified descendant.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Returns JSON-RPC `-32005` when the bounded finalization
+    /// request queue is full or the request exceeds its 5s timeout.
     #[method(name = "getConsensusBlock")]
     async fn get_consensus_block(&self, height: u64) -> jsonrpsee::core::RpcResult<Bytes>;
 
+    /// Returns a direct finalization certificate for `height` or its nearest
+    /// certified descendant within 64 blocks together with intermediate
+    /// ancestor block bytes.
+    ///
+    /// Rejects `height > lastFinalizedBlock` with JSON-RPC `-32602` before
+    /// enqueueing. Enforces a 5s total walk budget and returns JSON-RPC
+    /// `-32005` on queue saturation or timeout.
     #[method(name = "getFinalityProof")]
     async fn get_finality_proof(
         &self,
@@ -452,6 +468,7 @@ mod tests {
             last_converged_finalized_number: Some(7),
             last_converged_finalized_hash: Some(B256::repeat_byte(0x22)),
             desired_repository_count: 2,
+            observed_repository_count: 2,
             available_repository_count: 1,
             pending_repository_count: 1,
             resolved_peer_count: 3,
@@ -466,6 +483,7 @@ mod tests {
         };
         let json = serde_json::to_value(status).unwrap();
         assert_eq!(json["phase"], "ready");
+        assert_eq!(json["observedRepositoryCount"], 2);
         assert_eq!(
             json["localNodeId"],
             format!("{:#x}", B256::repeat_byte(0x11))

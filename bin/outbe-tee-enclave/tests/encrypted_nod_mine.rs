@@ -9,7 +9,6 @@ use outbe_tee::{
     },
 };
 use outbe_tee_enclave::{gratis, nod_encryption::encrypt_nod, nod_mine};
-use x25519_dalek::{PublicKey, StaticSecret};
 
 #[test]
 fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
@@ -18,7 +17,6 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let fidelity_key = [13; 32];
     let account = Address::repeat_byte(3);
     let amount = U256::from(123);
-    let creator = PublicKey::from(&StaticSecret::from([11; 32])).to_bytes();
     let day = WorldwideDay::new(20250115);
     let terms = NodTermsV1 {
         chain_id: 1,
@@ -30,7 +28,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         issuance_currency: 840,
         reference_currency: 978,
     };
-    let nod = encrypt_nod(&network, &creator, terms, amount).unwrap();
+    let nod = encrypt_nod(&network, terms, amount).unwrap();
     let modify_key = gratis::derive_modify_key(&key, account).unwrap();
     let chain = B256::from(U256::ONE);
     let auth = |op, value, nonce| ModifyAuth {

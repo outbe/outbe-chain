@@ -12,8 +12,6 @@
 
 use outbe_primitives::{block::BlockLifecycle, block::BlockRuntimeContext, error::Result};
 
-use crate::runtime;
-
 /// Zero-sized marker implementing the block-lifecycle contract for the
 /// Rewards module. Registered in
 /// `outbe_evm::executor::run_outbe_pre_execution_hooks` so the executor
@@ -24,13 +22,7 @@ impl BlockLifecycle for RewardsLifecycle {
     type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
     type EndBlockResult = ();
 
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // Record `genesis_utc_day` from block 0's timestamp on the very
-        // first invocation of this lifecycle on a fresh chain.
-        // Subsequent calls are no-ops because the slot is already
-        // non-zero. `day_emission_limit` in `outbe_emissionlimit::day_emission`
-        // reads this anchor through `day_number_since_genesis`.
-        let _genesis = runtime::ensure_genesis_anchor(ctx)?;
+    fn begin_block(_ctx: &BlockRuntimeContext) -> Result<()> {
         Ok(())
     }
 
@@ -42,6 +34,7 @@ impl BlockLifecycle for RewardsLifecycle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime;
     use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]

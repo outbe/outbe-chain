@@ -8,7 +8,10 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::runtime;
 
-pub use crate::runtime::{issue_lysis_nod, issue_tribute_nod, MineGratisRequest};
+pub use crate::runtime::{
+    issue_lysis_nod, issue_tribute_nod, issue_tribute_nod_in_series, seal_lysis_series,
+    LysisSeriesInput, MineGratisRequest,
+};
 
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
     runtime::issue_nod(storage, encrypted)

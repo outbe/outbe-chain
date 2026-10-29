@@ -30,7 +30,6 @@ interface IGemFactory {
     error InvalidOwner();
     error Overflow();
     error ZeroPromisLoad();
-    error UndecodableReturn(string value);
     error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
     error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
     error PositionNotExpired();

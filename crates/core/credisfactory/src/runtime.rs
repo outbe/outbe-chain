@@ -27,6 +27,7 @@ fn maintenance_context<'s>(
             timestamp: storage.now_secs()?,
             chain_id: storage.chain_id()?,
             genesis_hash: storage.genesis_hash()?,
+            genesis_timestamp: storage.genesis_timestamp()?,
             ..Default::default()
         },
         storage.clone(),
