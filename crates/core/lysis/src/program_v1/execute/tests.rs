@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn nod_action_retains_full_independent_digest_and_source_tribute() {
+fn nod_action_uses_independent_keccak_vector_and_preserves_source_tribute() {
     let owner = alloy_primitives::Address::repeat_byte(0x42);
     let day = WorldwideDay::new(0x01020304);
     let source_id = derive_poseidon_entity_id(owner, day);
@@ -20,12 +20,20 @@ fn nod_action_retains_full_independent_digest_and_source_tribute() {
     assert_eq!(
         action.nod_id,
         U256::from_str_radix(
-            "14edf11805beb34363ddabb6c010e0b5883bfe90d9e06ff2eeffa66f61683c0b",
+            "501ba769d4ff8f2faa11545b1608051d3009bb0cdd2518ef005b88ec71b5243b",
             16,
         )
         .unwrap()
     );
     assert_eq!(action.source_tribute_id, source_id);
+    assert_eq!(
+        source_id.to_u256(),
+        U256::from_str_radix(
+            "0102030405beb34363ddabb6c010e0b5883bfe90d9e06ff2eeffa66f61683c0b",
+            16,
+        )
+        .unwrap()
+    );
     assert_ne!(action.nod_id, source_id.to_u256());
 }
 
