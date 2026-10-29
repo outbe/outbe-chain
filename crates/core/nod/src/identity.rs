@@ -34,8 +34,8 @@ pub fn series_group_key(
     alloy_primitives::keccak256(bytes)
 }
 
-/// Deterministic full-width Poseidon2 NOD identity derived from
-/// `(owner, worldwide_day)`. The typed Nod collection is its namespace.
+/// Deterministic full-width Keccak256 NOD identity: raw owner (20 bytes)
+/// followed by worldwide_day (u32 big-endian). The typed Nod collection is its namespace.
 pub fn generate_nod_id(owner: Address, worldwide_day: WorldwideDay) -> U256 {
     outbe_primitives::nod_rules::derive_nod_id(owner, worldwide_day)
 }

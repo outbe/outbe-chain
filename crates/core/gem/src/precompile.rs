@@ -108,7 +108,7 @@ fn dispatch_entity(
 
 fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
     IGem::GemData {
-        gemId: gem.item.gem_id.to_u256(),
+        gemId: gem.item.gem_id,
         owner: gem.item.owner,
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
