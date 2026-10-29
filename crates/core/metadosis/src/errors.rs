@@ -13,10 +13,6 @@ use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-alloy_sol_types::sol! {
-    error VwapOverflow(string accumulator);
-}
-
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum MetadosisError {
@@ -72,11 +68,3 @@ impl From<MetadosisError> for PrecompileError {
 }
 
 pub type MetadosisResult<T> = std::result::Result<T, MetadosisError>;
-
-pub(crate) fn is_vwap_overflow(error: &PrecompileError) -> bool {
-    matches!(
-        error,
-        PrecompileError::RevertBytes(bytes)
-            if bytes.len() >= 4 && bytes[..4] == VwapOverflow::SELECTOR
-    )
-}

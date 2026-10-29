@@ -10,11 +10,11 @@ use crate::inputs::{StakeSeedTerms, ValidatorSeedTerms};
 use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, parse_genesis_timestamp, parse_i128,
-    parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, timestamp_to_utc_date_key,
-    u64_bytes, write_mapping_bytes, StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS,
-    DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
-    HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, REWARDS_ADDRESS, STAKING_ADDRESS,
-    VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, u64_bytes, write_mapping_bytes,
+    StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
+    DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
+    HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
 };
 use crate::seed_economy::{merge_storage_into_alloc, seed_vault_router};
 use crate::seed_p2p::encode_p2p_address_payload;
@@ -202,12 +202,7 @@ pub fn seed_staking(
     Ok(total_staked)
 }
 
-/// Seed Rewards slot 0 with `genesis_utc_day`.
-pub fn seed_rewards(storage: &mut StorageBuilder, genesis_timestamp: u64) {
-    storage.set_slot(0u64, timestamp_to_utc_date_key(genesis_timestamp));
-}
-
-/// Seed ValidatorSet, VaultRouter, HyperlaneController, Staking, and Rewards for founding validators.
+/// Seed ValidatorSet, VaultRouter, HyperlaneController, and Staking for founding validators.
 pub fn seed_founders(
     genesis: &Value,
     seed: &Value,
@@ -326,8 +321,5 @@ pub fn seed_founders(
         );
     }
 
-    let mut rewards_storage = StorageBuilder::new();
-    seed_rewards(&mut rewards_storage, epoch_start_timestamp);
-    merge_storage_into_alloc(alloc, REWARDS_ADDRESS, &rewards_storage)?;
     Ok(())
 }

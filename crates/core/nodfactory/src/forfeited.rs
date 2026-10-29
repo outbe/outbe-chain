@@ -59,12 +59,12 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
-        Ok(
-            match called && self.nod.group_nod_count.read(&group)? != 0 {
-                true => Due::Process,
-                false => Due::Drop,
-            },
-        )
+        let has_live = self.nod.group_nod_count.read(&group)? != 0
+            || self.nod.group_unclaimed_tribute_count.read(&group)? != 0;
+        Ok(match called && has_live {
+            true => Due::Process,
+            false => Due::Drop,
+        })
     }
 
     fn member_count(&self, _group: B256) -> Result<u32> {
@@ -79,16 +79,22 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
         error.record_pass_failure()
     }
 
-    /// Returns the Gratis load of the group's unpaid Nods in one credit. Lysis drew it
-    /// out of the day limit and only mining converts it, so unmined it goes back.
+    /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
+    /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
     fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
         let nods = self.nod.group_nod_count.read(&group)?;
-        let load = self.nod.group_unpaid_load.read(&group)?;
+        let unpaid_load = self.nod.group_unpaid_load.read(&group)?;
+        let unclaimed_load = self.nod.group_unclaimed_tribute_load.read(&group)?;
+        let load = unpaid_load
+            .checked_add(unclaimed_load)
+            .ok_or(outbe_nod::errors::NodError::GroupUnpaidLoadOverflow { group_key: group })?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .checked_credit(load)?;
         }
         self.nod.group_unpaid_load.clear(&group)?;
+        self.nod.group_unclaimed_tribute_load.clear(&group)?;
+        self.nod.group_is_forfeited.write(&group, true)?;
         self.nod.hand_to_cleanup(group)?;
         self.nod.emit(INod::NodGroupForfeited {
             groupKey: group,

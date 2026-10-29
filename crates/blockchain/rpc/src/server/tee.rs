@@ -97,15 +97,32 @@ where
                         crate::errors::RpcInternalError::ImmutableChainIdentityNotConfigured,
                     )
                 })?;
-            let mut provider = ReadOnlyStorageProvider::new_with_block_context(
-                reader,
-                ReadOnlyBlockContext {
-                    chain_id,
-                    genesis_hash,
-                    block_number: finalized.number,
-                    timestamp: header.timestamp(),
-                },
-            );
+            let genesis_timestamp = self
+                .provider
+                .header_by_number(0)
+                .map_err(|error| {
+                    internal_err(crate::errors::RpcInternalError::BlockHeaderReadFailed {
+                        target: 0,
+                        reason: error.to_string(),
+                    })
+                })?
+                .map(|genesis| genesis.inner.timestamp)
+                .filter(|timestamp| *timestamp != 0)
+                .ok_or_else(|| {
+                    internal_err(crate::errors::RpcInternalError::FinalizedHeaderUnavailable)
+                })?;
+            let read_only_ctx = ReadOnlyBlockContext::try_new(
+                chain_id,
+                genesis_hash,
+                genesis_timestamp,
+                finalized.number,
+                header.timestamp(),
+            )
+            .map_err(|_| {
+                internal_err(crate::errors::RpcInternalError::FinalizedHeaderUnavailable)
+            })?;
+            let mut provider =
+                ReadOnlyStorageProvider::new_with_block_context(reader, read_only_ctx);
             let registry = outbe_teeregistry::TeeRegistry::new(StorageHandle::new(&mut provider));
             let check = live_upgrade_candidate(
                 &registry,

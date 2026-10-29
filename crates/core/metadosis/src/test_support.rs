@@ -7,5 +7,5 @@ pub fn fresh_devnet_sentinel_is_pristine(
 ) -> Result<bool> {
     let contract = crate::schema::MetadosisContract::new(storage.clone());
     Ok(crate::api::worldwide_days(storage)?.is_empty()
-        && contract.emission_days.get(day.value())?.is_none())
+        && contract.emission_days().get(day.value())?.is_none())
 }

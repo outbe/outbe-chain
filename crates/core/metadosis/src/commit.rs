@@ -3,7 +3,7 @@ use outbe_primitives::{
     error::Result,
     storage::{MetadosisMutationPurpose, StorageHandle},
 };
-use outbe_tribute::worldwideday::ValidatedWwdAggregate;
+use outbe_tributefactory::worldwideday::ValidatedWwdAggregate;
 
 /// The single production mutation seam. The provider grants an exact
 /// purpose-bound lease. Its checkpoint covers state and EVM events.

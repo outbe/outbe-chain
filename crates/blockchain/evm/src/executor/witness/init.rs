@@ -120,6 +120,7 @@ where
             timestamp,
             chain_id,
             genesis_hash: self.genesis_hash,
+            genesis_timestamp: self.genesis_timestamp,
             proposer,
             validators: Vec::new(),
         });

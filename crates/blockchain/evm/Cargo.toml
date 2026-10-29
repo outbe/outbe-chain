@@ -38,6 +38,7 @@ outbe-update.workspace = true
 outbe-agentreward.workspace = true
 outbe-ccaregistry.workspace = true
 outbe-metadosis.workspace = true
+outbe-emission.workspace = true
 outbe-validatorset.workspace = true
 outbe-consensus.workspace = true
 outbe-slashindicator.workspace = true

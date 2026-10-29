@@ -420,6 +420,7 @@ where
 pub struct OutbeEvmFactory {
     /// Immutable chain identity installed by `OutbeEvmConfig`.
     genesis_hash: B256,
+    genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
 }
 
@@ -428,6 +429,7 @@ impl core::fmt::Debug for OutbeEvmFactory {
         formatter
             .debug_struct("OutbeEvmFactory")
             .field("genesis_hash", &self.genesis_hash)
+            .field("genesis_timestamp", &self.genesis_timestamp)
             .field("tee_attestation_v1", &self.tee_attestation_v1)
             .finish()
     }
@@ -446,6 +448,15 @@ impl OutbeEvmFactory {
     #[must_use]
     pub const fn genesis_hash(&self) -> B256 {
         self.genesis_hash
+    }
+
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
+    }
+
+    pub const fn genesis_timestamp(&self) -> u64 {
+        self.genesis_timestamp
     }
 
     #[must_use]
@@ -474,6 +485,7 @@ impl EvmFactory for OutbeEvmFactory {
         extend_outbe_precompiles::<DB>(
             &mut precompiles,
             OutbePrecompileExecutionContext::new(spec, self.genesis_hash)
+                .with_genesis_timestamp(self.genesis_timestamp)
                 .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
             crate::precompiles::OutbePrecompileRuntime::new()
                 .with_abort_bridge(abort_bridge.clone()),

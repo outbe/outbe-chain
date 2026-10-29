@@ -650,7 +650,7 @@ where
 
     async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {
         Ok(EmissionInfo {
-            validator_reward_percent: outbe_emissionlimit::allocation::VALIDATOR_REWARD_PCT,
+            validator_reward_percent: outbe_emission::allocation::VALIDATOR_REWARD_PCT,
             fee_escrow_address: outbe_primitives::addresses::REWARDS_ADDRESS,
         })
     }

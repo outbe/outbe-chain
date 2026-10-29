@@ -219,19 +219,6 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    pub fn unseal_day(&mut self, day: WorldwideDay) -> Result<()> {
-        require_day_unseal_lease(&self.storage_handle())?;
-        if self.retired_days.read(&day)? || self.day_amount_record(day, true)?.is_some() {
-            return Err(TributeError::WorldwideDaySealed.into());
-        }
-        self.set_day_sealed(day, false)?;
-        self.emit(ITribute::TributeWorldwideDaySealed {
-            worldwideDay: day.into(),
-            isSealed: false,
-        })?;
-        Ok(())
-    }
-
     /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
     pub fn record_metadosis_fractions(
         &mut self,
@@ -281,6 +268,11 @@ impl TributeContract<'_> {
         total_allocated.min(lysis_limit_minor)
     }
 
+    /// Resolves the Oracle UTC day (`emission_day`) that prices `day`.
+    pub fn resolve_price_day(&self, day: WorldwideDay, completed_at: u64) -> Result<u32> {
+        forfeiture::resolve_price_day(self, day, completed_at)
+    }
+
     /// Computes league fractions from `fi_groups[day]` and `lysis_limit_minor`,
     /// stores them along with `completed_at`, and returns `(fractions, total_allocated_minor)`.
     pub fn compute_and_record_metadosis_fractions(
@@ -317,8 +309,19 @@ impl TributeContract<'_> {
             .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
             .collect();
         self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
-        let allocated =
+        let mut allocated =
             Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
+        if !outbe_tee::lysis::is_test_transport_installed() && !lysis_limit_minor.is_zero() {
+            if let Some(exact) = forfeiture::seal_series_and_sum_exact_loads(
+                self,
+                day,
+                lysis_limit_minor,
+                completed_at,
+                &u256_fractions,
+            )? {
+                allocated = exact;
+            }
+        }
         Ok((fractions, allocated))
     }
 
@@ -329,94 +332,12 @@ impl TributeContract<'_> {
         caller: alloy_primitives::Address,
         tribute_id: WwdEntityId,
     ) -> Result<WwdEntityId> {
-        let storage = self.storage_handle();
-        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
-        storage.with_checkpoint(|| {
-            let day = tribute_id.worldwide_day();
-            if self.retired_days.read(&day)? {
-                return Err(TributeError::TributeNotFound.into());
-            }
-            let completed_at = self.day_metadosis_completed_at.read(&day)?;
-            if completed_at == 0 {
-                return Err(TributeError::MetadosisNotCompleted.into());
-            }
-            let now = storage.now_secs()?;
-            if now < completed_at {
-                return Err(TributeError::NodCreationBeforeCompletion.into());
-            }
-            let record = crate::state_api::get_retained_record(&storage, tribute_id)?
-                .ok_or(TributeError::TributeNotFound)?;
-            if record.owner != caller {
-                return Err(TributeError::CallerNotTributeOwner.into());
-            }
-            let raw_league = self.tribute_leagues.read(&tribute_id)?;
-            let league = raw_league.max(1);
-            let fraction = U256::from(
-                self.day_fractions
-                    .read(&crate::schema::day_league_key(day, league))?,
-            );
-            let lysis_limit = self.day_lysis_limit_minor.read(&day)?;
-            let nominal = record
-                .calculation_view()
-                .map_err(TributeError::private_amount_read_failed)?
-                .nominal_amount_minor;
-            let nod_max: U256 = lysis_limit >> 10usize;
-            let gratis_load_minor =
-                outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, nod_max, 0)
-                    .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
+        forfeiture::create_nod_from_tribute(self, caller, tribute_id)
+    }
 
-            let price_day =
-                outbe_nod::openings::entry_price_day(completed_at).map_err(date_step_error)?;
-            let gratis_day_price = outbe_oracle::api::get_utc_day_vwap_for_iso(
-                storage.clone(),
-                price_day,
-                record.reference_currency,
-            )?
-            .ok_or(TributeError::EntryPriceUnavailable {
-                price_day,
-                currency: record.reference_currency,
-            })?;
-
-            let encrypted_tribute = record
-                .encrypted()
-                .ok_or(TributeError::InvalidEncryptedEncoding)?;
-            let encrypted_nod = crate::enclave_client::encrypt_nod_for_tribute(
-                encrypted_tribute,
-                outbe_primitives::nod_encryption::NodTermsV1 {
-                    chain_id: storage.chain_id()?,
-                    nod_id: tribute_id,
-                    owner: record.owner,
-                    worldwide_day: day,
-                    league_id: league,
-                    issuance_currency: record.issuance_currency,
-                    reference_currency: record.reference_currency,
-                    entry_price_minor: gratis_day_price,
-                },
-                gratis_load_minor,
-            )
-            .map_err(TributeError::private_amount_read_failed)?;
-            outbe_nodfactory::api::issue_tribute_nod(&storage, &encrypted_nod, gratis_load_minor)?;
-
-            // Atomically burn the Tribute upon Nod creation, keeping partition accounting consistent.
-            self.bump_day_bucket_record(&record, false)?;
-            if raw_league != 0 {
-                self.adjust_fi_group(day, raw_league, nominal, false)?;
-                self.tribute_leagues.clear(&tribute_id)?;
-            }
-            let supply = self
-                .total_supply
-                .read()?
-                .checked_sub(1)
-                .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
-            self.total_supply.write(supply)?;
-            self.delete_loaded_state_record(&record)?;
-            self.emit(ITribute::TributeBurned {
-                tributeId: tribute_id.to_u256(),
-                owner: record.owner,
-                worldwideDay: day.into(),
-            })?;
-            Ok(tribute_id)
-        })
+    /// Permissionless cleanup of a forfeited Tribute (`ITribute.clean(uint256)`).
+    pub fn clean(&mut self, tribute_id: WwdEntityId) -> Result<()> {
+        forfeiture::clean_forfeited_tribute(self, tribute_id)
     }
 }
 
@@ -461,8 +382,8 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
         || message == "Metadosis mutation frame identity mismatch"
 }
 
-/// Init-genesis, cycle allocation, and process-ready create worldwide days.
-pub(crate) fn require_worldwide_day_creation_lease(
+/// Init-genesis, cycle allocation, advance-due, and process-ready create worldwide days.
+pub fn require_worldwide_day_creation_lease(
     storage: &StorageHandle<'_>,
     day: WorldwideDay,
 ) -> Result<()> {
@@ -472,12 +393,13 @@ pub(crate) fn require_worldwide_day_creation_lease(
             DayLease::InitGenesis,
             DayLease::CycleAllocation(day),
             DayLease::ProcessReady,
+            DayLease::AdvanceDue,
         ],
     )
 }
 
 /// Process-ready completion and advance-due failure remove the active day.
-pub(crate) fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
+pub fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
     accept_day_lease(storage, &[DayLease::ProcessReady, DayLease::AdvanceDue])
 }
 
@@ -492,9 +414,4 @@ pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: Worldwide
             DayLease::AdvanceDue,
         ],
     )
-}
-
-/// Offering sync uses advance-due. Nested process-ready may unseal the same day.
-pub(crate) fn require_day_unseal_lease(storage: &StorageHandle<'_>) -> Result<()> {
-    accept_day_lease(storage, &[DayLease::AdvanceDue, DayLease::ProcessReady])
 }

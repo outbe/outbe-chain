@@ -294,7 +294,8 @@ fn cycle_tick_utc_boundary_gas_usage() {
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
     let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
     evm_env.block_env.timestamp = U256::from(block_timestamp);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+    let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+        .with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut executor = config.create_executor(
         evm,
@@ -387,10 +388,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
             cycle
-                .active_utc_day
-                .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
-                .unwrap();
-            cycle
                 .last_executed_at
                 .write(&emission_trigger, GENESIS_TS + 60)
                 .unwrap();
@@ -414,7 +411,8 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         });
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(block_ts);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+    let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+        .with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
 
@@ -462,8 +460,12 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
-        let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-        assert!(rewards.daily_settled.read(&prev_day)?);
+        let day_record = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
+            .expect("settled EmissionDay must exist");
+        assert!(
+            day_record.state == outbe_emission::schema::emission_day_state::PROCESSING
+                || day_record.state == outbe_emission::schema::emission_day_state::COMPLETED
+        );
         let gem = outbe_gem::GemContract::new(storage);
         assert_eq!(gem.total_supply()?, 0);
         Ok::<_, outbe_primitives::error::PrecompileError>(())

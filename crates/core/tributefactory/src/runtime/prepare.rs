@@ -103,7 +103,7 @@ fn pricing(
         }
         .into());
     }
-    if !outbe_tribute::worldwideday::api::is_offering_day(storage.clone(), input.worldwide_day)? {
+    if !crate::worldwideday::api::is_offering_day(storage.clone(), input.worldwide_day)? {
         return Err(TributeFactoryError::WorldwideDayNotOffering {
             worldwide_day: input.worldwide_day,
         }
@@ -124,7 +124,7 @@ fn pricing(
         issuance_currency: input.tribute_currency,
     })?;
     if pricing.issuance_wwd_vwap_minor.is_zero() || pricing.reference_wwd_vwap_minor.is_zero() {
-        return Err(TributeFactoryError::NominalPriceUnavailable {
+        return Err(TributeFactoryError::CurrencyPriceUnavailable {
             worldwide_day: input.worldwide_day,
         }
         .into());

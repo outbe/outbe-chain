@@ -79,7 +79,7 @@ where
                 );
             }
 
-            // NOTE: the canonical-binding authentication (fb_number/epoch/
+            // The canonical-binding authentication (fb_number/epoch/
             // committee_set_hash vs the escrow) is intentionally NOT done here.
             // THIS block's CPA writes the escrow for the closest in-window target
             // (block N-1). The CPA executes in pre-execution AFTER this gate
@@ -97,6 +97,7 @@ where
                     timestamp,
                     chain_id,
                     genesis_hash: self.genesis_hash,
+                    genesis_timestamp: self.genesis_timestamp,
                     proposer,
                     validators: Vec::new(),
                 });

@@ -1,44 +1,5 @@
 [
   {
-    "type": "function",
-    "name": "getEmissionDay",
-    "inputs": [
-      {
-        "name": "day",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "emissionLimitMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "wwd",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "metadosisStart",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "state",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
     "type": "event",
     "name": "DayLimitFormed",
     "inputs": [

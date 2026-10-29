@@ -22,7 +22,7 @@ pub mod constants;
 mod emission_sink;
 pub mod errors;
 #[cfg(feature = "test-utils")]
-pub use outbe_tribute::worldwideday::genesis;
+pub use outbe_tributefactory::worldwideday::genesis;
 mod lifecycle;
 mod limits;
 mod lysis;
@@ -34,7 +34,7 @@ mod settlement;
 pub mod test_support;
 
 pub use api::EmissionDayProjection;
-pub use outbe_tribute::worldwideday::WwdProjection;
+pub use outbe_tributefactory::worldwideday::WwdProjection;
 pub use schema::{emission_day_state, EmissionDay};
 
 #[cfg(test)]

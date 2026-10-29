@@ -36,6 +36,7 @@ pub fn outbe_precompile_addresses() -> &'static [Address] {
 pub struct OutbePrecompileExecutionContext {
     spec: SpecId,
     genesis_hash: B256,
+    genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
 }
 
@@ -45,8 +46,14 @@ impl OutbePrecompileExecutionContext {
         Self {
             spec,
             genesis_hash,
+            genesis_timestamp: 0,
             tee_attestation_v1: TeeAttestationChainSpecStateV1::Unbound,
         }
+    }
+
+    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+        self.genesis_timestamp = genesis_timestamp;
+        self
     }
 
     pub(crate) const fn spec_id(&self) -> SpecId {
@@ -99,6 +106,7 @@ pub fn extend_outbe_precompiles<DB>(
     let OutbePrecompileExecutionContext {
         spec,
         genesis_hash,
+        genesis_timestamp,
         tee_attestation_v1,
     } = execution_context;
     let OutbePrecompileRuntime { abort_bridge } = runtime;
@@ -123,6 +131,7 @@ pub fn extend_outbe_precompiles<DB>(
                     abort_bridge: &abort_bridge,
                     spec,
                     genesis_hash,
+                    genesis_timestamp,
                     tee_attestation_v1: &tee_attestation_v1,
                 },
             )

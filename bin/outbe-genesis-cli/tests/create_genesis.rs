@@ -548,9 +548,12 @@ fn seed_stage_end_to_end_and_reproducibility() {
     );
     let mainnet_seeded = seed_once(tmp.path(), &mainnet_cfg);
     assert_eq!(mainnet_seeded["config"]["chainId"], json!(676));
-    assert!(!mainnet_seeded["alloc"][REWARDS_ADDRESS]["storage"]
+    assert!(mainnet_seeded["alloc"][REWARDS_ADDRESS]
+        .get("storage")
+        .is_none());
+    assert!(!mainnet_seeded["alloc"][VALIDATOR_SET_ADDRESS]["storage"]
         .as_object()
-        .expect("rewards")
+        .expect("validator_set")
         .is_empty());
 
     // Reproducibility and stale timestamp check

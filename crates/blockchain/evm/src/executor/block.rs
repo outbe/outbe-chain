@@ -15,6 +15,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
     /// Immutable chain identity sourced from the executor's canonical ChainSpec.
     pub(super) genesis_hash: B256,
+    pub(super) genesis_timestamp: u64,
     /// Optional bridge to the consensus layer for finalization data.
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
@@ -139,9 +140,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             dependencies: BlockExecutionDependencies { bridge, evm_signer },
         } = inputs;
         let genesis_hash = inner.spec.genesis_hash();
+        let genesis_timestamp = inner.spec.genesis_timestamp();
         Self {
             inner,
             genesis_hash,
+            genesis_timestamp,
             bridge,
             final_extra_data: block_extra_data.clone(),
             block_extra_data,

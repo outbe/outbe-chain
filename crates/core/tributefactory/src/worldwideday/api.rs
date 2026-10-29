@@ -1,7 +1,7 @@
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
-use crate::schema::TributeContract;
+use crate::schema::TributeFactoryContract;
 
 use super::{
     aggregate::{ValidatedWwdAggregate, WwdProjection},
@@ -13,7 +13,7 @@ pub fn worldwide_day(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
 ) -> Result<Option<WwdProjection>> {
-    let contract = TributeContract::new(storage);
+    let contract = TributeFactoryContract::new(storage);
     let Some(record) = contract.worldwide_days.get(wwd)? else {
         return Ok(None);
     };
@@ -40,14 +40,17 @@ pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<
 /// contains the current block timestamp.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
-    let contract = TributeContract::new(storage);
+    let contract = TributeFactoryContract::new(storage);
     let mut result = Vec::new();
     for wwd in contract.active_wwd.read_all()? {
         let record = contract
             .worldwide_days
             .get(wwd)?
             .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd })?;
-        if now >= record.offerings_start && now < record.offering_end {
+        if record.state == super::schema::wwd_state::ACTIVE
+            && now >= record.offering_start
+            && now < record.offering_end
+        {
             result.push(wwd);
         }
     }

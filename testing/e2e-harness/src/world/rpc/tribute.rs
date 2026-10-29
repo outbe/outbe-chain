@@ -132,16 +132,16 @@ impl Rpc {
         let now = eth::latest_block_timestamp(&self.cfg.rpc0)?;
         let active_days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
-            addresses::TRIBUTE_ADDR,
-            &ITribute::getActiveWorldwideDaysCall {},
+            addresses::TRIBUTE_FACTORY_ADDR,
+            &ITributeFactory::getActiveWorldwideDaysCall {},
         )?;
         let days: Vec<u32> = active_days
             .into_iter()
             .filter(|&wwd| {
                 eth::read_call(
                     &self.cfg.rpc0,
-                    addresses::TRIBUTE_ADDR,
-                    &ITribute::getWorldwideDayCall { wwd },
+                    addresses::TRIBUTE_FACTORY_ADDR,
+                    &ITributeFactory::getWorldwideDayCall { wwd },
                 )
                 .is_some_and(|r| now >= r.offeringsStart && now < r.offeringEnd)
             })

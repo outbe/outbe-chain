@@ -27,12 +27,30 @@ pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Res
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
+/// Input for sealing a Lysis series group in `Nod`.
+#[derive(Debug, Clone, Copy)]
+pub struct LysisSeriesInput {
+    pub group_key: alloy_primitives::B256,
+    pub emission_day: u32,
+    pub reference_currency: u16,
+    pub entry_price_minor: Option<U256>,
+    pub unclaimed_tribute_count: u64,
+    pub unclaimed_tribute_load: U256,
+}
+
+#[derive(Default)]
+struct IssueNodHints {
+    verified_cost: Option<U256>,
+    gratis_load_minor: Option<U256>,
+    series_group_key: Option<alloy_primitives::B256>,
+}
+
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<WwdEntityId> {
-    issue_nod_with_cost(storage, encrypted, issued_at, None, None)
+    issue_nod_with_cost(storage, encrypted, issued_at, IssueNodHints::default())
 }
 
 pub fn issue_lysis_nod(
@@ -44,12 +62,14 @@ pub fn issue_lysis_nod(
         storage,
         verified.nod(),
         storage.now_secs()?,
-        Some(verified.settlement_cost_minor()),
-        None,
+        IssueNodHints {
+            verified_cost: Some(verified.settlement_cost_minor()),
+            ..IssueNodHints::default()
+        },
     )
 }
 
-/// Issues a Nod claimed from a Tribute within the 7-day post-Metadosis claim window.
+/// Issues a Nod claimed from a Tribute within the post-Metadosis claim window.
 pub fn issue_tribute_nod(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
@@ -64,8 +84,69 @@ pub fn issue_tribute_nod(
         storage,
         encrypted,
         storage.now_secs()?,
-        Some(cost),
-        Some(gratis_load_minor),
+        IssueNodHints {
+            verified_cost: Some(cost),
+            gratis_load_minor: Some(gratis_load_minor),
+            series_group_key: None,
+        },
+    )
+}
+
+/// Issues a Nod claimed from a Tribute belonging to a Lysis-sealed series (`series_group_key`).
+pub fn issue_tribute_nod_in_series(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV1,
+    gratis_load_minor: U256,
+    series_group_key: alloy_primitives::B256,
+) -> Result<WwdEntityId> {
+    let cost =
+        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
+    if cost.is_zero() {
+        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
+    }
+    issue_nod_with_cost(
+        storage,
+        encrypted,
+        storage.now_secs()?,
+        IssueNodHints {
+            verified_cost: Some(cost),
+            gratis_load_minor: Some(gratis_load_minor),
+            series_group_key: Some(series_group_key),
+        },
+    )
+}
+
+/// Seals a Lysis series group `(emission_day, issuance_currency, reference_currency)`
+/// with its initial `unclaimed_tribute_count` and exact `unclaimed_tribute_load`.
+pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -> Result<()> {
+    let LysisSeriesInput {
+        group_key,
+        emission_day,
+        reference_currency,
+        entry_price_minor,
+        unclaimed_tribute_count,
+        unclaimed_tribute_load,
+    } = input;
+    let full_day_after_issue = outbe_primitives::time::WorldwideDay::new(
+        outbe_primitives::time::next_date_key(emission_day).map_err(date_step_error)?,
+    );
+    let (entry_price, terms) = match entry_price_minor {
+        Some(price) if outbe_nod::pricing::is_issuable_entry(price) => {
+            (price, call_terms(storage, price, reference_currency)?)
+        }
+        _ => (U256::ZERO, None),
+    };
+    nod_api::seal_lysis_series(
+        storage,
+        nod_api::LysisSeriesSeal {
+            group_key,
+            full_day_after_issue,
+            reference_currency,
+            entry_price_minor: entry_price,
+            call_terms: terms,
+            unclaimed_tribute_count,
+            unclaimed_tribute_load,
+        },
     )
 }
 
@@ -74,9 +155,13 @@ fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
-    verified_cost: Option<U256>,
-    gratis_load_minor: Option<U256>,
+    hints: IssueNodHints,
 ) -> Result<WwdEntityId> {
+    let IssueNodHints {
+        verified_cost,
+        gratis_load_minor,
+        series_group_key,
+    } = hints;
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
@@ -95,7 +180,22 @@ fn issue_nod_with_cost(
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
-    let call_price_minor = call_terms.map_or(U256::ZERO, |t| t.call_price_minor);
+    let mut call_price_minor = call_terms.map_or(U256::ZERO, |t| t.call_price_minor);
+    let group_key = match series_group_key {
+        Some(key) => {
+            let sealed_call_price = outbe_nod::schema::NodContract::new(storage.clone())
+                .group_call_price_minor
+                .read(&key)?;
+            if !sealed_call_price.is_zero() {
+                call_price_minor = sealed_call_price;
+            }
+            key
+        }
+        None => {
+            outbe_nod::identity::group_key(issued_at, call_price_minor, terms.reference_currency)
+                .map_err(date_step_error)?
+        }
+    };
     let item = NodItemState {
         is_settled: false,
         nod_id,
@@ -103,12 +203,7 @@ fn issue_nod_with_cost(
         encrypted: encrypted.clone(),
         worldwide_day: terms.worldwide_day,
         league_id: terms.league_id,
-        group_key: outbe_nod::identity::group_key(
-            issued_at,
-            call_price_minor,
-            terms.reference_currency,
-        )
-        .map_err(date_step_error)?,
+        group_key,
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
         issued_at,
@@ -122,7 +217,11 @@ fn issue_nod_with_cost(
         Some(cost) => cost,
         None => nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?,
     };
-    nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
+    if let Some(series_key) = series_group_key {
+        nod_api::add_series_nod(storage, &item, call_terms, gratis_load_minor, series_key)?;
+    } else {
+        nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
+    }
     emit_event(
         storage,
         INodFactory::NodIssued {

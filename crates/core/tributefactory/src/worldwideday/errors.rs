@@ -1,4 +1,4 @@
-use crate::precompile::ITribute;
+use crate::precompile::ITributeFactory;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
@@ -17,6 +17,9 @@ pub enum WwdCallerError {
     #[error("Metadosis offering window overflow")]
     OfferingWindowOverflow,
 
+    #[error("timestamp overflows UTC+14 WorldwideDay conversion")]
+    UtcPlus14TimestampOverflow,
+
     #[error("Metadosis {label} duration overflow")]
     DurationOverflow { label: &'static str },
 
@@ -30,11 +33,14 @@ fn revert_with<E: SolError>(error: E) -> PrecompileError {
 
 impl From<WwdCallerError> for PrecompileError {
     fn from(value: WwdCallerError) -> Self {
-        use ITribute as I;
+        use ITributeFactory as I;
         match value {
             WwdCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
             WwdCallerError::LookbackWindowOverflow => revert_with(I::LookbackWindowOverflow {}),
             WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),
+            WwdCallerError::UtcPlus14TimestampOverflow => {
+                revert_with(I::UtcPlus14TimestampOverflow {})
+            }
             WwdCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
                 label: label.to_string(),
             }),
@@ -54,6 +60,13 @@ pub enum WwdStorageCorruptionError {
         wwd: WorldwideDay,
         expected_day: u32,
         found_day: u32,
+    },
+
+    #[error("Metadosis EmissionDay {day} already exists with different linked WWD (expected {expected_wwd}, found {found_wwd})")]
+    EmissionDayWwdLinkMismatch {
+        day: u32,
+        expected_wwd: WorldwideDay,
+        found_wwd: WorldwideDay,
     },
 
     #[error("Metadosis active WWD cap {max_active_wwds} reached before inserting {wwd}")]

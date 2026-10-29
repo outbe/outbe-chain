@@ -469,7 +469,6 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                 outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
 
                 let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-                cycle.active_utc_day.write(PREVIOUS_DAY).unwrap();
                 cycle
                     .last_executed_at
                     .write(&emission_trigger, GENESIS_TS + 60)
@@ -511,7 +510,8 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
         let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(block_timestamp);
-        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
+            .with_evm_signer(signer.clone());
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {
@@ -547,13 +547,25 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
             let gem = outbe_gem::GemContract::new(storage.clone());
             Observation {
-                active_day: cycle.active_utc_day.read().unwrap(),
+                active_day: outbe_cycle::handler::derive_active_utc_day(
+                    storage.clone(),
+                    GENESIS_TS,
+                    block_timestamp,
+                )
+                .unwrap(),
                 last_executed_at: cycle.last_executed_at.read(&emission_trigger).unwrap(),
-                day_settled: rewards.daily_settled.read(&PREVIOUS_DAY).unwrap(),
+                day_settled: outbe_emission::api::get_emission_day_record(
+                    storage.clone(),
+                    PREVIOUS_DAY,
+                )
+                .unwrap()
+                .is_some_and(|r| {
+                    r.state == outbe_emission::schema::emission_day_state::PROCESSING
+                        || r.state == outbe_emission::schema::emission_day_state::COMPLETED
+                }),
                 voter_claimable: outbe_agentreward::AgentRewardContract::new(storage.clone())
                     .get_pool_claimable_reward(
                         outbe_agentreward::schema::RewardPool::Validator,
