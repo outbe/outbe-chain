@@ -155,10 +155,18 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             storage.clone(),
         );
         crate::commands::start_metadosis(&aligned).unwrap();
-        let completed = api::emission_day(storage, 20260922).unwrap().unwrap();
+        let completed = api::emission_day(storage.clone(), 20260922)
+            .unwrap()
+            .unwrap();
         assert_eq!(completed.day, 20260922);
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, emission_day_state::SUCCEEDED);
+        let desis = outbe_desis::schema::DesisContract::new(storage);
+        assert_eq!(
+            desis.auction_stage.read(&wwd_sep_01).unwrap(),
+            outbe_desis::schema::AuctionStage::Briefed as u8
+        );
+        assert_eq!(desis.brief_has_limit.read(&wwd_sep_01).unwrap(), 0);
     });
 }
 
@@ -199,6 +207,25 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
             day = next_date_key(day).unwrap();
         }
         assert_eq!(empty_count, 20);
+
+        crate::commands::dispatch_terminal_remainder_at(
+            &ctx,
+            U256::from(1_000_000u64),
+            date_key_to_utc_timestamp(20261001),
+        )
+        .unwrap();
+        let empty_due_ts = date_key_to_utc_timestamp(20261002) + 1;
+        storage
+            .set_block_timestamp(U256::from(empty_due_ts))
+            .unwrap();
+        let empty_due_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), empty_due_ts, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::commands::start_metadosis(&empty_due_ctx).unwrap();
+        let settled_empty = api::emission_day(storage, 20261001).unwrap().unwrap();
+        assert_eq!(settled_empty.wwd, WorldwideDay::new(0));
+        assert_eq!(settled_empty.state, emission_day_state::SUCCEEDED);
     });
 
     // Genesis on 2026-10-01 at 12:00 UTC -> first_wwd = 20261001 (G),
