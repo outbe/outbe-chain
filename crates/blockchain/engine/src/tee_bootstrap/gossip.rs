@@ -71,13 +71,15 @@ pub struct CommonwareDkgGossip<S, R, C> {
     pub(super) clock: C,
     /// `tee_bls -> consensus P2P pubkey` for addressed ceremony sends.
     pub(super) routing: BTreeMap<Vec<u8>, bls12381::PublicKey>,
+    /// `consensus P2P pubkey -> tee_bls` for authenticating incoming ceremony senders.
+    pub(super) sender_to_tee_bls: BTreeMap<bls12381::PublicKey, Vec<u8>>,
     /// Ceremony messages received during the identity-exchange phase. `recv`
     /// replays them before it reads new ones, so the phase race loses nothing.
-    pub(super) buffered: VecDeque<(Vec<u8>, DkgWireMessage)>,
+    pub(super) buffered: VecDeque<(bls12381::PublicKey, DkgWireMessage)>,
     /// Signed announcements can arrive during preliminary BLS discovery. Once
     /// ACKed, they must survive the phase transition. The sender may stop retrying.
     /// Bounded by the expected participant count of this startup exchange.
-    pub(super) early_signed_identities: BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)>,
+    pub(super) early_signed_identities: BTreeMap<Vec<u8>, (bls12381::PublicKey, [u8; 32], Vec<u8>)>,
     /// Typed, bounded delivery state. Transport acknowledgements suppress
     /// retries per message and peer. The enclosing startup timeout remains the
     /// ceremony deadline.
@@ -96,6 +98,7 @@ where
             receiver: transport.receiver,
             clock: transport.clock,
             routing: BTreeMap::new(),
+            sender_to_tee_bls: BTreeMap::new(),
             buffered: VecDeque::new(),
             early_signed_identities: BTreeMap::new(),
             delivery: new_delivery_tracker(scope, transport.allowed_remote_peers),
@@ -138,8 +141,10 @@ where
     }
 
     async fn recv(&mut self) -> Option<(Vec<u8>, DkgWireMessage)> {
-        if let Some(buffered) = self.buffered.pop_front() {
-            return Some(buffered);
+        while let Some((from, msg)) = self.buffered.pop_front() {
+            if let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() {
+                return Some((sender_tee_bls, msg));
+            }
         }
         const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(750);
         loop {
@@ -150,7 +155,12 @@ where
                     let _ = self.sender.send(Recipients::One(from.clone()), ack_envelope(id), true);
                     match bytes.first().copied() {
                         Some(DKG_ENV_CEREMONY) => match DkgWireMessage::from_bytes(&bytes[1..]) {
-                            Ok(msg) => return Some((from.encode().to_vec(), msg)),
+                            Ok(msg) => {
+                                let Some(sender_tee_bls) = self.sender_to_tee_bls.get(&from).cloned() else {
+                                    continue;
+                                };
+                                return Some((sender_tee_bls, msg));
+                            }
                             Err(_) => continue,
                         },
                         // Late identity announcement (a peer still in its exchange phase).

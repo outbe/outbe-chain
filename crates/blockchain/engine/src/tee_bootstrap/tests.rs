@@ -238,6 +238,143 @@ mod identity_phase_regression {
     fn early_acked_signed_identity_survives_phase_transition() {
         exchange_with_order(true);
     }
+
+    #[test]
+    fn identity_exchange_enforces_bijection_ignores_local_bls_and_maps_recv_sender_to_tee_bls() {
+        use crate::tee_bootstrap::DKG_ENV_CEREMONY;
+        use outbe_tee::tee_dkg::{DkgGossip as _, DkgWireMessage, FinalizedLog};
+
+        deterministic::Runner::timed(Duration::from_secs(100)).start(|context| async move {
+            let peers: Vec<_> = (201..205)
+                .map(|seed| bls12381::PrivateKey::from_seed(seed).public_key())
+                .collect();
+            let bls: Vec<_> = (301..305)
+                .map(|seed| {
+                    bls12381::PrivateKey::from_seed(seed)
+                        .public_key()
+                        .encode()
+                        .to_vec()
+                })
+                .collect();
+            let scope = B256::repeat_byte(0x39);
+            let mut trackers = peer_delivery_trackers(&peers, scope);
+
+            let inbox = Arc::new(Mutex::new(VecDeque::new()));
+            // Peer 1 attempts to announce local node 0's `bls[0]` (must be ignored)
+            // and also unsigned `bls[2]` during Phase 1 (must not lock routing for peer 2).
+            let capture_local_unsigned = announcement(&mut trackers[0], &bls[0], false);
+            let spoof_peer2_unsigned = announcement(&mut trackers[0], &bls[2], false);
+            let preliminary: Vec<_> = (1..4)
+                .map(|i| announcement(&mut trackers[i - 1], &bls[i], false))
+                .collect();
+            inbox
+                .lock()
+                .unwrap()
+                .push_back((peers[1].clone(), capture_local_unsigned.into()));
+            inbox
+                .lock()
+                .unwrap()
+                .push_back((peers[1].clone(), spoof_peer2_unsigned.into()));
+            enqueue_preliminary(&inbox, &peers, &preliminary, None);
+
+            let sent = Sent::default();
+            let mut gossip = CommonwareDkgGossip::new(
+                StartupGossipTransport {
+                    sender: RecordingSender {
+                        peers: peers[1..].to_vec(),
+                        sent,
+                    },
+                    receiver: OrderedReceiver(inbox.clone()),
+                    clock: context,
+                    allowed_remote_peers: peers[1..].iter().cloned().collect(),
+                },
+                scope,
+            );
+            let first = gossip
+                .exchange_identities(IdentityExchange {
+                    local: LocalIdentityAnnouncement {
+                        bls: bls[0].clone(),
+                        enc: [0; 32],
+                        signature: Vec::new(),
+                    },
+                    binding: CeremonyBinding {
+                        ceremony_id: B256::ZERO,
+                        round: 0,
+                        participant_set_hash: B256::ZERO,
+                    },
+                    participant_count: 4,
+                })
+                .await
+                .unwrap();
+            assert_eq!(first.len(), 4);
+            assert!(
+                gossip.routing.is_empty() && gossip.sender_to_tee_bls.is_empty(),
+                "unsigned preliminary phase must not lock routing or sender_to_tee_bls"
+            );
+
+            // Phase 2:
+            // - Peer 1 sends a buffered ceremony message before its signed identity.
+            // - Peer 1 attempts to claim local `bls[0]` (signed) -> ignored.
+            // - Peer 1 registers its legitimate signed `bls[1]`.
+            // - Peer 1 attempts to register a second identity `bls[2]` -> rejected (1-to-1 bijection).
+            // - Peer 2 attempts to overwrite `bls[1]` -> rejected (1-to-1 bijection).
+            // - Peers 2 and 3 register their legitimate signed `bls[2]` and `bls[3]`.
+            let early_ceremony_msg = DkgWireMessage::FinalizedLog(FinalizedLog {
+                dealer_bls: bls[1].clone(),
+                signed_log: vec![0xaa],
+            });
+            let mut early_ceremony_payload = vec![DKG_ENV_CEREMONY];
+            early_ceremony_payload.extend_from_slice(&early_ceremony_msg.to_bytes());
+            let early_ceremony_env = trackers[0]
+                .envelope(Recipients::All, early_ceremony_payload)
+                .unwrap();
+
+            let capture_local_signed = announcement(&mut trackers[0], &bls[0], true);
+            let peer1_valid_signed = announcement(&mut trackers[0], &bls[1], true);
+            let peer1_second_bls_signed = announcement(&mut trackers[0], &bls[2], true);
+            let peer2_hijack_peer1_signed = announcement(&mut trackers[1], &bls[1], true);
+            let peer2_valid_signed = announcement(&mut trackers[1], &bls[2], true);
+            let peer3_valid_signed = announcement(&mut trackers[2], &bls[3], true);
+
+            {
+                let mut q = inbox.lock().unwrap();
+                q.push_back((peers[1].clone(), early_ceremony_env.into()));
+                q.push_back((peers[1].clone(), capture_local_signed.into()));
+                q.push_back((peers[1].clone(), peer1_valid_signed.into()));
+                q.push_back((peers[1].clone(), peer1_second_bls_signed.into()));
+                q.push_back((peers[2].clone(), peer2_hijack_peer1_signed.into()));
+                q.push_back((peers[2].clone(), peer2_valid_signed.into()));
+                q.push_back((peers[3].clone(), peer3_valid_signed.into()));
+            }
+
+            let identities = gossip
+                .exchange_identities(IdentityExchange {
+                    local: LocalIdentityAnnouncement {
+                        bls: bls[0].clone(),
+                        enc: [0x11; 32],
+                        signature: vec![0x44; 96],
+                    },
+                    binding: CeremonyBinding {
+                        ceremony_id: B256::repeat_byte(0x41),
+                        round: 0,
+                        participant_set_hash: B256::repeat_byte(0x42),
+                    },
+                    participant_count: 4,
+                })
+                .await
+                .unwrap();
+            assert_eq!(identities.len(), 4);
+            assert_eq!(gossip.routing.get(&bls[1]), Some(&peers[1]));
+            assert_eq!(gossip.routing.get(&bls[2]), Some(&peers[2]));
+            assert_eq!(gossip.routing.get(&bls[3]), Some(&peers[3]));
+            assert!(!gossip.routing.contains_key(&bls[0]));
+
+            // Buffered ceremony message from peers[1] resolves to bls[1], not peers[1].encode()!
+            let (from_buffered, msg_buffered) = gossip.recv().await.unwrap();
+            assert_eq!(from_buffered, bls[1]);
+            assert_eq!(msg_buffered, early_ceremony_msg);
+        });
+    }
 }
 
 #[test]

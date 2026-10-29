@@ -143,6 +143,13 @@ where
     .await
     .map_err(|e| crate::errors::TeeBootstrapError::DkgCeremonyFailed(e.to_string()))?;
 
+    if outcome.identity_mismatches > 0 {
+        tracing::warn!(
+            identity_mismatches = outcome.identity_mismatches,
+            "TEE DKG ceremony ignored wire messages with mismatched sender identity"
+        );
+    }
+
     Ok((
         outcome.tribute_offer_public,
         outcome.tribute_offer_group_public_key,

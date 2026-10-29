@@ -212,6 +212,17 @@ impl DkgWireMessage {
         }
         Ok(msg)
     }
+
+    /// Return the enclave BLS public key claimed inside the wire payload.
+    #[must_use]
+    pub fn claimed_sender(&self) -> &[u8] {
+        match self {
+            DkgWireMessage::DealerBundle(b) => &b.dealer_bls,
+            DkgWireMessage::Ack(a) => &a.player_bls,
+            DkgWireMessage::FinalizedLog(l) => &l.dealer_bls,
+            DkgWireMessage::TributeOfferPartial { signer_bls, .. } => signer_bls,
+        }
+    }
 }
 
 /// The P2P gossip surface the ceremony driver needs. The node implements it over
@@ -251,6 +262,10 @@ pub struct CeremonyOutcome {
     /// `tribute_offer_public` at Seam F and carried into the founding bootstrap
     /// payload.
     pub tribute_offer_group_public_key: Vec<u8>,
+    /// Number of incoming wire messages ignored due to a mismatch between the
+    /// authenticated transport sender and the payload's claimed enclave BLS key
+    /// (or an unauthorized sender).
+    pub identity_mismatches: usize,
 }
 
 /// Coordinator errors: a transport failure, or an unexpected enclave response.
@@ -314,6 +329,14 @@ impl CeremonyCoordinator {
     /// This node's BLS public key bytes.
     pub fn my_bls(&self) -> &[u8] {
         &self.my_bls
+    }
+
+    /// Check whether `sender_bls` belongs to the registered ceremony participants.
+    #[must_use]
+    pub fn is_allowed_sender(&self, sender_bls: &[u8]) -> bool {
+        self.participants
+            .iter()
+            .any(|participant| participant.bls_pub.as_slice() == sender_bls)
     }
 
     /// Open the ceremony inside the enclave.
@@ -431,6 +454,7 @@ impl CeremonyCoordinator {
                 // Filled by `run_tee_dkg_ceremony` after Seam F.
                 tribute_offer_public: [0u8; 32],
                 tribute_offer_group_public_key: Vec::new(),
+                identity_mismatches: 0,
             }),
             _ => Err(CeremonyError::unexpected_response(
                 crate::errors::TeeDkgUnexpectedResponseReason::DkgPlayerFinalize,

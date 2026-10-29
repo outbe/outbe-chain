@@ -325,7 +325,8 @@ impl EnclaveClient {
     /// Run GetQuote, structural binding validation, and the Noise-IK handshake
     /// over an established transport.
     fn from_transport(mut stream: Transport) -> Result<Self, TransportError> {
-        // 1. GetQuote (cleartext, pre-handshake) with a fresh nonce.
+        // 1. GetQuote (cleartext, pre-handshake): send `{ nonce }` and receive
+        //    `{ quote, enclave_static_pub }` before starting the Noise-IK handshake.
         let nonce: [u8; 32] = rand::random();
         with_io_phase(
             write_frame(

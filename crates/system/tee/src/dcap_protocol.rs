@@ -277,6 +277,9 @@ impl DcapVerdictV1 {
         let qe_tcb_evaluation_data_number = decoder.u32_be()?;
         let collateral_valid_until = decoder.u64_be()?;
         let advisory_count = usize::from(decoder.u16_be()?);
+        if advisory_count > decoder.remaining() / 3 {
+            return Err(DcapRejectCodeV1::NativeOutputMalformed);
+        }
         let mut advisory_ids = Vec::with_capacity(advisory_count);
         for _ in 0..advisory_count {
             let len = usize::from(decoder.u16_be()?);
@@ -339,6 +342,7 @@ pub enum DcapRejectCodeV1 {
     QeTcbRejected = 0x0502,
     TcbEvaluationNumberTooLow = 0x0503,
     MeasurementRejected = 0x0601,
+    DebugEnclaveRejected = 0x0602,
     OperationMismatch = 0x0701,
     NodeSignatureInvalid = 0x0702,
     EnclaveSignatureInvalid = 0x0703,
@@ -376,6 +380,7 @@ impl TryFrom<u16> for DcapRejectCodeV1 {
             0x0502 => Self::QeTcbRejected,
             0x0503 => Self::TcbEvaluationNumberTooLow,
             0x0601 => Self::MeasurementRejected,
+            0x0602 => Self::DebugEnclaveRejected,
             0x0701 => Self::OperationMismatch,
             0x0702 => Self::NodeSignatureInvalid,
             0x0703 => Self::EnclaveSignatureInvalid,
@@ -634,6 +639,15 @@ mod tests {
         }
         assert_eq!(
             DcapVerificationOutcomeV1::decode_canonical(&[1, 2, 0xFF, 0xFF]),
+            Err(DcapRejectCodeV1::NativeOutputMalformed)
+        );
+
+        let mut oversized_advisory_count = verdict().encode_canonical().unwrap();
+        let count_offset = 1 + 32 + 32 + 2 + 2 + 1 + 6 + 2 + 1 + 4 + 4 + 8;
+        oversized_advisory_count[count_offset..count_offset + 2]
+            .copy_from_slice(&u16::MAX.to_be_bytes());
+        assert_eq!(
+            DcapVerdictV1::decode_canonical(&oversized_advisory_count),
             Err(DcapRejectCodeV1::NativeOutputMalformed)
         );
     }

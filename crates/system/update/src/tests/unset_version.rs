@@ -90,10 +90,27 @@ fn exact_state_resolver_rejects_noncanonical_width() {
             )
             .unwrap();
 
+        let expected = crate::precompile::IUpdate::ActiveVersionDoesNotFitU32 {}.abi_encode();
+        for res in [
+            resolve_active_version(storage.clone()),
+            get_active_version(storage.clone()),
+            Update::new(storage.clone()).get_active_version(),
+        ] {
+            assert!(matches!(
+                res,
+                Err(outbe_primitives::error::PrecompileError::RevertBytes(ref bytes))
+                    if bytes.as_ref() == expected.as_slice()
+            ));
+        }
         assert!(matches!(
-            resolve_active_version(storage),
-            Err(outbe_primitives::error::PrecompileError::RevertBytes(bytes))
-                if bytes.as_ref() == crate::precompile::IUpdate::ActiveVersionDoesNotFitU32 {}.abi_encode()
+            is_version_active_eq(storage.clone(), V1_2),
+            Err(outbe_primitives::error::PrecompileError::RevertBytes(ref bytes))
+                if bytes.as_ref() == expected.as_slice()
+        ));
+        assert!(matches!(
+            crate::api::is_version_active_gte(storage, V1_2),
+            Err(outbe_primitives::error::PrecompileError::RevertBytes(ref bytes))
+                if bytes.as_ref() == expected.as_slice()
         ));
     });
 }

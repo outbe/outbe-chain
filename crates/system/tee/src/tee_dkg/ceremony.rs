@@ -31,11 +31,12 @@ pub async fn run_tee_dkg_ceremony<C: EnclaveChannel, G: DkgGossip>(
     let collection = DealerCollection::new(coord, parameters.participant_count, acknowledged);
     let (logs, offer_partials) = collection.collect(enclave, gossip).await?;
     let mut outcome = coord.finalize_player(enclave, &logs)?;
-    let (public, group_public) = offer_partials
+    let (public, group_public, identity_mismatches) = offer_partials
         .complete(coord, enclave, gossip, parameters)
         .await?;
     outcome.tribute_offer_public = public;
     outcome.tribute_offer_group_public_key = group_public;
+    outcome.identity_mismatches = identity_mismatches;
     Ok(outcome)
 }
 
@@ -88,6 +89,7 @@ impl<'a> DealerCollection<'a> {
             offer_partials: OfferPartials {
                 recipient: coord.my_bls().to_vec(),
                 sealed: BTreeMap::new(),
+                identity_mismatches: 0,
             },
         }
     }
@@ -99,11 +101,15 @@ impl<'a> DealerCollection<'a> {
     ) -> Result<(Vec<FinalizedLog>, OfferPartials)> {
         self.finalize_dealing(enclave, gossip).await?;
         while self.logs.len() < self.required {
-            let Some((_from, message)) = gossip.recv().await else {
+            let Some((from, message)) = gossip.recv().await else {
                 return Err(CeremonyError::UnexpectedResponse(
                     "gossip closed before ceremony completed",
                 ));
             };
+            if from.as_slice() != message.claimed_sender() || !self.coord.is_allowed_sender(&from) {
+                self.offer_partials.identity_mismatches += 1;
+                continue;
+            }
             self.receive(message, enclave, gossip).await?;
         }
         Ok((self.logs.into_values().collect(), self.offer_partials))
@@ -121,7 +127,7 @@ impl<'a> DealerCollection<'a> {
             }
             DkgWireMessage::Ack(ack) => self.accept_ack(ack, enclave, gossip).await?,
             DkgWireMessage::FinalizedLog(log) => {
-                self.logs.insert(log.dealer_bls.clone(), log);
+                self.logs.entry(log.dealer_bls.clone()).or_insert(log);
             }
             partial @ DkgWireMessage::TributeOfferPartial { .. } => {
                 self.offer_partials.record(partial);
@@ -178,6 +184,7 @@ impl<'a> DealerCollection<'a> {
 struct OfferPartials {
     recipient: Vec<u8>,
     sealed: BTreeMap<Vec<u8>, Vec<u8>>,
+    identity_mismatches: usize,
 }
 
 impl OfferPartials {
@@ -189,7 +196,7 @@ impl OfferPartials {
         } = message
         {
             if recipient_bls == self.recipient {
-                self.sealed.insert(signer_bls, partial);
+                self.sealed.entry(signer_bls).or_insert(partial);
             }
         }
     }
@@ -222,22 +229,27 @@ impl OfferPartials {
         enclave: &mut C,
         gossip: &mut G,
         parameters: FoundingCeremonyParameters,
-    ) -> Result<([u8; 32], Vec<u8>)> {
+    ) -> Result<([u8; 32], Vec<u8>, usize)> {
         self.publish_local(coord, enclave, gossip).await?;
         while self.sealed.len() < parameters.participant_count {
-            let Some((_from, message)) = gossip.recv().await else {
+            let Some((from, message)) = gossip.recv().await else {
                 return Err(CeremonyError::UnexpectedResponse(
                     "gossip closed before founding offer-key finalization completed",
                 ));
             };
+            if from.as_slice() != message.claimed_sender() || !coord.is_allowed_sender(&from) {
+                self.identity_mismatches += 1;
+                continue;
+            }
             self.record(message);
         }
         let partials = self.sealed.into_values().collect::<Vec<_>>();
-        coord.finalize_tribute_offer(
+        let (public, group_public) = coord.finalize_tribute_offer(
             enclave,
             &partials,
             parameters.chain_id,
             parameters.tribute_offer_epoch,
-        )
+        )?;
+        Ok((public, group_public, self.identity_mismatches))
     }
 }

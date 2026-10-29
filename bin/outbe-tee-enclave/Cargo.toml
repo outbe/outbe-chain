@@ -6,7 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-e2e-test = ["outbe-tee/e2e-test"]
+sgx-noattest = ["outbe-tee/sgx-noattest"]
+e2e-test = ["outbe-tee/e2e-test", "sgx-noattest"]
 # `mock` gates the dev/CI-only EGETKEY stub (hard-coded sealing key + fake
 # quote). The production binary is built WITHOUT this feature and therefore
 # physically contains no mock key material. See plan section "Mock build-time isolation".
@@ -115,6 +116,7 @@ rand-commonware.workspace = true
 rand-core-commonware.workspace = true
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["sgx-noattest"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true

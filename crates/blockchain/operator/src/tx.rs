@@ -97,8 +97,9 @@ impl RelaySignerV1 {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let bytes: [u8; 32] = bytes.try_into().map_err(|_| TxError::InvalidKeyLength)?;
-        let key = SigningKey::from_bytes((&bytes).into()).map_err(TxError::InvalidPrivateKey)?;
+        let bytes: Zeroizing<[u8; 32]> =
+            Zeroizing::new(bytes.try_into().map_err(|_| TxError::InvalidKeyLength)?);
+        let key = SigningKey::from_bytes((&*bytes).into()).map_err(TxError::InvalidPrivateKey)?;
         let public = key.verifying_key().to_encoded_point(false);
         let hash = keccak256(&public.as_bytes()[1..]);
         let address = Address::from_slice(&hash[12..]);
