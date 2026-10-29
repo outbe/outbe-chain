@@ -124,7 +124,7 @@ jobs:
           test "$(jq -r '.config | has("teeAttestationV1")' "${genesis_path}")" = false
 
       - name: Upload source identity and approved genesis
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: preflight-release-inputs
           path: ${{ runner.temp }}/preflight-inputs
@@ -154,7 +154,7 @@ jobs:
       - name: Install and verify pinned Noir build tools
         run: release/scripts/install-zk-build-tools.sh
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: preflight-release-inputs
           path: ${{ runner.temp }}/preflight-inputs
@@ -183,7 +183,7 @@ jobs:
           sha256sum elf.tar unsigned.tar > SHA256SUMS
 
       - name: Upload the regional preflight candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: preflight-builder-${{ matrix.region }}
           path: ${{ runner.temp }}/preflight-build-${{ matrix.region }}/output
@@ -229,17 +229,17 @@ jobs:
           driver-opts: |
             image=moby/buildkit@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: preflight-release-inputs
           path: ${{ runner.temp }}/preflight-inputs
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: preflight-builder-fr
           path: ${{ runner.temp }}/preflight-builder-fr
 
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: preflight-builder-mum
           path: ${{ runner.temp }}/preflight-builder-mum
@@ -361,7 +361,7 @@ jobs:
           docker image inspect "${PREFLIGHT_IMAGE}" >/dev/null
 
       - name: Publish preflight evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-preflight-${{ inputs.network }}-${{ needs.identity.outputs.source_sha }}
           path: ${{ env.PREFLIGHT_ROOT }}/evidence
