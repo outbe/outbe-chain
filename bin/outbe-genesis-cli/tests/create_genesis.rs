@@ -18,9 +18,9 @@ use outbe_genesis_cli::network::{
     DEFAULT_PREFUND_COEN_UNITS, SEED_SECTIONS,
 };
 use outbe_genesis_cli::seed_codec::{
-    address_as_u256, address_bytes, asset_address, data_slot, hex32, mapping_key, parse_u256,
-    u32_bytes, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, NOD_ADDRESS, NOD_PROFILE_SLOT, ORACLE_ADDRESS,
-    REWARDS_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    address_as_u256, address_bytes, address_pair, asset_address, data_slot, hex32, mapping_key,
+    parse_u256, u32_bytes, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, NOD_ADDRESS, NOD_PROFILE_SLOT,
+    ORACLE_ADDRESS, REWARDS_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_genesis_cli::seed_genesis::apply_seed;
 use outbe_genesis_cli::stages::{
@@ -453,9 +453,11 @@ fn seed_stage_end_to_end_and_reproducibility() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let tmp_str = tmp.path().display().to_string();
     let seeded_feeder = seed_once(tmp.path(), &merge_obj(minimal_config(&tmp_str), feeder_cfg));
+    // One seeded curve for COEN/840 in its S-curve ring (`scurve_len`, slot 82).
+    let usd_curves = mapping_key(&address_pair("COEN", "840").expect("pair"), 82);
     assert_eq!(
-        seeded_feeder["alloc"][ORACLE_ADDRESS]["storage"][hex32(34u64)],
-        json!(hex32(6u64))
+        seeded_feeder["alloc"][ORACLE_ADDRESS]["storage"][usd_curves],
+        json!(hex32(1u64))
     );
 
     let prefund_cfg = merge_obj(

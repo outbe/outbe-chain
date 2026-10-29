@@ -15,6 +15,7 @@ use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_va
 use outbe_primitives::error::Result;
 use outbe_primitives::math::reference_price::pair_scales;
 use outbe_primitives::stablecoin::iso_4217_alpha;
+use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -102,7 +103,6 @@ pub fn dispatch(
             getFinalizedWindowVwap(c) => finalized_window_vwap(oracle, c),
             getWorldwideDayVwap(c) => worldwide_day_vwap(oracle, c),
             getWorldwideDayVwapSnapshot(c) => worldwide_day_vwap_snapshot(oracle, c),
-            getScurveEntries(c) => scurve_entries(oracle, c),
             getScurveValues(c) => scurve_values(oracle, c),
             getAllScurveData(_) => all_scurve_data(oracle),
             getAllScurveDataForPair(c) => all_scurve_data_for_pair(oracle, c),
@@ -533,32 +533,18 @@ fn worldwide_day_vwap_snapshot(
 fn scurve_value(oracle: &OracleContract, c: IOracle::getScurveValueCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        crate::scurve::get_max_active_scurve_value(oracle, pair, c.timestamp)
-    })
-}
-
-fn scurve_entries(oracle: &OracleContract, c: IOracle::getScurveEntriesCall) -> Result<Bytes> {
-    view(c, |c| {
-        let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let now = oracle.storage.now_secs()?;
-        let (peak_days, peak_prices, current_values) =
-            crate::scurve::get_scurve_entries(oracle, pair, now)?;
-        Ok(IOracle::getScurveEntriesReturn {
-            peakDays: peak_days,
-            peakPrices: peak_prices,
-            currentValues: current_values,
-        })
+        crate::scurve::scurve_value(oracle, pair, WorldwideDay::from_timestamp(c.timestamp))
     })
 }
 
 fn scurve_values(oracle: &OracleContract, c: IOracle::getScurveValuesCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let target_day = crate::scurve::truncate_to_day(c.timestamp);
+        let target_day = WorldwideDay::from_timestamp(c.timestamp);
         let (peak_days, peak_prices, values) =
-            crate::scurve::get_scurve_entries(oracle, pair, c.timestamp)?;
+            crate::scurve::get_scurve_entries(oracle, pair, target_day)?;
         Ok(IOracle::getScurveValuesReturn {
-            targetDay: target_day,
+            targetDay: target_day.into(),
             peakDays: peak_days,
             peakPrices: peak_prices,
             values,
@@ -606,12 +592,12 @@ fn nominal_price_components(
 ) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let (nominal_price, vwap, max_scurve, source) =
+        let (nominal_price, vwap, scurve_value, source) =
             oracle.get_nominal_price_components(pair, c.timestamp)?;
         Ok(IOracle::getNominalPriceComponentsReturn {
             nominalPrice: nominal_price,
             vwap,
-            maxScurve: max_scurve,
+            scurveValue: scurve_value,
             source,
         })
     })

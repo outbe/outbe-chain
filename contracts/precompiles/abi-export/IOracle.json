@@ -441,7 +441,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "maxScurve",
+        "name": "scurveValue",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -623,40 +623,6 @@
         "name": "isoCodes",
         "type": "uint16[]",
         "internalType": "uint16[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getScurveEntries",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "peakDays",
-        "type": "uint64[]",
-        "internalType": "uint64[]"
-      },
-      {
-        "name": "peakPrices",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
-      },
-      {
-        "name": "currentValues",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"

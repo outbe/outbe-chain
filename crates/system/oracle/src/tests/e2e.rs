@@ -5,9 +5,12 @@ use crate::schema::{OracleContract, SCALE_1E18};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
 use super::common::*;
+
+/// The WWD that holds Unix time 0.
+const EPOCH_WWD: WorldwideDay = WorldwideDay::new(19_700_101);
 
 // -----------------------------------------------------------------------
 // Genesis config tests
@@ -467,8 +470,13 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             )
             .unwrap();
 
-        crate::scurve::store_scurve_entry(&mut oracle, pair_key(COEN, usd()), 0, coen_iso(160))
-            .unwrap();
+        crate::scurve::store_scurve_entry(
+            &mut oracle,
+            pair_key(COEN, usd()),
+            EPOCH_WWD,
+            coen_iso(160),
+        )
+        .unwrap();
 
         use crate::precompile::IOracle;
         use alloy_sol_types::SolCall;
@@ -523,8 +531,8 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.targetDay, 0);
-        assert_eq!(decoded.peakDays, vec![0]);
+        assert_eq!(decoded.targetDay, u64::from(EPOCH_WWD));
+        assert_eq!(decoded.peakDays, vec![u64::from(EPOCH_WWD)]);
         assert_eq!(decoded.values, vec![coen_iso(160)]);
 
         let scurve_data = IOracle::getAllScurveDataForPairCall {
@@ -537,7 +545,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.peakDays, vec![0]);
+        assert_eq!(decoded.peakDays, vec![u64::from(EPOCH_WWD)]);
         assert_eq!(decoded.peakPrices, vec![coen_iso(160)]);
 
         let nominal_components = IOracle::getNominalPriceComponentsCall {
@@ -557,7 +565,7 @@ fn precompile_dispatch_round_trips_the_whole_query_surface() {
         )
         .unwrap();
         assert_eq!(decoded.nominalPrice, coen_iso(160));
-        assert_eq!(decoded.maxScurve, coen_iso(160));
+        assert_eq!(decoded.scurveValue, coen_iso(160));
         assert_eq!(decoded.source, "scurve");
 
         let nominal = IOracle::getNominalPriceCall {
@@ -627,20 +635,20 @@ fn genesis_imports_price_snapshots() {
 }
 
 #[test]
-fn genesis_imports_one_chain_per_pair() {
+fn genesis_imports_every_curve_of_a_pair() {
     with_storage(|storage| {
         let config = crate::genesis::OracleGenesisConfig {
             scurve_entries: vec![
                 crate::genesis::GenesisScurveEntry {
                     base: COEN,
                     quote: usd(),
-                    peak_day: SECONDS_PER_DAY,
+                    peak_day: WorldwideDay::new(19_700_102),
                     peak_price: coen_iso(500),
                 },
                 crate::genesis::GenesisScurveEntry {
                     base: COEN,
                     quote: usd(),
-                    peak_day: 10 * SECONDS_PER_DAY,
+                    peak_day: WorldwideDay::new(19_700_111),
                     peak_price: coen_iso(600),
                 },
             ],
@@ -650,13 +658,14 @@ fn genesis_imports_one_chain_per_pair() {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
 
-        assert_eq!(oracle.scurve_count.read().unwrap(), 1);
         assert_eq!(oracle.pair_at(1).unwrap(), pair_key(COEN, usd()));
         assert_eq!(
-            oracle.scurve_peak_day.read(&0u32).unwrap(),
-            10 * SECONDS_PER_DAY
+            crate::scurve::get_all_scurve_data_for_pair(&oracle, pair_key(COEN, usd())).unwrap(),
+            (
+                vec![19_700_102, 19_700_111],
+                vec![coen_iso(500), coen_iso(600)]
+            )
         );
-        assert_eq!(oracle.scurve_peak_price.read(&0u32).unwrap(), coen_iso(600));
     });
 }
 
@@ -741,13 +750,16 @@ fn assert_exported_snapshot(exported: &crate::genesis::OracleGenesisConfig) {
     assert_eq!(exported.snapshots[0].entries.len(), 2);
 }
 
-/// Asserts that `exported` holds the one COEN/USD S-curve entry that peaked on
-/// day 86400.
+/// Asserts that `exported` holds the one COEN/USD S-curve that starts at
+/// WWD 1970-01-02.
 fn assert_exported_scurve_entry(exported: &crate::genesis::OracleGenesisConfig) {
     assert_eq!(exported.scurve_entries.len(), 1);
     assert_eq!(exported.scurve_entries[0].base, COEN);
     assert_eq!(exported.scurve_entries[0].quote, usd());
-    assert_eq!(exported.scurve_entries[0].peak_day, SECONDS_PER_DAY);
+    assert_eq!(
+        exported.scurve_entries[0].peak_day,
+        WorldwideDay::new(19_700_102)
+    );
 }
 
 #[test]
@@ -783,7 +795,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         scurve_entries: vec![crate::genesis::GenesisScurveEntry {
             base: COEN,
             quote: usd(),
-            peak_day: SECONDS_PER_DAY,
+            peak_day: WorldwideDay::new(19_700_102),
             peak_price: coen_iso(100),
         }],
         vote_period: 2,
@@ -834,7 +846,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
             &[(v1, Penalty::Success, 7), (v2, Penalty::Miss, 4)],
         );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 1);
-        assert_eq!(oracle.scurve_count.read().unwrap(), 1);
+        assert_eq!(oracle.scurve_len.read(&pair_key(COEN, usd())).unwrap(), 1);
     });
 }
 
@@ -1766,10 +1778,9 @@ fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
 
         // A curve on the issuance currency must never brake Tribute pricing.
         // The API returns only the independently selected reference currency curve.
-        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, usd()), start_time, coen_iso(500))
+        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, usd()), day, coen_iso(500))
             .unwrap();
-        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, eur), start_time, coen_iso(320))
-            .unwrap();
+        crate::scurve::store_scurve_entry(oracle, pair_key(COEN, eur), day, coen_iso(320)).unwrap();
         assert_eq!(
             crate::api::tribute_pricing_inputs(storage.clone(), 840, 978, day).unwrap(),
             Some(crate::api::TributePricingInputs {

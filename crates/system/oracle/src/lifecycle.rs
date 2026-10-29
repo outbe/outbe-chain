@@ -6,7 +6,6 @@ use outbe_primitives::{
 
 use crate::constants::MAX_UTC_DAY_VWAP_BACKFILL_DAYS;
 use crate::schema::OracleContract;
-use crate::scurve;
 use crate::tally;
 
 pub struct OracleLifecycle;
@@ -56,9 +55,6 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// - writes price snapshots;
 /// - counts miss/success/abstain per validator.
 ///
-/// At UTC day boundaries: runs S-curve peak detection for each registered,
-/// active reference-currency COEN pair.
-///
 /// It defers the slash window to the receipt-visible `OracleSlashWindow` phase.
 /// A same-block boundary can activate its target set before Oracle jails
 /// an underperformer. The penalty is jail, not a move to EXITING.
@@ -88,8 +84,6 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         tally::run_tally(&mut oracle, block_number, timestamp)?;
     }
 
-    process_scurve_day(&mut oracle, timestamp)?;
-
     if timestamp > 0 {
         finalize_day_vwaps(&mut oracle, timestamp)?;
     }
@@ -101,23 +95,6 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
 /// zero period never qualify.
 fn is_period_boundary(block_number: u64, period: u64) -> bool {
     period > 0 && block_number > 0 && block_number.is_multiple_of(period)
-}
-
-/// Daily S-curve processing at UTC day boundary. Runs once per UTC day for each
-/// registered, active reference-currency COEN pair.
-fn process_scurve_day(oracle: &mut OracleContract, timestamp: u64) -> Result<()> {
-    let current_day = scurve::truncate_to_day(timestamp);
-    let last_processed = oracle.scurve_last_processed_day.read()?;
-    if current_day > last_processed && timestamp > 0 {
-        for iso_code in crate::constants::REFERENCE_CURRENCIES {
-            let pair = crate::types::AddressPair::new_coen_to(iso_code);
-            if oracle.pair_index_of(pair)? != 0 && oracle.vote_target.read(&pair)? {
-                scurve::process_daily_scurve(oracle, pair, timestamp)?;
-            }
-        }
-        oracle.scurve_last_processed_day.write(current_day)?;
-    }
-    Ok(())
 }
 
 /// Finalize per-UTC-day VWAP for every calendar day that has fully closed.
