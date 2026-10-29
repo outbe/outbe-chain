@@ -74,6 +74,7 @@ fn immutable_status_distinguishes_repository_states() {
         last_seen_finalized: Some(block(12)),
         last_converged_finalized: Some(block(12)),
         desired_repository_count: 2,
+        observed_repository_count: 2,
         available_repository_count: 1,
         pending_repository_count: 1,
         ..ManagerStatus::default()
@@ -82,6 +83,7 @@ fn immutable_status_distinguishes_repository_states() {
     let snapshot = handle.snapshot();
     assert_eq!(snapshot.local_node_id, Some(node_id));
     assert_eq!(snapshot.voting_gate, RadicleVotingGate::Verifier);
+    assert_eq!(snapshot.manager.observed_repository_count, 2);
     assert_eq!(snapshot.repositories.len(), 2);
     assert_eq!(
         snapshot.repositories[0].state,
@@ -92,10 +94,32 @@ fn immutable_status_distinguishes_repository_states() {
         RadicleRepositoryState::Pending
     );
 
+    // Subsequent snapshot observation preserves existing Available state, drops
+    // removed repositories, and initializes newly added ones to Pending.
+    let added = RepoId::repeat_byte(0x23);
+    publisher.observe_snapshot(&FinalizedSnapshot {
+        block: block(13),
+        validators: vec![],
+        registry_generation: 3,
+        repositories: vec![available, added],
+    });
+    let next_snapshot = handle.snapshot();
+    assert_eq!(next_snapshot.repositories.len(), 2);
+    assert_eq!(next_snapshot.repositories[0].repo_id, available);
+    assert_eq!(
+        next_snapshot.repositories[0].state,
+        RadicleRepositoryState::Available
+    );
+    assert_eq!(next_snapshot.repositories[1].repo_id, added);
+    assert_eq!(
+        next_snapshot.repositories[1].state,
+        RadicleRepositoryState::Pending
+    );
+
     // The handle is an immutable snapshot reader. No UDS/TCP/network dependency
     // is reachable from this API.
     let cloned = handle.clone();
-    assert_eq!(cloned.snapshot(), snapshot);
+    assert_eq!(cloned.snapshot(), next_snapshot);
 }
 
 #[test]
@@ -108,6 +132,8 @@ fn metrics_use_frozen_names_and_known_height_bits() {
         last_converged_finalized: Some(block(0)),
         resolved_peer_count: 3,
         connected_peer_count: 2,
+        desired_repository_count: 5,
+        observed_repository_count: 3,
         provider_failures: 4,
         uds_failures: 5,
         ..ManagerStatus::default()
@@ -145,6 +171,8 @@ fn metrics_use_frozen_names_and_known_height_bits() {
     assert_gauge("outbe_radicle_last_converged_finalized_height", 0.0);
     assert_gauge("outbe_radicle_resolved_peers", 3.0);
     assert_gauge("outbe_radicle_connected_peers", 2.0);
+    assert_gauge("outbe_radicle_desired_repositories", 5.0);
+    assert_gauge("outbe_radicle_observed_repositories", 3.0);
     assert_counter("outbe_radicle_provider_failures_total", 4);
     assert_counter("outbe_radicle_uds_failures_total", 5);
 

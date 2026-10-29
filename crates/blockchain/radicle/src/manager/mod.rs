@@ -17,5 +17,5 @@ pub use types::{
     FinalizedValidator, FinalizedVotePage, HeartwoodControl, ManagerConfig, ManagerDependencies,
     ManagerError, ManagerPhase, ManagerStatus, PhaseError, RepositoryAuthorityReader,
     RepositoryReceiptReader, RepositoryStatus, RetryPolicy, SessionDirection, SnapshotReader,
-    MAX_VOTE_PAGE,
+    MAX_REPOSITORIES_PER_RECONCILE, MAX_VOTE_PAGE,
 };

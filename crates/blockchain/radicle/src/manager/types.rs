@@ -306,13 +306,24 @@ pub enum ManagerPhase {
 
 pub use crate::errors::{ManagerError, PhaseError};
 
+/// Maximum repositories seeded and probed in a single reconcile pass.
+///
+/// Bounds per-pass sidecar round trips (at most 16 `seed` and 16 `available`
+/// calls) independent of how many repositories are registered on chain, while
+/// rotating through the full registry across passes. Overrun repair ticks are
+/// skipped by `PRODUCTION_REPAIR_INTERVAL`'s `MissedTickBehavior::Skip`.
+pub const MAX_REPOSITORIES_PER_RECONCILE: usize = 16;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ManagerStatus {
     pub phase: ManagerPhase,
     pub phase_error: Option<PhaseError>,
     pub last_seen_finalized: Option<FinalizedBlock>,
+    /// Finalized block for which desired peer sessions and the current pass's
+    /// repository window converged.
     pub last_converged_finalized: Option<FinalizedBlock>,
     pub desired_repository_count: usize,
+    pub observed_repository_count: usize,
     pub available_repository_count: usize,
     pub pending_repository_count: usize,
     pub resolved_peer_count: usize,

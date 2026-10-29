@@ -157,13 +157,21 @@ impl RadicleStatusPublisher {
             });
             state.evidence_height = Some(snapshot.block.number);
             state.evidence_validators.clone_from(&snapshot.validators);
+            let previous: std::collections::BTreeMap<RepoId, RadicleRepositoryState> = state
+                .repositories
+                .iter()
+                .map(|entry| (entry.repo_id, entry.state))
+                .collect();
             state.repositories = snapshot
                 .repositories
                 .iter()
                 .copied()
                 .map(|repo_id| RadicleRepositorySnapshot {
                     repo_id,
-                    state: RadicleRepositoryState::Pending,
+                    state: previous
+                        .get(&repo_id)
+                        .copied()
+                        .unwrap_or(RadicleRepositoryState::Pending),
                 })
                 .collect();
             state.repositories.sort_by_key(|entry| entry.repo_id);
