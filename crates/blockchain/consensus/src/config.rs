@@ -122,6 +122,18 @@ pub const PROPOSE_RESOLUTION_TIMEOUT: Duration = DEFAULT_PEER_RESPONSE_TIMEOUT;
 /// starts a new cycle. It does not return a fatal error.
 pub const FINALIZE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Number of full marshal-resolution retry cycles before escalating to a
+/// suspected local-divergence alarm.
+pub const FINALIZE_DIVERGENCE_ALARM_CYCLES: u32 = 5;
+
+/// Elapsed stall duration threshold after which repeated marshal resolution
+/// failures escalate to a suspected local-divergence alarm (5 full timeout
+/// retry cycles = 290s).
+pub const STALL_DIVERGENCE_ALARM: Duration = FINALIZE_RESOLUTION_TIMEOUT
+    .saturating_mul(FINALIZE_MAX_RETRIES)
+    .saturating_add(FINALIZE_RETRY_DELAY.saturating_mul(FINALIZE_MAX_RETRIES.saturating_sub(1)))
+    .saturating_mul(FINALIZE_DIVERGENCE_ALARM_CYCLES);
+
 // ---------------------------------------------------------------------------
 // Marshal storage constants used by Outbe production nodes
 // ---------------------------------------------------------------------------

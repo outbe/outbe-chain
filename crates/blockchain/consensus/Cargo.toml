@@ -71,6 +71,7 @@ parking_lot.workspace = true
 tracing.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }

@@ -78,7 +78,7 @@ impl CeremonyState {
         // Old share holders are dealers in a reshare. New validators are
         // players only until they receive a fresh threshold share.
         let (dealer, my_pub_msg, priv_msgs) = if is_local_dealer {
-            let dealer_seed = dealer_retry_snapshot
+            let dealer_seed = *dealer_retry_snapshot
                 .as_ref()
                 .ok_or(DkgError::LocalDealerRetrySnapshotNotInitialized)?
                 .seed;
