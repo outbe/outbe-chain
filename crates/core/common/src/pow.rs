@@ -11,8 +11,15 @@
 use alloy_primitives::{Address, U256};
 use ring::digest::{digest, SHA256};
 
-/// PoW difficulty: number of leading zero bytes required in the SHA256 hash.
-/// Identical across all entity factories.
+/// PoW difficulty: leading zero bytes required in the SHA-256 work hash.
+/// Identical across all entity factories; Intex builds its own preimage and
+/// reuses [`meets_difficulty`].
+///
+/// Two zero bytes target an expected `2^16 = 65_536` SHA-256 candidate hashes
+/// per solution (assuming a uniform digest), acting as an anti-spam work gate
+/// rather than a fixed latency. Nod and Gem rights are mined once
+/// ([`SINGLE_MINING_SEQUENCE`]), and sponsored zero-fee factory calls are
+/// separately bounded per block by `outbe_zerofee::SPONSORED_GAS_PER_BLOCK`.
 pub const POW_DIFFICULTY: u8 = 2;
 
 /// Mining sequence for a right that is mined once (Nod and Gem).

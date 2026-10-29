@@ -143,7 +143,7 @@ impl Storable for u64 {
     const BYTES: usize = 8;
 
     fn from_word(word: U256) -> Self {
-        word.to::<u64>()
+        word.saturating_to::<u64>()
     }
     fn to_word(&self) -> U256 {
         U256::from(*self)
@@ -158,7 +158,7 @@ impl Storable for u32 {
     const BYTES: usize = 4;
 
     fn from_word(word: U256) -> Self {
-        word.to::<u32>()
+        word.saturating_to::<u32>()
     }
     fn to_word(&self) -> U256 {
         U256::from(*self)
@@ -173,7 +173,7 @@ impl Storable for u16 {
     const BYTES: usize = 2;
 
     fn from_word(word: U256) -> Self {
-        word.to::<u16>()
+        word.saturating_to::<u16>()
     }
     fn to_word(&self) -> U256 {
         U256::from(*self)
@@ -207,7 +207,7 @@ impl Storable for u8 {
     const BYTES: usize = 1;
 
     fn from_word(word: U256) -> Self {
-        word.to::<u8>()
+        word.saturating_to::<u8>()
     }
     fn to_word(&self) -> U256 {
         U256::from(*self)
@@ -297,4 +297,42 @@ use crate::address_pair::AddressPair;
 /// the `Mapping<K, AddressPair>` accessors instead.
 impl StorableType for AddressPair {
     const SLOTS: usize = 2;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn storable_in_range_roundtrip() {
+        for v in [0u64, 1, u64::MAX] {
+            assert_eq!(u64::from_word(v.to_word()), v);
+        }
+        for v in [0u32, 1, u32::MAX] {
+            assert_eq!(u32::from_word(v.to_word()), v);
+        }
+        for v in [0u16, 1, u16::MAX] {
+            assert_eq!(u16::from_word(v.to_word()), v);
+        }
+        for v in [0u8, 1, u8::MAX] {
+            assert_eq!(u8::from_word(v.to_word()), v);
+        }
+    }
+
+    #[test]
+    fn storable_narrowing_decodes_do_not_panic() {
+        // Out-of-range words saturate to T::MAX (saturating_to rather than wrapping_to).
+        for word in [U256::from(u64::MAX) + U256::ONE, U256::MAX] {
+            assert_eq!(u64::from_word(word), u64::MAX);
+        }
+        for word in [U256::from(u32::MAX) + U256::ONE, U256::MAX] {
+            assert_eq!(u32::from_word(word), u32::MAX);
+        }
+        for word in [U256::from(u16::MAX) + U256::ONE, U256::MAX] {
+            assert_eq!(u16::from_word(word), u16::MAX);
+        }
+        for word in [U256::from(u8::MAX) + U256::ONE, U256::MAX] {
+            assert_eq!(u8::from_word(word), u8::MAX);
+        }
+    }
 }
