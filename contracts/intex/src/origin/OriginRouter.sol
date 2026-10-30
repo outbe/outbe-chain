@@ -472,7 +472,7 @@ contract OriginRouter is
         // A day whose intake has closed (cleared on the fan-in timeout, or cancelled) would have
         // every chunk of the next round ignored on arrival. So the round is not worth paying for.
         IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(emissionDay);
-        if (stage != IDesis.AuctionStage.Revealing && stage != IDesis.AuctionStage.Clearing) {
+        if (stage != IDesis.AuctionStage.RevealingBids && stage != IDesis.AuctionStage.CollectingBids) {
             emit InboundMessageIgnored(
                 srcChainId,
                 BridgeMsgCodec.MSG_BIDS_REMAINING,

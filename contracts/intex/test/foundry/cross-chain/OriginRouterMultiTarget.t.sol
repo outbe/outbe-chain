@@ -227,7 +227,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     ///      acknowledges the report instead.
     function test_inbound_bidsRemaining_ignoreClosedDay() public {
         _fireStart(DAY);
-        MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Cleared);
+        MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Completed);
         bytes32 key = bytes32((uint256(DAY) << 32) | TARGET_A);
         bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
 

@@ -5,20 +5,21 @@ use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::time::EmissionDate;
 
-/// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
-/// commit window, `Revealing` for the reveal window, `Clearing` while the
-/// fan-in aggregates bids, then terminal `Cleared` / `Cancelled`.
+/// Auction lifecycle stage, in order: a day is `Briefed`, takes commits in `CommittingBids`,
+/// reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`. It ends
+/// `Completed`, `Cancelled` (it could not start) or `Failed` (it started and found no result).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
     #[default]
     None = 0,
     Briefed = 1,
-    Started = 2,
-    Revealing = 3,
-    Clearing = 4,
-    Cleared = 5,
+    CommittingBids = 2,
+    RevealingBids = 3,
+    CollectingBids = 4,
+    Completed = 5,
     Cancelled = 6,
+    Failed = 7,
 }
 
 impl AuctionStage {
@@ -26,11 +27,12 @@ impl AuctionStage {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Briefed),
-            2 => Ok(Self::Started),
-            3 => Ok(Self::Revealing),
-            4 => Ok(Self::Clearing),
-            5 => Ok(Self::Cleared),
+            2 => Ok(Self::CommittingBids),
+            3 => Ok(Self::RevealingBids),
+            4 => Ok(Self::CollectingBids),
+            5 => Ok(Self::Completed),
             6 => Ok(Self::Cancelled),
+            7 => Ok(Self::Failed),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }

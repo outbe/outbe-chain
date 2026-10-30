@@ -112,6 +112,7 @@ fn auction_clears(world: &mut World) {
         }
         flush_parked_bid_relays(world, emission_day);
         assert_ne!(stage, Some(6), "Desis cancelled day {emission_day}");
+        assert_ne!(stage, Some(7), "Desis failed day {emission_day}");
         assert!(
             Instant::now() < deadline,
             "day {emission_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}; {}; {}; {}; {}; {}",

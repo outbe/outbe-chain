@@ -10,11 +10,12 @@ interface IDesis {
     enum AuctionStage {
         None,
         Briefed,
-        Started,
-        Revealing,
-        Clearing,
-        Cleared,
-        Cancelled
+        CommittingBids,
+        RevealingBids,
+        CollectingBids,
+        Completed,
+        Cancelled,
+        Failed
     }
 
     function processBidsBatch(

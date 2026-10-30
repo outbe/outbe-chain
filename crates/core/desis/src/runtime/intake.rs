@@ -1,13 +1,15 @@
 use super::*;
 
-/// - `Open` while `Revealing`/`Clearing`.
-/// - `Closed` past clearing, and `UnknownDay` for an unbriefed day. Both are acknowledged, since
-///   nothing can make them applicable.
+/// - `Open` while `RevealingBids`/`CollectingBids`.
+/// - `Closed` once the day ended, and `UnknownDay` for an unbriefed day. Both are acknowledged,
+///   since nothing can make them applicable.
 /// - `Err` before reveal, so the transport redelivers.
 fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
-        AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
-        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(Intake::Closed),
+        AuctionStage::RevealingBids | AuctionStage::CollectingBids => Ok(Intake::Open),
+        AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
+            Ok(Intake::Closed)
+        }
         AuctionStage::None => Ok(Intake::UnknownDay),
         _ => Err(DesisError::InvalidStageTransition.into()),
     }
@@ -50,7 +52,7 @@ fn emit_inbound_ignored(
     })
 }
 
-/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`.
+/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `RevealingBids`.
 /// Batches may arrive in any order over the unordered bridge, so a per-chain bitmap of
 /// `batch_index` tracks completeness. The chain finalizes once its BIDS_DONE marker and every batch
 /// have arrived (see `try_finalize_chain`). The first batch fixes the chain's `total_batches` and

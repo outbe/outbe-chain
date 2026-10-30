@@ -146,13 +146,13 @@ fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
             U256::from(LIMIT)
         );
         if terminal {
-            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Cleared);
+            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Completed);
             assert_eq!(issued, sold);
             assert_eq!(pending, U256::ZERO);
             assert_eq!(returned, U256::from(LIMIT - u128::from(sold) * LOAD));
             assert_eq!(day.gate_active_count.read().unwrap(), 0);
         } else {
-            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Clearing);
+            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::CollectingBids);
             assert_eq!(pending, U256::from(LIMIT));
             assert_eq!(returned, U256::ZERO);
             assert_eq!(issued, 0);

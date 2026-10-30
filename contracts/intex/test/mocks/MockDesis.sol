@@ -37,7 +37,7 @@ contract MockDesis {
     ) external {}
 
     /// @dev Open for intake by default, so a day under relay behaves as the common case.
-    IDesis.AuctionStage private _stage = IDesis.AuctionStage.Revealing;
+    IDesis.AuctionStage private _stage = IDesis.AuctionStage.RevealingBids;
 
     function setAuctionStage(IDesis.AuctionStage stage) external {
         _stage = stage;

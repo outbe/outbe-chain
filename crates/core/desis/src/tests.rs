@@ -712,7 +712,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         let before = storage.contract::<DesisContract>();
         assert_eq!(
             before.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Started
+            AuctionStage::CommittingBids
         );
         let config = before.read_auction_config(EMISSION_DAY).unwrap();
         let anchor = before.auction_at.read(&EMISSION_DAY).unwrap();
@@ -730,7 +730,7 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         let after = storage.contract::<DesisContract>();
         assert_eq!(
             after.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Started
+            AuctionStage::CommittingBids
         );
         assert_eq!(
             after.pending_desis_limit_minor.read(&EMISSION_DAY).unwrap(),
@@ -1047,7 +1047,7 @@ fn a_late_brief_keeps_its_emission_day_anchor_and_prices() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Started
+            AuctionStage::CommittingBids
         );
         assert_eq!(
             u64::from(contract.auction_at.read(&EMISSION_DAY).unwrap()),
@@ -1085,7 +1085,7 @@ fn a_start_with_the_minimum_commit_window_opens() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Started
+            AuctionStage::CommittingBids
         );
     });
 }
@@ -1196,7 +1196,7 @@ fn a_late_native_brief_cancels_its_day() {
 }
 
 /// A day that never started is still a late start past its whole issuance window, so
-/// its targets hear of it. Only a started day is retired as overdue.
+/// its targets hear of it. Only a started day can fail.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_brief_past_the_issuance_window_is_still_a_late_start() {
@@ -1207,15 +1207,15 @@ fn a_brief_past_the_issuance_window_is_still_a_late_start() {
     );
 }
 
-/// Past its issuance window, a day whose START the router still refuses is retired as
-/// overdue. Its limit therefore does not wait on the router forever.
+/// Past its issuance window, a day whose START the router still refuses is cancelled with
+/// no message. Its limit therefore does not wait on the router forever.
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_briefed_day_the_router_never_takes_is_retired_past_its_issuance_window() {
+fn a_briefed_day_the_router_never_takes_is_cancelled_past_its_issuance_window() {
     let outcome = start_at(ANCHOR + 3 * SECONDS_PER_DAY, false, native_brief_at_now);
     assert_eq!(
         outcome,
-        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), false)
+        (AuctionStage::Cancelled, U256::from(10 * LOAD_MINOR), true)
     );
 }
 
@@ -1275,7 +1275,7 @@ fn schedule_starts_a_brief_with_a_limit() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Started
+            AuctionStage::CommittingBids
         );
         let cfg = contract.read_auction_config(EMISSION_DAY).unwrap();
         assert_eq!(
@@ -1295,7 +1295,7 @@ fn schedule_flips_to_revealing_at_commit_end() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Revealing
+            AuctionStage::RevealingBids
         );
         assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 0);
     });
@@ -1311,7 +1311,7 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Clearing
+            AuctionStage::CollectingBids
         );
         assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 1);
         assert_eq!(
@@ -1338,7 +1338,7 @@ fn schedule_catches_up_over_missed_ticks() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Clearing
+            AuctionStage::CollectingBids
         );
         assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 1);
     });
@@ -1378,8 +1378,15 @@ fn schedule_cancels_a_missed_start() {
     });
 }
 
+/// The day's last clearing time: the Intex issuance window's end less the delivery margin.
+const LAST_CLEARING: u64 = ANCHOR
+    + crate::constants::COMMIT_WINDOW_SECONDS
+    + crate::constants::REVEAL_WINDOW_SECONDS
+    + crate::constants::INTEX_ISSUANCE_WINDOW_SECONDS
+    - crate::constants::RESULT_DELIVERY_MARGIN_SECONDS;
+
 #[test]
-fn schedule_retires_an_overdue_day() {
+fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_message() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
 
@@ -1391,11 +1398,25 @@ fn schedule_retires_an_overdue_day() {
         Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {
-        use outbe_promislimit::PromisLimitContract;
         brief(&s, true);
         runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
+        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::CollectingBids
+        );
+    });
+    let sends_before = storage.sub_call_inputs().len();
+    StorageHandle::enter(&mut storage, |s| {
+        use outbe_promislimit::PromisLimitContract;
+        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
         let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::Failed
+        );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
         assert_eq!(
@@ -1403,12 +1424,40 @@ fn schedule_retires_an_overdue_day() {
             U256::from(10 * LOAD_MINOR)
         );
     });
-    let overdue_sig = IDesis::AuctionOverdue::SIGNATURE_HASH;
-    let found = storage
+    assert_eq!(
+        storage.sub_call_inputs().len(),
+        sends_before,
+        "a failed day sends nothing to the other chains"
+    );
+    let failed = storage
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
         .iter()
-        .any(|log| log.topics().first() == Some(&overdue_sig));
-    assert!(found, "expected AuctionOverdue event");
+        .find_map(|log| IDesis::AuctionFailed::decode_log_data(log).ok())
+        .expect("AuctionFailed");
+    assert_eq!(failed.emissionDay, EMISSION_DAY.value());
+    assert_eq!(failed.stage, AuctionStage::CollectingBids as u8);
+}
+
+#[test]
+fn the_gate_does_not_clear_past_the_last_clearing_time() {
+    with_storage(|s| {
+        open_clearing(&s, 100);
+        relay_bids(&s, SRC_CHAIN, 100, 200);
+        assert!(runtime::force_clear(s.clone(), EMISSION_DAY, LAST_CLEARING)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::CollectingBids
+        );
+        assert!(
+            runtime::force_clear(s.clone(), EMISSION_DAY, LAST_CLEARING - 1)
+                .unwrap()
+                .is_some()
+        );
+    });
 }
 
 /// One decade up the rate ladder, the same PROMIS buys ten times the Intexes. The
@@ -1594,7 +1643,7 @@ fn process_bids_accumulate_across_batches() {
         assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 5);
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Revealing
+            AuctionStage::RevealingBids
         );
         // No marker yet, so the chain is not done.
         assert!(
@@ -1741,7 +1790,7 @@ fn no_bids_clears_as_no_sale() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Cleared
+            AuctionStage::Completed
         );
     });
 }
@@ -1794,7 +1843,7 @@ fn clearing_transitions_to_cleared() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Cleared
+            AuctionStage::Completed
         );
         // The gate is released once the day clears.
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
@@ -1837,6 +1886,41 @@ fn below_one_unit(
         .find_map(|log| AuctionCancelledBelowOneUnit::decode_log_data(log).ok())
 }
 
+/// A day whose start steps the load still keeps the step when the new load cancels it, and its
+/// "below one unit" check measures against the load after the step.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn the_load_steps_on_a_day_the_new_load_cancels() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    StorageHandle::enter(&mut storage, |s| {
+        brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        // COEN a decade cheaper: ten times the PROMIS per Intex, more than the day's limit holds.
+        brief_at_rate_from(
+            &s,
+            RateBrief {
+                emission_day: NEXT_EMISSION_DAY,
+                desis_limit_minor: 5 * LOAD_MINOR,
+                rate: ENTRY_PRICE / 10,
+                has_limit: true,
+            },
+        );
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(NEXT_EMISSION_DAY).unwrap(),
+            AuctionStage::Cancelled
+        );
+        assert_eq!(contract.promis_load_exponent.read().unwrap(), 13);
+    });
+    let events = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let cancelled = below_one_unit(events).expect("AuctionCancelledBelowOneUnit");
+    assert_eq!(cancelled.emissionDay, NEXT_EMISSION_DAY.value());
+    assert_eq!(cancelled.promisLoadMinor, 10 * LOAD_MINOR);
+}
+
 #[test]
 fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     let (stage, unallocated, events) = start_day(LOAD_MINOR - 1, true);
@@ -1872,7 +1956,7 @@ fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
 }
 
 #[test]
-fn an_overdue_day_records_a_zero_desis_allocation() {
+fn a_failed_day_records_a_zero_desis_allocation() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
@@ -2198,7 +2282,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Clearing
+            AuctionStage::CollectingBids
         );
 
         // Chain B reports -> the gate opens and the tick clears.
@@ -2221,7 +2305,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Cleared
+            AuctionStage::Completed
         );
     });
 }
@@ -2307,7 +2391,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
             .read_stage(EMISSION_DAY)
             .unwrap()
     });
-    assert_eq!(cleared, AuctionStage::Cleared);
+    assert_eq!(cleared, AuctionStage::Completed);
 
     // The missing chain is reported skipped.
     let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
@@ -2356,7 +2440,7 @@ fn tick_gate_clears_ready_day() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::Cleared
+            AuctionStage::Completed
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
     });

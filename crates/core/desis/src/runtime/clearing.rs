@@ -3,12 +3,16 @@ use super::*;
 
 /// Tick entry for the fan-in gate: clear once every snapshot chain has finalized,
 /// or once the deadline passes (missing chains are excluded and reported via
-/// `ChainSkipped`). Returns `None` while the gate is not ready.
+/// `ChainSkipped`). Returns `None` while the gate is not ready, and past the day's
+/// last clearing time, which leaves the day to fail.
 pub fn force_clear(
     storage: StorageHandle<'_>,
     emission_day: EmissionDate,
     now: u64,
 ) -> Result<Option<ClearingResult>> {
+    if now >= super::schedule::last_clearing(&storage.contract::<DesisContract>(), emission_day)? {
+        return Ok(None);
+    }
     let snapshot = fetch_targets(&storage, emission_day)?;
     let (included, skipped) = {
         let contract = storage.contract::<DesisContract>();
@@ -119,7 +123,7 @@ fn partition_chains(
 
 /// Clear the day:
 /// - Run the clearing algorithm over the included chains' bids.
-/// - Transition to `Cleared`.
+/// - Transition to `Completed`.
 /// - Hand issuance to IntexFactory.
 /// - Return the unused limit to PromisLimit.
 /// - Send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
@@ -131,7 +135,7 @@ fn clear_inner(
     skipped: &[u32],
 ) -> Result<ClearingResult> {
     let mut contract = storage.contract::<DesisContract>();
-    require_stage(&contract, emission_day, AuctionStage::Clearing)?;
+    require_stage(&contract, emission_day, AuctionStage::CollectingBids)?;
 
     let desis_limit_units = contract.pending_desis_limit_units.read(&emission_day)?;
     if contract.clearing_initiated.read(&emission_day)? == 0 {
@@ -151,7 +155,7 @@ fn clear_inner(
     let result = calculate_clearing(&sorted, &config, desis_limit_units, min_bid_qty);
 
     // Persist clearing outcome and transition.
-    contract.write_stage(emission_day, AuctionStage::Cleared)?;
+    contract.write_stage(emission_day, AuctionStage::Completed)?;
     contract.write_last_cleared_emission_day(emission_day)?;
     contract.write_last_clearing_issued_count(result.issued_units)?;
 

@@ -32,8 +32,8 @@ pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()>
     Ok(())
 }
 
-/// Walk one day's schedule: start at the anchor, flip to Revealing at commit
-/// end, arm the clearing gate at reveal end, retire overdue and terminal days.
+/// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
+/// the bids at reveal end, and end a day that found no result by its last clearing time.
 fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     loop {
         let mut contract = storage.contract::<DesisContract>();
@@ -49,30 +49,16 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
         };
         #[cfg(not(feature = "e2e-test"))]
         let anchor = stored_anchor;
-        let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
-        let reveal_end = commit_end.saturating_add(REVEAL_WINDOW_SECONDS);
-        let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
-        let windows = Windows {
-            commit_end,
-            reveal_end,
-            issuance_end,
-        };
+        let windows = Windows::from_anchor(anchor);
         match stage {
-            AuctionStage::Cleared | AuctionStage::Cancelled => {
+            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
                 return contract.remove_sched_active(emission_day);
             }
-            _ if now >= issuance_end => {
-                // A day that never started is sent as a late start while the router accepts it.
-                let started_late = stage == AuctionStage::Briefed
-                    && storage
-                        .with_checkpoint(|| {
-                            start_auction(storage, &mut contract, emission_day, windows, now)
-                        })
-                        .is_ok();
-                return if started_late {
-                    Ok(())
+            _ if windows.unfinished_past_deadline(stage, now) => {
+                return if stage == AuctionStage::Briefed {
+                    end_unstarted(storage, &mut contract, emission_day, windows, now)
                 } else {
-                    retire_overdue(storage, &mut contract, emission_day)
+                    fail_auction(storage, &mut contract, emission_day, stage)
                 };
             }
             AuctionStage::Briefed if now >= anchor => {
@@ -85,10 +71,10 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
                     return Ok(());
                 }
             }
-            AuctionStage::Started if now >= commit_end => {
-                contract.write_stage(emission_day, AuctionStage::Revealing)?;
+            AuctionStage::CommittingBids if now >= windows.commit_end => {
+                contract.write_stage(emission_day, AuctionStage::RevealingBids)?;
             }
-            AuctionStage::Revealing if now >= reveal_end => {
+            AuctionStage::RevealingBids if now >= windows.reveal_end => {
                 return arm_clearing(storage, emission_day, now);
             }
             _ => return Ok(()),
@@ -96,18 +82,68 @@ fn advance_day(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64
     }
 }
 
-fn retire_overdue(
+/// A day that never started, out of time: it is sent as a late start while the router accepts
+/// it, and is cancelled otherwise.
+fn end_unstarted(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    emission_day: EmissionDate,
+    windows: Windows,
+    now: u64,
+) -> Result<()> {
+    let started_late = storage
+        .with_checkpoint(|| start_auction(storage, contract, emission_day, windows, now))
+        .is_ok();
+    if started_late {
+        Ok(())
+    } else {
+        cancel_unstarted(storage, contract, emission_day)
+    }
+}
+
+/// A day whose START no chain ever took. It never ran, so it is cancelled with no message.
+fn cancel_unstarted(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
 ) -> Result<()> {
-    contract.emit(IDesis::AuctionOverdue {
+    contract.emit(IDesis::AuctionCancelledLateStart {
         emissionDay: emission_day.into(),
     })?;
     refund_unused_desis_limit(storage, contract, emission_day)?;
-    contract.remove_gate_active(emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Cancelled)?;
     contract.remove_sched_active(emission_day)
+}
+
+/// A started day with no result by its last clearing time. Nothing goes to the other chains:
+/// they read the day as failed from its own schedule, and the refund time limit returns the bids.
+fn fail_auction(
+    storage: &StorageHandle<'_>,
+    contract: &mut DesisContract<'_>,
+    emission_day: EmissionDate,
+    stage: AuctionStage,
+) -> Result<()> {
+    contract.emit(IDesis::AuctionFailed {
+        emissionDay: emission_day.into(),
+        stage: stage as u8,
+    })?;
+    contract.remove_gate_active(emission_day)?;
+    contract.clearing_initiated.write(&emission_day, 0u8)?;
+    contract.pending_desis_limit_units.write(&emission_day, 0)?;
+    contract.clearing_deadline.clear(&emission_day)?;
+    refund_unused_desis_limit(storage, contract, emission_day)?;
+    contract.write_stage(emission_day, AuctionStage::Failed)?;
+    contract.remove_sched_active(emission_day)
+}
+
+/// The last moment a started day may still clear: early enough that its result reaches every
+/// chain before the day ends there.
+pub(super) fn last_clearing(
+    contract: &DesisContract<'_>,
+    emission_day: EmissionDate,
+) -> Result<u64> {
+    let anchor = u64::from(contract.auction_at.read(&emission_day)?);
+    Ok(Windows::from_anchor(anchor).last_clearing)
 }
 
 /// u32 wire timestamp (bounded until 2106).
@@ -115,16 +151,43 @@ fn ts32(ts: u64) -> Result<u32> {
     u32::try_from(ts).map_err(|_| DesisError::ScheduleTimestampExceedsU32.into())
 }
 
-/// The ends of a day's commit, reveal and issuance windows.
+/// The ends of a day's commit, reveal and issuance windows, and its last clearing time.
 #[derive(Clone, Copy)]
 struct Windows {
     commit_end: u64,
     reveal_end: u64,
     issuance_end: u64,
+    last_clearing: u64,
+}
+
+impl Windows {
+    /// Whether the day is out of time: unstarted past its issuance window, or started and past
+    /// its last clearing time.
+    fn unfinished_past_deadline(&self, stage: AuctionStage, now: u64) -> bool {
+        match stage {
+            AuctionStage::Briefed => now >= self.issuance_end,
+            AuctionStage::CommittingBids
+            | AuctionStage::RevealingBids
+            | AuctionStage::CollectingBids => now >= self.last_clearing,
+            _ => false,
+        }
+    }
+
+    fn from_anchor(anchor: u64) -> Self {
+        let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
+        let reveal_end = commit_end.saturating_add(REVEAL_WINDOW_SECONDS);
+        let issuance_end = reveal_end.saturating_add(INTEX_ISSUANCE_WINDOW_SECONDS);
+        Self {
+            commit_end,
+            reveal_end,
+            issuance_end,
+            last_clearing: issuance_end.saturating_sub(RESULT_DELIVERY_MARGIN_SECONDS),
+        }
+    }
 }
 
 enum StartOutcome {
-    /// Auction started. The schedule loop continues from `Started`.
+    /// Auction started. The schedule loop continues from `CommittingBids`.
     Started,
     /// Day was cancelled and retired. The schedule loop stops.
     Retired,
@@ -143,6 +206,7 @@ fn start_auction(
         commit_end,
         reveal_end,
         issuance_end,
+        ..
     } = windows;
     let rows: Vec<ReferenceCurrencyPrice> = outbe_oracle::api::priced_reference_currencies_of_day(
         storage.clone(),
@@ -205,7 +269,7 @@ fn start_auction(
         return Ok(StartOutcome::Retired);
     }
     send_stage_start(storage, start, DAY_STATE_LIVE)?;
-    contract.write_stage(emission_day, AuctionStage::Started)?;
+    contract.write_stage(emission_day, AuctionStage::CommittingBids)?;
     contract.emit(IDesis::AuctionCreated {
         emissionDay: emission_day.into(),
     })?;
@@ -261,7 +325,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
         .clearing_deadline
         .write(&emission_day, now.saturating_add(BIDS_FANIN_TIMEOUT_SECS))?;
     contract.push_gate_active(emission_day)?;
-    contract.write_stage(emission_day, AuctionStage::Clearing)?;
+    contract.write_stage(emission_day, AuctionStage::CollectingBids)?;
 
     // Per chain, each in its own checkpoint. A chain whose send fails takes neither the day's
     // arming nor the other chains' rounds with it. The fan-in deadline covers the one left behind.

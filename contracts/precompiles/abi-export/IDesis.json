@@ -330,13 +330,19 @@
   },
   {
     "type": "event",
-    "name": "AuctionOverdue",
+    "name": "AuctionFailed",
     "inputs": [
       {
         "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      },
+      {
+        "name": "stage",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false

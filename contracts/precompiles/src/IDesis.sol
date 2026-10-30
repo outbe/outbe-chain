@@ -31,11 +31,12 @@ interface IDesis {
     enum AuctionStage {
         None,
         Briefed,
-        Started,
-        Revealing,
-        Clearing,
-        Cleared,
-        Cancelled
+        CommittingBids,
+        RevealingBids,
+        CollectingBids,
+        Completed,
+        Cancelled,
+        Failed
     }
 
     // --- Bid ingestion (from OriginRouter) ---
@@ -76,7 +77,7 @@ interface IDesis {
     event ChainSkipped(uint32 indexed emissionDay, uint32 indexed srcChainId);
     /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared
     /// InboundReason codes:
-    /// - 2 = obsolete (the day already cleared or was cancelled).
+    /// - 2 = obsolete (the day already ended: completed, cancelled or failed).
     /// - 3 = conflicting BIDS_DONE marker.
     /// - 4 = day not found (never briefed here).
     event InboundIgnored(uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason);
@@ -92,7 +93,10 @@ interface IDesis {
     /// @notice The day was cancelled because its auction would start with less than the minimum
     ///         commit window.
     event AuctionCancelledLateStart(uint32 indexed emissionDay);
-    event AuctionOverdue(uint32 indexed emissionDay);
+    /// @notice The day started but found no result by its last clearing time. `stage` is the
+    ///         stage it was in, which tells how far it got. Its unused Desis Limit returned to
+    ///         PromisLimit. The other chains read the day as failed from its schedule.
+    event AuctionFailed(uint32 indexed emissionDay, uint8 stage);
     event AuctionCleared(uint32 indexed emissionDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed emissionDay, uint64 totalDemand);
     /// @notice The day put `desisAllocationMinor` of its `desisLimitMinor` into issued Intex.

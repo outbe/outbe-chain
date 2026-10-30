@@ -14,18 +14,18 @@ pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
 pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
 
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
-/// BIDS_DONE within this window after the clearing stage starts. A repair window
+/// BIDS_DONE within this window after the collection stage starts. A repair window
 /// for parked legs. It must stay under 24h so the deadline clear lands on the
 /// same UTC day as the dispatch.
-pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 12 * 3600;
+pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 
-/// Midnight-anchored schedule: the commit, reveal and settlement windows each span one day.
+/// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.
 #[cfg(not(feature = "e2e-test"))]
 pub const COMMIT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(not(feature = "e2e-test"))]
 pub const REVEAL_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(not(feature = "e2e-test"))]
-pub const SETTLEMENT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
+pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 
 /// An e2e run walks the same stages inside one day, so its windows have to fit
 /// there: a day-long window would carry the auction over a midnight the run
@@ -35,7 +35,14 @@ pub const COMMIT_WINDOW_SECONDS: u64 = 900;
 #[cfg(feature = "e2e-test")]
 pub const REVEAL_WINDOW_SECONDS: u64 = 1800;
 #[cfg(feature = "e2e-test")]
-pub const SETTLEMENT_WINDOW_SECONDS: u64 = 1800;
+pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = 1800;
+
+/// Desis clears no later than this before the end of the Intex issuance window, so a result
+/// sent at the last moment still reaches every chain before the day ends there.
+#[cfg(not(feature = "e2e-test"))]
+pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 8 * 3600;
+#[cfg(feature = "e2e-test")]
+pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 600;
 
 /// An auction that would start with less commit window than this is cancelled.
 #[cfg(not(feature = "e2e-test"))]

@@ -127,6 +127,7 @@ pub(crate) fn desis_stage(url: &str, emission_day: u32) -> String {
         Some(1) => "Desis holds the brief but never started the auction".to_owned(),
         Some(2) => "Desis started it, so the message never reached the venue".to_owned(),
         Some(6) => "Desis cancelled the day".to_owned(),
+        Some(7) => "Desis failed the day: no result by its last clearing time".to_owned(),
         Some(other) => format!("Desis stage {other}"),
         None => "Desis did not answer".to_owned(),
     }
