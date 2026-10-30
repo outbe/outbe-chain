@@ -85,6 +85,28 @@ pub fn record_finalization_divergence_cleared() {
     gauge!("outbe_finalization_divergence_suspected").set(0.0);
 }
 
+/// Count a committee-snapshot build failure on the finalization path.
+///
+/// The actor skips the finalization-slot write and the late-finalize rekey.
+/// The validator stays up.
+pub fn record_finalization_snapshot_build_degraded() {
+    counter!("outbe_finalization_snapshot_build_degraded_total").increment(1);
+}
+
+/// Count an exhausted parent-cert store retry budget and latch the degraded gauge.
+///
+/// The gauge stays at `1.0` until [`record_finalization_persist_recovered`] runs
+/// for a cycle whose finalization write and both prunes succeeded.
+pub fn record_finalization_persist_degraded() {
+    counter!("outbe_finalization_persist_degraded_total").increment(1);
+    gauge!("outbe_finalization_persist_degraded").set(1.0);
+}
+
+/// Clear the parent-cert persist degraded gauge after a fully successful store cycle.
+pub fn record_finalization_persist_recovered() {
+    gauge!("outbe_finalization_persist_degraded").set(0.0);
+}
+
 /// Record a pre-finalization canonical-head reorg at the same height.
 ///
 /// This is expected on view timeout / leader rotation. A sustained non-zero rate
