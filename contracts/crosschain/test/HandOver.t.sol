@@ -48,10 +48,18 @@ contract HandOverTest is Test {
     }
 
     function test_GovernanceOwner_IsTheControllerOnOutbeAndItsAccountElsewhere() public {
+        address configuredOwner = vm.envOr("GOVERNANCE_OWNER", address(0));
+
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
-        assertEq(script.governanceOwner(), HYPERLANE_CONTROLLER, "Outbe");
+        assertEq(
+            script.governanceOwner(), configuredOwner == address(0) ? HYPERLANE_CONTROLLER : configuredOwner, "Outbe"
+        );
 
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
-        assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");
+        assertEq(
+            script.governanceOwner(),
+            configuredOwner == address(0) ? address(uint160(0x1CA)) : configuredOwner,
+            "other chain"
+        );
     }
 }
