@@ -1,5 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
-use outbe_intex::{SeriesId, SERIES_ID_LEN};
+use outbe_intex::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
@@ -155,14 +155,14 @@ impl GemFactoryContract<'_> {
     /// what tells two positions on the same series in one block apart.
     pub fn generate_position_id(
         merchant: Address,
-        source_series_id: SeriesId,
+        source_intex_id: U256,
         block_number: u64,
     ) -> U256 {
-        let mut buf = [0u8; 11 + 20 + SERIES_ID_LEN + 8];
+        let mut buf = [0u8; 11 + 20 + 32 + 8];
         buf[0..11].copy_from_slice(b"gemposition");
         buf[11..31].copy_from_slice(merchant.as_slice());
-        buf[31..31 + SERIES_ID_LEN].copy_from_slice(source_series_id.as_bytes());
-        buf[31 + SERIES_ID_LEN..].copy_from_slice(&block_number.to_be_bytes());
+        buf[31..63].copy_from_slice(&source_intex_id.to_be_bytes::<32>());
+        buf[63..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }

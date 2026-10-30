@@ -681,6 +681,7 @@ fn gem_cost_load(item: &GemItemState) -> U256 {
         called_at: _,
         settled_at: _,
         entry_price_minor: _,
+        series_id: _,
     } = item;
     *promis_load_minor
 }
@@ -746,7 +747,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
 
 #[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
-    let series = SeriesId::pack(7, *b"USD", b'U').unwrap();
+    let series = outbe_intex::intex_id(SeriesId::pack(7, *b"USD", b'U').unwrap());
     let block = 1u64;
     assert_ne!(
         GemFactoryContract::generate_position_id(ALICE, series, block),

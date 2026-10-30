@@ -1,7 +1,10 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_ADDRESS;
-use outbe_primitives::time::{first_full_day, timestamp_to_date_key, TimeError, WorldwideDay};
+use outbe_primitives::series_id::SeriesId;
+use outbe_primitives::time::{
+    first_full_day, previous_date_key, timestamp_to_date_key, TimeError, WorldwideDay,
+};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +64,9 @@ pub struct GemItemState {
     pub settled_at: u64,
     #[attribute(order = 9)]
     pub entry_price_minor: U256,
+    /// The UTC day before the issue, in the gem's currencies.
+    #[attribute(order = 10)]
+    pub series_id: SeriesId,
 }
 
 impl GemItemState {
@@ -333,20 +339,21 @@ pub struct GemContract {
 }
 
 impl GemContract<'_> {
-    /// `gem_id = keccak256("gem" || owner || amount_be || block_number_be || issuance_currency_be || reference_currency_be || total_supply_be)`.
-    /// `amount` is the gem's `promis_load_minor` (reward principal).
-    /// `total_supply` is the existing checked `u64` live count before insertion, not
-    /// lifetime issuance. Removal can permit collisions or reuse of deleted IDs.
-    pub fn generate_gem_id(params: &GemAddParams, block_number: u64, total_supply: u64) -> U256 {
-        let mut buf = [0u8; 3 + 20 + 32 + 8 + 2 + 2 + 8];
-        buf[0..3].copy_from_slice(b"gem");
-        buf[3..23].copy_from_slice(params.owner.as_slice());
-        buf[23..55].copy_from_slice(&params.promis_load_minor.to_be_bytes::<32>());
-        buf[55..63].copy_from_slice(&block_number.to_be_bytes());
-        buf[63..65].copy_from_slice(&params.issuance_currency.to_be_bytes());
-        buf[65..67].copy_from_slice(&params.reference_currency.to_be_bytes());
-        buf[67..75].copy_from_slice(&total_supply.to_be_bytes());
-        U256::from_be_bytes(keccak256(buf).0)
+    /// `keccak256(series_id || owner || block_number_be)`: one gem per owner, series and block.
+    pub fn generate_gem_id(series_id: SeriesId, owner: Address, block_number: u64) -> U256 {
+        series_id.right_id(&[owner.as_slice(), &block_number.to_be_bytes()])
+    }
+
+    /// The series of a gem issued at `issued_at`: the UTC day before it, in its currencies.
+    pub fn series_of(
+        issued_at: u64,
+        issuance_currency: u16,
+        reference_currency: u16,
+    ) -> outbe_primitives::error::Result<SeriesId> {
+        let day = previous_date_key(timestamp_to_date_key(issued_at))
+            .map_err(crate::errors::date_step_error)?;
+        SeriesId::for_pair(day, issuance_currency, reference_currency)
+            .map_err(|error| crate::errors::GemError::from(error).into())
     }
 }
 

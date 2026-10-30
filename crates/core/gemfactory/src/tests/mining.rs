@@ -113,11 +113,8 @@ fn statistics_track_mint_count() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let base = U256::from(1u64) * six_decimal_unit();
-        // `gem_id = keccak(owner || amount || block_number)`. Vary `load`
-        // per issue so the same (owner, block) pair does not collide.
-        for i in 0..3 {
-            let load = base + U256::from(i as u64);
-            issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
+        for owner in [ALICE, BOB, Address::repeat_byte(0x33)] {
+            issue_at_live_rate(storage, owner, base, 840, 840).unwrap();
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));

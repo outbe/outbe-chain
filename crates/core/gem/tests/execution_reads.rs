@@ -32,7 +32,13 @@ fn reverted_issuance_rolls_back_state_and_events() {
     let owner = Address::repeat_byte(0x66);
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
         let params = params(owner);
-        let expected = GemContract::generate_gem_id(&params, storage.block_number().unwrap(), 0);
+        let series = GemContract::series_of(
+            params.issued_at,
+            params.issuance_currency,
+            params.reference_currency,
+        )
+        .unwrap();
+        let expected = GemContract::generate_gem_id(series, owner, storage.block_number().unwrap());
         let outcome: Result<U256> = storage.with_checkpoint(|| {
             let gem_id = api::add_gem(&storage, params.clone())?;
             assert_eq!(gem_id, expected);

@@ -64,6 +64,15 @@ pub enum GemError {
 
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
+
+    #[error("gem currencies spell no series id")]
+    InvalidSeriesId,
+}
+
+impl From<outbe_primitives::series_id::InvalidSeriesId> for GemError {
+    fn from(_: outbe_primitives::series_id::InvalidSeriesId) -> Self {
+        Self::InvalidSeriesId
+    }
 }
 
 pub(crate) fn date_step_error(
@@ -141,6 +150,7 @@ impl From<GemError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
+            GemError::InvalidSeriesId => revert_with(I::InvalidSeriesId {}),
         }
     }
 }

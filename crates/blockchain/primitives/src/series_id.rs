@@ -21,7 +21,19 @@ pub struct InvalidSeriesId;
 
 /// Series identifier: `20260212-TRY-U`, or `20261102-EUR` plus two `0x00` bytes.
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
 
 impl SeriesId {

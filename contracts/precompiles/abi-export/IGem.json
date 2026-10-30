@@ -646,6 +646,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSeriesId",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonTransferable",
     "inputs": []
   },

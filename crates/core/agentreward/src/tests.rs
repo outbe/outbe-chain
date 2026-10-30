@@ -576,7 +576,7 @@ fn claiming_a_pool_issues_its_gem() {
 }
 
 #[test]
-fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
+fn same_block_claims_with_different_currencies_have_distinct_ids() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(500u64);
 
@@ -589,7 +589,7 @@ fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
             .unwrap();
 
         let mut ids = Vec::new();
-        for currencies in [(USD, USD), (EUR, USD), (USD, EUR), (USD, USD)] {
+        for currencies in [(USD, USD), (EUR, USD), (USD, EUR)] {
             let gem_id = contract
                 .claim_reward(RewardPool::Waa, alice, load, currencies)
                 .unwrap();
@@ -608,14 +608,23 @@ fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
             );
         }
 
-        assert_eq!(remaining, U256::ZERO);
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        let error = contract
+            .claim_reward(RewardPool::Waa, alice, load, (USD, USD))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
+                    &outbe_gem::precompile::IGem::AlreadyExists {}
+                ).as_slice()
+        ));
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
         assert_eq!(
             contract.pool_claimable_total(RewardPool::Waa).unwrap(),
-            U256::ZERO
+            remaining
         );
         let owned = outbe_gem::api::list_by_owner(&storage, alice).unwrap();
-        assert_eq!(owned.len(), 4);
+        assert_eq!(owned.len(), 3);
         for gem in owned {
             assert!(ids.contains(&gem.gem_id));
         }
@@ -624,7 +633,7 @@ fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
                 .total_supply
                 .read()
                 .unwrap(),
-            4
+            3
         );
     });
 }

@@ -109,16 +109,23 @@ fn same_block_issuances_with_different_currencies_have_distinct_ids() {
 }
 
 #[test]
-fn same_block_identical_issuances_have_distinct_ids() {
+fn a_second_gem_in_the_same_series_and_block_reverts() {
     with_storage(|storage| {
         let first = add(storage, sample_params(ALICE));
-        let second = add(storage, sample_params(ALICE));
-        assert_ne!(first, second);
-        let owned = owned(storage, ALICE);
-        assert_eq!(owned.len(), 2);
-        assert!(owned.contains(&first));
-        assert!(owned.contains(&second));
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 2);
+        let before = view(storage, first);
+        let mut second = sample_params(ALICE);
+        second.promis_load_minor = U256::from(2_000_000u64);
+        let error = crate::runtime::add_gem(storage, second).unwrap_err();
+        assert!(matches!(
+            error,
+            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
+                    &IGem::AlreadyExists {}
+                ).as_slice()
+        ));
+        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(owned(storage, ALICE), [first]);
+        assert_eq!(view(storage, first), before);
     });
 }
 
@@ -142,41 +149,29 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
 }
 
 #[test]
-fn removal_can_collide_with_a_surviving_same_block_issuance() {
-    with_storage(|storage| {
-        let first = add(storage, sample_params(ALICE));
-        let second = add(storage, sample_params(ALICE));
-        settle(storage, first);
-        burn_settled(storage, first);
-        let before = view(storage, second);
-        let error = crate::runtime::add_gem(storage, sample_params(ALICE)).unwrap_err();
-        assert!(matches!(
-            error,
-            outbe_primitives::error::PrecompileError::RevertBytes(bytes)
-                if bytes.as_ref() == alloy_sol_types::SolError::abi_encode(
-                    &IGem::AlreadyExists {}
-                ).as_slice()
-        ));
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
-        assert_eq!(owned(storage, ALICE), [second]);
-        assert!(item(storage, first).is_none());
-        assert_eq!(view(storage, second), before);
-    });
-}
-
-#[test]
-fn gem_id_derivation_binds_each_currency_and_live_supply() {
-    let derive = |issuance, reference, supply| {
-        let mut params = sample_params(ALICE);
-        params.issuance_currency = issuance;
-        params.reference_currency = reference;
-        GemContract::generate_gem_id(&params, 1, supply)
-    };
-    let baseline = derive(USD, USD, 0);
-    assert_eq!(baseline, derive(USD, USD, 0));
-    assert_ne!(baseline, derive(EUR, USD, 0));
-    assert_ne!(baseline, derive(USD, EUR, 0));
-    assert_ne!(baseline, derive(USD, USD, 1));
+fn gem_id_derivation_binds_the_series_owner_and_block() {
+    let series = |issuance, reference| GemContract::series_of(T_NOW, issuance, reference).unwrap();
+    let baseline = GemContract::generate_gem_id(series(USD, USD), ALICE, 1);
+    assert_eq!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, USD), ALICE, 1)
+    );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(EUR, USD), ALICE, 1)
+    );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, EUR), ALICE, 1)
+    );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, USD), BOB, 1)
+    );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, USD), ALICE, 2)
+    );
 }
 
 #[test]
@@ -184,7 +179,7 @@ fn enumerable_returns_only_owned_gems() {
     with_storage(|storage| {
         let g1 = add(storage, sample_params(ALICE));
         let mut p2 = sample_params(ALICE);
-        p2.promis_load_minor = U256::from(2u64);
+        p2.issuance_currency = EUR;
         let g2 = add(storage, p2);
         let _g3 = add(storage, sample_params(BOB));
 
@@ -215,7 +210,14 @@ fn burn_requires_settled_state() {
 #[test]
 fn burn_leaves_the_owners_other_gems_listed() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 2, 3]);
+        let gems: Vec<U256> = [USD, EUR, 826]
+            .into_iter()
+            .map(|issuance_currency| {
+                let mut params = sample_params(ALICE);
+                params.issuance_currency = issuance_currency;
+                add(storage, params)
+            })
+            .collect();
         settle(storage, gems[0]);
         burn_settled(storage, gems[0]);
 
@@ -231,7 +233,7 @@ fn burn_leaves_the_owners_other_gems_listed() {
 #[test]
 fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 2]);
+        let gems = gems_with_loads(storage, &[1, 2]);
         let group = group_of(storage, gems[0]);
         assert!(!group.is_zero());
         assert_eq!(group_of(storage, gems[1]), group, "the load is not a term");
@@ -246,9 +248,8 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
 
         let nonce = std::cell::Cell::new(0u64);
         let apart = |edit: &dyn Fn(&mut GemAddParams)| {
-            let mut params = sample_params(BOB);
             nonce.set(nonce.get() + 1);
-            params.promis_load_minor = U256::from(nonce.get());
+            let mut params = sample_params(holder(100 + nonce.get()));
             edit(&mut params);
             group_of(storage, add(storage, params))
         };
@@ -329,7 +330,7 @@ fn profile_change_after_open_does_not_reterm_the_group() {
 #[test]
 fn leaving_a_group_moves_its_last_member_into_the_hole() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 2, 3]);
+        let gems = gems_with_loads(storage, &[1, 2, 3]);
         let group = group_of(storage, gems[0]);
         let gem = GemContract::new(storage.clone());
 
@@ -405,7 +406,7 @@ fn group_and_terms_survive_until_unpaid_and_settled_are_zero() {
 fn unpaid_removal_preserves_group_state_settled_removal_decrements() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
-        let gems = alice_gems(&storage, &[1, 2]);
+        let gems = gems_with_loads(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
         settle(&storage, gems[1]);
         let group_id = item(&storage, gems[1]).unwrap().group_key;
@@ -455,7 +456,7 @@ fn an_issued_gem_settles_once() {
 #[test]
 fn settling_one_gem_of_a_called_group_leaves_the_rest_called() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 2]);
+        let gems = gems_with_loads(storage, &[1, 2]);
         call_gem(storage, gems[0], T_NOW);
         assert_eq!(gem_state(storage, gems[1]), GemState::Called as u8);
 
@@ -498,7 +499,7 @@ fn leaving_called_frees_the_expiry_slot() {
 #[test]
 fn stale_group_capability_is_rejected() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 2]);
+        let gems = gems_with_loads(storage, &[1, 2]);
         call_gem(storage, gems[0], T_NOW);
         let (first, stale_group) = api::load_pair(storage, gems[0]).unwrap().unwrap();
         settle(storage, gems[1]);
@@ -526,14 +527,13 @@ fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
 #[test]
 fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
     with_storage(|storage| {
-        let supply = GemContract::new(storage.clone()).total_supply().unwrap();
         let gem_id = add(storage, sample_params(ALICE));
         assert_eq!(
             gem_id,
             GemContract::generate_gem_id(
-                &sample_params(ALICE),
+                GemContract::series_of(T_NOW, USD, USD).unwrap(),
+                ALICE,
                 storage.block_number().unwrap(),
-                supply,
             )
         );
         let stored = item(storage, gem_id).unwrap();

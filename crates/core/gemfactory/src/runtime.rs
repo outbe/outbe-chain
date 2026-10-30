@@ -180,7 +180,7 @@ pub fn issue_gem_position(
     outbe_intex::api::release_if_spent(storage, source_series_id)?;
 
     let position_id =
-        GemFactoryContract::generate_position_id(caller, source_series_id, storage.block_number()?);
+        GemFactoryContract::generate_position_id(caller, series.intex_id, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let position = GemPosition {
