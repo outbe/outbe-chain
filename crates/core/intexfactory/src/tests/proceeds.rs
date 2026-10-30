@@ -170,7 +170,7 @@ fn unpublished_selectors_refuse_native_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
     let calls = [IIntexFactory::settleIntexCall {
-        seriesId: Default::default(),
+        intexId: U256::ZERO,
         owner: Address::ZERO,
         units: U256::ZERO,
         asset: Address::ZERO,

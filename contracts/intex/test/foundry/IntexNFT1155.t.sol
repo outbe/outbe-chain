@@ -60,9 +60,9 @@ contract IntexNFT1155Test is Test {
     bytes14 constant SERIES_ID_2 = "20250102-USD-U";
     uint32 constant SERIES_ID_3_DAY = 20250103;
     bytes14 constant SERIES_ID_3 = "20250103-USD-U";
-    uint256 constant TOKEN_ID_1 = uint256(uint112(SERIES_ID_1));
-    uint256 constant TOKEN_ID_2 = uint256(uint112(SERIES_ID_2));
-    uint256 constant TOKEN_ID_3 = uint256(uint112(SERIES_ID_3));
+    uint256 constant TOKEN_ID_1 = uint256(keccak256(abi.encodePacked(SERIES_ID_1)));
+    uint256 constant TOKEN_ID_2 = uint256(keccak256(abi.encodePacked(SERIES_ID_2)));
+    uint256 constant TOKEN_ID_3 = uint256(keccak256(abi.encodePacked(SERIES_ID_3)));
 
     uint32 constant ISSUED_UNITS = 10_000;
 
@@ -95,6 +95,17 @@ contract IntexNFT1155Test is Test {
         // The contract stores callPeriod verbatim. Defaulting/bounding is the caller's
         // (intexfactory) responsibility.
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
+    }
+
+    function test_ReadTokenData_ReadsTheSeriesByItsTokenId() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+
+        IIntexNFT1155.SeriesData memory byId = nft.readTokenData(TOKEN_ID_1);
+        assertEq(byId.seriesId, SERIES_ID_1);
+        assertEq(keccak256(abi.encode(byId)), keccak256(abi.encode(nft.readData(SERIES_ID_1))));
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1 + 1));
+        nft.readTokenData(TOKEN_ID_1 + 1);
     }
 
     function test_OnlyBridgeCanCreateSeries() public {
@@ -393,7 +404,7 @@ contract IntexNFT1155Test is Test {
     }
 
     function test_IssuedTokenId_IsTheSeriesId() public view {
-        assertEq(nft.issuedTokenId(SERIES_ID_1), uint256(uint112(SERIES_ID_1)));
+        assertEq(nft.issuedTokenId(SERIES_ID_1), uint256(keccak256(abi.encodePacked(SERIES_ID_1))));
     }
 
     function test_BatchTransferRestrictions() public {

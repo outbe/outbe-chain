@@ -20,7 +20,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     uint32 constant SERIES_ID_DAY = 20260401;
     bytes14 constant SERIES_ID = "20260401-USD-U";
-    uint256 constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     uint32 constant CALL_PERIOD = uint32(1 days);
 

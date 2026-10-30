@@ -1,6 +1,6 @@
 //! What a Nod supplies to the shared lifecycle. One group holds five Nods. Each owner
 //! submits one encrypted Tribute, Metadosis Lysis seals it, and the owner mints through
-//! `ITribute::createNod`. The harness then moves the group stamp. Two are paid while
+//! `ITribute::issueNod`. The harness then moves the group stamp. Two are paid while
 //! issued, two are inside the call notice, and one is forfeited.
 
 use outbe_primitives::time::SECONDS_PER_DAY;
@@ -122,13 +122,13 @@ fn issue_five_nods(world: &mut World) {
             &url,
             addresses::TRIBUTE_ADDR,
             key,
-            &eth::ITribute::createNodCall {
+            &eth::ITribute::issueNodCall {
                 tributeId: tribute_id,
             },
             Some(U256::ZERO),
         )
-        .expect("submit ITribute::createNod");
-        assert_mined_success(&outcome, "ITribute::createNod");
+        .expect("submit ITribute::issueNod");
+        assert_mined_success(&outcome, "ITribute::issueNod");
         let nod_id = nod_of(&url, owner);
         let load = sealed_load(world, nod_id);
         match shared_load {
@@ -238,8 +238,8 @@ impl Lifecycle for NodLifecycle {
                 data.callNoticePeriod
             );
             assert_eq!(
-                (data.worldwideDay, data.entryPriceMinor),
-                (first.worldwideDay, first.entryPriceMinor),
+                (data.seriesId, data.entryPriceMinor),
+                (first.seriesId, first.entryPriceMinor),
                 "every Nod must share one group"
             );
         }
@@ -458,17 +458,14 @@ where
 }
 
 fn nod_of(url: &str, owner: Address) -> U256 {
-    eth::read_call_result(
+    let ids = eth::read_call_result(
         url,
         addresses::NOD_ADDR,
-        &eth::INod::tokenOfOwnerByIndexCall {
-            owner,
-            index: U256::ZERO,
-        },
+        &eth::INod::tokensByOwnerCall { owner },
     )
-    .unwrap_or_else(|error| {
-        panic!("the Nod issued to {owner} is not in its owner's index: {error}")
-    })
+    .unwrap_or_else(|error| panic!("read the Nods of {owner}: {error}"));
+    *ids.first()
+        .unwrap_or_else(|| panic!("the Nod issued to {owner} is not in its owner's list"))
 }
 
 fn paid_nod_mining_call(

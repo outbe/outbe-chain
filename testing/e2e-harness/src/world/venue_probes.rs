@@ -725,6 +725,11 @@ pub(crate) fn series_issued_count(
         .map(|data| data.issuedUnits)
 }
 
+/// A series' token id on every chain and its id in the Outbe calls.
+pub(crate) fn intex_id(series: alloy_primitives::FixedBytes<14>) -> U256 {
+    outbe_primitives::series_id::SeriesId::from(series).right_id(&[])
+}
+
 /// When the series was Called, as both chains recorded it.
 pub(crate) fn series_called_at(
     url: &str,

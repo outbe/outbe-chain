@@ -54,7 +54,7 @@ const TRANSFERRED_UNITS: u64 = 4;
 const SETTLED_UNITS: u64 = 3;
 
 fn issued_id() -> U256 {
-    U256::from_be_slice(&SERIES)
+    outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES)))
 }
 
 struct World {
@@ -226,7 +226,7 @@ impl World {
         self.view(
             INTEX_FACTORY_ADDRESS,
             IIntexFactory::quoteSettlementCall {
-                seriesId: FixedBytes(SERIES),
+                intexId: issued_id(),
                 asset: ASSET,
                 units: U256::from(units),
             },
@@ -252,7 +252,7 @@ impl World {
     /// The payer, a third party, settles `units` for `owner` through the factory precompile.
     fn settle_for(&mut self, owner: Address, units: u64) -> SubCallOutput {
         let calldata = IIntexFactory::settleIntexCall {
-            seriesId: FixedBytes(SERIES),
+            intexId: issued_id(),
             owner,
             units: U256::from(units),
             asset: ASSET,
@@ -302,7 +302,7 @@ impl World {
             .view(
                 INTEX_ADDRESS,
                 IIntex::getIntexSeriesCall {
-                    seriesId: FixedBytes(SERIES),
+                    intexId: issued_id(),
                 },
             )
             .settledUnits;

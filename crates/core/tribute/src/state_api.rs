@@ -99,12 +99,6 @@ pub fn issue_encrypted_with_league(
         contract.bump_day_bucket_record(&record, true)?;
         contract.tribute_leagues.write(&record.tribute_id, league)?;
         contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
-        let supply = contract
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(TributeError::TotalSupplyOverflowDuringIssuance)?;
-        contract.total_supply.write(supply)?;
         contract.insert_state_record(&StoredTribute::from(body))?;
         contract.emit(ITribute::TributeIssued {
             owner: record.owner,
@@ -139,7 +133,7 @@ pub fn load(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<Loade
         .transpose()
 }
 
-/// Test helper. Production deletion is only `create_nod` after Nod issuance.
+/// Test helper. Production deletion is only `issue_nod` after Nod issuance.
 #[cfg(test)]
 pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result<()> {
     let LoadedTribute { record } = loaded;
@@ -165,12 +159,6 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
             contract.adjust_fi_group(record.worldwide_day, league, nominal, false)?;
             contract.tribute_leagues.clear(&record.tribute_id)?;
         }
-        let supply = contract
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
-        contract.total_supply.write(supply)?;
         contract.delete_state_record(record.tribute_id)?;
         contract.emit(ITribute::TributeBurned {
             tributeId: record.tribute_id.to_u256(),
@@ -287,7 +275,6 @@ mod tests {
             .unwrap();
             issue_encrypted(&storage, &body).unwrap();
             assert!(issue_encrypted(&storage, &body).is_err());
-            assert_eq!(contract.total_supply().unwrap(), 1);
             assert_eq!(
                 get_record(&storage, id).unwrap().unwrap().encrypted(),
                 Some(&body)
@@ -303,7 +290,6 @@ mod tests {
             );
             burn_loaded(&storage, load(&storage, id).unwrap().unwrap()).unwrap();
             assert!(get_record(&storage, id).unwrap().is_none());
-            assert_eq!(contract.total_supply().unwrap(), 0);
             assert!(contract.state_records_by_owner(owner).unwrap().is_empty());
             assert!(contract.state_records_by_day(day).unwrap().is_empty());
             assert_eq!(

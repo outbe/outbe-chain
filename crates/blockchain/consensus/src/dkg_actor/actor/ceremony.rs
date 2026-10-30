@@ -146,6 +146,7 @@ struct RecoveredRoles {
 pub(super) struct CeremonyState {
     info: Info<MinSig, bls12381::PublicKey>,
     ceremony_id: DkgCeremonyId,
+    dealers: Set<bls12381::PublicKey>,
     participants: Set<bls12381::PublicKey>,
     n: u32,
     player_threshold: u32,

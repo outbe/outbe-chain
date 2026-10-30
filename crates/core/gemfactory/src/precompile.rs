@@ -1,11 +1,10 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_intex::SeriesId;
+
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
-use crate::errors::GemFactoryError;
 use crate::runtime;
 use crate::schema::GemFactoryContract;
 
@@ -40,12 +39,9 @@ pub fn dispatch(
         use IGemFactory::IGemFactoryCalls::*;
         match call {
             issueGemPosition(c) => mutate(&storage, c, caller, |sender, c| {
-                runtime::issue_gem_position(
-                    &storage,
-                    sender,
-                    SeriesId::from(c.sourceIntexId),
-                    c.units,
-                )
+                let source = outbe_intex::api::find_series_by_id(&storage, c.sourceIntexId)?
+                    .ok_or(crate::errors::GemFactoryError::SourceIntexNotFound)?;
+                runtime::issue_gem_position(&storage, sender, source.series_id, c.units)
             }),
             issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
@@ -116,9 +112,8 @@ pub fn dispatch(
             tokenURI(c) => view(c, |c| {
                 GemFactoryContract::new(storage.clone()).token_uri(c.positionId)
             }),
-            tokenOfOwnerByIndex(c) => view(c, |c| {
-                let idx = u32::try_from(c.index).map_err(|_| GemFactoryError::IndexOutOfBounds)?;
-                GemFactoryContract::new(storage.clone()).token_of_owner_by_index(c.owner, idx)
+            tokensByOwner(c) => view(c, |c| {
+                GemFactoryContract::new(storage.clone()).tokens_by_owner(c.owner)
             }),
         }
     })

@@ -1,10 +1,82 @@
 use super::*;
 
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct StoreFaultInjection {
+    fail_put_finalization: AtomicUsize,
+    fail_prune_height: AtomicUsize,
+    fail_prune_cn: AtomicUsize,
+}
+
+#[cfg(test)]
+fn consume_fault(counter: &AtomicUsize) -> bool {
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_sub(1)
+        })
+        .is_ok()
+}
+
+#[cfg(test)]
+fn injected_store_failure() -> ParentProofStoreError {
+    ParentProofStoreError::Db {
+        path: PathBuf::new(),
+        source: DatabaseError::Other("injected test store failure".to_owned()),
+    }
+}
+
+#[cfg(test)]
+impl StoreFaultInjection {
+    fn check(&self, counter: &AtomicUsize) -> Result<(), ParentProofStoreError> {
+        if consume_fault(counter) {
+            Err(injected_store_failure())
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(super) fn check_put_finalization(&self) -> Result<(), ParentProofStoreError> {
+        self.check(&self.fail_put_finalization)
+    }
+
+    pub(super) fn check_prune_height(&self) -> Result<(), ParentProofStoreError> {
+        self.check(&self.fail_prune_height)
+    }
+
+    pub(super) fn check_prune_cn(&self) -> Result<(), ParentProofStoreError> {
+        self.check(&self.fail_prune_cn)
+    }
+}
+
+#[cfg(test)]
+impl FinalizedParentCertStore {
+    pub(crate) fn fail_next_put_finalization(&self, count: usize) {
+        self.faults
+            .fail_put_finalization
+            .store(count, Ordering::Relaxed);
+    }
+
+    pub(crate) fn fail_next_prune_below_height(&self, count: usize) {
+        self.faults
+            .fail_prune_height
+            .store(count, Ordering::Relaxed);
+    }
+
+    pub(crate) fn fail_next_prune_cn(&self, count: usize) {
+        self.faults.fail_prune_cn.store(count, Ordering::Relaxed);
+    }
+}
+
 impl CertifiedParentProofStore for FinalizedParentCertStore {
     fn put_finalization(
         &self,
         record: CertifiedParentProofRecord,
     ) -> Result<(), ParentProofStoreError> {
+        #[cfg(test)]
+        self.faults.check_put_finalization()?;
         debug_assert_eq!(
             record.proof_kind(),
             ParentParticipationProof::Finalization,
@@ -62,6 +134,8 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
     }
 
     fn prune_below_height(&self, floor: u64) -> Result<usize, ParentProofStoreError> {
+        #[cfg(test)]
+        self.faults.check_prune_height()?;
         let _writer = self
             .durable_writer
             .lock()

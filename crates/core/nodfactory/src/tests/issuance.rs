@@ -4,7 +4,7 @@ use super::*;
 fn nod_pow_binds_owner_and_zero_sequence() {
     let owner = Address::repeat_byte(0x11);
     let other = Address::repeat_byte(0x22);
-    let nod_id = outbe_nod::identity::generate_nod_id(owner, WorldwideDay::new(20_241_201));
+    let nod_id = outbe_nod::test_support::nod_id_of(owner, 20_241_201, 840, 840);
     let nonce = 42;
     let bound = runtime::compute_pow_hash(nod_id, owner, nonce);
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
@@ -86,13 +86,14 @@ fn second_same_block_issue_reuses_the_group() {
             .unwrap(),
         2
     );
-    assert_eq!(
-        world
-            .enter(|storage| nod_api::list_all(&storage))
-            .unwrap()
-            .len(),
-        2
-    );
+    for owner in [first_item.owner, second_item.owner] {
+        assert_eq!(
+            world
+                .enter(|storage| nod_api::balance_of(&storage, owner))
+                .unwrap(),
+            1
+        );
+    }
 }
 
 #[test]
@@ -152,7 +153,12 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     );
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
-    let nod_id = outbe_nod::identity::generate_nod_id(input.owner, input.worldwide_day);
+    let nod_id = outbe_nod::test_support::nod_id_of(
+        input.owner,
+        input.emission_day,
+        input.issuance_currency,
+        input.reference_currency,
+    );
     assert!(world
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
@@ -342,4 +348,48 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         .expect("NodMined event");
     assert_eq!(mined.owner, input.owner);
     assert_eq!(mined.nodId, nod_id);
+}
+
+#[test]
+fn lysis_series_of_one_day_and_reference_share_one_call_group() {
+    use outbe_primitives::series_id::SeriesId;
+    let mut world = World::new();
+    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020) + 3_600;
+    world.enter(|storage| {
+        let seal = |series_id, count, load: u64| {
+            crate::api::seal_lysis_series(
+                &storage,
+                crate::api::LysisSeriesInput {
+                    series_id,
+                    sealed_at,
+                    reference_currency: 840,
+                    entry_price_minor: U256::from(500_000),
+                    unclaimed_tribute_count: count,
+                    unclaimed_tribute_load: U256::from(load),
+                },
+            )
+        };
+        let usd = SeriesId::for_pair(20_261_019, 840, 840).unwrap();
+        let eur = SeriesId::for_pair(20_261_019, 978, 840).unwrap();
+        seal(usd, 2, 30).unwrap();
+        seal(eur, 1, 10).unwrap();
+
+        let group = nod_api::series_group(&storage, usd).unwrap().unwrap();
+        assert_eq!(nod_api::series_group(&storage, eur).unwrap(), Some(group));
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 3);
+        assert_eq!(
+            nod.group_unclaimed_tribute_load.read(&group).unwrap(),
+            U256::from(40)
+        );
+        assert_eq!(
+            nod_api::get_group(&storage, group)
+                .unwrap()
+                .unwrap()
+                .full_day_after_issue,
+            WorldwideDay::new(20_261_021),
+            "the call counts from the first full day after Lysis"
+        );
+        assert!(seal(usd, 1, 5).is_err(), "a series seals once");
+    });
 }

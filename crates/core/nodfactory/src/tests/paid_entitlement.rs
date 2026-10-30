@@ -88,7 +88,6 @@ fn settlement_preserves_entitlement_and_failed_mining_can_retry_after_deadline()
             .unwrap();
         assert_eq!(group.settled_nods, 1);
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(nod.group_nod_count.read(&item.group_key).unwrap(), 0);
         assert_eq!(
             nod.group_called_at.read(&item.group_key).unwrap(),

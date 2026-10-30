@@ -203,7 +203,7 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
     let result = crate::precompile::dispatch(
         storage,
         &IGemFactory::issueGemPositionCall {
-            sourceIntexId: alloy_primitives::FixedBytes::repeat_byte(99),
+            sourceIntexId: U256::from(99),
             units: U256::from(1),
         }
         .abi_encode(),

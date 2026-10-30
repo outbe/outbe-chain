@@ -137,18 +137,8 @@ impl CredisContract<'_> {
         self.owner_credis_count(account)
     }
 
-    /// `account`'s `index`-th live Credis, in list order.
-    pub fn token_of_owner_by_index(&self, account: Address, index: u32) -> Result<U256> {
-        self.owner_credis_id(account, index)
-    }
-
-    /// The `index`-th live Credis, in list order.
-    pub fn token_by_index(&self, index: u32) -> Result<U256> {
-        self.live_credis_id(index)
-    }
-
-    /// Live Credis. This value backs `totalSupply`.
-    pub fn total_credis(&self) -> Result<u32> {
-        self.live_credis_count()
+    /// The ids of `account`'s live Credis.
+    pub fn tokens_by_owner(&self, account: Address) -> Result<Vec<U256>> {
+        self.owner_credis_ids(account)
     }
 }

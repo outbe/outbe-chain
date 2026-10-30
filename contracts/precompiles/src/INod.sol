@@ -6,7 +6,6 @@ interface INod {
     error InvalidNodIdHex();
     error NodNotFound();
     error GroupNotFound();
-    error IndexOutOfBounds();
     error QueryLimitExceeded();
     error ZeroReferenceCurrency();
     error NonTransferable();
@@ -17,10 +16,8 @@ interface INod {
     error GroupIdentityMismatch(bytes32 expected, bytes32 found);
     error NodAlreadyExists();
     error GroupExistenceDisagreesWithMemberCount(uint256 groupId, uint32 memberCount);
-    error TotalSupplyOverflowDuringIssuance();
     error GroupUnpaidLoadOverflow(bytes32 groupKey);
     error GroupUnpaidLoadUnderflow(bytes32 groupKey);
-    error TotalSupplyUnderflowDuringRemoval();
     error GroupSettledCountUnderflow(uint256 groupId);
     error AlreadySettled();
     error SettledCountOverflow();
@@ -43,7 +40,7 @@ interface INod {
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906: emitted over the whole id range when a group is called. A group holds
-    /// Nods of several Worldwide Days, so no narrower range covers it.
+    /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     /// Group force-called by the daily Call scan: the reference price
@@ -58,11 +55,11 @@ interface INod {
     event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
-        // Full Keccak256 of raw owner (20 bytes) || worldwide_day (u32 big-endian).
-        // The day is stored separately.
+        // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
-        uint32 worldwideDay;
+        /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
+        bytes14 seriesId;
         uint16 leagueId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
@@ -119,9 +116,7 @@ interface INod {
     function tokenURI(uint256 nodId) external view returns (string memory);
 
     // Enumeration reads
-    function totalSupply() external view returns (uint256);
-    function tokenByIndex(uint256 index) external view returns (uint256);
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
 
     // outbe-specific
     function getNod(uint256 nodId) external view returns (NodData memory);

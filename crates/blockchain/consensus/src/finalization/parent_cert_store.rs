@@ -516,6 +516,8 @@ pub struct FinalizedParentCertStore {
     revision: Arc<AtomicU64>,
     durable_writer: Arc<Mutex<()>>,
     revision_tx: watch::Sender<u64>,
+    #[cfg(test)]
+    faults: Arc<trait_impl::StoreFaultInjection>,
 }
 
 #[derive(Default)]
@@ -535,6 +537,8 @@ impl Default for FinalizedParentCertStore {
             revision: Arc::new(AtomicU64::new(0)),
             durable_writer: Arc::new(Mutex::new(())),
             revision_tx,
+            #[cfg(test)]
+            faults: Arc::new(trait_impl::StoreFaultInjection::default()),
         }
     }
 }
@@ -568,6 +572,8 @@ impl FinalizedParentCertStore {
             revision: Arc::new(AtomicU64::new(0)),
             durable_writer: Arc::new(Mutex::new(())),
             revision_tx: watch::channel(0).0,
+            #[cfg(test)]
+            faults: Arc::new(trait_impl::StoreFaultInjection::default()),
         })
     }
 
@@ -752,6 +758,8 @@ impl FinalizedParentCertStore {
         &self,
         floor: Round,
     ) -> Result<usize, ParentProofStoreError> {
+        #[cfg(test)]
+        self.faults.check_prune_cn()?;
         let _writer = self
             .durable_writer
             .lock()

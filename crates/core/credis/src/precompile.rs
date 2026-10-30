@@ -3,8 +3,7 @@ use alloy_sol_types::{sol, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::{
-    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
-    ERC721_METADATA_INTERFACE_ID,
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
 
@@ -17,10 +16,9 @@ use crate::schema::CredisContract;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
+const SUPPORTED_INTERFACES: [[u8; 4]; 4] = [
     ERC165_INTERFACE_ID,
     ERC721_INTERFACE_ID,
-    ERC721_ENUMERABLE_INTERFACE_ID,
     ERC721_METADATA_INTERFACE_ID,
     ERC4906_INTERFACE_ID,
 ];
@@ -45,7 +43,6 @@ pub fn dispatch(
                 let now = contract.storage.now_secs()?;
                 crate::metadata::token_uri(&record, now)
             }),
-            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_credis()?))),
             getCredis(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
                 abi_credis(&record, contract.storage.now_secs()?)
@@ -62,15 +59,8 @@ pub fn dispatch(
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
-            tokenByIndex(c) => view(c, |c| {
-                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                contract.token_by_index(index)
-            }),
             balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
-            tokenOfOwnerByIndex(c) => view(c, |c| {
-                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                contract.token_of_owner_by_index(c.owner, index)
-            }),
+            tokensByOwner(c) => view(c, |c| contract.tokens_by_owner(c.owner)),
             interestAccruedMinor(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
                 let timestamp = contract.storage.now_secs()?;

@@ -21,7 +21,19 @@ pub struct InvalidSeriesId;
 
 /// Series identifier: `20260212-TRY-U`, or `20261102-EUR` plus two `0x00` bytes.
 #[repr(transparent)]
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
 
 impl SeriesId {
@@ -58,21 +70,15 @@ impl SeriesId {
         &self.0
     }
 
-    /// The ERC-1155 token id of the series' units: `uint256(uint112(seriesId))`.
-    pub fn token_id(&self) -> U256 {
-        U256::from_be_slice(&self.0)
-    }
-
-    /// The series a token id names; `None` above the 14-byte id space.
-    pub fn from_token_id(id: U256) -> Option<Self> {
-        let word = id.to_be_bytes::<32>();
-        let (high, low) = word.split_at(32 - SERIES_ID_LEN);
-        if high.iter().any(|byte| *byte != 0) {
-            return None;
+    /// Id of a right in this series: keccak256 of the 14 id bytes, then `parts` at their fixed
+    /// widths. With no parts it is the id of the series itself.
+    pub fn right_id(&self, parts: &[&[u8]]) -> U256 {
+        let mut hasher = alloy_primitives::Keccak256::new();
+        hasher.update(self.0);
+        for part in parts {
+            hasher.update(part);
         }
-        let mut bytes = [0u8; SERIES_ID_LEN];
-        bytes.copy_from_slice(low);
-        Some(Self(bytes))
+        U256::from_be_bytes(hasher.finalize().0)
     }
 
     /// The date the id leads with, as `YYYYMMDD`.
@@ -170,6 +176,29 @@ mod tests {
     }
 
     #[test]
+    fn a_right_id_hashes_the_id_bytes_and_its_parts() {
+        let id = SeriesId::pack(DAY, *b"TRY", b'U').unwrap();
+        let owner = alloy_primitives::Address::repeat_byte(0x11);
+        let block = 7u64.to_be_bytes();
+        assert_eq!(
+            id.right_id(&[]),
+            U256::from_be_bytes(alloy_primitives::keccak256(id.as_bytes()).0)
+        );
+        let mut preimage = id.as_bytes().to_vec();
+        preimage.extend_from_slice(owner.as_slice());
+        preimage.extend_from_slice(&block);
+        assert_eq!(
+            id.right_id(&[owner.as_slice(), &block]),
+            U256::from_be_bytes(alloy_primitives::keccak256(&preimage).0)
+        );
+        let other = SeriesId::pack(DAY + 1, *b"TRY", b'U').unwrap();
+        assert_ne!(
+            other.right_id(&[owner.as_slice()]),
+            id.right_id(&[owner.as_slice()])
+        );
+    }
+
+    #[test]
     fn reads_as_text() {
         assert_eq!(
             SeriesId::pack(DAY, *b"TRY", b'U').unwrap().to_string(),
@@ -219,14 +248,6 @@ mod tests {
         assert_eq!(SeriesId::pack_same(DAY, *b"USD").unwrap(), id);
         assert_ne!(id, SeriesId::pack(DAY, *b"USD", b'U').unwrap());
         assert!(SeriesId::pack_same(DAY, *b"usd").is_err());
-    }
-
-    #[test]
-    fn a_series_token_id_round_trips() {
-        let id = SeriesId::pack(DAY, *b"EUR", b'E').unwrap();
-        assert_eq!(SeriesId::from_token_id(id.token_id()), Some(id));
-        assert!(id.token_id() < U256::ONE << 112);
-        assert_eq!(SeriesId::from_token_id(U256::ONE << 112), None);
     }
 
     #[test]

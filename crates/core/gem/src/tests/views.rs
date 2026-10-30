@@ -136,41 +136,12 @@ fn precompile_balance_and_owner_views() {
         let out = call(storage, IGem::ownerOfCall { gemId: gem_id }.abi_encode()).unwrap();
         assert_eq!(IGem::ownerOfCall::abi_decode_returns(&out).unwrap(), ALICE);
 
-        let out = call(
-            storage,
-            IGem::tokenOfOwnerByIndexCall {
-                owner: ALICE,
-                index: U256::ZERO,
-            }
-            .abi_encode(),
-        )
-        .unwrap();
-        assert_eq!(
-            IGem::tokenOfOwnerByIndexCall::abi_decode_returns(&out).unwrap(),
-            gem_id
-        );
-        let err = call(
-            storage,
-            IGem::tokenOfOwnerByIndexCall {
-                owner: ALICE,
-                index: U256::from(1u64),
-            }
-            .abi_encode(),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemError::IndexOutOfBounds
-            )
-            .to_string()
-        );
-
-        let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();
-        assert_eq!(
-            IGem::totalSupplyCall::abi_decode_returns(&out).unwrap(),
-            U256::from(1u64)
-        );
+        let tokens = |owner| {
+            let out = call(storage, IGem::tokensByOwnerCall { owner }.abi_encode()).unwrap();
+            IGem::tokensByOwnerCall::abi_decode_returns(&out).unwrap()
+        };
+        assert_eq!(tokens(ALICE), vec![gem_id]);
+        assert!(tokens(BOB).is_empty());
     });
 }
 
@@ -483,15 +454,14 @@ fn config_unknown_selector_errors() {
 fn gem_contract_slot_layout_is_pinned() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
-        assert_eq!(gem.total_supply.slot(), U256::from(0u64));
-        assert_eq!(gem.group_gem_count.base_slot(), U256::from(1u64));
-        assert_eq!(gem.group_called_at.base_slot(), U256::from(10u64));
-        assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(11u64));
-        assert_eq!(gem.forfeit_tree_root.slot(), U256::from(19u64));
-        assert_eq!(gem.config_profile.slot(), U256::from(32u64));
+        assert_eq!(gem.group_gem_count.base_slot(), U256::from(0u64));
+        assert_eq!(gem.group_called_at.base_slot(), U256::from(9u64));
+        assert_eq!(gem.call_bin_tree_root.base_slot(), U256::from(10u64));
+        assert_eq!(gem.forfeit_tree_root.slot(), U256::from(18u64));
+        assert_eq!(gem.config_profile.slot(), U256::from(31u64));
         assert_eq!(
             gem.min_call_threshold_seconds.base_slot(),
-            U256::from(34u64)
+            U256::from(33u64)
         );
         assert_eq!(GemState::Settled as u8, 2);
     });

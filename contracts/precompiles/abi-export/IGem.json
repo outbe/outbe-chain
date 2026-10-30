@@ -82,6 +82,11 @@
             "internalType": "address"
           },
           {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
@@ -310,30 +315,6 @@
   },
   {
     "type": "function",
-    "name": "tokenOfOwnerByIndex",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "index",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "tokenURI",
     "inputs": [
       {
@@ -353,13 +334,19 @@
   },
   {
     "type": "function",
-    "name": "totalSupply",
-    "inputs": [],
+    "name": "tokensByOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "tokenIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -641,7 +628,7 @@
   },
   {
     "type": "error",
-    "name": "IndexOutOfBounds",
+    "name": "InvalidSeriesId",
     "inputs": []
   },
   {
@@ -664,16 +651,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TotalSupplyOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TotalSupplyUnderflow",
-    "inputs": []
   },
   {
     "type": "error",

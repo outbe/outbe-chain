@@ -318,13 +318,19 @@ fn a_group_with_a_failing_member_is_deferred_whole() {
         let (members, deadline) = called_two_member_group(&s, scan_ts);
         let registry = outbe_intex::IntexContract::new(s.clone());
         // More settled than issued: the EUR series fails its accounting.
-        registry.settled_units.write(&members[1], 1_000).unwrap();
+        registry
+            .settled_units
+            .write(&outbe_intex::intex_id(members[1]), 1_000)
+            .unwrap();
 
         sweep_at(&s, due(deadline));
         assert_eq!(unallocated(&s), U256::ZERO);
         assert!(expiring(&s, members[0]));
 
-        registry.settled_units.write(&members[1], 0).unwrap();
+        registry
+            .settled_units
+            .write(&outbe_intex::intex_id(members[1]), 0)
+            .unwrap();
         let retry_day = IntexContract::deadline_day(due(deadline));
         assert_eq!(registry.first_expiry_day().unwrap(), Some(retry_day));
         assert_eq!(

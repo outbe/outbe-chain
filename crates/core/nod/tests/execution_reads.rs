@@ -1,7 +1,6 @@
 use alloy_primitives::Address;
 use alloy_sol_types::SolEvent;
 use outbe_nod::{api, precompile::INod};
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     addresses::NOD_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -22,10 +21,7 @@ fn provider() -> HashMapStorageProvider {
 #[test]
 fn same_block_issue_is_visible_to_point_and_list_reads() {
     let mut provider = provider();
-    let body = outbe_nod::test_support::sample_item(
-        Address::repeat_byte(0x21),
-        WorldwideDay::new(20_260_716),
-    );
+    let body = outbe_nod::test_support::sample_item(Address::repeat_byte(0x21), 20_260_716);
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_profile(&storage);
@@ -42,7 +38,6 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
                 .collect::<Vec<_>>(),
             [body.nod_id]
         );
-        assert_eq!(api::list_all(&storage).unwrap().len(), 1);
     });
 
     let signatures: Vec<_> = provider
@@ -56,10 +51,7 @@ fn same_block_issue_is_visible_to_point_and_list_reads() {
 #[test]
 fn removal_checks_loaded_state() {
     let mut provider = provider();
-    let body = outbe_nod::test_support::sample_item(
-        Address::repeat_byte(0x41),
-        WorldwideDay::new(20_260_716),
-    );
+    let body = outbe_nod::test_support::sample_item(Address::repeat_byte(0x41), 20_260_716);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_profile(&storage);
         outbe_nod::test_support::add(&storage, &body).unwrap();

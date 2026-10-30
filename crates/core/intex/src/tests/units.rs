@@ -86,7 +86,7 @@ fn the_view_carries_the_whole_split() {
 
 fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex::SeriesData {
     let call = IIntex::getIntexSeriesCall {
-        seriesId: series_id.into(),
+        intexId: crate::schema::intex_id(series_id),
     };
     let out = dispatch(
         storage.clone(),

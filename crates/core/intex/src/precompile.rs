@@ -15,7 +15,7 @@ use outbe_primitives::error::Result;
 
 use crate::constants::{SETTLED_TOKEN_NAME, SETTLED_TOKEN_SYMBOL};
 use crate::errors::{date_step_error, IntexError};
-use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
+use crate::schema::{CallStamp, IntexContract, SeriesRecord};
 
 const SUPPORTED_INTERFACES: [[u8; 4]; 3] = [
     ERC165_INTERFACE_ID,
@@ -50,17 +50,17 @@ pub fn dispatch(
         use IIntex::IIntexCalls::*;
         match call {
             getIntexSeries(c) => view(c, |c| {
-                let series_id = SeriesId::from(c.seriesId);
-                let record = registry.load_series(series_id)?;
-                let settled = registry.settled_units.read(&series_id)?;
-                let mined = registry.mined_units.read(&series_id)?;
-                let gem_factory = registry.gem_factory_units.read(&series_id)?;
+                let record = load_by_id(&registry, c.intexId)?;
+                let settled = registry.settled_units.read(&c.intexId)?;
+                let mined = registry.mined_units.read(&c.intexId)?;
+                let gem_factory = registry.gem_factory_units.read(&c.intexId)?;
                 let stamp = registry.call_stamp(&record)?;
                 let now = storage.now_secs()?;
                 to_abi_data(&record, [settled, mined, gem_factory], stamp, now)
             }),
             seriesUnitCounts(c) => view(c, |c| {
-                let counts = crate::api::unit_counts(&storage, SeriesId::from(c.seriesId))?;
+                let series_id = load_by_id(&registry, c.intexId)?.series_id;
+                let counts = crate::api::unit_counts(&storage, series_id)?;
                 Ok(IIntex::UnitCounts {
                     issuedUnits: counts.issued,
                     activeUnits: counts.active,
@@ -70,7 +70,7 @@ pub fn dispatch(
                     forfeitedUnits: counts.forfeited,
                 })
             }),
-            seriesExists(c) => view(c, |c| registry.series_exists(SeriesId::from(c.seriesId))),
+            seriesExists(c) => view(c, |c| registry.series.exists(c.intexId)),
             totalSeries(_) => metadata::<IIntex::totalSeriesCall>(|| {
                 Ok(U256::from(registry.read_total_series()?))
             }),
@@ -100,23 +100,26 @@ pub fn dispatch(
                 Err(IntexError::NonTransferable.into())
             }
             uri(c) => view(c, |c| {
-                let series_id = SeriesId::from_token_id(c.id).ok_or(IntexError::SeriesNotFound)?;
-                Ok(crate::metadata::settled_token_uri(
-                    &registry.load_series(series_id)?,
-                ))
+                Ok(crate::metadata::settled_token_uri(&load_by_id(
+                    &registry, c.id,
+                )?))
             }),
         }
     })
 }
 
-/// An id outside the series id space holds nothing.
+fn load_by_id(registry: &IntexContract<'_>, intex_id: U256) -> Result<SeriesRecord> {
+    registry
+        .series
+        .get(intex_id)?
+        .ok_or_else(|| IntexError::SeriesNotFound.into())
+}
+
+/// An id no series has holds nothing.
 fn settled_balance(registry: &IntexContract<'_>, account: Address, id: U256) -> Result<U256> {
-    let Some(series_id) = SeriesId::from_token_id(id) else {
-        return Ok(U256::ZERO);
-    };
     let units = registry
         .owner_settled_units
-        .read(&IntexContract::owner_units_key(series_id, account))?;
+        .read(&IntexContract::owner_units_key(id, account))?;
     Ok(U256::from(units))
 }
 
@@ -127,6 +130,7 @@ fn to_abi_data(
     now: u64,
 ) -> Result<IIntex::SeriesData> {
     Ok(IIntex::SeriesData {
+        intexId: r.intex_id,
         seriesId: r.series_id.into(),
         promisLoadMinor: r.promis_load_minor,
         entryPriceMinor: r.entry_price_minor,

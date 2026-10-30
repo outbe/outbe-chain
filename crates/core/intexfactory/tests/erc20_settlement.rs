@@ -64,7 +64,7 @@ impl Rail for Intex {
             INTEX_NFT1155_ADDRESS,
             INftFixture::mint1155Call {
                 account: OWNER,
-                id: U256::from_be_slice(&SERIES),
+                id: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
                 amount: U256::from(UNITS),
             },
         );
@@ -74,7 +74,7 @@ impl Rail for Intex {
         let quote = world.view(
             INTEX_FACTORY_ADDRESS,
             IIntexFactory::quoteSettlementCall {
-                seriesId: FixedBytes(SERIES),
+                intexId: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
                 asset: ASSET,
                 units: U256::from(UNITS),
             },
@@ -88,7 +88,7 @@ impl Rail for Intex {
 
     fn settle_call(self, _id: U256, snapshot_id: U256) -> Bytes {
         IIntexFactory::settleIntexCall {
-            seriesId: FixedBytes(SERIES),
+            intexId: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
             owner: OWNER,
             units: U256::from(UNITS),
             asset: ASSET,
@@ -115,7 +115,7 @@ impl Rail for Intex {
             INTEX_ADDRESS,
             IIntex::balanceOfCall {
                 account: OWNER,
-                id: U256::from_be_slice(&SERIES),
+                id: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
             },
         );
         assert_eq!(settled, U256::from(UNITS));

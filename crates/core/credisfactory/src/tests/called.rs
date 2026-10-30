@@ -1315,7 +1315,6 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         assert_eq!(reserve(&storage), expected);
         let credis = CredisContract::new(storage.clone());
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
-        assert_eq!(credis.total_credis().unwrap(), 0);
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
         assert_eq!(credis.group_member_count(group).unwrap(), 0);
         assert_eq!(queued_at(&storage, group), 0);

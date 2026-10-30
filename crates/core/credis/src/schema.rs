@@ -191,7 +191,7 @@ impl Credis {
 
 /// EVM storage layout for the Credis contract.
 ///
-/// `owner_ids` and `all_ids` list the live Credis, as `outbe-nod` lists its Nods.
+/// `owner_ids` lists each owner's live Credis, as `outbe-nod` lists its Nods.
 /// Slot assignment is macro-generated: a `Map<K, V>` over a record reserves
 /// `V::SLOTS` top-level slots, so the Credis map alone spans as many slots as `Credis`
 /// has attributes.
@@ -212,12 +212,6 @@ pub struct CredisContract {
         outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 2)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
-
-    /// Every live Credis (backs `totalSupply` / `tokenByIndex`).
-    #[attribute(order = 3)]
-    pub all_ids: outbe_primitives::storage::dsl::List<U256>,
-    #[attribute(order = 4)]
-    pub global_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Widest `call_window_seconds` ever opened in a reference currency, in seconds. It
     /// only grows, so the trailing span the daily scan collects always covers a

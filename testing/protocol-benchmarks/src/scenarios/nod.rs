@@ -40,7 +40,7 @@ fn issue_params(index: usize) -> NodIssueParams {
     NodIssueParams {
         owner: Address::repeat_byte(owner_byte),
         gratis_load_minor: U256::from(1_000),
-        worldwide_day: TARGET_WWD,
+        emission_day: TARGET_WWD.value(),
         league_id: 1,
         entry_price_minor: U256::from(500),
         issuance_currency: 840,

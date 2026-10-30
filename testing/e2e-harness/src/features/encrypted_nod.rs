@@ -68,7 +68,7 @@ fn verify_encrypted_nod(world: &mut World) {
         .nod_creation_blocks
         .get(&encrypted.terms.nod_id)
         .copied()
-        .expect("creator createNod block");
+        .expect("creator issueNod block");
     let (item, _) = world
         .rpc
         .nod_state_at(port, checkpoint, encrypted.terms.nod_id)
@@ -79,7 +79,7 @@ fn verify_encrypted_nod(world: &mut World) {
         world
             .rpc
             .block_timestamp(port, issued_in)
-            .expect("createNod block time")
+            .expect("issueNod block time")
     );
     assert_native_issuance(world, &encrypted, issued_in);
 }

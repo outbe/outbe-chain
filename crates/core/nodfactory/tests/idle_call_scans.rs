@@ -3,7 +3,6 @@
 use alloy_primitives::{Address, U256};
 use outbe_nod::NodContract;
 use outbe_nodfactory::{called, hooks};
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -31,10 +30,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
         for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
             let entry = U256::from(entry);
-            let mut body = outbe_nod::test_support::sample_item(
-                Address::repeat_byte(owner),
-                WorldwideDay::new(20260715),
-            );
+            let mut body =
+                outbe_nod::test_support::sample_item(Address::repeat_byte(owner), 20260715);
             body.group_key = outbe_nod::test_support::group_key(body.issued_at, entry, 978);
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             outbe_nod::test_support::add(&storage, &body).unwrap();

@@ -21,7 +21,7 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     };
 
     let hex = format!("{:064x}", item.nod_id);
-    let id = format!("{}-{}", item.worldwide_day, &hex[..8]);
+    let id = format!("{}-{}", item.series_id, &hex[..8]);
     let mut rows = vec![
         ("Gratis Load", "Encrypted".into()),
         (
@@ -35,7 +35,7 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     ));
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::integer("Worldwide Day", item.worldwide_day.value()),
+        Trait::text("Series", item.series_id.to_string()),
         Trait::integer("League", item.league_id),
         Trait::amount("Entry Price", item.entry_price_minor(), PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),

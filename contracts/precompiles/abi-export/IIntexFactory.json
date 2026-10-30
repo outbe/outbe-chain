@@ -22,9 +22,9 @@
     "name": "minePromis",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "owner",
@@ -66,9 +66,9 @@
     "name": "ownerBalances",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "owner",
@@ -130,9 +130,9 @@
     "name": "quoteSettlement",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "asset",
@@ -169,9 +169,9 @@
     "name": "settleIntex",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "owner",

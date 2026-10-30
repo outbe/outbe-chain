@@ -106,6 +106,8 @@ where
                 self.dkg_rotation_params.activation_grace_blocks,
             );
         }
+        self.vrf_safety
+            .apply_pending_ceremony_output(Some(&dkg_complete.output));
         publish_randomness_status(&self.bridge, &self.vrf_safety);
 
         // Pre-register vote/cert/res sub-channels for

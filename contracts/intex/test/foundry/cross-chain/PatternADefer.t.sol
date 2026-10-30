@@ -115,7 +115,7 @@ contract PatternADeferTest is CrossChainTest {
     address internal outbePeer = makeAddr("outbePeer");
     uint32 internal constant SERIES_ID_DAY = 20260301;
     bytes14 internal constant SERIES_ID = "20260301-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     function setUp() public {
         _setUpBridge();

@@ -14,10 +14,135 @@ use tracing::{debug, info, warn};
 use super::{
     ceremony::{FinalizedLogOutcome, ReconstructOutcome},
     dkg_output_hash, public_polynomial_hash, BoundaryStatus, CeremonyState, CommittedDkgBoundary,
-    FinalizedReplayGuard, Mailbox, State,
+    FinalizedReplayGuard, Mailbox, OdkoOutcome, State,
 };
+use crate::errors::DkgError;
+
+/// Canonical chain-reconstructible record of the revealed validator set at a
+/// finalized epoch boundary (`W-08`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevealedSetRecord {
+    /// Epoch activated by this boundary (`boundary.epoch == OdkoOutcome.epoch.get()`).
+    pub epoch: u64,
+    /// Height of the finalized carrier block (`block_number`).
+    pub boundary_height: u64,
+    /// Canonically ordered public keys whose individual share evaluations were
+    /// revealed during the DKG ceremony (`output.revealed()`).
+    pub revealed: Vec<bls12381::PublicKey>,
+}
+
+impl RevealedSetRecord {
+    /// Construct a [`RevealedSetRecord`] from an already-decoded DKG [`Output`].
+    pub fn from_output(
+        epoch: u64,
+        boundary_height: u64,
+        output: &Output<MinSig, bls12381::PublicKey>,
+    ) -> Self {
+        Self {
+            epoch,
+            boundary_height,
+            revealed: output.revealed().iter().cloned().collect(),
+        }
+    }
+
+    /// Construct a [`RevealedSetRecord`] from a finalized [`DkgBoundaryArtifact`]
+    /// and its carrier `block_number`.
+    ///
+    /// Returns `Ok(None)` when `block_number == 0` or `boundary.outcome` is a
+    /// group-key-only bootstrap artifact (raw 48/96-byte group key or legacy
+    /// ODKO-v1 group-key-only envelope).
+    pub fn from_finalized_boundary(
+        block_number: u64,
+        boundary: &DkgBoundaryArtifact,
+    ) -> std::result::Result<Option<Self>, DkgError> {
+        if block_number == 0 || is_group_key_only_outcome(boundary)? {
+            return Ok(None);
+        }
+        let decoded = OdkoOutcome::decode(&boundary.outcome)?;
+        if decoded.epoch.get() != boundary.epoch {
+            return Err(DkgError::BoundaryOutcomeEpochMismatch {
+                boundary_epoch: boundary.epoch,
+                outcome_epoch: decoded.epoch.get(),
+            });
+        }
+        let _ = u32::try_from(decoded.output.revealed().len()).map_err(|_| {
+            DkgError::RevealedValidatorCountOverflow {
+                count: decoded.output.revealed().len(),
+            }
+        })?;
+        Ok(Some(Self::from_output(
+            boundary.epoch,
+            block_number,
+            &decoded.output,
+        )))
+    }
+
+    /// Canonical byte encoding (`epoch:u64 BE || boundary_height:u64 BE ||
+    /// count:u32 BE || concat(Encode::encode(pk))`).
+    pub fn encode(&self) -> Bytes {
+        let count = u32::try_from(self.revealed.len())
+            .expect("revealed validator count bounded by MAX_VALIDATORS");
+        let mut buf = Vec::with_capacity(8 + 8 + 4 + self.revealed.len() * 48);
+        buf.extend_from_slice(&self.epoch.to_be_bytes());
+        buf.extend_from_slice(&self.boundary_height.to_be_bytes());
+        buf.extend_from_slice(&count.to_be_bytes());
+        for pk in &self.revealed {
+            buf.extend_from_slice(commonware_codec::Encode::encode(pk).as_ref());
+        }
+        Bytes::from(buf)
+    }
+}
+
+fn is_group_key_only_outcome(
+    boundary: &DkgBoundaryArtifact,
+) -> std::result::Result<bool, DkgError> {
+    let bytes = boundary.outcome.as_ref();
+    if matches!(bytes.len(), 48 | 96) && &bytes[..4] != b"ODKO" {
+        return Ok(true);
+    }
+    if bytes.len() >= 18 && &bytes[0..4] == b"ODKO" && bytes[4] == 0x01 && bytes[13] <= 1 {
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&bytes[14..18]);
+        let declared = usize::try_from(u32::from_be_bytes(len_bytes)).unwrap_or(usize::MAX);
+        let actual = bytes.len() - 18;
+        if declared == actual && matches!(actual, 48 | 96) {
+            let mut epoch_bytes = [0u8; 8];
+            epoch_bytes.copy_from_slice(&bytes[5..13]);
+            let outcome_epoch = u64::from_be_bytes(epoch_bytes);
+            if outcome_epoch != boundary.epoch {
+                return Err(DkgError::BoundaryOutcomeEpochMismatch {
+                    boundary_epoch: boundary.epoch,
+                    outcome_epoch,
+                });
+            }
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 impl Mailbox {
+    pub(super) fn record_finalized_revealed_set(
+        state: &mut State,
+        block_number: u64,
+        boundary: &DkgBoundaryArtifact,
+    ) {
+        match RevealedSetRecord::from_finalized_boundary(block_number, boundary) {
+            Ok(Some(record)) => {
+                state.latest_revealed_set = Some(record);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(
+                    %error,
+                    epoch = boundary.epoch,
+                    block_number,
+                    "failed to decode revealed validator set from finalized DKG boundary"
+                );
+            }
+        }
+    }
+
     pub(super) fn commit_finalized_boundary(
         state: &mut State,
         block_number: u64,
@@ -43,6 +168,7 @@ impl Mailbox {
                         BoundaryStatus::BoundaryCommitted(committed),
                     );
                 }
+                Self::record_finalized_revealed_set(state, block_number, boundary);
             }
             Err(error) => {
                 warn!(%error, "failed to record finalized DKG boundary status");

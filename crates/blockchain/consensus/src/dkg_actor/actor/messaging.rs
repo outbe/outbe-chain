@@ -180,12 +180,24 @@ pub(super) fn chain_finalized_reconstructable(
     info: &Info<MinSig, bls12381::PublicKey>,
     finalized_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
 ) -> bool {
+    chain_finalized_reconstructable_with_rng(
+        info,
+        finalized_logs,
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+    )
+}
+
+pub(crate) fn chain_finalized_reconstructable_with_rng(
+    info: &Info<MinSig, bls12381::PublicKey>,
+    finalized_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
+    rng: &mut impl rand_core_commonware::CryptoRng,
+) -> bool {
     let mut logs = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
     for (dealer_pk, log) in finalized_logs {
         logs.record(dealer_pk.clone(), log.clone());
     }
     observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        rng,
         logs,
         &Sequential,
     )

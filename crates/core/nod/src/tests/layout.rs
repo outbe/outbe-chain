@@ -9,7 +9,7 @@ fn config_profile_slot_matches_seeder_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
             NodContract::new(storage).config_profile.slot(),
-            U256::from(25)
+            U256::from(24)
         );
     });
 }
@@ -46,21 +46,11 @@ fn the_call_rate_is_pinned_per_profile() {
     assert_eq!(NodParams::DEV.call_rate, 8);
 }
 
-/// Dense `order`-packing puts these fields at contiguous offsets 0..=8.
 #[test]
 fn nod_contract_slot_layout_is_pinned() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let nod = NodContract::new(storage);
-        for (index, actual) in [nod.total_supply.slot(), nod.group_nod_count.base_slot()]
-            .into_iter()
-            .enumerate()
-        {
-            assert_eq!(
-                actual,
-                U256::from(index),
-                "NodContract field #{index} moved slot"
-            );
-        }
+        assert_eq!(nod.group_nod_count.base_slot(), U256::ZERO);
     });
 }

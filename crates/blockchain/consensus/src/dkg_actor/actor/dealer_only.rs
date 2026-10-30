@@ -184,8 +184,12 @@ impl DealerOnlyState {
         )
         .map_err(DkgError::create_dealer_only_info)?;
 
-        let max_players = NonZeroU32::new(participants.len() as u32)
-            .ok_or(DkgError::DealerOnlyNoTargetPlayers)?;
+        let participant_count =
+            u32::try_from(participants.len()).map_err(|_| DkgError::ParticipantCountOverflow {
+                count: participants.len(),
+            })?;
+        let max_players =
+            NonZeroU32::new(participant_count).ok_or(DkgError::DealerOnlyNoTargetPlayers)?;
         let ceremony_id = DkgCeremonyId::new(
             &crate::config::outbe_app_namespace(),
             round,

@@ -52,14 +52,13 @@ fn a_rejected_promis_mint_leaves_the_settled_gem_and_its_nonce_untouched() {
             "{error:?}"
         );
 
-        let gem = GemContract::new(storage.clone());
         let item = gem_item(storage, gem_id);
         assert_eq!(
             item.state,
             GemState::Settled as u8,
             "a failed mint must not burn the Gem"
         );
-        assert_eq!(gem.total_supply().unwrap(), 1);
+        assert_eq!(gem_api::balance_of(storage, ALICE).unwrap(), 1);
         assert_eq!(promis_balance(storage, ALICE), U256::ZERO);
         assert_eq!(
             outbe_promis::api::op_nonce(storage.clone(), ALICE).unwrap(),

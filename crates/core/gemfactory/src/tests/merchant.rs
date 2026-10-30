@@ -41,7 +41,7 @@ fn an_issued_series_is_sent_once_without_a_promis_limit_credit() {
         );
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
         assert!(
-            !outbe_intex::api::series_exists(storage, source_intex_id()).unwrap(),
+            !outbe_intex::api::series_exists(storage, source_series_id()).unwrap(),
             "every unit went into the position, so the source series is spent"
         );
         assert_eq!(unallocated(storage), promis_limit);
@@ -57,14 +57,14 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
         assert_eq!(rec.merchant, ALICE);
-        assert_eq!(rec.source_intex_id, source_intex_id());
+        assert_eq!(rec.source_series_id, source_series_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
         assert_eq!(factory.balance_of(ALICE).unwrap(), 1);
-        assert_eq!(factory.token_of_owner_by_index(ALICE, 0).unwrap(), id);
+        assert_eq!(factory.tokens_by_owner(ALICE).unwrap(), vec![id]);
     });
 }
 
@@ -73,7 +73,7 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     with_storage(None, |storage| {
         seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         // Their load lives in the position now, so nothing is left in the source series.
-        assert!(!outbe_intex::api::series_exists(storage, source_intex_id()).unwrap());
+        assert!(!outbe_intex::api::series_exists(storage, source_series_id()).unwrap());
     });
 }
 
@@ -177,7 +177,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
 fn issue_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
         let r =
-            runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS));
+            runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS));
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
@@ -423,7 +423,7 @@ fn a_merchant_gem_names_a_reference_other_than_its_source() {
         outbe_oracle::test_support::record_finalized_day_vwap(
             storage,
             978,
-            source_intex_id().day(),
+            source_series_id().day(),
             rate,
         )
         .unwrap();
@@ -490,7 +490,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
             .add_position(&GemPosition {
                 position_id,
                 merchant: ALICE,
-                source_intex_id: source_intex_id(),
+                source_series_id: source_series_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
                 expires_at: T_NOW - 1,

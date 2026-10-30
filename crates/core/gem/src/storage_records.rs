@@ -110,12 +110,8 @@ mod tests {
             );
             assert_eq!(crate::api::balance_of(&storage, owner).unwrap(), 2);
             assert_eq!(
-                crate::api::token_of_owner_by_index(&storage, owner, 0).unwrap(),
-                Some(high)
-            );
-            assert_eq!(
-                crate::api::token_of_owner_by_index(&storage, owner, 1).unwrap(),
-                Some(low)
+                crate::api::tokens_by_owner(&storage, owner).unwrap(),
+                vec![high, low]
             );
             assert_eq!(
                 contract

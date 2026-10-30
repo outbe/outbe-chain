@@ -14,10 +14,10 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_intex_id: SeriesId,
+    source_series_id: SeriesId,
     units: U256,
 ) -> Result<U256> {
-    runtime::issue_gem_position(storage, caller, source_intex_id, units)
+    runtime::issue_gem_position(storage, caller, source_series_id, units)
 }
 
 pub fn issue_merchant_gem(

@@ -10,6 +10,9 @@ pub enum DkgError {
     #[error("DKG ceremony requires at least one participant")]
     NoParticipants,
 
+    #[error("DKG participant count {count} exceeds u32::MAX")]
+    ParticipantCountOverflow { count: usize },
+
     #[error("no pending DKG boundary artifact")]
     NoPendingBoundaryArtifact,
 
@@ -197,7 +200,8 @@ pub enum DkgError {
 
     #[error(
         "DKG ceremony timed out after {timeout:?} \
-         (acks: {acks}/{player_threshold}, logs: {logs}/{log_target})"
+         (acks: {acks}/{player_threshold}, logs: {logs}/{log_target}, \
+         missing_dealers: {missing_dealers:?})"
     )]
     CeremonyTimedOut {
         timeout: Duration,
@@ -205,6 +209,7 @@ pub enum DkgError {
         player_threshold: u32,
         logs: usize,
         log_target: u32,
+        missing_dealers: Vec<commonware_cryptography::bls12381::PublicKey>,
     },
 
     #[error("our own finalized log failed verification")]
@@ -230,6 +235,20 @@ pub enum DkgError {
 
     #[error("zero validator cap")]
     ZeroValidatorCap,
+
+    #[error("invalid ODKO boundary outcome in finalized boundary: {0}")]
+    InvalidBoundaryOutcome(#[from] crate::dkg_manager::OdkoDecodeError),
+
+    #[error(
+        "finalized boundary outcome epoch {outcome_epoch} does not match boundary epoch {boundary_epoch}"
+    )]
+    BoundaryOutcomeEpochMismatch {
+        boundary_epoch: u64,
+        outcome_epoch: u64,
+    },
+
+    #[error("revealed validator count {count} exceeds u32::MAX")]
+    RevealedValidatorCountOverflow { count: usize },
 }
 
 /// Wire-level invalid message reasons for `DkgMessage`.

@@ -87,13 +87,18 @@ pub struct CreateSeriesParams {
     pub reference_currency: u16,
 }
 
-/// Per-series identity + lifecycle record. Keyed by `series_id`.
+/// The id of a series: its ERC-1155 token id on every chain and the key of its records.
+pub fn intex_id(series_id: SeriesId) -> U256 {
+    series_id.right_id(&[])
+}
+
+/// Per-series identity + lifecycle record. Keyed by the series' `intex_id`.
 /// `issued_at == 0` means "no series".
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(packed, exists_field = issued_at)]
 pub struct SeriesRecord {
     #[key]
-    pub series_id: SeriesId,
+    pub intex_id: U256,
 
     #[attribute(order = 0)]
     pub promis_load_minor: U256,
@@ -133,6 +138,9 @@ pub struct SeriesRecord {
 
     #[attribute(order = 11)]
     pub transit_margin_seconds: u32,
+
+    #[attribute(order = 12)]
+    pub series_id: SeriesId,
 }
 
 impl SeriesRecord {
@@ -161,7 +169,7 @@ impl SeriesRecord {
 #[contract(addr = INTEX_ADDRESS)]
 pub struct IntexContract {
     #[attribute(order = 0)]
-    pub series: outbe_primitives::storage::dsl::Map<SeriesId, SeriesRecord>,
+    pub series: outbe_primitives::storage::dsl::Map<U256, SeriesRecord>,
 
     #[attribute(order = 1)]
     pub series_ids: outbe_primitives::storage::dsl::List<SeriesId>,
@@ -172,17 +180,17 @@ pub struct IntexContract {
     // Disjoint classes: a series forfeits `issued_units - settled - mined -
     // gem_factory` at its deadline. Not on `SeriesRecord` because a record write
     // rewrites every field.
-    /// series_id -> units paid for and not yet mined.
+    /// intex_id -> units paid for and not yet mined.
     #[attribute(order = 27)]
-    pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub settled_units: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// series_id -> units sent to the Gem Factory.
+    /// intex_id -> units sent to the Gem Factory.
     #[attribute(order = 28)]
-    pub gem_factory_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub gem_factory_units: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// series_id -> settled units burned into Promis so far.
+    /// intex_id -> settled units burned into Promis so far.
     #[attribute(order = 29)]
-    pub mined_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+    pub mined_units: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     // Per-owner ledgers. The owner's Issued units are its token balance, so the
     // registry keeps the Settled balance and what left the token.
@@ -342,11 +350,11 @@ impl IntexContract<'_> {
         outbe_primitives::call_bins::scoped(reference_currency, key)
     }
 
-    /// Composite key for the per-owner ledgers: `keccak256(series_id ++ owner)`.
-    pub fn owner_units_key(series_id: SeriesId, owner: Address) -> B256 {
-        let mut buf = [0u8; SERIES_ID_LEN + 20];
-        buf[..SERIES_ID_LEN].copy_from_slice(series_id.as_bytes());
-        buf[SERIES_ID_LEN..].copy_from_slice(owner.as_slice());
+    /// Composite key for the per-owner ledgers: `keccak256(intex_id ++ owner)`.
+    pub fn owner_units_key(intex_id: U256, owner: Address) -> B256 {
+        let mut buf = [0u8; 32 + 20];
+        buf[..32].copy_from_slice(&intex_id.to_be_bytes::<32>());
+        buf[32..].copy_from_slice(owner.as_slice());
         keccak256(buf)
     }
 }

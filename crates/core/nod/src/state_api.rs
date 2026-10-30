@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     nod_encryption::NOD_BLOB_LEN,
+    series_id::SeriesId,
     storage::StorageHandle,
 };
 
@@ -84,14 +85,14 @@ pub fn add_series_item(
     item: &NodItemState,
     terms: Option<CallTerms>,
     gratis_load_minor: U256,
-    series_group_key: B256,
+    series_id: SeriesId,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
         NodContract::new(storage.clone()).record_nod_issued_state(
             item,
             terms,
             gratis_load_minor,
-            Some(series_group_key),
+            Some(series_id),
         )
     })
 }
@@ -146,12 +147,19 @@ impl NodContract<'_> {
         item: &NodItemState,
         call_terms: Option<CallTerms>,
         gratis_load_minor: U256,
-        series_group_key: Option<B256>,
+        series_id: Option<SeriesId>,
     ) -> Result<()> {
+        let series_group = match series_id {
+            Some(series_id) => Some(
+                self.sealed_series_group(series_id)?
+                    .ok_or_else(|| PrecompileError::fatal("a Nod claims an unsealed series"))?,
+            ),
+            None => None,
+        };
         crate::issuance::validate_item(
             item,
             call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
-            series_group_key,
+            series_group,
         )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
@@ -187,14 +195,12 @@ impl NodContract<'_> {
             }
         };
 
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
-        self.total_supply.write(supply)?;
-        if series_group_key.is_some() {
-            self.consume_unclaimed_tribute_from_series(item.group_key, gratis_load_minor)?;
+        if let Some(series_id) = series_id {
+            self.consume_unclaimed_tribute_from_series(
+                series_id,
+                item.group_key,
+                gratis_load_minor,
+            )?;
         }
         self.add_unpaid_load(item.group_key, gratis_load_minor)?;
         self.insert_group_member(item.group_key, item.nod_id)?;
@@ -243,12 +249,6 @@ impl NodContract<'_> {
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
         let group_id = item.group_id().map_err(date_step_error)?;
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(NodError::TotalSupplyUnderflowDuringRemoval)?;
-        self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
             group.settled_nods = group
                 .settled_nods
@@ -282,17 +282,15 @@ mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
     use outbe_primitives::{
-        storage::hashmap::HashMapStorageProvider,
-        time::{date_key_to_utc_timestamp, WorldwideDay},
+        storage::hashmap::HashMapStorageProvider, time::date_key_to_utc_timestamp,
     };
 
     fn stored_fixture() -> StoredNod {
-        let day = WorldwideDay::new(20261015);
         let id = U256::from_be_bytes([7; 32]);
         let mut record = StoredNod::with_key(id);
         record.owner = Address::repeat_byte(1);
         record.chain_id = 1;
-        record.worldwide_day = day;
+        record.series_id = SeriesId::for_pair(20261015, 840, 978).unwrap();
         record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
         record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
         record
@@ -300,12 +298,10 @@ mod tests {
 
     #[test]
     fn stored_nod_survives_the_item_state_round_trip_exactly() {
-        let day = WorldwideDay::new(20261015);
         let stored = StoredNod {
             nod_id: U256::from_be_bytes([7; 32]),
             owner: Address::repeat_byte(1),
             chain_id: 2,
-            worldwide_day: day,
             league_id: 3,
             entry_price_minor: U256::from(4),
             issuance_currency: 5,
@@ -315,6 +311,7 @@ mod tests {
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
+            series_id: SeriesId::for_pair(20261016, 840, 978).unwrap(),
         };
         let item = NodItemState::from(stored.clone());
         assert_eq!(StoredNod::from(&item), stored);
@@ -335,16 +332,12 @@ mod tests {
             invalid.encrypted_gratis_amount[0] = 2;
             contract.records.update(&invalid).unwrap();
             assert!(load_item(&storage, id).is_err());
-            record.worldwide_day = WorldwideDay::new(20261016);
+            record.series_id = SeriesId::for_pair(20261016, 840, 978).unwrap();
             contract.records.update(&record).unwrap();
-            // Structural reads do not infer a day from an opaque identity.
+            // Structural reads do not infer the series from an opaque identity.
             assert_eq!(
-                load_item(&storage, id)
-                    .unwrap()
-                    .unwrap()
-                    .body()
-                    .worldwide_day,
-                record.worldwide_day
+                load_item(&storage, id).unwrap().unwrap().body().series_id,
+                record.series_id
             );
         });
     }
@@ -383,7 +376,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let params = NodIssueParams {
                 owner: Address::repeat_byte(1),
-                worldwide_day: WorldwideDay::new(20261015),
+                emission_day: 20261015,
                 league_id: 1,
                 gratis_load_minor: U256::from(5_000_000),
                 entry_price_minor: U256::from(1_000_000),
@@ -394,7 +387,11 @@ mod tests {
             let item = NodItemState {
                 nod_id: encrypted.terms.nod_id,
                 owner: params.owner,
-                worldwide_day: params.worldwide_day,
+                series_id: test_support::series_of(
+                    params.emission_day,
+                    params.issuance_currency,
+                    params.reference_currency,
+                ),
                 league_id: params.league_id,
                 group_key: crate::identity::group_key(
                     date_key_to_utc_timestamp(20_200_101),
@@ -410,8 +407,7 @@ mod tests {
             };
             add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
             let contract = NodContract::new(storage.clone());
-            assert_eq!(contract.total_supply().unwrap(), 1);
-            assert_eq!(contract.state_records(Some(item.owner)).unwrap().len(), 1);
+            assert_eq!(contract.state_records(item.owner).unwrap().len(), 1);
             let stale_item = load_item(&storage, item.nod_id).unwrap().unwrap();
             let stale_group = load_group(&storage, item.group_key).unwrap().unwrap();
             record_settled(
@@ -437,8 +433,7 @@ mod tests {
                 load_group(&storage, item.group_key).unwrap().unwrap(),
             )
             .unwrap();
-            assert_eq!(contract.total_supply().unwrap(), 0);
-            assert!(contract.state_records(None).unwrap().is_empty());
+            assert!(contract.state_records(item.owner).unwrap().is_empty());
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }

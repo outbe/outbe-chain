@@ -134,6 +134,17 @@ where
                 crate::errors::StackEpochError::DeferredStartupPlanChangedActiveEpoch.into(),
             );
         }
+        let ceremony_output = match &restored {
+            RestoredPendingDkgActivation::Participant(pending) => Some(
+                pending
+                    .recovered_output
+                    .as_ref()
+                    .unwrap_or(&pending.complete.output),
+            ),
+            RestoredPendingDkgActivation::DealerOnly(pending) => pending.recovered_output.as_ref(),
+        };
+        self.vrf_safety
+            .apply_pending_ceremony_output(ceremony_output);
         self.state.dkg_cycle =
             next_dkg_cycle_after_restored_target(self.state.dkg_cycle, restored_target_dkg_cycle);
         match restored {
@@ -153,6 +164,7 @@ where
             finalized_height = recovery_anchor_height,
             "restored future DKG handoff; current-epoch channels will be acquired first"
         );
+        publish_randomness_status(&self.bridge, &self.vrf_safety);
         Ok(())
     }
 
@@ -232,6 +244,7 @@ where
                 .planned_activation_height(activation_anchor),
             self.dkg_rotation_params.activation_grace_blocks,
         );
+        self.vrf_safety.apply_revealed_output(&canonical_output);
         publish_randomness_status(&self.bridge, &self.vrf_safety);
         self.application_epoch_fence
             .arm_activation_boundary(previous_epoch, activation_anchor);

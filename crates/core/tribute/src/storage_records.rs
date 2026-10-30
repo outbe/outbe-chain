@@ -178,7 +178,7 @@ impl<'storage> crate::TributeContract<'storage> {
         create_indexed(&self.records, record, self.record_indexes(record))
     }
 
-    /// Test helper. `create_nod` deletes through [`Self::delete_loaded_state_record`].
+    /// Test helper. `issue_nod` deletes through [`Self::delete_loaded_state_record`].
     #[cfg(test)]
     pub(crate) fn delete_state_record(
         &self,

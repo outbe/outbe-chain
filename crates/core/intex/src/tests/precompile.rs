@@ -9,7 +9,7 @@ fn precompile_series_data_round_trip() {
         api::create_series(&s, sample_params(7)).unwrap();
 
         let call = IIntex::getIntexSeriesCall {
-            seriesId: sid(7).into(),
+            intexId: crate::schema::intex_id(sid(7)),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
@@ -32,7 +32,7 @@ fn precompile_series_data_round_trip() {
 fn precompile_series_data_missing_reverts() {
     with_registry(|s| {
         let call = IIntex::getIntexSeriesCall {
-            seriesId: sid(99).into(),
+            intexId: crate::schema::intex_id(sid(99)),
         }
         .abi_encode();
         assert!(dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).is_err());
@@ -45,14 +45,14 @@ fn precompile_series_exists() {
         api::create_series(&s, sample_params(7)).unwrap();
 
         let yes = IIntex::seriesExistsCall {
-            seriesId: sid(7).into(),
+            intexId: crate::schema::intex_id(sid(7)),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &yes, Address::ZERO, U256::ZERO).unwrap();
         assert!(IIntex::seriesExistsCall::abi_decode_returns(&out).unwrap());
 
         let no = IIntex::seriesExistsCall {
-            seriesId: sid(8).into(),
+            intexId: crate::schema::intex_id(sid(8)),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &no, Address::ZERO, U256::ZERO).unwrap();

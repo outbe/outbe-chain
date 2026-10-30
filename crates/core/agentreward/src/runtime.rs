@@ -1,4 +1,4 @@
-use crate::constants::AGENT_DISCOUNT_PCT;
+use crate::constants::{AGENT_DISCOUNT_PCT, REWARD_BALANCE_IDLE_SECONDS};
 use crate::errors::{date_step_error, AgentRewardError};
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
@@ -99,6 +99,27 @@ impl AgentRewardContract<'_> {
         self.pending_total_minor.read(&(pool as u8))
     }
 
+    /// Returns zero for an empty balance; a nonempty balance must have a deadline.
+    pub fn get_pool_balance_deadline(&self, pool: RewardPool, address: Address) -> Result<u64> {
+        if self.get_pool_claimable_reward(pool, address)?.is_zero() {
+            return Ok(0);
+        }
+        let deadline = self
+            .reward_balance_deadlines
+            .read(&Self::reward_balance_key(pool, address))?;
+        if deadline == 0 {
+            return Err(AgentRewardError::RewardDeadlineMissing.into());
+        }
+        Ok(deadline)
+    }
+
+    fn renewed_reward_deadline(&self) -> Result<u64> {
+        self.storage
+            .now_secs()?
+            .checked_add(REWARD_BALANCE_IDLE_SECONDS)
+            .ok_or_else(|| AgentRewardError::RewardDeadlineOverflow.into())
+    }
+
     /// Adds amount to an address's claimable reward in one pool.
     pub fn add_claimable_reward(
         &mut self,
@@ -106,11 +127,49 @@ impl AgentRewardContract<'_> {
         address: Address,
         amount: U256,
     ) -> Result<()> {
-        let current = self.get_pool_claimable_reward(pool, address)?;
-        let next = current
-            .checked_add(amount)
-            .ok_or(AgentRewardError::ClaimableRewardsOverflow)?;
-        self.write_pool_claimable_reward(pool, address, next)
+        if amount.is_zero() {
+            return Ok(());
+        }
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let current = self.get_pool_claimable_reward(pool, address)?;
+            let next = current
+                .checked_add(amount)
+                .ok_or(AgentRewardError::ClaimableRewardsOverflow)?;
+            let deadline = if current.is_zero() {
+                self.renewed_reward_deadline()?
+            } else {
+                self.get_pool_balance_deadline(pool, address)?
+            };
+            self.write_pool_claimable_reward(pool, address, next)?;
+            self.reward_balance_deadlines
+                .write(&Self::reward_balance_key(pool, address), deadline)
+        })
+    }
+
+    /// Anyone can return an expired pool balance, but only the Promis Limit receives it.
+    pub fn return_expired_reward(&mut self, pool: RewardPool, address: Address) -> Result<U256> {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let balance = self.get_pool_claimable_reward(pool, address)?;
+            if balance.is_zero() {
+                return Ok(U256::ZERO);
+            }
+            let deadline = self.get_pool_balance_deadline(pool, address)?;
+            if storage.now_secs()? < deadline {
+                return Err(AgentRewardError::RewardBalanceNotExpired(deadline).into());
+            }
+            outbe_promislimit::PromisLimitContract::new(storage.clone()).checked_credit(balance)?;
+            self.write_pool_claimable_reward(pool, address, U256::ZERO)?;
+            self.reward_balance_deadlines
+                .write(&Self::reward_balance_key(pool, address), 0)?;
+            self.emit(IAgentReward::RewardBalanceExpired {
+                account: address,
+                pool: pool as u8,
+                promisLoadMinor: balance,
+            })?;
+            Ok(balance)
+        })
     }
 
     fn write_pool_claimable_reward(
@@ -140,7 +199,8 @@ impl AgentRewardContract<'_> {
     ///
     /// The balance is the safe form of the reward. The Gem is not: an unsettled
     /// Gem can be Called and forfeited. Sizing the claim is therefore the agent's
-    /// own risk control. The part that the agent does not claim keeps accruing.
+    /// own risk control. Unclaimed value expires after 365 days without a claim
+    /// in this pool and can then be returned to the Promis Limit by anyone.
     ///
     /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
     /// price is the previous UTC day's COEN VWAP in the reference currency less
@@ -167,12 +227,23 @@ impl AgentRewardContract<'_> {
             if balance.is_zero() {
                 return Err(AgentRewardError::NoClaimableBalance.into());
             }
+            let deadline = self.get_pool_balance_deadline(pool, address)?;
+            if storage.now_secs()? >= deadline {
+                return Err(AgentRewardError::ClaimDeadlinePassed(deadline).into());
+            }
             let requested = if amount.is_zero() { balance } else { amount };
             if requested > balance {
                 return Err(AgentRewardError::InsufficientClaimableBalance.into());
             }
+            let next_deadline = if requested == balance {
+                0
+            } else {
+                self.renewed_reward_deadline()?
+            };
             let gem_id = issue_reward_gem(&self.storage, (address, requested), currencies)?;
             self.write_pool_claimable_reward(pool, address, balance - requested)?;
+            self.reward_balance_deadlines
+                .write(&Self::reward_balance_key(pool, address), next_deadline)?;
             self.emit(IAgentReward::RewardsClaimed {
                 account: address,
                 pool: pool as u8,

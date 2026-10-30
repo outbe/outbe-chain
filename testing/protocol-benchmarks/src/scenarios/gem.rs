@@ -73,7 +73,7 @@ fn six_decimal_unit() -> U256 {
     U256::from(SCALE_1E6_U64)
 }
 
-fn source_intex_id() -> SeriesId {
+fn source_series_id() -> SeriesId {
     SeriesId::pack(20_260_212, *b"USD", b'U').expect("benchmark Intex id is canonical")
 }
 
@@ -102,7 +102,7 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     // A merchant gem is floored at the source's emission-day price.
     oracle
-        .record_utc_day_vwap(source_intex_id().day(), index, six_decimal_unit())
+        .record_utc_day_vwap(source_series_id().day(), index, six_decimal_unit())
         .map_err(|error| error.to_string())
 }
 
@@ -110,7 +110,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
-            series_id: source_intex_id(),
+            series_id: source_series_id(),
             emission_day: EmissionDate::new(0),
             issued_units: PARK_UNITS as u32,
             promis_load_minor: SCALE_1E6_U128,
@@ -191,7 +191,7 @@ impl BenchmarkScenario for GemScenario {
                     outbe_gemfactory::api::issue_gem_position(
                         &storage,
                         ALICE,
-                        source_intex_id(),
+                        source_series_id(),
                         U256::from(PARK_UNITS),
                     )
                     .map_err(|error| error.to_string())
@@ -238,7 +238,7 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
         PreparedGemPath::Position => outbe_gemfactory::api::issue_gem_position(
             &storage,
             ALICE,
-            source_intex_id(),
+            source_series_id(),
             U256::from(PARK_UNITS),
         )
         .map_err(|error| error.to_string()),

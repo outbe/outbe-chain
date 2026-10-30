@@ -1,10 +1,7 @@
 //! Pure NOD identities shared by issuance and offchain calculation.
 use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
-    error::Result,
-    time::{TimeError, WorldwideDay},
-};
+use outbe_primitives::{error::Result, series_id::SeriesId, time::TimeError};
 
 /// The call group of a Nod issued at `issued_at`: its first full day, its call price and
 /// the currency that price is quoted in.
@@ -20,24 +17,9 @@ pub fn group_key(
     ))
 }
 
-/// Series group identity sealed at Lysis: `(emission_day E, issuance_currency, reference_currency)` (OIP-00343 / OIP-00328).
-#[must_use]
-pub fn series_group_key(
-    emission_day: u32,
-    issuance_currency: u16,
-    reference_currency: u16,
-) -> B256 {
-    let mut bytes = [0u8; 8];
-    bytes[..4].copy_from_slice(&emission_day.to_be_bytes());
-    bytes[4..6].copy_from_slice(&issuance_currency.to_be_bytes());
-    bytes[6..8].copy_from_slice(&reference_currency.to_be_bytes());
-    alloy_primitives::keccak256(bytes)
-}
-
-/// Deterministic full-width Keccak256 NOD identity: raw owner (20 bytes)
-/// followed by worldwide_day (u32 big-endian). The typed Nod collection is its namespace.
-pub fn generate_nod_id(owner: Address, worldwide_day: WorldwideDay) -> U256 {
-    outbe_primitives::nod_rules::derive_nod_id(owner, worldwide_day)
+/// `keccak256(series_id || owner)`: one Nod per owner and series.
+pub fn generate_nod_id(series_id: SeriesId, owner: Address) -> U256 {
+    outbe_primitives::nod_rules::derive_nod_id(series_id, owner)
 }
 
 pub fn parse_nod_id(nod_id: &str) -> Result<U256> {

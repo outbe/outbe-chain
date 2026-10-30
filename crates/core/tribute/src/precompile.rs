@@ -35,9 +35,6 @@ pub fn dispatch(
         match call {
             name(_) => metadata::<ITribute::nameCall>(|| Ok("tribute".to_string())),
             symbol(_) => metadata::<ITribute::symbolCall>(|| Ok("TRIBUTE".to_string())),
-            totalSupply(_) => metadata::<ITribute::totalSupplyCall>(|| {
-                Ok(alloy_primitives::U256::from(tribute.total_supply()?))
-            }),
             balanceOf(c) => view(c, |c| {
                 Ok(alloy_primitives::U256::from(tribute.balance_of(c.owner)?))
             }),
@@ -56,7 +53,7 @@ pub fn dispatch(
                 )
                     .into())
             }),
-            getTributesByOwner(c) => view(c, |c| {
+            tokensByOwner(c) => view(c, |c| {
                 Ok(tribute
                     .get_tribute_ids_by_owner(c.owner)?
                     .into_iter()
@@ -67,8 +64,8 @@ pub fn dispatch(
             getDayLeagueFraction(c) => view(c, |c| {
                 tribute.get_day_league_fraction(c.worldwideDay.into(), c.league)
             }),
-            createNod(c) => mutate(&storage, c, caller, |sender, c| {
-                let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
+            issueNod(c) => mutate(&storage, c, caller, |sender, c| {
+                let nod_id = tribute.issue_nod(sender, WwdEntityId::from(c.tributeId))?;
                 Ok(nod_id)
             }),
             clean(c) => mutate(&storage, c, caller, |_, c| {

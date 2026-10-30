@@ -11,10 +11,11 @@
 //! - DKG header artifact recording
 //! - Block-cache eviction below the new finalized height
 //!
-//! The actor writes the parent certificate store before it publishes the finalized
-//! view. Thus a proposer that can observe the new finalized parent can also recover
-//! the exact-parent certificate. The Phase 1 system transaction of the successor
-//! block needs that certificate.
+//! The actor attempts the parent certificate write before it publishes the
+//! finalized view. A snapshot-build failure skips that write and the late-finalize
+//! rekey. A store failure after bounded retries continues in degraded mode. View
+//! publication still proceeds. The successor Phase 1 transaction needs the
+//! certificate when the write succeeded.
 
 use crate::finalization::committee_prelude::build_committee_prelude;
 use commonware_runtime::{Clock, Spawner};
@@ -52,6 +53,11 @@ use std::sync::Arc;
 /// parent is eligible for Phase 1. Retention remains bounded so stale local
 /// recovery data cannot grow unbounded across restarts or missed slots.
 pub const PARENT_CERT_KEEP_DEPTH: u64 = 256;
+
+/// Synchronous attempts for one parent-cert store write or prune.
+///
+/// After this many failures the actor continues in degraded mode.
+pub const FINALIZE_PERSIST_MAX_ATTEMPTS: usize = 3;
 use crate::marshal_types::MarshalMailbox;
 use crate::vrf_safety::VrfSafetyGate;
 
@@ -92,6 +98,44 @@ pub struct FinalizationActorDeps {
     /// handler reads it to pack the proposer artifact. Best-effort and
     /// process-local. It is never consensus state.
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
+}
+
+/// Result of one finalization-slot persist attempt.
+struct PersistFinalizationOutcome {
+    /// Committee for the late-finalize rekey. `None` when the snapshot build
+    /// failed. The rekey must not run in that case.
+    rekey_committee: Option<LateFinalizeCommittee>,
+    /// `true` only when `put_finalization` finished inside the retry budget.
+    put_succeeded: bool,
+}
+
+/// Run `op` up to [`FINALIZE_PERSIST_MAX_ATTEMPTS`] times.
+///
+/// Returns the successful value. Does not clear the persist-degraded gauge.
+/// The caller clears that gauge once, after the whole store cycle succeeds.
+fn persist_with_budget<T, E>(
+    op_name: &'static str,
+    mut op: impl FnMut() -> std::result::Result<T, E>,
+) -> Option<T>
+where
+    E: std::fmt::Display,
+{
+    let mut error = String::new();
+    for _attempt in 0..FINALIZE_PERSIST_MAX_ATTEMPTS {
+        match op() {
+            Ok(value) => return Some(value),
+            Err(failure) => error = failure.to_string(),
+        }
+    }
+    crate::metrics::record_finalization_persist_degraded();
+    tracing::error!(
+        target: "outbe::finalization",
+        op = op_name,
+        attempts = FINALIZE_PERSIST_MAX_ATTEMPTS,
+        %error,
+        "finalization store operation failed after bounded retries; continuing in degraded mode"
+    );
+    None
 }
 
 /// FinalizationActor itself. Owns the receiver end of an unbounded
@@ -137,11 +181,13 @@ impl FinalizationActor {
         self
     }
 
-    /// Run the actor's event loop. Returns `Err` on a fatal
-    /// finalization error (same-round / same-height inconsistency, or a
-    /// missing marshal mailbox). An exhausted marshal resolution cycle is not
-    /// fatal. The actor records a stall metric and retries. Returns `Ok(())`
-    /// if the mailbox closes cleanly during graceful shutdown.
+    /// Run the actor's event loop. Returns `Err` on a fatal finalization error:
+    /// same-round or same-height inconsistency, a missing marshal mailbox, or a
+    /// failed boundary observation. A snapshot-build failure and a parent-cert
+    /// store failure after bounded retries are operational and do not stop the
+    /// actor. An exhausted marshal resolution cycle is not fatal. The actor
+    /// records a stall metric and retries. Returns `Ok(())` if the mailbox
+    /// closes cleanly during graceful shutdown.
     pub async fn run<E>(mut self, ctx: E) -> Result<()>
     where
         E: Spawner + Clock + Send + Sync + 'static,
@@ -464,55 +510,34 @@ impl FinalizationActor {
             ReplayClassification::New => {}
         }
 
-        // Persist the per-finalized-block parent proof record before publishing
-        // the finalized view. This closes the post-finalize / pre-child-build
-        // crash window: any proposer that can observe the new finalized parent
-        // can also recover its Phase 1 certificate record.
-        //
-        // This code computes the V2 canonical fields `committee_set_hash`,
-        // `vrf_material_version`, and `vrf_group_public_key_hash` from the
-        // `HybridScheme` of the epoch. Thus the finalization-slot record carries
-        // the same canonical fields that the certified-notarization writer
-        // (`OutbeReporter::handle_certification`) writes via
-        // `outbe_consensus::proof::committee_set_hash_v2`.
-        // `ParentProofSelector` reads through `get_best_for_parent`, which
-        // returns the finalization record first. If `committee_set_hash` here
-        // defaulted to `ZERO`, Phase 1's snapshot lookup
-        // `committee_snapshot_key(epoch, ZERO)` would miss
-        // the snapshot that `apply_boundary_outcome` wrote under the canonical
-        // hash. This miss occurs even when the certified-notarization slot has the
-        // right value.
+        // Attempt the canonical parent-proof write before publishing the view.
+        // A snapshot-build failure skips the finalization-slot write and the
+        // late-finalize rekey, so a zero `committee_set_hash` cannot shadow a
+        // certified-notarization witness or poison late credits. A store failure
+        // after FINALIZE_PERSIST_MAX_ATTEMPTS continues in degraded mode. Neither
+        // failure stops view publication. This call does not touch `view`.
         let consensus_data = finalized.consensus_data.clone();
-
-        // Persist the canonical parent-proof record before publishing the view,
-        // closing the post-finalize / pre-child-build crash window. The V2
-        // canonical fields match the certified-notarization writer. This call has
-        // no `view` access, so it is safe to call while the write guard is held.
-        let (committee_set_hash, committee_size) =
-            self.persist_finalization_record(&finalized, &consensus_data, digest, block_number)?;
-
-        // Rekey the `fb_hash`-buffered late-finalize votes to this block
-        // number and prune those outside the K-block inclusion window. No `view`
-        // access.
-        self.rekey_late_finalize_votes(
-            FinalizeVoteTarget {
-                epoch: finalized.round.epoch().get(),
-                view: finalized.round.view().get(),
-                parent_view: consensus_data.finalized_certificate.parent_view,
-                fb_hash: digest.0,
-            },
-            block_number,
-            LateFinalizeCommittee {
-                set_hash: committee_set_hash,
-                size: committee_size,
-            },
-        );
-
-        // Prune old parent-cert records and record store metrics. No `view` access.
-        self.prune_parent_cert_store(
+        let outcome =
+            self.persist_finalization_record(&finalized, &consensus_data, digest, block_number);
+        if let Some(committee) = outcome.rekey_committee {
+            self.rekey_late_finalize_votes(
+                FinalizeVoteTarget {
+                    epoch: finalized.round.epoch().get(),
+                    view: finalized.round.view().get(),
+                    parent_view: consensus_data.finalized_certificate.parent_view,
+                    fb_hash: digest.0,
+                },
+                block_number,
+                committee,
+            );
+        }
+        let prune_succeeded = self.prune_parent_cert_store(
             block_number,
             view.last_finalized_round.unwrap_or(finalized.round),
-        )?;
+        );
+        if outcome.put_succeeded && prune_succeeded {
+            crate::metrics::record_finalization_persist_recovered();
+        }
 
         view.last_finalized_round = Some(match view.last_finalized_round {
             Some(last_round) => std::cmp::max(last_round, finalized.round),
@@ -548,21 +573,22 @@ impl FinalizationActor {
         Ok(())
     }
 
-    /// Build and persist the canonical V2 finalization parent-proof record, and
-    /// return the `(committee_set_hash, committee_size)` the late-finalize rekey
-    /// needs. Does not touch the shared `view`. The function derives the V2
-    /// canonical fields from the `HybridScheme` of the epoch, so the
-    /// finalization-slot record matches the certified-notarization writer. A
-    /// snapshot-build failure is an encode-invariant violation. It fails the
-    /// finalization deterministically and does not write a record whose
-    /// `committee_set_hash` would diverge.
+    /// Build and persist the canonical V2 finalization parent-proof record.
+    ///
+    /// Does not touch the shared `view`. The V2 canonical fields come from the
+    /// epoch `HybridScheme`, so a written finalization-slot record matches the
+    /// certified-notarization writer. A snapshot-build failure skips the
+    /// finalization-slot write and returns no rekey committee. A missing scheme
+    /// still writes default V2 fields and still returns a rekey committee.
+    /// `put_finalization` retries inside [`FINALIZE_PERSIST_MAX_ATTEMPTS`]. A
+    /// failed put still returns the committee when the prelude succeeded.
     fn persist_finalization_record(
         &self,
         finalized: &Finalized,
         consensus_data: &ConsensusData,
         digest: Digest,
         block_number: u64,
-    ) -> eyre::Result<(alloy_primitives::B256, usize)> {
+    ) -> PersistFinalizationOutcome {
         let encoded_certificate = consensus_data
             .finalized_certificate
             .encoded_certificate
@@ -575,7 +601,7 @@ impl FinalizationActor {
         // Captured before `ordered_committee` is moved into the proof record, for
         // the late-finalize store resolve.
         let committee_size = ordered_committee.len();
-        let (committee_set_hash, vrf_material_version, vrf_group_public_key_hash) = match self
+        let built = match self
             .deps
             .certificate_scheme_provider
             .scoped(finalized.round.epoch())
@@ -586,18 +612,27 @@ impl FinalizationActor {
                 // This path reconstructs the snapshot from finalized metadata. Thus the
                 // unused `vrf_public_polynomial_hash` of the snapshot is `B256::ZERO`
                 // inside the helper.
-                let prelude = build_committee_prelude(&scheme, &ordered_committee, finalized_epoch)
-                    .map_err(|e| {
-                        crate::errors::FinalizationError::CommitteeSnapshotBuildFailed {
-                            finalized_epoch,
-                            reason: format!("{e}"),
-                        }
-                    })?;
-                (
-                    prelude.committee_set_hash,
-                    prelude.vrf_material_version,
-                    prelude.vrf_group_public_key_hash,
-                )
+                match build_committee_prelude(&scheme, &ordered_committee, finalized_epoch) {
+                    Ok(prelude) => Some((
+                        prelude.committee_set_hash,
+                        prelude.vrf_material_version,
+                        prelude.vrf_group_public_key_hash,
+                    )),
+                    Err(error) => {
+                        crate::metrics::record_finalization_snapshot_build_degraded();
+                        warn!(
+                            target: "outbe::finalization",
+                            epoch = finalized_epoch,
+                            block_number,
+                            %error,
+                            "committee prelude build failed on finalization; skipping finalization parent-cert write in degraded mode"
+                        );
+                        return PersistFinalizationOutcome {
+                            rekey_committee: None,
+                            put_succeeded: false,
+                        };
+                    }
+                }
             }
             None => {
                 warn!(
@@ -607,13 +642,15 @@ impl FinalizationActor {
                      record will carry default V2 canonical fields; Phase 1 snapshot lookup \
                      may miss"
                 );
-                (
-                    alloy_primitives::B256::ZERO,
-                    0,
-                    alloy_primitives::B256::ZERO,
-                )
+                None
             }
         };
+        let (committee_set_hash, vrf_material_version, vrf_group_public_key_hash) = built
+            .unwrap_or((
+                alloy_primitives::B256::ZERO,
+                0,
+                alloy_primitives::B256::ZERO,
+            ));
         let snap = CertifiedParentProofRecord {
             format_version: CERTIFIED_PARENT_PROOF_RECORD_FORMAT_VERSION,
             kind: ProofKind::Finalization {
@@ -630,13 +667,17 @@ impl FinalizationActor {
             vrf_material_version,
             vrf_group_public_key_hash,
         };
-        self.deps
-            .parent_cert_store
-            .put_finalization(snap)
-            .map_err(|error| {
-                crate::errors::FinalizationError::PersistParentProofRecord(format!("{error}"))
-            })?;
-        Ok((committee_set_hash, committee_size))
+        let put_succeeded = persist_with_budget("put_finalization", || {
+            self.deps.parent_cert_store.put_finalization(snap.clone())
+        })
+        .is_some();
+        PersistFinalizationOutcome {
+            rekey_committee: Some(LateFinalizeCommittee {
+                set_hash: committee_set_hash,
+                size: committee_size,
+            }),
+            put_succeeded,
+        }
     }
 
     /// Rekey the reporter's view-buffered late-finalize votes to the now-known
@@ -656,18 +697,14 @@ impl FinalizationActor {
 
     /// Prune parent-cert records below the retention floor and record store
     /// metrics. No `view` access.
-    fn prune_parent_cert_store(
-        &self,
-        block_number: u64,
-        processed_round: Round,
-    ) -> eyre::Result<()> {
-        let pruned = self
-            .deps
-            .parent_cert_store
-            .prune_below_height(block_number.saturating_sub(PARENT_CERT_KEEP_DEPTH))
-            .map_err(|error| {
-                crate::errors::FinalizationError::PruneParentCertRecords(format!("{error}"))
-            })?;
+    ///
+    /// Returns whether both prunes finished inside the retry budget. An
+    /// exhausted budget is operational. The caller keeps finalizing.
+    fn prune_parent_cert_store(&self, block_number: u64, processed_round: Round) -> bool {
+        let height_floor = block_number.saturating_sub(PARENT_CERT_KEEP_DEPTH);
+        let pruned_height = persist_with_budget("prune_below_height", || {
+            self.deps.parent_cert_store.prune_below_height(height_floor)
+        });
         // Match marshal: retain temporary certificates behind the previously processed round.
         let keep_views = u64::from(crate::config::ACTIVITY_TIMEOUT)
             .saturating_mul(crate::config::VIEW_RETENTION_MULTIPLIER);
@@ -677,14 +714,12 @@ impl FinalizationActor {
                 .view()
                 .saturating_sub(commonware_consensus::types::ViewDelta::new(keep_views)),
         );
-        let pruned = pruned
-            + self
-                .deps
+        let pruned_cn = persist_with_budget("prune_certified_notarizations_below_round", || {
+            self.deps
                 .parent_cert_store
                 .prune_certified_notarizations_below_round(round_floor)
-                .map_err(|error| {
-                    crate::errors::FinalizationError::PruneTemporaryParentCerts(format!("{error}"))
-                })?;
+        });
+        let pruned = pruned_height.unwrap_or(0) + pruned_cn.unwrap_or(0);
         crate::metrics::record_parent_cert_store_size(self.deps.parent_cert_store.len());
         crate::metrics::record_parent_cert_record_pruned(pruned);
         if let Some(oldest) = self.deps.parent_cert_store.oldest_stored_height() {
@@ -692,7 +727,7 @@ impl FinalizationActor {
         } else {
             crate::metrics::record_parent_cert_retained_depth(0);
         }
-        Ok(())
+        pruned_height.is_some() && pruned_cn.is_some()
     }
 
     /// Publish a fresh `ConsensusStatus` to the bridge for RPC after durable

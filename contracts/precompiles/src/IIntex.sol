@@ -23,6 +23,8 @@ interface IIntex {
     error BatchLengthMismatch();
 
     struct SeriesData {
+        /// @notice `keccak256(seriesId)`: the series' token id on every chain.
+        uint256 intexId;
         bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
@@ -54,7 +56,7 @@ interface IIntex {
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist, or was deleted once nothing in it was left to settle
     ///         or mine.
-    function getIntexSeries(bytes14 seriesId) external view returns (SeriesData memory);
+    function getIntexSeries(uint256 intexId) external view returns (SeriesData memory);
 
     /// @notice The classes an issued unit can be in. Disjoint: they sum to
     ///         `issuedUnits`. `activeUnits` is what is still unpaid while the series
@@ -70,11 +72,11 @@ interface IIntex {
         uint32 forfeitedUnits;
     }
 
-    /// @notice Read the disjoint unit counts of `seriesId`.
-    function seriesUnitCounts(bytes14 seriesId) external view returns (UnitCounts memory);
+    /// @notice Read the disjoint unit counts of `intexId`.
+    function seriesUnitCounts(uint256 intexId) external view returns (UnitCounts memory);
 
     /// @notice Whether a series exists.
-    function seriesExists(bytes14 seriesId) external view returns (bool);
+    function seriesExists(uint256 intexId) external view returns (bool);
 
     /// @notice Number of live series (dense-enumeration length).
     function totalSeries() external view returns (uint256);
@@ -85,7 +87,7 @@ interface IIntex {
     // ERC-165
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
-    // ERC-1155: a series' Settled units, token id = `uint256(uint112(seriesId))`.
+    // ERC-1155: a series' Settled units, token id = its `intexId`.
     function balanceOf(address account, uint256 id) external view returns (uint256);
     function balanceOfBatch(address[] calldata accounts, uint256[] calldata ids)
         external

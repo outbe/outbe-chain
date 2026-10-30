@@ -75,7 +75,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 nod_id: entity(U256::ZERO, WorldwideDay::new(0)),
                 owner: Address::ZERO,
                 gratis_load_minor: U256::ZERO,
-                worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
                 league_id: 0,
                 group_key: B256::ZERO,
                 issuance_currency: 0,
@@ -90,7 +90,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 nod_id: entity(U256::MAX, WorldwideDay::new(u32::MAX)),
                 owner: Address::repeat_byte(u8::MAX),
                 gratis_load_minor: U256::MAX,
-                worldwide_day: WorldwideDay::new(u32::MAX),
+                emission_day: u32::MAX,
                 league_id: u16::MAX,
                 group_key: B256::repeat_byte(u8::MAX),
                 issuance_currency: u16::MAX,
@@ -108,7 +108,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             outbe_nod::api::calculation_amount(&decoded).unwrap(),
             outbe_nod::api::calculation_amount(&body).unwrap()
         );
-        assert_eq!(decoded.worldwide_day, body.worldwide_day);
+        assert_eq!(decoded.series_id, body.series_id);
         assert_eq!(decoded.league_id, body.league_id);
         assert_eq!(decoded.group_key, body.group_key);
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
@@ -144,7 +144,7 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     let amount = U256::from_be_bytes([0x39; 32]);
     let params = outbe_nod::NodIssueParams {
         owner: Address::repeat_byte(0x81),
-        worldwide_day: WorldwideDay::new(20_261_007),
+        emission_day: 20_261_007,
         league_id: 4,
         gratis_load_minor: amount,
         entry_price_minor: U256::from(17),

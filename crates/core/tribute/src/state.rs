@@ -11,10 +11,6 @@ use crate::storage_records::StoredTributeEntryExt;
 use crate::TributeRecord;
 
 impl TributeContract<'_> {
-    pub fn total_supply(&self) -> Result<u64> {
-        self.total_supply.read()
-    }
-
     pub fn owner_of(&self, tribute_id: WwdEntityId) -> Result<Address> {
         if self.retired_days.read(&tribute_id.worldwide_day())? {
             return Err(TributeError::TributeNotFound.into());

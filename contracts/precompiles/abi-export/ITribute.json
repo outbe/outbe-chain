@@ -33,25 +33,6 @@
   },
   {
     "type": "function",
-    "name": "createNod",
-    "inputs": [
-      {
-        "name": "tributeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "getDayLeagueFraction",
     "inputs": [
       {
@@ -124,22 +105,22 @@
   },
   {
     "type": "function",
-    "name": "getTributesByOwner",
+    "name": "issueNod",
     "inputs": [
       {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
+        "name": "tributeId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "tributeIds",
-        "type": "uint256[]",
-        "internalType": "uint256[]"
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -226,13 +207,19 @@
   },
   {
     "type": "function",
-    "name": "totalSupply",
-    "inputs": [],
+    "name": "tokensByOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "tokenIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -441,22 +428,6 @@
   },
   {
     "type": "error",
-    "name": "EntryPriceUnavailable",
-    "inputs": [
-      {
-        "name": "priceDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "currency",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidLeague",
     "inputs": [
       {
@@ -494,7 +465,7 @@
   },
   {
     "type": "error",
-    "name": "NodCreationBeforeCompletion",
+    "name": "NodIssueBeforeCompletion",
     "inputs": []
   },
   {

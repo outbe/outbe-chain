@@ -32,7 +32,7 @@ contract DuplicateProtectionTest is CrossChainTest {
 
     uint32 internal constant SERIES_ID_DAY = 20260101;
     bytes14 internal constant SERIES_ID = "20260101-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
 
     function setUp() public {
         _setUpBridge();

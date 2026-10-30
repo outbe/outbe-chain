@@ -32,7 +32,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     address private user = address(0x1);
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint256 private constant AMOUNT = 100;
     uint32 private constant ISSUED_UNITS = 10_000;
 
@@ -276,7 +276,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         // must park the transfer (not unwind the packet and strand the burned tokens).
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
-        uint256 failTokenId = uint256(uint112(failSeries));
+        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
@@ -320,7 +320,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         // Park an inbound on B for a series that exists on A only.
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
-        uint256 failTokenId = uint256(uint112(failSeries));
+        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
         tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 

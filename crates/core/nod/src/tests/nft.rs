@@ -107,6 +107,37 @@ fn transfer_logs_announce_issuance_and_removal() {
 }
 
 #[test]
+fn tokens_by_owner_lists_the_owners_live_nods() {
+    use crate::precompile::{dispatch, INod};
+    use alloy_sol_types::SolCall;
+
+    let owner = Address::repeat_byte(0x63);
+    let body = item(owner, U256::from(5), USD);
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let tokens = |owner| {
+            let data = INod::tokensByOwnerCall { owner }.abi_encode();
+            let out = dispatch(storage.clone(), &data, Address::ZERO, U256::ZERO).unwrap();
+            INod::tokensByOwnerCall::abi_decode_returns(&out).unwrap()
+        };
+        seed_production_nod_genesis(&storage);
+        assert!(tokens(owner).is_empty());
+
+        crate::test_support::add(&storage, &body).unwrap();
+        assert_eq!(tokens(owner), vec![body.nod_id]);
+        assert!(tokens(Address::repeat_byte(0x64)).is_empty());
+
+        api::remove_nod(
+            &storage,
+            api::load_item(&storage, body.nod_id).unwrap().unwrap(),
+            api::load_group(&storage, body.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(tokens(owner).is_empty());
+    });
+}
+
+#[test]
 fn supported_interfaces_match_the_implemented_selectors() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
@@ -142,15 +173,6 @@ fn supported_interfaces_match_the_implemented_selectors() {
         ]),
         ERC721_METADATA_INTERFACE_ID
     );
-    assert_eq!(
-        interface_id(&[
-            INod::totalSupplyCall::SELECTOR,
-            INod::tokenByIndexCall::SELECTOR,
-            INod::tokenOfOwnerByIndexCall::SELECTOR,
-        ]),
-        ERC721_ENUMERABLE_INTERFACE_ID
-    );
-
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let supports = |id: [u8; 4]| {
@@ -165,11 +187,11 @@ fn supported_interfaces_match_the_implemented_selectors() {
             ERC165_INTERFACE_ID,
             ERC721_INTERFACE_ID,
             ERC721_METADATA_INTERFACE_ID,
-            ERC721_ENUMERABLE_INTERFACE_ID,
             ERC4906_INTERFACE_ID,
         ] {
             assert!(supports(id), "{id:02x?}");
         }
+        assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
         assert!(!supports(ERC20_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
     });

@@ -101,7 +101,7 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(uint256 intexId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
             returns (uint256 promisMinor);
     }
@@ -339,7 +339,7 @@ pub fn mine_promis(request: MinePromis<'_>) -> Result<()> {
         INTEX_FACTORY,
         owner_key,
         &IPromisMining::minePromisCall {
-            seriesId: series,
+            intexId: super::venue_probes::intex_id(series),
             owner,
             units: U256::from(units),
             nonce,

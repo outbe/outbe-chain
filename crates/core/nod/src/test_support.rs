@@ -4,17 +4,41 @@ use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
-    time::WorldwideDay,
+    series_id::SeriesId,
 };
 
+/// The series of a fixture Nod of `emission_day`. Currencies that spell no series give the
+/// default one, which issuance rejects.
+pub fn series_of(emission_day: u32, issuance_currency: u16, reference_currency: u16) -> SeriesId {
+    SeriesId::for_pair(emission_day, issuance_currency, reference_currency).unwrap_or_default()
+}
+
+/// The id of the owner's Nod of `emission_day` in the fixture series.
+pub fn nod_id_of(
+    owner: Address,
+    emission_day: u32,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> U256 {
+    crate::identity::generate_nod_id(
+        series_of(emission_day, issuance_currency, reference_currency),
+        owner,
+    )
+}
+
 pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNodV1 {
-    let nod_id = crate::identity::generate_nod_id(params.owner, params.worldwide_day);
+    let nod_id = nod_id_of(
+        params.owner,
+        params.emission_day,
+        params.issuance_currency,
+        params.reference_currency,
+    );
     encrypt(
         NodTermsV1 {
             chain_id,
             nod_id,
             owner: params.owner,
-            worldwide_day: params.worldwide_day,
+            emission_day: params.emission_day,
             league_id: params.league_id,
             entry_price_minor: params.entry_price_minor,
             issuance_currency: params.issuance_currency,
@@ -32,7 +56,7 @@ pub struct NodItemFixture {
     pub nod_id: U256,
     pub owner: Address,
     pub gratis_load_minor: U256,
-    pub worldwide_day: WorldwideDay,
+    pub emission_day: u32,
     pub league_id: u16,
     pub group_key: B256,
     pub issuance_currency: u16,
@@ -46,7 +70,7 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
             chain_id: 1,
             nod_id: f.nod_id,
             owner: f.owner,
-            worldwide_day: f.worldwide_day,
+            emission_day: f.emission_day,
             league_id: f.league_id,
             entry_price_minor,
             issuance_currency: f.issuance_currency,
@@ -58,7 +82,7 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
         nod_id: f.nod_id,
         owner: f.owner,
         encrypted,
-        worldwide_day: f.worldwide_day,
+        series_id: series_of(f.emission_day, f.issuance_currency, f.reference_currency),
         league_id: f.league_id,
         group_key: f.group_key,
         issuance_currency: f.issuance_currency,
@@ -76,7 +100,7 @@ pub fn unsettled_item(terms: NodTermsV1, amount: U256, issued_at: u64) -> NodIte
             nod_id: terms.nod_id,
             owner: terms.owner,
             gratis_load_minor: amount,
-            worldwide_day: terms.worldwide_day,
+            emission_day: terms.emission_day,
             league_id: terms.league_id,
             group_key,
             issuance_currency: terms.issuance_currency,
@@ -99,7 +123,7 @@ pub fn set_terms(item: &mut NodItemState) {
             chain_id: t.chain_id,
             nod_id: item.nod_id,
             owner: item.owner,
-            worldwide_day: item.worldwide_day,
+            emission_day: item.series_id.day(),
             league_id: item.league_id,
             entry_price_minor: t.entry_price_minor,
             issuance_currency: item.issuance_currency,
@@ -117,15 +141,15 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
 }
 
 /// Unsettled Nod used by execution and idle-scan fixtures.
-pub fn sample_item(owner: Address, day: WorldwideDay) -> NodItemState {
-    let nod_id = crate::identity::generate_nod_id(owner, day);
+pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
+    let nod_id = nod_id_of(owner, emission_day, 840, 978);
     item(
         NodItemFixture {
             is_settled: false,
             nod_id,
             owner,
             gratis_load_minor: U256::from(11),
-            worldwide_day: day,
+            emission_day,
             league_id: 4,
             group_key: group_key(1_752_534_000, U256::from(5), 978),
             issuance_currency: 840,

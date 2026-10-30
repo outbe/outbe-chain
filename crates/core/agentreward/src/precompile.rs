@@ -57,6 +57,12 @@ impl AgentRewardContract<'_> {
         self.get_pool_claimable_reward(RewardPool::from_abi(pool)?, account)
     }
 
+    #[contract_public("getPoolBalanceDeadline(address,uint8) view returns (uint64)")]
+    #[contract_view]
+    fn _abi_get_pool_balance_deadline(&mut self, account: Address, pool: u8) -> Result<u64> {
+        self.get_pool_balance_deadline(RewardPool::from_abi(pool)?, account)
+    }
+
     #[contract_public("getPoolClaimableTotal(uint8) view returns (uint256)")]
     #[contract_view]
     fn _abi_get_pool_claimable_total(&mut self, pool: u8) -> Result<U256> {
@@ -67,6 +73,16 @@ impl AgentRewardContract<'_> {
     #[contract_view]
     fn _abi_get_pool_pending_total(&mut self, pool: u8) -> Result<U256> {
         self.pool_pending_total(RewardPool::from_abi(pool)?)
+    }
+
+    #[contract_public("returnExpiredReward(address,uint8) returns (uint256)")]
+    fn _abi_return_expired_reward(
+        &mut self,
+        _sender: Address,
+        account: Address,
+        pool: u8,
+    ) -> Result<U256> {
+        self.return_expired_reward(RewardPool::from_abi(pool)?, account)
     }
 
     #[contract_public("claimReward(uint8,uint256,uint16,uint16) returns (uint256)")]

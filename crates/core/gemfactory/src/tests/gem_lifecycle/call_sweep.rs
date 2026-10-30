@@ -339,7 +339,7 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         );
 
         set_profile(storage, outbe_gem::config::PROFILE_DEV);
-        let mut third = sample_params(ALICE);
+        let mut third = sample_params(holder(0));
         third.entry_price_minor = U256::from(700_000u64);
         third.promis_load_minor = U256::from(2_000_000u64);
         add(storage, third);

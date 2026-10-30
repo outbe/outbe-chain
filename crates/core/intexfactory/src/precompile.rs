@@ -50,7 +50,7 @@ pub fn dispatch(
                 settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,
-                        SeriesId::from(c.seriesId),
+                        series_of(&storage, c.intexId)?,
                         c.owner,
                         c.units,
                         SettlementPayment {
@@ -64,7 +64,7 @@ pub fn dispatch(
                     let (settlement_currency, payment_minor, snapshot_id) =
                         runtime::quote_settlement(
                             &storage,
-                            SeriesId::from(c.seriesId),
+                            series_of(&storage, c.intexId)?,
                             c.asset,
                             c.units,
                         )?;
@@ -75,8 +75,8 @@ pub fn dispatch(
                     })
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
-                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
-                // has the protocol's leading zero bytes. `seq` is the on-chain
+                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8), over the
+                // series id `intexId` names, has the protocol's leading zero bytes. `seq` is the on-chain
                 // per-(series, owner) counter.
                 minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
@@ -85,7 +85,7 @@ pub fn dispatch(
                     };
                     runtime::mine_promis(
                         &storage,
-                        SeriesId::from(c.seriesId),
+                        series_of(&storage, c.intexId)?,
                         c.owner,
                         c.units,
                         runtime::MiningProof {
@@ -118,9 +118,16 @@ pub fn dispatch(
                     },
                 ),
                 ownerBalances(c) => view(c, |c| {
-                    runtime::owner_balances(&storage, c.seriesId.into(), c.owner)
+                    runtime::owner_balances(&storage, series_of(&storage, c.intexId)?, c.owner)
                 }),
             }
         },
     )
+}
+
+/// The series an intex id names.
+fn series_of(storage: &StorageHandle<'_>, intex_id: U256) -> Result<SeriesId> {
+    outbe_intex::api::find_series_by_id(storage, intex_id)?
+        .map(|record| record.series_id)
+        .ok_or_else(|| outbe_intex::IntexError::SeriesNotFound.into())
 }

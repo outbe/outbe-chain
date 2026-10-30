@@ -39,9 +39,7 @@ pub fn dispatch(
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
         use IGem::IGemCalls::*;
         match call {
-            call @ (supportsInterface(_) | name(_) | symbol(_) | totalSupply(_)) => {
-                dispatch_metadata(&storage, call)
-            }
+            call @ (supportsInterface(_) | name(_) | symbol(_)) => dispatch_metadata(call),
             transferFrom(_)
             | safeTransferFrom_0(_)
             | safeTransferFrom_1(_)
@@ -49,29 +47,19 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(GemError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            call @ (balanceOf(_)
-            | ownerOf(_)
-            | tokenURI(_)
-            | tokenOfOwnerByIndex(_)
-            | getGem(_)) => dispatch_entity(&storage, call),
+            call @ (balanceOf(_) | ownerOf(_) | tokenURI(_) | tokensByOwner(_) | getGem(_)) => {
+                dispatch_entity(&storage, call)
+            }
         }
     })
 }
 
-fn dispatch_metadata(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    call: IGem::IGemCalls,
-) -> Result<Bytes> {
+fn dispatch_metadata(call: IGem::IGemCalls) -> Result<Bytes> {
     use IGem::IGemCalls::*;
     match call {
         supportsInterface(c) => view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0))),
         name(_) => metadata::<IGem::nameCall>(|| Ok(GemContract::name().to_string())),
         symbol(_) => metadata::<IGem::symbolCall>(|| Ok(GemContract::symbol().to_string())),
-        totalSupply(_) => metadata::<IGem::totalSupplyCall>(|| {
-            GemContract::new(storage.clone())
-                .total_supply()
-                .map(U256::from)
-        }),
         _ => Err(crate::errors::GemFatalError::MetadataRouteEntityCall.into()),
     }
 }
@@ -93,11 +81,7 @@ fn dispatch_entity(
             let now = storage.now_secs()?;
             Ok(crate::metadata::token_uri(&gem, now))
         }),
-        tokenOfOwnerByIndex(c) => view(c, |c| {
-            let index = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
-            api::token_of_owner_by_index(storage, c.owner, index)?
-                .ok_or_else(|| GemError::IndexOutOfBounds.into())
-        }),
+        tokensByOwner(c) => view(c, |c| api::tokens_by_owner(storage, c.owner)),
         getGem(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
             Ok(to_abi_data(&gem, storage.now_secs()?))
@@ -110,6 +94,7 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
     IGem::GemData {
         gemId: gem.item.gem_id,
         owner: gem.item.owner,
+        seriesId: gem.item.series_id.into(),
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
         entryPriceMinor: gem.item.entry_price_minor,

@@ -92,7 +92,7 @@ fn attest(
             return signed_response(request, result, &keys);
         }
         5 => {
-            result.nods[0].nod.terms.worldwide_day = WorldwideDay::new(20261016);
+            result.nods[0].nod.terms.emission_day = DAY + 1;
             return signed_response(request, result, &keys);
         }
         6 => {
@@ -238,7 +238,7 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
 }
 
 #[test]
-fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
+fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
     let mut provider = fixture();
     assert!(!outbe_tee::lysis::is_test_transport_installed());
 
@@ -257,15 +257,11 @@ fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
         );
 
         let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 3);
         assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
         assert!(!tribute.retired_days.read(&WWD).unwrap());
-        assert_eq!(
-            outbe_nod::schema::NodContract::new(storage)
-                .total_supply()
-                .unwrap(),
-            0
-        );
+        assert!((1..=3u8).all(|byte| {
+            outbe_nod::api::balance_of(&storage, Address::repeat_byte(byte)).unwrap() == 0
+        }));
     });
 }
 
@@ -350,14 +346,17 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
             emission_day_state::SUCCEEDED
         );
         let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 0);
         assert!(tribute.retired_days.read(&WWD).unwrap());
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
         let owner = Address::repeat_byte(1);
         assert_eq!(
+            nods[0].series_id,
+            outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap()
+        );
+        assert_eq!(
             nods[0].nod_id,
-            outbe_primitives::nod_rules::derive_nod_id(owner, WWD)
+            outbe_primitives::nod_rules::derive_nod_id(nods[0].series_id, owner)
         );
         assert_ne!(
             nods[0].nod_id,
@@ -365,7 +364,17 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         );
         let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
             .unwrap();
-        assert_eq!(load, U256::from(LIMIT / 1024));
+        let fraction = tribute
+            .day_fractions
+            .read(&outbe_tribute::schema::day_league_key(
+                WWD,
+                nods[0].league_id,
+            ))
+            .unwrap();
+        assert_eq!(
+            load,
+            U256::from(NOMINAL) * U256::from(fraction) / U256::from(1_000_000u64)
+        );
     });
     let before = provider.storage.clone();
     let logs = provider.get_ordered_events().to_vec();
@@ -402,7 +411,11 @@ fn existing_full_digest_target_rejects_lysis_before_mutation() {
     let _nod_enclave = outbe_nod::test_support::scope();
     let mut provider = fixture();
     StorageHandle::enter(&mut provider, |storage| {
-        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), WWD);
+        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), DAY);
+        item.reference_currency = 840;
+        item.series_id = outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap();
+        item.nod_id = outbe_primitives::nod_rules::derive_nod_id(item.series_id, item.owner);
+        outbe_nod::test_support::set_terms(&mut item);
         let terms =
             outbe_nod::test_support::sealed_terms(&storage, &item, item.entry_price_minor())
                 .unwrap();
@@ -458,15 +471,16 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
                 emission_day_state::FAILED
             );
             let tribute = TributeContract::new(storage.clone());
-            assert_eq!(tribute.total_supply().unwrap(), amounts.len() as u64);
+            assert_eq!(
+                tribute.state_records_by_day(WWD).unwrap().len(),
+                amounts.len()
+            );
             assert!(!tribute.retired_days.read(&WWD).unwrap());
             assert!(tribute.get_day_totals(WWD).unwrap().is_sealed);
-            assert_eq!(
-                outbe_nod::schema::NodContract::new(storage)
-                    .total_supply()
-                    .unwrap(),
-                0
-            );
+            assert!((1..=amounts.len()).all(|index| {
+                let owner = Address::repeat_byte(u8::try_from(index).unwrap());
+                outbe_nod::api::balance_of(&storage, owner).unwrap() == 0
+            }));
         });
         let after = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();
@@ -576,6 +590,6 @@ fn tribute_consumption_requires_the_exact_metadosis_command() {
                 },
             )
             .unwrap();
-        assert_eq!(tribute.total_supply().unwrap(), 3);
+        assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
     });
 }

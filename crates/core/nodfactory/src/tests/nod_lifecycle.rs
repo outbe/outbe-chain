@@ -98,10 +98,10 @@ fn nod_item_issued(
     outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: outbe_nod::test_support::nod_id_of(owner, worldwide_day.value(), iso, iso),
             owner,
             gratis_load_minor: U256::from(11),
-            worldwide_day,
+            emission_day: worldwide_day.value(),
             league_id: 4,
             group_key: outbe_nod::identity::group_key(
                 issued_at,
@@ -176,8 +176,15 @@ fn issue_item(storage: &StorageHandle<'_>, item: NodItemState) -> NodItemState {
     item
 }
 
+thread_local! {
+    /// Groups this test issued into, for `slice` to see which leave the forfeit queue.
+    static ISSUED_GROUPS: std::cell::RefCell<std::collections::HashSet<B256>> =
+        std::cell::RefCell::default();
+}
+
 /// Records `item` as NodFactory issues it: the terms its entry price seals and its load.
 fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
+    ISSUED_GROUPS.with(|groups| groups.borrow_mut().insert(item.group_key));
     api::add_nod(
         storage,
         item,
@@ -842,7 +849,6 @@ fn forfeiting_the_last_member_drops_the_group_from_the_call_index() {
         assert!(!is_queued(storage, item.group_key));
         assert_eq!(nod.group_called_at.read(&item.group_key).unwrap(), 0);
         assert_eq!(nod.group_nod_count.read(&item.group_key).unwrap(), 0);
-        assert_eq!(nod.total_supply().unwrap(), 0);
         // The group body is gone with its last member.
         let group_id = item.group_key;
         assert!(api::get_group(storage, group_id).unwrap().is_none());
@@ -951,7 +957,6 @@ fn every_member_of_a_lapsed_group_burns_in_one_pass() {
                 item.nod_id
             );
         }
-        assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
     });
 }
 
@@ -1137,16 +1142,14 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
 }
 
 fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let nod = NodContract::new(storage.clone());
-    let groups: std::collections::HashSet<_> = nod
-        .all_ids
-        .read_all()
-        .unwrap()
-        .into_iter()
-        .filter_map(|id| api::get_item(storage, id).unwrap())
-        .filter(|item| is_queued(storage, item.group_key))
-        .map(|item| item.group_key)
-        .collect();
+    let groups: Vec<_> = ISSUED_GROUPS.with(|groups| {
+        groups
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|group| is_queued(storage, *group))
+            .collect()
+    });
     let ctx = block_at(storage, timestamp);
     let called = crate::called::process_call_pass(&ctx).unwrap();
     crate::cleanup::cleanup(&ctx).unwrap();
@@ -1170,8 +1173,6 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
         let ctx = block_at(&storage, past);
         assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         assert_eq!(reserve(&storage), U256::from(12u64));
-        let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.total_supply().unwrap(), 2);
         for item in &items {
             let stored = api::get_item(&storage, item.nod_id).unwrap().unwrap();
             assert_eq!(
@@ -1191,7 +1192,6 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
             U256::from(12u64),
             "the cleanup moves no value"
         );
-        assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(api::balance_of(&storage, items[0].owner).unwrap(), 0);
         assert!(api::get_group(&storage, group_key).unwrap().is_none());
         items
@@ -1239,7 +1239,6 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
 
         assert_eq!(slice(storage, past + 1), 0);
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
-        assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(reserve(storage), U256::from(specs.len()));
     });
 }
@@ -1413,7 +1412,6 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         limit.checked_take_up_to(U256::MAX).unwrap();
         limit.checked_credit(U256::MAX).unwrap();
         assert_eq!(scan(storage, past), 0);
-        assert_eq!(nod.total_supply().unwrap(), 3);
         assert_eq!(nod.group_nod_count.read(&key).unwrap(), 2);
         assert!(api::get_item(storage, items[0].nod_id).unwrap().is_some());
         assert!(api::get_item(storage, items[2].nod_id).unwrap().is_some());
@@ -1434,7 +1432,6 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         let group = api::get_group(storage, id).unwrap().unwrap();
         assert_eq!(group.settled_nods, 1);
         assert_eq!(nod.group_nod_count.read(&key).unwrap(), 0);
-        assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(called_at(storage, key), at);
         assert_eq!(
             nod.read_call_terms(key).unwrap().call_notice_period_seconds,
@@ -1447,7 +1444,6 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         )
         .unwrap();
         assert!(api::get_group(storage, id).unwrap().is_none());
-        assert_eq!(nod.total_supply().unwrap(), 0);
         assert!(!is_queued(storage, key));
         assert_eq!(reserve(storage), expected);
     });
@@ -1509,7 +1505,6 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
                 .unwrap()
                 .is_settled
         );
-        assert_eq!(nod.total_supply().unwrap(), 1);
         assert_eq!(reserve(storage), U256::ZERO);
     });
 }
@@ -1781,7 +1776,6 @@ fn native_storage_out_of_gas_reverts_the_forfeit_transaction_then_retries_once()
         assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
-        assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(reserve(&storage), U256::from(16u64));
         assert!(!is_queued(&storage, group_key));
     });
@@ -1829,7 +1823,6 @@ fn configured_forfeit_slice_fits_the_native_storage_gas_limit() {
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&issued[0].group_key).unwrap(), 0);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
-        assert_eq!(nod.total_supply().unwrap(), 0);
         assert_eq!(reserve(&storage), expected);
         storage.gas_used().unwrap()
     });

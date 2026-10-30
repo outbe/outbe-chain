@@ -152,7 +152,7 @@ fn erc20_series(
     snapshot: U256,
 ) -> eth::IIntexFactory::settleIntexCall {
     eth::IIntexFactory::settleIntexCall {
-        seriesId: id,
+        intexId: crate::world::venue_probes::intex_id(id),
         owner: target.owner,
         units: U256::from(units),
         asset,
@@ -166,7 +166,7 @@ fn mine_series(
     units: u32,
 ) -> eth::IIntexFactory::minePromisCall {
     eth::IIntexFactory::minePromisCall {
-        seriesId: id,
+        intexId: crate::world::venue_probes::intex_id(id),
         owner: target.owner,
         units: U256::from(units),
         nonce: 0,

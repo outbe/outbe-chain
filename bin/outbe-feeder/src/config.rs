@@ -872,24 +872,4 @@ mod tests {
         );
         std::fs::remove_dir_all(directory).unwrap();
     }
-
-    #[test]
-    fn test_price_oracle_template_config_loads() {
-        let path = format!("{}/config/config.toml", env!("CARGO_MANIFEST_DIR"));
-        let cfg = FeederConfig::load(&path).unwrap();
-        // Canonical testnet chain id (`outbe_genesis_cli::network::TESTNET_CHAIN_ID`).
-        assert_eq!(cfg.chain.chain_id, 54322345);
-        assert_eq!(cfg.oracle.vote_period, 60);
-        // COEN/840 is the only pair the chain registers. The decorative
-        // XAU/BTC/ETH/stablecoin entries were dropped because no code read them
-        // and they name assets with no on-chain address.
-        assert_eq!(cfg.currency_pairs.len(), 1);
-        assert_eq!(cfg.currency_pairs[0].base, "COEN");
-        assert_eq!(cfg.currency_pairs[0].quote, "840");
-        assert!(cfg
-            .currency_pairs
-            .iter()
-            .all(|pair| { pair.sources == vec![source("mock_http", "COEN", "840")] }));
-        assert!(cfg.validate().is_ok());
-    }
 }

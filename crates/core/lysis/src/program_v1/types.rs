@@ -97,9 +97,7 @@ pub enum SemanticObservationV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodActionV1 {
     pub source_tribute_id: WwdEntityId,
-    pub nod_id: U256,
     pub owner: Address,
-    pub worldwide_day: WorldwideDay,
     pub league_id: u16,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,

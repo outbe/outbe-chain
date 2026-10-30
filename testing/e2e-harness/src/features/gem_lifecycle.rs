@@ -194,7 +194,7 @@ fn park_units(world: &mut World) {
     let series = source_series(world);
 
     let call = eth::IGemFactory::issueGemPositionCall {
-        sourceIntexId: series,
+        sourceIntexId: venue_probes::intex_id(series),
         units: U256::from(PARKED_UNITS),
     };
     // The precompile reports a decode failure rather than the collection's own
@@ -211,11 +211,9 @@ fn park_units(world: &mut World) {
     let position_id = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::tokenOfOwnerByIndexCall {
-            owner: merchant,
-            index: U256::ZERO,
-        },
+        &eth::IGemFactory::tokensByOwnerCall { owner: merchant },
     )
+    .and_then(|ids| ids.first().copied())
     .expect("the parked position was issued to the merchant");
     world.state.gem_position = Some(position_id);
 }
@@ -366,6 +364,11 @@ impl Lifecycle for GemLifecycle {
             unissued_capacity(),
             "issuing the gems did not drain exactly their load from the position"
         );
+        assert_eq!(position.sourceSeriesId, source_series(world));
+        assert_eq!(
+            position.sourceIntexId,
+            venue_probes::intex_id(source_series(world))
+        );
         // Never below the source Intex, valued on its emission day.
         let source_floor = eth::read_call(
             &world_url(world),
@@ -373,8 +376,7 @@ impl Lifecycle for GemLifecycle {
             &eth::IOracle::getUtcDayVwapCall {
                 base: Address::ZERO,
                 quote: outbe_primitives::asset_type::currency_address(USD_ISO),
-                utcDay: outbe_primitives::series_id::SeriesId::from_bytes(position.sourceIntexId.0)
-                    .day(),
+                utcDay: outbe_primitives::series_id::SeriesId::from(position.sourceSeriesId).day(),
             },
         )
         .expect("the source emission day is priced");
