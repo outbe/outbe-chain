@@ -37,7 +37,8 @@ interface IAgentReward {
     /// up the full VWAP. `issuanceCurrency` is any code in 1..=999.
     /// A `promisLoadMinor` of zero claims the whole pool balance. What is left
     /// keeps accruing and cannot be forfeited. The caller controls its own risk
-    /// through the size of the claim.
+    /// through the size of the claim. One owner gets one Gem of a series in each block, so a
+    /// second claim in the same currencies and block reverts `AlreadyExists`.
     /// @return gemId the Gem issued for the caller.
     function claimReward(uint8 pool, uint256 promisLoadMinor, uint16 issuanceCurrency, uint16 referenceCurrency)
         external

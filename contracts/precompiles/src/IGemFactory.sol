@@ -36,7 +36,8 @@ interface IGemFactory {
     /// @notice Issue one Merchant gem to `owner` in the currencies the merchant names,
     ///         draining the position's capacity. Only the position's merchant (the caller)
     ///         may call. `issuanceCurrency` is any ISO 4217 code, `referenceCurrency` an
-    ///         oracle reference currency.
+    ///         oracle reference currency. One owner gets one Gem of a series in each block,
+    ///         so a second one in the same currencies and block reverts `AlreadyExists`.
     function issueGem(
         uint256 positionId,
         address owner,
