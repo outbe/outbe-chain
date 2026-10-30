@@ -43,7 +43,7 @@ interface INod {
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906: emitted over the whole id range when a group is called. A group holds
-    /// Nods of several Worldwide Days, so no narrower range covers it.
+    /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     /// Group force-called by the daily Call scan: the reference price

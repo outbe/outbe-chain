@@ -292,6 +292,20 @@ pub(crate) mod tests {
                 outbe_tee::nod_decrypt::decrypt_nod_for_owner(&nod_view_key, &output.nod).unwrap();
             assert_eq!(enclave_load, expected_load);
             assert_eq!(owner_load, expected_load);
+            let terms = &output.nod.terms;
+            assert_eq!(terms.emission_day, request.emission_day);
+            assert_eq!(
+                terms.nod_id,
+                outbe_primitives::nod_rules::derive_nod_id(
+                    outbe_primitives::series_id::SeriesId::for_pair(
+                        request.emission_day,
+                        terms.issuance_currency,
+                        terms.reference_currency,
+                    )
+                    .unwrap(),
+                    terms.owner,
+                )
+            );
             assert_eq!(
                 output.settlement_cost_minor,
                 outbe_primitives::nod_rules::settlement_cost_minor(
