@@ -75,6 +75,17 @@ impl SeriesId {
         Some(Self(bytes))
     }
 
+    /// Id of a right in this series: keccak256 of the 14 id bytes, then `parts` at their fixed
+    /// widths. With no parts it is the id of the series itself.
+    pub fn right_id(&self, parts: &[&[u8]]) -> U256 {
+        let mut hasher = alloy_primitives::Keccak256::new();
+        hasher.update(self.0);
+        for part in parts {
+            hasher.update(part);
+        }
+        U256::from_be_bytes(hasher.finalize().0)
+    }
+
     /// The date the id leads with, as `YYYYMMDD`.
     pub fn day(&self) -> u32 {
         self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
@@ -167,6 +178,29 @@ mod tests {
         assert_eq!(id.day(), DAY);
         assert_eq!(id.as_bytes(), b"20260212-TRY-U");
         assert_eq!(SeriesId::from_bytes(*id.as_bytes()), id);
+    }
+
+    #[test]
+    fn a_right_id_hashes_the_id_bytes_and_its_parts() {
+        let id = SeriesId::pack(DAY, *b"TRY", b'U').unwrap();
+        let owner = alloy_primitives::Address::repeat_byte(0x11);
+        let block = 7u64.to_be_bytes();
+        assert_eq!(
+            id.right_id(&[]),
+            U256::from_be_bytes(alloy_primitives::keccak256(id.as_bytes()).0)
+        );
+        let mut preimage = id.as_bytes().to_vec();
+        preimage.extend_from_slice(owner.as_slice());
+        preimage.extend_from_slice(&block);
+        assert_eq!(
+            id.right_id(&[owner.as_slice(), &block]),
+            U256::from_be_bytes(alloy_primitives::keccak256(&preimage).0)
+        );
+        let other = SeriesId::pack(DAY + 1, *b"TRY", b'U').unwrap();
+        assert_ne!(
+            other.right_id(&[owner.as_slice()]),
+            id.right_id(&[owner.as_slice()])
+        );
     }
 
     #[test]
