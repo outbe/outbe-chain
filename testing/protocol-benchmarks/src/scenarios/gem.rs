@@ -92,12 +92,17 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    OracleContract::new(storage)
+    let oracle = OracleContract::new(storage);
+    oracle
         .record_utc_day_vwap(
             previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
             index,
             rate,
         )
+        .map_err(|error| error.to_string())?;
+    // A merchant gem is floored at the source's emission-day price.
+    oracle
+        .record_utc_day_vwap(source_intex_id().day(), index, six_decimal_unit())
         .map_err(|error| error.to_string())
 }
 
@@ -244,6 +249,8 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 position_id,
                 owner: BOB,
                 promis_load_minor: U256::from(10) * six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .map_err(|error| error.to_string()),

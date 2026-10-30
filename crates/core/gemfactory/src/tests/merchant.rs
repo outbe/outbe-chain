@@ -59,7 +59,6 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         assert_eq!(rec.merchant, ALICE);
         assert_eq!(rec.source_intex_id, source_intex_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
-        assert_eq!(rec.source_entry_price_minor, six_decimal_unit());
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
 
         // Position NFT issued to the merchant.
@@ -156,6 +155,8 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: sent_capacity(six_decimal_u128()),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();
@@ -204,6 +205,8 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: load,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();
@@ -244,6 +247,8 @@ fn issue_merchant_gem_anchors_entry_to_source() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();
@@ -265,6 +270,8 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: U256::ONE,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();
@@ -286,6 +293,8 @@ fn issue_merchant_gem_rejects_non_merchant() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         );
         assert_eq!(
@@ -311,6 +320,8 @@ fn issue_merchant_gem_over_capacity_rejects() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: over,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         );
         assert_eq!(
@@ -320,6 +331,151 @@ fn issue_merchant_gem_over_capacity_rejects() {
             )
             .to_string()
         );
+    });
+}
+
+#[test]
+fn an_unpriced_source_emission_day_issues_nothing() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        // A zero source entry leaves the source's emission day without a VWAP.
+        let id = seed_and_send(storage, U256::ZERO, six_decimal_u128());
+        let r = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        );
+        assert_eq!(
+            r.unwrap_err().to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::OracleUnavailable
+            )
+            .to_string()
+        );
+        let position = GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            position.remaining_capacity_minor,
+            sent_capacity(six_decimal_u128())
+        );
+    });
+}
+
+#[test]
+fn equal_prices_take_the_market_price() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        let id = seed_and_send(storage, rate, six_decimal_u128());
+        let gem_id = runtime::issue_merchant_gem(
+            storage,
+            crate::schema::MerchantGemIssueParams {
+                caller: ALICE,
+                position_id: id,
+                owner: BOB,
+                promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
+            },
+        )
+        .unwrap();
+        assert_eq!(gem_view(storage, gem_id).item.entry_price_minor, rate);
+    });
+}
+
+fn issue_in(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    (issuance_currency, reference_currency): (u16, u16),
+) -> outbe_primitives::error::Result<U256> {
+    runtime::issue_merchant_gem(
+        storage,
+        crate::schema::MerchantGemIssueParams {
+            caller: ALICE,
+            position_id,
+            owner: BOB,
+            promis_load_minor: six_decimal_unit(),
+            issuance_currency,
+            reference_currency,
+        },
+    )
+}
+
+#[test]
+fn a_merchant_gem_names_a_reference_other_than_its_source() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        let yesterday = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
+        let eur_market = U256::from(3u64) * six_decimal_unit();
+        outbe_oracle::test_support::record_finalized_day_vwap(storage, 978, yesterday, eur_market)
+            .unwrap();
+        outbe_oracle::test_support::record_finalized_day_vwap(
+            storage,
+            978,
+            source_intex_id().day(),
+            rate,
+        )
+        .unwrap();
+
+        let gem_id = issue_in(storage, id, (978, 978)).unwrap();
+        let item = gem_item(storage, gem_id);
+        assert_eq!(
+            (item.issuance_currency, item.reference_currency),
+            (978, 978)
+        );
+        assert_eq!(item.entry_price_minor, eur_market);
+    });
+}
+
+#[test]
+fn a_merchant_gem_refuses_currencies_it_cannot_carry() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        // 756 (CHF) is not a reference currency, and 1 is not an ISO 4217 code.
+        assert!(issue_in(storage, id, (840, 756)).is_err());
+        assert_eq!(
+            err_msg(issue_in(storage, id, (1, 840))),
+            format!(
+                "{:?}",
+                outbe_primitives::error::PrecompileError::from(
+                    crate::errors::GemFactoryError::InvalidCurrency { currency: 1 }
+                )
+            )
+        );
+        let position = GemFactoryContract::new(storage.clone())
+            .positions
+            .get(id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            position.remaining_capacity_minor,
+            sent_capacity(six_decimal_u128())
+        );
+    });
+}
+
+#[test]
+fn an_unpriced_issuance_currency_still_issues() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        seed_day_vwap(storage, 840, rate);
+        let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        // 36 (AUD) has no oracle price; the gem settles on its reference rail.
+        let gem_id = issue_in(storage, id, (36, 840)).unwrap();
+        assert_eq!(gem_item(storage, gem_id).issuance_currency, 36);
     });
 }
 
@@ -336,9 +492,6 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 merchant: ALICE,
                 source_intex_id: source_intex_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
-                source_entry_price_minor: six_decimal_unit(),
-                issuance_currency: 840,
-                reference_currency: 840,
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
                 expires_at: T_NOW - 1,
             })
@@ -351,6 +504,8 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 position_id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         );
         assert_eq!(
@@ -392,6 +547,8 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                     position_id: id,
                     owner: BOB,
                     promis_load_minor: load,
+                    issuance_currency: 840,
+                    reference_currency: 840,
                 },
             );
             let remaining = runtime::position_data(&storage, id)
@@ -441,6 +598,8 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();
@@ -518,6 +677,8 @@ fn issue_merchant_gem_takes_the_higher_entry() {
                     position_id: id,
                     owner: BOB,
                     promis_load_minor: six_decimal_unit(),
+                    issuance_currency: 840,
+                    reference_currency: 840,
                 },
             )
             .unwrap();
@@ -558,6 +719,8 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
                 position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         );
         assert_eq!(
@@ -585,6 +748,8 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
                 position_id: position,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .unwrap();

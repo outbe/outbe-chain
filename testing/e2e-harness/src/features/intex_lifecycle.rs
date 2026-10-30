@@ -116,6 +116,7 @@ fn issue_four_series(world: &mut World) {
         url: &url,
         sender_key: DEPLOYER_KEY,
         worldwide_day: day,
+        emission_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
         issued_at: head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
         reference_currency: USD_ISO,

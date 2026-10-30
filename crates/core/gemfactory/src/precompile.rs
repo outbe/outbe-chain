@@ -55,6 +55,8 @@ pub fn dispatch(
                         position_id: c.positionId,
                         owner: c.owner,
                         promis_load_minor: c.promisLoadMinor,
+                        issuance_currency: c.issuanceCurrency,
+                        reference_currency: c.referenceCurrency,
                     },
                 )
             }),

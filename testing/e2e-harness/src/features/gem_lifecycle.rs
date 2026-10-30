@@ -137,6 +137,11 @@ fn issue_source_series(world: &mut World) {
         url: &url,
         sender_key: DEPLOYER_KEY,
         worldwide_day: day,
+        // A closed day, so the merchant gems can read its price.
+        emission_day: outbe_primitives::time::previous_date_key(
+            outbe_primitives::time::timestamp_to_date_key(head),
+        )
+        .expect("date step"),
         issued_at: head,
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
@@ -268,6 +273,8 @@ fn issue_five_gems(world: &mut World) {
                 positionId: position_id,
                 owner: owner_address(index),
                 promisLoadMinor: U256::from(GEM_LOAD_MINOR),
+                issuanceCurrency: MYR_ISO,
+                referenceCurrency: USD_ISO,
             },
             None,
         )
@@ -360,11 +367,18 @@ impl Lifecycle for GemLifecycle {
             unissued_capacity(),
             "issuing the gems did not drain exactly their load from the position"
         );
-        assert_eq!(
-            (position.issuanceCurrency, position.referenceCurrency),
-            (MYR_ISO, USD_ISO),
-            "the position does not carry the parked series' currencies"
-        );
+        // Never below the source Intex, valued on its emission day.
+        let source_floor = eth::read_call(
+            &world_url(world),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &eth::IOracle::getUtcDayVwapCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(USD_ISO),
+                utcDay: outbe_primitives::series_id::SeriesId::from_bytes(position.sourceIntexId.0)
+                    .day(),
+            },
+        )
+        .expect("the source emission day is priced");
         let first = read_gem(world, gem(world, 0));
         for index in 0..HOLDERS {
             let id = gem(world, index);
@@ -379,12 +393,11 @@ impl Lifecycle for GemLifecycle {
             assert_eq!(data.promisLoadMinor, U256::from(GEM_LOAD_MINOR));
             assert_eq!(
                 (data.issuanceCurrency, data.referenceCurrency),
-                (position.issuanceCurrency, position.referenceCurrency),
-                "gem {id} does not inherit the position's currencies"
+                (MYR_ISO, USD_ISO),
+                "gem {id} does not carry the currencies the merchant named"
             );
-            // The anti-dilution floor: never below the Intex the position came from.
             assert!(
-                data.entryPriceMinor >= position.sourceEntryPriceMinor,
+                data.entryPriceMinor >= source_floor,
                 "gem {id} priced below the Intex it was parked from"
             );
             assert_eq!(

@@ -29,6 +29,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             positionId: position_id,
             owner: OWNER,
             promisLoadMinor: U256::from(1_000_000),
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
         }
         .abi_encode()
         .into(),
@@ -52,16 +54,17 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                     .create(&GemPosition {
                         position_id,
                         merchant: Address(*user.signer()),
+                        // Dated by the priced day, which floors the merchant gem.
                         source_intex_id: outbe_intex::SeriesId::pack(
-                            outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            outbe_primitives::time::previous_date_key(
+                                outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            )
+                            .unwrap(),
                             *b"USD",
                             b'U',
                         )
                         .unwrap(),
                         remaining_capacity_minor: U256::from(2_000_000),
-                        source_entry_price_minor: U256::from(1_000_000),
-                        issuance_currency: 840,
-                        reference_currency: 840,
                         issued_at: block_ts - 1,
                         expires_at: block_ts + SECONDS_PER_DAY,
                     })
