@@ -393,14 +393,14 @@ contract AuctionGasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.auctionStart(rows), "auction start must fit the quote");
     }
 
-    function test_TheQuoteCoversAuctionStageClearingWithNoBids() public {
+    function test_TheQuoteCoversAuctionStageCollectingBidsWithNoBids() public {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY));
 
         emit log_named_uint("clearing_0bids", spent);
-        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "clearing must fit the quote");
+        assertLt(spent, IntexGas.AUCTION_STAGE_COLLECTING_BIDS, "clearing must fit the quote");
     }
 
     function test_TheQuoteCoversRefundsAtTheirWidest() public {
@@ -427,7 +427,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
         vm.prank(address(router));
-        auction.startClearingStage(EMISSION_DAY);
+        auction.startAwaitingResult(EMISSION_DAY);
 
         uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, ISSUED_UNITS, ENTRY_PRICE, 0));
 
@@ -465,7 +465,7 @@ contract ClearingRelayGasTest is CrossChainTest {
     ///      would stop in production rather than running on the test frame's whole allowance.
     function _clearingWithin(uint256 bids, uint256 gasCap) internal returns (bool delivered) {
         stub.setBidCount(bids);
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY);
         (delivered,) = address(bridge).call{gas: gasCap}(
             abi.encodeCall(
                 bridge.deliverAs,
@@ -477,7 +477,9 @@ contract ClearingRelayGasTest is CrossChainTest {
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
         stub.setBidCount(bids);
         uint256 before = gasleft();
-        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY));
+        _deliver(
+            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+        );
         spent = before - gasleft();
     }
 
@@ -525,7 +527,7 @@ contract BidStub {
         bidCount = n;
     }
 
-    function startClearingStage(uint32) external {}
+    function startAwaitingResult(uint32) external {}
 
     function getAuctionDetails(uint32)
         external
@@ -572,7 +574,7 @@ contract BidStub {
     }
 
     function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 }
 

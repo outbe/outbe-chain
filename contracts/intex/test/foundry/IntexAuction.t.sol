@@ -7,6 +7,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {EscrowTimes} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 contract AuctionTest is Test {
@@ -146,6 +147,30 @@ contract AuctionTest is Test {
         auction.revealBid(emissionDay, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
+    /// @dev A day with no result fails at `commitEnd` plus the refund delay, when its first bid
+    ///      can be taken back, and then takes no result.
+    function test_ADayWithoutAResultFailsWhenItsFirstRefundOpens() public {
+        uint256 startTs = block.timestamp;
+        uint32 emissionDay = 20250116;
+        _start(emissionDay, 50, 1);
+        uint256 failAt = startTs + COMMIT_OFFSET + EscrowTimes.UNFINALIZED_REFUND_DELAY;
+
+        vm.warp(failAt - 1);
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+
+        vm.warp(failAt);
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Failed));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.AwaitingResult,
+                IIntexAuction.AuctionStage.Failed
+            )
+        );
+        vm.prank(bridger);
+        auction.executeAuctionClearing(emissionDay, 0, 0, 0);
+    }
+
     function test_Lifecycle_FullFlow() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250115; // yyyymmdd format
@@ -184,8 +209,8 @@ contract AuctionTest is Test {
         // only advances the stage.
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        auction.startAwaitingResult(emissionDay);
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
 
         vm.expectEmit(true, false, false, true);
         emit IIntexAuction.AuctionClearingExecuted(emissionDay, 75, 100);
@@ -455,7 +480,7 @@ contract AuctionTest is Test {
         vm.warp(d.schedule.revealEnd - 1);
         assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
         vm.warp(d.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 
     // --- Access Control Tests ---
@@ -546,7 +571,7 @@ contract AuctionTest is Test {
         auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
     }
 
-    function test_AccessControl_StartClearingStage() public {
+    function test_AccessControl_StartAwaitingResult() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250125;
         _start(emissionDay, 10, 1);
@@ -554,11 +579,11 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
     }
 
     function test_AccessControl_ExecuteAuctionClearing() public {
@@ -567,7 +592,7 @@ contract AuctionTest is Test {
         _start(emissionDay, 10, 1);
         _enterRevealStage(emissionDay, startTs);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         vm.expectRevert();
         vm.prank(admin);
@@ -592,7 +617,7 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba2, 40, 70, iba2PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // 2 bids revealed; a clearing claiming 3 winners is rejected.
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, uint32(3), uint32(2)));
@@ -613,7 +638,7 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         vm.expectRevert(
             abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
@@ -632,7 +657,7 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // Clearing rate below the configured minimum is rejected.
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, uint64(floor - 1), floor));
@@ -655,7 +680,7 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // Zero winners, zero issued, clearing rate at the floor (non-zero): a valid No-sale result.
         vm.expectEmit(true, false, false, true);
@@ -686,7 +711,7 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // issued=0, clearingRate=0, won=0 - accepted despite floor=50 (no supply was available).
         vm.expectEmit(true, false, false, true);
@@ -705,7 +730,7 @@ contract AuctionTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexAuction.StageRequired.selector,
-                IIntexAuction.AuctionStage.Issuance,
+                IIntexAuction.AuctionStage.AwaitingResult,
                 IIntexAuction.AuctionStage.Completed
             )
         );
@@ -786,7 +811,7 @@ contract AuctionTest is Test {
         // Reach the Issuance stage (time-derived: now >= revealEnd).
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // Zero auctionClearingRate
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
@@ -821,21 +846,21 @@ contract AuctionTest is Test {
         auction.revealBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, wrongChainId, sig);
     }
 
-    function test_StartClearingStage_AlreadyClearing() public {
+    function test_StartAwaitingResult_AlreadyClearing() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250130;
         _start(emissionDay, 10, 1);
         _enterRevealStage(emissionDay, startTs);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         // Call again when already in the issuance stage: idempotent, re-emits the stage update.
         vm.expectEmit(true, false, false, true);
         emit IIntexAuction.AuctionStageUpdated(
-            emissionDay, IIntexAuction.AuctionStage.Issuance, uint32(block.timestamp), ""
+            emissionDay, IIntexAuction.AuctionStage.AwaitingResult, uint32(block.timestamp), ""
         );
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
     }
 
     function test_ViewFunctions_NotFound() public {

@@ -7,7 +7,7 @@ import {EIP712Upgradeable} from "@openzeppelin/contracts-upgradeable/utils/crypt
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
-import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
+import {IEscrowAdapter, EscrowTimes} from "./interfaces/IEscrowAdapter.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {Iso4217} from "../shared/libs/Iso4217.sol";
@@ -221,12 +221,12 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function startClearingStage(uint32 emissionDay) external override onlyRole(RELAYER_ROLE) {
+    function startAwaitingResult(uint32 emissionDay) external override onlyRole(RELAYER_ROLE) {
         IIntexAuction.AuctionData storage a = _s().auctions[emissionDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(emissionDay);
-        bool alreadyIssuance = currentStage == IIntexAuction.AuctionStage.Issuance;
-        if (!alreadyIssuance && currentStage != IIntexAuction.AuctionStage.RevealingBids) {
+        bool alreadyAwaiting = currentStage == IIntexAuction.AuctionStage.AwaitingResult;
+        if (!alreadyAwaiting && currentStage != IIntexAuction.AuctionStage.RevealingBids) {
             revert StageRequired(IIntexAuction.AuctionStage.RevealingBids, currentStage);
         }
 
@@ -235,7 +235,7 @@ contract IntexAuction is
         if (nowTs < a.schedule.revealEnd) {
             a.schedule.revealEnd = nowTs;
         }
-        emit AuctionStageUpdated(emissionDay, IIntexAuction.AuctionStage.Issuance, nowTs, "");
+        emit AuctionStageUpdated(emissionDay, IIntexAuction.AuctionStage.AwaitingResult, nowTs, "");
     }
 
     /// @inheritdoc IIntexAuction
@@ -249,8 +249,8 @@ contract IntexAuction is
         IIntexAuction.AuctionData storage a = $.auctions[emissionDay];
         if (a.schedule.commitEnd == 0) revert AuctionNotFound();
         IIntexAuction.AuctionStage currentStage = _getAuctionStage(emissionDay);
-        if (currentStage != IIntexAuction.AuctionStage.Issuance) {
-            revert StageRequired(IIntexAuction.AuctionStage.Issuance, currentStage);
+        if (currentStage != IIntexAuction.AuctionStage.AwaitingResult) {
+            revert StageRequired(IIntexAuction.AuctionStage.AwaitingResult, currentStage);
         }
 
         // No-sale (issuedUnits == 0): supply was exhausted/zero, nothing is issued and every bidder
@@ -548,6 +548,8 @@ contract IntexAuction is
     ///      - A cancelled day short-circuits to `Cancelled`.
     ///      - A cleared auction short-circuits to `Completed`. The `cleared` flag, set by
     ///        `executeAuctionClearing`, also covers a no-sale clearing whose rate is 0.
+    ///      - A day with no result by the time its first bid can be refunded is `Failed`:
+    ///        a result arriving later would meet bids already taken back.
     ///      - In all other cases the stage follows the stored schedule timestamps.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @return Current auction stage.
@@ -570,7 +572,10 @@ contract IntexAuction is
         if (nowTs < a.schedule.revealEnd) {
             return IIntexAuction.AuctionStage.RevealingBids;
         }
-        return IIntexAuction.AuctionStage.Issuance;
+        if (uint256(nowTs) >= uint256(a.schedule.commitEnd) + EscrowTimes.UNFINALIZED_REFUND_DELAY) {
+            return IIntexAuction.AuctionStage.Failed;
+        }
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
     /// @notice Check whether the contract supports a given interface.

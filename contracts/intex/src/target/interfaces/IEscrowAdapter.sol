@@ -3,6 +3,15 @@ pragma solidity 0.8.30;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// @notice Escrow time limits the auction reads too.
+library EscrowTimes {
+    /// @notice Safety window before the bidder of a never-finalized series can claim the full
+    ///         principal, anchored at the lock's `lockedAt`. The earliest lock comes at `commitEnd`,
+    ///         so the first refund opens at `commitEnd` plus this window. The auction reads a day
+    ///         without a result at that time as failed and takes no later one.
+    uint32 internal constant UNFINALIZED_REFUND_DELAY = 48 hours;
+}
+
 /**
  * @title EscrowAdapter Contract Interface
  * @author Outbe

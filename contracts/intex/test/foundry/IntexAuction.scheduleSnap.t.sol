@@ -57,13 +57,13 @@ contract IntexAuctionScheduleSnapTest is Test {
         uint32 signalTs = b.schedule.commitEnd + 20;
         vm.warp(signalTs);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.schedule.revealEnd, signalTs);
         assertLt(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 
     function test_ClearingSignal_Late_LeavesRevealEnd() public {
@@ -73,11 +73,11 @@ contract IntexAuctionScheduleSnapTest is Test {
 
         vm.warp(b.schedule.revealEnd + 5);
         vm.prank(bridger);
-        auction.startClearingStage(emissionDay);
+        auction.startAwaitingResult(emissionDay);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 }

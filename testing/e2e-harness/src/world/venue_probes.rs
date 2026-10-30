@@ -364,7 +364,7 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
                 Some(1) => "bids batch".to_owned(),
                 Some(2) => "bids done".to_owned(),
                 Some(3) => "auction stage start".to_owned(),
-                Some(4) => "auction stage clearing".to_owned(),
+                Some(4) => "auction stage collecting bids".to_owned(),
                 Some(5) => "auction result".to_owned(),
                 Some(6) => "issuance instructions".to_owned(),
                 Some(7) => "refund instructions".to_owned(),

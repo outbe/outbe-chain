@@ -213,8 +213,8 @@ contract TargetRouter is
 
         if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_START) {
             TargetInbound.handleAuctionStageStart(_ts(), srcChainId, message);
-        } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING) {
-            TargetInbound.handleAuctionStageClearing(_ts(), srcChainId, message);
+        } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS) {
+            TargetInbound.handleAuctionStageCollectingBids(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_RESULT) {
             TargetInbound.handleAuctionResult(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS) {
@@ -255,7 +255,7 @@ contract TargetRouter is
     function relayBids(uint32 emissionDay) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
         if ($.bidsRelay[emissionDay].done) revert NoBidsToRelay(emissionDay);
-        if ($.auction.getAuctionStage(emissionDay) != IIntexAuction.AuctionStage.Issuance) {
+        if ($.auction.getAuctionStage(emissionDay) != IIntexAuction.AuctionStage.AwaitingResult) {
             revert NoBidsToRelay(emissionDay);
         }
         uint16 batchBefore = $.bidsRelay[emissionDay].nextBatch;

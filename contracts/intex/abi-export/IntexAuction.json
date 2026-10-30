@@ -1088,7 +1088,7 @@
     },
     {
       "type": "function",
-      "name": "startClearingStage",
+      "name": "startAwaitingResult",
       "inputs": [
         {
           "name": "emissionDay",

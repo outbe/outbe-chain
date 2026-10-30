@@ -14,9 +14,10 @@ interface IIntexAuction {
     enum AuctionStage {
         CommittingBids,
         RevealingBids,
-        Issuance,
+        AwaitingResult,
         Completed,
-        Cancelled
+        Cancelled,
+        Failed
     }
 
     /// @notice Emission-day state, final at `auctionStart`.
@@ -264,10 +265,10 @@ interface IIntexAuction {
         AuctionParams calldata params
     ) external;
 
-    /// @notice Advance the auction to the issuance stage (bridge-driven clearing signal from Outbe).
+    /// @notice Move the auction to `AwaitingResult` (the bridge-driven signal from Outbe that it collects the bids).
     /// @dev Early signal snaps `revealEnd` forward; `issuanceEnd` is unchanged.
     /// @param emissionDay Emission day (yyyymmdd).
-    function startClearingStage(uint32 emissionDay) external;
+    function startAwaitingResult(uint32 emissionDay) external;
 
     /// @notice Execute auction clearing with final data from Outbe.
     /// @dev `issuedPromisLoadMinor` is derived on-chain (`issuedUnits * promisLoadMinor`).

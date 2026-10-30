@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
-import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
+import {IEscrowAdapter, EscrowTimes} from "./interfaces/IEscrowAdapter.sol";
 import {ITheCompact} from "../vendor/the-compact/interfaces/ITheCompact.sol";
 import {IAllocator} from "../vendor/the-compact/interfaces/IAllocator.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
@@ -40,10 +40,8 @@ contract EscrowAdapter is
     /// @notice Role identifier for auction contract integration.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @notice Safety window before the bidder of a never-finalized series can claim the
-    ///         full principal, anchored at the lock's `lockedAt`. MUST exceed the longest
-    ///         legitimate finalization latency (settlement window + cross-chain delivery).
-    uint32 public constant UNFINALIZED_REFUND_DELAY = 72 hours;
+    /// @notice See `EscrowTimes.UNFINALIZED_REFUND_DELAY`.
+    uint32 public constant UNFINALIZED_REFUND_DELAY = EscrowTimes.UNFINALIZED_REFUND_DELAY;
 
     /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives

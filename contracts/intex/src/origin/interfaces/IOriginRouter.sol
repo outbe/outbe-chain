@@ -270,8 +270,8 @@ interface IOriginRouter {
     /// @notice Broadcast auction stage start to every registered target, and take a snapshot of the
     ///         target set for the day. Restricted to `DESIS_ROLE`.
     function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
-    /// @notice Broadcast auction stage clearing over the day's snapshot. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageClearing(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit) external payable;
+    /// @notice Broadcast the collecting-bids stage to one chain of the day's snapshot. Restricted to `DESIS_ROLE`.
+    function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit) external payable;
     /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.
     function sendAuctionResult(
         uint32 dstChainId,

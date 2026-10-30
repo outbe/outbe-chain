@@ -93,6 +93,7 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
         )
         .expect("the venue knows the auction");
         assert_ne!(stage, 4, "day {emission_day} was cancelled on the venue");
+        assert_ne!(stage, 5, "day {emission_day} failed on the venue");
         if stage >= target_stage {
             return;
         }

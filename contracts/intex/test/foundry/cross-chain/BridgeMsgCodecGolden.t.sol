@@ -46,8 +46,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
     }
 
-    function test_Golden_AuctionStageClearing() public pure {
-        assertEq(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D), hex"01040a0b0c0d");
+    function test_Golden_AuctionStageCollectingBids() public pure {
+        assertEq(BridgeMsgCodec.encodeAuctionStageCollectingBids(0x0A0B0C0D), hex"01040a0b0c0d");
     }
 
     function test_Golden_AuctionResult() public pure {
@@ -254,7 +254,8 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     function test_RoundTrip_SingleField_SeriesId() public view {
         assertEq(
-            this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
+            this.exposedDecodeAuctionStageCollectingBids(BridgeMsgCodec.encodeAuctionStageCollectingBids(0x0A0B0C0D)),
+            0x0A0B0C0D
         );
         assertEq(
             this.exposedDecodeMarkCalled(
@@ -270,8 +271,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 
-    function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageClearing(p);
+    function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
+        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {

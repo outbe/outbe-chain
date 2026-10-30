@@ -171,7 +171,7 @@ contract StoredBidStub {
     }
 
     /// @dev Burns what the real flip costs (452k, `GasBudget.t.sol`) so a budget test pays for it.
-    function startClearingStage(uint32) external view {
+    function startAwaitingResult(uint32) external view {
         uint256 floorGas = gasleft() - _flipGas;
         uint256 spin;
         while (gasleft() > floorGas) {
@@ -180,7 +180,7 @@ contract StoredBidStub {
     }
 
     function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
     function revealedBidsCount(uint32) external view returns (uint256) {
@@ -295,7 +295,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         _wireRouter(address(gateway));
     }
 
-    /// @notice `AUCTION_STAGE_CLEARING` is the budget that a chain with no history gets, so it has
+    /// @notice `AUCTION_STAGE_COLLECTING_BIDS` is the budget that a chain with no history gets, so it has
     ///         to be worth sending. The round must place at least one chunk and report the rest.
     ///         Otherwise the day stalls waiting for a hand.
     /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
@@ -318,11 +318,11 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
                 uint256(1),
                 _interop(DST_CHAIN_ID, originPeer),
                 recipient,
-                BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY)
+                BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
             )
         );
 
-        uint256 cap = ((IntexGas.AUCTION_STAGE_CLEARING * 63) / 64 * 63) / 64;
+        uint256 cap = ((IntexGas.AUCTION_STAGE_COLLECTING_BIDS * 63) / 64 * 63) / 64;
         vm.recordLogs();
         uint256 before = gasleft();
         (bool delivered,) = address(gateway).call{gas: cap}(

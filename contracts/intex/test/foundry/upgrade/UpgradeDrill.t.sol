@@ -192,7 +192,7 @@ contract UpgradeDrillTest is CrossChainTest {
         vm.prank(admin);
         origin.setRemoteMessenger(B_CHAIN_ID, "");
         vm.prank(address(desisMock));
-        origin.sendAuctionStageClearing(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING);
+        origin.sendAuctionStageCollectingBids(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
 
         OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);

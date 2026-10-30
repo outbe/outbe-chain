@@ -289,7 +289,7 @@ contract LocalLoopbackTest is Test {
         //    back through the loopback to the origin. This makes three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
-        origin.sendAuctionStageClearing(DAY, local, IntexGas.AUCTION_STAGE_CLEARING);
+        origin.sendAuctionStageCollectingBids(DAY, local, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
         assertEq(desis.bidsCount(), 2, "bids not relayed");
         assertEq(desis.lastDay(), DAY, "relay day");
         assertEq(desis.lastSrcChainId(), local, "relay source chain");

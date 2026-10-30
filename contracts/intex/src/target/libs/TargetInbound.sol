@@ -77,27 +77,26 @@ library TargetInbound {
         }
     }
 
-    /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
+    /// @notice Decode AUCTION_STAGE_COLLECTING_BIDS, forward to Auction, then relay revealed bids to Outbe.
     /// @dev These days cannot take the transition any more. The handler acknowledges them without
     ///      effect (and without a relay):
     ///      - a day already past clearing (Completed)
     ///      - a cancelled day
+    ///      - a failed day, which found no result in time
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
     ///      valid, so the bridge redelivers. Only the outbound relay is caught (parked on failure).
-    function handleAuctionStageClearing(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+    function handleAuctionStageCollectingBids(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
-        uint32 emissionDay = BridgeMsgCodec.decodeAuctionStageClearing(message);
+        uint32 emissionDay = BridgeMsgCodec.decodeAuctionStageCollectingBids(message);
 
-        try $.auction.startClearingStage(emissionDay) {}
+        try $.auction.startAwaitingResult(emissionDay) {}
         catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
-                IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
-                if (current != IIntexAuction.AuctionStage.Completed && current != IIntexAuction.AuctionStage.Cancelled)
-                {
+                if (!_ended(_stageRequiredCurrent(reason))) {
                     LowLevelCall.bubbleRevert(reason);
                 }
                 why = InboundReason.OBSOLETE;
@@ -106,7 +105,7 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, bytes32(uint256(emissionDay)), why);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, bytes32(uint256(emissionDay)), why);
             return;
         }
 
@@ -131,13 +130,15 @@ library TargetInbound {
             }
         }
 
-        emit ITargetRouter.AuctionStageReceived(srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+        emit ITargetRouter.AuctionStageReceived(
+            srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS
+        );
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
     /// @dev The handler acknowledges these cases without effect:
     ///      - a result the day already holds (same -> duplicate, other -> conflict)
-    ///      - a cancelled or unknown day
+    ///      - a cancelled, failed or unknown day
     ///      - a result that fails the auction's permanent sanity bounds
     ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
     ///      redelivers.
@@ -156,7 +157,9 @@ library TargetInbound {
                     why = _sameResult($, emissionDay, issuedUnits, auctionClearingRate, wonBidsCount)
                         ? InboundReason.DUPLICATE
                         : InboundReason.CONFLICT;
-                } else if (current == IIntexAuction.AuctionStage.Cancelled) {
+                } else if (
+                    current == IIntexAuction.AuctionStage.Cancelled || current == IIntexAuction.AuctionStage.Failed
+                ) {
                     why = InboundReason.OBSOLETE;
                 } else {
                     LowLevelCall.bubbleRevert(reason);
@@ -204,6 +207,22 @@ library TargetInbound {
         return
             r.issuedUnits == issuedUnits && r.auctionClearingRate == auctionClearingRate
                 && r.wonBidsCount == wonBidsCount;
+    }
+
+    /// @dev Whether this chain reads the day as failed. A day it never opened is not.
+    function _failed(TargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
+        if (address($.auction).code.length == 0) return false;
+        try $.auction.getAuctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
+            return stage == IIntexAuction.AuctionStage.Failed;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev Whether the day has ended: no stage message or result can apply to it any more.
+    function _ended(IIntexAuction.AuctionStage stage) private pure returns (bool) {
+        return stage == IIntexAuction.AuctionStage.Completed || stage == IIntexAuction.AuctionStage.Cancelled
+            || stage == IIntexAuction.AuctionStage.Failed;
     }
 
     /// @dev `currentStage` argument of a `StageRequired(requiredStage, currentStage)` revert payload.
@@ -359,8 +378,8 @@ library TargetInbound {
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag. The handler acknowledges without effect a chunk
-    ///      already applied, or one arriving after the escrow closed the day. Bidders it would have
-    ///      settled recover through the auction's `claimRefund` path.
+    ///      already applied, or one arriving after the escrow closed the day or the day failed.
+    ///      Bidders it would have settled recover through the auction's `claimRefund` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -391,7 +410,7 @@ library TargetInbound {
             return;
         }
         (, bool finalized,) = $.escrowAdapter.getAuctionStatus(emissionDay);
-        if (finalized) {
+        if (finalized || _failed($, emissionDay)) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.OBSOLETE);
             return;
         }

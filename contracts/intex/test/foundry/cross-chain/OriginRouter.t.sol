@@ -165,11 +165,11 @@ contract OriginRouterTest is CrossChainTest {
         );
     }
 
-    function test_sendAuctionStageClearing_revert_unauthorized() public {
+    function test_sendAuctionStageCollectingBids_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageClearing{value: 0.1 ether}(
-            EMISSION_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING
+        originRouter.sendAuctionStageCollectingBids{value: 0.1 ether}(
+            EMISSION_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_COLLECTING_BIDS
         );
     }
 

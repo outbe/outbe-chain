@@ -122,12 +122,12 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
         vm.recordLogs();
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY, TARGET_B, IntexGas.AUCTION_STAGE_CLEARING);
+        origin.sendAuctionStageCollectingBids(DAY, TARGET_B, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
         assertEq(_countStageSent(), 1, "the removed target still takes the day's clearing");
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.NoTargets.selector);
-        origin.sendAuctionStageClearing(DAY, 4242, IntexGas.AUCTION_STAGE_CLEARING);
+        origin.sendAuctionStageCollectingBids(DAY, 4242, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
     }
 
     /// @dev A round smaller than a round is worth comes back up to the floor. A round above what a
@@ -135,12 +135,12 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_clearing_clampsTheAskToWhatARoundIsWorth() public {
         _fireStart(DAY);
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY, TARGET_A, 1);
-        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING, "clamped up to the floor");
+        origin.sendAuctionStageCollectingBids(DAY, TARGET_A, 1);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_COLLECTING_BIDS, "clamped up to the floor");
 
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY, TARGET_A, 100_000_000);
-        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_CLEARING_MAX, "clamped down to the cap");
+        origin.sendAuctionStageCollectingBids(DAY, TARGET_A, 100_000_000);
+        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX, "clamped down to the cap");
     }
 
     function _lastGasAttribute() internal view returns (uint256) {
@@ -212,7 +212,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
         assertEq(
             uint8(bridge.lastPayload()[1]),
-            BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING,
+            BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS,
             "the answer is another clearing round"
         );
         assertEq(

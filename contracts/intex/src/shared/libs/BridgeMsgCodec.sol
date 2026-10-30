@@ -21,7 +21,7 @@ library BridgeMsgCodec {
 
     // Message types: Outbe -> target chain
     uint8 internal constant MSG_AUCTION_STAGE_START = 3;
-    uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 4;
+    uint8 internal constant MSG_AUCTION_STAGE_COLLECTING_BIDS = 4;
     uint8 internal constant MSG_AUCTION_RESULT = 5;
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
@@ -65,7 +65,7 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     // MARK_CALLED: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
@@ -319,12 +319,12 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Encodes AUCTION_STAGE_CLEARING message.
+    /// @notice Encodes AUCTION_STAGE_COLLECTING_BIDS message.
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)]
     /// @param _emissionDay The emission day (yyyymmdd).
-    /// @return The wire-encoded AUCTION_STAGE_CLEARING message.
-    function encodeAuctionStageClearing(uint32 _emissionDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_CLEARING, _emissionDay);
+    /// @return The wire-encoded AUCTION_STAGE_COLLECTING_BIDS message.
+    function encodeAuctionStageCollectingBids(uint32 _emissionDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_COLLECTING_BIDS, _emissionDay);
     }
 
     /// @notice Encodes AUCTION_RESULT message.
@@ -673,13 +673,13 @@ library BridgeMsgCodec {
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
-    /// @notice Decodes AUCTION_STAGE_CLEARING message.
+    /// @notice Decodes AUCTION_STAGE_COLLECTING_BIDS message.
     /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
-    /// @param _msg The wire-encoded AUCTION_STAGE_CLEARING message.
+    /// @param _msg The wire-encoded AUCTION_STAGE_COLLECTING_BIDS message.
     /// @return emissionDay The emission day (yyyymmdd).
-    function decodeAuctionStageClearing(bytes calldata _msg) internal pure returns (uint32 emissionDay) {
-        _assertExactLength(_msg, MSG_AUCTION_STAGE_CLEARING, MIN_LEN_AUCTION_STAGE_CLEARING);
+    function decodeAuctionStageCollectingBids(bytes calldata _msg) internal pure returns (uint32 emissionDay) {
+        _assertExactLength(_msg, MSG_AUCTION_STAGE_COLLECTING_BIDS, MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS);
         _assertBodyVersion(_msg);
         emissionDay = uint32(bytes4(_msg[2:6]));
     }
@@ -816,7 +816,7 @@ library BridgeMsgCodec {
     /// @return The minimum encoded length for `_msgType`, or 0 if unknown to the codec.
     function minLengthFor(uint8 _msgType) internal pure returns (uint16) {
         if (_msgType == MSG_AUCTION_STAGE_START) return MIN_LEN_AUCTION_STAGE_START;
-        if (_msgType == MSG_AUCTION_STAGE_CLEARING) return MIN_LEN_AUCTION_STAGE_CLEARING;
+        if (_msgType == MSG_AUCTION_STAGE_COLLECTING_BIDS) return MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS;
         if (_msgType == MSG_AUCTION_RESULT) return MIN_LEN_AUCTION_RESULT;
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;

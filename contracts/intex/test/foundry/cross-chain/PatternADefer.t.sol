@@ -29,7 +29,7 @@ contract StubAuctionWithBids {
         IIntexAuction.AuctionSchedule calldata,
         IIntexAuction.AuctionParams calldata
     ) external {}
-    function startClearingStage(uint32) external {}
+    function startAwaitingResult(uint32) external {}
     function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
 
     function getAuctionDetails(uint32)
@@ -78,7 +78,7 @@ contract StubAuctionWithBids {
         }
     }
 
-    IIntexAuction.AuctionStage public stage = IIntexAuction.AuctionStage.Issuance;
+    IIntexAuction.AuctionStage public stage = IIntexAuction.AuctionStage.AwaitingResult;
 
     function setStage(IIntexAuction.AuctionStage s) external {
         stage = s;
@@ -157,7 +157,7 @@ contract PatternADeferTest is CrossChainTest {
         // TM has zero native float but the bridge charges a fee, so `_send` reverts when relaying bids.
         assertEq(address(bnbRouter).balance, 0);
 
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
 
         (uint16 nextBatch, uint16 totalBatches, bool done) = bnbRouter.bidsRelay(SERIES_ID_DAY);
         assertEq(nextBatch, 0, "the round rolled back whole");
@@ -166,7 +166,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_RelayBidsFinishesTheDayAfterTopUp() public {
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
 
         // Top up TM float generously so the resumed round can pay the bridge fee.
         vm.deal(address(bnbRouter), 10 ether);
@@ -177,7 +177,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_RelayBidsOnAFinishedDayReverts() public {
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
         bnbRouter.relayBids(SERIES_ID_DAY);
 
@@ -201,7 +201,7 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbRouter), 10 ether);
 
         // Deliver with enough gas for a chunk or two, not for the day: exactly what a tight budget does.
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY);
         (bool delivered,) = address(bridge).call{gas: 4_500_000}(
             abi.encodeCall(
                 bridge.deliverAs,
@@ -224,7 +224,7 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_ARoundThatSentNothingDoesNotReport() public {
         // Zero float, so the round reverts whole before any chunk leaves.
         assertEq(address(bnbRouter).balance, 0);
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
 
         assertEq(bridge.lastPayload().length, 0, "nothing was sent, so nothing was reported");
     }
@@ -238,7 +238,7 @@ contract PatternADeferTest is CrossChainTest {
     // instead of the old early-return that sent nothing.
     function test_TM_BidsRelay_ZeroBids_SendsOneEmptyFinalBatch() public {
         stubAuction.setBidCount(0);
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();
@@ -253,7 +253,7 @@ contract PatternADeferTest is CrossChainTest {
     // final chunk carries the remainder. (130 bids -> 64 + 64 + 2.)
     function test_TM_BidsRelay_ChunksAboveCap() public {
         stubAuction.setBidCount(130);
-        _deliverBridge(BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY));
+        _deliverBridge(BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY));
         vm.deal(address(bnbRouter), 10 ether);
 
         vm.recordLogs();

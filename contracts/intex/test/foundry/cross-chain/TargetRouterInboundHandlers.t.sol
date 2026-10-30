@@ -92,7 +92,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         // Push the auction into Issuance stage so executeAuctionClearing is accepted.
         vm.warp(block.timestamp + 1 days);
         vm.prank(address(bnbRouter));
-        auction.startClearingStage(EMISSION_DAY);
+        auction.startAwaitingResult(EMISSION_DAY);
 
         uint64 clearingPrice = 100e6;
         bytes memory packet = BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, ISSUED_UNITS, clearingPrice, 0);
@@ -103,21 +103,21 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
-    // --- _handleAuctionStageClearing: relays a BIDS_DONE marker, exactly once ---
-    function test_handleAuctionStageClearing_emitsBidsDone() public {
+    // --- _handleAuctionStageCollectingBids: relays a BIDS_DONE marker, exactly once ---
+    function test_handleAuctionStageCollectingBids_emitsBidsDone() public {
         _seedAuction();
         vm.warp(block.timestamp + 1 days);
 
         // No revealed bids: one empty BIDS_BATCH plus a BIDS_DONE(totalBatches=1, totalBids=0).
         vm.expectEmit(false, true, false, true, address(bnbRouter));
         emit ITargetRouter.BidsDoneSent(bytes32(0), EMISSION_DAY, 1, 0);
-        _deliver(BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY));
+        _deliver(BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY));
     }
 
-    function test_handleAuctionStageClearing_idempotentOnRedelivery() public {
+    function test_handleAuctionStageCollectingBids_idempotentOnRedelivery() public {
         _seedAuction();
         vm.warp(block.timestamp + 1 days);
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY);
         _deliver(packet); // first CLEARING relays
 
         // A redelivered CLEARING must not relay the day again.
@@ -133,7 +133,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.setRemoteMessenger(otherChain, _interop(otherChain, otherPeer));
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.UnexpectedSourceChain.selector, otherChain));
-        _deliver(otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY));
+        _deliver(
+            otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+        );
     }
 
     // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---

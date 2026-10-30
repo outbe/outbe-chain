@@ -6,7 +6,7 @@ pragma solidity 0.8.30;
 /// @notice Interface for a target-chain router. Relays revealed bids to Outbe and receives auction/series messages
 ///         from Outbe over the protocol-agnostic ERC-7786 bridge.
 /// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
-///      {ERC7786MessengerBase-receiveMessage}. The inbound AUCTION_STAGE_CLEARING triggers the bids relay,
+///      {ERC7786MessengerBase-receiveMessage}. The inbound AUCTION_STAGE_COLLECTING_BIDS triggers the bids relay,
 ///      and the contract's relay float funds it. Auction messages are keyed by `emissionDay`. Series
 ///      (issuance/mark) messages are keyed by `seriesId`.
 interface ITargetRouter {
@@ -27,7 +27,7 @@ interface ITargetRouter {
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param emissionDay Emission day (yyyymmdd).
-    /// @param stageType BridgeMsgCodec message type (3=AuctionStageStart, 4=AuctionStageClearing).
+    /// @param stageType BridgeMsgCodec message type (3=AuctionStageStart, 4=AuctionStageCollectingBids).
     event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed emissionDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is received from Outbe.

@@ -216,7 +216,7 @@ contract PayNativeAccountingTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY)
+            BridgeMsgCodec.encodeAuctionStageCollectingBids(SERIES_ID_DAY)
         );
     }
 
@@ -264,7 +264,7 @@ contract StubAuction {
         IIntexAuction.AuctionSchedule calldata,
         IIntexAuction.AuctionParams calldata
     ) external {}
-    function startClearingStage(uint32) external {}
+    function startAwaitingResult(uint32) external {}
     function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
 
     function getAuctionDetails(uint32)
@@ -310,7 +310,7 @@ contract StubAuction {
     }
 
     function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 }
 

@@ -37,10 +37,10 @@ contract BodyVersionTest is Test {
             "stageStart.length"
         );
 
-        encoded = BridgeMsgCodec.encodeAuctionStageClearing(1);
+        encoded = BridgeMsgCodec.encodeAuctionStageCollectingBids(1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageClearing.version");
 
-        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, "stageClearing.msgType");
+        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, "stageClearing.msgType");
         assertEq(encoded.length, 6, "stageClearing.length");
 
         encoded = BridgeMsgCodec.encodeBidsRemaining(1, 2, 3, 4);
@@ -147,11 +147,11 @@ contract BodyVersionTest is Test {
         this.exposedDecodeBidsBatch(packet);
     }
 
-    function test_BridgeCodec_UnknownBodyVersion_AuctionStageClearing_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(1);
+    function test_BridgeCodec_UnknownBodyVersion_AuctionStageCollectingBids_Reverts() public {
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(1);
         packet[0] = 0x10;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x10));
-        this.exposedDecodeAuctionStageClearing(packet);
+        this.exposedDecodeAuctionStageCollectingBids(packet);
     }
 
     function test_BridgeCodec_UnknownBodyVersion_RefundInstructions_Reverts() public {
@@ -225,8 +225,8 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
 
-    function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageClearing(p);
+    function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
+        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
     function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {

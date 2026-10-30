@@ -68,7 +68,7 @@ contract OriginRouter is
         mapping(uint256 idx => ParkedMessage) parkedMessages;
         /// @dev Next index to assign in `parkedMessages`.
         uint256 nextParkedMessageIdx;
-        /// @dev Gas a day's CLEARING round asks of each chain, as desis sized it from that
+        /// @dev Gas a day's COLLECTING_BIDS round asks of each chain, as desis sized it from that
         ///      chain's recent bid counts. Later rounds of the same day reuse it, so a remainder
         ///      report needs no sizing.
         mapping(uint32 emissionDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
@@ -282,7 +282,7 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageClearing(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit)
+    function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit)
         external
         payable
         onlyRole(DESIS_ROLE)
@@ -292,15 +292,17 @@ contract OriginRouter is
         // Store the budget so the rounds that follow a remainder report ask for the same gas as the
         // first one.
         _os().clearingGas[emissionDay][dstChainId] = budget;
-        bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageClearing(emissionDay), budget);
-        emit AuctionStageSent(sendId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+        bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageCollectingBids(emissionDay), budget);
+        emit AuctionStageSent(sendId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS);
     }
 
     /// @dev Keep the ask inside what a round is worth. Below the floor, a round could not even flip
     ///      the stage. Above the cap, no target chain would accept the delivery.
     function _clearingBudget(uint256 gasLimit) private pure returns (uint64) {
-        if (gasLimit < IntexGas.AUCTION_STAGE_CLEARING) return uint64(IntexGas.AUCTION_STAGE_CLEARING);
-        if (gasLimit > IntexGas.AUCTION_STAGE_CLEARING_MAX) return uint64(IntexGas.AUCTION_STAGE_CLEARING_MAX);
+        if (gasLimit < IntexGas.AUCTION_STAGE_COLLECTING_BIDS) return uint64(IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        if (gasLimit > IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX) {
+            return uint64(IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX);
+        }
         return uint64(gasLimit);
     }
 
@@ -483,8 +485,8 @@ contract OriginRouter is
         }
 
         uint64 budget = _os().clearingGas[emissionDay][srcChainId];
-        uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_CLEARING : budget;
-        bytes memory round = BridgeMsgCodec.encodeAuctionStageClearing(emissionDay);
+        uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_COLLECTING_BIDS : budget;
+        bytes memory round = BridgeMsgCodec.encodeAuctionStageCollectingBids(emissionDay);
 
         // A target on this very chain gets the delivery inside this frame, where `receiveMessage`
         // still holds its re-entry guard. So the guard would reject the round's own chunk sends

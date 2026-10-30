@@ -44,6 +44,16 @@ pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 8 * 3600;
 #[cfg(feature = "e2e-test")]
 pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 600;
 
+/// Mirrors `EscrowTimes.UNFINALIZED_REFUND_DELAY`: the other chains read a day without a result
+/// as failed once this much has passed since its commit end.
+pub const TARGET_UNFINALIZED_REFUND_DELAY_SECONDS: u64 = 48 * 3600;
+
+// A result sent at the last clearing time must still find the day awaiting it on the other chains.
+const _: () = assert!(
+    REVEAL_WINDOW_SECONDS + INTEX_ISSUANCE_WINDOW_SECONDS
+        <= TARGET_UNFINALIZED_REFUND_DELAY_SECONDS
+);
+
 /// An auction that would start with less commit window than this is cancelled.
 #[cfg(not(feature = "e2e-test"))]
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
@@ -74,7 +84,7 @@ pub const IGNORED_OBSOLETE: u8 = 2;
 pub const IGNORED_CONFLICT: u8 = 3;
 pub const IGNORED_NOT_FOUND: u8 = 4;
 
-/// What a CLEARING round costs on a target chain - fixed part, one chunk, one bid - measured in
+/// What a COLLECTING_BIDS round costs on a target chain - fixed part, one chunk, one bid - measured in
 /// `contracts/intex/test/foundry/cross-chain/ClearingRelayMailboxGas.t.sol`.
 pub const CLEARING_FIXED_GAS: u64 = 564_000;
 pub const CLEARING_CHUNK_GAS: u64 = 197_000;

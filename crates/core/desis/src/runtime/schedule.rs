@@ -305,7 +305,7 @@ fn refund_unused_desis_limit(
 }
 
 /// Arm the clearing from the briefed Desis Limit: convert raw PROMIS to whole Intex
-/// units, start the fan-in gate and broadcast the clearing stage.
+/// units, start the fan-in gate and broadcast the collecting-bids stage.
 fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
     let config = contract.read_auction_config(emission_day)?;
@@ -335,7 +335,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendAuctionStageClearingCall {
+                IOriginRouter::sendAuctionStageCollectingBidsCall {
                     emissionDay: emission_day.into(),
                     dstChainId: chain_id,
                     gasLimit: U256::from(gas),
@@ -351,7 +351,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
                 %emission_day,
                 chain_id,
                 error = ?error,
-                "clearing round: chain skipped"
+                "collecting-bids round: chain skipped"
             );
         }
     }

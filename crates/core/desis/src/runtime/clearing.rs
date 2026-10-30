@@ -55,7 +55,7 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Gas one CLEARING round asks of `chain_id`, from the busiest of its last
+/// Gas one COLLECTING_BIDS round asks of `chain_id`, from the busiest of its last
 /// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth.
 pub(crate) fn clearing_round_gas(
     storage: &StorageHandle<'_>,
