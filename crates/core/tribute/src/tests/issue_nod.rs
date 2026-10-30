@@ -862,10 +862,15 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
         assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 1);
         assert_eq!(nod.series_unclaimed_tribute_count.read(&series).unwrap(), 1);
 
-        let zero_load = tc.issue_nod(owner1, t_tiny.tribute_id).unwrap_err();
-        assert!(
-            zero_load.to_string().contains("zero Gratis load"),
-            "{zero_load}"
+        let expected_zero_load: PrecompileError = crate::errors::TributeError::LysisArithmetic(
+            outbe_lysis::errors::ProgramErrorV1::ZeroGratisLoad { ordinal: 0 }.to_string(),
+        )
+        .into();
+        assert_eq!(
+            tc.issue_nod(owner1, t_tiny.tribute_id)
+                .unwrap_err()
+                .to_string(),
+            expected_zero_load.to_string()
         );
         let clean_tiny = crate::precompile::ITribute::cleanCall {
             tributeId: t_tiny.tribute_id.to_u256(),
