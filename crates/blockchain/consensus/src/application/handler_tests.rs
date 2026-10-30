@@ -828,11 +828,99 @@ fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
 }
 
 fn consensus_block_with_number(seed: u8, number: u64) -> ConsensusBlock {
+    consensus_block_extending(seed, number, B256::ZERO)
+}
+
+fn consensus_block_extending(seed: u8, number: u64, parent_hash: B256) -> ConsensusBlock {
     let mut block = Block::default();
     block.header.number = number;
+    block.header.parent_hash = parent_hash;
     block.header.extra_data = Bytes::from(vec![seed]);
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+#[test]
+fn verify_precheck_ignores_sticky_expired_inside_vrf_expiry() {
+    let outcome = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
+        |context| async move {
+            use commonware_runtime::Supervisor as _;
+            let clock = context.child("vrf_verify");
+            let (marshal_mailbox, resolver_keepalive, actor_handle) =
+                start_marshal_without_available_block(context).await;
+            let shared = finalizer_test_shared(
+                &clock,
+                marshal_mailbox,
+                HybridSchemeProvider::<MinSig>::new(),
+            );
+            let expiry = shared.vrf_safety.snapshot().vrf_expiry_height;
+            shared.vrf_safety.mark_expired(expiry);
+
+            let leader = bls12381::PublicKey::from(bls12381::PrivateKey::from_seed(1));
+            let round = Round::new(Epoch::new(0), View::new(1));
+            let allowed_parent = consensus_block_with_number(0x31, expiry - 1);
+            let allowed = consensus_block_extending(0x32, expiry, allowed_parent.block_hash());
+            let allowed_ok = shared.validate_verify_parent_and_height_for_test(
+                simplex_context(round, leader.clone(), allowed_parent.digest()),
+                allowed,
+                Some(allowed_parent),
+            );
+
+            let rejected_parent = consensus_block_with_number(0x41, expiry);
+            let rejected =
+                consensus_block_extending(0x42, expiry + 1, rejected_parent.block_hash());
+            let rejected_ok = shared.validate_verify_parent_and_height_for_test(
+                simplex_context(round, leader, rejected_parent.digest()),
+                rejected,
+                Some(rejected_parent),
+            );
+            let above = shared.vrf_safety.ensure_verify_height_allowed(expiry + 1);
+            let proposer_blocked = shared.vrf_safety.ensure_block_allowed(expiry);
+
+            drop(resolver_keepalive);
+            actor_handle.abort();
+            let _ = actor_handle.await;
+            (expiry, allowed_ok, rejected_ok, above, proposer_blocked)
+        },
+    );
+
+    let (expiry, allowed_ok, rejected_ok, above, proposer_blocked) = outcome;
+    assert_eq!(expiry, 10_100);
+    assert!(
+        allowed_ok,
+        "verify precheck must accept block.number() == vrf_expiry_height after mark_expired"
+    );
+    assert!(
+        !rejected_ok,
+        "verify precheck must reject block.number() == vrf_expiry_height + 1"
+    );
+    let error = above.expect_err("height above VRF expiry");
+    let expired = error
+        .downcast_ref::<crate::errors::VrfSafetyError>()
+        .expect("VrfSafetyError");
+    assert!(matches!(
+        expired,
+        crate::errors::VrfSafetyError::MaterialExpired {
+            block_height,
+            expiry_height,
+        } if *block_height == expiry + 1 && *expiry_height == expiry
+    ));
+    assert!(
+        proposer_blocked.is_err(),
+        "sticky Expired still blocks the proposer at the expiry height"
+    );
+}
+
+fn simplex_context(
+    round: Round,
+    leader: bls12381::PublicKey,
+    parent_digest: Digest,
+) -> crate::application::ingress::SimplexContext {
+    crate::application::ingress::SimplexContext {
+        round,
+        leader,
+        parent: (View::zero(), parent_digest),
+    }
 }
 
 fn consensus_block_with_timestamp(seed: u8, number: u64, timestamp_millis: u64) -> ConsensusBlock {

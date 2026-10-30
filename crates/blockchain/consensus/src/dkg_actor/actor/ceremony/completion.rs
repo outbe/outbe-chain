@@ -8,12 +8,19 @@ impl CeremonyState {
         } else {
             self.n
         };
+        let missing_dealers = self
+            .dealers
+            .iter()
+            .filter(|dealer| !self.finalized_logs.contains_key(*dealer))
+            .cloned()
+            .collect();
         DkgError::CeremonyTimedOut {
             timeout: DKG_TIMEOUT,
             acks: self.roles.acked_players.len(),
             player_threshold: self.player_threshold,
             logs: self.finalized_logs.len(),
             log_target,
+            missing_dealers,
         }
         .into()
     }
@@ -106,7 +113,7 @@ impl CeremonyState {
         // reshare does NOT complete on the raw all-n count. It flows through the
         // observe gate below (C1). Thus the actor breaks at the same log-set prefix
         // at which `DkgManager` freezes `canonical_output`.
-        if !self.chain_finalized_mode && self.finalized_logs.len() as u32 >= self.n {
+        if !self.chain_finalized_mode && self.finalized_logs.len() >= self.n as usize {
             let now = clock.current();
             match self.bootstrap_all_logs_collected_at {
                 // `SystemTime::duration_since` errors only if `collected_at` is in the
@@ -150,7 +157,7 @@ impl CeremonyState {
         // requires the local dealer to finish because it has no chain-finalized
         // carrier.
         if (!self.chain_finalized_mode && self.roles.dealer.is_some())
-            || (self.finalized_logs.len() as u32) < self.log_threshold
+            || self.finalized_logs.len() < self.log_threshold as usize
         {
             return false;
         }

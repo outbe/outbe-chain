@@ -376,3 +376,112 @@ fn canonical_public_output_does_not_allow_completion_without_a_private_share() {
         );
     });
 }
+
+#[test]
+fn genesis_timeout_err_names_missing_founders() {
+    commonware_runtime::deterministic::Runner::default().start(|clock| async move {
+        let mut fixture = Fixture::new();
+        let mut state = CeremonyState::start(&clock, fixture.config(), false, &mut fixture.sender)
+            .await
+            .unwrap();
+
+        // Simulate 3 of 4 founding dealers submitting finalized logs; keys[3] is offline.
+        let missing_pk = fixture.keys[3].public_key();
+        for (index, dealer_key) in fixture.keys.iter().enumerate().take(3) {
+            let (mut dealer, public, private) = Dealer::start::<N3f1>(
+                rand_commonware::rngs::ChaCha20Rng::from_seed([index as u8 + 10; 32]),
+                state.info.clone(),
+                dealer_key.clone(),
+                None,
+            )
+            .unwrap();
+            for (player_key, priv_msg) in private {
+                let player_signing_key = fixture
+                    .keys
+                    .iter()
+                    .find(|key| key.public_key() == player_key)
+                    .unwrap();
+                let mut player =
+                    Player::new(state.info.clone(), player_signing_key.clone()).unwrap();
+                let ack = player
+                    .dealer_message::<N3f1>(dealer_key.public_key(), public.clone(), priv_msg)
+                    .unwrap()
+                    .unwrap();
+                dealer.receive_player_ack(player_key, ack).unwrap();
+            }
+            let signed_log = dealer.finalize::<N3f1>();
+            state.record_chain_log(Bytes::from(signed_log.encode()));
+        }
+
+        let err = state.timeout_error();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("logs: 3/4"),
+            "timeout error must preserve logs: 3/4 diagnostic, got: {msg}"
+        );
+        assert!(
+            msg.contains(&format!("{missing_pk:?}")),
+            "timeout error must name the missing founding dealer, got: {msg}"
+        );
+        for present_key in fixture.keys.iter().take(3) {
+            let present_pk = present_key.public_key();
+            assert!(
+                !msg.contains(&format!("{present_pk:?}")),
+                "timeout error must not list dealers that already submitted logs: {msg}"
+            );
+        }
+        let typed = err.downcast_ref::<crate::errors::DkgError>().unwrap();
+        match typed {
+            crate::errors::DkgError::CeremonyTimedOut {
+                logs,
+                log_target,
+                missing_dealers,
+                ..
+            } => {
+                assert_eq!(*logs, 3);
+                assert_eq!(*log_target, 4);
+                assert_eq!(missing_dealers, &vec![missing_pk]);
+            }
+            other => panic!("expected CeremonyTimedOut, got: {other:?}"),
+        }
+
+        // Reshare case: a newly joining player-only validator is in `participants`
+        // but not in `dealers`, so it must not appear in `missing_dealers`.
+        let dkg = crate::bls::bootstrap_dkg_for_participants(fixture.participants.clone()).unwrap();
+        let new_player_pk = bls12381::PrivateKey::from_seed(999).public_key();
+        let reshare_participants: Set<bls12381::PublicKey> = fixture
+            .participants
+            .iter()
+            .cloned()
+            .chain(std::iter::once(new_player_pk.clone()))
+            .try_collect()
+            .unwrap();
+        let reshare_config = CeremonyConfig {
+            signing_key: fixture.keys[0].clone(),
+            participants: reshare_participants,
+            previous_output: Some(dkg.output),
+            previous_share: Some(dkg.shares[0].clone()),
+            round: 1,
+            retry_store: None,
+        };
+        let reshare_state = CeremonyState::start(&clock, reshare_config, true, &mut fixture.sender)
+            .await
+            .unwrap();
+        let reshare_err = reshare_state.timeout_error();
+        let reshare_typed = reshare_err
+            .downcast_ref::<crate::errors::DkgError>()
+            .unwrap();
+        match reshare_typed {
+            crate::errors::DkgError::CeremonyTimedOut {
+                missing_dealers, ..
+            } => {
+                assert_eq!(missing_dealers.len(), 4);
+                assert!(
+                    !missing_dealers.contains(&new_player_pk),
+                    "player-only target validator must not be reported as a missing dealer"
+                );
+            }
+            other => panic!("expected CeremonyTimedOut, got: {other:?}"),
+        }
+    });
+}

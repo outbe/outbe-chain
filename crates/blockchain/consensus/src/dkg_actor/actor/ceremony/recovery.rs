@@ -16,7 +16,10 @@ impl CeremonyState {
             round,
             retry_store,
         } = config;
-        let n = participants.len() as u32;
+        let n =
+            u32::try_from(participants.len()).map_err(|_| DkgError::ParticipantCountOverflow {
+                count: participants.len(),
+            })?;
         let my_pk = commonware_cryptography::Signer::public_key(&signing_key);
         let player_threshold = participants.quorum::<N3f1>();
 
@@ -59,7 +62,7 @@ impl CeremonyState {
             previous_output,
             Mode::NonZeroCounter,
             commonware_cryptography::bls12381::dkg::feldman_desmedt::Reveal::V1,
-            dealers,
+            dealers.clone(),
             participants.clone(),
         )
         .map_err(DkgError::create_info)?;
@@ -150,6 +153,7 @@ impl CeremonyState {
         Ok(Self {
             info,
             ceremony_id,
+            dealers,
             participants,
             n,
             player_threshold,

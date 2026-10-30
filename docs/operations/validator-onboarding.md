@@ -38,6 +38,18 @@ runs `UpstreamBootstrap` until it is ready at or above the upstream tip of
 its start. Without `--upstream`, startup stops with
 `ValidatorBootstrapRequiresUpstream`.
 
+## Genesis DKG
+
+The genesis ceremony is `n`-of-`n`, so all founding validators must be online.
+Each founder contributes a `DealerLog`. A threshold subset is not enough:
+interactive bootstrap has no chain carrier, so a partial dealer set can
+produce a different public polynomial on each validator.
+
+`DKG_TIMEOUT` is 120 seconds. If a `DealerLog` from every founder is not in
+before that deadline, the ceremony fails with `CeremonyTimedOut`. The error
+carries `missing_dealers`, the founder public keys that did not deliver a
+finalized dealer log.
+
 ## Join a running network
 
 1. Run `outbe-cli tee join` against the enclave and the upstream RPC.

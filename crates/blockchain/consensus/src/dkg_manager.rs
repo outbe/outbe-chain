@@ -39,7 +39,7 @@ mod boundary;
 
 /// Finalized artifact effects and fenced ceremony replay.
 mod finalized;
-pub use finalized::CeremonyReplayRequest;
+pub use finalized::{CeremonyReplayRequest, RevealedSetRecord};
 
 /// The ODKO boundary-outcome record codec.
 mod odko;
@@ -80,6 +80,7 @@ struct CeremonyState {
 struct State {
     pending_boundary: Option<DkgBoundaryArtifact>,
     committed_boundary: Option<CommittedDkgBoundary>,
+    latest_revealed_set: Option<RevealedSetRecord>,
     boundary_status_cache: BTreeMap<B256, BoundaryStatusCacheEntry>,
     boundary_status_lru: VecDeque<B256>,
     ceremony: Option<CeremonyState>,
@@ -133,8 +134,11 @@ impl Mailbox {
         participants: Set<bls12381::PublicKey>,
         finalized_dealer_log_tx: Option<mpsc::UnboundedSender<Bytes>>,
     ) -> Result<()> {
-        let max_players =
-            NonZeroU32::new(participants.len() as u32).ok_or(DkgError::NoParticipants)?;
+        let participant_count =
+            u32::try_from(participants.len()).map_err(|_| DkgError::ParticipantCountOverflow {
+                count: participants.len(),
+            })?;
+        let max_players = NonZeroU32::new(participant_count).ok_or(DkgError::NoParticipants)?;
         let dealers = previous_output
             .as_ref()
             .map(|output| output.players().clone())
@@ -271,8 +275,13 @@ impl Mailbox {
                 block_number,
                 block_hash,
             });
+            Self::record_finalized_revealed_set(state, block_number, artifact);
             true
         }))
+    }
+
+    pub fn latest_revealed_set_record(&self) -> Option<RevealedSetRecord> {
+        self.with_state(|state| state.latest_revealed_set.clone())
     }
 
     pub async fn get_dealer_log(&self, epoch: Epoch) -> Option<Bytes> {

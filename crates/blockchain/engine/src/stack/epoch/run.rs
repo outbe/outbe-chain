@@ -359,6 +359,7 @@ where
             .saturating_add(dkg_rotation_params.activation_grace_blocks),
         "VRF material active"
     );
+    vrf_safety.apply_optional_revealed_output(last_dkg_output.as_ref());
     publish_randomness_status(&bridge, &vrf_safety);
 
     // `is_fresh_bootstrap` is determined AFTER marshal init (below),
