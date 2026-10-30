@@ -332,6 +332,12 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             "credited claims must equal distributed validator pool"
         );
     });
+    assert!(
+        storage
+            .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+            .is_empty(),
+        "Cycle credits claims but does not mint Gems"
+    );
 }
 
 #[test]
@@ -552,6 +558,12 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         );
         assert_eq!(last_executed_at(&retry), next_window);
     });
+    assert!(
+        storage
+            .get_events(outbe_primitives::addresses::GEM_ADDRESS)
+            .is_empty(),
+        "Cycle credits claims; validators mint their own Gems"
+    );
 }
 
 #[test]
