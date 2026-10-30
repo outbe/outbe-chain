@@ -1,9 +1,9 @@
 use crate::precompile::INodFactory;
+use alloy_primitives::U256;
 use alloy_primitives::{Bytes, B256};
 use alloy_sol_types::SolError;
 use outbe_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use thiserror::Error;
 
 /// Errors that the Nod factory precompile returns.
@@ -44,16 +44,10 @@ pub enum NodFactoryError {
     EmptyGroupMemberSlotDuringCleanup { group_key: B256 },
 
     #[error("Nod group {group_key} member {nod_id} has no body during cleanup")]
-    MissingGroupMemberRecordDuringCleanup {
-        group_key: B256,
-        nod_id: WwdEntityId,
-    },
+    MissingGroupMemberRecordDuringCleanup { group_key: B256, nod_id: U256 },
 
     #[error("Nod group {group_key} indexes an ineligible member {nod_id}")]
-    IneligibleGroupMember {
-        group_key: B256,
-        nod_id: WwdEntityId,
-    },
+    IneligibleGroupMember { group_key: B256, nod_id: U256 },
 
     #[error("Nod group {group_key} has no body during cleanup")]
     MissingGroupRecordDuringCleanup { group_key: B256 },
@@ -106,13 +100,13 @@ impl From<NodFactoryError> for PrecompileError {
             NodFactoryError::MissingGroupMemberRecordDuringCleanup { group_key, nod_id } => {
                 revert_with(I::MissingGroupMemberRecordDuringCleanup {
                     groupKey: group_key,
-                    nodId: nod_id.to_u256(),
+                    nodId: nod_id,
                 })
             }
             NodFactoryError::IneligibleGroupMember { group_key, nod_id } => {
                 revert_with(I::IneligibleGroupMember {
                     groupKey: group_key,
-                    nodId: nod_id.to_u256(),
+                    nodId: nod_id,
                 })
             }
             NodFactoryError::MissingGroupRecordDuringCleanup { group_key } => {

@@ -13,10 +13,10 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E6_U256;
 
 pub use query::{
-    get_all_scurve_data, get_all_scurve_data_for_pair, get_max_active_scurve_value,
-    get_scurve_entries,
+    get_all_scurve_data, get_all_scurve_data_for_pair, get_scurve_entries, scurve_value,
 };
-pub use store::{evict_expired_scurves, process_daily_scurve, store_scurve_entry};
+pub(crate) use store::process_wwd_scurves;
+pub use store::{store_scurve_entry, SCURVE_RING_SLOTS};
 
 /// S-curve period in days.
 pub const PERIOD: usize = 128;
@@ -198,6 +198,8 @@ mod tests {
     use outbe_primitives::address_pair::AddressPair;
     use outbe_primitives::units::SCALE_1E6_U64 as COEN840_SCALE;
 
+    use outbe_primitives::time::WorldwideDay;
+
     use super::*;
     use crate::schema::OracleContract;
 
@@ -331,143 +333,25 @@ mod tests {
         assert!(ts - day < SECONDS_PER_DAY);
     }
 
-    #[test]
-    fn stored_chain_remains_queryable_after_day_128() {
+    /// WWD `day` days after 2024-01-01.
+    fn wwd(day: u64) -> WorldwideDay {
+        WorldwideDay::from_timestamp(
+            outbe_primitives::time::date_key_to_utc_timestamp(20_240_101) + day * SECONDS_PER_DAY,
+        )
+    }
+
+    fn with_pair(test: impl FnOnce(&mut OracleContract, AddressPair)) {
         use outbe_primitives::storage::hashmap::HashMapStorageProvider;
         use outbe_primitives::storage::StorageHandle;
 
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut oracle = OracleContract::new(storage);
-
-            // Store an S-curve entry. Use day-aligned timestamps.
-            let pair = register_test_pair(&mut oracle);
-            let peak_day = truncate_to_day(1_000_000);
-            let peak_price = price6(500);
-
-            store_scurve_entry(&mut oracle, pair, peak_day, peak_price).unwrap();
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-
-            // Query value at peak day (day_index=0) -> should equal peak_price
-            let val = get_max_active_scurve_value(&oracle, pair, peak_day).unwrap();
-            assert_eq!(val, peak_price);
-
-            // Query value at peak_day + 127 days -> should be ~92% of peak
-            let far_future = peak_day + 127 * SECONDS_PER_DAY;
-            let val_127 = get_max_active_scurve_value(&oracle, pair, far_future).unwrap();
-            assert_eq!(val_127, price6(460)); // 500 * 0.92 = 460
-
-            let continued = peak_day + 128 * SECONDS_PER_DAY;
-            let value = get_max_active_scurve_value(&oracle, pair, continued).unwrap();
-            assert_eq!(value, price6(460));
-
-            let (days, prices, values) = get_scurve_entries(&oracle, pair, continued).unwrap();
-            assert_eq!(days, vec![peak_day]);
-            assert_eq!(prices, vec![peak_price]);
-            assert_eq!(values, vec![price6(460)]);
-
-            evict_expired_scurves(&mut oracle, continued).unwrap();
-            assert_eq!(oracle.scurve_oldest_idx.read().unwrap(), 0);
-            assert_eq!(
-                get_max_active_scurve_value(&oracle, pair, continued).unwrap(),
-                price6(460)
-            );
+            let pair = register_test_pair_with_iso(&mut oracle, 840);
+            test(&mut oracle, pair);
         });
     }
 
-    #[test]
-    fn one_pair_owns_one_replaceable_chain() {
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
-
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let pair = register_test_pair(&mut oracle);
-
-            // The store compares a lower candidate with the existing chain
-            // value at the candidate day and ignores the candidate.
-            let peak1_day = truncate_to_day(1_000_000);
-            let peak1_price = price6(100);
-            store_scurve_entry(&mut oracle, pair, peak1_day, peak1_price).unwrap();
-
-            let peak2_day = peak1_day + 10 * SECONDS_PER_DAY;
-            store_scurve_entry(&mut oracle, pair, peak2_day, price6(90)).unwrap();
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-            assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), peak1_day);
-
-            // At day 128 the old chain is 92, so a new peak of 93 replaces
-            // it even though it is lower than the original 100 peak.
-            let replacement_day = peak1_day + 128 * SECONDS_PER_DAY;
-            let replacement_price = price6(93);
-            store_scurve_entry(&mut oracle, pair, replacement_day, replacement_price).unwrap();
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-            assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), replacement_day);
-            assert_eq!(
-                oracle.scurve_peak_price.read(&0).unwrap(),
-                replacement_price
-            );
-            assert_eq!(
-                get_max_active_scurve_value(&oracle, pair, replacement_day).unwrap(),
-                replacement_price
-            );
-
-            // Replays and lower peaks remain storage no-ops.
-            store_scurve_entry(&mut oracle, pair, replacement_day, replacement_price).unwrap();
-            store_scurve_entry(
-                &mut oracle,
-                pair,
-                replacement_day + SECONDS_PER_DAY,
-                price6(80),
-            )
-            .unwrap();
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-            assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), replacement_day);
-        });
-    }
-
-    #[test]
-    fn chains_are_isolated_by_pair() {
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
-
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let usd = register_test_pair_with_iso(&mut oracle, 840);
-            let eur = register_test_pair_with_iso(&mut oracle, 978);
-            let peak_day = truncate_to_day(1_000_000);
-
-            store_scurve_entry(&mut oracle, usd, peak_day, price6(100)).unwrap();
-            store_scurve_entry(&mut oracle, eur, peak_day, price6(200)).unwrap();
-            store_scurve_entry(&mut oracle, usd, peak_day + SECONDS_PER_DAY, price6(150)).unwrap();
-
-            assert_eq!(oracle.scurve_count.read().unwrap(), 2);
-            assert_eq!(
-                get_max_active_scurve_value(&oracle, usd, peak_day + SECONDS_PER_DAY).unwrap(),
-                price6(150)
-            );
-            assert_eq!(
-                get_max_active_scurve_value(&oracle, eur, peak_day + SECONDS_PER_DAY).unwrap(),
-                compute_scurve_value(price6(200), 1)
-            );
-        });
-    }
-
-    // ===================================================================
-    // Daily peak-detection window (regression tests).
-    //
-    // The daily hook fires on the FIRST block of the current UTC day, when
-    // that day has no close yet. Detection therefore runs over fully-CLOSED
-    // days only: D-3 < D-2 > D-1 confirms a peak on D-2. The previous
-    // implementation used the just-started current day as a close. Thus
-    // `close_d0` was zero at fire time, and the runtime never stored a peak.
-    // ===================================================================
-
-    /// Writes a single end-of-day snapshot so `get_daily_close` treats `rate`
-    /// as that UTC day's close.
-    /// Registers the canonical COEN/USD pair so snapshot writes can resolve an
-    /// ordinal for it. Returns ordinal 1 as the first registration.
     fn register_test_pair_with_iso(oracle: &mut OracleContract, iso_code: u16) -> AddressPair {
         let quote: Address = crate::types::AssetType::IsoCurrency(iso_code).into();
         let pair = AddressPair::from_addresses(Address::ZERO, quote);
@@ -475,130 +359,101 @@ mod tests {
         pair
     }
 
-    fn register_test_pair(oracle: &mut OracleContract) -> AddressPair {
-        register_test_pair_with_iso(oracle, 840)
-    }
-
-    fn write_daily_close(
-        oracle: &mut OracleContract,
-        pair: AddressPair,
-        day_start: u64,
-        rate: U256,
-    ) {
-        oracle
-            .write_snapshot(day_start + 80_000, &[(pair, rate, price6(1))])
-            .unwrap();
-    }
-
     #[test]
-    fn test_peak_detected_over_closed_days_without_current_day_data() {
-        // Core regression: a peak on D-2 is detected at the start of D0 using
-        // only closed days, regardless of whether the current day has data.
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
+    fn a_curve_continues_after_day_128() {
+        with_pair(|oracle, pair| {
+            assert!(store_scurve_entry(oracle, pair, wwd(0), price6(500)).unwrap());
 
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let pair = register_test_pair(&mut oracle);
-
-            let d0 = truncate_to_day(1_700_000_000); // current day - empty at fire time
-            let d1 = d0 - SECONDS_PER_DAY;
-            let d2 = d0 - 2 * SECONDS_PER_DAY; // peak
-            let d3 = d0 - 3 * SECONDS_PER_DAY;
-
-            write_daily_close(&mut oracle, pair, d3, price6(100));
-            write_daily_close(&mut oracle, pair, d2, price6(120));
-            write_daily_close(&mut oracle, pair, d1, price6(110));
-            // Intentionally NO D0 data. The fix must not depend on it.
-
-            process_daily_scurve(&mut oracle, pair, d0).unwrap();
-
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-            assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), d2);
-            assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), price6(120));
+            assert_eq!(scurve_value(oracle, pair, wwd(0)).unwrap(), price6(500));
+            assert_eq!(scurve_value(oracle, pair, wwd(127)).unwrap(), price6(460));
+            assert_eq!(scurve_value(oracle, pair, wwd(128)).unwrap(), price6(460));
+            assert_eq!(
+                get_scurve_entries(oracle, pair, wwd(128)).unwrap(),
+                (vec![wwd(0).into()], vec![price6(500)], vec![price6(460)])
+            );
         });
     }
 
     #[test]
-    fn test_current_day_data_is_irrelevant() {
-        // The data of the current (incomplete) day must not change the
-        // outcome. Detection uses closed days only.
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
+    fn a_price_at_or_below_the_newest_curve_starts_no_curve() {
+        with_pair(|oracle, pair| {
+            store_scurve_entry(oracle, pair, wwd(0), price6(100)).unwrap();
 
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let pair = register_test_pair(&mut oracle);
-
-            let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - SECONDS_PER_DAY;
-            let d2 = d0 - 2 * SECONDS_PER_DAY;
-            let d3 = d0 - 3 * SECONDS_PER_DAY;
-
-            write_daily_close(&mut oracle, pair, d3, price6(100));
-            write_daily_close(&mut oracle, pair, d2, price6(120));
-            write_daily_close(&mut oracle, pair, d1, price6(110));
-            // A spurious current-day tick that the old code would have consumed.
-            write_daily_close(&mut oracle, pair, d0, price6(999));
-
-            process_daily_scurve(&mut oracle, pair, d0).unwrap();
-
-            assert_eq!(oracle.scurve_count.read().unwrap(), 1);
-            assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), d2);
-            assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), price6(120));
+            assert!(!store_scurve_entry(oracle, pair, wwd(10), price6(90)).unwrap());
+            assert!(!store_scurve_entry(oracle, pair, wwd(0), price6(200)).unwrap());
+            // At day 128 the curve is at 92, so 93 starts a curve below the old peak.
+            assert!(store_scurve_entry(oracle, pair, wwd(128), price6(93)).unwrap());
+            assert_eq!(oracle.scurve_len.read(&pair).unwrap(), 2);
         });
     }
 
     #[test]
-    fn test_no_peak_on_monotonic_closed_days() {
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
+    fn a_new_curve_keeps_the_older_one_for_earlier_wwds() {
+        with_pair(|oracle, pair| {
+            store_scurve_entry(oracle, pair, wwd(0), price6(100)).unwrap();
+            store_scurve_entry(oracle, pair, wwd(9), price6(105)).unwrap();
 
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let pair = register_test_pair(&mut oracle);
-
-            let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - SECONDS_PER_DAY;
-            let d2 = d0 - 2 * SECONDS_PER_DAY;
-            let d3 = d0 - 3 * SECONDS_PER_DAY;
-
-            // Monotonic rising: no local max at D-2.
-            write_daily_close(&mut oracle, pair, d3, price6(100));
-            write_daily_close(&mut oracle, pair, d2, price6(110));
-            write_daily_close(&mut oracle, pair, d1, price6(120));
-
-            process_daily_scurve(&mut oracle, pair, d0).unwrap();
-
-            assert_eq!(oracle.scurve_count.read().unwrap(), 0);
+            assert_eq!(
+                scurve_value(oracle, pair, wwd(5)).unwrap(),
+                compute_scurve_value(price6(100), 5)
+            );
+            assert_eq!(scurve_value(oracle, pair, wwd(9)).unwrap(), price6(105));
         });
     }
 
     #[test]
-    fn test_no_detection_with_insufficient_history() {
-        // Only two closed days available (D-3 missing) -> no peak, no panic.
-        use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-        use outbe_primitives::storage::StorageHandle;
+    fn the_next_curve_overwrites_the_oldest_in_a_full_ring() {
+        with_pair(|oracle, pair| {
+            for day in 0..=SCURVE_RING_SLOTS {
+                store_scurve_entry(oracle, pair, wwd(day), price6(100 + day)).unwrap();
+            }
 
-        let mut storage = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut storage, |storage| {
-            let mut oracle = OracleContract::new(storage);
-            let pair = register_test_pair(&mut oracle);
+            assert_eq!(scurve_value(oracle, pair, wwd(0)).unwrap(), U256::ZERO);
+            assert_eq!(scurve_value(oracle, pair, wwd(1)).unwrap(), price6(101));
+            assert_eq!(
+                get_all_scurve_data_for_pair(oracle, pair).unwrap().0.len() as u64,
+                SCURVE_RING_SLOTS
+            );
+        });
+    }
 
-            let d0 = truncate_to_day(1_700_000_000);
-            let d1 = d0 - SECONDS_PER_DAY;
-            let d2 = d0 - 2 * SECONDS_PER_DAY;
+    #[test]
+    fn curves_are_isolated_by_pair() {
+        with_pair(|oracle, usd| {
+            let eur = register_test_pair_with_iso(oracle, 978);
+            store_scurve_entry(oracle, usd, wwd(0), price6(100)).unwrap();
+            store_scurve_entry(oracle, eur, wwd(0), price6(200)).unwrap();
+            store_scurve_entry(oracle, usd, wwd(1), price6(150)).unwrap();
 
-            write_daily_close(&mut oracle, pair, d2, price6(100));
-            write_daily_close(&mut oracle, pair, d1, price6(120));
-            // D-3 missing
+            assert_eq!(scurve_value(oracle, usd, wwd(1)).unwrap(), price6(150));
+            assert_eq!(
+                scurve_value(oracle, eur, wwd(1)).unwrap(),
+                compute_scurve_value(price6(200), 1)
+            );
+        });
+    }
 
-            process_daily_scurve(&mut oracle, pair, d0).unwrap();
+    #[test]
+    fn a_wwd_starts_a_curve_only_when_its_utc_day_has_a_vwap() {
+        with_pair(|oracle, usd| {
+            let cad = register_test_pair_with_iso(oracle, 124);
+            let usd_index = oracle.pair_index_of(usd).unwrap();
+            let cad_index = oracle.pair_index_of(cad).unwrap();
+            oracle
+                .record_utc_day_vwap(wwd(1).value(), usd_index, price6(1))
+                .unwrap();
+            oracle
+                .record_utc_day_vwap(wwd(1).value(), cad_index, price6(1))
+                .unwrap();
+            let vwaps = [(usd, price6(100)), (cad, price6(100))];
 
-            assert_eq!(oracle.scurve_count.read().unwrap(), 0);
+            process_wwd_scurves(oracle, wwd(0), &vwaps).unwrap();
+            assert_eq!(oracle.scurve_len.read(&usd).unwrap(), 0);
+
+            process_wwd_scurves(oracle, wwd(1), &vwaps).unwrap();
+            assert_eq!(scurve_value(oracle, usd, wwd(1)).unwrap(), price6(100));
+            // CAD is not a reference currency.
+            assert_eq!(oracle.scurve_len.read(&cad).unwrap(), 0);
         });
     }
 }

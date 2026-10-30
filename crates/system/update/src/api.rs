@@ -9,7 +9,7 @@ use crate::ProtocolVersion;
 
 /// Returns the currently active protocol version (`0` = baseline / pre-upgrade chain).
 pub fn get_active_version(storage: StorageHandle) -> Result<ProtocolVersion> {
-    Update::new(storage).get_active_version()
+    resolve_active_version(storage)
 }
 
 /// Resolves the active version from the exact state used by the current execution.

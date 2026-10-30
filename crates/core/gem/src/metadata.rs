@@ -5,7 +5,7 @@ use crate::schema::{GemState, GemView};
 
 pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
     let item = &view.item;
-    let id = nft_card::short_id(item.gem_id.to_u256());
+    let id = nft_card::short_id(item.gem_id);
     let settled = item.is_settled();
     let called_at = view.called_at();
     let deadline = (called_at != 0 && !settled).then(|| view.settlement_deadline());

@@ -1,7 +1,7 @@
 //! Domain error types for the Nod crate.
 
 use crate::precompile::INod;
-use alloy_primitives::{Bytes, B256};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
@@ -38,14 +38,8 @@ pub enum NodError {
     #[error("unknown nod profile selector: {selector}")]
     UnknownProfileSelector { selector: u8 },
 
-    #[error("{0}")]
-    EntityIdDerivation(String),
-
     #[error("Nod item canonical identity mismatch: expected {expected}, found {found}")]
-    CanonicalIdentityMismatch {
-        expected: WwdEntityId,
-        found: WwdEntityId,
-    },
+    CanonicalIdentityMismatch { expected: U256, found: U256 },
 
     #[error("encrypted NOD terms mismatch")]
     EncryptedTermsMismatch,
@@ -93,10 +87,7 @@ pub enum NodError {
     GroupMemberCountUnderflowDuringRemoval { group_key: B256 },
 
     #[error("Nod {nod_id} is not indexed in group {group_key}")]
-    NodNotIndexedInGroup {
-        nod_id: WwdEntityId,
-        group_key: B256,
-    },
+    NodNotIndexedInGroup { nod_id: U256, group_key: B256 },
 
     #[error("Nod group {group_key} member slot {slot} is empty during removal")]
     EmptyGroupMemberSlotDuringRemoval { group_key: B256, slot: u32 },
@@ -124,13 +115,6 @@ pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> Precomp
     }
 }
 
-impl NodError {
-    /// Converts an entity-ID derivation failure into a precompile error.
-    pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EntityIdDerivation(error.to_string()).into()
-    }
-}
-
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }
@@ -154,12 +138,8 @@ impl From<NodError> for PrecompileError {
             NodError::UnknownProfileSelector { selector } => {
                 revert_with(I::UnknownProfileSelector { selector })
             }
-            NodError::EntityIdDerivation(value) => revert_with(I::EntityIdDerivation { value }),
             NodError::CanonicalIdentityMismatch { expected, found } => {
-                revert_with(I::CanonicalIdentityMismatch {
-                    expected: expected.to_u256(),
-                    found: found.to_u256(),
-                })
+                revert_with(I::CanonicalIdentityMismatch { expected, found })
             }
             NodError::EncryptedTermsMismatch => revert_with(I::EncryptedTermsMismatch {}),
             NodError::CannotIssueSettledNod => revert_with(I::CannotIssueSettledNod {}),
@@ -209,7 +189,7 @@ impl From<NodError> for PrecompileError {
             }
             NodError::NodNotIndexedInGroup { nod_id, group_key } => {
                 revert_with(I::NodNotIndexedInGroup {
-                    nodId: nod_id.to_u256(),
+                    nodId: nod_id,
                     groupKey: group_key,
                 })
             }

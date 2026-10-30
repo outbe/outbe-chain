@@ -1,5 +1,5 @@
 //! Self-contained encrypted NOD amounts.
-use crate::{time::WorldwideDay, wwd_entity_id::WwdEntityId};
+use crate::time::WorldwideDay;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
 pub const NOD_AMOUNT_KEY_INFO: &[u8] = b"outbe/nod/amount-key/v2";
@@ -8,7 +8,7 @@ pub const NOD_BLOB_LEN: usize = 8 + 32 + 16;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodTermsV1 {
     pub chain_id: u64,
-    pub nod_id: WwdEntityId,
+    pub nod_id: U256,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
@@ -20,7 +20,7 @@ impl NodTermsV1 {
     pub fn digest(&self) -> B256 {
         let mut bytes = b"outbe/nod/terms/v2".to_vec();
         bytes.extend_from_slice(&self.chain_id.to_be_bytes());
-        bytes.extend_from_slice(self.nod_id.as_slice());
+        bytes.extend_from_slice(&self.nod_id.to_be_bytes::<32>());
         bytes.extend_from_slice(self.owner.as_slice());
         bytes.extend_from_slice(&self.worldwide_day.value().to_be_bytes());
         bytes.extend_from_slice(&self.league_id.to_be_bytes());
@@ -52,8 +52,43 @@ impl EncryptedNodV1 {
         info
     }
     pub fn has_valid_encoding(&self) -> bool {
-        self.terms.nod_id.worldwide_day() == self.terms.worldwide_day
-            && self.encrypted_gratis_amount.len() == NOD_BLOB_LEN
+        self.encrypted_gratis_amount.len() == NOD_BLOB_LEN
             && self.encrypted_gratis_amount[..8] == 1u64.to_be_bytes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terms_use_native_u256_serde_and_full_width_big_endian_hashing() {
+        let terms = NodTermsV1 {
+            chain_id: 1,
+            nod_id: U256::ONE,
+            owner: Address::repeat_byte(0x42),
+            worldwide_day: WorldwideDay::new(20261029),
+            league_id: 2,
+            entry_price_minor: U256::from(3),
+            issuance_currency: 840,
+            reference_currency: 978,
+        };
+        let json = serde_json::to_value(&terms).unwrap();
+        assert_eq!(json["nod_id"], "0x1");
+        assert_eq!(serde_json::from_value::<NodTermsV1>(json).unwrap(), terms);
+        let mut expected = b"outbe/nod/terms/v2".to_vec();
+        expected.extend_from_slice(&1u64.to_be_bytes());
+        let mut id = [0u8; 32];
+        id[31] = 1;
+        expected.extend_from_slice(&id);
+        expected.extend_from_slice(&[0x42; 20]);
+        expected.extend_from_slice(&20261029u32.to_be_bytes());
+        expected.extend_from_slice(&2u16.to_be_bytes());
+        let mut entry_price = [0u8; 32];
+        entry_price[31] = 3;
+        expected.extend_from_slice(&entry_price);
+        expected.extend_from_slice(&840u16.to_be_bytes());
+        expected.extend_from_slice(&978u16.to_be_bytes());
+        assert_eq!(terms.digest(), keccak256(expected));
     }
 }

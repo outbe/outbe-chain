@@ -20,8 +20,8 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
         EffectiveState::Issued => nft_card::ISSUED,
     };
 
-    let hex = format!("{:064x}", item.nod_id.to_u256());
-    let id = format!("{}-{}", item.worldwide_day, &hex[8..16]);
+    let hex = format!("{:064x}", item.nod_id);
+    let id = format!("{}-{}", item.worldwide_day, &hex[..8]);
     let mut rows = vec![
         ("Gratis Load", "Encrypted".into()),
         (

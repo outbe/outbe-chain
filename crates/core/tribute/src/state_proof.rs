@@ -111,8 +111,7 @@ pub fn expected_record_words(
 ) -> Result<Vec<(B256, U256)>> {
     subject.validate()?;
     let context = &tribute.context;
-    let expected_id = derive_poseidon_entity_id(context.owner, context.worldwide_day)
-        .map_err(|error| invalid(error.to_string()))?;
+    let expected_id = derive_poseidon_entity_id(context.owner, context.worldwide_day);
     if !subject.matches_context(day_index, tribute) || expected_id != context.tribute_id {
         return Err(invalid(
             "Tribute source identity does not match its subject",

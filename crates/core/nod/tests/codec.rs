@@ -10,8 +10,8 @@ use outbe_primitives::entity_codec::{
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 
-fn entity(seed: U256, worldwide_day: WorldwideDay) -> WwdEntityId {
-    WwdEntityId::from_day_and_digest(worldwide_day, seed.to_be_bytes::<32>())
+fn entity(seed: U256, _worldwide_day: WorldwideDay) -> U256 {
+    seed
 }
 
 fn group_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {

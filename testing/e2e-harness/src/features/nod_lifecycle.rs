@@ -117,7 +117,6 @@ fn issue_five_nods(world: &mut World) {
         let owner = owner_address(index);
         let tribute_id =
             outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, worldwide_day)
-                .expect("tribute id")
                 .to_u256();
         let outcome = eth::send_call_outcome(
             &url,

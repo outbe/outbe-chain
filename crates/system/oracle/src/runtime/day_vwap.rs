@@ -98,6 +98,7 @@ impl OracleContract<'_> {
         for (pair, vwap) in &day_vwaps {
             value_map.write(&self.pair_index_of(*pair)?, *vwap)?;
         }
+        crate::scurve::process_wwd_scurves(self, worldwide_day, &day_vwaps)?;
 
         let event = IOracle::WorldwideDayVwapStored {
             worldwideDay: worldwide_day.value(),

@@ -206,7 +206,7 @@ impl Rpc {
         &self,
         port: u16,
         checkpoint: FinalizedCheckpoint,
-        id: outbe_primitives::wwd_entity_id::WwdEntityId,
+        id: U256,
     ) -> Result<Option<(outbe_nod::NodItemState, outbe_nod::NodGroupState)>> {
         self.read_state_at(port, checkpoint, |storage| {
             let Some(item) = outbe_nod::state_api::load_item(&storage, id)? else {
@@ -237,7 +237,7 @@ impl Rpc {
         &self,
         port: u16,
         checkpoint: FinalizedCheckpoint,
-        id: outbe_primitives::wwd_entity_id::WwdEntityId,
+        id: U256,
     ) -> Result<Option<(outbe_gem::GemItemState, outbe_gem::GemGroupState)>> {
         self.read_state_at(port, checkpoint, |storage| {
             let Some(item) = outbe_gem::state_api::load_item(&storage, id)? else {

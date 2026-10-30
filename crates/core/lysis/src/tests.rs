@@ -64,8 +64,8 @@ fn test_two_fi_groups() {
         );
     }
 
-    // Each fraction is at most 2*fmax (a reasonable bound for fixed-point).
-    let bound = F_MAX_FP * U256::from(2u64);
+    // Each fraction is at most fmax_fp.
+    let bound = F_MAX_FP;
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] too large: {frac}");
     }
@@ -84,7 +84,7 @@ fn test_three_fi_groups() {
 
     assert_eq!(result.len(), 3);
 
-    let bound = F_MAX_FP * U256::from(2u64);
+    let bound = F_MAX_FP;
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
@@ -100,7 +100,7 @@ fn test_many_fi_groups() {
 
     assert_eq!(result.len(), n);
 
-    let bound = F_MAX_FP * U256::from(2u64);
+    let bound = F_MAX_FP;
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] too large");
     }
@@ -115,7 +115,7 @@ fn test_with_zero_population_entries() {
     let result = calc_fraction_distribution_fp(&y_fp, &p, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
-    let bound = F_MAX_FP * U256::from(2u64);
+    let bound = F_MAX_FP;
     for (i, &frac) in result.iter().enumerate() {
         assert!(frac <= bound, "fraction[{i}] > bound: {frac}");
     }
@@ -149,7 +149,7 @@ fn test_large_nominal_distribution() {
     let result = calc_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
-    let bound = F_MAX_FP * U256::from(2u64);
+    let bound = F_MAX_FP;
     for (i, &frac) in result.iter().enumerate() {
         assert!(
             !frac.is_zero(),
@@ -279,9 +279,9 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
     let fmax_fp = F_MAX_FP;
     let result = calc_fraction_distribution_fp(&y_fp, &p, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
-    let bound = F_MAX_FP * U256::from(2u64);
+    let bound = F_MAX_FP;
     for &f in &result {
-        assert!(f <= bound, "fraction {f} exceeds LYSIS_LIMIT_MAX*2 bound");
+        assert!(f <= bound, "fraction {f} exceeds F_MAX_FP bound");
     }
 }
 

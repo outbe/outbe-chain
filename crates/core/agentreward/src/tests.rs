@@ -533,7 +533,7 @@ fn gem_of(storage: &StorageHandle<'_>, owner: Address) -> outbe_gem::GemView {
     let mut owned = outbe_gem::api::list_by_owner(storage, owner).unwrap();
     assert_eq!(owned.len(), 1, "the owner holds one gem");
     let item = owned.pop().unwrap();
-    outbe_gem::api::get_view(storage, item.gem_id.to_u256())
+    outbe_gem::api::get_view(storage, item.gem_id)
         .unwrap()
         .unwrap()
 }
@@ -617,7 +617,7 @@ fn same_block_claims_with_repeated_currencies_have_distinct_ids() {
         let owned = outbe_gem::api::list_by_owner(&storage, alice).unwrap();
         assert_eq!(owned.len(), 4);
         for gem in owned {
-            assert!(ids.contains(&gem.gem_id.to_u256()));
+            assert!(ids.contains(&gem.gem_id));
         }
         assert_eq!(
             outbe_gem::GemContract::new(storage.clone())

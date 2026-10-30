@@ -1,7 +1,6 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{CallTerms, EffectiveState, NodContract, NodGroupState, NodItemState};
@@ -129,7 +128,7 @@ pub fn record_unclaimed_tribute_cleaned(
 }
 
 /// Permissionless cleanup of an unpaid forfeited Nod (`INod.clean(uint256)`).
-pub fn clean(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<()> {
+pub fn clean(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     crate::state_api::clean_item(storage, nod_id)
 }
 
@@ -151,10 +150,7 @@ pub fn remove_nod(
 }
 
 /// Loads a Nod item while retaining its exact stored state for mutation.
-pub fn load_item(
-    storage: &StorageHandle<'_>,
-    nod_id: WwdEntityId,
-) -> Result<Option<LoadedNodItem>> {
+pub fn load_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<Option<LoadedNodItem>> {
     crate::state_api::load_item(storage, nod_id)
 }
 
@@ -164,7 +160,7 @@ pub fn load_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<Option
 }
 
 /// Fetches a Nod item state by ID.
-pub fn get_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<Option<NodItemState>> {
+pub fn get_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<Option<NodItemState>> {
     load_item(storage, nod_id).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
@@ -175,10 +171,7 @@ pub fn get_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<Option<
 
 /// The `index`-th Nod in the global index, read in one slot.
 pub fn token_by_index(storage: &StorageHandle<'_>, index: u32) -> Result<Option<U256>> {
-    Ok(NodContract::new(storage.clone())
-        .all_ids
-        .get(index)?
-        .map(|id| id.to_u256()))
+    NodContract::new(storage.clone()).all_ids.get(index)
 }
 
 /// The owner's `index`-th Nod in its owner index, read in one slot.
@@ -187,11 +180,10 @@ pub fn token_of_owner_by_index(
     owner: Address,
     index: u32,
 ) -> Result<Option<U256>> {
-    Ok(NodContract::new(storage.clone())
+    NodContract::new(storage.clone())
         .owner_ids
         .list(&owner)
-        .get(index)?
-        .map(|id| id.to_u256()))
+        .get(index)
 }
 
 /// Loads the complete Nod collection.

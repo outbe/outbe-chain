@@ -372,7 +372,7 @@ fn assert_keyless_nod_state_and_private_call_rejection(
         .expect("Nod owner read on primary")
         .expect("created Nod on primary");
     let nod_u256 = U256::from_be_slice(&id_bytes);
-    let id = outbe_primitives::wwd_entity_id::WwdEntityId::from(nod_u256);
+    let id = nod_u256;
     let expected = world
         .rpc
         .nod_state_at(primary, checkpoint, id)

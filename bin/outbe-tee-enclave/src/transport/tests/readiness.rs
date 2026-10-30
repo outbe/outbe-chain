@@ -4,14 +4,13 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
-    wwd_entity_id::WwdEntityId,
 };
 
 fn encrypted_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20250115);
     let terms = NodTermsV1 {
         chain_id: 54322345,
-        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(6)),
+        nod_id: U256::from_be_bytes([6; 32]),
         owner: Address::repeat_byte(3),
         worldwide_day: day,
         league_id: 0,

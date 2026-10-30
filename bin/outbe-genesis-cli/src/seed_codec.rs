@@ -192,6 +192,15 @@ pub fn mapping_key(key_bytes: &[u8], base_slot: u64) -> String {
     format!("0x{}", hex::encode(keccak256(&buf)))
 }
 
+/// Compute the slot of `mapping(K1 => mapping(K2 => V))[outer_key][inner_key]` at `base_slot`.
+pub fn nested_mapping_key(outer_key: &[u8], inner_key: &[u8], base_slot: u64) -> U256 {
+    let outer = mapping_key(outer_key, base_slot);
+    let mut buf = [0u8; 64];
+    buf[32 - inner_key.len()..32].copy_from_slice(inner_key);
+    buf[32..].copy_from_slice(&hex::decode(&outer[2..]).expect("mapping_key returns hex"));
+    U256::from_be_bytes(keccak256(&buf))
+}
+
 /// Parse a `0x`-prefixed or bare 40-char hex address into 20 bytes.
 pub fn address_bytes(addr_hex: &str) -> Result<[u8; 20], GenesisError> {
     let stripped = addr_hex.trim().to_ascii_lowercase();

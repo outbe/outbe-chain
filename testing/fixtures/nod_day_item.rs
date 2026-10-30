@@ -12,7 +12,7 @@ pub(crate) fn nod_day_item(owner: Address, day: u32, entry_price_minor: U256) ->
     outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day).unwrap(),
+            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day),
             owner,
             gratis_load_minor: U256::from(11u64),
             worldwide_day,

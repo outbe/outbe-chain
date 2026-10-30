@@ -4,6 +4,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_primitives::time::WorldwideDay;
 use std::collections::BTreeSet;
 
 use super::{
@@ -131,23 +132,22 @@ fn export_snapshots(oracle: &OracleContract) -> Result<Vec<GenesisSnapshot>> {
     Ok(snapshots)
 }
 
-/// Export the active S-curve entries.
+/// Export the stored S-curves, oldest first within each pair.
 fn export_scurve_entries(oracle: &OracleContract) -> Result<Vec<GenesisScurveEntry>> {
-    let scurve_count = oracle.scurve_count.read()?;
-    let scurve_oldest = oracle.scurve_oldest_idx.read()?;
-    let mut scurve_entries = Vec::new();
-    for idx in scurve_oldest..scurve_count {
-        let pair = oracle.scurve_pair.read_pair(&idx)?;
-        let peak_day = oracle.scurve_peak_day.read(&idx)?;
-        let peak_price = oracle.scurve_peak_price.read(&idx)?;
-        scurve_entries.push(GenesisScurveEntry {
-            base: pair.address1(),
-            quote: pair.address2(),
-            peak_day,
-            peak_price,
-        });
-    }
-    Ok(scurve_entries)
+    let (bases, quotes, peak_days, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
+    Ok(bases
+        .into_iter()
+        .zip(quotes)
+        .zip(peak_days.into_iter().zip(peak_prices))
+        .map(
+            |((base, quote), (peak_day, peak_price))| GenesisScurveEntry {
+                base,
+                quote,
+                peak_day: WorldwideDay::new(peak_day as u32),
+                peak_price,
+            },
+        )
+        .collect())
 }
 
 /// Export the policy-rate registry in its stored order.

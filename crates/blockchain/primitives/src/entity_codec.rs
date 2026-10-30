@@ -580,7 +580,7 @@ mod tests {
             encrypted: EncryptedNodV1 {
                 terms: NodTermsV1 {
                     chain_id: 2026,
-                    nod_id: id,
+                    nod_id: U256::MAX,
                     owner,
                     worldwide_day: day,
                     league_id: 3,

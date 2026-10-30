@@ -34,7 +34,7 @@ pub struct NodIssueParams {
 /// Runtime view of one self-contained encrypted canonical NOD body.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct NodItemState {
-    pub nod_id: WwdEntityId,
+    pub nod_id: U256,
 
     pub owner: Address,
 
@@ -137,7 +137,7 @@ pub struct NodContract {
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
     // --- Group member index: lets the cleanup enumerate a group's unpaid Nods.
-    // `WwdEntityId` occupies one storage word; IDs require no reconstruction.
+    // U256 occupies one storage word; IDs require no reconstruction.
     /// Authoritative unpaid member count, stored outside the shared group body.
     #[attribute(order = 35)]
     pub group_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -145,12 +145,12 @@ pub struct NodContract {
     /// `group_nod_key(group_key, index)` -> Nod id. Insertion-ordered and
     /// swap-popped, matching the call-price bin index.
     #[attribute(order = 36)]
-    pub group_nods: Map<B256, WwdEntityId>,
+    pub group_nods: Map<B256, U256>,
 
     /// Nod id -> position in its group, for O(1) swap-remove. A Nod belongs to
     /// exactly one group, so one global map suffices.
     #[attribute(order = 37)]
-    pub group_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    pub group_nod_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// `entry_price_minor * (100 + call_rate) / 100`, using the genesis-selected profile.
     /// Issuance pins this price so the daily scan need not read a group body to decide.
@@ -256,21 +256,18 @@ pub struct NodContract {
     #[attribute(order = 82)]
     pub call_scan_failed_day: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 83)]
-    pub records:
-        outbe_primitives::storage::dsl::Map<WwdEntityId, crate::storage_records::StoredNod>,
+    pub records: outbe_primitives::storage::dsl::Map<U256, crate::storage_records::StoredNod>,
     #[attribute(order = 84)]
     pub groups: outbe_primitives::storage::dsl::Map<B256, NodGroupState>,
     #[attribute(order = 85)]
-    pub all_ids: outbe_primitives::storage::dsl::List<WwdEntityId>,
+    pub all_ids: outbe_primitives::storage::dsl::List<U256>,
     #[attribute(order = 86)]
-    pub owner_ids: outbe_primitives::storage::dsl::Map<
-        Address,
-        outbe_primitives::storage::dsl::List<WwdEntityId>,
-    >,
+    pub owner_ids:
+        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 87)]
-    pub global_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    pub global_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 88)]
-    pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Gratis load of the group's unpaid Nods, returned at once when it is forfeited.
     #[attribute(order = 89)]

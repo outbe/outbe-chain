@@ -2,14 +2,13 @@
 pub use crate::enclave_client::test_enclave::{install, scope, uninstall, Guard, NETWORK_SECRET};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     nod_encryption::{EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
 };
 
 pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNodV1 {
-    let nod_id = crate::identity::generate_nod_id(params.owner, params.worldwide_day).unwrap();
+    let nod_id = crate::identity::generate_nod_id(params.owner, params.worldwide_day);
     encrypt(
         NodTermsV1 {
             chain_id,
@@ -30,7 +29,7 @@ fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
 }
 /// Test-only plaintext inputs; never accepted by a production writer.
 pub struct NodItemFixture {
-    pub nod_id: WwdEntityId,
+    pub nod_id: U256,
     pub owner: Address,
     pub gratis_load_minor: U256,
     pub worldwide_day: WorldwideDay,
@@ -119,7 +118,7 @@ pub fn set_entry_price(item: &mut NodItemState, price: U256) {
 
 /// Unsettled Nod used by execution and idle-scan fixtures.
 pub fn sample_item(owner: Address, day: WorldwideDay) -> NodItemState {
-    let nod_id = crate::identity::generate_nod_id(owner, day).unwrap();
+    let nod_id = crate::identity::generate_nod_id(owner, day);
     item(
         NodItemFixture {
             is_settled: false,

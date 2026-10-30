@@ -230,11 +230,7 @@ fn live_owner_day_tribute_ids(
     let worldwide_day = outbe_primitives::time::WorldwideDay::new(day);
     let mut tribute_ids = Vec::new();
     for owner in owner_keys.keys() {
-        let Ok(id) =
-            outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(*owner, worldwide_day)
-        else {
-            continue;
-        };
+        let id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(*owner, worldwide_day);
         let id = id.to_u256();
         let found: Option<Address> = eth::read_call(
             url,

@@ -16,7 +16,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     }
     let t = &body.encrypted.terms;
     let mut out = Vec::with_capacity(320);
-    encode_bytes_field(1, t.nod_id.as_slice(), &mut out);
+    encode_bytes_field(1, &t.nod_id.to_be_bytes::<32>(), &mut out);
     encode_bytes_field(2, t.owner.as_slice(), &mut out);
     encode_bytes_field(3, &body.encrypted.encrypted_gratis_amount, &mut out);
     // Field 4 is retired (formerly encrypted_creator_public_key); never reuse tag 4.
@@ -34,7 +34,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
 }
 pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
     let mut f = Fields::new(bytes);
-    let nod_id = WwdEntityId::try_from(required_bytes(&mut f, 1)?)?;
+    let nod_id = decode_u256(required_bytes(&mut f, 1)?, 1)?;
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut f, 2)?, 2)?);
     let encrypted_gratis_amount = required_bytes(&mut f, 3)?.to_vec();
     let chain_id = optional_varint(&mut f, 5)?;

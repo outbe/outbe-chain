@@ -7,7 +7,6 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
@@ -50,7 +49,7 @@ impl Rail for Nod {
             &outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID),
         )
         .unwrap();
-        (nod.to_u256(), 0)
+        (nod, 0)
     }
 
     fn quote(self, world: &mut World<Self>) -> Quote {
@@ -149,7 +148,7 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     assert!(!matches!(world.settle().status, SubCallStatus::Success));
     assert_eq!(world.balances(), balances);
 
-    let nod = WwdEntityId::from(world.id);
+    let nod = world.id;
     let nonce = (0..1_000_000)
         .find(|n| outbe_nodfactory::runtime::validate_pow(nod, OWNER, *n).is_ok())
         .unwrap();

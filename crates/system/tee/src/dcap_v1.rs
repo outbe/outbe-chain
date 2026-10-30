@@ -10,7 +10,7 @@ mod signed_collateral;
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, DcapEvidenceV1, PlatformTcbStatusSetV1, TeePolicyV1,
+    AttestationEvidenceV1, DcapEvidenceV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1,
 };
 
 pub use crate::dcap_protocol::{
@@ -161,6 +161,7 @@ fn validate_measurement_rule(
     measurements: &ReportMeasurements,
     policy: &TeePolicyV1,
 ) -> Result<(), DcapRejectCodeV1> {
+    validate_debug_attribute(measurements, cfg!(feature = "sgx-noattest"))?;
     let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
         rule.mrenclave == B256::from(measurements.mrenclave)
             && rule.mrsigner == B256::from(measurements.mrsigner)
@@ -169,6 +170,16 @@ fn validate_measurement_rule(
     });
     if !measurement_accepted {
         return Err(DcapRejectCodeV1::MeasurementRejected);
+    }
+    Ok(())
+}
+
+const fn validate_debug_attribute(
+    measurements: &ReportMeasurements,
+    allow_debug: bool,
+) -> Result<(), DcapRejectCodeV1> {
+    if measurements.is_debug() && !allow_debug {
+        return Err(DcapRejectCodeV1::DebugEnclaveRejected);
     }
     Ok(())
 }
@@ -207,7 +218,10 @@ fn verify_native_quote_and_build_verdict(
     {
         return Err(DcapRejectCodeV1::CollateralExpired);
     }
-    validate_qe_status(native_verdict.supplemental.qe_status)?;
+    validate_qe_status(
+        native_verdict.supplemental.qe_status,
+        policy.accepted_qe_tcb_status,
+    )?;
     let platform_tcb_status = map_platform_status(
         native_verdict.aggregate_status,
         policy.accepted_platform_tcb_statuses,
@@ -355,9 +369,12 @@ const fn map_platform_status(
     }
 }
 
-const fn validate_qe_status(status: NativeQvlStatus) -> Result<(), DcapRejectCodeV1> {
-    match status {
-        NativeQvlStatus::UpToDate => Ok(()),
+const fn validate_qe_status(
+    status: NativeQvlStatus,
+    accepted: QvlTcbStatusV1,
+) -> Result<(), DcapRejectCodeV1> {
+    match (status, accepted) {
+        (NativeQvlStatus::UpToDate, QvlTcbStatusV1::UpToDate) => Ok(()),
         _ => Err(DcapRejectCodeV1::QeTcbRejected),
     }
 }
@@ -491,8 +508,31 @@ mod tests {
             } else {
                 Err(DcapRejectCodeV1::QeTcbRejected)
             };
-            assert_eq!(validate_qe_status(status), expected);
+            assert_eq!(
+                validate_qe_status(status, QvlTcbStatusV1::UpToDate),
+                expected
+            );
         }
+    }
+
+    #[test]
+    fn debug_enclave_is_rejected_without_sgx_noattest_and_allowed_with_it() {
+        let prod_quote =
+            include_bytes!("../tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin");
+        let prod_measurements = crate::quote::parse_quote_measurements(prod_quote).unwrap();
+        assert!(!prod_measurements.is_debug());
+        assert_eq!(validate_debug_attribute(&prod_measurements, false), Ok(()));
+        assert_eq!(validate_debug_attribute(&prod_measurements, true), Ok(()));
+
+        let debug_quote =
+            include_bytes!("../tests/fixtures/intel-dcap-1.26-intent-bound-processor/quote.bin");
+        let debug_measurements = crate::quote::parse_quote_measurements(debug_quote).unwrap();
+        assert!(debug_measurements.is_debug());
+        assert_eq!(
+            validate_debug_attribute(&debug_measurements, false),
+            Err(DcapRejectCodeV1::DebugEnclaveRejected)
+        );
+        assert_eq!(validate_debug_attribute(&debug_measurements, true), Ok(()));
     }
 
     #[test]
@@ -590,10 +630,12 @@ mod tests {
                 DcapRejectCodeV1::QeTcbRejected.code(),
                 DcapRejectCodeV1::TcbEvaluationNumberTooLow.code(),
                 DcapRejectCodeV1::MeasurementRejected.code(),
+                DcapRejectCodeV1::DebugEnclaveRejected.code(),
             ],
             [
                 0x0101, 0x0102, 0x0103, 0x0104, 0x0201, 0x0202, 0x0203, 0x0204, 0x0301, 0x0302,
                 0x0303, 0x0304, 0x0305, 0x0401, 0x0402, 0x0403, 0x0501, 0x0502, 0x0503, 0x0601,
+                0x0602,
             ]
         );
     }

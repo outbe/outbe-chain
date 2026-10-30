@@ -114,3 +114,26 @@ fn max_waiting_for_activation_updates_is_enforced() {
         }
     });
 }
+
+#[test]
+fn removing_non_tail_waiting_proposal_swaps_in_tail_element() {
+    with_update(|storage| {
+        let mut update = Update::new(storage);
+        let base_activation = min_activation(SCHEDULE_HEIGHT);
+        for i in 1..=3u64 {
+            schedule_version(&mut update, U256::from(i), V1_2, base_activation + i).unwrap();
+        }
+        assert_eq!(
+            update.list_waiting_for_activation_proposal_ids().unwrap(),
+            vec![U256::from(1), U256::from(2), U256::from(3)]
+        );
+
+        update
+            .set_scheduled_update_status(U256::from(1), ScheduledUpdateStatus::Canceled)
+            .unwrap();
+        assert_eq!(
+            update.list_waiting_for_activation_proposal_ids().unwrap(),
+            vec![U256::from(3), U256::from(2)]
+        );
+    });
+}

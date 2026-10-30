@@ -23,6 +23,7 @@ pub struct IdentityExchange {
 type IdentitySet = BTreeMap<Vec<u8>, ([u8; 32], Vec<u8>)>;
 struct IdentityCollection {
     ids: IdentitySet,
+    local_bls: Vec<u8>,
     require_scoped: bool,
     expected_count: usize,
 }
@@ -75,11 +76,14 @@ where
     ) -> eyre::Result<IdentityCollection> {
         let local = &request.local;
         let require_scoped = !local.signature.is_empty();
-        let mut ids = if require_scoped {
-            std::mem::take(&mut self.early_signed_identities)
-        } else {
-            BTreeMap::new()
-        };
+        let mut ids = BTreeMap::new();
+        if require_scoped {
+            for (bls, (from, enc, sig)) in std::mem::take(&mut self.early_signed_identities) {
+                self.routing.insert(bls.clone(), from.clone());
+                self.sender_to_tee_bls.insert(from, bls.clone());
+                ids.insert(bls, (enc, sig));
+            }
+        }
         ids.insert(local.bls.clone(), (local.enc, local.signature.clone()));
         let mut env = vec![DKG_ENV_IDENTITY];
         env.extend_from_slice(&(local.bls.len() as u32).to_be_bytes());
@@ -91,6 +95,7 @@ where
         let _ = self.sender.send(Recipients::All, delivery_env, true);
         Ok(IdentityCollection {
             ids,
+            local_bls: local.bls.clone(),
             require_scoped,
             expected_count: request.participant_count,
         })
@@ -168,7 +173,7 @@ where
             }
             Some(DKG_ENV_CEREMONY) => {
                 if let Ok(msg) = DkgWireMessage::from_bytes(&frame.bytes[1..]) {
-                    self.buffered.push_back((frame.from.encode().to_vec(), msg));
+                    self.buffered.push_back((frame.from, msg));
                 }
             }
             _ => {}
@@ -182,24 +187,62 @@ where
         announcement: LocalIdentityAnnouncement,
         collected: &mut IdentityCollection,
     ) -> eyre::Result<()> {
-        if collected.require_scoped && announcement.signature.is_empty() {
+        if announcement.bls == collected.local_bls {
             return Ok(());
         }
-        if !collected.require_scoped && !announcement.signature.is_empty() {
-            self.retain_early_signed_identity(&announcement, collected.expected_count)?;
+        if collected.require_scoped {
+            if announcement.signature.is_empty() {
+                return Ok(());
+            }
+            if self
+                .routing
+                .get(&announcement.bls)
+                .is_some_and(|existing| existing != &from)
+                || self
+                    .sender_to_tee_bls
+                    .get(&from)
+                    .is_some_and(|existing| existing != &announcement.bls)
+            {
+                return Ok(());
+            }
+            self.routing.insert(announcement.bls.clone(), from.clone());
+            self.sender_to_tee_bls
+                .insert(from, announcement.bls.clone());
+            collected
+                .ids
+                .entry(announcement.bls)
+                .or_insert((announcement.enc, announcement.signature));
+            return Ok(());
         }
-        self.routing.insert(announcement.bls.clone(), from);
+        if !announcement.signature.is_empty() {
+            self.retain_early_signed_identity(from, &announcement, collected.expected_count)?;
+        }
         collected
             .ids
-            .insert(announcement.bls, (announcement.enc, announcement.signature));
+            .entry(announcement.bls)
+            .or_insert((announcement.enc, announcement.signature));
         Ok(())
     }
 
     fn retain_early_signed_identity(
         &mut self,
+        from: bls12381::PublicKey,
         announcement: &LocalIdentityAnnouncement,
         n: usize,
     ) -> eyre::Result<()> {
+        if self
+            .early_signed_identities
+            .get(&announcement.bls)
+            .is_some_and(|(existing_from, _, _)| existing_from != &from)
+            || self
+                .early_signed_identities
+                .iter()
+                .any(|(existing_bls, (existing_from, _, _))| {
+                    existing_from == &from && existing_bls != &announcement.bls
+                })
+        {
+            return Ok(());
+        }
         if !self.early_signed_identities.contains_key(&announcement.bls)
             && self.early_signed_identities.len() >= n
         {
@@ -207,10 +250,9 @@ where
                 crate::errors::TeeBootstrapError::EarlySignedIdentityBudgetExceeded(n).into(),
             );
         }
-        self.early_signed_identities.insert(
-            announcement.bls.clone(),
-            (announcement.enc, announcement.signature.clone()),
-        );
+        self.early_signed_identities
+            .entry(announcement.bls.clone())
+            .or_insert((from, announcement.enc, announcement.signature.clone()));
         Ok(())
     }
 }

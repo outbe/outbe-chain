@@ -37,7 +37,10 @@ time = { workspace = true, features = ["parsing"], optional = true }
 [features]
 # Scoped real-engine callbacks for downstream test fixtures; absent from release.
 test-utils = []
-e2e-test = []
+# Non-production escape hatch: permits SGX quotes with `SGX_FLAGS_DEBUG` set for
+# dev/testnet/e2e runs. Production builds (`production-dcap-release`) omit this.
+sgx-noattest = []
+e2e-test = ["sgx-noattest"]
 # Consensus V1 path: links the exact-pinned Intel native QVL into the Gramine
 # enclave.
 native-dcap = [
@@ -51,11 +54,11 @@ native-dcap = [
 native-dcap-test-trace = ["native-dcap"]
 # Host-only real-fixture preparation/assembly binary. This is not linked into
 # the consensus library or the production enclave binary.
-dcap-fixture-tool = ["native-dcap", "dep:k256"]
+dcap-fixture-tool = ["native-dcap", "sgx-noattest", "dep:k256"]
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
-outbe-tee = { path = ".", features = ["test-utils"] }
+outbe-tee = { path = ".", features = ["test-utils", "sgx-noattest"] }
 k256.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true }

@@ -1,5 +1,6 @@
 //! Check historical TypeScript MCP client vectors against the enclave.
 //! The fixture preserves the JSON from commit 6c6cb705 before MCP moved to outbe-mcp.
+//! NOD issuance outputs were regenerated with enclave encryption for Keccak256 NOD IDs.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_signatures::recover_signer;
@@ -190,9 +191,7 @@ fn mcp_opens_the_balances_the_enclave_writes() {
 
 #[test]
 fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
-    use outbe_primitives::{
-        nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
-    };
+    use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
     use outbe_tee::nod_decrypt::decrypt_nod_for_owner;
     use outbe_tee_enclave::nod_encryption::{derive_view_key, encrypt_nod};
 
@@ -202,7 +201,10 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let nod_state_key = word(&v["nodStateKey"]);
     let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
-        nod_id: WwdEntityId::from(decimal(&v["nodId"])),
+        nod_id: outbe_primitives::nod_rules::derive_nod_id(
+            v["owner"].as_str().unwrap().parse().unwrap(),
+            WorldwideDay::new(v["worldwideDay"].as_u64().unwrap() as u32),
+        ),
         owner: v["owner"].as_str().unwrap().parse().unwrap(),
         worldwide_day: WorldwideDay::new(v["worldwideDay"].as_u64().unwrap() as u32),
         league_id: v["leagueId"].as_u64().unwrap() as u16,
@@ -211,6 +213,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         reference_currency: v["referenceCurrency"].as_u64().unwrap() as u16,
     };
     let view_key = derive_view_key(&nod_state_key, terms.owner).unwrap();
+    assert_eq!(terms.nod_id, decimal(&v["nodId"]));
     assert_eq!(view_key, word(&v["viewKey"]));
     let nod = encrypt_nod(&nod_state_key, terms, decimal(&v["gratisAmount"])).unwrap();
     assert_eq!(

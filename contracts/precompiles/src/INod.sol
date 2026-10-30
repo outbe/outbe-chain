@@ -11,7 +11,6 @@ interface INod {
     error ZeroReferenceCurrency();
     error NonTransferable();
     error UnknownProfileSelector(uint8 selector);
-    error EntityIdDerivation(string value);
     error CanonicalIdentityMismatch(uint256 expected, uint256 found);
     error EncryptedTermsMismatch();
     error CannotIssueSettledNod();
@@ -59,6 +58,8 @@ interface INod {
     event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
+        // Full Keccak256 of raw owner (20 bytes) || worldwide_day (u32 big-endian).
+        // The day is stored separately.
         uint256 nodId;
         address owner;
         uint32 worldwideDay;

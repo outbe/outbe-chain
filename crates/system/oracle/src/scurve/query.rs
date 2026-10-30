@@ -1,144 +1,111 @@
-//! Reads of the stored S-curve chains.
+//! Reads of the per-pair S-curve ring.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
-use super::{compute_scurve_value, truncate_to_day};
+use super::compute_scurve_value;
+use super::store::SCURVE_RING_SLOTS;
 use crate::schema::OracleContract;
 
-/// `(bases, quotes, peak_days, peak_prices)` - every active S-curve entry.
+/// `(bases, quotes, peak_days, peak_prices)` - every stored S-curve.
 type ScurveTable = (Vec<Address>, Vec<Address>, Vec<u64>, Vec<U256>);
 
-/// The pair an S-curve entry belongs to.
-pub(super) fn entry_pair(oracle: &OracleContract, idx: u32) -> Result<AddressPair> {
-    oracle.scurve_pair.read_pair(&idx)
+/// The stored curves of `pair` as `(start WWD, peak price)`, oldest first.
+fn curves(oracle: &OracleContract, pair: AddressPair) -> Result<Vec<(WorldwideDay, U256)>> {
+    let len = oracle.scurve_len.read(&pair)?;
+    let starts = oracle.scurve_peak_wwd.get_nested(&pair);
+    let prices = oracle.scurve_peak_price.get_nested(&pair);
+    (len.saturating_sub(SCURVE_RING_SLOTS)..len)
+        .map(|n| {
+            let slot = n % SCURVE_RING_SLOTS;
+            Ok((starts.read(&slot)?, prices.read(&slot)?))
+        })
+        .collect()
 }
 
-/// Returns the S-curve value for a pair at a given timestamp.
+/// The curve of `pair` in force at `wwd`: the newest curve that starts at `wwd`
+/// or earlier.
 ///
-/// The function keeps its public name for ABI compatibility. Fresh state stores
-/// at most one continuous entry per pair.
-pub fn get_max_active_scurve_value(
+/// Curve starts grow with the curve number, so the scan goes from the newest
+/// curve to the oldest and stops at the first start at or before `wwd`. A
+/// recent `wwd` reads one or two slots, not the whole ring. Only the found
+/// curve reads its price.
+pub(super) fn curve_at(
     oracle: &OracleContract,
     pair: AddressPair,
-    timestamp: u64,
-) -> Result<U256> {
-    let count = oracle.scurve_count.read()?;
-    let oldest = oracle.scurve_oldest_idx.read()?;
-    let target_day = truncate_to_day(timestamp);
-
-    let mut max_value = U256::ZERO;
-
-    for idx in oldest..count {
-        if entry_pair(oracle, idx)? != pair {
-            continue;
-        }
-
-        let peak_day = oracle.scurve_peak_day.read(&idx)?;
-        let peak_price = oracle.scurve_peak_price.read(&idx)?;
-
-        if target_day < peak_day {
-            continue;
-        }
-
-        let days_since = ((target_day - peak_day) / SECONDS_PER_DAY) as usize;
-        let value = compute_scurve_value(peak_price, days_since);
-        if value > max_value {
-            max_value = value;
+    wwd: WorldwideDay,
+) -> Result<Option<(WorldwideDay, U256)>> {
+    let len = oracle.scurve_len.read(&pair)?;
+    let starts = oracle.scurve_peak_wwd.get_nested(&pair);
+    for n in (len.saturating_sub(SCURVE_RING_SLOTS)..len).rev() {
+        let slot = n % SCURVE_RING_SLOTS;
+        let start = starts.read(&slot)?;
+        if start <= wwd {
+            let price = oracle.scurve_peak_price.get_nested(&pair).read(&slot)?;
+            return Ok(Some((start, price)));
         }
     }
-
-    Ok(max_value)
+    Ok(None)
 }
 
-/// Returns the continuous S-curve entry for a specific pair.
-///
-/// Returns `(peak_days, peak_prices, current_values)` as parallel arrays.
+/// The value at `wwd` of the curve that starts at `start` with `peak_price`.
+/// `wwd` must not be before `start`.
+pub(super) fn curve_value(start: WorldwideDay, peak_price: U256, wwd: WorldwideDay) -> U256 {
+    let days = (wwd.to_timestamp_utc() - start.to_timestamp_utc()) / SECONDS_PER_DAY;
+    compute_scurve_value(peak_price, days as usize)
+}
+
+/// The S-curve value of `pair` at `wwd`, or 0 when no curve starts at `wwd` or
+/// earlier.
+pub fn scurve_value(oracle: &OracleContract, pair: AddressPair, wwd: WorldwideDay) -> Result<U256> {
+    Ok(curve_at(oracle, pair, wwd)?
+        .map_or(U256::ZERO, |(start, price)| curve_value(start, price, wwd)))
+}
+
+/// The curves of `pair` that start at `wwd` or earlier, oldest first, as
+/// `(start WWDs, peak prices, values at wwd)`.
 pub fn get_scurve_entries(
     oracle: &OracleContract,
     pair: AddressPair,
-    current_timestamp: u64,
+    wwd: WorldwideDay,
 ) -> Result<(Vec<u64>, Vec<U256>, Vec<U256>)> {
-    let count = oracle.scurve_count.read()?;
-    let oldest = oracle.scurve_oldest_idx.read()?;
-    let target_day = truncate_to_day(current_timestamp);
-
-    let mut peak_days = Vec::new();
-    let mut peak_prices = Vec::new();
-    let mut current_values = Vec::new();
-
-    for idx in oldest..count {
-        if entry_pair(oracle, idx)? != pair {
-            continue;
+    let mut starts = Vec::new();
+    let mut prices = Vec::new();
+    let mut values = Vec::new();
+    for (start, price) in curves(oracle, pair)? {
+        if start <= wwd {
+            starts.push(start.into());
+            prices.push(price);
+            values.push(curve_value(start, price, wwd));
         }
-
-        let peak_day = oracle.scurve_peak_day.read(&idx)?;
-        let peak_price = oracle.scurve_peak_price.read(&idx)?;
-
-        let days_since = if target_day >= peak_day {
-            ((target_day - peak_day) / SECONDS_PER_DAY) as usize
-        } else {
-            continue;
-        };
-
-        peak_days.push(peak_day);
-        peak_prices.push(peak_price);
-        current_values.push(compute_scurve_value(peak_price, days_since));
     }
-
-    Ok((peak_days, peak_prices, current_values))
+    Ok((starts, prices, values))
 }
 
-/// Returns all S-curve data across all pairs.
-///
-/// Returns `(bases, quotes, peak_days, peak_prices)` as parallel arrays.
+/// Every stored curve of every registered pair, in registry order.
 pub fn get_all_scurve_data(oracle: &OracleContract) -> Result<ScurveTable> {
-    let count = oracle.scurve_count.read()?;
-    let oldest = oracle.scurve_oldest_idx.read()?;
-
-    let mut bases = Vec::new();
-    let mut quotes = Vec::new();
-    let mut peak_days = Vec::new();
-    let mut peak_prices = Vec::new();
-
-    for idx in oldest..count {
-        let pair = entry_pair(oracle, idx)?;
-        let peak_day = oracle.scurve_peak_day.read(&idx)?;
-        let peak_price = oracle.scurve_peak_price.read(&idx)?;
-
-        bases.push(pair.address1());
-        quotes.push(pair.address2());
-        peak_days.push(peak_day);
-        peak_prices.push(peak_price);
+    let mut table = ScurveTable::default();
+    for index in 1..=oracle.pair_count.read()? {
+        let pair = oracle.pair_at(index)?;
+        for (start, price) in curves(oracle, pair)? {
+            table.0.push(pair.address1());
+            table.1.push(pair.address2());
+            table.2.push(start.into());
+            table.3.push(price);
+        }
     }
-
-    Ok((bases, quotes, peak_days, peak_prices))
+    Ok(table)
 }
 
-/// Returns all S-curve data for a specific pair.
-///
-/// Returns `(peak_days, peak_prices)` as parallel arrays. The full continuous
-/// value chain is deterministic from the peak price, so callers can use
-/// `getScurveValues` for timestamp-specific values.
+/// Every stored curve of `pair`, oldest first, as `(start WWDs, peak prices)`.
 pub fn get_all_scurve_data_for_pair(
     oracle: &OracleContract,
     pair: AddressPair,
 ) -> Result<(Vec<u64>, Vec<U256>)> {
-    let count = oracle.scurve_count.read()?;
-    let oldest = oracle.scurve_oldest_idx.read()?;
-
-    let mut peak_days = Vec::new();
-    let mut peak_prices = Vec::new();
-
-    for idx in oldest..count {
-        if !entry_pair(oracle, idx)?.same_market(&pair) {
-            continue;
-        }
-        peak_days.push(oracle.scurve_peak_day.read(&idx)?);
-        peak_prices.push(oracle.scurve_peak_price.read(&idx)?);
-    }
-
-    Ok((peak_days, peak_prices))
+    Ok(curves(oracle, pair)?
+        .into_iter()
+        .map(|(start, price)| (u64::from(start), price))
+        .unzip())
 }

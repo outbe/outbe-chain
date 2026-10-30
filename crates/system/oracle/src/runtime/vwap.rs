@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::time::{WorldwideDay, SECONDS_PER_DAY};
 
 use super::{pair_series, PairSeries, VwapAccumulator};
 use crate::constants::VWAP_HOUR_SECONDS;
@@ -186,7 +186,7 @@ impl OracleContract<'_> {
         Ok(pair_series(vwaps, lookback))
     }
 
-    /// Returns `(nominal, vwap, max_scurve, source)` for a pair.
+    /// Returns `(nominal, vwap, scurve_value, source)` for a pair.
     ///
     /// Nominal price follows the Cosmos port rule: `max(VWAP, S-curve)`.
     /// If no VWAP samples exist for the day, VWAP contributes zero.
@@ -200,17 +200,18 @@ impl OracleContract<'_> {
         let vwap = self
             .try_calculate_vwap(pair, day_start, day_end)?
             .unwrap_or(U256::ZERO);
-        let max_scurve = crate::scurve::get_max_active_scurve_value(self, pair, timestamp)?;
+        let scurve_value =
+            crate::scurve::scurve_value(self, pair, WorldwideDay::from_timestamp(timestamp))?;
 
-        let (nominal, source) = if vwap.is_zero() && max_scurve.is_zero() {
+        let (nominal, source) = if vwap.is_zero() && scurve_value.is_zero() {
             (U256::ZERO, "none".to_string())
-        } else if vwap > max_scurve {
+        } else if vwap > scurve_value {
             (vwap, "vwap".to_string())
         } else {
-            (max_scurve, "scurve".to_string())
+            (scurve_value, "scurve".to_string())
         };
 
-        Ok((nominal, vwap, max_scurve, source))
+        Ok((nominal, vwap, scurve_value, source))
     }
 
     /// Calculates VWAP for a pair using a lookback in seconds from `now`.

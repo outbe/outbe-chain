@@ -269,10 +269,9 @@ pub(crate) fn validate_tribute_for_issue(tribute: &TributeData) -> Result<()> {
         return Err(TributeError::InvalidOwner.into());
     }
     if tribute.issuance_amount_minor.is_zero() {
-        return Err(TributeError::SettlementAmountMustBePositive.into());
+        return Err(TributeError::IssuanceAmountMustBePositive.into());
     }
-    let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day)
-        .map_err(TributeError::entity_id_derivation)?;
+    let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day);
     if tribute.tribute_id != expected {
         return Err(TributeError::CanonicalIdentityMismatch {
             expected,

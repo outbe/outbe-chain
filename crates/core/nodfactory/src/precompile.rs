@@ -5,7 +5,6 @@ use outbe_primitives::error::Result;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::runtime;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -40,7 +39,7 @@ pub fn dispatch(
             settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,
-                    WwdEntityId::from(c.nodId),
+                    c.nodId,
                     SettlementPayment {
                         payer: sender,
                         asset: c.asset,
@@ -51,7 +50,7 @@ pub fn dispatch(
             }),
             quoteSettlement(c) => view(c, |c| {
                 let (settlement_currency, amount, snapshot_id) =
-                    runtime::quote_settlement(&storage, WwdEntityId::from(c.nodId), c.asset)?;
+                    runtime::quote_settlement(&storage, c.nodId, c.asset)?;
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
                     paymentMinor: amount,
@@ -67,7 +66,7 @@ pub fn dispatch(
                     &storage,
                     runtime::MineGratisRequest {
                         caller: sender,
-                        nod_id: WwdEntityId::from(c.nodId),
+                        nod_id: c.nodId,
                         nonce: c.nonce,
                         auth,
                     },
