@@ -7,36 +7,36 @@ pragma solidity 0.8.30;
 ///         from Outbe over the protocol-agnostic ERC-7786 bridge.
 /// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
 ///      {ERC7786MessengerBase-receiveMessage}. The inbound AUCTION_STAGE_CLEARING triggers the bids relay,
-///      and the contract's relay float funds it. Auction messages are keyed by `worldwideDay`. Series
+///      and the contract's relay float funds it. Auction messages are keyed by `emissionDay`. Series
 ///      (issuance/mark) messages are keyed by `seriesId`.
 interface ITargetRouter {
     // --- Events ---
     /// @notice Emitted when a bids batch is sent to Outbe.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidsCount Number of bids sent.
-    event BidsBatchSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint256 bidsCount);
+    event BidsBatchSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint256 bidsCount);
 
     /// @notice Emitted when the BIDS_DONE completeness marker is sent to Outbe after a day's chunks.
     /// @param sendId Bridge send identifier.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param totalBatches Number of BIDS_BATCH messages relayed for this day.
     /// @param totalBids Total bids relayed for this day.
-    event BidsDoneSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 totalBatches, uint32 totalBids);
+    event BidsDoneSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint16 totalBatches, uint32 totalBids);
 
     /// @notice Emitted when an auction stage message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param stageType BridgeMsgCodec message type (3=AuctionStageStart, 4=AuctionStageClearing).
-    event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint8 stageType);
+    event AuctionStageReceived(uint32 indexed srcChainId, uint32 indexed emissionDay, uint8 stageType);
 
     /// @notice Emitted when an auction result is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param issuedUnits Number of Intex units issued.
     /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
     event AuctionResultReceived(
-        uint32 indexed srcChainId, uint32 indexed worldwideDay, uint32 issuedUnits, uint64 clearingRate
+        uint32 indexed srcChainId, uint32 indexed emissionDay, uint32 issuedUnits, uint64 clearingRate
     );
 
     /// @notice Emitted when issuance instructions are received from Outbe.
@@ -47,20 +47,20 @@ interface ITargetRouter {
     /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param msgType Codec message type.
-    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, ...) as the handler keys it.
+    /// @param key Identity of the ignored effect (emission day, series id, chunk, ...) as the handler keys it.
     /// @param reason One of the `InboundReason` codes.
     event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
 
     /// @notice Emitted when the last of a day's issuance chunks has been applied on this chain.
-    /// @param worldwideDay Worldwide day whose issuance is complete here.
+    /// @param emissionDay Emission day whose issuance is complete here.
     /// @param totalChunks How many chunks the day's run spanned.
-    event IssuanceCompleted(uint32 indexed worldwideDay, uint16 totalChunks);
+    event IssuanceCompleted(uint32 indexed emissionDay, uint16 totalChunks);
 
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param instructionsCount Winners in the chunk.
-    event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed worldwideDay, uint256 instructionsCount);
+    event RefundInstructionsReceived(uint32 indexed srcChainId, uint32 indexed emissionDay, uint256 instructionsCount);
 
     /// @notice Emitted when a mark-called message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -69,38 +69,38 @@ interface ITargetRouter {
 
     /// @notice Emitted when a round of the day's bids relay leaves chunks unsent: the gas it was given
     ///         ran out, or a send reverted and the round rolled back.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param nextBatch First chunk still to send.
     /// @param totalBatches Chunks the day's relay spans.
-    event BidsRelayIncomplete(uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
+    event BidsRelayIncomplete(uint32 indexed emissionDay, uint16 nextBatch, uint16 totalBatches);
 
     /// @notice Emitted when an unfinished day is reported home for another round.
     /// @param sendId Transport id of the report.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param nextBatch First chunk still to send.
     /// @param totalBatches Chunks the day's relay spans.
-    event BidsRemainingSent(bytes32 indexed sendId, uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
+    event BidsRemainingSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint16 nextBatch, uint16 totalBatches);
 
     /// @notice Emitted when the report itself could not be sent, most likely because of an empty relay
     ///         float. The day then waits for a hand-pushed `relayBids` instead of another round.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param nextBatch First chunk still to send.
     /// @param totalBatches Chunks the day's relay spans.
-    event BidsRemainingUnreported(uint32 indexed worldwideDay, uint16 nextBatch, uint16 totalBatches);
+    event BidsRemainingUnreported(uint32 indexed emissionDay, uint16 nextBatch, uint16 totalBatches);
 
     /// @notice Emitted when the day's last chunk and its completeness marker have left.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param totalBatches Chunks the day's relay spanned.
-    event BidsRelayComplete(uint32 indexed worldwideDay, uint16 totalBatches);
+    event BidsRelayComplete(uint32 indexed emissionDay, uint16 totalBatches);
 
     /// @notice Emitted when a refund chunk's proceeds are routed cross-chain to the OriginRouter.
-    event ProceedsRouted(uint32 indexed worldwideDay, uint16 chunkIndex, uint256 amount);
+    event ProceedsRouted(uint32 indexed emissionDay, uint16 chunkIndex, uint256 amount);
     /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
     event ProceedsParked(
-        uint256 indexed idx, uint32 indexed worldwideDay, uint16 chunkIndex, uint256 amount, bytes reason
+        uint256 indexed idx, uint32 indexed emissionDay, uint16 chunkIndex, uint256 amount, bytes reason
     );
     /// @notice Emitted when `resendParkedProceeds` routed a previously deferred amount.
-    event ParkedProceedsResent(uint256 indexed idx, uint32 indexed worldwideDay);
+    event ParkedProceedsResent(uint256 indexed idx, uint32 indexed emissionDay);
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
 
@@ -121,9 +121,9 @@ interface ITargetRouter {
     error ZeroAddress(string field);
     /// @notice A day's revealed bids need more than 256 batches. The receiver's arrival mask cannot
     ///         track that many.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose relay was rejected.
+    /// @param emissionDay Emission day (yyyymmdd) whose relay was rejected.
     /// @param totalBatches Batch count the relay would have needed.
-    error TooManyBidsBatches(uint32 worldwideDay, uint16 totalBatches);
+    error TooManyBidsBatches(uint32 emissionDay, uint16 totalBatches);
     /// @notice Native-token sweep transfer failed.
     error NativeSweepFailed();
     /// @notice Native-token balance is insufficient for the requested sweep.
@@ -135,8 +135,8 @@ interface ITargetRouter {
     /// @notice `wire` would move the venue off an escrow that still holds something to claim.
     error EscrowHasLiveLocks();
     /// @notice `relayBids` called for a day whose relay never started or has already finished.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    error NoBidsToRelay(uint32 worldwideDay);
+    /// @param emissionDay Emission day (yyyymmdd).
+    error NoBidsToRelay(uint32 emissionDay);
     /// @notice No parked proceeds route at `idx`.
     error NoSuchParkedProceeds(uint256 idx);
     /// @notice `applyParkedMark` called for a series with nothing waiting in its slot.

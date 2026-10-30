@@ -8,7 +8,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @author Outbe
  * @notice Public API, events, errors, and data types for escrow operations with The Compact.
  * @dev Integrates with The Compact protocol for locking bid funds and handles auction
- *      finalization. All escrow state is keyed by `worldwideDay` (uint32).
+ *      finalization. All escrow state is keyed by `emissionDay` (uint32).
  */
 interface IEscrowAdapter {
     // --- Types ---
@@ -93,40 +93,40 @@ interface IEscrowAdapter {
     // --- Events ---
 
     /// @notice Emitted when funds are locked for a bid during reveal.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose funds were locked.
     /// @param amount Amount of payment-token locked.
-    event FundsLocked(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
+    event FundsLocked(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a commit-entry bond is locked at `commitBid`.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond was taken.
     /// @param amount Amount of payment-token bonded.
-    event CommitBondLocked(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
+    event CommitBondLocked(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when a commit-entry bond is returned to its owner (reveal, cancel,
     ///         auction-side claim, or the escrow-local abandoned-bond claim).
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder the bond was returned to.
     /// @param amount Amount of payment-token returned.
-    event CommitBondReleased(uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
+    event CommitBondReleased(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted when funds are refunded to a bidder.
     /// @param receiveId `bytes32(0)`: only a claim pays a refund. A bridge message never does.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder who received the refund.
     /// @param amount Amount refunded to the bidder.
-    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, uint128 amount);
+    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed emissionDay, address indexed bidder, uint128 amount);
 
     /// @notice Emitted for each refund chunk the escrow applies.
     /// @param receiveId Inbound bridge message that carried the chunk.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param totalRefunded Change the chunk's winners are now owed.
     /// @param totalPaid Winning payments routed to the proceeds recipient.
     /// @param bidsProcessed Winners the chunk carried.
     event AuctionEscrowFinalized(
         bytes32 indexed receiveId,
-        uint32 indexed worldwideDay,
+        uint32 indexed emissionDay,
         uint128 totalRefunded,
         uint128 totalPaid,
         uint32 bidsProcessed
@@ -164,17 +164,17 @@ interface IEscrowAdapter {
     ///         - its payment would exceed it.
     ///         The lock stays as it was.
     /// @param receiveId Inbound bridge message that carried the chunk.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Winner that was skipped.
     /// @param reason Encoded error naming why.
     event BidderRefundFailed(
-        bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
+        bytes32 indexed receiveId, uint32 indexed emissionDay, address indexed bidder, bytes reason
     );
 
     /// @notice Emitted when a refund chunk carried winners and settled none of them.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidsProcessed Winners the chunk carried, all skipped.
-    event FinalizationNoOp(uint32 indexed worldwideDay, uint32 bidsProcessed);
+    event FinalizationNoOp(uint32 indexed emissionDay, uint32 bidsProcessed);
 
     /// @notice Emitted when the finalized-proceeds recipient is configured.
     /// @param recipient Address receiving each series' finalized proceeds.
@@ -228,9 +228,9 @@ interface IEscrowAdapter {
     /// @notice No deposits made yet (lock id not set).
     error NoDeposits();
     /// @notice A lock was offered for a day whose earlier locks sit under a retired asset.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param assetVersion Asset version the day is bound to.
-    error DayAssetRetired(uint32 worldwideDay, uint8 assetVersion);
+    error DayAssetRetired(uint32 emissionDay, uint8 assetVersion);
     /// @notice Finalization produced proceeds but no recipient is configured.
     error ProceedsRecipientNotSet();
     /// @notice A winner's lock holds no change to refund.
@@ -266,40 +266,40 @@ interface IEscrowAdapter {
     /// @notice Lock funds for a bid during the reveal stage. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The escrow
     ///      locks `quantity * basis * bidRate / 1e6`, scaled to the active payment token.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param basis Per-Intex escrow basis: the day's PROMIS load, in protocol units.
     /// @param bidRate Bid rate (1e6 fixed-point).
     /// @param quantity Intex units the bid asked for.
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity) external;
+    function lockFunds(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity) external;
 
     /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
     /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The Compact
     ///      holds the bond under the same lock id as bid escrow.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address the bond is taken from (and later returned to).
     /// @param amount Protocol bond amount (the day's `commitBondMinor`), scaled to the active payment token.
-    function lockCommitBond(uint32 worldwideDay, address bidder, uint128 amount) external;
+    function lockCommitBond(uint32 emissionDay, address bidder, uint128 amount) external;
 
     /// @notice Return a live commit bond to its owner. Callable only by the IntexAuction contract
     ///         (reveal, cancel, and the auction-side stage-aware claim path).
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is returned.
-    function releaseCommitBond(uint32 worldwideDay, address bidder) external;
+    function releaseCommitBond(uint32 emissionDay, address bidder) external;
 
     /// @notice Redeem a winner's WinNote: pay the change it still holds and return the units won.
     ///         Callable only by the IntexAuction contract, which issues the units.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Winner whose WinNote is redeemed.
     /// @return units Units the winner won.
-    function redeemWinNote(uint32 worldwideDay, address bidder) external returns (uint16 units);
+    function redeemWinNote(uint32 emissionDay, address bidder) external returns (uint16 units);
 
     /// @notice Active payment token used for bid escrow (WCOEN).
     function paymentToken() external view returns (IERC20);
 
     /// @notice Payment token of the asset a day locked under. Its proceeds leave in this token.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    function dayPaymentToken(uint32 worldwideDay) external view returns (IERC20);
+    /// @param emissionDay Emission day (yyyymmdd).
+    function dayPaymentToken(uint32 emissionDay) external view returns (IERC20);
 
     /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
     function proceedsRecipient() external view returns (address);
@@ -315,7 +315,7 @@ interface IEscrowAdapter {
     ///         never name lost.
     /// @dev A winner's lock leaves `Locked` on its first chunk, so none pays twice. `completesDay`
     ///      closes the day.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param receiveId Inbound bridge message id that carried the chunk. The function threads it
     ///        into the emitted events.
     /// @param winners Winners on this chain in the chunk.
@@ -327,7 +327,7 @@ interface IEscrowAdapter {
     /// @param completesDay Whether this is the day's last chunk.
     /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to the origin.
     function finalizeAuction(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         bytes32 receiveId,
         address[] calldata winners,
         uint16 partialIndex,
@@ -345,19 +345,19 @@ interface IEscrowAdapter {
     ///         - A bidder whose day never finalized collects its full principal after
     ///           `UNFINALIZED_REFUND_DELAY`.
     ///         A lock already gone on a finalized day pays nothing and reports closed.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     /// @return closed Whether the lock is gone after the call.
     /// @return finalized Whether the day is finalized.
-    function releaseRefund(uint32 worldwideDay, address bidder) external returns (bool closed, bool finalized);
+    function releaseRefund(uint32 emissionDay, address bidder) external returns (bool closed, bool finalized);
 
     /// @notice Escrow-local safety valve for a lock stranded past `REFUND_ABANDON_DELAY` (e.g. the
     ///         auction contract stopped working). It is time-based only and never consults the
     ///         auction. It pays the stored `bidder`, not `msg.sender`, and only money: a winner's
     ///         units stay in its lock.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose lock is being claimed.
-    function claimAbandonedRefund(uint32 worldwideDay, address bidder) external;
+    function claimAbandonedRefund(uint32 emissionDay, address bidder) external;
 
     /// @notice `claimAbandonedRefund` was called before the escrow-local safety window elapsed.
     /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
@@ -368,41 +368,41 @@ interface IEscrowAdapter {
     ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
     ///         bond was live). It is time-based only and never consults the auction. It pays the
     ///         stored `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function claimAbandonedCommitBond(uint32 worldwideDay, address bidder) external;
+    function claimAbandonedCommitBond(uint32 emissionDay, address bidder) external;
 
     // --- Views ---
 
     /// @notice Get bid lock information.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose lock is being read.
     /// @return lock The stored `BidLock` record for the series/bidder pair.
-    function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory lock);
+    function getBidLock(uint32 emissionDay, address bidder) external view returns (BidLock memory lock);
 
     /// @notice What the auction's `claimRefund` would pay `bidder` for the day, and from when. Zero once nothing is left to
     ///         claim: a settled or claimed lock is gone.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @return amount Refund the claim would pay.
     /// @return claimableAt Earliest unix-seconds timestamp the claim succeeds at.
-    function getClaimableRefund(uint32 worldwideDay, address bidder)
+    function getClaimableRefund(uint32 emissionDay, address bidder)
         external
         view
         returns (uint128 amount, uint32 claimableAt);
 
     /// @notice Get commit bond information. A zero `amount` means no live bond.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose bond is being read.
     /// @return bond The stored `CommitBond` record for the series/bidder pair.
-    function getCommitBond(uint32 worldwideDay, address bidder) external view returns (CommitBond memory bond);
+    function getCommitBond(uint32 emissionDay, address bidder) external view returns (CommitBond memory bond);
 
     /// @notice Get series escrow status.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @return hasLocks True if the series ever took a lock. Claimed locks do not lower it.
     /// @return isFinalized True if the series escrow is finalized.
     /// @return totalLocked Total payment-token currently locked for the series.
-    function getAuctionStatus(uint32 worldwideDay)
+    function getAuctionStatus(uint32 emissionDay)
         external
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);

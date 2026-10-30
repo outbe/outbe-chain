@@ -18,24 +18,24 @@ contract EscrowConservationHandler is Test {
     address internal auction;
     address internal bridger;
     address[] internal bidders;
-    uint32[] internal worldwideDays;
+    uint32[] internal emissionDays;
 
     constructor(
         EscrowAdapter _escrow,
         address _auction,
         address _bridger,
         address[] memory _bidders,
-        uint32[] memory _worldwideDays
+        uint32[] memory _emissionDays
     ) {
         escrow = _escrow;
         auction = _auction;
         bridger = _bridger;
         bidders = _bidders;
-        worldwideDays = _worldwideDays;
+        emissionDays = _emissionDays;
     }
 
     function _series(uint256 seed) internal view returns (uint32) {
-        return worldwideDays[bound(seed, 0, worldwideDays.length - 1)];
+        return emissionDays[bound(seed, 0, emissionDays.length - 1)];
     }
 
     function _bidder(uint256 seed) internal view returns (address) {
@@ -101,7 +101,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     address internal bridger = address(2);
     address internal auction = address(3);
 
-    uint32[] internal worldwideDays;
+    uint32[] internal emissionDays;
     address[] internal bidders;
 
     function setUp() public {
@@ -124,11 +124,11 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
             paymentToken.approve(address(escrow), type(uint256).max);
         }
 
-        worldwideDays.push(1);
-        worldwideDays.push(2);
-        worldwideDays.push(3);
+        emissionDays.push(1);
+        emissionDays.push(2);
+        emissionDays.push(3);
 
-        handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, worldwideDays);
+        handler = new EscrowConservationHandler(escrow, auction, bridger, bidders, emissionDays);
 
         bytes4[] memory selectors = new bytes4[](7);
         selectors[0] = EscrowConservationHandler.lock.selector;
@@ -144,15 +144,15 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
     function invariant_pooledBalanceEqualsSumOfTotalLocked() public view {
         uint256 sumTotalLocked;
-        for (uint256 i = 0; i < worldwideDays.length; i++) {
-            (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);
+        for (uint256 i = 0; i < emissionDays.length; i++) {
+            (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDays[i]);
             sumTotalLocked += totalLocked;
         }
         // Commit bonds share the pooled lockId with bid escrow but are accounted separately.
         uint256 sumBonds;
-        for (uint256 i = 0; i < worldwideDays.length; i++) {
+        for (uint256 i = 0; i < emissionDays.length; i++) {
             for (uint256 j = 0; j < bidders.length; j++) {
-                sumBonds += escrow.getCommitBond(worldwideDays[i], bidders[j]).amount;
+                sumBonds += escrow.getCommitBond(emissionDays[i], bidders[j]).amount;
             }
         }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());
@@ -161,12 +161,12 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
 
     /// @dev A winner's payment left with the proceeds, so its lock still holds only the change.
     function invariant_totalLockedIsWhatTheLocksStillHold() public view {
-        for (uint256 i = 0; i < worldwideDays.length; i++) {
+        for (uint256 i = 0; i < emissionDays.length; i++) {
             uint256 held;
             for (uint256 j = 0; j < bidders.length; j++) {
-                held += escrow.getBidLock(worldwideDays[i], bidders[j]).lockedAmount;
+                held += escrow.getBidLock(emissionDays[i], bidders[j]).lockedAmount;
             }
-            (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDays[i]);
+            (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDays[i]);
             assertEq(held, totalLocked, "totalLocked != what the day's locks still hold");
         }
     }

@@ -140,7 +140,7 @@ fn to_abi_data(
         callNoticePeriod: r.call_notice_period_seconds,
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
-        worldwideDay: r.worldwide_day.into(),
+        emissionDay: r.emission_day.into(),
         settledUnits: settled,
         minedUnits: mined,
         gemFactoryUnits: gem_factory,

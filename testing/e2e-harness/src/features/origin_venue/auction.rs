@@ -28,7 +28,7 @@ fn jump_committee_past_window(world: &mut World, target_stage: u8) {
         &side.url,
         side.auction,
         &IVenueSchedule::getAuctionInfoCall {
-            worldwideDay: settled_day(world),
+            emissionDay: settled_day(world),
         },
     )
     .expect("the venue reports the day's schedule")
@@ -71,7 +71,7 @@ fn jump_committee_past_window(world: &mut World, target_stage: u8) {
 /// Each chain runs the day on its own clock, so every venue has to reach the
 /// stage before the bidders may act on any of them.
 fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8) {
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     let url = venue.url.clone();
     let home = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
@@ -88,17 +88,17 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
             &url,
             venue.auction,
             &IAuctionStage::getAuctionStageCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
             },
         )
         .expect("the venue knows the auction");
-        assert_ne!(stage, 4, "day {worldwide_day} was cancelled on the venue");
+        assert_ne!(stage, 4, "day {emission_day} was cancelled on the venue");
         if stage >= target_stage {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} stalled at venue stage {stage} short of {target_stage} on {}",
+            "day {emission_day} stalled at venue stage {stage} short of {target_stage} on {}",
             venue.url
         );
         sleep(Duration::from_secs(2));
@@ -214,7 +214,7 @@ fn auction_opened_on(world: &World, venue: &VenueSide) {
         .clone()
         .expect("a deploy recorded its addresses")
         .origin_router;
-    let worldwide_day = world
+    let emission_day = world
         .state
         .wwd
         .as_deref()
@@ -230,24 +230,24 @@ fn auction_opened_on(world: &World, venue: &VenueSide) {
             &url,
             venue.auction,
             &IAuctionStage::getAuctionStageCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
             },
         ) {
             assert!(
                 stage < 2,
-                "day {worldwide_day} reached the venue at stage {stage}: {}",
-                venue_probes::venue_schedule(&url, venue.auction, worldwide_day)
+                "day {emission_day} reached the venue at stage {stage}: {}",
+                venue_probes::venue_schedule(&url, venue.auction, emission_day)
             );
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}; {}; {}",
+            "day {emission_day} settled but no auction ever opened on the venue at {}: {}; {}; {}; {}",
             venue.auction,
-            venue_probes::desis_stage(&home, worldwide_day),
-            venue_probes::frozen_targets(&home, origin_router, worldwide_day),
-            venue_probes::day_closure(world, worldwide_day),
-            venue_probes::day_status(world, worldwide_day)
+            venue_probes::desis_stage(&home, emission_day),
+            venue_probes::frozen_targets(&home, origin_router, emission_day),
+            venue_probes::day_closure(world),
+            venue_probes::day_status(world)
         );
         sleep(Duration::from_secs(2));
     }
@@ -312,20 +312,20 @@ pub(super) fn assert_no_parked_deliveries(world: &World) {
     );
 }
 
-pub(super) fn flush_parked_bid_relays(world: &mut World, worldwide_day: u32) {
+pub(super) fn flush_parked_bid_relays(world: &mut World, emission_day: u32) {
     for venue in venue_sides(world) {
-        push_one_venue_bid_relay(&venue, worldwide_day);
+        push_one_venue_bid_relay(&venue, emission_day);
     }
 }
 
 /// A relay that stopped part way continues from the chunk it left. The routers share an address
 /// across chains. So the push request has to go to the chain that is relaying.
-fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
+fn push_one_venue_bid_relay(venue: &VenueSide, emission_day: u32) {
     let progress = eth::read_call(
         &venue.url,
         venue.target_router,
         &IParkedWork::bidsRelayCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     );
     if progress.is_none_or(|p| p.done) {
@@ -337,19 +337,26 @@ fn push_one_venue_bid_relay(venue: &VenueSide, worldwide_day: u32) {
         venue.target_router,
         crate::world::forge::DEPLOYER_KEY,
         &IParkedWork::relayBidsCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
         None,
     )
     .ok();
 }
 
-pub(super) fn settled_day(world: &World) -> u32 {
-    world
+/// The emission day the settled Worldwide Day feeds: the day its auction runs under.
+pub(crate) fn settled_day(world: &World) -> u32 {
+    let wwd = world
         .state
         .wwd
         .as_deref()
         .expect("the settled day's WorldwideDay")
         .parse::<u32>()
-        .expect("numeric WorldwideDay")
+        .expect("numeric WorldwideDay");
+    let port = world.validators.committee_ports()[0];
+    world
+        .rpc
+        .metadosis_wwd_state_on(port, wwd)
+        .expect("native WWD state")
+        .day
 }

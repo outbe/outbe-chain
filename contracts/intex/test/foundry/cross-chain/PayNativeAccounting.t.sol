@@ -260,7 +260,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 contract StubAuction {
     function auctionStart(
         uint32,
-        IIntexAuction.WorldwideDayState,
+        IIntexAuction.DayState,
         IIntexAuction.AuctionSchedule calldata,
         IIntexAuction.AuctionParams calldata
     ) external {}

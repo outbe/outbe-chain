@@ -43,7 +43,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        p.worldwideDay = day;
+        p.emissionDay = day;
         p.dayState = 1;
     }
 

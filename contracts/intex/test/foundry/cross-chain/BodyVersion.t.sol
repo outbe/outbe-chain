@@ -76,14 +76,14 @@ contract BodyVersionTest is Test {
             42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 13e6), 5, 6, 7, 3, 17e6, 1
         );
         (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
+            uint32 emissionDay,
+            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(packet);
 
-        assertEq(worldwideDay, 42);
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Live));
+        assertEq(emissionDay, 42);
+        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Live));
         assertEq(schedule.commitEnd, 100);
         assertEq(schedule.revealEnd, 200);
         assertEq(schedule.issuanceEnd, 300);
@@ -101,9 +101,9 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionResult_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionResult(42, 7, 13e6, 5);
-        (uint32 worldwideDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
+        (uint32 emissionDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
             this.exposedDecodeAuctionResult(packet);
-        assertEq(worldwideDay, 42);
+        assertEq(emissionDay, 42);
         assertEq(issuedCount, 7);
         assertEq(clearingPrice, 13e6);
         assertEq(wonCount, 5);

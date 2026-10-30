@@ -18,9 +18,9 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionBids {
-        function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
+        function commitBid(uint32 emissionDay, bytes32 commitHash) external;
         function revealBid(
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint16 quantity,
             uint32 bidRate,
             uint16 issuanceCurrency,
@@ -102,15 +102,15 @@ pub fn fund(
     Ok(())
 }
 
-fn bid_digest(auction: Address, chain_id: u64, worldwide_day: u32, bidder: &Bidder) -> B256 {
+fn bid_digest(auction: Address, chain_id: u64, emission_day: u32, bidder: &Bidder) -> B256 {
     let type_hash = keccak256(
-        b"RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        b"RevealBid(uint32 emissionDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
             .as_slice(),
     );
     let struct_hash = keccak256(
         (
             type_hash,
-            worldwide_day,
+            emission_day,
             bidder.address,
             bidder.quantity,
             bidder.bid_rate,
@@ -145,10 +145,10 @@ fn bid_digest(auction: Address, chain_id: u64, worldwide_day: u32, bidder: &Bidd
 fn bid_signature(
     auction: Address,
     chain_id: u64,
-    worldwide_day: u32,
+    emission_day: u32,
     bidder: &Bidder,
 ) -> Result<Vec<u8>> {
-    let digest = bid_digest(auction, chain_id, worldwide_day, bidder);
+    let digest = bid_digest(auction, chain_id, emission_day, bidder);
     let signer: PrivateKeySigner = bidder
         .key
         .parse()
@@ -160,17 +160,17 @@ pub fn commit(
     url: &str,
     auction: Address,
     chain_id: u64,
-    worldwide_day: u32,
+    emission_day: u32,
     bidders: &[Bidder],
 ) -> Result<()> {
     for bidder in bidders {
-        let signature = bid_signature(auction, chain_id, worldwide_day, bidder)?;
+        let signature = bid_signature(auction, chain_id, emission_day, bidder)?;
         eth::send_call(
             url,
             auction,
             &bidder.key,
             &IAuctionBids::commitBidCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 commitHash: keccak256(&signature),
             },
             None,
@@ -183,17 +183,17 @@ pub fn reveal(
     url: &str,
     auction: Address,
     chain_id: u64,
-    worldwide_day: u32,
+    emission_day: u32,
     bidders: &[Bidder],
 ) -> Result<()> {
     for bidder in bidders {
-        let signature = bid_signature(auction, chain_id, worldwide_day, bidder)?;
+        let signature = bid_signature(auction, chain_id, emission_day, bidder)?;
         eth::send_call(
             url,
             auction,
             &bidder.key,
             &IAuctionBids::revealBidCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 quantity: bidder.quantity,
                 bidRate: bidder.bid_rate,
                 issuanceCurrency: DAY_CURRENCY,

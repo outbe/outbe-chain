@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::{Map, Value};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,
@@ -12,50 +12,50 @@ use crate::schema::{
 impl<'storage> DesisContract<'storage> {
     // --- AuctionStage ---
 
-    pub(crate) fn read_stage(&self, worldwide_day: WorldwideDay) -> Result<AuctionStage> {
-        let raw = self.auction_stage.read(&worldwide_day)?;
+    pub(crate) fn read_stage(&self, emission_day: EmissionDate) -> Result<AuctionStage> {
+        let raw = self.auction_stage.read(&emission_day)?;
         AuctionStage::from_u8(raw).map_err(Into::into)
     }
 
     pub(crate) fn write_stage(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         stage: AuctionStage,
     ) -> Result<()> {
-        self.auction_stage.write(&worldwide_day, stage as u8)
+        self.auction_stage.write(&emission_day, stage as u8)
     }
 
     // --- AuctionConfig ---
 
-    pub(crate) fn read_auction_config(&self, worldwide_day: WorldwideDay) -> Result<AuctionConfig> {
-        let promis_load_minor = self.config_promis_load_minor.read(&worldwide_day)?;
+    pub(crate) fn read_auction_config(&self, emission_day: EmissionDate) -> Result<AuctionConfig> {
+        let promis_load_minor = self.config_promis_load_minor.read(&emission_day)?;
         Ok(AuctionConfig {
             promis_load_minor: u128::try_from(promis_load_minor)
-                .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
+                .map_err(|_| crate::DesisError::InvalidEmissionDay(emission_day))?,
             call_trigger: IntexCallTrigger {
-                call_window_seconds: self.config_call_window_seconds.read(&worldwide_day)?,
-                call_threshold_seconds: self.config_call_threshold_seconds.read(&worldwide_day)?,
+                call_window_seconds: self.config_call_window_seconds.read(&emission_day)?,
+                call_threshold_seconds: self.config_call_threshold_seconds.read(&emission_day)?,
                 call_notice_period_seconds: self
                     .config_call_notice_period_seconds
-                    .read(&worldwide_day)?,
-                transit_margin_seconds: self.config_transit_margin_seconds.read(&worldwide_day)?,
+                    .read(&emission_day)?,
+                transit_margin_seconds: self.config_transit_margin_seconds.read(&emission_day)?,
             },
-            min_intex_bid_rate: self.config_min_bid_rate.read(&worldwide_day)?,
-            min_intex_bid_quantity: self.config_min_bid_quantity.read(&worldwide_day)? as u16,
-            commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&worldwide_day)?)
-                .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
-            reference_prices: self.read_reference_prices(worldwide_day)?,
+            min_intex_bid_rate: self.config_min_bid_rate.read(&emission_day)?,
+            min_intex_bid_quantity: self.config_min_bid_quantity.read(&emission_day)? as u16,
+            commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&emission_day)?)
+                .map_err(|_| crate::DesisError::InvalidEmissionDay(emission_day))?,
+            reference_prices: self.read_reference_prices(emission_day)?,
         })
     }
 
     pub(crate) fn read_reference_prices(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
     ) -> Result<Vec<ReferenceCurrencyPrice>> {
-        let count = self.reference_price_count.read(&worldwide_day)?;
+        let count = self.reference_price_count.read(&emission_day)?;
         let mut rows = Vec::with_capacity(count as usize);
         for index in 0..count {
-            let key = Self::reference_price_key(worldwide_day, index);
+            let key = Self::reference_price_key(emission_day, index);
             rows.push(ReferenceCurrencyPrice {
                 iso_code: self.reference_price_iso.read(&key)? as u16,
                 entry_price_minor: self.reference_entry_price_minor.read(&key)?,
@@ -69,29 +69,29 @@ impl<'storage> DesisContract<'storage> {
     /// the tail beyond `reference_price_count` is never cleared.
     pub(crate) fn write_auction_config(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         cfg: &AuctionConfig,
     ) -> Result<()> {
         self.config_promis_load_minor
-            .write(&worldwide_day, U256::from(cfg.promis_load_minor))?;
+            .write(&emission_day, U256::from(cfg.promis_load_minor))?;
         self.config_call_window_seconds
-            .write(&worldwide_day, cfg.call_trigger.call_window_seconds)?;
+            .write(&emission_day, cfg.call_trigger.call_window_seconds)?;
         self.config_call_threshold_seconds
-            .write(&worldwide_day, cfg.call_trigger.call_threshold_seconds)?;
+            .write(&emission_day, cfg.call_trigger.call_threshold_seconds)?;
         self.config_call_notice_period_seconds
-            .write(&worldwide_day, cfg.call_trigger.call_notice_period_seconds)?;
+            .write(&emission_day, cfg.call_trigger.call_notice_period_seconds)?;
         self.config_transit_margin_seconds
-            .write(&worldwide_day, cfg.call_trigger.transit_margin_seconds)?;
+            .write(&emission_day, cfg.call_trigger.transit_margin_seconds)?;
         self.config_min_bid_rate
-            .write(&worldwide_day, cfg.min_intex_bid_rate)?;
+            .write(&emission_day, cfg.min_intex_bid_rate)?;
         self.config_min_bid_quantity
-            .write(&worldwide_day, u32::from(cfg.min_intex_bid_quantity))?;
+            .write(&emission_day, u32::from(cfg.min_intex_bid_quantity))?;
         self.config_commit_bond_minor
-            .write(&worldwide_day, U256::from(cfg.commit_bond_minor))?;
+            .write(&emission_day, U256::from(cfg.commit_bond_minor))?;
         self.reference_price_count
-            .write(&worldwide_day, cfg.reference_prices.len() as u32)?;
+            .write(&emission_day, cfg.reference_prices.len() as u32)?;
         for (index, row) in cfg.reference_prices.iter().enumerate() {
-            let key = Self::reference_price_key(worldwide_day, index as u32);
+            let key = Self::reference_price_key(emission_day, index as u32);
             self.reference_price_iso
                 .write(&key, u32::from(row.iso_code))?;
             self.reference_entry_price_minor
@@ -106,26 +106,26 @@ impl<'storage> DesisContract<'storage> {
 
     pub(crate) fn append_bid(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         chain_id: u32,
         bid: &BidData,
     ) -> Result<u32> {
-        let chain_key = Self::chain_key(worldwide_day, chain_id);
+        let chain_key = Self::chain_key(emission_day, chain_id);
         let index = self.chain_bid_count.read(&chain_key)?;
-        self.write_bid_at(worldwide_day, chain_id, index, bid)?;
+        self.write_bid_at(emission_day, chain_id, index, bid)?;
         self.chain_bid_count.write(&chain_key, index + 1)?;
-        let day_count = self.day_bid_count.read(&worldwide_day)?;
-        self.day_bid_count.write(&worldwide_day, day_count + 1)?;
+        let day_count = self.day_bid_count.read(&emission_day)?;
+        self.day_bid_count.write(&emission_day, day_count + 1)?;
         Ok(index)
     }
 
     pub(crate) fn read_bid_at(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         chain_id: u32,
         index: u32,
     ) -> Result<BidData> {
-        let key = Self::bid_key(worldwide_day, chain_id, index);
+        let key = Self::bid_key(emission_day, chain_id, index);
         let packed = self.bid_packed.read(&key)?;
         let limbs = packed.as_limbs();
         Ok(BidData {
@@ -140,12 +140,12 @@ impl<'storage> DesisContract<'storage> {
 
     fn write_bid_at(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         chain_id: u32,
         index: u32,
         bid: &BidData,
     ) -> Result<()> {
-        let key = Self::bid_key(worldwide_day, chain_id, index);
+        let key = Self::bid_key(emission_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
         // The currency pair rides the free limbs of the same word: no new map and no
         // attribute-order change.
@@ -163,16 +163,16 @@ impl<'storage> DesisContract<'storage> {
     /// Load the chains' bids into memory, tagged with their source chain.
     pub(crate) fn read_chains_bids(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         chain_ids: &[u32],
     ) -> Result<Vec<(u32, BidData)>> {
         let mut bids = Vec::new();
         for &chain_id in chain_ids {
             let count = self
                 .chain_bid_count
-                .read(&Self::chain_key(worldwide_day, chain_id))?;
+                .read(&Self::chain_key(emission_day, chain_id))?;
             for i in 0..count {
-                bids.push((chain_id, self.read_bid_at(worldwide_day, chain_id, i)?));
+                bids.push((chain_id, self.read_bid_at(emission_day, chain_id, i)?));
             }
         }
         Ok(bids)
@@ -181,14 +181,14 @@ impl<'storage> DesisContract<'storage> {
     /// Drop the chain's bids once the day has cleared.
     pub(crate) fn reset_chain_intake(
         &self,
-        worldwide_day: WorldwideDay,
+        emission_day: EmissionDate,
         chain_id: u32,
     ) -> Result<()> {
-        let key = Self::chain_key(worldwide_day, chain_id);
+        let key = Self::chain_key(emission_day, chain_id);
         let chain_count = self.chain_bid_count.read(&key)?;
-        let day_count = self.day_bid_count.read(&worldwide_day)?;
+        let day_count = self.day_bid_count.read(&emission_day)?;
         self.day_bid_count
-            .write(&worldwide_day, day_count.saturating_sub(chain_count))?;
+            .write(&emission_day, day_count.saturating_sub(chain_count))?;
         self.chain_bid_count.write(&key, 0)?;
         self.chain_total_batches.write(&key, 0)?;
         self.chain_arrived_mask.write(&key, U256::ZERO)?;
@@ -200,23 +200,23 @@ impl<'storage> DesisContract<'storage> {
     // --- clearing fan-in gate (dense active set) ---
 
     /// Append a day to the gate-active set (idempotent).
-    pub(crate) fn push_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        self.gate_active().push(worldwide_day)
+    pub(crate) fn push_gate_active(&mut self, emission_day: EmissionDate) -> Result<()> {
+        self.gate_active().push(emission_day)
     }
 
     /// Remove a day from the gate-active set via swap-remove (idempotent).
-    pub(crate) fn remove_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        self.gate_active().remove(worldwide_day)
+    pub(crate) fn remove_gate_active(&mut self, emission_day: EmissionDate) -> Result<()> {
+        self.gate_active().remove(emission_day)
     }
 
     /// Append a day to the schedule-active set (idempotent).
-    pub(crate) fn push_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        self.sched_active().push(worldwide_day)
+    pub(crate) fn push_sched_active(&mut self, emission_day: EmissionDate) -> Result<()> {
+        self.sched_active().push(emission_day)
     }
 
     /// Remove a day from the schedule-active set via swap-remove (idempotent).
-    pub(crate) fn remove_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
-        self.sched_active().remove(worldwide_day)
+    pub(crate) fn remove_sched_active(&mut self, emission_day: EmissionDate) -> Result<()> {
+        self.sched_active().remove(emission_day)
     }
 
     fn gate_active(&self) -> DenseDaySet<'_, 'storage> {
@@ -237,15 +237,12 @@ impl<'storage> DesisContract<'storage> {
 
     // --- last cleared series ---
 
-    pub(crate) fn read_last_cleared_worldwide_day(&self) -> Result<WorldwideDay> {
-        self.last_cleared_worldwide_day.read()
+    pub(crate) fn read_last_cleared_emission_day(&self) -> Result<EmissionDate> {
+        self.last_cleared_emission_day.read()
     }
 
-    pub(crate) fn write_last_cleared_worldwide_day(
-        &self,
-        worldwide_day: WorldwideDay,
-    ) -> Result<()> {
-        self.last_cleared_worldwide_day.write(worldwide_day)
+    pub(crate) fn write_last_cleared_emission_day(&self, emission_day: EmissionDate) -> Result<()> {
+        self.last_cleared_emission_day.write(emission_day)
     }
 
     pub(crate) fn read_last_clearing_issued_count(&self) -> Result<u32> {
@@ -261,36 +258,36 @@ impl<'storage> DesisContract<'storage> {
 struct DenseDaySet<'a, 'storage> {
     count: &'a Value<'storage, u32>,
     at: &'a Map<'storage, u32, u32>,
-    slot: &'a Map<'storage, WorldwideDay, u32>,
+    slot: &'a Map<'storage, EmissionDate, u32>,
 }
 
 impl DenseDaySet<'_, '_> {
-    fn push(&self, worldwide_day: WorldwideDay) -> Result<()> {
-        if self.slot.read(&worldwide_day)? != 0 {
+    fn push(&self, emission_day: EmissionDate) -> Result<()> {
+        if self.slot.read(&emission_day)? != 0 {
             return Ok(());
         }
         let count = self.count.read()?;
-        self.at.write(&count, worldwide_day.value())?;
+        self.at.write(&count, emission_day.value())?;
         // store index + 1 so that 0 unambiguously means "absent".
-        self.slot.write(&worldwide_day, count + 1)?;
+        self.slot.write(&emission_day, count + 1)?;
         self.count.write(count + 1)?;
         Ok(())
     }
 
-    fn remove(&self, worldwide_day: WorldwideDay) -> Result<()> {
-        let slot1 = self.slot.read(&worldwide_day)?;
+    fn remove(&self, emission_day: EmissionDate) -> Result<()> {
+        let slot1 = self.slot.read(&emission_day)?;
         if slot1 == 0 {
             return Ok(());
         }
         let idx = slot1 - 1;
         let last = self.count.read()? - 1;
         if idx != last {
-            let last_day: WorldwideDay = self.at.read(&last)?.into();
+            let last_day: EmissionDate = self.at.read(&last)?.into();
             self.at.write(&idx, last_day.value())?;
             self.slot.write(&last_day, idx + 1)?;
         }
         self.at.clear(&last)?;
-        self.slot.clear(&worldwide_day)?;
+        self.slot.clear(&emission_day)?;
         self.count.write(last)?;
         Ok(())
     }

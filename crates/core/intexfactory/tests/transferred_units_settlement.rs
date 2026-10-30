@@ -12,7 +12,7 @@ use outbe_primitives::{
         INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
     },
     storage::{SubCallOutput, SubCallStatus},
-    time::WorldwideDay,
+    time::EmissionDate,
 };
 use outbe_vaultrouter::{
     api::IVaultRouter::StablesSource,
@@ -94,7 +94,7 @@ impl World {
                 &storage,
                 CreateSeriesParams {
                     series_id: SeriesId::from(FixedBytes(SERIES)),
-                    worldwide_day: WorldwideDay::new(20_241_220),
+                    emission_day: EmissionDate::new(20_241_220),
                     issued_units: ISSUED_UNITS as u32,
                     promis_load_minor: 1_500_000,
                     entry_price_minor: U256::from(2_000_000),
@@ -176,7 +176,7 @@ impl World {
             IIntexNFT1155::createSeriesCall {
                 params: IIntexNFT1155::CreateSeriesParams {
                     seriesId: FixedBytes(SERIES),
-                    worldwideDay: 20_241_220,
+                    emissionDay: 20_241_220,
                     issuedAt: TIMESTAMP,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,

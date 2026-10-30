@@ -11,7 +11,7 @@ mod auction;
 
 mod bidding;
 
-pub(super) use auction::VenueSide;
+pub(super) use auction::{settled_day, VenueSide};
 
 const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
 

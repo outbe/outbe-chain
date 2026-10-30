@@ -32,7 +32,7 @@ import {
 ///         selects the active transport.
 /// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor.
-///      All auction/series auction messages are keyed by `worldwideDay`. Series messages
+///      All auction/series auction messages are keyed by `emissionDay`. Series messages
 ///      (issuance/mark) are keyed by `seriesId`.
 contract TargetRouter is
     ITargetRouter,
@@ -109,10 +109,10 @@ contract TargetRouter is
     function parkedProceeds(uint256 idx)
         external
         view
-        returns (uint32 worldwideDay, uint16 chunkIndex, uint128 amount, bool exists, bool done)
+        returns (uint32 emissionDay, uint16 chunkIndex, uint128 amount, bool exists, bool done)
     {
         ParkedProceeds storage p = _ts().parkedProceeds[idx];
-        return (p.worldwideDay, p.chunkIndex, p.amount, p.exists, p.done);
+        return (p.emissionDay, p.chunkIndex, p.amount, p.exists, p.done);
     }
 
     /// @notice How many proceeds routes have ever parked here. `done` in the view tells which are
@@ -122,31 +122,31 @@ contract TargetRouter is
     }
 
     /// @notice How far the day's bids relay has got.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done) {
-        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+    /// @param emissionDay Emission day (yyyymmdd).
+    function bidsRelay(uint32 emissionDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done) {
+        BidsRelayProgress storage p = _ts().bidsRelay[emissionDay];
         return (p.nextBatch, p.totalBatches, p.done);
     }
 
-    /// @notice Issuance chunk progress of `worldwideDay` on this chain: applied so far and the
+    /// @notice Issuance chunk progress of `emissionDay` on this chain: applied so far and the
     ///         declared total (0 until the first chunk lands).
-    function issuanceChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+    function issuanceChunks(uint32 emissionDay) external view returns (uint16 seen, uint16 total) {
         TargetRouterStorage storage $ = _ts();
-        ChunkProgress memory progress = $.issuanceProgress[worldwideDay];
+        ChunkProgress memory progress = $.issuanceProgress[emissionDay];
         return (progress.chunksSeen, progress.totalChunks);
     }
 
-    /// @notice Refund chunk progress of `worldwideDay` on this chain: applied so far and the
+    /// @notice Refund chunk progress of `emissionDay` on this chain: applied so far and the
     ///         declared total (0 until the first chunk lands).
-    function refundChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+    function refundChunks(uint32 emissionDay) external view returns (uint16 seen, uint16 total) {
         TargetRouterStorage storage $ = _ts();
-        RefundProgress memory progress = $.refundProgress[worldwideDay];
+        RefundProgress memory progress = $.refundProgress[emissionDay];
         return (progress.chunksSeen, progress.totalChunks);
     }
 
-    /// @notice Whether issuance chunk `chunkIndex` of `worldwideDay` has been applied here.
-    function issuanceChunkApplied(uint32 worldwideDay, uint16 chunkIndex) external view returns (bool) {
-        return _ts().issuanceChunksApplied[worldwideDay] & (1 << chunkIndex) != 0;
+    /// @notice Whether issuance chunk `chunkIndex` of `emissionDay` has been applied here.
+    function issuanceChunkApplied(uint32 emissionDay, uint16 chunkIndex) external view returns (bool) {
+        return _ts().issuanceChunksApplied[emissionDay] & (1 << chunkIndex) != 0;
     }
 
     /// @notice Call time of the Called mark waiting for `seriesId` to land here (0 = none).
@@ -230,48 +230,48 @@ contract TargetRouter is
 
     /// @notice Self-call shim around the relay: lets an inbound delivery bound its gas and keep the
     ///         stage flip even when the relay cannot finish.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose revealed bids are relayed to Outbe.
-    function relayBidsToOutbe(uint32 worldwideDay) external {
+    /// @param emissionDay Emission day (yyyymmdd) whose revealed bids are relayed to Outbe.
+    function relayBidsToOutbe(uint32 emissionDay) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _relayBids(worldwideDay);
+        _relayBids(emissionDay);
     }
 
     /// @notice Self-call shim reporting an unfinished day home, isolated so a failed report cannot
     ///         take the round that just succeeded with it.
-    /// @param worldwideDay Worldwide day (yyyymmdd) whose remainder is reported.
-    function reportBidsRemaining(uint32 worldwideDay) external {
+    /// @param emissionDay Emission day (yyyymmdd) whose remainder is reported.
+    function reportBidsRemaining(uint32 emissionDay) external {
         if (msg.sender != address(this)) revert NotSelf();
-        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+        BidsRelayProgress storage p = _ts().bidsRelay[emissionDay];
         bytes memory message =
-            BridgeMsgCodec.encodeBidsRemaining(worldwideDay, uint32(block.chainid), p.nextBatch, p.totalBatches);
+            BridgeMsgCodec.encodeBidsRemaining(emissionDay, uint32(block.chainid), p.nextBatch, p.totalBatches);
         bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_REMAINING);
-        emit BidsRemainingSent(sendId, worldwideDay, p.nextBatch, p.totalBatches);
+        emit BidsRemainingSent(sendId, emissionDay, p.nextBatch, p.totalBatches);
     }
 
     /// @notice Permissionless push for a day whose bids have not all left, for a relay float that
     ///         ran dry. Only a day past its reveal accepts it, and only the inbound CLEARING sets
     ///         that stage.
-    /// @param worldwideDay Worldwide day (yyyymmdd) to continue relaying.
-    function relayBids(uint32 worldwideDay) external nonReentrant {
+    /// @param emissionDay Emission day (yyyymmdd) to continue relaying.
+    function relayBids(uint32 emissionDay) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        if ($.bidsRelay[worldwideDay].done) revert NoBidsToRelay(worldwideDay);
-        if ($.auction.getAuctionStage(worldwideDay) != IIntexAuction.AuctionStage.Issuance) {
-            revert NoBidsToRelay(worldwideDay);
+        if ($.bidsRelay[emissionDay].done) revert NoBidsToRelay(emissionDay);
+        if ($.auction.getAuctionStage(emissionDay) != IIntexAuction.AuctionStage.Issuance) {
+            revert NoBidsToRelay(emissionDay);
         }
-        uint16 batchBefore = $.bidsRelay[worldwideDay].nextBatch;
+        uint16 batchBefore = $.bidsRelay[emissionDay].nextBatch;
         // Sends go to the immutable bridge. The writes after them are the relay's own progress.
         // slither-disable-next-line reentrancy-eth
-        _relayBids(worldwideDay);
-        _reportIfAdvanced(worldwideDay, batchBefore);
+        _relayBids(emissionDay);
+        _reportIfAdvanced(emissionDay, batchBefore);
     }
 
-    function _reportIfAdvanced(uint32 worldwideDay, uint16 batchBefore) internal {
-        BidsRelayProgress storage p = _ts().bidsRelay[worldwideDay];
+    function _reportIfAdvanced(uint32 emissionDay, uint16 batchBefore) internal {
+        BidsRelayProgress storage p = _ts().bidsRelay[emissionDay];
         if (!TargetInbound.advanced(p, batchBefore)) return;
         // solhint-disable-next-line no-empty-blocks
-        try this.reportBidsRemaining(worldwideDay) {}
+        try this.reportBidsRemaining(emissionDay) {}
         catch {
-            emit BidsRemainingUnreported(worldwideDay, p.nextBatch, p.totalBatches);
+            emit BidsRemainingUnreported(emissionDay, p.nextBatch, p.totalBatches);
         }
     }
 
@@ -280,12 +280,12 @@ contract TargetRouter is
     /// @dev The first round freezes the span. Reveals are closed by then, so a bid's chunk never
     ///      moves. Every chunk carries `batchIndex`/`totalBatches` for the unordered bridge. The
     ///      marker goes with the last chunk. No bids -> one empty batch (0 of 1).
-    function _relayBids(uint32 worldwideDay) internal {
+    function _relayBids(uint32 emissionDay) internal {
         TargetRouterStorage storage $ = _ts();
-        BidsRelayProgress storage progress = $.bidsRelay[worldwideDay];
+        BidsRelayProgress storage progress = $.bidsRelay[emissionDay];
         if (progress.done) return;
 
-        uint256 bidsCount = $.auction.revealedBidsCount(worldwideDay);
+        uint256 bidsCount = $.auction.revealedBidsCount(emissionDay);
         uint16 totalBatches = progress.totalBatches;
         if (totalBatches == 0) {
             uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
@@ -293,7 +293,7 @@ contract TargetRouter is
             // The receiver tracks batch arrival in a 256-bit mask, so it rejects any relay with
             // more than 256 batches. Fail here instead of sending a doomed relay it drops batch by
             // batch.
-            if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(worldwideDay, totalBatches);
+            if (totalBatches > MAX_BIDS_BATCHES) revert TooManyBidsBatches(emissionDay, totalBatches);
             progress.totalBatches = totalBatches;
         }
 
@@ -304,13 +304,13 @@ contract TargetRouter is
                 ? IntexGas.RELAY_CHUNK_GAS + IntexGas.RELAY_MARKER_GAS
                 : IntexGas.RELAY_CHUNK_GAS;
             if (gasleft() <= need) break;
-            _sendBidsChunk(worldwideDay, batch, totalBatches, bidsCount);
+            _sendBidsChunk(emissionDay, batch, totalBatches, bidsCount);
             ++batch;
         }
         progress.nextBatch = batch;
 
         if (batch < totalBatches) {
-            emit BidsRelayIncomplete(worldwideDay, batch, totalBatches);
+            emit BidsRelayIncomplete(emissionDay, batch, totalBatches);
             return;
         }
 
@@ -318,12 +318,12 @@ contract TargetRouter is
         // Completeness marker in the same round as the last chunk, so it can never outrun a lost
         // sibling.
         // slither-disable-next-line reentrancy-eth
-        _sendBidsDone(worldwideDay, totalBatches, SafeCast.toUint32(bidsCount));
-        emit BidsRelayComplete(worldwideDay, totalBatches);
+        _sendBidsDone(emissionDay, totalBatches, SafeCast.toUint32(bidsCount));
+        emit BidsRelayComplete(emissionDay, totalBatches);
     }
 
     /// @dev Read and send one chunk: pull from the auction only the bids it carries.
-    function _sendBidsChunk(uint32 worldwideDay, uint16 batchIndex, uint16 totalBatches, uint256 bidsCount) private {
+    function _sendBidsChunk(uint32 emissionDay, uint16 batchIndex, uint16 totalBatches, uint256 bidsCount) private {
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
         uint256 offset = uint256(batchIndex) * maxChunk;
         uint256 chunkLen = bidsCount > offset ? bidsCount - offset : 0;
@@ -333,7 +333,7 @@ contract TargetRouter is
         uint256[] memory packedBids = new uint256[](chunkLen);
         if (chunkLen != 0) {
             IIntexAuction.SubmittedBidData[] memory bids =
-                _ts().auction.revealedBidsSlice(worldwideDay, offset, chunkLen);
+                _ts().auction.revealedBidsSlice(emissionDay, offset, chunkLen);
             for (uint256 i = 0; i < chunkLen; i++) {
                 IIntexAuction.SubmittedBidData memory bid = bids[i];
                 bidderAddresses[i] = bid.bidderAddress;
@@ -343,33 +343,33 @@ contract TargetRouter is
             }
         }
 
-        _sendOneBidsBatch(worldwideDay, batchIndex, totalBatches, bidderAddresses, packedBids);
+        _sendOneBidsBatch(emissionDay, batchIndex, totalBatches, bidderAddresses, packedBids);
     }
 
     /// @dev Encode and `_send` the BIDS_DONE completeness marker for a day. Carries this chain's
     ///      chainId as its source. The receiver cross-checks it against the authenticated source.
-    function _sendBidsDone(uint32 worldwideDay, uint16 totalBatches, uint32 totalBids) internal {
+    function _sendBidsDone(uint32 emissionDay, uint16 totalBatches, uint32 totalBids) internal {
         bytes memory message =
-            BridgeMsgCodec.encodeBidsDone(worldwideDay, uint32(block.chainid), totalBatches, totalBids);
+            BridgeMsgCodec.encodeBidsDone(emissionDay, uint32(block.chainid), totalBatches, totalBids);
         bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_DONE);
-        emit BidsDoneSent(sendId, worldwideDay, totalBatches, totalBids);
+        emit BidsDoneSent(sendId, emissionDay, totalBatches, totalBids);
     }
 
     /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId
     ///      as its source (cross-checked by the receiver against the authenticated source). The
     ///      relay float funds the send.
     function _sendOneBidsBatch(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] memory bidderAddresses,
         uint256[] memory packedBids
     ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            worldwideDay, uint32(block.chainid), batchIndex, totalBatches, bidderAddresses, packedBids
+            emissionDay, uint32(block.chainid), batchIndex, totalBatches, bidderAddresses, packedBids
         );
         sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
-        emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
+        emit BidsBatchSent(sendId, emissionDay, bidderAddresses.length);
     }
 
     /// @notice Self-call shim around one Called mark. It isolates a series that will not take it.
@@ -393,9 +393,9 @@ contract TargetRouter is
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
-    function routeProceedsExt(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) external {
+    function routeProceedsExt(uint32 emissionDay, uint16 chunkIndex, uint128 amount) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _doRouteProceeds(worldwideDay, chunkIndex, amount);
+        _doRouteProceeds(emissionDay, chunkIndex, amount);
     }
 
     /// @notice Permissionless retry of a previously deferred proceeds route.
@@ -405,18 +405,18 @@ contract TargetRouter is
         if (!p.exists) revert NoSuchParkedProceeds(idx);
         if (p.done) revert AlreadyResolved(idx);
         p.done = true;
-        _doRouteProceeds(p.worldwideDay, p.chunkIndex, p.amount);
-        emit ParkedProceedsResent(idx, p.worldwideDay);
+        _doRouteProceeds(p.emissionDay, p.chunkIndex, p.amount);
+        emit ParkedProceedsResent(idx, p.emissionDay);
     }
 
     /// @dev Approve the token bridge and route `amount` WCOEN to the OriginRouter with the series
     ///      id, self-funding the bridge fee from the relay float. The credited WCOEN is unwrapped
     ///      and distributed on Outbe.
-    function _doRouteProceeds(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) internal {
+    function _doRouteProceeds(uint32 emissionDay, uint16 chunkIndex, uint128 amount) internal {
         TargetRouterStorage storage $ = _ts();
         address to = $.originRouter;
-        bytes memory extraData = abi.encode(worldwideDay);
-        IERC20 token = $.escrowAdapter.dayPaymentToken(worldwideDay);
+        bytes memory extraData = abi.encode(emissionDay);
+        IERC20 token = $.escrowAdapter.dayPaymentToken(emissionDay);
         IERC20 bridgeToken = $.tokenBridge.token();
         if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
 
@@ -424,7 +424,7 @@ contract TargetRouter is
         uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
-        emit ProceedsRouted(worldwideDay, chunkIndex, amount);
+        emit ProceedsRouted(emissionDay, chunkIndex, amount);
     }
 
     /// @inheritdoc ITargetRouter

@@ -47,14 +47,14 @@ contract RecordingDesis {
     }
 
     function processBidsBatch(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint32 srcChainId,
         uint16, /* batchIndex */
         uint16 totalBatches,
         address[] calldata bidderAddresses,
         uint256[] calldata packedBids
     ) external {
-        lastDay = worldwideDay;
+        lastDay = emissionDay;
         lastSrcChainId = srcChainId;
         lastTotalBatches = totalBatches;
         for (uint256 i = 0; i < bidderAddresses.length; i++) {
@@ -83,8 +83,8 @@ contract RecordingFactory {
     uint256 public lastValue;
     uint256 public calls;
 
-    function distribute(uint32 worldwideDay, uint32 srcChainId) external payable {
-        lastDay = worldwideDay;
+    function distribute(uint32 emissionDay, uint32 srcChainId) external payable {
+        lastDay = emissionDay;
         lastSrcChainId = srcChainId;
         lastValue = msg.value;
         calls++;
@@ -147,7 +147,7 @@ contract LocalLoopbackTest is Test {
     uint256 internal constant INITIAL_WCOEN_BALANCE = 100e18;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 emissionDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
 
     MockERC7786Bridge internal bridge;
@@ -227,7 +227,7 @@ contract LocalLoopbackTest is Test {
     }
 
     function _stageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory p) {
-        p.worldwideDay = DAY;
+        p.emissionDay = DAY;
         p.commitEnd = uint32(startTs + 100);
         p.revealEnd = uint32(startTs + 200);
         p.issuanceEnd = uint32(startTs + 300);
@@ -330,7 +330,7 @@ contract LocalLoopbackTest is Test {
         IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
         issuance[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: CreateSeriesLib.seriesId(DAY),
-            worldwideDay: DAY,
+            emissionDay: DAY,
             issuedAt: uint32(block.timestamp),
             issuedUnits: 50,
             promisLoadMinor: PROMIS_LOAD_MINOR,

@@ -66,7 +66,7 @@ fn a_called_series_reports_its_settlement_deadline() {
 #[test]
 fn scan_and_call_reads_daily_vwap_at_midnight() {
     // Regression: the scan fires on the midnight Cycle tick. At that time, yesterday's
-    // WorldwideDay snapshot does not exist yet (metadosis writes it at noon of
+    // EmissionDate snapshot does not exist yet (metadosis writes it at noon of
     // the current day). The finalized per-UTC-day VWAP is already closed by
     // then and must be the scan's price source. The test seeds exactly `threshold` (21)
     // breach days through the production finalization path. The scan day itself
@@ -184,7 +184,7 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u64) {
         s,
         outbe_intex::CreateSeriesParams {
             series_id: sid(id),
-            worldwide_day: id.into(),
+            emission_day: id.into(),
             issued_units: 100,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
@@ -357,18 +357,18 @@ fn the_scan_range_covers_terms_the_live_profile_no_longer_names() {
 }
 
 /// A series in a call group of its own, with nothing realized, so expiry forfeits all of it.
-fn grouped_series(s: &StorageHandle<'_>, worldwide_day: u32) -> SeriesId {
-    series_in(s, worldwide_day, worldwide_day)
+fn grouped_series(s: &StorageHandle<'_>, emission_day: u32) -> SeriesId {
+    series_in(s, emission_day, emission_day)
 }
 
-/// The series of `worldwide_day`, issued into the call group `group_day` names.
-fn series_in(s: &StorageHandle<'_>, worldwide_day: u32, group_day: u32) -> SeriesId {
-    let series_id = sid(worldwide_day);
+/// The series of `emission_day`, issued into the call group `group_day` names.
+fn series_in(s: &StorageHandle<'_>, emission_day: u32, group_day: u32) -> SeriesId {
+    let series_id = sid(emission_day);
     outbe_intex::api::create_series(
         s,
         outbe_intex::schema::CreateSeriesParams {
             series_id,
-            worldwide_day: WorldwideDay::new(worldwide_day),
+            emission_day: EmissionDate::new(emission_day),
             issued_units: 1,
             promis_load_minor: PROMIS_LOAD_MINOR,
             entry_price_minor: U256::from(ENTRY_PRICE),
@@ -389,8 +389,8 @@ fn series_in(s: &StorageHandle<'_>, worldwide_day: u32, group_day: u32) -> Serie
 }
 
 /// A grouped series whose group was called and waits on `deadline`.
-fn called_series(s: &StorageHandle<'_>, worldwide_day: u32, deadline: u64) -> SeriesId {
-    let series_id = grouped_series(s, worldwide_day);
+fn called_series(s: &StorageHandle<'_>, emission_day: u32, deadline: u64) -> SeriesId {
+    let series_id = grouped_series(s, emission_day);
     IntexContract::new(s.clone())
         .seed_called_group(series_id, deadline)
         .unwrap();

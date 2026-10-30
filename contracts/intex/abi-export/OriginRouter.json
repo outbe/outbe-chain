@@ -331,7 +331,7 @@
           "internalType": "struct IOriginRouter.ParkedProceeds",
           "components": [
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -501,7 +501,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -535,7 +535,7 @@
       "name": "sendAuctionStageClearing",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -563,7 +563,7 @@
           "internalType": "struct IOriginRouter.AuctionStageStartParams",
           "components": [
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -660,7 +660,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -685,7 +685,7 @@
               "internalType": "bytes14"
             },
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -790,7 +790,7 @@
       "name": "sendMarkCalled",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -818,7 +818,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -958,7 +958,7 @@
       "name": "targetsOf",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1045,7 +1045,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1076,7 +1076,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1101,7 +1101,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1126,7 +1126,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1157,7 +1157,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1382,7 +1382,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1401,7 +1401,7 @@
       "name": "ProceedsDistributed",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1426,7 +1426,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1470,7 +1470,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1961,7 +1961,7 @@
       "name": "NotSeriesTarget",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },

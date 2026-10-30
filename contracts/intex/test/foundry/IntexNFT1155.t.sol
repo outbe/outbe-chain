@@ -71,9 +71,9 @@ contract IntexNFT1155Test is Test {
     }
 
     /// @dev Create a series with the standard parameters and a given call period.
-    function _createSeries(uint32 worldwideDay, uint32 callPeriod) internal {
+    function _createSeries(uint32 emissionDay, uint32 callPeriod) internal {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(worldwideDay, ISSUED_UNITS, callPeriod));
+        nft.createSeries(CreateSeriesLib.params(emissionDay, ISSUED_UNITS, callPeriod));
     }
 
     function test_InitialState() public view {
@@ -111,15 +111,15 @@ contract IntexNFT1155Test is Test {
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 0));
     }
 
-    function test_CreateSeries_RecordsWorldwideDay() public {
+    function test_CreateSeries_RecordsEmissionDay() public {
         _createSeries(SERIES_ID_1_DAY, 0);
         _createSeries(SERIES_ID_2_DAY, 0);
 
-        assertEq(nft.worldwideDayOf(SERIES_ID_1), SERIES_ID_1_DAY);
-        bytes14[] memory ids = nft.seriesIdsByWorldwideDay(SERIES_ID_1_DAY);
+        assertEq(nft.emissionDayOf(SERIES_ID_1), SERIES_ID_1_DAY);
+        bytes14[] memory ids = nft.seriesIdsByEmissionDay(SERIES_ID_1_DAY);
         assertEq(ids.length, 1);
         assertEq(ids[0], SERIES_ID_1);
-        assertEq(nft.seriesIdsByWorldwideDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
+        assertEq(nft.seriesIdsByEmissionDay(SERIES_ID_2_DAY)[0], SERIES_ID_2);
     }
 
     function test_CreateSeries_IndexesTheDayCurrencyPair() public {
@@ -142,17 +142,17 @@ contract IntexNFT1155Test is Test {
     ///      day) records the real day. Fails if provenance reads `params.seriesId`.
     function test_CreateSeries_StoresRealDay_DistinctFromSeriesId() public {
         bytes14 seriesId = "20250505-TRY-U";
-        uint32 worldwideDay = 20260101;
-        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(worldwideDay, ISSUED_UNITS, 0);
+        uint32 emissionDay = 20260101;
+        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(emissionDay, ISSUED_UNITS, 0);
         p.seriesId = seriesId; // the id's own day differs from the provenance day
         vm.prank(bridger);
         nft.createSeries(p);
 
-        assertEq(nft.worldwideDayOf(seriesId), worldwideDay, "day stored verbatim");
-        bytes14[] memory ids = nft.seriesIdsByWorldwideDay(worldwideDay);
+        assertEq(nft.emissionDayOf(seriesId), emissionDay, "day stored verbatim");
+        bytes14[] memory ids = nft.seriesIdsByEmissionDay(emissionDay);
         assertEq(ids.length, 1);
         assertEq(ids[0], seriesId, "day indexes the series id");
-        assertEq(nft.seriesIdsByWorldwideDay(20250505).length, 0, "the id's own day is not a provenance key");
+        assertEq(nft.seriesIdsByEmissionDay(20250505).length, 0, "the id's own day is not a provenance key");
     }
 
     function test_Issue() public {

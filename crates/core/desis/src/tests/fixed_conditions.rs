@@ -11,7 +11,7 @@ const EUR_ENTRY_PRICE: u128 = 3_000_000;
 
 fn read_config(s: &StorageHandle) -> AuctionConfig {
     s.contract::<DesisContract>()
-        .read_auction_config(WORLDWIDE_DAY)
+        .read_auction_config(EMISSION_DAY)
         .unwrap()
 }
 
@@ -22,7 +22,7 @@ fn announced(
 ) -> crate::sol_ext::IOriginRouter::AuctionStageStartParams {
     runtime::stage_start_params(
         runtime::StageStart {
-            worldwide_day: WORLDWIDE_DAY,
+            emission_day: EMISSION_DAY,
             config,
             commit_end: 1,
             reveal_end: 2,
@@ -95,7 +95,7 @@ fn the_start_message_carries_only_the_stored_day_config() {
         select_profile(&s, outbe_intex::config::PROFILE_DEV);
 
         let message = announced(&config, DAY_STATE_LIVE);
-        assert_eq!(message.worldwideDay, WORLDWIDE_DAY.value());
+        assert_eq!(message.emissionDay, EMISSION_DAY.value());
         assert_eq!(message.promisLoadMinor, config.promis_load_minor);
         assert_eq!(message.minIntexBidRate, config.min_intex_bid_rate);
         assert_eq!(message.minIntexBidQuantity, config.min_intex_bid_quantity);
@@ -127,7 +127,7 @@ fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
         runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Cancelled
         );
@@ -158,7 +158,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
     use outbe_intexfactory::SeriesId;
 
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 2 * LOAD_MINOR, true);
+        brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
         let message = announced(&config, DAY_STATE_LIVE);
@@ -185,7 +185,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
         };
         let series_id =
-            SeriesId::for_pair(WORLDWIDE_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
+            SeriesId::for_pair(EMISSION_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(
             series.promis_load_minor,
@@ -200,14 +200,8 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
 
         // The issuance gets the same conditions. IntexFactory builds the legs from them.
         assert_eq!(read_config(&s), config);
-        let groups = runtime::issuance_groups(
-            &result,
-            &config,
-            WORLDWIDE_DAY,
-            WORLDWIDE_DAY.value(),
-            &[SRC_CHAIN],
-        )
-        .unwrap();
+        let groups =
+            runtime::issuance_groups(&result, &config, EMISSION_DAY, &[SRC_CHAIN]).unwrap();
         assert_eq!(groups.len(), 1);
         let group = &groups[0];
         assert_eq!(group.promis_load_minor, message.promisLoadMinor);
@@ -221,11 +215,11 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
 }
 
 #[test]
-fn a_series_is_dated_by_its_emission_day_and_kept_on_its_auction_day() {
+fn a_series_is_dated_by_its_emission_day() {
     use outbe_intexfactory::SeriesId;
 
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 2 * LOAD_MINOR, true);
+        brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let result = crate::schema::ClearingResult {
             issued_units: 1,
@@ -233,26 +227,21 @@ fn a_series_is_dated_by_its_emission_day_and_kept_on_its_auction_day() {
             winner_quantities: vec![U256::from(1u8)],
             ..Default::default()
         };
-        let groups = runtime::issuance_groups(
-            &result,
-            &read_config(&s),
-            WORLDWIDE_DAY,
-            EMISSION_DAY,
-            &[SRC_CHAIN],
-        )
-        .unwrap();
+        let groups =
+            runtime::issuance_groups(&result, &read_config(&s), EMISSION_DAY, &[SRC_CHAIN])
+                .unwrap();
         assert_eq!(
             groups[0].series_id,
-            SeriesId::for_pair(EMISSION_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap()
+            SeriesId::for_pair(EMISSION_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap()
         );
-        assert_eq!(groups[0].worldwide_day, WORLDWIDE_DAY);
+        assert_eq!(groups[0].emission_day, EMISSION_DAY);
     });
 }
 
 #[test]
 fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 2 * LOAD_MINOR, true);
+        brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
         let result = crate::schema::ClearingResult {
@@ -261,14 +250,8 @@ fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
             winner_quantities: vec![U256::from(1u8)],
             ..Default::default()
         };
-        let err = runtime::issuance_groups(
-            &result,
-            &config,
-            WORLDWIDE_DAY,
-            WORLDWIDE_DAY.value(),
-            &[SRC_CHAIN],
-        )
-        .unwrap_err();
+        let err =
+            runtime::issuance_groups(&result, &config, EMISSION_DAY, &[SRC_CHAIN]).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
@@ -308,8 +291,8 @@ fn the_day_config_round_trips_with_its_call_prices() {
         };
         let contract = s.contract::<DesisContract>();
         contract
-            .write_auction_config(WORLDWIDE_DAY, &config)
+            .write_auction_config(EMISSION_DAY, &config)
             .unwrap();
-        assert_eq!(contract.read_auction_config(WORLDWIDE_DAY).unwrap(), config);
+        assert_eq!(contract.read_auction_config(EMISSION_DAY).unwrap(), config);
     });
 }

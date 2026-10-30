@@ -162,11 +162,12 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, emission_day_state::SUCCEEDED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
+        let briefed = outbe_primitives::time::EmissionDate::new(20260922);
         assert_eq!(
-            desis.auction_stage.read(&wwd_sep_01).unwrap(),
+            desis.auction_stage.read(&briefed).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
         );
-        assert_eq!(desis.brief_has_limit.read(&wwd_sep_01).unwrap(), 0);
+        assert_eq!(desis.brief_has_limit.read(&briefed).unwrap(), 0);
     });
 }
 

@@ -102,7 +102,7 @@ fn issue_four_series(world: &mut World) {
         url: &url,
         sender_key: DEPLOYER_KEY,
         origin_router,
-        worldwide_day: day,
+        emission_day: day,
         now,
         reference_currency: USD_ISO,
         entry_price_minor: ENTRY_PRICE_MINOR,
@@ -115,7 +115,6 @@ fn issue_four_series(world: &mut World) {
     let series = test_issuance::issue_series(test_issuance::IssueSeries {
         url: &url,
         sender_key: DEPLOYER_KEY,
-        worldwide_day: day,
         emission_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
         issued_at: head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),

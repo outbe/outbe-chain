@@ -24,12 +24,12 @@ sol! {
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionStage {
-        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+        function getAuctionStage(uint32 emissionDay) external view returns (uint8);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IOriginTargets {
-        function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
+        function targetsOf(uint32 emissionDay) external view returns (uint32[] memory);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -48,16 +48,16 @@ sol! {
             uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedUnits; uint128 issuedPromisLoadMinor;
         }
         struct AuctionData {
-            uint8 worldwideDayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;
+            uint8 dayState; AuctionSchedule schedule; AuctionParams params; AuctionResult result;
         }
-        function getAuctionInfo(uint32 worldwideDay) external view returns (AuctionData memory);
+        function getAuctionInfo(uint32 emissionDay) external view returns (AuctionData memory);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IParkedWork {
         struct ParkedMessage { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
-        function bidsRelay(uint32 worldwideDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done);
-        function relayBids(uint32 worldwideDay) external;
+        function bidsRelay(uint32 emissionDay) external view returns (uint16 nextBatch, uint16 totalBatches, bool done);
+        function relayBids(uint32 emissionDay) external;
         function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
         function resendParkedMessage(uint256 idx) external;
         function nextParkedIdx() external view returns (uint256);
@@ -66,14 +66,14 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IVenueCounts {
-        function auctionRunningCounts(uint32 worldwideDay)
+        function auctionRunningCounts(uint32 emissionDay)
             external view returns (uint32 committedBidsCount, uint32 revealedBidsCount);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IDesisBids {
-        function getBidsCount(uint32 worldwideDay) external view returns (uint256);
-        function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
+        function getBidsCount(uint32 emissionDay) external view returns (uint256);
+        function isChainDone(uint32 emissionDay, uint32 srcChainId) external view returns (bool);
     }
 }
 /// Every probe below asks the chain the same question: "what did this contract
@@ -98,12 +98,12 @@ fn logs_of(
     .cloned()
 }
 
-pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
+pub(crate) fn frozen_targets(url: &str, router: Address, emission_day: u32) -> String {
     match eth::read_call(
         url,
         router,
         &IOriginTargets::targetsOfCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     ) {
         Some(targets) if targets.is_empty() => "the router froze no targets for the day".to_owned(),
@@ -112,7 +112,7 @@ pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> 
     }
 }
 
-pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
+pub(crate) fn desis_stage(url: &str, emission_day: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
         .expect("desis precompile address");
@@ -120,7 +120,7 @@ pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
         url,
         desis,
         &IAuctionStage::getAuctionStageCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     ) {
         Some(0) => "no brief ever reached Desis".to_owned(),
@@ -132,20 +132,21 @@ pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
     }
 }
 
-pub(crate) fn day_status(world: &World, worldwide_day: u32) -> String {
+/// Metadosis keeps its state per Worldwide Day, so the probe reads the settled one.
+pub(crate) fn day_status(world: &World) -> String {
     match world
         .rpc
-        .metadosis_wwd_state_on(world.validators.primary_port(), worldwide_day)
+        .metadosis_wwd_state_on(world.validators.primary_port(), settled_wwd(world))
     {
         Some(state) => format!("day in status {}", state.status),
         None => "day state unreadable".to_owned(),
     }
 }
 
-pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
+pub(crate) fn day_closure(world: &World) -> String {
     match world
         .rpc
-        .metadosis_terminal_receipt_on(world.validators.primary_port(), worldwide_day)
+        .metadosis_terminal_receipt_on(world.validators.primary_port(), settled_wwd(world))
     {
         // An absent receipt reads back zeroed rather than reverting, so the
         // block number is what tells a real closure from no closure at all.
@@ -157,13 +158,22 @@ pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
     }
 }
 
-pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
+fn settled_wwd(world: &World) -> u32 {
+    world
+        .state
+        .wwd
+        .as_deref()
+        .and_then(|wwd| wwd.parse().ok())
+        .unwrap_or_default()
+}
+
+pub(crate) fn venue_schedule(url: &str, venue: Address, emission_day: u32) -> String {
     let now = eth::latest_block_timestamp(url).unwrap_or_default();
     match eth::read_call(
         url,
         venue,
         &IVenueSchedule::getAuctionInfoCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     ) {
         Some(a) => format!(
@@ -180,13 +190,13 @@ pub(crate) fn parked_work(
     venue_url: &str,
     router: Address,
     venue_router: Address,
-    worldwide_day: u32,
+    emission_day: u32,
 ) -> String {
     let relay = eth::read_call(
         venue_url,
         venue_router,
         &IParkedWork::bidsRelayCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     );
     let parked = eth::read_call(
@@ -225,7 +235,7 @@ pub(crate) fn parked_work(
                 venue_router,
                 crate::world::forge::DEPLOYER_KEY,
                 &IParkedWork::relayBidsCall {
-                    worldwideDay: worldwide_day,
+                    emissionDay: emission_day,
                 },
                 None,
             );
@@ -249,9 +259,9 @@ pub(crate) fn bid_relay_traffic(
     venue_url: &str,
     router: Address,
     venue_router: Address,
-    worldwide_day: u32,
+    emission_day: u32,
 ) -> String {
-    let day_topic = format!("0x{:064x}", worldwide_day);
+    let day_topic = format!("0x{:064x}", emission_day);
     let count = |at: &str, address: Address, signature: &[u8], day_topic_index: usize| -> String {
         let topic0 = alloy_primitives::keccak256(signature);
         let mut topics = vec![
@@ -291,12 +301,12 @@ pub(crate) fn bid_relay_traffic(
 }
 /// Desis drops inbound work of its own, with its own reason codes, and those
 /// never appear in either router's ignore log.
-pub(crate) fn ignored_by_desis(url: &str, worldwide_day: u32) -> String {
+pub(crate) fn ignored_by_desis(url: &str, emission_day: u32) -> String {
     let desis: Address = origin_venue::DESIS
         .parse()
         .expect("desis precompile address");
     let topic0 = alloy_primitives::keccak256(b"InboundIgnored(uint32,uint32,uint8)".as_slice());
-    let day_topic = format!("0x{:064x}", worldwide_day);
+    let day_topic = format!("0x{:064x}", emission_day);
     let logs = logs_of(
         url,
         desis,
@@ -381,10 +391,10 @@ pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String 
     format!("{side} ignored {}", described.join(", "))
 }
 
-pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
+pub(crate) fn stages_received(url: &str, venue_router: Address, emission_day: u32) -> String {
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
-    let day_topic = format!("0x{:064x}", worldwide_day);
+    let day_topic = format!("0x{:064x}", emission_day);
     let logs = logs_of(
         url,
         venue_router,
@@ -401,12 +411,12 @@ pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u
     }
 }
 
-pub(crate) fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
+pub(crate) fn venue_bid_counts(url: &str, venue: Address, emission_day: u32) -> String {
     match eth::read_call(
         url,
         venue,
         &IVenueCounts::auctionRunningCountsCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     ) {
         Some(counts) => format!(
@@ -417,7 +427,7 @@ pub(crate) fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) ->
     }
 }
 
-pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
+pub(crate) fn relayed_bids(url: &str, emission_day: u32, chain_id: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
         .expect("desis precompile address");
@@ -425,14 +435,14 @@ pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> Stri
         url,
         desis,
         &IDesisBids::getBidsCountCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
         },
     );
     let done = eth::read_call(
         url,
         desis,
         &IDesisBids::isChainDoneCall {
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
             srcChainId: chain_id,
         },
     );
@@ -490,7 +500,7 @@ pub(crate) fn parked_deliveries(world: &World) -> String {
 }
 /// Did Desis get as far as handing the refunds to the router? Separates "the
 /// clearing never sent them" from "the target chain refused them".
-pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
+pub(crate) fn refunds_were_sent(world: &World, emission_day: u32) -> bool {
     let url = world.rpc.url(world.validators.primary_port());
     let Some(contracts) = world.state.origin_contracts.clone() else {
         return false;
@@ -503,7 +513,7 @@ pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
         vec![
             serde_json::json!(format!("{topic0:?}")),
             serde_json::Value::Null,
-            serde_json::json!(format!("0x{worldwide_day:064x}")),
+            serde_json::json!(format!("0x{emission_day:064x}")),
         ],
     )
     .is_some_and(|entries| !entries.is_empty())
@@ -560,7 +570,7 @@ sol! {
         uint64 calledAt;
         uint32 totalSupply;
         uint8 state;
-        uint32 worldwideDay;
+        uint32 emissionDay;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -582,9 +592,9 @@ sol! {
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IRefundClaim {
-        function getClaimableRefund(uint32 worldwideDay, address bidder)
+        function getClaimableRefund(uint32 emissionDay, address bidder)
             external view returns (uint128 amount, uint32 claimableAt);
-        function claimRefund(uint32 worldwideDay, address bidder) external;
+        function claimRefund(uint32 emissionDay, address bidder) external;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -598,8 +608,8 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IWinClaim {
-        function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
-        function redeemWinNote(uint32 worldwideDay, address bidder) external;
+        function getBidLock(uint32 emissionDay, address bidder) external view returns (BidLock memory);
+        function redeemWinNote(uint32 emissionDay, address bidder) external;
     }
 }
 /// The series the target chain was told to issue, read back from its own log so
@@ -623,9 +633,9 @@ pub(crate) fn issued_series(
 }
 /// Whether Desis issued anything at all. Absent issuance means one of two very
 /// different things, and only the clearing event tells them apart.
-pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
+pub(crate) fn cleared_empty(url: &str, emission_day: u32) -> Option<bool> {
     let desis: Address = origin_venue::DESIS.parse().ok()?;
-    let day_topic = format!("0x{worldwide_day:064x}");
+    let day_topic = format!("0x{emission_day:064x}");
     let seen = |signature: &[u8]| {
         let topic0 = alloy_primitives::keccak256(signature);
         logs_of(

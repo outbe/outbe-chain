@@ -6,7 +6,7 @@
       "name": "claimAbandonedCommitBond",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -24,7 +24,7 @@
       "name": "claimAbandonedRefund",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -55,7 +55,7 @@
       "name": "dayPaymentToken",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -74,7 +74,7 @@
       "name": "finalizeAuction",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -169,7 +169,7 @@
       "name": "getAuctionStatus",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -198,7 +198,7 @@
       "name": "getBidLock",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -249,7 +249,7 @@
       "name": "getClaimableRefund",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -278,7 +278,7 @@
       "name": "getCommitBond",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -332,7 +332,7 @@
       "name": "lockCommitBond",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -355,7 +355,7 @@
       "name": "lockFunds",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -414,7 +414,7 @@
       "name": "redeemWinNote",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -438,7 +438,7 @@
       "name": "releaseCommitBond",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -456,7 +456,7 @@
       "name": "releaseRefund",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -558,7 +558,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -595,7 +595,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -620,7 +620,7 @@
       "name": "CommitBondLocked",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -645,7 +645,7 @@
       "name": "CommitBondReleased",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -670,7 +670,7 @@
       "name": "FinalizationNoOp",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -689,7 +689,7 @@
       "name": "FundsLocked",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -720,7 +720,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -863,7 +863,7 @@
       "name": "DayAssetRetired",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },

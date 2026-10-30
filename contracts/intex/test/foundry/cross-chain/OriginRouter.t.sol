@@ -21,7 +21,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
  * @title OriginRouterTest
  * @notice Foundry tests for OriginRouter
  * @dev Tests message encoding/decoding and access control.
- *      Auction messages are keyed by `worldwideDay`. Series messages (issuance/mark) are keyed by
+ *      Auction messages are keyed by `emissionDay`. Series messages (issuance/mark) are keyed by
  *      `seriesId`.
  */
 contract OriginRouterTest is CrossChainTest {
@@ -45,7 +45,7 @@ contract OriginRouterTest is CrossChainTest {
     address private admin = address(this);
     address private user = address(0x1);
 
-    uint32 private constant WORLDWIDE_DAY = 20250115; // yyyymmdd - the auction day (root)
+    uint32 private constant EMISSION_DAY = 20250115; // yyyymmdd - the auction day (root)
     bytes14 private constant SERIES_ID = "20250115-USD-U";
 
     function setUp() public {
@@ -91,10 +91,10 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     // --- Helpers ---
-    /// @dev Build a baseline AuctionStageStartParams payload keyed by WORLDWIDE_DAY.
+    /// @dev Build a baseline AuctionStageStartParams payload keyed by EMISSION_DAY.
     function _baseStageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory) {
         return IOriginRouter.AuctionStageStartParams({
-            worldwideDay: WORLDWIDE_DAY,
+            emissionDay: EMISSION_DAY,
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
@@ -114,7 +114,7 @@ contract OriginRouterTest is CrossChainTest {
         batch = new IOriginRouter.IssuanceInstructionsParams[](1);
         batch[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
-            worldwideDay: WORLDWIDE_DAY,
+            emissionDay: EMISSION_DAY,
             issuedAt: uint32(block.timestamp),
             issuedUnits: 10_000,
             promisLoadMinor: 1000,
@@ -161,7 +161,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendMarkCalled{value: 0.1 ether}(
-            WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+            EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
         );
     }
 
@@ -169,22 +169,20 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendAuctionStageClearing{value: 0.1 ether}(
-            WORLDWIDE_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING
+            EMISSION_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_CLEARING
         );
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, WORLDWIDE_DAY, 10_000, 100e6, 50);
+        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 10_000, 100e6, 50);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams()
-        );
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
@@ -194,7 +192,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, winners, 0, 0
+            BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, winners, 0, 0
         );
     }
 
@@ -205,7 +203,7 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.sendAuctionStageStart(_baseStageStartParams());
 
         vm.prank(intexFactory);
-        originRouter.sendIssuanceInstructions(BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, _baseIssuanceParams());
+        originRouter.sendIssuanceInstructions(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
     }
 
     function test_sendRefundInstructions_emptyWinners_ok() public {
@@ -214,7 +212,7 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.sendAuctionStageStart(_baseStageStartParams());
 
         vm.prank(desis);
-        originRouter.sendRefundInstructions(BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, new address[](0), 0, 0);
+        originRouter.sendRefundInstructions(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, new address[](0), 0, 0);
     }
 
     function test_sendRefundInstructions_revert_partial_outside_winners() public {
@@ -228,7 +226,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(desis);
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, 600_000, 1e6, winners, 2, 1
+            BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, winners, 2, 1
         );
     }
 

@@ -6,7 +6,7 @@ use outbe_intex::{IntexCallTrigger, SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 /// The call terms of the live profile. `api::call_terms` reads them once, and the
 /// auction start fixes them for the day.
@@ -29,7 +29,7 @@ impl IntexCallTerms {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssuanceParams {
     pub series_id: SeriesId,
-    pub worldwide_day: WorldwideDay,
+    pub emission_day: EmissionDate,
     pub issued_units: u32,
     pub promis_load_minor: u128,
     /// Entry price (per-unit, reference ISO stable-units, 1e6). Cost and floor derive from it.

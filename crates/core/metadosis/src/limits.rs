@@ -1,7 +1,7 @@
 //! Native Lysis capacity allocation and auction dispatch.
 
 use alloy_primitives::U256;
-use outbe_primitives::{error::Result, storage::StorageHandle, time::WorldwideDay};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_promislimit::PromisLimitContract;
 
 use crate::errors::MetadosisError;
@@ -116,22 +116,18 @@ pub(crate) fn apply_lysis_limit(
 
 pub(crate) fn apply_auction_brief(
     storage: StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
     emission_day: u32,
     split: &LimitSplit,
-    logical_anchor: u64,
 ) -> Result<()> {
     let is_active = !split.desis_limit_minor.is_zero();
     storage.with_checkpoint(|| {
         outbe_desis::api::dispatch_auction_brief(
             storage.clone(),
             outbe_desis::api::AuctionBrief {
-                worldwide_day,
-                emission_day,
+                emission_day: emission_day.into(),
                 desis_limit_minor: split.desis_limit_minor,
                 has_limit: is_active,
             },
-            logical_anchor,
             outbe_desis::api::BriefOverflowPolicy::Reject,
         )
         .map(|_| ())
@@ -142,6 +138,7 @@ pub(crate) fn apply_auction_brief(
 mod tests {
     use super::*;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::time::EmissionDate;
 
     #[test]
     fn native_split_preserves_the_day_and_carry_economic_vectors() {
@@ -174,9 +171,8 @@ mod tests {
                         .unwrap(),
                     U256::from(remaining as u64)
                 );
-                let day = WorldwideDay::new(20260101);
-                apply_auction_brief(storage.clone(), day, day.value(), &split, 1_699_920_005)
-                    .unwrap();
+                let day = EmissionDate::new(20260101);
+                apply_auction_brief(storage.clone(), day.value(), &split).unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
                     desis.pending_desis_limit_minor.read(&day).unwrap(),
@@ -224,13 +220,7 @@ mod tests {
                             nominal_total: nominal,
                         },
                     )?;
-                    apply_auction_brief(
-                        storage.clone(),
-                        WorldwideDay::new(20260101),
-                        20260101,
-                        &split,
-                        1_699_920_005,
-                    )
+                    apply_auction_brief(storage.clone(), 20260101, &split)
                 })
             });
             assert!(result.is_err());

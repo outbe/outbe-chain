@@ -70,7 +70,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function _liveStart(uint32 commitEnd) internal pure returns (bytes memory) {
-        return _start(DAY, commitEnd, 60e6, uint8(IIntexAuction.WorldwideDayState.Live));
+        return _start(DAY, commitEnd, 60e6, uint8(IIntexAuction.DayState.Live));
     }
 
     function _openLiveDay() internal returns (uint32 commitEnd) {
@@ -104,7 +104,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     function test_AStartWithOtherTermsIsAConflict() public {
         uint32 commitEnd = _openLiveDay();
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.CONFLICT);
-        _deliver(_start(DAY, commitEnd, 70e6, uint8(IIntexAuction.WorldwideDayState.Live)));
+        _deliver(_start(DAY, commitEnd, 70e6, uint8(IIntexAuction.DayState.Live)));
         assertEq(auction.getAuctionInfo(DAY).params.minIntexBidRate, 60e6, "the first START stands");
     }
 
@@ -132,7 +132,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
             0,
             1,
             0,
-            uint8(IIntexAuction.WorldwideDayState.Live)
+            uint8(IIntexAuction.DayState.Live)
         );
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_START, InboundReason.INVALID);
         _deliver(packet);
@@ -153,7 +153,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AClearingForACancelledDayIsObsolete() public {
-        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Cancelled)));
+        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.DayState.Cancelled)));
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY));
     }
@@ -206,7 +206,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultForACancelledDayIsObsolete() public {
-        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Cancelled)));
+        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.DayState.Cancelled)));
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
     }

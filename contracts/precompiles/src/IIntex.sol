@@ -38,7 +38,7 @@ interface IIntex {
         uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
-        uint32 worldwideDay;
+        uint32 emissionDay;
         /// @notice Units paid for and not yet mined. Their load belongs to the settler.
         uint32 settledUnits;
         /// @notice Units already burned into Promis. They leave `settledUnits` for good.

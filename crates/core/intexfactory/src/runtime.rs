@@ -7,7 +7,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use outbe_intex::{IntexContract, IntexState, SeriesRecord};
 use outbe_vaultrouter::settlement::{self, SettlementPayment};
@@ -46,7 +46,7 @@ pub fn issue_intex(
 
     let record = outbe_intex::CreateSeriesParams {
         series_id: params.series_id,
-        worldwide_day: params.worldwide_day,
+        emission_day: params.emission_day,
         issued_units: params.issued_units,
         promis_load_minor: params.promis_load_minor,
         entry_price_minor: params.entry_price_minor,
@@ -72,7 +72,7 @@ pub fn issue_intex(
             chain_id,
             payload: IOriginRouter::IssuanceInstructionsParams {
                 seriesId: params.series_id.into(),
-                worldwideDay: params.worldwide_day.into(),
+                emissionDay: params.emission_day.into(),
                 issuedAt: issued_at,
                 issuedUnits: params.issued_units,
                 promisLoadMinor: params.promis_load_minor,
@@ -134,7 +134,7 @@ pub fn pack_issuance_messages(
 /// Send a day's packed issuance messages, each stamped with its position in the chain's run.
 /// Relay-float-funded: value 0. The router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
-    for ((chain_id, worldwide_day), messages) in
+    for ((chain_id, emission_day), messages) in
         chunk_issuance_messages(pack_issuance_messages(legs))
     {
         let total_chunks = u16::try_from(messages.len())
@@ -145,7 +145,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
                 U256::ZERO,
                 IOriginRouter::sendIssuanceInstructionsCall {
                     dstChainId: chain_id,
-                    worldwideDay: worldwide_day,
+                    emissionDay: emission_day,
                     chunkIndex: chunk_index as u16,
                     totalChunks: total_chunks,
                     series,
@@ -158,7 +158,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
     Ok(())
 }
 
-/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header
+/// One (chain, emission day) run of issuance messages, in send order: what the chunk header
 /// numbers.
 pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
 
@@ -170,7 +170,7 @@ pub(crate) fn chunk_issuance_messages(
 ) -> Vec<IssuanceRun> {
     let mut runs: Vec<IssuanceRun> = Vec::new();
     for (chain_id, message) in packed {
-        let key = (chain_id, message[0].worldwideDay);
+        let key = (chain_id, message[0].emissionDay);
         match runs.iter_mut().find(|(run_key, _)| *run_key == key) {
             Some((_, messages)) => messages.push(message),
             None => runs.push((key, vec![message])),

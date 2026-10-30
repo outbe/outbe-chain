@@ -214,7 +214,7 @@ contract StoredBidStub {
 abstract contract RelayGasBase is Test {
     /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
     uint32 internal constant DST_CHAIN_ID = 56;
-    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    uint32 internal constant EMISSION_DAY = 20260501;
     uint256 internal constant SEEDED_BIDS = 256;
 
     TargetRouter internal router;
@@ -230,7 +230,7 @@ abstract contract RelayGasBase is Test {
         stub.setVisible(bids);
         vm.prank(address(router));
         uint256 before = gasleft();
-        router.relayBidsToOutbe(WORLDWIDE_DAY);
+        router.relayBidsToOutbe(EMISSION_DAY);
         spent = before - gasleft();
     }
 
@@ -318,7 +318,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
                 uint256(1),
                 _interop(DST_CHAIN_ID, originPeer),
                 recipient,
-                BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY)
+                BridgeMsgCodec.encodeAuctionStageClearing(EMISSION_DAY)
             )
         );
 
@@ -332,7 +332,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(EMISSION_DAY);
         emit log_named_uint("floor_chunks_placed", nextBatch);
         assertEq(totalBatches, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");

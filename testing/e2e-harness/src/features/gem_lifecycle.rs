@@ -116,14 +116,18 @@ fn issue_source_series(world: &mut World) {
         .expect("the Intex engine was deployed")
         .origin_router;
     let head = head_time(world);
-    let day = outbe_primitives::time::worldwide_day_from_timestamp(head);
+    // A closed day, so the merchant gems can read its price.
+    let day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(head),
+    )
+    .expect("date step");
     let now = u32::try_from(head).expect("timestamp fits a uint32");
 
     test_issuance::open_day(test_issuance::OpenDay {
         url: &url,
         sender_key: DEPLOYER_KEY,
         origin_router,
-        worldwide_day: day,
+        emission_day: day,
         now,
         reference_currency: USD_ISO,
         entry_price_minor: ENTRY_PRICE_MINOR,
@@ -136,12 +140,7 @@ fn issue_source_series(world: &mut World) {
     let series = test_issuance::issue_series(test_issuance::IssueSeries {
         url: &url,
         sender_key: DEPLOYER_KEY,
-        worldwide_day: day,
-        // A closed day, so the merchant gems can read its price.
-        emission_day: outbe_primitives::time::previous_date_key(
-            outbe_primitives::time::timestamp_to_date_key(head),
-        )
-        .expect("date step"),
+        emission_day: day,
         issued_at: head,
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,

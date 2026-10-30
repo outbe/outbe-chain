@@ -37,11 +37,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         mapping(uint256 tokenId => IIntexNFT1155.SeriesData) seriesData;
         /// @dev Every series ever created on this chain, in creation order.
         bytes14[] allSeries;
-        /// @dev Series ids issued per worldwide day.
-        mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
+        /// @dev Series ids issued per emission day.
+        mapping(uint32 emissionDay => bytes14[] seriesIds) seriesOfDay;
         /// @dev The series a day's currency pair was created under.
         mapping(
-            uint32 worldwideDay
+            uint32 emissionDay
                 => mapping(uint16 issuanceCurrency => mapping(uint16 referenceCurrency => bytes14 seriesId))
         ) seriesOfPair;
     }
@@ -78,22 +78,22 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /// @inheritdoc IIntexNFT1155
-    function worldwideDayOf(bytes14 seriesId) external view returns (uint32) {
-        return _s().seriesData[_issuedTokenId(seriesId)].worldwideDay;
+    function emissionDayOf(bytes14 seriesId) external view returns (uint32) {
+        return _s().seriesData[_issuedTokenId(seriesId)].emissionDay;
     }
 
     /// @inheritdoc IIntexNFT1155
-    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory) {
-        return _s().seriesOfDay[worldwideDay];
+    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory) {
+        return _s().seriesOfDay[emissionDay];
     }
 
     /// @inheritdoc IIntexNFT1155
-    function seriesIdOf(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency)
+    function seriesIdOf(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency)
         external
         view
         returns (bytes14)
     {
-        return _s().seriesOfPair[worldwideDay][issuanceCurrency][referenceCurrency];
+        return _s().seriesOfPair[emissionDay][issuanceCurrency][referenceCurrency];
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -132,15 +132,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             calledAt: 0,
             totalSupply: 0,
             state: IIntexNFT1155.IntexState.Issued,
-            worldwideDay: params.worldwideDay
+            emissionDay: params.emissionDay
         });
         $.seriesData[iTok] = seed;
 
         // Series remain in allSeries permanently even after supply reaches 0. This
         // preserves the historical record and avoids O(n) removal.
         $.allSeries.push(params.seriesId);
-        $.seriesOfDay[params.worldwideDay].push(params.seriesId);
-        $.seriesOfPair[params.worldwideDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
+        $.seriesOfDay[params.emissionDay].push(params.seriesId);
+        $.seriesOfPair[params.emissionDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
         emit MetadataUpdate(iTok);
     }

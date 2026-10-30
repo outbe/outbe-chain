@@ -23,7 +23,7 @@ import {ResetPeriod} from "../vendor/the-compact/types/ResetPeriod.sol";
  *      Integrates with The Compact for fund locking and handles auction finalization.
  *      EscrowAdapter acts as SPONSOR (owns ERC6909 in Compact) and ALLOCATOR (attest).
  *      Both roles bind to the proxy address.
- *      All escrow state is keyed by `worldwideDay` (uint32).
+ *      All escrow state is keyed by `emissionDay` (uint32).
  */
 contract EscrowAdapter is
     AccessControlUpgradeable,
@@ -71,12 +71,12 @@ contract EscrowAdapter is
         uint96 allocatorId;
         /// @dev Lock tag (allocatorId + scope + reset period) for deposits.
         bytes12 lockTag;
-        /// @dev Bid locks: worldwideDay => bidder => BidLock.
-        mapping(uint32 worldwideDay => mapping(address bidder => BidLock)) bidLocks;
+        /// @dev Bid locks: emissionDay => bidder => BidLock.
+        mapping(uint32 emissionDay => mapping(address bidder => BidLock)) bidLocks;
         /// @dev Per-series escrow state.
-        mapping(uint32 worldwideDay => AuctionEscrowState) auctionEscrowState;
-        /// @dev Commit-entry bonds: worldwideDay => bidder => CommitBond.
-        mapping(uint32 worldwideDay => mapping(address bidder => CommitBond)) commitBonds;
+        mapping(uint32 emissionDay => AuctionEscrowState) auctionEscrowState;
+        /// @dev Commit-entry bonds: emissionDay => bidder => CommitBond.
+        mapping(uint32 emissionDay => mapping(address bidder => CommitBond)) commitBonds;
         /// @dev Recipient of finalized auction proceeds (the router routing them cross-chain).
         address proceedsRecipient;
         /// @dev Assets rotated away from, keyed by the version they were active under.
@@ -84,7 +84,7 @@ contract EscrowAdapter is
         /// @dev Version of the active asset held in `compact`, `paymentToken` and `lockId`.
         uint8 currentAssetVersion;
         /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
-        mapping(uint32 worldwideDay => DayClearing) dayClearing;
+        mapping(uint32 emissionDay => DayClearing) dayClearing;
         /// @dev WinNotes the auction has not redeemed yet, across all days. One may hold no money.
         uint256 openWinNotes;
         /// @dev Payment-token units in one protocol unit for the active asset.
@@ -141,8 +141,8 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function dayPaymentToken(uint32 worldwideDay) external view override returns (IERC20) {
-        return _tokenOf(_s().auctionEscrowState[worldwideDay].assetVersion);
+    function dayPaymentToken(uint32 emissionDay) external view override returns (IERC20) {
+        return _tokenOf(_s().auctionEscrowState[emissionDay].assetVersion);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -286,7 +286,7 @@ contract EscrowAdapter is
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(uint32 worldwideDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
+    function lockFunds(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -295,25 +295,25 @@ contract EscrowAdapter is
         if (bidRate == 0) revert ZeroValue("bidRate");
         if (quantity == 0) revert ZeroValue("quantity");
         uint128 amount = _toPayment(_protocolAmount(quantity, basis, bidRate), _s().currentAssetVersion);
-        _validateLockInputs(worldwideDay, bidder, amount);
-        _executeLock(worldwideDay, bidder, amount, bidRate, quantity);
+        _validateLockInputs(emissionDay, bidder, amount);
+        _executeLock(emissionDay, bidder, amount, bidRate, quantity);
     }
 
     // --- Commit bonds ---
     /// @inheritdoc IEscrowAdapter
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.commitBid`,
     ///      forwarded through the `AUCTION_ROLE`-gated entry point (mirrors `lockFunds`).
-    function lockCommitBond(uint32 worldwideDay, address bidder, uint128 amount)
+    function lockCommitBond(uint32 emissionDay, address bidder, uint128 amount)
         external
         override
         onlyRole(AUCTION_ROLE)
         nonReentrant
     {
-        if (worldwideDay == 0) revert ZeroValue("worldwideDay");
+        if (emissionDay == 0) revert ZeroValue("emissionDay");
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
         EscrowAdapterStorage storage $ = _s();
-        if ($.commitBonds[worldwideDay][bidder].amount != 0) revert CommitBondAlreadyLocked();
+        if ($.commitBonds[emissionDay][bidder].amount != 0) revert CommitBondAlreadyLocked();
         amount = _toPayment(amount, $.currentAssetVersion);
 
         // CEI deviation mirrors `_executeLock`: the one-time lockId bootstrap inside
@@ -322,51 +322,51 @@ contract EscrowAdapter is
         $.paymentToken.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
 
-        $.commitBonds[worldwideDay][bidder] =
+        $.commitBonds[emissionDay][bidder] =
             CommitBond({amount: amount, lockedAt: uint32(block.timestamp), assetVersion: $.currentAssetVersion});
-        emit CommitBondLocked(worldwideDay, bidder, amount);
+        emit CommitBondLocked(emissionDay, bidder, amount);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function releaseCommitBond(uint32 worldwideDay, address bidder)
+    function releaseCommitBond(uint32 emissionDay, address bidder)
         external
         override
         onlyRole(AUCTION_ROLE)
         nonReentrant
     {
-        _releaseCommitBond(worldwideDay, bidder);
+        _releaseCommitBond(emissionDay, bidder);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function claimAbandonedCommitBond(uint32 worldwideDay, address bidder) external override nonReentrant {
-        CommitBond storage bond = _s().commitBonds[worldwideDay][bidder];
+    function claimAbandonedCommitBond(uint32 emissionDay, address bidder) external override nonReentrant {
+        CommitBond storage bond = _s().commitBonds[emissionDay][bidder];
         if (bond.amount == 0) revert CommitBondNotFound();
         uint32 claimableAt = bond.lockedAt + COMMIT_BOND_ABANDON_DELAY;
         if (block.timestamp < claimableAt) revert CommitBondNotYetAbandoned(claimableAt, uint32(block.timestamp));
-        _releaseCommitBond(worldwideDay, bidder);
+        _releaseCommitBond(emissionDay, bidder);
     }
 
     /// @dev Delete the bond record, withdraw from The Compact, and pay the stored bidder.
     ///      CEI: the delete precedes both external calls. A re-claim reverts `CommitBondNotFound`.
-    function _releaseCommitBond(uint32 worldwideDay, address bidder) internal {
+    function _releaseCommitBond(uint32 emissionDay, address bidder) internal {
         EscrowAdapterStorage storage $ = _s();
-        CommitBond memory bond = $.commitBonds[worldwideDay][bidder];
+        CommitBond memory bond = $.commitBonds[emissionDay][bidder];
         if (bond.amount == 0) revert CommitBondNotFound();
         uint128 amount = bond.amount;
 
         // Effects
-        delete $.commitBonds[worldwideDay][bidder];
+        delete $.commitBonds[emissionDay][bidder];
 
         // Interactions
         _withdrawFromCompact(bond.assetVersion, amount);
         _tokenOf(bond.assetVersion).safeTransfer(bidder, amount);
-        emit CommitBondReleased(worldwideDay, bidder, amount);
+        emit CommitBondReleased(emissionDay, bidder, amount);
     }
 
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
     function finalizeAuction(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         bytes32 receiveId,
         address[] calldata winners,
         uint16 partialIndex,
@@ -376,7 +376,7 @@ contract EscrowAdapter is
         bool completesDay
     ) external override onlyRole(RELAYER_ROLE) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
-        AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         if (state.finalized) revert AlreadyFinalized();
         if (completesDay) {
             state.finalized = true;
@@ -385,15 +385,15 @@ contract EscrowAdapter is
         if (partialWon != 0 && partialIndex >= winners.length) {
             revert PartialFillOutsideChunk(partialIndex, winners.length);
         }
-        if (winners.length != 0) _recordClearing(worldwideDay, clearingRate, basis);
+        if (winners.length != 0) _recordClearing(emissionDay, clearingRate, basis);
 
         uint128 totalOwed = 0;
         uint32 settled = 0;
         for (uint256 i = 0; i < winners.length; ++i) {
             address bidder = winners[i];
-            BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+            BidLock storage lock = $.bidLocks[emissionDay][bidder];
             if (lock.status != LockStatus.Locked) {
-                emit BidderRefundFailed(receiveId, worldwideDay, bidder, abi.encodeWithSelector(LockNotActive.selector));
+                emit BidderRefundFailed(receiveId, emissionDay, bidder, abi.encodeWithSelector(LockNotActive.selector));
                 continue;
             }
             uint16 quantity = lock.quantity;
@@ -401,7 +401,7 @@ contract EscrowAdapter is
                 if (partialWon >= quantity) {
                     emit BidderRefundFailed(
                         receiveId,
-                        worldwideDay,
+                        emissionDay,
                         bidder,
                         abi.encodeWithSelector(PartialFillNotPartial.selector, partialWon, quantity)
                     );
@@ -413,7 +413,7 @@ contract EscrowAdapter is
             uint256 paid = _protocolAmount(quantity, basis, clearingRate) * _scaleOf(state.assetVersion);
             if (paid > locked) {
                 emit BidderRefundFailed(
-                    receiveId, worldwideDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
+                    receiveId, emissionDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
                 );
                 continue;
             }
@@ -430,8 +430,8 @@ contract EscrowAdapter is
         }
 
         if (totalPaid > 0) state.totalLocked -= totalPaid;
-        emit AuctionEscrowFinalized(receiveId, worldwideDay, totalOwed, totalPaid, uint32(winners.length));
-        if (winners.length != 0 && settled == 0) emit FinalizationNoOp(worldwideDay, uint32(winners.length));
+        emit AuctionEscrowFinalized(receiveId, emissionDay, totalOwed, totalPaid, uint32(winners.length));
+        if (winners.length != 0 && settled == 0) emit FinalizationNoOp(emissionDay, uint32(winners.length));
 
         if (totalPaid > 0) {
             address recipient = $.proceedsRecipient;
@@ -444,9 +444,9 @@ contract EscrowAdapter is
 
     /// @dev Record the day's clearing terms on its first chunk with winners, and hold every later
     ///      one to them.
-    function _recordClearing(uint32 worldwideDay, uint64 clearingRate, uint128 basis) private {
+    function _recordClearing(uint32 emissionDay, uint64 clearingRate, uint128 basis) private {
         if (clearingRate == 0 || basis == 0) revert ClearingTermsMissing();
-        DayClearing storage clearing = _s().dayClearing[worldwideDay];
+        DayClearing storage clearing = _s().dayClearing[emissionDay];
         if (clearing.basis == 0) {
             clearing.clearingRate = clearingRate;
             clearing.basis = basis;
@@ -456,7 +456,7 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function releaseRefund(uint32 worldwideDay, address bidder)
+    function releaseRefund(uint32 emissionDay, address bidder)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -466,8 +466,8 @@ contract EscrowAdapter is
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
-        AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        BidLock storage lock = $.bidLocks[emissionDay][bidder];
+        AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         finalized = state.finalized;
         LockStatus status = lock.status;
         if (status == LockStatus.None) {
@@ -478,22 +478,22 @@ contract EscrowAdapter is
 
         (uint128 refund, uint32 claimableAt) = _claimable(state, lock);
         if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-        closed = _release(worldwideDay, state, lock, bidder, refund);
+        closed = _release(emissionDay, state, lock, bidder, refund);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function claimAbandonedRefund(uint32 worldwideDay, address bidder) external override nonReentrant {
+    function claimAbandonedRefund(uint32 emissionDay, address bidder) external override nonReentrant {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        BidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status == LockStatus.None) revert LockNotActive();
         uint32 claimableAt = lock.lockedAt + REFUND_ABANDON_DELAY;
         if (block.timestamp < claimableAt) revert RefundNotYetAbandoned(claimableAt, uint32(block.timestamp));
-        _release(worldwideDay, $.auctionEscrowState[worldwideDay], lock, bidder, lock.lockedAmount);
+        _release(emissionDay, $.auctionEscrowState[emissionDay], lock, bidder, lock.lockedAmount);
     }
 
     /// @dev Pay `refund` out of the lock. A winner's lock keeps its units, any other lock is deleted.
     function _release(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         AuctionEscrowState storage state,
         BidLock storage lock,
         address bidder,
@@ -503,14 +503,14 @@ contract EscrowAdapter is
             if (refund == 0) revert NothingToRefund();
             lock.lockedAmount = 0;
         } else {
-            delete _s().bidLocks[worldwideDay][bidder];
+            delete _s().bidLocks[emissionDay][bidder];
             closed = true;
         }
-        _payOut(worldwideDay, state, bidder, refund);
+        _payOut(emissionDay, state, bidder, refund);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function redeemWinNote(uint32 worldwideDay, address bidder)
+    function redeemWinNote(uint32 emissionDay, address bidder)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -518,23 +518,23 @@ contract EscrowAdapter is
         returns (uint16 units)
     {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        BidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status != LockStatus.Won) revert LockNotActive();
         units = lock.quantity;
         uint128 change = lock.lockedAmount;
-        delete $.bidLocks[worldwideDay][bidder];
+        delete $.bidLocks[emissionDay][bidder];
         --$.openWinNotes;
-        if (change > 0) _payOut(worldwideDay, $.auctionEscrowState[worldwideDay], bidder, change);
+        if (change > 0) _payOut(emissionDay, $.auctionEscrowState[emissionDay], bidder, change);
     }
 
     /// @dev Withdraw `amount` of the day's escrow from The Compact and pay it to `bidder`.
-    function _payOut(uint32 worldwideDay, AuctionEscrowState storage state, address bidder, uint128 amount) private {
+    function _payOut(uint32 emissionDay, AuctionEscrowState storage state, address bidder, uint128 amount) private {
         // A winner's payment already left with the day's proceeds, so this is all the lock held.
         state.totalLocked -= amount;
         uint8 version = state.assetVersion;
         _withdrawFromCompact(version, amount);
         _tokenOf(version).safeTransfer(bidder, amount);
-        emit FundsRefunded(bytes32(0), worldwideDay, bidder, amount);
+        emit FundsRefunded(bytes32(0), emissionDay, bidder, amount);
     }
 
     /// @dev What a live lock is owed and from when. A winner is owed its change at once.
@@ -552,36 +552,36 @@ contract EscrowAdapter is
 
     // --- Views ---
     /// @inheritdoc IEscrowAdapter
-    function getBidLock(uint32 worldwideDay, address bidder) external view override returns (BidLock memory) {
-        return _s().bidLocks[worldwideDay][bidder];
+    function getBidLock(uint32 emissionDay, address bidder) external view override returns (BidLock memory) {
+        return _s().bidLocks[emissionDay][bidder];
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getClaimableRefund(uint32 worldwideDay, address bidder)
+    function getClaimableRefund(uint32 emissionDay, address bidder)
         external
         view
         override
         returns (uint128 amount, uint32 claimableAt)
     {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[worldwideDay][bidder];
+        BidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status != LockStatus.Locked && lock.status != LockStatus.Won) return (0, 0);
-        return _claimable($.auctionEscrowState[worldwideDay], lock);
+        return _claimable($.auctionEscrowState[emissionDay], lock);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getCommitBond(uint32 worldwideDay, address bidder) external view override returns (CommitBond memory) {
-        return _s().commitBonds[worldwideDay][bidder];
+    function getCommitBond(uint32 emissionDay, address bidder) external view override returns (CommitBond memory) {
+        return _s().commitBonds[emissionDay][bidder];
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getAuctionStatus(uint32 worldwideDay)
+    function getAuctionStatus(uint32 emissionDay)
         external
         view
         override
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked)
     {
-        AuctionEscrowState memory state = _s().auctionEscrowState[worldwideDay];
+        AuctionEscrowState memory state = _s().auctionEscrowState[emissionDay];
         return (state.lockCount > 0, state.finalized, state.totalLocked);
     }
 
@@ -625,18 +625,18 @@ contract EscrowAdapter is
 
     // --- Internal helpers ---
     /// @notice Validate lock inputs before any state write.
-    /// @dev Rejects a zero `worldwideDay`, zero `bidder`, zero `amount`, and a bidder that already
+    /// @dev Rejects a zero `emissionDay`, zero `bidder`, zero `amount`, and a bidder that already
     ///      holds a non-`None` lock for the series.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
-    function _validateLockInputs(uint32 worldwideDay, address bidder, uint128 amount) internal view {
+    function _validateLockInputs(uint32 emissionDay, address bidder, uint128 amount) internal view {
         // Cheap sanity floor: the AUCTION_ROLE gate already guarantees a real, stage-gated series.
         // But a zero id is obviously bogus, so this check rejects it before any state write.
-        if (worldwideDay == 0) revert ZeroValue("worldwideDay");
+        if (emissionDay == 0) revert ZeroValue("emissionDay");
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
-        if (_s().bidLocks[worldwideDay][bidder].status != LockStatus.None) {
+        if (_s().bidLocks[emissionDay][bidder].status != LockStatus.None) {
             revert BidAlreadyLocked();
         }
     }
@@ -644,21 +644,21 @@ contract EscrowAdapter is
     /// @notice Execute the lock operation - transfer from the bidder and deposit to The Compact.
     /// @dev Bootstraps `lockId` and forced withdrawal on the first deposit, then records the
     ///      `BidLock` and bumps the per-series escrow stats.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
     /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealBid`,
     ///      forwarded through the `AUCTION_ROLE`-gated `lockFunds` entry point. Safety relies
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
-    function _executeLock(uint32 worldwideDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
+    function _executeLock(uint32 emissionDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
         internal
     {
         EscrowAdapterStorage storage $ = _s();
-        AuctionEscrowState storage state = $.auctionEscrowState[worldwideDay];
+        AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         // A day's locks share one asset, so its proceeds leave in one withdrawal.
         uint8 version = $.currentAssetVersion;
         if (state.lockCount != 0 && state.assetVersion != version) {
-            revert DayAssetRetired(worldwideDay, state.assetVersion);
+            revert DayAssetRetired(emissionDay, state.assetVersion);
         }
 
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
@@ -669,7 +669,7 @@ contract EscrowAdapter is
         _depositToCompact(amount);
 
         // Store lock data.
-        $.bidLocks[worldwideDay][bidder] = BidLock({
+        $.bidLocks[emissionDay][bidder] = BidLock({
             lockedAmount: amount,
             lockedAt: uint32(block.timestamp),
             status: LockStatus.Locked,
@@ -682,7 +682,7 @@ contract EscrowAdapter is
         ++state.lockCount;
         state.totalLocked += amount;
 
-        emit FundsLocked(worldwideDay, bidder, amount);
+        emit FundsLocked(emissionDay, bidder, amount);
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).

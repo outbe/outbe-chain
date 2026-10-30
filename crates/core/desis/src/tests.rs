@@ -7,7 +7,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
@@ -20,10 +20,9 @@ use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 const CHAIN_ID: u64 = 1;
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
-const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
-/// The emission day the production pipeline sells on `WORLDWIDE_DAY`.
-const EMISSION_DAY: u32 = 20260122;
-const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
+/// The emission day whose auction starts at `ANCHOR`, the midnight after it.
+const EMISSION_DAY: EmissionDate = EmissionDate::new(20231113);
+const NEXT_EMISSION_DAY: EmissionDate = EmissionDate::new(20231114);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// Registry indices of the seeded oracle pairs: the reference currency, and one
 /// more for the cases that price a day in something else.
@@ -93,7 +92,7 @@ fn the_first_priced_start_captures_its_currency_at_the_launch_rung() {
         assert_eq!(
             contract
                 .config_promis_load_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(LOAD_MINOR),
         );
@@ -117,7 +116,7 @@ fn the_fixture_load_is_the_one_the_ladder_picks() {
         assert_eq!(
             s.contract::<DesisContract>()
                 .config_promis_load_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(LOAD_MINOR),
         );
@@ -216,18 +215,18 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 fn brief_at(
     s: &StorageHandle,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     desis_limit_minor: u128,
     has_limit: bool,
 ) {
-    brief_at_rate(s, worldwide_day, desis_limit_minor, ENTRY_PRICE, has_limit)
+    brief_at_rate(s, emission_day, desis_limit_minor, ENTRY_PRICE, has_limit)
 }
 
 /// Brief a day whose auction starts at `NOW`, quoted at `rate`: both the entry
 /// price it will carry and the rate the PROMIS load is picked from.
 fn brief_at_rate(
     s: &StorageHandle,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     desis_limit_minor: u128,
     rate: u128,
     has_limit: bool,
@@ -235,38 +234,38 @@ fn brief_at_rate(
     brief_at_rate_from(
         s,
         RateBrief {
-            worldwide_day,
+            emission_day,
             desis_limit_minor,
             rate,
             has_limit,
-            now: NOW,
         },
     )
 }
 
-/// The day, limit, rate, and brief time a start prices from.
+/// The day, limit and rate a start prices from.
 struct RateBrief {
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     desis_limit_minor: u128,
     rate: u128,
     has_limit: bool,
-    now: u64,
 }
 
-/// The same, for a day briefed at `brief.now`. The brief time fixes both its schedule
-/// anchor and the UTC day its start will price from.
+/// The same, quoted at `brief.rate` on the brief's own emission day, which its start prices from.
 fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
-    seed_rate(s, brief.now, brief.rate);
+    let start = brief
+        .emission_day
+        .next()
+        .expect("date step")
+        .start_timestamp();
+    seed_rate(s, start, brief.rate);
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: brief.worldwide_day,
-                emission_day: brief.worldwide_day.value(),
+                emission_day: brief.emission_day,
                 desis_limit_minor: U256::from(brief.desis_limit_minor),
                 has_limit: brief.has_limit,
             },
-            brief.now,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap(),
@@ -275,7 +274,7 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
 }
 
 fn brief(s: &StorageHandle, has_limit: bool) {
-    brief_at(s, WORLDWIDE_DAY, 10 * LOAD_MINOR, has_limit);
+    brief_at(s, EMISSION_DAY, 10 * LOAD_MINOR, has_limit);
 }
 
 /// Brief and drive the schedule to `Revealing` (bid intake open, gate not armed).
@@ -292,7 +291,7 @@ fn arm_clearing(s: &StorageHandle) {
 
 /// Brief `units` whole Intex units and drive the schedule until the gate is armed.
 fn open_clearing(s: &StorageHandle, units: u128) {
-    brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
+    brief_at(s, EMISSION_DAY, units * LOAD_MINOR, true);
     runtime::schedule_tick(s, NOW).unwrap();
     runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
     arm_clearing(s);
@@ -304,7 +303,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
         s.clone(),
         runtime::Inbound {
             caller: ORIGIN_ROUTER_ADDRESS,
-            worldwide_day: WORLDWIDE_DAY,
+            emission_day: EMISSION_DAY,
             src_chain_id: chain,
         },
         total_batches,
@@ -325,7 +324,7 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain,
             },
             batch_index,
@@ -348,7 +347,7 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
 fn clear(s: &StorageHandle) -> crate::schema::ClearingResult {
-    runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
+    runtime::force_clear(s.clone(), EMISSION_DAY, NOW)
         .unwrap()
         .unwrap()
 }
@@ -397,7 +396,7 @@ fn priced_bids(rates: &[u32]) -> Vec<BidData> {
 fn origin(chain: u32) -> runtime::Inbound {
     runtime::Inbound {
         caller: ORIGIN_ROUTER_ADDRESS,
-        worldwide_day: WORLDWIDE_DAY,
+        emission_day: EMISSION_DAY,
         src_chain_id: chain,
     }
 }
@@ -422,7 +421,7 @@ fn chain_done_after_one_batch(s: &StorageHandle, arrived: u8, marked_total: u32)
     mark_done(s, SRC_CHAIN, 1, marked_total);
     s.contract::<DesisContract>()
         .chain_done
-        .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+        .read(&DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN))
         .unwrap()
 }
 
@@ -434,45 +433,39 @@ fn dispatch_auction_brief_records_the_brief() {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
                 emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Briefed
         );
         assert_eq!(
             contract
                 .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(10 * PROMIS_LOAD_MINOR)
         );
-        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 1);
         assert_eq!(
-            contract.brief_emission_day.read(&WORLDWIDE_DAY).unwrap(),
-            EMISSION_DAY
-        );
-        assert_eq!(
-            u64::from(contract.auction_at.read(&WORLDWIDE_DAY).unwrap()),
+            u64::from(contract.auction_at.read(&EMISSION_DAY).unwrap()),
             NOW - NOW % SECONDS_PER_DAY
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
         assert_eq!(
             contract.sched_active_at.read(&0).unwrap(),
-            WORLDWIDE_DAY.value()
+            EMISSION_DAY.value()
         );
         // A brief carries no terms: the day is priced when its auction starts.
         assert!(contract
-            .read_auction_config(WORLDWIDE_DAY)
+            .read_auction_config(EMISSION_DAY)
             .unwrap()
             .reference_prices
             .is_empty());
@@ -482,35 +475,23 @@ fn dispatch_auction_brief_records_the_brief() {
 #[test]
 fn dispatch_auction_brief_records_a_brief_with_no_limit() {
     with_storage(|s| {
-        let zero_wwd_receipt = crate::api::dispatch_auction_brief(
-            s.clone(),
-            crate::api::AuctionBrief {
-                worldwide_day: WorldwideDay::new(0),
-                emission_day: 0,
-                desis_limit_minor: U256::ZERO,
-                has_limit: false,
-            },
-            NOW,
-            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
-        )
-        .unwrap();
-        assert_eq!(zero_wwd_receipt, AuctionBriefReceipt::Accepted);
-        assert_eq!(
-            s.contract::<DesisContract>()
-                .sched_active_count
-                .read()
-                .unwrap(),
-            0
-        );
         assert!(crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WorldwideDay::new(0),
-                emission_day: 0,
+                emission_day: EmissionDate::new(0),
+                desis_limit_minor: U256::ZERO,
+                has_limit: false,
+            },
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
+        )
+        .is_err());
+        assert!(crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                emission_day: EmissionDate::new(0),
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .is_err());
@@ -518,36 +499,28 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: false,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Briefed
         );
-        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 0);
     });
 }
 
 fn strict_auction_brief(
     storage: StorageHandle<'_>,
     brief: crate::api::AuctionBrief,
-    logical_anchor: u64,
 ) -> outbe_primitives::error::Result<crate::api::AuctionBriefReceipt> {
-    crate::api::dispatch_auction_brief(
-        storage,
-        brief,
-        logical_anchor,
-        crate::api::BriefOverflowPolicy::Reject,
-    )
+    crate::api::dispatch_auction_brief(storage, brief, crate::api::BriefOverflowPolicy::Reject)
 }
 
 #[test]
@@ -556,32 +529,30 @@ fn strict_request_desis_limit_commits_the_exact_live_brief() {
         let receipt = strict_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            NOW,
         )
         .expect("strict request brief");
 
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Briefed
         );
         assert_eq!(
             contract
                 .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
-        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 1);
         // The brief carries no prices; the auction prices the day at its start.
         assert!(contract
-            .read_auction_config(WORLDWIDE_DAY)
+            .read_auction_config(EMISSION_DAY)
             .unwrap()
             .reference_prices
             .is_empty());
@@ -594,24 +565,20 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         strict_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true,
             },
-            NOW,
         )
         .unwrap();
 
         assert!(strict_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(9 * PROMIS_LOAD_MINOR),
                 has_limit: true
             },
-            NOW
         )
         .is_err());
 
@@ -619,7 +586,7 @@ fn strict_request_desis_limit_propagates_duplicate_refusal_without_overwrite() {
         assert_eq!(
             contract
                 .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(7 * PROMIS_LOAD_MINOR)
         );
@@ -633,18 +600,16 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
         assert!(strict_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            NOW
         )
         .is_err());
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::None
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
@@ -655,11 +620,11 @@ fn strict_request_desis_limit_rejects_an_oversized_limit_without_state() {
 fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
     let contract = storage.contract::<DesisContract>();
     assert_eq!(
-        contract.read_stage(WORLDWIDE_DAY).unwrap(),
+        contract.read_stage(EMISSION_DAY).unwrap(),
         AuctionStage::None
     );
     assert_eq!(
-        contract.read_auction_config(WORLDWIDE_DAY).unwrap(),
+        contract.read_auction_config(EMISSION_DAY).unwrap(),
         AuctionConfig {
             promis_load_minor: 0,
             call_trigger: Default::default(),
@@ -672,15 +637,15 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
     assert_eq!(
         contract
             .pending_desis_limit_minor
-            .read(&WORLDWIDE_DAY)
+            .read(&EMISSION_DAY)
             .unwrap(),
         U256::ZERO
     );
-    assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
-    assert_eq!(contract.auction_at.read(&WORLDWIDE_DAY).unwrap(), 0);
+    assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 0);
+    assert_eq!(contract.auction_at.read(&EMISSION_DAY).unwrap(), 0);
     assert_eq!(contract.sched_active_count.read().unwrap(), 0);
     assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0u32);
-    assert_eq!(contract.sched_active_slot.read(&WORLDWIDE_DAY).unwrap(), 0);
+    assert_eq!(contract.sched_active_slot.read(&EMISSION_DAY).unwrap(), 0);
 }
 
 #[test]
@@ -691,12 +656,10 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             strict_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                NOW,
             )
         });
         assert!(result.is_ok());
@@ -714,12 +677,10 @@ fn strict_request_desis_limit_rolls_back_every_partial_write_boundary() {
             strict_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                NOW,
             )
         });
         assert!(
@@ -740,50 +701,43 @@ fn strict_request_desis_limit_never_tops_up_a_live_auction() {
         strict_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(7 * LOAD_MINOR),
                 has_limit: true,
             },
-            NOW,
         )
         .unwrap();
         runtime::schedule_tick(&storage, NOW).unwrap();
 
         let before = storage.contract::<DesisContract>();
         assert_eq!(
-            before.read_stage(WORLDWIDE_DAY).unwrap(),
+            before.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Started
         );
-        let config = before.read_auction_config(WORLDWIDE_DAY).unwrap();
-        let anchor = before.auction_at.read(&WORLDWIDE_DAY).unwrap();
+        let config = before.read_auction_config(EMISSION_DAY).unwrap();
+        let anchor = before.auction_at.read(&EMISSION_DAY).unwrap();
 
         assert!(strict_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(9 * LOAD_MINOR),
                 has_limit: true
             },
-            NOW
         )
         .is_err());
 
         let after = storage.contract::<DesisContract>();
         assert_eq!(
-            after.read_stage(WORLDWIDE_DAY).unwrap(),
+            after.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Started
         );
         assert_eq!(
-            after
-                .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
-                .unwrap(),
+            after.pending_desis_limit_minor.read(&EMISSION_DAY).unwrap(),
             U256::from(7 * LOAD_MINOR)
         );
-        assert_eq!(after.read_auction_config(WORLDWIDE_DAY).unwrap(), config);
-        assert_eq!(after.auction_at.read(&WORLDWIDE_DAY).unwrap(), anchor);
+        assert_eq!(after.read_auction_config(EMISSION_DAY).unwrap(), config);
+        assert_eq!(after.auction_at.read(&EMISSION_DAY).unwrap(), anchor);
         assert_eq!(after.sched_active_count.read().unwrap(), 1);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(storage)
@@ -808,12 +762,10 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             crate::api::dispatch_auction_brief(
                 s.clone(),
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(10 * PROMIS_LOAD_MINOR),
                     has_limit: true
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
@@ -822,12 +774,10 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         assert!(crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                 has_limit: true
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
@@ -835,7 +785,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         assert_eq!(
             contract
                 .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(10 * PROMIS_LOAD_MINOR),
             "the first brief stays intact"
@@ -859,12 +809,10 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
             crate::api::dispatch_auction_brief(
                 s.clone(),
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::MAX,
                     has_limit: true
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
@@ -876,7 +824,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
         );
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::None
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
@@ -886,7 +834,7 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
     let event = IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
-    assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(event.emissionDay, EMISSION_DAY.value());
     assert_eq!(event.desisLimitMinor, U256::MAX);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
@@ -902,12 +850,10 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             crate::api::dispatch_auction_brief(
                 storage.clone(),
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(u128::MAX),
                     has_limit: true
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
@@ -922,12 +868,10 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
             crate::api::dispatch_auction_brief(
                 storage.clone(),
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: supply,
                     has_limit: true
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
@@ -943,7 +887,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
     let event = crate::precompile::IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
-    assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(event.emissionDay, EMISSION_DAY.value());
     assert_eq!(event.desisLimitMinor, supply);
     assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
@@ -959,39 +903,34 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WorldwideDay::new(0),
-                emission_day: 0,
+                emission_day: EmissionDate::new(0),
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
-        brief_at(&storage, WORLDWIDE_DAY, 1, true);
+        brief_at(&storage, EMISSION_DAY, 1, true);
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
 
+        // Its auction would anchor at 2106-02-08, past the u32 timestamps the wire carries.
         assert!(crate::api::dispatch_auction_brief(
             storage,
             crate::api::AuctionBrief {
-                worldwide_day: NEXT_WORLDWIDE_DAY,
-                emission_day: NEXT_WORLDWIDE_DAY.value(),
+                emission_day: EmissionDate::new(21060207),
                 desis_limit_minor: U256::MAX,
                 has_limit: true
             },
-            u64::MAX,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit
         )
         .is_err());
@@ -1009,12 +948,10 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             crate::api::dispatch_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
@@ -1030,12 +967,10 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             crate::api::dispatch_auction_brief(
                 storage,
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(7 * PROMIS_LOAD_MINOR),
                     has_limit: true,
                 },
-                NOW,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
             )
         });
@@ -1053,12 +988,10 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
         crate::api::dispatch_auction_brief(
             storage,
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
     });
@@ -1072,37 +1005,61 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
 
 // --- Late start ---
 
-fn brief_anchor_at(now: u64) -> u64 {
+#[test]
+fn a_brief_anchors_at_the_midnight_after_its_emission_day() {
     with_storage(|s| {
         assert_eq!(
             crate::api::dispatch_auction_brief(
                 s.clone(),
                 crate::api::AuctionBrief {
-                    worldwide_day: WORLDWIDE_DAY,
-                    emission_day: WORLDWIDE_DAY.value(),
+                    emission_day: EMISSION_DAY,
                     desis_limit_minor: U256::from(LOAD_MINOR),
                     has_limit: true
                 },
-                now,
                 crate::api::BriefOverflowPolicy::ReturnToPromisLimit
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
         );
-        u64::from(
-            s.contract::<DesisContract>()
-                .auction_at
-                .read(&WORLDWIDE_DAY)
-                .unwrap(),
-        )
-    })
+        let anchor = s
+            .contract::<DesisContract>()
+            .auction_at
+            .read(&EMISSION_DAY)
+            .unwrap();
+        assert_eq!(u64::from(anchor), ANCHOR);
+        assert_eq!(
+            u64::from(anchor),
+            EMISSION_DAY.next().unwrap().start_timestamp()
+        );
+    });
 }
 
+/// A brief that comes hours after the midnight still opens at that midnight and prices
+/// from its own emission day, not from the day before the late start.
 #[test]
-fn brief_anchors_to_its_own_midnight() {
-    assert_eq!(brief_anchor_at(ANCHOR + 4 * 3600), ANCHOR);
-    assert_eq!(brief_anchor_at(ANCHOR + 8 * 3600), ANCHOR);
-    assert_eq!(brief_anchor_at(ANCHOR + 12 * 3600), ANCHOR);
+#[cfg(not(feature = "e2e-test"))]
+fn a_late_brief_keeps_its_emission_day_anchor_and_prices() {
+    with_storage(|s| {
+        seed_rate(&s, ANCHOR + SECONDS_PER_DAY, 7 * ENTRY_PRICE);
+        let late = ANCHOR + 4 * 3600;
+        brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
+        runtime::schedule_tick(&s, late).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::Started
+        );
+        assert_eq!(
+            u64::from(contract.auction_at.read(&EMISSION_DAY).unwrap()),
+            ANCHOR
+        );
+        let rows = contract
+            .read_auction_config(EMISSION_DAY)
+            .unwrap()
+            .reference_prices;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].entry_price_minor, U256::from(ENTRY_PRICE));
+    });
 }
 
 /// The last moment a day may start: exactly the minimum commit window left.
@@ -1117,17 +1074,16 @@ fn a_start_with_the_minimum_commit_window_opens() {
         brief_at_rate_from(
             &s,
             RateBrief {
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: 10 * LOAD_MINOR,
                 rate: ENTRY_PRICE,
                 has_limit: true,
-                now: LAST_START,
             },
         );
         runtime::schedule_tick(&s, LAST_START).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Started
         );
@@ -1153,11 +1109,11 @@ fn start_at(
     }
     let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
         brief(&s);
-        seed_rate(&s, start, ENTRY_PRICE);
+        seed_rate(&s, ANCHOR, ENTRY_PRICE);
         runtime::schedule_tick(&s, start).unwrap();
         (
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .promis_limit()
@@ -1180,11 +1136,10 @@ fn a_start_past_the_minimum_commit_window_cancels_the_day_and_returns_its_limit(
         brief_at_rate_from(
             s,
             RateBrief {
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: 10 * LOAD_MINOR,
                 rate: ENTRY_PRICE,
                 has_limit: true,
-                now: start,
             },
         );
     });
@@ -1204,11 +1159,10 @@ fn a_late_day_is_cancelled_only_once_its_cancelled_start_is_sent() {
         brief_at_rate_from(
             s,
             RateBrief {
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: 10 * LOAD_MINOR,
                 rate: ENTRY_PRICE,
                 has_limit: true,
-                now: start,
             },
         );
     });
@@ -1220,12 +1174,10 @@ fn native_brief_at_now(s: &StorageHandle) {
     strict_auction_brief(
         s.clone(),
         crate::api::AuctionBrief {
-            worldwide_day: WORLDWIDE_DAY,
-            emission_day: WORLDWIDE_DAY.value(),
+            emission_day: EMISSION_DAY,
             desis_limit_minor: U256::from(10 * LOAD_MINOR),
             has_limit: true,
         },
-        NOW,
     )
     .expect("strict request brief");
 }
@@ -1281,7 +1233,7 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
         runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Cancelled,
             "an auction never opens on stale terms"
@@ -1309,7 +1261,7 @@ fn the_price_chosen_at_start_is_the_one_the_series_carries() {
         assert_eq!(clear(&s).issued_units, 2);
 
         let series_id =
-            SeriesId::for_pair(WORLDWIDE_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
+            SeriesId::for_pair(EMISSION_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(series.entry_price_minor, U256::from(ENTRY_PRICE));
     });
@@ -1322,10 +1274,10 @@ fn schedule_starts_a_brief_with_a_limit() {
         runtime::schedule_tick(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Started
         );
-        let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
+        let cfg = contract.read_auction_config(EMISSION_DAY).unwrap();
         assert_eq!(
             cfg.commit_bond_minor,
             100_000_000u128 * 1_000_000u128,
@@ -1342,10 +1294,10 @@ fn schedule_flips_to_revealing_at_commit_end() {
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Revealing
         );
-        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 0);
     });
 }
 
@@ -1358,20 +1310,20 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
         runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Clearing
         );
-        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 1);
         assert_eq!(
             contract
                 .pending_desis_limit_units
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             10
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 1);
         assert_eq!(
-            contract.clearing_deadline.read(&WORLDWIDE_DAY).unwrap(),
+            contract.clearing_deadline.read(&EMISSION_DAY).unwrap(),
             ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS
         );
     });
@@ -1385,10 +1337,10 @@ fn schedule_catches_up_over_missed_ticks() {
         runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Clearing
         );
-        assert_eq!(contract.clearing_initiated.read(&WORLDWIDE_DAY).unwrap(), 1);
+        assert_eq!(contract.clearing_initiated.read(&EMISSION_DAY).unwrap(), 1);
     });
 }
 
@@ -1399,7 +1351,7 @@ fn schedule_cancels_a_brief_with_no_limit() {
         runtime::schedule_tick(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Cancelled
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
@@ -1414,7 +1366,7 @@ fn schedule_cancels_a_missed_start() {
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY + 3600).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Cancelled
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
@@ -1473,11 +1425,10 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         brief_at_rate_from(
             &s,
             RateBrief {
-                worldwide_day: NEXT_WORLDWIDE_DAY,
+                emission_day: NEXT_EMISSION_DAY,
                 desis_limit_minor: 100 * LOAD_MINOR,
                 rate: 10 * ENTRY_PRICE,
                 has_limit: true,
-                now: NOW + SECONDS_PER_DAY,
             },
         );
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
@@ -1488,7 +1439,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(
             contract
                 .config_promis_load_minor
-                .read(&NEXT_WORLDWIDE_DAY)
+                .read(&NEXT_EMISSION_DAY)
                 .unwrap(),
             U256::from(LOAD_MINOR / 10),
             "the load stepped one decade down"
@@ -1496,7 +1447,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(
             contract
                 .pending_desis_limit_units
-                .read(&NEXT_WORLDWIDE_DAY)
+                .read(&NEXT_EMISSION_DAY)
                 .unwrap(),
             1_000,
             "the same PROMIS splits into ten times the tirage"
@@ -1504,7 +1455,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(
             contract
                 .config_min_bid_quantity
-                .read(&NEXT_WORLDWIDE_DAY)
+                .read(&NEXT_EMISSION_DAY)
                 .unwrap(),
             40,
             "the floor follows the tirage instead of staying at yesterday's scale"
@@ -1527,12 +1478,12 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
         relay_bids(&s, SRC_CHAIN, 100, 200);
         clear(&s);
 
-        brief_at(&s, NEXT_WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
+        brief_at(&s, NEXT_EMISSION_DAY, 10 * LOAD_MINOR, true);
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
             .config_min_bid_quantity
-            .read(&(NEXT_WORLDWIDE_DAY))
+            .read(&(NEXT_EMISSION_DAY))
             .unwrap();
         assert_eq!(min_qty, 4);
     });
@@ -1558,7 +1509,7 @@ fn process_bids_rejects_non_origin_caller() {
             s.clone(),
             runtime::Inbound {
                 caller: attacker,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN
             },
             0,
@@ -1567,7 +1518,7 @@ fn process_bids_rejects_non_origin_caller() {
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 0);
     });
 }
 
@@ -1581,7 +1532,7 @@ fn process_bids_rejects_an_oversized_batch() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1601,7 +1552,7 @@ fn process_bids_rejects_an_oversized_batch() {
         );
         // Refused at the intake, so clearing never sees a day it cannot refund.
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 0);
     });
 }
 
@@ -1618,7 +1569,7 @@ fn process_bids_accumulate_across_batches() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1630,7 +1581,7 @@ fn process_bids_accumulate_across_batches() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             1,
@@ -1640,16 +1591,16 @@ fn process_bids_accumulate_across_batches() {
         .unwrap();
 
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 5);
+        assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 5);
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Revealing
         );
         // No marker yet, so the chain is not done.
         assert!(
             contract
                 .chain_done
-                .read(&DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN))
+                .read(&DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN))
                 .unwrap()
                 == 0
         );
@@ -1671,13 +1622,13 @@ fn marker_arriving_before_batches_still_finalizes() {
         // Marker races ahead of the batches over the unordered bridge: it is recorded, and the
         // batch that completes the set finalizes the chain.
         mark_done(&s, SRC_CHAIN, 1, 2);
-        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        let key = DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN);
         assert!(s.contract::<DesisContract>().chain_done.read(&key).unwrap() == 0);
         runtime::process_bids_batch(
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1707,7 +1658,7 @@ fn a_redelivered_batch_counts_once() {
                 s.clone(),
                 runtime::Inbound {
                     caller: ORIGIN_ROUTER_ADDRESS,
-                    worldwide_day: WORLDWIDE_DAY,
+                    emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,
                 },
                 0,
@@ -1717,7 +1668,7 @@ fn a_redelivered_batch_counts_once() {
             .unwrap();
         }
         let contract = DesisContract::new(s.clone());
-        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        let key = DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN);
         assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 3);
         assert_eq!(
             contract.chain_arrived_mask.read(&key).unwrap(),
@@ -1735,7 +1686,7 @@ fn a_batch_declaring_another_total_is_refused() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1747,7 +1698,7 @@ fn a_batch_declaring_another_total_is_refused() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN
             },
             1,
@@ -1756,7 +1707,7 @@ fn a_batch_declaring_another_total_is_refused() {
         )
         .is_err());
         let contract = DesisContract::new(s.clone());
-        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        let key = DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN);
         assert_eq!(contract.chain_total_batches.read(&key).unwrap(), 2);
         assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 1);
     });
@@ -1771,7 +1722,7 @@ fn no_bids_clears_as_no_sale() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1788,7 +1739,7 @@ fn no_bids_clears_as_no_sale() {
         assert!(result.winners.is_empty());
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Cleared
         );
@@ -1807,7 +1758,7 @@ fn clearing_allocates_up_to_the_limit() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1830,7 +1781,7 @@ fn clearing_transitions_to_cleared() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -1842,7 +1793,7 @@ fn clearing_transitions_to_cleared() {
         clear(&s);
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Cleared
         );
         // The gate is released once the day clears.
@@ -1858,11 +1809,11 @@ fn start_day(
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
     let (stage, unallocated) = StorageHandle::enter(&mut storage, |s| {
-        brief_at(&s, WORLDWIDE_DAY, desis_limit_minor, has_limit);
+        brief_at(&s, EMISSION_DAY, desis_limit_minor, has_limit);
         runtime::schedule_tick(&s, NOW).unwrap();
         (
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             outbe_promislimit::PromisLimitContract::new(s.clone())
                 .promis_limit()
@@ -1915,7 +1866,7 @@ fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
     assert_eq!(stage, AuctionStage::Cancelled);
     let records = allocation_records(&events);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(records[0].emissionDay, EMISSION_DAY.value());
     assert_eq!(records[0].desisLimitMinor, U256::from(LOAD_MINOR - 1));
     assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
 }
@@ -1971,13 +1922,13 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
     let stage = StorageHandle::enter(&mut storage, |s| {
-        brief_at(&s, WORLDWIDE_DAY, 0, false);
+        brief_at(&s, EMISSION_DAY, 0, false);
         unprice_day(&s, NOW);
         let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
+        assert_eq!(contract.brief_has_limit.read(&EMISSION_DAY).unwrap(), 0);
         runtime::schedule_tick(&s, NOW).unwrap();
         s.contract::<DesisContract>()
-            .read_stage(WORLDWIDE_DAY)
+            .read_stage(EMISSION_DAY)
             .unwrap()
     });
     let events = storage
@@ -2014,7 +1965,7 @@ fn clear_bids_below_min_price_skipped() {
         open_clearing(&s, 3);
         s.contract::<DesisContract>()
             .config_min_bid_rate
-            .write(&WORLDWIDE_DAY, 100)
+            .write(&EMISSION_DAY, 100)
             .unwrap();
         let low_bids = vec![
             BidData {
@@ -2038,7 +1989,7 @@ fn clear_bids_below_min_price_skipped() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2081,7 +2032,7 @@ fn clear_refunds_equal_locked_minus_paid() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2154,7 +2105,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
     use outbe_promislimit::PromisLimitContract;
 
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 3 * LOAD_MINOR + 7, true);
+        brief_at(&s, EMISSION_DAY, 3 * LOAD_MINOR + 7, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
@@ -2162,7 +2113,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2178,7 +2129,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
         assert_eq!(
             contract
                 .pending_desis_limit_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::ZERO
         );
@@ -2230,7 +2181,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain_a,
             },
             0,
@@ -2240,12 +2191,12 @@ fn force_clear_waits_then_fires_when_all_done() {
         .unwrap();
         mark_done(&s, chain_a, 1, 1);
         // Before the deadline, a missing chain keeps the gate closed.
-        assert!(runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
+        assert!(runtime::force_clear(s.clone(), EMISSION_DAY, NOW)
             .unwrap()
             .is_none());
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Clearing
         );
@@ -2255,7 +2206,7 @@ fn force_clear_waits_then_fires_when_all_done() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain_b,
             },
             0,
@@ -2264,11 +2215,11 @@ fn force_clear_waits_then_fires_when_all_done() {
         )
         .unwrap();
         mark_done(&s, chain_b, 1, 1);
-        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW).unwrap();
+        let result = runtime::force_clear(s.clone(), EMISSION_DAY, NOW).unwrap();
         assert!(result.is_some());
         assert_eq!(
             s.contract::<DesisContract>()
-                .read_stage(WORLDWIDE_DAY)
+                .read_stage(EMISSION_DAY)
                 .unwrap(),
             AuctionStage::Cleared
         );
@@ -2302,7 +2253,7 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
         "the clearing records its Desis Allocation once"
     );
     let allocation = &records[0];
-    assert_eq!(allocation.worldwideDay, WORLDWIDE_DAY.value());
+    assert_eq!(allocation.emissionDay, EMISSION_DAY.value());
     assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
     assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));
     let unused = logs
@@ -2335,7 +2286,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain_a,
             },
             0,
@@ -2346,14 +2297,14 @@ fn force_clear_skips_missing_chain_after_deadline() {
         mark_done(&s, chain_a, 1, 1);
         // Past the deadline the gate clears without chain B.
         let deadline = ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
-        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1).unwrap();
+        let result = runtime::force_clear(s.clone(), EMISSION_DAY, deadline + 1).unwrap();
         assert!(result.is_some());
         let result = result.unwrap();
         // Only chain A's bid participated.
         assert_eq!(result.issued_units, 1);
         assert!(result.bidder_chains.iter().all(|&c| c == chain_a));
         s.contract::<DesisContract>()
-            .read_stage(WORLDWIDE_DAY)
+            .read_stage(EMISSION_DAY)
             .unwrap()
     });
     assert_eq!(cleared, AuctionStage::Cleared);
@@ -2364,7 +2315,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
     let found = storage.get_events(desis_addr).iter().any(|log| {
         log.topics().first() == Some(&skip_sig)
             && IDesis::ChainSkipped::decode_log_data(log)
-                .map(|ev| ev.worldwideDay == WORLDWIDE_DAY.value() && ev.srcChainId == chain_b)
+                .map(|ev| ev.emissionDay == EMISSION_DAY.value() && ev.srcChainId == chain_b)
                 .unwrap_or(false)
     });
     assert!(found, "expected ChainSkipped for the missing chain");
@@ -2389,7 +2340,7 @@ fn tick_gate_clears_ready_day() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2404,7 +2355,7 @@ fn tick_gate_clears_ready_day() {
         runtime::tick_gate(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Cleared
         );
         assert_eq!(contract.gate_active_count.read().unwrap(), 0);
@@ -2450,7 +2401,7 @@ fn test_iface_id_matches_selector_xor() {
 /// drive the schedule until the clearing gate is armed. The fixture's own currency is
 /// included only when it is one of the `references`.
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
-    brief_at(s, WORLDWIDE_DAY, units * LOAD_MINOR, true);
+    brief_at(s, EMISSION_DAY, units * LOAD_MINOR, true);
     unprice_day(s, NOW);
     let mut next_pair_id = OTHER_PAIR_ID;
     for &iso_code in references {
@@ -2490,7 +2441,7 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain,
             },
             0,
@@ -2503,10 +2454,10 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         let result = clear(&s);
         assert_eq!(result.issued_units, 3);
 
-        let usd = SeriesId::for_pair(WORLDWIDE_DAY.value(), 840, 840).unwrap();
-        let lira = SeriesId::for_pair(WORLDWIDE_DAY.value(), 949, 978).unwrap();
-        assert_eq!(usd.to_string(), "20260101-USD");
-        assert_eq!(lira.to_string(), "20260101-TRY-E");
+        let usd = SeriesId::for_pair(EMISSION_DAY.value(), 840, 840).unwrap();
+        let lira = SeriesId::for_pair(EMISSION_DAY.value(), 949, 978).unwrap();
+        assert_eq!(usd.to_string(), "20231113-USD");
+        assert_eq!(lira.to_string(), "20231113-TRY-E");
 
         // Each series holds only its own winners and its own reference price.
         let usd_series = outbe_intex::api::get_series(&s, usd).unwrap();
@@ -2530,7 +2481,7 @@ fn a_day_priced_in_every_reference_currency_starts_with_one_row_each() {
         open_clearing_priced(&s, 4, &outbe_oracle::api::REFERENCE_CURRENCIES);
         let config = s
             .contract::<DesisContract>()
-            .read_auction_config(WORLDWIDE_DAY)
+            .read_auction_config(EMISSION_DAY)
             .unwrap();
         assert_eq!(
             config
@@ -2658,7 +2609,7 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2695,7 +2646,7 @@ fn rate_lock_matches_the_escrow_vectors() {
 #[cfg(not(feature = "e2e-test"))]
 fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
+        brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
         unprice_day(&s, NOW);
         runtime::schedule_tick(&s, NOW).unwrap();
 
@@ -2703,7 +2654,7 @@ fn a_day_nobody_priced_carries_the_launch_load_and_captures_nothing() {
         assert_eq!(
             contract
                 .config_promis_load_minor
-                .read(&WORLDWIDE_DAY)
+                .read(&EMISSION_DAY)
                 .unwrap(),
             U256::from(LOAD_MINOR),
             "the day carries the launch rung, not the widest one"
@@ -2723,7 +2674,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
     // Settlement still has to complete, so the day must reach a terminal stage
     // instead of failing the brief.
     with_storage(|s| {
-        brief_at(&s, WORLDWIDE_DAY, 4 * LOAD_MINOR, true);
+        brief_at(&s, EMISSION_DAY, 4 * LOAD_MINOR, true);
         unprice_day(&s, NOW);
 
         runtime::schedule_tick(&s, NOW).unwrap();
@@ -2731,7 +2682,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
 
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Cancelled,
             "an unpriced day ends as a closed record"
         );
@@ -2768,7 +2719,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: chain,
             },
             0,
@@ -2788,7 +2739,7 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
 
 // --- Inbound acknowledgements: messages that can never apply are acked, not rejected ---
 
-const UNBRIEFED_DAY: WorldwideDay = WorldwideDay::new(20260202);
+const UNBRIEFED_DAY: EmissionDate = EmissionDate::new(20260202);
 fn inbound_storage() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
@@ -2823,7 +2774,7 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: UNBRIEFED_DAY,
+                emission_day: UNBRIEFED_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2847,7 +2798,7 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2861,7 +2812,7 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2894,7 +2845,7 @@ fn an_early_marker_stands_against_a_conflicting_one() {
                 s.clone(),
                 runtime::Inbound {
                     caller: ORIGIN_ROUTER_ADDRESS,
-                    worldwide_day: WORLDWIDE_DAY,
+                    emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,
                 },
                 1,
@@ -2906,7 +2857,7 @@ fn an_early_marker_stands_against_a_conflicting_one() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2915,7 +2866,7 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         )
         .unwrap();
         let contract = DesisContract::new(s.clone());
-        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        let key = DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN);
         assert_eq!(contract.chain_done_bids.read(&key).unwrap(), 1);
         assert_eq!(contract.chain_done.read(&key).unwrap(), 1);
     });
@@ -2931,7 +2882,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: WORLDWIDE_DAY,
+                emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
             },
             0,
@@ -2946,7 +2897,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
                 s.clone(),
                 runtime::Inbound {
                     caller: ORIGIN_ROUTER_ADDRESS,
-                    worldwide_day: WORLDWIDE_DAY,
+                    emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,
                 },
                 2,
@@ -2955,7 +2906,7 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
             .unwrap();
         }
         let contract = DesisContract::new(s.clone());
-        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        let key = DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN);
         assert_eq!(contract.chain_done_batches.read(&key).unwrap(), 2);
         assert_eq!(contract.chain_done_bids.read(&key).unwrap(), 3);
     });
@@ -2969,12 +2920,10 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
         let error = crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: WORLDWIDE_DAY,
-                emission_day: WORLDWIDE_DAY.value(),
+                emission_day: EMISSION_DAY,
                 desis_limit_minor: U256::MAX,
                 has_limit: true,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::Reject,
         )
         .unwrap_err();
@@ -2987,7 +2936,7 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
         );
         let contract = s.contract::<DesisContract>();
         assert_eq!(
-            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::None
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
@@ -3003,7 +2952,7 @@ fn dispatch_auction_brief_oversized_limit_rejects_under_the_reject_policy() {
 /// A miss only costs another round, so the estimate has to be close, not exact.
 #[test]
 fn a_clearing_round_is_sized_from_the_chains_recent_days() {
-    let day = WorldwideDay::new(20260501);
+    let day = EmissionDate::new(20260501);
     let chain = 56u32;
     with_targets(&[chain], |s| {
         let quiet = crate::runtime::clearing_round_gas(&s, day, chain).unwrap();
@@ -3013,7 +2962,7 @@ fn a_clearing_round_is_sized_from_the_chains_recent_days() {
         contract
             .chain_bid_count
             .write(
-                &DesisContract::chain_key(WorldwideDay::new(busy), chain),
+                &DesisContract::chain_key(EmissionDate::new(busy), chain),
                 300,
             )
             .unwrap();

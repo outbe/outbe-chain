@@ -122,7 +122,7 @@
       "name": "bidsRelay",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -251,7 +251,7 @@
       "name": "issuanceChunkApplied",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -275,7 +275,7 @@
       "name": "issuanceChunks",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -338,7 +338,7 @@
       ],
       "outputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -425,7 +425,7 @@
       "name": "refundChunks",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -449,7 +449,7 @@
       "name": "relayBids",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -462,7 +462,7 @@
       "name": "relayBidsToOutbe",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -512,7 +512,7 @@
       "name": "reportBidsRemaining",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -556,7 +556,7 @@
       "name": "routeProceedsExt",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -712,7 +712,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -743,7 +743,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -768,7 +768,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -793,7 +793,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -818,7 +818,7 @@
       "name": "BidsRelayComplete",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -837,7 +837,7 @@
       "name": "BidsRelayIncomplete",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -868,7 +868,7 @@
           "internalType": "bytes32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -893,7 +893,7 @@
       "name": "BidsRemainingUnreported",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -962,7 +962,7 @@
       "name": "IssuanceCompleted",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1070,7 +1070,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1089,7 +1089,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1139,7 +1139,7 @@
       "name": "ProceedsRouted",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1170,7 +1170,7 @@
           "internalType": "uint32"
         },
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1460,7 +1460,7 @@
       "name": "NoBidsToRelay",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1610,7 +1610,7 @@
       "name": "TooManyBidsBatches",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },

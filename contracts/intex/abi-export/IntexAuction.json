@@ -63,7 +63,7 @@
       "name": "auctionRunningCounts",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -87,14 +87,14 @@
       "name": "auctionStart",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
         {
           "name": "dayState",
           "type": "uint8",
-          "internalType": "enum IIntexAuction.WorldwideDayState"
+          "internalType": "enum IIntexAuction.DayState"
         },
         {
           "name": "schedule",
@@ -198,7 +198,7 @@
       "name": "cancelCommit",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -211,7 +211,7 @@
       "name": "claimCommitBond",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -229,7 +229,7 @@
       "name": "claimRefund",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -247,7 +247,7 @@
       "name": "commitBid",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -265,7 +265,7 @@
       "name": "committedBidsByHash",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -345,7 +345,7 @@
       "name": "executeAuctionClearing",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -373,7 +373,7 @@
       "name": "getAuctionDetails",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -385,9 +385,9 @@
           "internalType": "struct IIntexAuction.AuctionData",
           "components": [
             {
-              "name": "worldwideDayState",
+              "name": "dayState",
               "type": "uint8",
-              "internalType": "enum IIntexAuction.WorldwideDayState"
+              "internalType": "enum IIntexAuction.DayState"
             },
             {
               "name": "schedule",
@@ -556,7 +556,7 @@
       "name": "getAuctionInfo",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -568,9 +568,9 @@
           "internalType": "struct IIntexAuction.AuctionData",
           "components": [
             {
-              "name": "worldwideDayState",
+              "name": "dayState",
               "type": "uint8",
-              "internalType": "enum IIntexAuction.WorldwideDayState"
+              "internalType": "enum IIntexAuction.DayState"
             },
             {
               "name": "schedule",
@@ -702,7 +702,7 @@
       "name": "getAuctionStage",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -821,7 +821,7 @@
       "name": "redeemWinNote",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -857,7 +857,7 @@
       "name": "revealBid",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -900,7 +900,7 @@
       "name": "revealedBidOf",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -956,7 +956,7 @@
       "name": "revealedBidsByBidder",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -980,7 +980,7 @@
       "name": "revealedBidsCount",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -999,7 +999,7 @@
       "name": "revealedBidsSlice",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -1091,7 +1091,7 @@
       "name": "startClearingStage",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1154,7 +1154,7 @@
       "name": "AuctionClearingExecuted",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1179,7 +1179,7 @@
       "name": "AuctionStageUpdated",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1210,7 +1210,7 @@
       "name": "BidCommitted",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1235,7 +1235,7 @@
       "name": "BidRevealed",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1278,7 +1278,7 @@
       "name": "CommitCancelled",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1442,7 +1442,7 @@
       "name": "WinNoteRedeemed",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
@@ -1687,7 +1687,7 @@
       "name": "ReferenceCurrencyNotPriced",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -1708,7 +1708,7 @@
       "name": "SeriesNotCreated",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },

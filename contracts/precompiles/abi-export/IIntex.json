@@ -129,7 +129,7 @@
             "internalType": "uint16"
           },
           {
-            "name": "worldwideDay",
+            "name": "emissionDay",
             "type": "uint32",
             "internalType": "uint32"
           },

@@ -21,7 +21,7 @@ contract LoopStub {
 
     function auctionStart(
         uint32,
-        IIntexAuction.WorldwideDayState,
+        IIntexAuction.DayState,
         IIntexAuction.AuctionSchedule calldata,
         IIntexAuction.AuctionParams calldata
     ) external {}
@@ -95,7 +95,7 @@ contract LoopbackRelayRoundTest is CrossChainTest {
 
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        p.worldwideDay = DAY;
+        p.emissionDay = DAY;
         p.dayState = 1;
         vm.prank(desis);
         origin.sendAuctionStageStart(p);
