@@ -20,7 +20,7 @@ use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLO
 
 pub(super) const CHAIN_ID: u64 = 1;
 pub(super) const REFERENCE_ISO: u16 = 840;
-pub(super) const ISSUED_AT: u32 = 1_700_000_000;
+pub(super) const ISSUED_AT: u64 = 1_700_000_000;
 pub(super) use outbe_primitives::time::{SECONDS_PER_DAY as DAY, SECONDS_PER_DAY_U32};
 pub(super) const TRIGGER: u64 = 1_000_000;
 pub(super) const WINDOW_DAYS: u32 = 28;
@@ -35,18 +35,18 @@ pub(super) fn fill_window(oracle: &OracleContract, latest: u32, pair: AddressPai
 
 /// Each day's candidate is issued on its own day, so it opens its own call group.
 pub(super) fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
-    let issued_at = ISSUED_AT - (worldwide_day % 1000) * SECONDS_PER_DAY_U32;
+    let issued_at = ISSUED_AT - u64::from((worldwide_day % 1000) * SECONDS_PER_DAY_U32);
     seed_candidate_at(s, worldwide_day, issued_at, TRIGGER)
 }
 
 fn series_of(worldwide_day: u32) -> SeriesId {
-    SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, REFERENCE_ISO).unwrap()
+    SeriesId::for_pair(worldwide_day, 840, REFERENCE_ISO).unwrap()
 }
 
 fn seed_young_candidate_at(
     s: &StorageHandle<'_>,
     worldwide_day: u32,
-    issued_at: u32,
+    issued_at: u64,
     trigger: u64,
 ) {
     seed_candidate_at(s, worldwide_day, issued_at, trigger)
@@ -56,7 +56,7 @@ fn seed_young_candidate_at(
 fn seed_candidate_at(
     s: &StorageHandle<'_>,
     worldwide_day: u32,
-    issued_at: u32,
+    issued_at: u64,
     trigger_minor: u64,
 ) {
     currencies::seed_series(s, worldwide_day, issued_at, trigger_minor, REFERENCE_ISO)
@@ -64,7 +64,7 @@ fn seed_candidate_at(
 
 pub(super) fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
     days.filter(|d| {
-        let series_id = SeriesId::for_pair(WorldwideDay::new(*d), 840, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(*d, 840, REFERENCE_ISO).unwrap();
         series_state(s, series_id) == outbe_intex::IntexState::Called
     })
     .count() as u32
@@ -75,7 +75,7 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         seed_called_candidate(&s, 20260101);
@@ -106,10 +106,7 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
             factory.group_members(key).unwrap(),
             vec![series_of(20260101)]
         );
-        assert_eq!(
-            factory.call_group_called_at.read(&key).unwrap(),
-            scan_ts as u32
-        );
+        assert_eq!(factory.call_group_called_at.read(&key).unwrap(), scan_ts);
     });
 }
 
@@ -158,7 +155,7 @@ fn priced_window(s: &StorageHandle<'_>, scan_ts: u64) {
 #[test]
 fn the_sweep_waits_until_settlement_has_actually_closed() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         seed_called_candidate(&s, 20260101);
         let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
@@ -181,11 +178,10 @@ fn the_sweep_waits_until_settlement_has_actually_closed() {
 #[test]
 fn expiry_returns_only_the_load_nobody_realized() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         seed_called_candidate(&s, 20260101);
-        let series_id =
-            SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(20260101, 840, REFERENCE_ISO).unwrap();
         outbe_intex::api::record_settled_units(&s, series_id, owner(), 30).unwrap();
         outbe_intex::api::record_gem_factory_units(&s, series_id, owner(), 25).unwrap();
 
@@ -205,7 +201,7 @@ fn expiry_returns_only_the_load_nobody_realized() {
 #[test]
 fn a_group_credits_every_member_exactly_once() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         let (members, deadline) = called_two_member_group(&s, scan_ts);
         sweep_at(&s, due(deadline));
@@ -223,7 +219,7 @@ fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
-        let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             worldwide_day: day,
@@ -263,7 +259,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for &issuance in ISO_4217_NUMERIC_CODES.iter().take(width.into()) {
-        let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+        let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
             worldwide_day: day,
@@ -292,7 +288,7 @@ fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<Se
 #[test]
 fn a_group_wider_than_the_write_budget_is_called_whole() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         let width = SWEEP_WRITES_PER_BLOCK as u16 + 1;
         let (members, deadline) = called_wide_group(&s, scan_ts, width);
@@ -307,7 +303,7 @@ fn a_group_wider_than_the_write_budget_is_called_whole() {
 #[test]
 fn a_group_wider_than_the_write_budget_expires_in_one_step() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         let width = SWEEP_WRITES_PER_BLOCK as u16 + 1;
         let (members, deadline) = called_wide_group(&s, scan_ts, width);
@@ -327,7 +323,7 @@ fn a_group_wider_than_the_write_budget_expires_in_one_step() {
 #[test]
 fn a_group_with_a_failing_member_is_deferred_whole() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         let (members, deadline) = called_two_member_group(&s, scan_ts);
         let registry = outbe_intex::IntexContract::new(s.clone());
@@ -360,7 +356,7 @@ fn a_group_with_a_failing_member_is_deferred_whole() {
 #[test]
 fn a_second_pass_over_an_expired_group_credits_nothing() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         seed_called_candidate(&s, 20260101);
         let deadline = call_and_deadline(&s, series_of(20260101), scan_ts);
@@ -379,7 +375,7 @@ fn a_second_pass_over_an_expired_group_credits_nothing() {
 #[test]
 fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
     with_factory(|s| {
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         priced_window(&s, scan_ts);
         // One series per group, so the action budget bounds the groups taken.
         let groups = SWEEP_WRITES_PER_BLOCK + SWEEP_WRITES_PER_BLOCK / 2;
@@ -416,7 +412,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Every window day above the trigger: all of them are due a call.
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
@@ -473,7 +469,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let opened_on = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_expiring_window(&oracle, opened_on, pair);
         // The day the sweep spills into is quiet, so the window it would see has
@@ -515,7 +511,7 @@ fn a_sweep_opened_a_day_later_sees_the_window_expire() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let opened_on = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_expiring_window(&oracle, opened_on, pair);
         set_vwap(
@@ -540,7 +536,7 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         seed_called_candidate(&s, 20260101);
@@ -561,7 +557,7 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
         for day in 20260101..20260105 {
@@ -582,7 +578,7 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
 
 /// A young series: issued inside the window, so its truncated window cannot hold
 /// the threshold however loud the days were.
-fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u32) {
+fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u64) {
     currencies::seed_series(s, worldwide_day, issued_at, TRIGGER, REFERENCE_ISO);
 }
 
@@ -593,12 +589,12 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
         // All issued five days ago: every one is visited, decided, and left alone.
-        let young_at = (scan_ts - 5 * DAY) as u32;
+        let young_at = scan_ts - 5 * DAY;
         let groups = SWEEP_VISITS_PER_BLOCK + 1;
         for day in 20260101..20260101 + groups {
             seed_young_candidate(&s, day, young_at);
@@ -633,7 +629,7 @@ fn a_window_price_out_of_range_skips_the_currency() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Priced days enough to reach the threshold, at a price no bin covers.
         fill_window(&oracle, last_closed_day, pair, U256::MAX);
@@ -660,17 +656,17 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER * 4));
 
         // Below the budget-stop: issued inside the window, so it decides against a
         // call today however loud the days were.
         let young = 20260001;
-        seed_young_candidate_at(&s, young, (scan_ts - 5 * DAY) as u32, TRIGGER);
+        seed_young_candidate_at(&s, young, scan_ts - 5 * DAY, TRIGGER);
         // Above it: enough mature groups at a higher trigger to spend every action.
         for day in 20260101..20260101 + SWEEP_WRITES_PER_BLOCK + 1 {
-            let issued_at = ISSUED_AT - (day % 1000) * SECONDS_PER_DAY_U32;
+            let issued_at = ISSUED_AT - u64::from((day % 1000) * SECONDS_PER_DAY_U32);
             seed_candidate_at(&s, day, issued_at, TRIGGER * 2);
         }
 

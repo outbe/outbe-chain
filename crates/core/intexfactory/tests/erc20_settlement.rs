@@ -49,7 +49,7 @@ impl Rail for Intex {
                     call_notice_period_seconds: 1,
                     transit_margin_seconds: 0,
                 },
-                issued_at: TIMESTAMP as u32,
+                issued_at: TIMESTAMP,
                 issuance_currency,
                 reference_currency: 840,
             },

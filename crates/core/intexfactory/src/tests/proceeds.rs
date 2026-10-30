@@ -65,17 +65,75 @@ fn proceeds_burn_into_the_promis_limit_pool() {
 }
 
 #[test]
-fn wei_below_one_protocol_unit_burns_without_a_credit() {
+fn wei_below_one_protocol_unit_carries_into_the_next_delivery() {
     let mut storage = factory_provider();
-    let amount = U256::from(2u64) * NATIVE_UNITS_PER_PROTOCOL_UNIT + U256::from(7u64);
+    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let rest = U256::from(7u64);
 
     StorageHandle::enter(&mut storage, |s| {
         let before = pool(&s);
-        deliver(&s, 10, amount);
-
-        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        deliver(&s, 10, U256::from(2u64) * unit + rest);
         assert_eq!(pool(&s), before + U256::from(2u64));
+        assert_eq!(
+            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            rest
+        );
+
+        deliver(&s, 10, unit - rest);
+        assert_eq!(pool(&s), before + U256::from(3u64));
+        assert_eq!(
+            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
+
+    let credited: Vec<U256> = burned_events(&storage)
+        .iter()
+        .map(|e| e.creditedPromisMinor)
+        .collect();
+    assert_eq!(credited, vec![U256::from(2u64), U256::from(1u64)]);
+}
+
+#[test]
+fn proceeds_burn_under_the_proceeds_source() {
+    use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
+    use outbe_promislimit::{precompile::IPromisLimit, NativeBurnSource};
+
+    let mut storage = factory_provider();
+    let amount = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    StorageHandle::enter(&mut storage, |s| deliver(&s, 10, amount));
+
+    let burns: Vec<IPromisLimit::NativeBurnedToPromisLimit> = storage
+        .get_events(PROMIS_LIMIT_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            IPromisLimit::NativeBurnedToPromisLimit::decode_raw_log(log.topics(), &log.data).ok()
+        })
+        .collect();
+    assert_eq!(burns.len(), 1);
+    assert_eq!(burns[0].source, NativeBurnSource::Proceeds as u8);
+    assert_eq!(burns[0].burnedUnit, amount);
+}
+
+#[test]
+fn proceeds_above_the_factory_balance_change_nothing() {
+    let mut storage = factory_provider();
+    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+
+    StorageHandle::enter(&mut storage, |s| {
+        s.increase_balance(INTEX_FACTORY_ADDRESS, unit).unwrap();
+        let before = pool(&s);
+        runtime::distribute(&s, ORIGIN_ROUTER_ADDRESS, 7.into(), 10, unit + unit).unwrap_err();
+
+        assert_eq!(pool(&s), before);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), unit);
+        assert_eq!(
+            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            U256::ZERO
+        );
+    });
+    assert!(burned_events(&storage).is_empty());
 }
 
 #[test]

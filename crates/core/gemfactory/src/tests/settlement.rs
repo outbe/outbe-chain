@@ -326,7 +326,7 @@ fn sending_rejects_a_series_whose_reference_currency_is_unregistered() {
                 entry_price_minor: six_decimal_unit(),
                 call_price_minor: U256::ZERO,
                 call_trigger: outbe_intex::IntexCallTrigger::default(),
-                issued_at: T_NOW as u32,
+                issued_at: T_NOW,
                 issuance_currency: 840,
                 // 756 (CHF) is not a reference currency.
                 reference_currency: 756,
@@ -752,7 +752,7 @@ fn settlement_cost_reads_entry_price_from_the_group() {
 
 #[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
-    let series = SeriesId::pack(WorldwideDay::new(7), *b"USD", b'U').unwrap();
+    let series = SeriesId::pack(7, *b"USD", b'U').unwrap();
     let block = 1u64;
     assert_ne!(
         GemFactoryContract::generate_position_id(ALICE, series, block),

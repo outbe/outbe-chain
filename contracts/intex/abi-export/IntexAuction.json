@@ -805,7 +805,20 @@
     },
     {
       "type": "function",
-      "name": "issueIntex",
+      "name": "proxiableUUID",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "redeemWinNote",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -820,19 +833,6 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "proxiableUUID",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1439,7 +1439,7 @@
     },
     {
       "type": "event",
-      "name": "WinExpired",
+      "name": "WinNoteRedeemed",
       "inputs": [
         {
           "name": "worldwideDay",
@@ -1458,43 +1458,6 @@
           "type": "bytes14",
           "indexed": true,
           "internalType": "bytes14"
-        },
-        {
-          "name": "units",
-          "type": "uint16",
-          "indexed": false,
-          "internalType": "uint16"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "WinIssued",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "units",
-          "type": "uint16",
-          "indexed": false,
-          "internalType": "uint16"
         }
       ],
       "anonymous": false

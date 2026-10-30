@@ -121,6 +121,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             promisLoadMinor: params.promisLoadMinor,
             entryPriceMinor: params.entryPriceMinor,
             callPriceMinor: params.callPriceMinor,
+            seriesId: params.seriesId,
             callTrigger: IIntexNFT1155.IntexCallTrigger({
                 callWindow: params.callTrigger.callWindow,
                 callThreshold: params.callTrigger.callThreshold,
@@ -131,8 +132,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             calledAt: 0,
             totalSupply: 0,
             state: IIntexNFT1155.IntexState.Issued,
-            worldwideDay: params.worldwideDay,
-            seriesId: params.seriesId
+            worldwideDay: params.worldwideDay
         });
         $.seriesData[iTok] = seed;
 
@@ -160,8 +160,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.state == IIntexNFT1155.IntexState.Called) {
             uint256 closeAt = _transitCloseAt(data);
             if (block.timestamp > closeAt) {
-                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert IssueAfterDeadline(tokenId, uint32(closeAt));
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint64
+                revert IssueAfterDeadline(tokenId, uint64(closeAt));
             }
         }
 
@@ -186,7 +186,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markCalled(bytes14 seriesId, uint32 calledAt) external onlyRole(RELAYER_ROLE) {
+    function markCalled(bytes14 seriesId, uint64 calledAt) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
@@ -197,19 +197,16 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         }
 
         // Zero is the "not called" sentinel, and a future stamp would outlast the origin's window.
-        if (calledAt == 0 || calledAt > block.timestamp) revert CalledAtInvalid(calledAt, uint32(block.timestamp));
+        if (calledAt == 0 || calledAt > block.timestamp) revert CalledAtInvalid(calledAt, uint64(block.timestamp));
 
-        IIntexNFT1155.IntexState previousState = data.state;
         data.state = IIntexNFT1155.IntexState.Called;
         data.calledAt = calledAt;
 
         uint256 deadline = _settlementDeadline(data);
-        // forge-lint: disable-next-line(unsafe-typecast) -- saturated to the event's uint32
-        uint32 derivedDeadline = deadline > type(uint32).max ? type(uint32).max : uint32(deadline);
+        // forge-lint: disable-next-line(unsafe-typecast) -- saturated to the event's uint64
+        uint64 derivedDeadline = deadline > type(uint64).max ? type(uint64).max : uint64(deadline);
 
-        emit IntexStatusUpdated(
-            msg.sender, tokenId, previousState, IIntexNFT1155.IntexState.Called, calledAt, derivedDeadline
-        );
+        emit IntexSeriesCalled(seriesId, calledAt, derivedDeadline);
         emit MetadataUpdate(tokenId);
     }
 
@@ -227,8 +224,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             // A hop leaves by the deadline, and the transit margin past it lets the hop land and settle.
             uint256 deadline = _settlementDeadline(data);
             if (block.timestamp > deadline) {
-                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert BridgeAfterDeadline(tokenId, uint32(deadline));
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint64
+                revert BridgeAfterDeadline(tokenId, uint64(deadline));
             }
         }
 
@@ -250,8 +247,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.state == IIntexNFT1155.IntexState.Called) {
             uint256 closeAt = _transitCloseAt(data);
             if (block.timestamp > closeAt) {
-                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                revert BridgeAfterDeadline(tokenId, uint32(closeAt));
+                // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint64
+                revert BridgeAfterDeadline(tokenId, uint64(closeAt));
             }
         }
 
@@ -380,8 +377,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
                 if (data.state == IIntexNFT1155.IntexState.Called) {
                     uint256 deadline = _settlementDeadline(data);
                     if (block.timestamp > deadline) {
-                        // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint32
-                        revert TransferAfterDeadline(ids[i], uint32(deadline));
+                        // forge-lint: disable-next-line(unsafe-typecast) -- below block.timestamp, so within uint64
+                        revert TransferAfterDeadline(ids[i], uint64(deadline));
                     }
                 }
             }

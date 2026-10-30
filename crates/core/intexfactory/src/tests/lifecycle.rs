@@ -90,7 +90,7 @@ fn try_call_marks_called_when_threshold_met() {
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         // All 30 window days above the trigger (threshold is 21).
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
@@ -115,7 +115,7 @@ fn try_call_skips_when_below_threshold() {
         let mut f = IntexContract::new(s.clone());
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         // Equal is not a breach: the check is strict `>`. 20 breach days and 10 calm
@@ -160,7 +160,7 @@ fn try_call_excludes_pre_issuance_days() {
         let pair = setup_pair(&oracle);
         // Scan only ~23 days after issuance, but set all 30 window days as
         // breaches: the ~7 pre-issuance days must not count, so 23 < 27.
-        let scan_ts = ISSUED_AT as u64 + 23 * DAY;
+        let scan_ts = ISSUED_AT + 23 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);

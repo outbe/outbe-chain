@@ -159,7 +159,7 @@ fn a_group_issued_inside_the_window_counts_only_its_own_days() {
         // Issued 10 days before the window's last day: only those days count, so
         // it cannot reach a threshold of 21 however loud they were.
         let issued_at = day_start(LAST_DAY) - 10 * DAY_SECS;
-        let series = seed_series(&s, issued_at as u32, U256::from(200u64));
+        let series = seed_series(&s, issued_at, U256::from(200u64));
 
         let mut f = IntexContract::new(s.clone());
         let window = window(&s);
@@ -186,8 +186,8 @@ fn day_start(date_key: u32) -> u64 {
 }
 
 /// A series with the protocol call parameters and the given trigger.
-fn seed_series(s: &StorageHandle<'_>, issued_at: u32, trigger: U256) -> SeriesId {
-    let series_id = SeriesId::for_pair(WorldwideDay::new(LAST_DAY), 840, REFERENCE_ISO).unwrap();
+fn seed_series(s: &StorageHandle<'_>, issued_at: u64, trigger: U256) -> SeriesId {
+    let series_id = SeriesId::for_pair(LAST_DAY, 840, REFERENCE_ISO).unwrap();
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {

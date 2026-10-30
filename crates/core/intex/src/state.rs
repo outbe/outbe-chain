@@ -154,12 +154,12 @@ impl IntexContract<'_> {
     }
 
     /// The group's call at `called_at`, on the notice period and transit margin it sealed.
-    pub fn group_stamp(&self, group: B256, called_at: u32) -> Result<CallStamp> {
+    pub fn group_stamp(&self, group: B256, called_at: u64) -> Result<CallStamp> {
         if called_at == 0 {
             return Ok(CallStamp::default());
         }
         let deadline = outbe_primitives::settlement::settlement_deadline_of(
-            u64::from(called_at),
+            called_at,
             self.call_group_notice_seconds.read(&group)?,
         );
         let close_at =
@@ -181,7 +181,7 @@ impl IntexContract<'_> {
     pub fn record_group_called(
         &mut self,
         group: B256,
-        called_at: u32,
+        called_at: u64,
         close_at: u64,
     ) -> Result<()> {
         // A second call would orphan the first slot and return the load twice.

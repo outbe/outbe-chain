@@ -117,10 +117,7 @@ fn issue_four_series(world: &mut World) {
         sender_key: DEPLOYER_KEY,
         worldwide_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
-        issued_at: u32::try_from(
-            head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
-        )
-        .expect("backdated stamp fits a uint32"),
+        issued_at: head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
@@ -450,9 +447,9 @@ impl Lifecycle for IntexLifecycle {
             .expect("the expiring series carries a call deadline");
         // A notice measured in days means the DEV profile never took. The wait below
         // would then sit out the whole run for no reason anyone could see.
-        let notice = deadline.saturating_sub(u64::from(
+        let notice = deadline.saturating_sub(
             venue_probes::series_called_at(&url, nft, series).expect("the series was Called"),
-        ));
+        );
         assert!(
             notice <= MAX_DEV_NOTICE_SECS,
             "call notice is {notice}s: the DEV parameter profile is not active, so this \
@@ -944,7 +941,7 @@ fn apply_parked_mark(
     target_url: &str,
     target_router: Address,
     series: FixedBytes<14>,
-) -> Option<u32> {
+) -> Option<u64> {
     let parked = eth::read_call(
         target_url,
         target_router,

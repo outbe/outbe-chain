@@ -256,6 +256,9 @@ pub struct DesisContract {
     /// worldwide_day -> 1 when the day was briefed with a limit to sell.
     #[attribute(order = 31)]
     pub brief_has_limit: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
+    /// worldwide_day -> the emission day the auction sells, as `YYYYMMDD`.
+    #[attribute(order = 43)]
+    pub brief_emission_day: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
     /// Days with a scheduled auction (dense active set for the begin-block tick).
     #[attribute(order = 32)]
     pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,

@@ -217,7 +217,8 @@ fn clear_inner(
 
     if result.issued_units != 0 {
         let mut legs = Vec::new();
-        for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
+        let emission_day = contract.brief_emission_day.read(&worldwide_day)?;
+        for group in issuance_groups(&result, &config, worldwide_day, emission_day, snapshot)? {
             legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
         }
 
@@ -341,6 +342,7 @@ pub(crate) fn issuance_groups(
     result: &ClearingResult,
     config: &AuctionConfig,
     worldwide_day: WorldwideDay,
+    emission_day: u32,
     snapshot: &[u32],
 ) -> Result<Vec<IssuanceParams>> {
     let mut groups: Vec<IssuanceParams> = Vec::new();
@@ -358,7 +360,7 @@ pub(crate) fn issuance_groups(
                     .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
                 groups.push(IssuanceParams {
                     series_id: SeriesId::for_pair(
-                        worldwide_day,
+                        emission_day,
                         issuance_currency,
                         reference_currency,
                     )

@@ -150,7 +150,7 @@ contract TargetRouter is
     }
 
     /// @notice Call time of the Called mark waiting for `seriesId` to land here (0 = none).
-    function parkedMark(bytes14 seriesId) external view returns (uint32 calledAt) {
+    function parkedMark(bytes14 seriesId) external view returns (uint64 calledAt) {
         return _ts().parkedMarks[seriesId];
     }
 
@@ -375,7 +375,7 @@ contract TargetRouter is
     /// @notice Self-call shim around one Called mark. It isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
     /// @param calledAt Origin's call timestamp.
-    function applyMarkOne(bytes14 seriesId, uint32 calledAt) external {
+    function applyMarkOne(bytes14 seriesId, uint64 calledAt) external {
         if (msg.sender != address(this)) revert NotSelf();
         _ts().intex.markCalled(seriesId, calledAt);
     }
@@ -385,7 +385,7 @@ contract TargetRouter is
     /// @param seriesId Series whose slotted mark to apply.
     function applyParkedMark(bytes14 seriesId) external nonReentrant {
         TargetRouterStorage storage $ = _ts();
-        uint32 calledAt = $.parkedMarks[seriesId];
+        uint64 calledAt = $.parkedMarks[seriesId];
         if (calledAt == 0) revert NoParkedMark(seriesId);
         delete $.parkedMarks[seriesId];
         $.intex.markCalled(seriesId, calledAt);

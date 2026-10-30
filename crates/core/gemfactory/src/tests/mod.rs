@@ -262,7 +262,7 @@ fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
 // --- Merchant gems ---
 
 fn source_intex_id() -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U').unwrap()
+    SeriesId::pack(20_260_212, *b"USD", b'U').unwrap()
 }
 
 fn six_decimal_u128() -> u128 {
@@ -291,7 +291,7 @@ fn seed_source_series(
             entry_price_minor: entry,
             call_price_minor: U256::ZERO,
             call_trigger,
-            issued_at: T_NOW as u32,
+            issued_at: T_NOW,
             issuance_currency: 840,
             reference_currency: 840,
         },
@@ -325,7 +325,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
             ..Default::default()
         },
     );
-    outbe_intex::api::call_group_of(storage, source_intex_id(), called_at as u32).unwrap();
+    outbe_intex::api::call_group_of(storage, source_intex_id(), called_at).unwrap();
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {

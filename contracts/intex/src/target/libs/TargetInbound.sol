@@ -22,7 +22,7 @@ import {
 interface ITargetRouterShims {
     function relayBidsToOutbe(uint32 worldwideDay) external;
     function reportBidsRemaining(uint32 worldwideDay) external;
-    function applyMarkOne(bytes14 seriesId, uint32 calledAt) external;
+    function applyMarkOne(bytes14 seriesId, uint64 calledAt) external;
     function routeProceedsExt(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) external;
 }
 
@@ -420,7 +420,7 @@ library TargetInbound {
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
     function handleMarkCalled(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
+        (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
         if (calledAt == 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(worldwideDay)), InboundReason.INVALID);
             return;
@@ -432,7 +432,7 @@ library TargetInbound {
 
     /// @dev An unseen series keeps the mark in its slot. An already called one is acknowledged. Any
     ///      other failure slots it for `applyParkedMark`.
-    function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint32 calledAt) private {
+    function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint64 calledAt) private {
         if (!$.intex.seriesExists(seriesId)) {
             _slotMark($, seriesId, calledAt);
             return;
@@ -453,7 +453,7 @@ library TargetInbound {
         emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
     }
 
-    function _slotMark(TargetRouterStorage storage $, bytes14 seriesId, uint32 calledAt) private {
+    function _slotMark(TargetRouterStorage storage $, bytes14 seriesId, uint64 calledAt) private {
         $.parkedMarks[seriesId] = calledAt;
         emit ITargetRouter.MarkParked(seriesId);
     }
@@ -461,7 +461,7 @@ library TargetInbound {
     /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
     ///      the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
-        uint32 calledAt = $.parkedMarks[seriesId];
+        uint64 calledAt = $.parkedMarks[seriesId];
         if (calledAt == 0) return;
         delete $.parkedMarks[seriesId];
         try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, calledAt) {

@@ -35,9 +35,7 @@ pub fn issue_intex(
         return Ok(Vec::new());
     }
 
-    // u32 timestamp. It is bounded until 2106.
-    let issued_at = u32::try_from(storage.now_secs()?)
-        .map_err(|_| IntexFactoryError::BlockTimestampExceedsU32)?;
+    let issued_at = storage.now_secs()?;
 
     let mut intex = IntexContract::new(storage.clone());
     let call_price_minor = params.call_price_minor;

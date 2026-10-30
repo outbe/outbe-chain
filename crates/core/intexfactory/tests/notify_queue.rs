@@ -27,22 +27,54 @@ use outbe_primitives::time::WorldwideDay;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
-const CALLED_AT: u32 = NOW as u32 - 3_600;
+const CALLED_AT: u64 = NOW - 3_600;
 
 fn series(index: u32) -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_101 + index), *b"USD", b'U')
-        .expect("well-formed series id")
+    SeriesId::pack(20_260_101 + index, *b"USD", b'U').expect("well-formed series id")
 }
 
 fn seed(handle: &StorageHandle<'_>, count: u32) {
     let factory = IntexFactoryContract::new(handle.clone());
     for index in 0..count {
+        record(handle, series(index));
         factory
             .notify_at
             .write(&index, pack_call_notice(series(index), CALLED_AT))
             .unwrap();
     }
     factory.notify_tail.write(count).unwrap();
+}
+
+/// A notice goes out only while its series exists. Its auction ran on the day the id names.
+fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
+    record_on(handle, series_id, WorldwideDay::new(series_id.day()));
+}
+
+fn record_on(handle: &StorageHandle<'_>, series_id: SeriesId, worldwide_day: WorldwideDay) {
+    if outbe_intex::api::series_exists(handle, series_id).unwrap() {
+        return;
+    }
+    outbe_intex::api::create_series(
+        handle,
+        outbe_intex::CreateSeriesParams {
+            series_id,
+            worldwide_day,
+            issued_units: 1,
+            promis_load_minor: 1,
+            entry_price_minor: U256::from(1u64),
+            call_price_minor: U256::from(2u64),
+            call_trigger: outbe_intex::IntexCallTrigger {
+                call_window_seconds: 1,
+                call_threshold_seconds: 1,
+                call_notice_period_seconds: 1,
+                transit_margin_seconds: 0,
+            },
+            issued_at: CALLED_AT,
+            issuance_currency: 840,
+            reference_currency: 840,
+        },
+    )
+    .unwrap();
 }
 
 /// A provider whose OriginRouter accepts sends.
@@ -108,8 +140,10 @@ fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let day = WorldwideDay::new(20_260_101);
-        let due = SeriesId::pack(day, *b"USD", b'U').unwrap();
-        let paused = SeriesId::pack(day, *b"EUR", b'U').unwrap();
+        let due = SeriesId::pack(day.value(), *b"USD", b'U').unwrap();
+        let paused = SeriesId::pack(day.value(), *b"EUR", b'U').unwrap();
+        record(&handle, due);
+        record(&handle, paused);
         let factory = IntexFactoryContract::new(handle.clone());
         factory
             .notify_at
@@ -137,6 +171,8 @@ fn a_fresh_entry_behind_a_paused_head_waits_one_pause_at_most() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let factory = IntexFactoryContract::new(handle.clone());
+        record(&handle, series(0));
+        record(&handle, series(1));
         let paused = with_retry_at(
             pack_call_notice(series(0), CALLED_AT),
             NOW + NOTICE_RETRY_SECONDS,
@@ -225,7 +261,7 @@ fn a_refused_notice_is_requeued_with_one_more_attempt() {
         assert_eq!(call_notice_attempts(entry), 1);
         assert_eq!(notice_retry_at(entry), NOW + NOTICE_RETRY_SECONDS);
         assert_eq!(SeriesId::from_word(entry), series(0));
-        assert_eq!((entry & U256::from(u32::MAX)).to::<u32>(), CALLED_AT);
+        assert_eq!((entry & U256::from(u64::MAX)).to::<u64>(), CALLED_AT);
     });
     assert!(failed_notices(&storage).is_empty());
 }
@@ -272,7 +308,7 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let dropped = failed_notices(&storage);
     assert_eq!(dropped.len(), 1);
     assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
-    assert_eq!(dropped[0].calledAt, u64::from(CALLED_AT));
+    assert_eq!(dropped[0].calledAt, CALLED_AT);
 }
 
 #[test]
@@ -325,12 +361,7 @@ fn a_refused_notice_does_not_hold_back_the_rest() {
 }
 
 fn same_day_series(index: u8) -> SeriesId {
-    SeriesId::pack(
-        WorldwideDay::new(20_260_101),
-        [b'0', b'0', b'0' + index],
-        b'U',
-    )
-    .expect("well-formed series id")
+    SeriesId::pack(20_260_101, [b'0', b'0', b'0' + index], b'U').expect("well-formed series id")
 }
 
 #[test]
@@ -339,6 +370,7 @@ fn every_entry_of_a_refused_run_is_requeued() {
     StorageHandle::enter(&mut storage, |handle| {
         let factory = IntexFactoryContract::new(handle.clone());
         for index in 0..3u8 {
+            record(&handle, same_day_series(index));
             factory
                 .notify_at
                 .write(
@@ -368,6 +400,66 @@ fn every_entry_of_a_refused_run_is_requeued() {
         );
     });
     assert!(failed_notices(&storage).is_empty());
+}
+
+fn queue_raw(handle: &StorageHandle<'_>, ids: &[SeriesId]) {
+    let factory = IntexFactoryContract::new(handle.clone());
+    for (slot, id) in (0u32..).zip(ids) {
+        factory
+            .notify_at
+            .write(&slot, pack_call_notice(*id, CALLED_AT))
+            .unwrap();
+    }
+    factory.notify_tail.write(ids.len() as u32).unwrap();
+}
+
+#[test]
+fn a_notice_of_a_deleted_series_is_dropped_unsent() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        queue_raw(&handle, &[series(0)]);
+        drain(&handle);
+        assert_eq!(
+            queue_bounds(&handle),
+            (0, 0),
+            "a refusing router would have requeued it"
+        );
+    });
+    assert!(failed_notices(&storage).is_empty());
+}
+
+/// Four refused runs end the block after three; one run is refused whole.
+#[test]
+fn the_series_record_day_cuts_the_runs() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let ids: Vec<SeriesId> = (0..4u8).map(same_day_series).collect();
+        for (offset, id) in (0u32..).zip(&ids) {
+            record_on(&handle, *id, WorldwideDay::new(20_260_201 + offset));
+        }
+        queue_raw(&handle, &ids);
+        drain(&handle);
+        assert_eq!(
+            queue_bounds(&handle),
+            (MAX_REFUSED_RUNS_PER_BLOCK, 4 + MAX_REFUSED_RUNS_PER_BLOCK),
+            "one id date, four auction days: four runs"
+        );
+    });
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |handle| {
+        let ids: Vec<SeriesId> = (0..4).map(series).collect();
+        for id in &ids {
+            record_on(&handle, *id, WorldwideDay::new(20_260_201));
+        }
+        queue_raw(&handle, &ids);
+        drain(&handle);
+        assert_eq!(
+            queue_bounds(&handle),
+            (4, 8),
+            "four id dates, one auction day: one run"
+        );
+    });
 }
 
 #[test]

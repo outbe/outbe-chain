@@ -105,7 +105,7 @@ impl World {
                         call_notice_period_seconds: 1,
                         transit_margin_seconds: 0,
                     },
-                    issued_at: TIMESTAMP as u32,
+                    issued_at: TIMESTAMP,
                     issuance_currency: 840,
                     reference_currency: 840,
                 },
@@ -177,7 +177,7 @@ impl World {
                 params: IIntexNFT1155::CreateSeriesParams {
                     seriesId: FixedBytes(SERIES),
                     worldwideDay: 20_241_220,
-                    issuedAt: TIMESTAMP as u32,
+                    issuedAt: TIMESTAMP,
                     issuanceCurrency: 840,
                     referenceCurrency: 840,
                     issuedUnits: ISSUED_UNITS as u32,

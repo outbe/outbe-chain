@@ -184,7 +184,8 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             call_notice_period_seconds: message.callNoticePeriod,
             transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
         };
-        let series_id = SeriesId::for_pair(WORLDWIDE_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap();
+        let series_id =
+            SeriesId::for_pair(WORLDWIDE_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
         let series = outbe_intex::api::get_series(&s, series_id).unwrap();
         assert_eq!(
             series.promis_load_minor,
@@ -199,8 +200,14 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
 
         // The issuance gets the same conditions. IntexFactory builds the legs from them.
         assert_eq!(read_config(&s), config);
-        let groups =
-            runtime::issuance_groups(&result, &config, WORLDWIDE_DAY, &[SRC_CHAIN]).unwrap();
+        let groups = runtime::issuance_groups(
+            &result,
+            &config,
+            WORLDWIDE_DAY,
+            WORLDWIDE_DAY.value(),
+            &[SRC_CHAIN],
+        )
+        .unwrap();
         assert_eq!(groups.len(), 1);
         let group = &groups[0];
         assert_eq!(group.promis_load_minor, message.promisLoadMinor);
@@ -210,6 +217,35 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         );
         assert_eq!(group.call_price_minor, U256::from(wire_row.callPriceMinor));
         assert_eq!(group.call_trigger, announced_trigger);
+    });
+}
+
+#[test]
+fn a_series_is_dated_by_its_emission_day_and_kept_on_its_auction_day() {
+    use outbe_intexfactory::SeriesId;
+
+    with_storage(|s| {
+        brief_at(&s, WORLDWIDE_DAY, 2 * LOAD_MINOR, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        let result = crate::schema::ClearingResult {
+            issued_units: 1,
+            winner_currencies: vec![(REFERENCE_ISO, REFERENCE_ISO)],
+            winner_quantities: vec![U256::from(1u8)],
+            ..Default::default()
+        };
+        let groups = runtime::issuance_groups(
+            &result,
+            &read_config(&s),
+            WORLDWIDE_DAY,
+            EMISSION_DAY,
+            &[SRC_CHAIN],
+        )
+        .unwrap();
+        assert_eq!(
+            groups[0].series_id,
+            SeriesId::for_pair(EMISSION_DAY, REFERENCE_ISO, REFERENCE_ISO).unwrap()
+        );
+        assert_eq!(groups[0].worldwide_day, WORLDWIDE_DAY);
     });
 }
 
@@ -225,8 +261,14 @@ fn a_winner_in_an_unpriced_reference_currency_is_an_error() {
             winner_quantities: vec![U256::from(1u8)],
             ..Default::default()
         };
-        let err =
-            runtime::issuance_groups(&result, &config, WORLDWIDE_DAY, &[SRC_CHAIN]).unwrap_err();
+        let err = runtime::issuance_groups(
+            &result,
+            &config,
+            WORLDWIDE_DAY,
+            WORLDWIDE_DAY.value(),
+            &[SRC_CHAIN],
+        )
+        .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(

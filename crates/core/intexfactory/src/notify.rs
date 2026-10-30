@@ -16,13 +16,14 @@ use crate::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
 use crate::schema::IntexFactoryContract;
 
 /// Bit offset of the refused-attempt count, in the byte above the call time.
-const ATTEMPTS_SHIFT: usize = 32;
+const ATTEMPTS_SHIFT: usize = 64;
 /// Bit offset of the time a refused entry may go out again, above the attempt count.
-const RETRY_AT_SHIFT: usize = 40;
+const RETRY_AT_SHIFT: usize = 72;
+const _: () = assert!(RETRY_AT_SHIFT + 64 <= 256 - 8 * outbe_intex::SERIES_ID_LEN);
 
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
 /// free, so the origin's stamp reaches the target instead of its delivery time.
-pub fn pack_call_notice(series_id: SeriesId, called_at: u32) -> U256 {
+pub fn pack_call_notice(series_id: SeriesId, called_at: u64) -> U256 {
     series_id.to_word() | U256::from(called_at)
 }
 
@@ -46,14 +47,19 @@ pub fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
 
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries
 /// one day and one call time for the whole batch, so both must match for a series to ride along.
-pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bool {
-    ts == called_at && id.worldwide_day() == day
+pub fn joins_run(day: WorldwideDay, called_at: u64, series_day: WorldwideDay, ts: u64) -> bool {
+    ts == called_at && series_day == day
 }
 
-fn unpack_call_notice(entry: U256) -> (SeriesId, u32) {
+/// The Worldwide Day the series' auction ran on; `None` once the series is deleted.
+fn series_day(storage: &StorageHandle<'_>, id: SeriesId) -> Result<Option<WorldwideDay>> {
+    Ok(outbe_intex::api::find_series(storage, id)?.map(|series| series.worldwide_day))
+}
+
+fn unpack_call_notice(entry: U256) -> (SeriesId, u64) {
     (
         SeriesId::from_word(entry),
-        (entry & U256::from(u32::MAX)).to::<u32>(),
+        (entry & U256::from(u64::MAX)).to::<u64>(),
     )
 }
 
@@ -120,7 +126,11 @@ impl NoticeSend<'_, '_> {
         let first = factory.notify_at.read(&at)?;
         let calls_left = self.budget.writes_left();
         let (first_id, called_at) = unpack_call_notice(first);
-        let worldwide_day = first_id.worldwide_day();
+        // A series is deleted only when nothing of it is left to call.
+        let Some(worldwide_day) = series_day(self.storage, first_id)? else {
+            factory.notify_at.clear(&at)?;
+            return Ok((1, false));
+        };
         let mut run = vec![first_id];
         let mut entries = vec![first];
 
@@ -131,7 +141,10 @@ impl NoticeSend<'_, '_> {
         while index < self.stop && run.len() < run_cap {
             let entry = factory.notify_at.read(&index)?;
             let (id, ts) = unpack_call_notice(entry);
-            if !joins_run(worldwide_day, called_at, id, ts) || notice_retry_at(entry) > self.now {
+            if notice_retry_at(entry) > self.now
+                || !series_day(self.storage, id)?
+                    .is_some_and(|day| joins_run(worldwide_day, called_at, day, ts))
+            {
                 break;
             }
             run.push(id);
@@ -175,7 +188,7 @@ impl NoticeSend<'_, '_> {
             self.storage,
             IntexSeriesCallNoticeFailed {
                 seriesId: series_id.into(),
-                calledAt: u64::from(called_at),
+                calledAt: called_at,
             },
         )
     }

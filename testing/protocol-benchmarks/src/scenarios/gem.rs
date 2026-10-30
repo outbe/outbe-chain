@@ -74,8 +74,7 @@ fn six_decimal_unit() -> U256 {
 }
 
 fn source_intex_id() -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U')
-        .expect("benchmark Intex id is canonical")
+    SeriesId::pack(20_260_212, *b"USD", b'U').expect("benchmark Intex id is canonical")
 }
 
 fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
@@ -113,7 +112,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
             entry_price_minor: six_decimal_unit(),
             call_price_minor: U256::ZERO,
             call_trigger: outbe_intex::IntexCallTrigger::default(),
-            issued_at: T_NOW as u32,
+            issued_at: T_NOW,
             issuance_currency: 840,
             reference_currency: 840,
         },

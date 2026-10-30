@@ -117,7 +117,7 @@ fn intex_factory_slot_layout_is_pinned() {
 fn the_parked_sweep_is_a_no_op_without_a_router() {
     with_factory(|s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID),
             s.clone(),
         );
         crate::parked::resend_parked_messages(&ctx).expect("a silent router is not a failed block");
@@ -141,10 +141,8 @@ fn parked_router(
 
 fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
-            s,
-        );
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID), s);
         crate::parked::resend_parked_messages(&ctx)
     })
 }
@@ -225,7 +223,7 @@ fn send_notices_in_block(
 ) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, ISSUED_AT as u64, CHAIN_ID),
+            BlockContext::empty_for_tests(1, ISSUED_AT, CHAIN_ID),
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
@@ -248,6 +246,24 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
         pack_call_notice(sid(8), ISSUED_AT),
     ];
     StorageHandle::enter(&mut provider, |s| {
+        for day in [7, 8] {
+            outbe_intex::api::create_series(
+                &s,
+                outbe_intex::CreateSeriesParams {
+                    series_id: sid(day),
+                    worldwide_day: WorldwideDay::new(day),
+                    issued_units: 1,
+                    promis_load_minor: 1,
+                    entry_price_minor: U256::from(1u64),
+                    call_price_minor: U256::from(2u64),
+                    call_trigger: prod_trigger(),
+                    issued_at: ISSUED_AT,
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                },
+            )
+            .unwrap();
+        }
         let factory = IntexFactoryContract::new(s);
         for entry in queued {
             enqueue_notice(&factory, entry).unwrap();

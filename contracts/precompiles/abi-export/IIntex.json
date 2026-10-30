@@ -105,13 +105,13 @@
           },
           {
             "name": "issuedAt",
-            "type": "uint32",
-            "internalType": "uint32"
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "calledAt",
-            "type": "uint32",
-            "internalType": "uint32"
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "callNoticePeriod",
@@ -455,9 +455,9 @@
       },
       {
         "name": "calledAt",
-        "type": "uint32",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "uint64"
       },
       {
         "name": "settlementDeadline",

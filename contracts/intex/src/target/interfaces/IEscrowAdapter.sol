@@ -14,7 +14,7 @@ interface IEscrowAdapter {
     // --- Types ---
 
     /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds. The lock keeps
-    ///         the change for `releaseRefund` and the units won for `closeWin`. A closed or refunded
+    ///         the change for `releaseRefund` and the units won for `redeemWinNote`. A redeemed or refunded
     ///         lock is deleted and reads as `None`.
     enum LockStatus {
         None,
@@ -171,12 +171,6 @@ interface IEscrowAdapter {
         bytes32 indexed receiveId, uint32 indexed worldwideDay, address indexed bidder, bytes reason
     );
 
-    /// @notice Emitted when the auction closes a win: the lock is gone and its units go to the bidder.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Winner whose lock was closed.
-    /// @param units Units the winner won.
-    event WinClosed(uint32 indexed worldwideDay, address indexed bidder, uint16 units);
-
     /// @notice Emitted when a refund chunk carried winners and settled none of them.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param bidsProcessed Winners the chunk carried, all skipped.
@@ -293,12 +287,12 @@ interface IEscrowAdapter {
     /// @param bidder Bidder whose bond is returned.
     function releaseCommitBond(uint32 worldwideDay, address bidder) external;
 
-    /// @notice Close a winner's lock: pay the change it still holds and return the units won.
+    /// @notice Redeem a winner's WinNote: pay the change it still holds and return the units won.
     ///         Callable only by the IntexAuction contract, which issues the units.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Winner whose lock is closed.
+    /// @param bidder Winner whose WinNote is redeemed.
     /// @return units Units the winner won.
-    function closeWin(uint32 worldwideDay, address bidder) external returns (uint16 units);
+    function redeemWinNote(uint32 worldwideDay, address bidder) external returns (uint16 units);
 
     /// @notice Active payment token used for bid escrow (WCOEN).
     function paymentToken() external view returns (IERC20);
@@ -346,7 +340,7 @@ interface IEscrowAdapter {
     // --- Recovery ---
 
     /// @notice Pay `bidder` what its lock owes. Callable only by the IntexAuction contract.
-    ///         - A winner collects its change at once. The lock keeps the units won for `closeWin`.
+    ///         - A winner collects its change at once. The lock keeps the units won for `redeemWinNote`.
     ///         - A bidder that the finalized day never named collects its full principal at once.
     ///         - A bidder whose day never finalized collects its full principal after
     ///           `UNFINALIZED_REFUND_DELAY`.
@@ -413,7 +407,7 @@ interface IEscrowAdapter {
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
 
-    /// @notice True while any win is still open or any asset version still holds money in The Compact:
+    /// @notice True while any WinNote is still open or any asset version still holds money in The Compact:
     ///         a lock, a change or a commit bond someone can still claim.
     function hasOutstandingLocks() external view returns (bool outstanding);
 

@@ -56,7 +56,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             .unwrap();
         (promis_minor, nonce)
     });
-    let close_at = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD) + u64::from(TRANSIT_MARGIN);
+    let close_at = ISSUED_AT + u64::from(CALL_NOTICE_PERIOD) + u64::from(TRANSIT_MARGIN);
     storage.set_timestamp(U256::from(close_at + 1));
 
     StorageHandle::enter(&mut storage, |s| {
@@ -173,7 +173,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             .unwrap()
             .promis_load_minor
     });
-    let deadline = u64::from(ISSUED_AT) + u64::from(CALL_NOTICE_PERIOD);
+    let deadline = ISSUED_AT + u64::from(CALL_NOTICE_PERIOD);
     let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
     storage.set_timestamp(U256::from(due));
     let forfeited = U256::from(100 - SETTLED) * load;

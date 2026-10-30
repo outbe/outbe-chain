@@ -18,7 +18,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     function exposedDecodeMarkCalled(bytes calldata p)
         external
         pure
-        returns (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds)
+        returns (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds)
     {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }

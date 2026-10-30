@@ -170,19 +170,12 @@ interface IIntexAuction {
     /// @param current Collection address after the update.
     event IntexWired(address previous, address current);
 
-    /// @notice Emitted when a winner's units are issued.
+    /// @notice Emitted when a WinNote is redeemed, with or without Intex. The mint holds the
+    ///         units issued, and the escrow payout holds the change.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Winner the units were issued to.
-    /// @param seriesId Series the units belong to.
-    /// @param units Units issued.
-    event WinIssued(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
-
-    /// @notice Emitted when a win is closed after its series was forfeited. No units are issued.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Winner whose win was closed.
-    /// @param seriesId Series that was forfeited.
-    /// @param units Units the winner won.
-    event WinExpired(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId, uint16 units);
+    /// @param bidder Winner whose WinNote was redeemed.
+    /// @param seriesId Series the WinNote names.
+    event WinNoteRedeemed(uint32 indexed worldwideDay, address indexed bidder, bytes14 indexed seriesId);
 
     // --- Errors ---
 
@@ -340,12 +333,12 @@ interface IIntexAuction {
     /// @param bidder Bidder whose refund is being claimed.
     function claimRefund(uint32 worldwideDay, address bidder) external;
 
-    /// @notice Permissionless issue of a winner's units. The units always go to `bidder`.
-    ///         The escrow closes the win and pays any change still in it. Past its series'
-    ///         deadline the win closes without issuing.
+    /// @notice Permissionless redeem of a winner's WinNote. The units always go to `bidder`.
+    ///         The escrow pays any change still in it. Once its series was forfeited, the
+    ///         WinNote is redeemed without issuing.
     /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param bidder Winner whose units are issued.
-    function issueIntex(uint32 worldwideDay, address bidder) external;
+    /// @param bidder Winner whose WinNote is redeemed.
+    function redeemWinNote(uint32 worldwideDay, address bidder) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled-day auction releases immediately. Otherwise the bond is claimable

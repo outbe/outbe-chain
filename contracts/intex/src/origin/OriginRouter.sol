@@ -370,7 +370,7 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds)
+    function sendMarkCalled(uint32 worldwideDay, uint64 calledAt, bytes14[] calldata seriesIds)
         external
         payable
         onlyRole(INTEX_FACTORY_ROLE)

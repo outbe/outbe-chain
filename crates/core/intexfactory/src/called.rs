@@ -186,7 +186,7 @@ fn call_currency(
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
-    called_at: u32,
+    called_at: u64,
     members: &[SeriesId],
 ) -> Result<Vec<SeriesId>> {
     let mut refused = Vec::new();
