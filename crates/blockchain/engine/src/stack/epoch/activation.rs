@@ -213,6 +213,7 @@ where
                                                    is_validator_set_change = activated_is_validator_set_change,
                                                    "VRF/DKG material activated"
                                                );
+                    self.vrf_safety.apply_revealed_output(&canonical_output);
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
                     register_epoch_validation_providers(
                         EpochValidationCommittee {
@@ -527,6 +528,8 @@ where
                             .planned_activation_height(anchored_height),
                         self.dkg_rotation_params.activation_grace_blocks,
                     );
+                    self.vrf_safety
+                        .apply_activated_ceremony_output(self.state.last_dkg_output.as_ref());
                     publish_randomness_status(&self.bridge, &self.vrf_safety);
                     self.application_epoch_fence
                         .arm_activation_boundary(self.state.current_epoch, activation_height);

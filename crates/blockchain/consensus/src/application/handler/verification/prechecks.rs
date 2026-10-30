@@ -157,7 +157,7 @@ impl ApplicationShared {
             return false;
         }
 
-        if let Err(error) = self.vrf_safety.ensure_block_allowed(block.number()) {
+        if let Err(error) = self.vrf_safety.ensure_verify_height_allowed(block.number()) {
             warn!(
                 digest = %payload_digest.0,
                 round = %round,
@@ -169,5 +169,25 @@ impl ApplicationShared {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+impl ApplicationShared {
+    pub(crate) fn validate_verify_parent_and_height_for_test(
+        &self,
+        context: crate::application::ingress::SimplexContext,
+        block: crate::block::ConsensusBlock,
+        parent_block: Option<crate::block::ConsensusBlock>,
+    ) -> bool {
+        let request = VerifyRequest {
+            context,
+            payload_digest: block.digest(),
+        };
+        let resolved = ResolvedVerifyBlocks {
+            block,
+            parent_block,
+        };
+        self.validate_verify_parent_and_height(&request, &resolved)
     }
 }

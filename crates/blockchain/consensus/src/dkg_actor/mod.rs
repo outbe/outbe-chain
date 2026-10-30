@@ -15,6 +15,8 @@ pub mod wire;
 mod sim_tests;
 
 #[cfg(test)]
+pub(crate) use actor::chain_finalized_reconstructable_with_rng;
+#[cfg(test)]
 pub use actor::{run_initial_dkg, run_reshare_dealer_only};
 pub use actor::{
     run_initial_dkg_durable, run_reshare_dealer_only_durable, DkgComplete, DkgDealerOnlyComplete,

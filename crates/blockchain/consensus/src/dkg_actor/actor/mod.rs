@@ -108,6 +108,8 @@ pub use test_support::{
 };
 
 mod messaging;
+#[cfg(test)]
+pub(crate) use messaging::chain_finalized_reconstructable_with_rng;
 use messaging::{
     acknowledge_restart_replay, chain_finalized_reconstructable, decode_signed_dealer_log,
     gossip_finalized_logs, record_and_store_signed_dealer_log, record_signed_dealer_log,

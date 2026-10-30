@@ -176,6 +176,24 @@ impl DkgCeremony {
         }
     }
 
+    /// Attempt canonical reconstruction using a caller-supplied batch-verification RNG.
+    #[cfg(test)]
+    pub(crate) fn try_reconstruct_if_needed_with_rng(
+        &mut self,
+        rng: &mut impl rand_core_commonware::CryptoRng,
+    ) -> ReconstructOutcome {
+        if !matches!(self.phase, DkgCeremonyPhase::Collecting) {
+            return ReconstructOutcome::AlreadyReconstructed;
+        }
+        match try_reconstruct_with_rng(&self.info, &self.finalized_dealer_logs, rng) {
+            Ok(output) => {
+                self.phase = DkgCeremonyPhase::Reconstructed(output.clone());
+                ReconstructOutcome::Reconstructed(output)
+            }
+            Err(error) => ReconstructOutcome::Pending(error.to_string()),
+        }
+    }
+
     /// The canonical group output, present iff the ceremony is `Reconstructed`.
     pub fn output(&self) -> Option<&Output<MinSig, bls12381::PublicKey>> {
         match &self.phase {
@@ -213,20 +231,29 @@ impl DkgCeremony {
 /// finalized dealer logs. The recovered value depends only on `info` and the
 /// log set. `OsRng` supplies only Commonware's batch-verification weights
 /// (it gates accept/reject of signatures, never the recovered output value).
-fn try_reconstruct(
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn try_reconstruct(
     info: &Info<MinSig, bls12381::PublicKey>,
     finalized_dealer_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
+) -> Result<Output<MinSig, bls12381::PublicKey>> {
+    try_reconstruct_with_rng(
+        info,
+        finalized_dealer_logs,
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+    )
+}
+
+pub(crate) fn try_reconstruct_with_rng(
+    info: &Info<MinSig, bls12381::PublicKey>,
+    finalized_dealer_logs: &BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
+    rng: &mut impl rand_core_commonware::CryptoRng,
 ) -> Result<Output<MinSig, bls12381::PublicKey>> {
     let mut logs = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
     for (dealer, log) in finalized_dealer_logs.clone() {
         logs.record(dealer, log);
     }
-    observe::<MinSig, bls12381::PublicKey, N3f1, Batch>(
-        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-        logs,
-        &Sequential,
-    )
-    .map_err(|error| DkgError::reconstruct(error).into())
+    observe::<MinSig, bls12381::PublicKey, N3f1, Batch>(rng, logs, &Sequential)
+        .map_err(|error| DkgError::reconstruct(error).into())
 }
 
 /// Outcome of offering a P2P dealer-log candidate to the gossip buffer.
