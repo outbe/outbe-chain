@@ -69,29 +69,6 @@ pub fn issue_lysis_nod(
     )
 }
 
-/// Issues a Nod claimed from a Tribute within the post-Metadosis claim window.
-pub fn issue_tribute_nod(
-    storage: &StorageHandle<'_>,
-    encrypted: &EncryptedNodV1,
-    gratis_load_minor: U256,
-) -> Result<U256> {
-    let cost =
-        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
-    if cost.is_zero() {
-        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
-    }
-    issue_nod_with_cost(
-        storage,
-        encrypted,
-        storage.now_secs()?,
-        IssueNodHints {
-            verified_cost: Some(cost),
-            gratis_load_minor: Some(gratis_load_minor),
-            sealed_series: None,
-        },
-    )
-}
-
 /// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
 pub fn issue_tribute_nod_in_series(
     storage: &StorageHandle<'_>,

@@ -270,7 +270,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
 }
 
 #[test]
-fn issue_nod_reverts_without_a_completion_day_price() {
+fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
     use alloy_sol_types::SolCall;
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -309,27 +309,30 @@ fn issue_nod_reverts_without_a_completion_day_price() {
             tributeId: tribute.tribute_id.to_u256(),
         }
         .abi_encode();
+        let forfeited: PrecompileError = crate::errors::TributeError::TributeForfeited.into();
         let unpriced =
             crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
-        let expected_err: PrecompileError = crate::errors::TributeError::EntryPriceUnavailable {
-            price_day: outbe_nod::openings::entry_price_day(completed_at).expect("date step"),
-            currency: 840,
-        }
-        .into();
-        assert_eq!(unpriced.unwrap_err().to_string(), expected_err.to_string());
+        assert_eq!(unpriced.unwrap_err().to_string(), forfeited.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
         assert_eq!(tc.total_supply().unwrap(), 1);
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &tribute))
             .unwrap()
             .is_none());
 
+        // A price that comes after Lysis issues nothing: Lysis returned the load already.
         seed_entry_price(
             &storage,
             840,
             outbe_nod::openings::entry_price_day(completed_at).expect("date step"),
             U256::from(1_234_567u64),
         );
-        crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO).unwrap();
+        let late = crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
+        assert_eq!(late.unwrap_err().to_string(), forfeited.to_string());
+        let clean = crate::precompile::ITribute::cleanCall {
+            tributeId: tribute.tribute_id.to_u256(),
+        }
+        .abi_encode();
+        crate::precompile::dispatch(storage.clone(), &clean, tribute.owner, U256::ZERO).unwrap();
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_none());
     });
 

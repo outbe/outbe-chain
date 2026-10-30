@@ -104,9 +104,6 @@ pub enum TributeError {
     #[error("caller is not Tribute owner")]
     CallerNotTributeOwner,
 
-    #[error("no finalized entry price for UTC day {price_day} in currency {currency}")]
-    EntryPriceUnavailable { price_day: u32, currency: u16 },
-
     #[error("Tribute state changed after loading")]
     TributeStateChangedAfterLoading,
 
@@ -200,13 +197,6 @@ impl From<TributeError> for PrecompileError {
             TributeError::MetadosisNotCompleted => revert_with(I::MetadosisNotCompleted {}),
             TributeError::NodIssueBeforeCompletion => revert_with(I::NodIssueBeforeCompletion {}),
             TributeError::CallerNotTributeOwner => revert_with(I::CallerNotTributeOwner {}),
-            TributeError::EntryPriceUnavailable {
-                price_day,
-                currency,
-            } => revert_with(I::EntryPriceUnavailable {
-                priceDay: price_day,
-                currency,
-            }),
             TributeError::TributeStateChangedAfterLoading => {
                 revert_with(I::TributeStateChangedAfterLoading {})
             }

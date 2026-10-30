@@ -18,7 +18,6 @@ interface ITribute {
     error MetadosisNotCompleted();
     error NodIssueBeforeCompletion();
     error CallerNotTributeOwner();
-    error EntryPriceUnavailable(uint32 priceDay, uint16 currency);
     error TributeStateChangedAfterLoading();
     error LysisArithmetic(string reason);
     error DateStep(uint8 kind, uint32 dateKey);

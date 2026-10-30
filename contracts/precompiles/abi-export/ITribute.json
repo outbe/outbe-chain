@@ -441,22 +441,6 @@
   },
   {
     "type": "error",
-    "name": "EntryPriceUnavailable",
-    "inputs": [
-      {
-        "name": "priceDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "currency",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidLeague",
     "inputs": [
       {
