@@ -54,8 +54,12 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                     .create(&GemPosition {
                         position_id,
                         merchant: Address(*user.signer()),
+                        // Dated by the priced day, which floors the merchant gem.
                         source_intex_id: outbe_intex::SeriesId::pack(
-                            outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            outbe_primitives::time::previous_date_key(
+                                outbe_primitives::time::timestamp_to_date_key(block_ts),
+                            )
+                            .unwrap(),
                             *b"USD",
                             b'U',
                         )
