@@ -99,6 +99,69 @@ fn reterm(
     .unwrap();
 }
 
+fn call_progress_revert(storage: &StorageHandle<'_>, credis_id: U256) -> alloy_primitives::Bytes {
+    match crate::call_progress::call_progress(storage, credis_id) {
+        Err(outbe_primitives::error::PrecompileError::RevertBytes(reason)) => reason,
+        Err(other) => panic!("expected a revert, got {other:?}"),
+        Ok(_) => panic!("expected a revert"),
+    }
+}
+
+#[test]
+fn the_call_progress_is_one_day_short_until_the_group_is_called() {
+    use crate::precompile::ICredisFactory;
+    use alloy_sol_types::SolError;
+
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
+        let credis_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, below_call());
+        for i in 0..CALL_THRESHOLD_DAYS - 1 {
+            set_vwap(&storage, day_back(at, i), above_call());
+        }
+
+        let progress = crate::call_progress::call_progress(&storage, credis_id).unwrap();
+        assert_eq!(
+            (progress.callWindowDays, progress.callThresholdDays),
+            (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS)
+        );
+        assert_eq!(
+            (
+                progress.daysChecked,
+                progress.daysAboveCallPrice,
+                progress.minDaysToCall
+            ),
+            (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS - 1, 1)
+        );
+        assert_eq!(progress.referenceCurrency, REFERENCE_ISO);
+        assert_eq!(
+            progress.callPriceMinor,
+            CredisContract::new(storage.clone())
+                .get_credis(credis_id)
+                .unwrap()
+                .call_price_minor
+        );
+        assert_eq!(progress.lastDayPriceMinor, above_call());
+
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(
+            call_progress_revert(&storage, credis_id),
+            ICredisFactory::CredisNotIssued {}.abi_encode()
+        );
+        assert_eq!(
+            call_progress_revert(&storage, U256::from(1u64)),
+            ICredisFactory::CredisNotFound {}.abi_encode()
+        );
+    });
+}
+
 /// The terms a group is called and forfeited under are the ones sealed at
 /// issuance, not the live profile: rewrite what the group holds and watch the
 /// scan follow the group rather than the profile.

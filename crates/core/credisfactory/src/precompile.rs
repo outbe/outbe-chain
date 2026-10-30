@@ -65,6 +65,9 @@ pub fn dispatch(
                     })
                 }),
                 quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
+                getCallProgress(c) => view(c, |c| {
+                    crate::call_progress::call_progress(&storage, c.credisId)
+                }),
                 forfeitCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;
                     Ok(ICredisFactory::forfeitCredisReturn {

@@ -14,6 +14,8 @@ interface ICredisFactory {
     error CredisClosed();
     error PaymentBelowAccruedInterest();
     error NotCalled();
+    error CredisNotFound();
+    error CredisNotIssued();
     error SettlementDeadlineNotPassed();
     error SettlementDeadlinePassed();
     error NothingOutstanding();
@@ -64,6 +66,28 @@ interface ICredisFactory {
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
+
+    /// @notice How close a right is to its group's call. The window ends at the last
+    ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
+    struct CallProgress {
+        uint32 callWindowDays;
+        uint32 callThresholdDays;
+        /// Window days since the group's start, priced or not.
+        uint32 daysChecked;
+        /// Of them, days whose VWAP was above `callPriceMinor`.
+        uint32 daysAboveCallPrice;
+        /// The fewest further days above the call price before the call, as the oldest
+        /// days leave the window. 0 once the call is decided.
+        uint32 minDaysToCall;
+        uint16 referenceCurrency;
+        uint256 callPriceMinor;
+        /// VWAP of the last finalized day, 0 when it has none.
+        uint256 lastDayPriceMinor;
+    }
+
+    /// @notice Read the call progress of `credisId`. Reverts `CredisNotFound`, or
+    ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
+    function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
     /// Gratis burns, the principal is written off and the Credis is deleted.
     function forfeitCredis(uint256 credisId)

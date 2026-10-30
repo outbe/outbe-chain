@@ -13,6 +13,7 @@
 //!   deletes its Credis, burning each one's collateral from its source's pledged balance
 //!   into the Promis Reserve.
 
+pub(crate) mod call_progress;
 pub mod called;
 mod cleanup;
 pub mod errors;
