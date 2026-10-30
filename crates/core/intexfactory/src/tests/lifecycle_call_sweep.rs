@@ -4,15 +4,18 @@
 use crate::tests::{at_height, group_of, series_state};
 
 use alloy_primitives::U256;
+use alloy_sol_types::{SolCall, SolError};
 use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::error::PrecompileError;
 use outbe_primitives::stablecoin::ISO_4217_NUMERIC_CODES;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
+use crate::precompile::IIntexFactory;
 use crate::tests::called;
 use crate::tests::owner;
 use outbe_intex::IntexContract;
@@ -107,6 +110,62 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
             vec![series_of(20260101)]
         );
         assert_eq!(factory.call_group_called_at.read(&key).unwrap(), scan_ts);
+    });
+}
+
+fn call_progress(
+    s: &StorageHandle<'_>,
+    intex_id: U256,
+) -> Result<IIntexFactory::CallProgress, alloy_primitives::Bytes> {
+    let call = IIntexFactory::getCallProgressCall { intexId: intex_id };
+    match crate::precompile::dispatch(s.clone(), &call.abi_encode(), owner(), U256::ZERO) {
+        Ok(out) => Ok(IIntexFactory::getCallProgressCall::abi_decode_returns(&out).unwrap()),
+        Err(PrecompileError::RevertBytes(reason)) => Err(reason),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn the_call_progress_counts_the_window_until_the_group_is_called() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
+        fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
+        seed_called_candidate(&s, 20260101);
+        let intex_id = outbe_intex::intex_id(series_of(20260101));
+
+        let progress = call_progress(&s, intex_id).unwrap();
+        assert_eq!(
+            (progress.callWindowDays, progress.callThresholdDays),
+            (WINDOW_DAYS, 21)
+        );
+        assert_eq!(
+            (
+                progress.daysChecked,
+                progress.daysAboveCallPrice,
+                progress.minDaysToCall
+            ),
+            (WINDOW_DAYS, WINDOW_DAYS, 0)
+        );
+        assert_eq!(progress.referenceCurrency, REFERENCE_ISO);
+        assert_eq!(progress.callPriceMinor, U256::from(TRIGGER));
+        assert_eq!(progress.lastDayPriceMinor, U256::from(TRIGGER + 1));
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(
+            call_progress(&s, intex_id).unwrap_err(),
+            IIntexFactory::SeriesNotIssued {}.abi_encode()
+        );
+        assert_eq!(
+            call_progress(&s, U256::from(1)).unwrap_err(),
+            IIntexFactory::SeriesNotFound {}.abi_encode()
+        );
     });
 }
 

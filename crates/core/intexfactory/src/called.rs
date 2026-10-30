@@ -26,7 +26,7 @@ use outbe_intex::{CallBins, IntexContract};
 
 pub(crate) mod group;
 
-pub(crate) use group::{call_if_breached, GroupCall};
+pub(crate) use group::{breach_terms, call_if_breached, GroupCall};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
