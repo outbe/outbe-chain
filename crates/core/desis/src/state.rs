@@ -178,7 +178,7 @@ impl<'storage> DesisContract<'storage> {
         Ok(bids)
     }
 
-    /// Drop the chain's bids once the day has cleared.
+    /// Drop the chain's bids and intake state once the day has ended.
     pub(crate) fn reset_chain_intake(
         &self,
         emission_day: EmissionDate,
@@ -186,6 +186,11 @@ impl<'storage> DesisContract<'storage> {
     ) -> Result<()> {
         let key = Self::chain_key(emission_day, chain_id);
         let chain_count = self.chain_bid_count.read(&key)?;
+        for index in 0..chain_count {
+            let bid = Self::bid_key(emission_day, chain_id, index);
+            self.bid_bidder.clear(&bid)?;
+            self.bid_packed.clear(&bid)?;
+        }
         let day_count = self.day_bid_count.read(&emission_day)?;
         self.day_bid_count
             .write(&emission_day, day_count.saturating_sub(chain_count))?;

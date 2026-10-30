@@ -115,8 +115,9 @@ fn cancel_unstarted(
     contract.remove_sched_active(emission_day)
 }
 
-/// A started day with no result by its last clearing time. Nothing goes to the other chains:
-/// they read the day as failed from its own schedule, and the refund time limit returns the bids.
+/// A started day with no result by its last clearing time. Its bids are dropped. Nothing goes to
+/// the other chains: they read the day as failed from its own schedule, and the refund time limit
+/// returns the bids there.
 fn fail_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
@@ -131,6 +132,22 @@ fn fail_auction(
     contract.clearing_initiated.write(&emission_day, 0u8)?;
     contract.pending_desis_limit_units.write(&emission_day, 0)?;
     contract.clearing_deadline.clear(&emission_day)?;
+    // The router names the day's chains. A day must still end when the router cannot answer,
+    // so its bids then stay behind.
+    match fetch_targets(storage, emission_day) {
+        Ok(chains) => {
+            for chain_id in chains {
+                contract.reset_chain_intake(emission_day, chain_id)?;
+            }
+            contract.day_bid_count.write(&emission_day, 0)?;
+        }
+        Err(error) => tracing::warn!(
+            target: "outbe::desis",
+            %emission_day,
+            error = ?error,
+            "failed day: bids kept, the router named no chains"
+        ),
+    }
     refund_unused_desis_limit(storage, contract, emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Failed)?;
     contract.remove_sched_active(emission_day)

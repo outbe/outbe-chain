@@ -277,7 +277,7 @@ fn brief(s: &StorageHandle, has_limit: bool) {
     brief_at(s, EMISSION_DAY, 10 * LOAD_MINOR, has_limit);
 }
 
-/// Brief and drive the schedule to `Revealing` (bid intake open, gate not armed).
+/// Brief and drive the schedule to `RevealingBids` (bid intake open, gate not armed).
 fn open_revealing(s: &StorageHandle) {
     brief(s, true);
     runtime::schedule_tick(s, NOW).unwrap();
@@ -1408,7 +1408,16 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
             AuctionStage::CollectingBids
         );
     });
-    let sends_before = storage.sub_call_inputs().len();
+    let router_sends = |storage: &HashMapStorageProvider| {
+        use crate::sol_ext::IOriginRouter::targetsOfCall;
+        storage
+            .sub_call_inputs()
+            .iter()
+            .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+            .filter(|input| !input.calldata.starts_with(&targetsOfCall::SELECTOR))
+            .count()
+    };
+    let sends_before = router_sends(&storage);
     StorageHandle::enter(&mut storage, |s| {
         use outbe_promislimit::PromisLimitContract;
         runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
@@ -1425,7 +1434,7 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
         );
     });
     assert_eq!(
-        storage.sub_call_inputs().len(),
+        router_sends(&storage),
         sends_before,
         "a failed day sends nothing to the other chains"
     );
@@ -1436,6 +1445,73 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
         .expect("AuctionFailed");
     assert_eq!(failed.emissionDay, EMISSION_DAY.value());
     assert_eq!(failed.stage, AuctionStage::CollectingBids as u8);
+}
+
+/// Whether any of the chain's first `n` bid records still holds data.
+fn holds_bids(s: &StorageHandle, chain: u32, n: u32) -> bool {
+    let contract = s.contract::<DesisContract>();
+    (0..n).any(|index| {
+        let key = DesisContract::bid_key(EMISSION_DAY, chain, index);
+        contract.bid_bidder.read(&key).unwrap() != Address::ZERO
+            || !contract.bid_packed.read(&key).unwrap().is_zero()
+    })
+}
+
+#[test]
+fn a_completed_day_deletes_its_bids() {
+    with_storage(|s| {
+        open_clearing(&s, 100);
+        relay_bids(&s, SRC_CHAIN, 3, 200);
+        assert!(holds_bids(&s, SRC_CHAIN, 3));
+        clear(&s);
+        assert!(!holds_bids(&s, SRC_CHAIN, 3));
+    });
+}
+
+#[test]
+fn a_failed_day_deletes_its_bids() {
+    with_storage(|s| {
+        open_clearing(&s, 100);
+        relay_bids(&s, SRC_CHAIN, 3, 200);
+        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(EMISSION_DAY).unwrap(),
+            AuctionStage::Failed
+        );
+        assert!(!holds_bids(&s, SRC_CHAIN, 3));
+        assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 0);
+    });
+}
+
+#[test]
+fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
+    use crate::sol_ext::IOriginRouter::targetsOfCall;
+    use alloy_sol_types::SolCall;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
+    });
+    storage.stub_sub_call_at_selector(ORIGIN_ROUTER_ADDRESS, targetsOfCall::SELECTOR, Bytes::new());
+    StorageHandle::enter(&mut storage, |s| {
+        use outbe_promislimit::PromisLimitContract;
+        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::Failed
+        );
+        assert_eq!(
+            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
+            U256::from(10 * LOAD_MINOR)
+        );
+    });
 }
 
 #[test]
@@ -1781,7 +1857,7 @@ fn no_bids_clears_as_no_sale() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 0);
 
-        // Clearing a zero-bid auction is a no-sale: Cleared with 0 issued and no winners. The
+        // Clearing a zero-bid auction is a no-sale: Completed with 0 issued and no winners. The
         // AuctionResult(0,0,0) lets the target chain finalize to Completed instead of stalling.
         let result = clear(&s);
         assert_eq!(result.issued_units, 0);
