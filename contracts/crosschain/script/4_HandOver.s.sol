@@ -23,7 +23,7 @@ interface IEndpointDelegates {
 /// Required env: `DEPLOYER_PK` (the current owner), `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`,
 ///   `OUTBE_CHAIN_ID`.
 /// Optional env: `LZ_ENDPOINT`, `HYPERLANE_MAILBOX`, `WIRE_LOOPBACK` (select the adapters, as in the
-///   deploy), `GOVERNANCE_OWNER` (explicit owner override), `OUTBE_RPC` (an `rpc_endpoints` alias,
+///   deploy), `KEEP_DEPLOYER_AS_OWNER` (default `false`), `OUTBE_RPC` (an `rpc_endpoints` alias,
 ///   default `outbe-testnet`).
 contract HandOver is Script {
     error DomainTooLarge(uint256 chainId);
@@ -52,8 +52,7 @@ contract HandOver is Script {
 
     /// @dev Governance on this chain: the controller on Outbe, its Interchain Account elsewhere.
     function governanceOwner() public returns (address) {
-        address configuredOwner = vm.envOr("GOVERNANCE_OWNER", address(0));
-        if (configuredOwner != address(0)) return configuredOwner;
+        if (vm.envOr("KEEP_DEPLOYER_AS_OWNER", false)) return vm.addr(vm.envUint("DEPLOYER_PK"));
         if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return HYPERLANE_CONTROLLER;
         if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
         return _controllerAccount(uint32(block.chainid));

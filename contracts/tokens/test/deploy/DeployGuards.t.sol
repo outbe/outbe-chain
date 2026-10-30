@@ -216,22 +216,17 @@ contract DeployGuardsTest is Test {
     /// @dev Governance owns the bridge: the controller precompile on Outbe, its Interchain Account elsewhere.
     ///      The peer on the other chain is the same CREATE3 address, and the local chain is skipped.
     function test_Bridge_HasGovernanceOwnerAndPeers() public {
-        address configuredOwner = vm.envOr("GOVERNANCE_OWNER", address(0));
+        bool keepDeployer = vm.envOr("KEEP_DEPLOYER_AS_OWNER", false);
 
         vm.chainId(OUTBE_CHAIN);
         (, address outbeBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
-        assertEq(
-            ERC7786TokenBridge(outbeBridge).owner(),
-            configuredOwner == address(0) ? HYPERLANE_CONTROLLER : configuredOwner
-        );
+        assertEq(ERC7786TokenBridge(outbeBridge).owner(), keepDeployer ? address(deploy) : HYPERLANE_CONTROLLER);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(EXTERNAL_CHAIN)), outbeBridge);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(OUTBE_CHAIN)), address(0));
 
         vm.chainId(EXTERNAL_CHAIN);
         (, address extBridge) = deploy.deployRoute(address(factory), "TEST_V2", deploy.routeByLabel("USDT"));
-        assertEq(
-            ERC7786TokenBridge(extBridge).owner(), configuredOwner == address(0) ? CONTROLLER_ICA : configuredOwner
-        );
+        assertEq(ERC7786TokenBridge(extBridge).owner(), keepDeployer ? address(deploy) : CONTROLLER_ICA);
     }
 
     /// @dev Create3Factory reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
