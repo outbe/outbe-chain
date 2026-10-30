@@ -10,6 +10,7 @@ interface INodFactory {
     error GroupNotFound();
     error NodAlreadySettled();
     error NodNotSettled();
+    error NodNotIssued();
     error InsufficientProofOfWork();
     error SettlementDeadlinePassed();
     error EmptyGroupMemberSlotDuringCleanup(bytes32 groupKey);
@@ -60,6 +61,28 @@ interface INodFactory {
         external
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
+
+    /// @notice How close a right is to its group's call. The window ends at the last
+    ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
+    struct CallProgress {
+        uint32 callWindowDays;
+        uint32 callThresholdDays;
+        /// Window days since the group's start, priced or not.
+        uint32 daysChecked;
+        /// Of them, days whose VWAP was above `callPriceMinor`.
+        uint32 daysAboveCallPrice;
+        /// The fewest further days above the call price before the call, as the oldest
+        /// days leave the window. 0 once the call is decided.
+        uint32 minDaysToCall;
+        uint16 referenceCurrency;
+        uint256 callPriceMinor;
+        /// VWAP of the last finalized day, 0 when it has none.
+        uint256 lastDayPriceMinor;
+    }
+
+    /// @notice Read the call progress of `nodId`. Reverts `NodNotFound`, or
+    ///         `NodNotIssued` once it is Called, Settled or Forfeited.
+    function getCallProgress(uint256 nodId) external view returns (CallProgress memory);
 
     /// @notice Mine a paid Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over

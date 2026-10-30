@@ -57,6 +57,9 @@ pub fn dispatch(
                     snapshotId: snapshot_id,
                 })
             }),
+            getCallProgress(c) => view(c, |c| {
+                crate::call_progress::call_progress(&storage, c.nodId)
+            }),
             mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,

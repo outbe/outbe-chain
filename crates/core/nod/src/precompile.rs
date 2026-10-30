@@ -109,11 +109,7 @@ fn to_abi_data(
     } else {
         api::settlement_deadline_of(called_at, terms.call_notice_period_seconds)
     };
-    let state = if !item.is_settled && nod.group_is_forfeited.read(&item.group_key)? {
-        crate::schema::EffectiveState::Forfeited
-    } else {
-        api::effective_state(item, called_at, deadline, storage.timestamp()?)
-    };
+    let state = api::state_of(storage, item)?;
     Ok(INod::NodData {
         nodId: item.nod_id,
         owner: item.owner,

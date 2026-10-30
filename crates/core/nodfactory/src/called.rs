@@ -33,7 +33,11 @@ use outbe_primitives::{
 };
 
 use outbe_nod::state::CallBins;
-use outbe_nod::{api, precompile::INod, schema::NodContract};
+use outbe_nod::{
+    api,
+    precompile::INod,
+    schema::{CallTerms, NodContract},
+};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 ///
@@ -269,23 +273,32 @@ fn call_if_breached(
     {
         return Ok(false);
     }
+    let terms = nod.read_call_terms(group_key)?;
+    if !window.breached(&breach_terms(nod, group_key, &terms)?) {
+        return Ok(false);
+    }
+    mark_called(nod, group_key, now, terms.call_notice_period_seconds)?;
+    Ok(true)
+}
+
+/// The terms a group is decided on: the ones it sealed, from the group's own first
+/// full day, which a Lysis series takes from its sealing.
+pub(crate) fn breach_terms(
+    nod: &NodContract<'_>,
+    group_key: B256,
+    terms: &CallTerms,
+) -> Result<BreachTerms> {
     let start_day = nod
         .groups
         .get(group_key)?
         .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
         .full_day_after_issue;
-    let terms = nod.read_call_terms(group_key)?;
-    let breached = window.breached(&BreachTerms {
+    Ok(BreachTerms {
         call_price: terms.call_price_minor,
         window_seconds: terms.call_window_seconds,
         threshold_seconds: terms.call_threshold_seconds,
         start_day: start_day.value(),
-    });
-    if !breached {
-        return Ok(false);
-    }
-    mark_called(nod, group_key, now, terms.call_notice_period_seconds)?;
-    Ok(true)
+    })
 }
 
 /// Stamps the call and opens the settlement window the group sealed.
