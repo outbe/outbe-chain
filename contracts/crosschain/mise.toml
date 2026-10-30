@@ -54,7 +54,7 @@ forge script script/3_ConfigureBridge.s.sol:ConfigureBridge --rpc-url "$NETWORK"
 '''
 
 [tasks.hand-over]
-description = "Give the bridge and the adapters to governance (run last; deploy-all runs it)"
+description = "Give the bridge and the adapters to governance (run last; deploy-all runs it unless KEEP_DEPLOYER_AS_OWNER=true)"
 run = '''
 set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/4_HandOver.s.sol:HandOver --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
