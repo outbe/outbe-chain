@@ -548,7 +548,9 @@ impl Lifecycle for IntexLifecycle {
         let group = eth::read_call_at(
             &url,
             addresses::INTEX_ADDR,
-            &eth::IIntex::getIntexSeriesCall { seriesId: series },
+            &eth::IIntex::getIntexSeriesCall {
+                intexId: venue_probes::intex_id(series),
+            },
             from,
         )
         .expect("the expiring series was live before the notice lapsed")
@@ -612,7 +614,9 @@ impl Lifecycle for IntexLifecycle {
                 eth::read_call(
                     &url,
                     addresses::INTEX_ADDR,
-                    &eth::IIntex::seriesExistsCall { seriesId: series },
+                    &eth::IIntex::seriesExistsCall {
+                        intexId: venue_probes::intex_id(series),
+                    },
                 ),
                 Some(false),
                 "series {series} was not deleted once its last settled unit mined"

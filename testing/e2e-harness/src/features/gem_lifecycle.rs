@@ -195,7 +195,7 @@ fn park_units(world: &mut World) {
     let series = source_series(world);
 
     let call = eth::IGemFactory::issueGemPositionCall {
-        sourceIntexId: series,
+        sourceIntexId: venue_probes::intex_id(series),
         units: U256::from(PARKED_UNITS),
     };
     // The precompile reports a decode failure rather than the collection's own
@@ -374,8 +374,7 @@ impl Lifecycle for GemLifecycle {
             &eth::IOracle::getUtcDayVwapCall {
                 base: Address::ZERO,
                 quote: outbe_primitives::asset_type::currency_address(USD_ISO),
-                utcDay: outbe_primitives::series_id::SeriesId::from_bytes(position.sourceIntexId.0)
-                    .day(),
+                utcDay: outbe_primitives::series_id::SeriesId::from(source_series(world)).day(),
             },
         )
         .expect("the source emission day is priced");

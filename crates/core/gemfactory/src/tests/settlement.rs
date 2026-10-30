@@ -320,7 +320,7 @@ fn a_series_in_any_reference_currency_can_be_sent() {
         outbe_intex::api::create_series(
             storage,
             outbe_intex::CreateSeriesParams {
-                series_id: source_intex_id(),
+                series_id: source_series_id(),
                 worldwide_day: WorldwideDay::new(0),
                 issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
@@ -334,7 +334,7 @@ fn a_series_in_any_reference_currency_can_be_sent() {
             },
         )
         .unwrap();
-        runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+        runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
             .unwrap();
     });
 }

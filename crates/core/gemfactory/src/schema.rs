@@ -46,7 +46,7 @@ pub struct GemPosition {
     pub merchant: Address,
 
     #[attribute(order = 1)]
-    pub source_intex_id: SeriesId,
+    pub source_series_id: SeriesId,
 
     /// Remaining Promis capacity. Each issue drains it by `promis_load_minor`.
     #[attribute(order = 2)]
@@ -155,13 +155,13 @@ impl GemFactoryContract<'_> {
     /// what tells two positions on the same series in one block apart.
     pub fn generate_position_id(
         merchant: Address,
-        source_intex_id: SeriesId,
+        source_series_id: SeriesId,
         block_number: u64,
     ) -> U256 {
         let mut buf = [0u8; 11 + 20 + SERIES_ID_LEN + 8];
         buf[0..11].copy_from_slice(b"gemposition");
         buf[11..31].copy_from_slice(merchant.as_slice());
-        buf[31..31 + SERIES_ID_LEN].copy_from_slice(source_intex_id.as_bytes());
+        buf[31..31 + SERIES_ID_LEN].copy_from_slice(source_series_id.as_bytes());
         buf[31 + SERIES_ID_LEN..].copy_from_slice(&block_number.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
     }

@@ -16,7 +16,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::errors::{date_step_error, IntexError};
 use crate::precompile::IIntex;
 use crate::schema::{
-    CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
+    intex_id, CallStamp, CreateSeriesParams, IntexContract, IntexState, SeriesId, SeriesRecord,
     SeriesRecordEntryExt,
 };
 
@@ -31,6 +31,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
 
     let mut registry = IntexContract::new(storage.clone());
     let record = SeriesRecord {
+        intex_id: intex_id(params.series_id),
         series_id: params.series_id,
         // u128 -> U256 widening is always lossless (see schema docs).
         promis_load_minor: U256::from(params.promis_load_minor),
@@ -73,7 +74,7 @@ pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Res
     // Past the deadline the unpaid units still wait for the group's expiry to return them.
     let group = record.group_key().map_err(date_step_error)?;
     let returned = registry.group_forfeited(group)?;
-    if registry.settled_units.read(&series_id)? != 0 || (unpaid != 0 && !returned) {
+    if registry.settled_units.read(&record.intex_id)? != 0 || (unpaid != 0 && !returned) {
         return Ok(false);
     }
     registry.leave_call_group(group, series_id)?;
@@ -91,10 +92,10 @@ pub struct Forfeited {
 /// settled, mined or sent to the Gem Factory. Writes nothing.
 pub fn forfeitable_units(storage: &StorageHandle<'_>, record: &SeriesRecord) -> Result<Forfeited> {
     let registry = IntexContract::new(storage.clone());
-    let series_id = record.series_id;
-    let settled = registry.settled_units.read(&series_id)?;
-    let mined = registry.mined_units.read(&series_id)?;
-    let gem_factory = registry.gem_factory_units.read(&series_id)?;
+    let id = record.intex_id;
+    let settled = registry.settled_units.read(&id)?;
+    let mined = registry.mined_units.read(&id)?;
+    let gem_factory = registry.gem_factory_units.read(&id)?;
     // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
         .issued_units
@@ -136,21 +137,21 @@ pub fn record_gem_factory_units(
 pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
     IntexContract::new(storage.clone())
         .settled_units
-        .read(&series_id)
+        .read(&intex_id(series_id))
 }
 
 /// Units of `series_id` sent to the Gem Factory.
 pub fn gem_factory_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
     IntexContract::new(storage.clone())
         .gem_factory_units
-        .read(&series_id)
+        .read(&intex_id(series_id))
 }
 
 /// Units of `series_id` burned into Promis so far.
 pub fn mined_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
     IntexContract::new(storage.clone())
         .mined_units
-        .read(&series_id)
+        .read(&intex_id(series_id))
 }
 
 /// Record `units` mined: they leave `settled_units` and join `mined_units`,
@@ -162,7 +163,8 @@ pub fn record_mined_units(
     units: u32,
 ) -> Result<()> {
     let registry = IntexContract::new(storage.clone());
-    let key = IntexContract::owner_units_key(series_id, owner);
+    let id = intex_id(series_id);
+    let key = IntexContract::owner_units_key(id, owner);
     let owner_settled = registry
         .owner_settled_units
         .read(&key)?
@@ -170,17 +172,17 @@ pub fn record_mined_units(
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     let settled = registry
         .settled_units
-        .read(&series_id)?
+        .read(&id)?
         .checked_sub(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     let mined = registry
         .mined_units
-        .read(&series_id)?
+        .read(&id)?
         .checked_add(units)
         .ok_or(IntexError::RealizedUnitsOverflow)?;
     registry.owner_settled_units.write(&key, owner_settled)?;
-    registry.settled_units.write(&series_id, settled)?;
-    registry.mined_units.write(&series_id, mined)?;
+    registry.settled_units.write(&id, settled)?;
+    registry.mined_units.write(&id, mined)?;
     add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)?;
     emit_settled_transfer(storage, series_id, owner, Address::ZERO, units)
 }
@@ -197,7 +199,7 @@ fn emit_settled_transfer(
         operator: INTEX_FACTORY_ADDRESS,
         from,
         to,
-        id: series_id.token_id(),
+        id: intex_id(series_id),
         value: U256::from(units),
     })
 }
@@ -211,7 +213,7 @@ fn add_owner_units(
     ledger: OwnerLedger,
 ) -> Result<()> {
     let registry = IntexContract::new(storage.clone());
-    let key = IntexContract::owner_units_key(series_id, owner);
+    let key = IntexContract::owner_units_key(intex_id(series_id), owner);
     let ledger = match ledger {
         OwnerLedger::Settled => &registry.owner_settled_units,
         OwnerLedger::Mined => &registry.owner_mined_units,
@@ -232,7 +234,7 @@ pub fn owner_settled_units(
 ) -> Result<u32> {
     IntexContract::new(storage.clone())
         .owner_settled_units
-        .read(&IntexContract::owner_units_key(series_id, owner))
+        .read(&IntexContract::owner_units_key(intex_id(series_id), owner))
 }
 
 /// Units of `series_id` this owner mined.
@@ -243,7 +245,7 @@ pub fn owner_mined_units(
 ) -> Result<u32> {
     IntexContract::new(storage.clone())
         .owner_mined_units
-        .read(&IntexContract::owner_units_key(series_id, owner))
+        .read(&IntexContract::owner_units_key(intex_id(series_id), owner))
 }
 
 /// Units of `series_id` this owner sent to the Gem Factory.
@@ -254,7 +256,7 @@ pub fn owner_gem_factory_units(
 ) -> Result<u32> {
     IntexContract::new(storage.clone())
         .owner_gem_factory_units
-        .read(&IntexContract::owner_units_key(series_id, owner))
+        .read(&IntexContract::owner_units_key(intex_id(series_id), owner))
 }
 
 /// The disjoint classes an issued unit can be in. They sum to `issued`.
@@ -273,9 +275,10 @@ pub struct UnitCounts {
 pub fn unit_counts(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<UnitCounts> {
     let registry = IntexContract::new(storage.clone());
     let record = registry.load_series(series_id)?;
-    let settled = registry.settled_units.read(&series_id)?;
-    let gem_factory = registry.gem_factory_units.read(&series_id)?;
-    let mined = registry.mined_units.read(&series_id)?;
+    let id = record.intex_id;
+    let settled = registry.settled_units.read(&id)?;
+    let gem_factory = registry.gem_factory_units.read(&id)?;
+    let mined = registry.mined_units.read(&id)?;
     // Checked: an underflow is corrupt state, not an empty class.
     let unpaid = record
         .issued_units
@@ -316,11 +319,12 @@ fn add_realized_units(
         return Ok(());
     }
     let registry = IntexContract::new(storage.clone());
+    let id = intex_id(series_id);
     // One slot, not the whole record: this runs on every settle.
-    let issued = registry.series.entry(series_id).issued_units().read()?;
-    let settled = registry.settled_units.read(&series_id)?;
-    let mined = registry.mined_units.read(&series_id)?;
-    let gem_factory = registry.gem_factory_units.read(&series_id)?;
+    let issued = registry.series.entry(id).issued_units().read()?;
+    let settled = registry.settled_units.read(&id)?;
+    let mined = registry.mined_units.read(&id)?;
+    let gem_factory = registry.gem_factory_units.read(&id)?;
 
     let (settled, gem_factory) = match kind {
         RealizedKind::Settled => (
@@ -346,8 +350,8 @@ fn add_realized_units(
     }
 
     match kind {
-        RealizedKind::Settled => registry.settled_units.write(&series_id, settled),
-        RealizedKind::GemFactory => registry.gem_factory_units.write(&series_id, gem_factory),
+        RealizedKind::Settled => registry.settled_units.write(&id, settled),
+        RealizedKind::GemFactory => registry.gem_factory_units.write(&id, gem_factory),
     }
 }
 
@@ -400,6 +404,14 @@ pub fn find_series(
     series_id: SeriesId,
 ) -> Result<Option<SeriesRecord>> {
     IntexContract::new(storage.clone()).get_series(series_id)
+}
+
+/// Get a series record by its intex id; `None` if the series does not exist.
+pub fn find_series_by_id(
+    storage: &StorageHandle<'_>,
+    intex_id: U256,
+) -> Result<Option<SeriesRecord>> {
+    IntexContract::new(storage.clone()).series.get(intex_id)
 }
 
 /// Whether a series exists.

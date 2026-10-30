@@ -58,23 +58,6 @@ impl SeriesId {
         &self.0
     }
 
-    /// The ERC-1155 token id of the series' units: `uint256(uint112(seriesId))`.
-    pub fn token_id(&self) -> U256 {
-        U256::from_be_slice(&self.0)
-    }
-
-    /// The series a token id names; `None` above the 14-byte id space.
-    pub fn from_token_id(id: U256) -> Option<Self> {
-        let word = id.to_be_bytes::<32>();
-        let (high, low) = word.split_at(32 - SERIES_ID_LEN);
-        if high.iter().any(|byte| *byte != 0) {
-            return None;
-        }
-        let mut bytes = [0u8; SERIES_ID_LEN];
-        bytes.copy_from_slice(low);
-        Some(Self(bytes))
-    }
-
     /// Id of a right in this series: keccak256 of the 14 id bytes, then `parts` at their fixed
     /// widths. With no parts it is the id of the series itself.
     pub fn right_id(&self, parts: &[&[u8]]) -> U256 {
@@ -253,14 +236,6 @@ mod tests {
         assert_eq!(SeriesId::pack_same(DAY, *b"USD").unwrap(), id);
         assert_ne!(id, SeriesId::pack(DAY, *b"USD", b'U').unwrap());
         assert!(SeriesId::pack_same(DAY, *b"usd").is_err());
-    }
-
-    #[test]
-    fn a_series_token_id_round_trips() {
-        let id = SeriesId::pack(DAY, *b"EUR", b'E').unwrap();
-        assert_eq!(SeriesId::from_token_id(id.token_id()), Some(id));
-        assert!(id.token_id() < U256::ONE << 112);
-        assert_eq!(SeriesId::from_token_id(U256::ONE << 112), None);
     }
 
     #[test]

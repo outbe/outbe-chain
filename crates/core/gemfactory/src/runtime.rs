@@ -148,14 +148,14 @@ fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_intex_id: SeriesId,
+    source_series_id: SeriesId,
     units: U256,
 ) -> Result<U256> {
     if caller.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    let series = outbe_intex::api::find_series(storage, source_intex_id)?
+    let series = outbe_intex::api::find_series(storage, source_series_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
     if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());
@@ -163,7 +163,7 @@ pub fn issue_gem_position(
 
     let issued_at = storage.now_secs()?;
 
-    burn_intex_into_gem_factory(storage, caller, source_intex_id, units)?;
+    burn_intex_into_gem_factory(storage, caller, source_series_id, units)?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
@@ -173,20 +173,20 @@ pub fn issue_gem_position(
     let gem_factory_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_gem_factory_units(
         storage,
-        source_intex_id,
+        source_series_id,
         caller,
         gem_factory_units,
     )?;
-    outbe_intex::api::release_if_spent(storage, source_intex_id)?;
+    outbe_intex::api::release_if_spent(storage, source_series_id)?;
 
     let position_id =
-        GemFactoryContract::generate_position_id(caller, source_intex_id, storage.block_number()?);
+        GemFactoryContract::generate_position_id(caller, source_series_id, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let position = GemPosition {
         position_id,
         merchant: caller,
-        source_intex_id,
+        source_series_id,
         remaining_capacity_minor: capacity,
         issued_at,
         expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
@@ -204,7 +204,7 @@ pub fn issue_gem_position(
         GemPositionIssued {
             positionId: position_id,
             merchant: caller,
-            sourceIntexId: source_intex_id.into(),
+            sourceIntexId: outbe_intex::intex_id(source_series_id),
             capacityMinor: capacity,
             issuanceCurrency: series.issuance_currency,
             referenceCurrency: series.reference_currency,
@@ -279,7 +279,7 @@ pub fn issue_merchant_gem(
 
     // Never below the source Intex, valued on its emission day in the gem's currency.
     let market_price = read_market_price(storage, reference_currency, now)?;
-    let source_price = read_day_price(storage, record.source_intex_id.day(), reference_currency)?;
+    let source_price = read_day_price(storage, record.source_series_id.day(), reference_currency)?;
     let entry_price = market_price.max(source_price);
 
     let gem_id = add_gem(
@@ -435,7 +435,7 @@ pub fn position_data(
     Ok(crate::precompile::IGemFactory::PositionData {
         positionId: record.position_id,
         merchant: record.merchant,
-        sourceIntexId: record.source_intex_id.into(),
+        sourceIntexId: outbe_intex::intex_id(record.source_series_id),
         remainingCapacityMinor: factory.remaining_capacity(&record)?,
         issuedAt: record.issued_at,
         expiresAt: record.expires_at,

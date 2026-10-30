@@ -22,7 +22,7 @@ fn balance(s: &StorageHandle, account: Address, id: U256) -> U256 {
 fn balances_follow_each_owners_settlements_and_minings() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
-        let id = sid(7).token_id();
+        let id = crate::schema::intex_id(sid(7));
         api::record_settled_units(&s, sid(7), owner(), 30).unwrap();
         api::record_settled_units(&s, sid(7), other(), 10).unwrap();
         api::record_mined_units(&s, sid(7), owner(), 12).unwrap();
@@ -58,7 +58,7 @@ fn balances_follow_each_owners_settlements_and_minings() {
 fn settled_units_never_move() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
-        let id = sid(7).token_id();
+        let id = crate::schema::intex_id(sid(7));
         api::record_settled_units(&s, sid(7), owner(), 5).unwrap();
 
         let calls = [
@@ -125,7 +125,7 @@ fn the_uri_shows_the_series_settled_card() {
         let uri = call(
             &s,
             IIntex::uriCall {
-                id: sid(7).token_id(),
+                id: crate::schema::intex_id(sid(7)),
             },
         );
         let json = STANDARD
@@ -144,7 +144,7 @@ fn the_uri_shows_the_series_settled_card() {
             .any(|t| t["trait_type"] == "State" && t["value"] == "Settled"));
 
         let missing = IIntex::uriCall {
-            id: sid(8).token_id(),
+            id: crate::schema::intex_id(sid(8)),
         };
         assert!(dispatch(s.clone(), &missing.abi_encode(), Address::ZERO, U256::ZERO).is_err());
     });
@@ -166,7 +166,7 @@ fn settlement_mints_and_mining_burns_the_settled_units() {
         .filter_map(|log| IIntex::TransferSingle::decode_log_data(log).ok())
         .map(|event| (event.operator, event.from, event.to, event.id, event.value))
         .collect();
-    let id = sid(7).token_id();
+    let id = crate::schema::intex_id(sid(7));
     assert_eq!(
         transfers,
         vec![

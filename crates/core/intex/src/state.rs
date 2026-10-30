@@ -12,7 +12,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::{date_step_error, IntexError};
-use crate::schema::{CallStamp, IntexContract, SeriesId, SeriesRecord};
+use crate::schema::{intex_id, CallStamp, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
     // ---------------------------------------------------------------------
@@ -20,21 +20,20 @@ impl IntexContract<'_> {
     // ---------------------------------------------------------------------
 
     pub(crate) fn series_exists(&self, series_id: SeriesId) -> Result<bool> {
-        self.series.exists(series_id)
+        self.series.exists(intex_id(series_id))
     }
 
     pub(crate) fn get_series(&self, series_id: SeriesId) -> Result<Option<SeriesRecord>> {
-        self.series.get(series_id)
+        self.series.get(intex_id(series_id))
     }
 
     pub(crate) fn load_series(&self, series_id: SeriesId) -> Result<SeriesRecord> {
-        self.series
-            .get(series_id)?
+        self.get_series(series_id)?
             .ok_or_else(|| IntexError::SeriesNotFound.into())
     }
 
     /// Create a new series record and list it for enumeration.
-    /// The underlying record `create` rejects a duplicate `series_id`.
+    /// The underlying record `create` rejects a duplicate id.
     pub(crate) fn create_series_record(&mut self, record: &SeriesRecord) -> Result<()> {
         self.series.create(record)?;
         self.series_index().insert(record.series_id)
@@ -47,11 +46,12 @@ impl IntexContract<'_> {
 
     /// Deletes a spent series: its record, its place in the enumeration and its ledgers.
     pub(crate) fn delete_series_record(&mut self, series_id: SeriesId) -> Result<()> {
+        let id = intex_id(series_id);
         self.series_index().remove(series_id)?;
-        self.settled_units.clear(&series_id)?;
-        self.gem_factory_units.clear(&series_id)?;
-        self.mined_units.clear(&series_id)?;
-        self.series.delete(series_id)
+        self.settled_units.clear(&id)?;
+        self.gem_factory_units.clear(&id)?;
+        self.mined_units.clear(&id)?;
+        self.series.delete(id)
     }
 
     pub(crate) fn read_total_series(&self) -> Result<u32> {

@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
-use outbe_intex::SeriesId;
+
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 use outbe_vaultrouter::settlement::SettlementPayment;
@@ -40,12 +40,9 @@ pub fn dispatch(
         use IGemFactory::IGemFactoryCalls::*;
         match call {
             issueGemPosition(c) => mutate(&storage, c, caller, |sender, c| {
-                runtime::issue_gem_position(
-                    &storage,
-                    sender,
-                    SeriesId::from(c.sourceIntexId),
-                    c.units,
-                )
+                let source = outbe_intex::api::find_series_by_id(&storage, c.sourceIntexId)?
+                    .ok_or(crate::errors::GemFactoryError::SourceIntexNotFound)?;
+                runtime::issue_gem_position(&storage, sender, source.series_id, c.units)
             }),
             issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
