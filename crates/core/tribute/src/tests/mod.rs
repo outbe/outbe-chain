@@ -101,6 +101,12 @@ fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay)
 
 fn open_sample_day(_tc: &mut TributeContract) {}
 
+/// Pin the day totals base slot: the genesis seeder writes a raw slot.
+#[test]
+fn day_totals_slot_matches_seeder_layout() {
+    with_tribute(|tc| assert_eq!(tc.day_totals.base_slot(), U256::ZERO));
+}
+
 #[test]
 fn test_initial_state() {
     with_tribute(|tc| {
