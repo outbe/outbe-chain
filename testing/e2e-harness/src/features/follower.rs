@@ -334,7 +334,7 @@ fn keyless_full_node_replays_confidential_lysis_and_rejects_private_call(world: 
     let checkpoint = world
         .rpc
         .wait_finalized_checkpoint(&[primary, keyless], height, 120)
-        .expect("keyless FullNode reached confidential Lysis and createNod checkpoint");
+        .expect("keyless FullNode reached confidential Lysis and issueNod checkpoint");
     assert_keyless_nod_state_and_private_call_rejection(world, primary, keyless, checkpoint);
 }
 

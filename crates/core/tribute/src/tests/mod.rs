@@ -8,7 +8,7 @@ use outbe_primitives::wwd_entity_id::{derive_poseidon_entity_id, WwdEntityId};
 
 use crate::{TributeContract, TributeData};
 
-mod create_nod;
+mod issue_nod;
 mod metadosis_boundary;
 
 fn in_process_ready<R>(

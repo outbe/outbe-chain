@@ -177,7 +177,7 @@ impl TributeContract<'_> {
         )
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn(&mut self, tribute_id: WwdEntityId) -> Result<()> {
         let loaded = self
@@ -191,13 +191,13 @@ impl TributeContract<'_> {
         crate::state_api::load(&self.storage_handle(), tribute_id)
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn_loaded(&mut self, loaded: LoadedTribute) -> Result<()> {
         crate::state_api::burn_loaded(&self.storage_handle(), loaded)
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn_all_by_wwd(&mut self, day: WorldwideDay) -> Result<()> {
         let storage = self.storage_handle();
@@ -322,12 +322,12 @@ impl TributeContract<'_> {
 
     /// Stage 5: Creates a `Nod` for `tribute_id` after Metadosis completion
     /// and deletes that Tribute only when Nod issuance succeeds.
-    pub fn create_nod(
+    pub fn issue_nod(
         &mut self,
         caller: alloy_primitives::Address,
         tribute_id: WwdEntityId,
     ) -> Result<U256> {
-        forfeiture::create_nod_from_tribute(self, caller, tribute_id)
+        forfeiture::issue_nod_from_tribute(self, caller, tribute_id)
     }
 
     /// Permissionless cleanup of a forfeited Tribute (`ITribute.clean(uint256)`).

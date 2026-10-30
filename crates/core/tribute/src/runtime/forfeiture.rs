@@ -142,7 +142,7 @@ fn issuable_day_vwap(
     )
 }
 
-pub(super) fn create_nod_from_tribute(
+pub(super) fn issue_nod_from_tribute(
     contract: &mut TributeContract<'_>,
     caller: alloy_primitives::Address,
     tribute_id: WwdEntityId,
@@ -159,7 +159,7 @@ pub(super) fn create_nod_from_tribute(
             return Err(TributeError::MetadosisNotCompleted.into());
         }
         if storage.now_secs()? < completed_at {
-            return Err(TributeError::NodCreationBeforeCompletion.into());
+            return Err(TributeError::NodIssueBeforeCompletion.into());
         }
         let record = crate::state_api::get_retained_record(&storage, tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;

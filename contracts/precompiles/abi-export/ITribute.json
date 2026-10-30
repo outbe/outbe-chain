@@ -33,25 +33,6 @@
   },
   {
     "type": "function",
-    "name": "createNod",
-    "inputs": [
-      {
-        "name": "tributeId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "getDayLeagueFraction",
     "inputs": [
       {
@@ -140,6 +121,25 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "issueNod",
+    "inputs": [
+      {
+        "name": "tributeId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -494,7 +494,7 @@
   },
   {
     "type": "error",
-    "name": "NodCreationBeforeCompletion",
+    "name": "NodIssueBeforeCompletion",
     "inputs": []
   },
   {

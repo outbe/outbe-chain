@@ -151,8 +151,8 @@ mod tests {
             &keccak256(b"getDayLeagueFraction(uint32,uint16)")[..4]
         );
         assert_eq!(
-            eth::ITribute::createNodCall::SELECTOR,
-            &keccak256(b"createNod(uint256)")[..4]
+            eth::ITribute::issueNodCall::SELECTOR,
+            &keccak256(b"issueNod(uint256)")[..4]
         );
     }
 }

@@ -238,7 +238,7 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
 }
 
 #[test]
-fn native_fraction_completion_keeps_tributes_for_owner_create_nod() {
+fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
     let mut provider = fixture();
     assert!(!outbe_tee::lysis::is_test_transport_installed());
 

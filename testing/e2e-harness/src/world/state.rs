@@ -296,9 +296,9 @@ pub struct FixtureState {
     /// The chain's worldwide-day key used for tribute offers.
     pub wwd: Option<String>,
     pub lysis_completion_height: Option<u64>,
-    /// Block of the last `createNod` of the completed day; every Nod exists there.
+    /// Block of the last `issueNod` of the completed day; every Nod exists there.
     pub nod_creation_height: Option<u64>,
-    /// Block of each `createNod`, by Tribute id.
+    /// Block of each `issueNod`, by Tribute id.
     pub nod_creation_blocks: std::collections::BTreeMap<alloy_primitives::U256, u64>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
     pub marker_height: Option<u64>,

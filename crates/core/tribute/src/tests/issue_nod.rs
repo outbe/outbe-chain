@@ -10,7 +10,7 @@ use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
 };
 
-/// The id `createNod` gives the Tribute's Nod: the owner in the series of its price day.
+/// The id `issueNod` gives the Tribute's Nod: the owner in the series of its price day.
 fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> U256 {
     let completed_at = tc
         .day_metadosis_completed_at
@@ -38,7 +38,7 @@ fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U
 }
 
 #[test]
-fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
+fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
     use alloy_sol_types::SolCall;
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -75,8 +75,8 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert_eq!(groups.get(&100), Some(&(1, t1.nominal_amount_minor)));
         assert_eq!(groups.get(&4000), Some(&(1, t2.nominal_amount_minor)));
 
-        // Cannot createNod before Metadosis has completed
-        assert!(tc.create_nod(owner1, t1.tribute_id).is_err());
+        // Cannot issueNod before Metadosis has completed
+        assert!(tc.issue_nod(owner1, t1.tribute_id).is_err());
 
         // Stage 3: Seal day and compute Metadosis fractions for WWD
         in_process_ready(&storage, || tc.seal_day(day));
@@ -110,9 +110,9 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         storage
             .set_block_timestamp(U256::from(base_ts - 1))
             .unwrap();
-        let early = tc.create_nod(owner1, t1.tribute_id).unwrap_err();
+        let early = tc.issue_nod(owner1, t1.tribute_id).unwrap_err();
         let expected_early: PrecompileError =
-            crate::errors::TributeError::NodCreationBeforeCompletion.into();
+            crate::errors::TributeError::NodIssueBeforeCompletion.into();
         assert_eq!(early.to_string(), expected_early.to_string());
         assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &t1))
@@ -122,7 +122,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         storage.set_block_timestamp(U256::from(base_ts)).unwrap();
 
         // A non-owner claim preserves the Tribute and issues no Nod.
-        let stranger_err = tc.create_nod(stranger, t1.tribute_id).unwrap_err();
+        let stranger_err = tc.issue_nod(stranger, t1.tribute_id).unwrap_err();
         let expected_owner: PrecompileError =
             crate::errors::TributeError::CallerNotTributeOwner.into();
         assert_eq!(stranger_err.to_string(), expected_owner.to_string());
@@ -137,7 +137,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
                 base_ts + 3 * outbe_primitives::time::SECONDS_PER_DAY,
             ))
             .unwrap();
-        let call_bytes = crate::precompile::ITribute::createNodCall {
+        let call_bytes = crate::precompile::ITribute::issueNodCall {
             tributeId: t1.tribute_id.to_u256(),
         }
         .abi_encode();
@@ -156,7 +156,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         let ret =
             crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).unwrap();
         let nod_id_u256 =
-            crate::precompile::ITribute::createNodCall::abi_decode_returns(&ret).unwrap();
+            crate::precompile::ITribute::issueNodCall::abi_decode_returns(&ret).unwrap();
         assert_eq!(nod_id_u256, nod_id_of(&tc, &t1));
         assert_ne!(nod_id_u256, t1.tribute_id.to_u256());
 
@@ -218,7 +218,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             Some(&(1, t2.nominal_amount_minor))
         );
 
-        // Calling createNod a second time for the burned Tribute must fail
+        // Calling issueNod a second time for the burned Tribute must fail
         assert!(
             crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).is_err()
         );
@@ -227,7 +227,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         let late = base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1;
         storage.set_block_timestamp(U256::from(late)).unwrap();
         assert_eq!(
-            tc.create_nod(owner2, t2.tribute_id).unwrap(),
+            tc.issue_nod(owner2, t2.tribute_id).unwrap(),
             nod_id_of(&tc, &t2)
         );
         assert!(tc.get_record(t2.tribute_id).unwrap().is_none());
@@ -270,7 +270,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
 }
 
 #[test]
-fn create_nod_reverts_without_a_completion_day_price() {
+fn issue_nod_reverts_without_a_completion_day_price() {
     use alloy_sol_types::SolCall;
 
     let mut provider = HashMapStorageProvider::new(1);
@@ -305,7 +305,7 @@ fn create_nod_reverts_without_a_completion_day_price() {
             ))
             .unwrap();
 
-        let call = crate::precompile::ITribute::createNodCall {
+        let call = crate::precompile::ITribute::issueNodCall {
             tributeId: tribute.tribute_id.to_u256(),
         }
         .abi_encode();
@@ -420,7 +420,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         );
 
         // Owner1 claims t1 -> moves t1's load from unclaimed_tribute_load to unpaid_load
-        let nod_id = tc.create_nod(owner1, t1.tribute_id).unwrap();
+        let nod_id = tc.issue_nod(owner1, t1.tribute_id).unwrap();
         let t1_item = outbe_nod::api::get_item(&storage, nod_id).unwrap().unwrap();
         assert_eq!(t1_item.group_key, group_key);
         let t1_load = outbe_tee_enclave::nod_encryption::decrypt_nod(
@@ -481,8 +481,8 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
             U256::ZERO
         );
 
-        // Subsequent createNod for unclaimed t2 must revert with TributeForfeited
-        let create_t2_err = tc.create_nod(owner2, t2.tribute_id).unwrap_err();
+        // Subsequent issueNod for unclaimed t2 must revert with TributeForfeited
+        let create_t2_err = tc.issue_nod(owner2, t2.tribute_id).unwrap_err();
         let expected_forfeited: PrecompileError =
             crate::errors::TributeError::TributeForfeited.into();
         assert_eq!(create_t2_err.to_string(), expected_forfeited.to_string());
@@ -751,7 +751,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         assert!(allocated <= U256::from(100_000u64));
 
         // 2. P4.4c: INod.clean on a settled Nod reverts with NodAlreadySettled
-        let nod_id = tc.create_nod(owner2, t_normal.tribute_id).unwrap();
+        let nod_id = tc.issue_nod(owner2, t_normal.tribute_id).unwrap();
         let nod_contract = outbe_nod::NodContract::new(storage.clone());
         let mut stored_nod = nod_contract.records.get(nod_id).unwrap().unwrap();
         stored_nod.is_settled = true;

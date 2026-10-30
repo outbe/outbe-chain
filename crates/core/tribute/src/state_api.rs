@@ -139,7 +139,7 @@ pub fn load(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<Loade
         .transpose()
 }
 
-/// Test helper. Production deletion is only `create_nod` after Nod issuance.
+/// Test helper. Production deletion is only `issue_nod` after Nod issuance.
 #[cfg(test)]
 pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result<()> {
     let LoadedTribute { record } = loaded;
