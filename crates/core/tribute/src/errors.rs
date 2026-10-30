@@ -20,8 +20,8 @@ pub enum TributeError {
     #[error("invalid owner")]
     InvalidOwner,
 
-    #[error("settlement amount must be positive")]
-    SettlementAmountMustBePositive,
+    #[error("issuance amount must be positive")]
+    IssuanceAmountMustBePositive,
 
     #[error("worldwide day is sealed")]
     WorldwideDaySealed,
@@ -160,8 +160,8 @@ impl From<TributeError> for PrecompileError {
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),
             TributeError::InvalidOwner => revert_with(I::InvalidOwner {}),
-            TributeError::SettlementAmountMustBePositive => {
-                revert_with(I::SettlementAmountMustBePositive {})
+            TributeError::IssuanceAmountMustBePositive => {
+                revert_with(I::IssuanceAmountMustBePositive {})
             }
             TributeError::WorldwideDaySealed => revert_with(I::WorldwideDaySealed {}),
             TributeError::OwnerBalanceOverflow => revert_with(I::OwnerBalanceOverflow {}),

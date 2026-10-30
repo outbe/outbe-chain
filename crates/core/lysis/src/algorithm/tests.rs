@@ -63,7 +63,7 @@ fn ref_root_scaled(base: u128, q: u32) -> u128 {
 /// real fractional power at the in-use `q in {5, 10}`. A scale-stacking wrap
 /// (the OIP-00043 bug) makes `target` - and thus the root - garbage, off by
 /// many orders of magnitude. Such a root fails this check. It still satisfies
-/// the loose `frac > 0` / `frac <= 2*fmax` bounds the distribution tests use.
+/// the loose `frac > 0` / `frac <= fmax` bounds the distribution tests use.
 #[test]
 fn test_fp_root_known_answers() {
     // pi^(1/10) at q = 10 - the call site that overflows U256 hardest.
@@ -181,9 +181,215 @@ fn test_two_groups_sum_reasonable() {
     // Both fractions should be positive and <= fmax
     for &frac in &result {
         assert!(!frac.is_zero(), "fraction should be positive");
-        assert!(
-            frac <= fmax_fp * U256::from(2u64),
-            "fraction should be bounded"
-        );
+        assert!(frac <= fmax_fp, "fraction should be bounded by fmax_fp");
     }
+}
+
+#[test]
+fn prop_fraction_never_exceeds_ceiling() {
+    // 1. Exact T-03 multi-group counterexample: raw f1[0] = 670_117 > fmax_fp = 640_000,
+    // while weighted_total = 639_999 <= f_fp = 640_000 (normalization does not fire).
+    let capped = calc_fraction_distribution_fp(
+        &[U256::from(200_000u64), U256::from(800_000u64)],
+        &[1, 1],
+        2,
+        F_MAX_FP,
+        F_MAX_FP,
+    )
+    .unwrap();
+    assert_eq!(capped, vec![U256::from(640_000u64), U256::from(632_470u64)]);
+
+    // 2. Singleton fast-path when f_fp > fmax_fp and when fmax_fp == 0.
+    let single_capped =
+        calc_fraction_distribution_fp(&[SCALE], &[1], 1, F_MAX_FP, F_FP_DEFAULT).unwrap();
+    assert_eq!(single_capped, vec![F_FP_DEFAULT]);
+    let single_zero_fmax =
+        calc_fraction_distribution_fp(&[SCALE], &[1], 1, F_FP_DEFAULT, U256::ZERO).unwrap();
+    assert_eq!(single_zero_fmax, vec![U256::ZERO]);
+
+    // 3. Multi-group zero paths: fmax_fp == 0 and t_total == 0 (all populations 0, nt == 0).
+    let half = SCALE / U256::from(2u64);
+    let multi_zero_fmax =
+        calc_fraction_distribution_fp(&[half, half], &[1, 1], 2, F_FP_DEFAULT, U256::ZERO).unwrap();
+    assert_eq!(multi_zero_fmax, vec![U256::ZERO, U256::ZERO]);
+
+    let zero_total_tau =
+        calc_fraction_distribution_fp(&[half, half], &[0, 0], 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    assert_eq!(zero_total_tau, vec![U256::ZERO, U256::ZERO]);
+
+    // 4. Grid over group counts, share distributions (including degenerate Var[Y] and tiny shares),
+    // populations, and (f_fp, fmax_fp) ratios (including f == fmax and f > fmax).
+    let share_cases: &[&[u64]] = &[
+        &[500_000, 500_000],
+        &[200_000, 800_000],
+        &[10_000, 990_000],
+        &[1, 999_999],
+        &[999_999, 1],
+        &[100_000, 200_000, 700_000],
+        &[50_000, 150_000, 300_000, 500_000],
+        &[0, 0, 1_000_000],
+    ];
+    let pop_cases: &[&[u64]] = &[&[1, 1], &[1, 1000], &[1000, 1], &[500_000_000, 500_000_000]];
+    let limit_cases: &[(U256, U256)] = &[
+        (F_FP_DEFAULT, F_MAX_FP),
+        (F_MAX_FP, F_MAX_FP),
+        (F_MAX_FP, F_FP_DEFAULT),
+        (SCALE, F_MAX_FP),
+    ];
+
+    for &shares in share_cases {
+        let y_fp: Vec<U256> = shares.iter().copied().map(U256::from).collect();
+        let n = y_fp.len();
+        for &pops_template in pop_cases {
+            let p: Vec<u64> = (0..n)
+                .map(|idx| pops_template[idx % pops_template.len()])
+                .collect();
+            let nt: usize = p.iter().copied().map(|v| v as usize).sum();
+            for &(f_fp, fmax_fp) in limit_cases {
+                let out = calc_fraction_distribution_fp(&y_fp, &p, nt, f_fp, fmax_fp).unwrap();
+                assert_eq!(out.len(), n);
+                for (idx, &frac) in out.iter().enumerate() {
+                    assert!(
+                        frac <= fmax_fp,
+                        "frac[{idx}] = {frac} exceeds ceiling fmax_fp = {fmax_fp} for shares={shares:?}, p={p:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn golden_fmax_twice_f_outputs_are_unchanged() {
+    // 1. Negative-beta case with non-zero signed division remainder.
+    let neg_beta = calc_fraction_distribution_fp(
+        &[U256::from(10_000u64), U256::from(990_000u64)],
+        &[1, 1],
+        2,
+        F_FP_DEFAULT,
+        F_MAX_FP,
+    )
+    .unwrap();
+    assert_eq!(
+        neg_beta,
+        vec![U256::from(586_432u64), U256::from(317_308u64)]
+    );
+
+    // 2. Balanced 2-group case.
+    let balanced_2 = calc_fraction_distribution_fp(
+        &[U256::from(500_000u64), U256::from(500_000u64)],
+        &[5, 5],
+        10,
+        F_FP_DEFAULT,
+        F_MAX_FP,
+    )
+    .unwrap();
+    assert_eq!(
+        balanced_2,
+        vec![U256::from(515_121u64), U256::from(124_878u64)]
+    );
+
+    // 3. Large-population 2-group boundary witness (p = [500_000_000, 500_000_000]).
+    let large_pop_2 = calc_fraction_distribution_fp(
+        &[U256::from(200_000u64), U256::from(800_000u64)],
+        &[500_000_000, 500_000_000],
+        1_000_000_000,
+        F_FP_DEFAULT,
+        F_MAX_FP,
+    )
+    .unwrap();
+    assert_eq!(
+        large_pop_2,
+        vec![U256::from(575_999u64), U256::from(255_999u64)]
+    );
+
+    // 4. 3-group case.
+    let groups_3 = calc_fraction_distribution_fp(
+        &[
+            U256::from(500_000u64),
+            U256::from(300_000u64),
+            U256::from(200_000u64),
+        ],
+        &[50, 30, 20],
+        100,
+        F_FP_DEFAULT,
+        F_MAX_FP,
+    )
+    .unwrap();
+    assert_eq!(
+        groups_3,
+        vec![
+            U256::from(460_224u64),
+            U256::from(240_437u64),
+            U256::from(88_784u64),
+        ]
+    );
+
+    // 5. 4-group skewed-population case.
+    let q = SCALE / U256::from(4u64);
+    let groups_4 =
+        calc_fraction_distribution_fp(&[q, q, q, q], &[100, 1, 1, 1], 103, F_FP_DEFAULT, F_MAX_FP)
+            .unwrap();
+    assert_eq!(
+        groups_4,
+        vec![
+            U256::from(517_793u64),
+            U256::from(379_522u64),
+            U256::from(244_974u64),
+            U256::from(137_709u64),
+        ]
+    );
+}
+
+#[test]
+fn kernel_checked_math_rejects_overflow_inputs() {
+    use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
+    use outbe_primitives::error::PrecompileError;
+
+    // 1. Cumulative share sum overflow (`cum.checked_add` in `compute_moments_fp`).
+    let err_cum =
+        calc_fraction_distribution_fp(&[U256::MAX, U256::ONE], &[1, 1], 2, F_FP_DEFAULT, F_MAX_FP)
+            .unwrap_err();
+    assert!(
+        matches!(&err_cum, PrecompileError::Revert(msg) if msg == "lysis: kernel arithmetic overflow"),
+        "unexpected error for cumulative sum overflow: {err_cum:?}"
+    );
+
+    // 2. Scaled multiplication overflow (`checked_mul_div_floor(f_fp, SCALE, fmax_fp)`).
+    let half = SCALE / U256::from(2u64);
+    let err_mul_div =
+        calc_fraction_distribution_fp(&[half, half], &[1, 1], 2, U256::MAX, SCALE).unwrap_err();
+    assert!(
+        matches!(&err_mul_div, PrecompileError::Revert(msg) if msg == "scaled_math: multiplication overflow"),
+        "unexpected error for scaled_math overflow: {err_mul_div:?}"
+    );
+
+    // 3. Square overflow (`yi.checked_mul(yi)` in `compute_moments_fp` at `yi = 2^128`).
+    let err_sq = calc_fraction_distribution_fp(
+        &[U256::ONE << 128, U256::ZERO],
+        &[1, 1],
+        2,
+        F_FP_DEFAULT,
+        F_MAX_FP,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err_sq, PrecompileError::Revert(msg) if msg == "lysis: kernel arithmetic overflow"),
+        "unexpected error for yi^2 overflow: {err_sq:?}"
+    );
+
+    // 4. `program_v1` boundary preserves `ProgramErrorV1::Arithmetic { reason: Math(_) }`
+    // and maps to `PrecompileError::BodyReadCorruption`.
+    let prog_err = ProgramErrorV1::math(err_sq);
+    assert!(matches!(
+        &prog_err,
+        ProgramErrorV1::Arithmetic {
+            reason: LysisArithmeticErrorV1::Math(msg)
+        } if msg.contains("lysis: kernel arithmetic overflow")
+    ));
+    let boundary_err: PrecompileError = prog_err.into();
+    assert!(matches!(
+        boundary_err,
+        PrecompileError::BodyReadCorruption(_)
+    ));
 }

@@ -74,8 +74,7 @@ fn six_decimal_unit() -> U256 {
 }
 
 fn source_intex_id() -> SeriesId {
-    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U')
-        .expect("benchmark Intex id is canonical")
+    SeriesId::pack(20_260_212, *b"USD", b'U').expect("benchmark Intex id is canonical")
 }
 
 fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
@@ -93,12 +92,17 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    OracleContract::new(storage)
+    let oracle = OracleContract::new(storage);
+    oracle
         .record_utc_day_vwap(
             previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
             index,
             rate,
         )
+        .map_err(|error| error.to_string())?;
+    // A merchant gem is floored at the source's emission-day price.
+    oracle
+        .record_utc_day_vwap(source_intex_id().day(), index, six_decimal_unit())
         .map_err(|error| error.to_string())
 }
 
@@ -113,7 +117,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
             entry_price_minor: six_decimal_unit(),
             call_price_minor: U256::ZERO,
             call_trigger: outbe_intex::IntexCallTrigger::default(),
-            issued_at: T_NOW as u32,
+            issued_at: T_NOW,
             issuance_currency: 840,
             reference_currency: 840,
         },
@@ -245,6 +249,8 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                 position_id,
                 owner: BOB,
                 promis_load_minor: U256::from(10) * six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         )
         .map_err(|error| error.to_string()),

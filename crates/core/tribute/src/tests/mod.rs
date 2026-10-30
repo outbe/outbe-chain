@@ -114,6 +114,15 @@ fn test_initial_state() {
 #[test]
 fn test_issue_accepts_unsealed_day_and_rejects_sealed_day() {
     with_tribute(|tc| {
+        let mut zero_amount = sample_tribute();
+        zero_amount.issuance_amount_minor = U256::ZERO;
+        let Err(PrecompileError::RevertBytes(revert)) = tc.issue(&zero_amount) else {
+            panic!("zero issuance amount must revert with custom error");
+        };
+        assert!(
+            <crate::precompile::ITribute::IssuanceAmountMustBePositive as alloy_sol_types::SolError>::abi_decode(&revert).is_ok()
+        );
+
         let tribute = sample_tribute();
         tc.issue(&tribute).unwrap();
         assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);

@@ -1,9 +1,8 @@
 use super::*;
 
-use outbe_primitives::units::native_to_protocol_floor;
-use outbe_promislimit::PromisLimitContract;
+use outbe_promislimit::{NativeBurnSource, PromisLimitContract};
 
-/// Burns the proceeds and credits whole units to the Promis limit pool; sub-unit wei is not credited.
+/// Burns the proceeds into the Promis Limit; wei below one unit carries in its shared rest.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -17,11 +16,11 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
-    let credited = native_to_protocol_floor(amount);
-    if !credited.is_zero() {
-        PromisLimitContract::new(storage.clone()).checked_credit(credited)?;
-    }
+    let credited = PromisLimitContract::new(storage.clone()).burn_native_to_promis_limit(
+        INTEX_FACTORY_ADDRESS,
+        amount,
+        NativeBurnSource::Proceeds,
+    )?;
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsBurned {

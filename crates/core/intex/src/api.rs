@@ -358,7 +358,7 @@ fn add_realized_units(
 pub fn set_issued_at(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    issued_at: u32,
+    issued_at: u64,
 ) -> Result<()> {
     if issued_at == 0 {
         return Err(IntexError::ZeroIssuedAt.into());
@@ -378,7 +378,7 @@ pub fn set_issued_at(
 pub fn call_group_of(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
-    called_at: u32,
+    called_at: u64,
 ) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     let group = registry

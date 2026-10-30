@@ -355,7 +355,7 @@ library BridgeMsgCodec {
         ///         records real provenance.
         uint32 worldwideDay;
         /// @notice When the origin created the series, so every chain dates it from the same moment.
-        uint32 issuedAt;
+        uint64 issuedAt;
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
@@ -524,7 +524,7 @@ library BridgeMsgCodec {
     /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(uint32 _worldwideDay, uint32 _calledAt, bytes14[] memory _seriesIds)
+    function encodeMarkCalled(uint32 _worldwideDay, uint64 _calledAt, bytes14[] memory _seriesIds)
         internal
         pure
         returns (bytes memory)
@@ -802,13 +802,13 @@ library BridgeMsgCodec {
     function decodeMarkCalled(bytes calldata _msg)
         external
         pure
-        returns (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds)
+        returns (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds)
     {
         if (_msg.length < MIN_LEN_MARK_CALLED) {
             revert InvalidPayloadLength(MSG_MARK_CALLED, _msg.length, MIN_LEN_MARK_CALLED);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, calledAt, seriesIds) = abi.decode(_msg[2:], (uint32, uint32, bytes14[]));
+        (worldwideDay, calledAt, seriesIds) = abi.decode(_msg[2:], (uint32, uint64, bytes14[]));
         _assertMarkBatch(seriesIds);
     }
 

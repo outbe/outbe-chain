@@ -38,13 +38,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
-    if iso_4217_alpha(issuance_currency).is_none() {
-        return Err(GemFactoryError::InvalidCurrency {
-            currency: issuance_currency,
-        }
-        .into());
-    }
-    outbe_oracle::api::check_reference_currency(reference_currency)?;
+    check_gem_currencies(issuance_currency, reference_currency)?;
 
     // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
@@ -148,8 +142,8 @@ fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
 }
 
 /// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
-/// The merchant can transfer a partial holding. The position pins the source entry.
-/// Its Promis capacity equals the source load times the burned units.
+/// The merchant can transfer a partial holding. Its Promis capacity equals the source
+/// load times the burned units.
 /// Return the issued `position_id`.
 pub fn issue_gem_position(
     storage: &StorageHandle<'_>,
@@ -166,9 +160,6 @@ pub fn issue_gem_position(
     if outbe_intex::api::state(storage, &series)? != IntexState::Issued {
         return Err(GemFactoryError::SourceIntexNotIssued.into());
     }
-
-    // The daily call scan walks only listed reference currencies.
-    outbe_oracle::api::check_reference_currency(series.reference_currency)?;
 
     let issued_at = storage.now_secs()?;
 
@@ -197,9 +188,6 @@ pub fn issue_gem_position(
         merchant: caller,
         source_intex_id,
         remaining_capacity_minor: capacity,
-        source_entry_price_minor: series.entry_price_minor,
-        issuance_currency: series.issuance_currency,
-        reference_currency: series.reference_currency,
         issued_at,
         expires_at: issued_at.saturating_add(outbe_gem::config::read(storage)?.position_validity),
     };
@@ -218,9 +206,8 @@ pub fn issue_gem_position(
             merchant: caller,
             sourceIntexId: source_intex_id.into(),
             capacityMinor: capacity,
-            sourceEntryPriceMinor: position.source_entry_price_minor,
-            issuanceCurrency: position.issuance_currency,
-            referenceCurrency: position.reference_currency,
+            issuanceCurrency: series.issuance_currency,
+            referenceCurrency: series.reference_currency,
             issuedAt: issued_at,
             expiresAt: position.expires_at,
         },
@@ -261,6 +248,8 @@ pub fn issue_merchant_gem(
         position_id,
         owner,
         promis_load_minor: promis_load,
+        issuance_currency,
+        reference_currency,
     } = params;
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
@@ -268,6 +257,7 @@ pub fn issue_merchant_gem(
     if promis_load.is_zero() {
         return Err(GemFactoryError::ZeroPromisLoad.into());
     }
+    check_gem_currencies(issuance_currency, reference_currency)?;
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
@@ -287,9 +277,10 @@ pub fn issue_merchant_gem(
         .checked_sub(promis_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-    // An anti-dilution bound, not a price: never below the source Intex.
-    let market_price = read_market_price(storage, record.reference_currency, now)?;
-    let entry_price = market_price.max(record.source_entry_price_minor);
+    // Never below the source Intex, valued on its emission day in the gem's currency.
+    let market_price = read_market_price(storage, reference_currency, now)?;
+    let source_price = read_day_price(storage, record.source_intex_id.day(), reference_currency)?;
+    let entry_price = market_price.max(source_price);
 
     let gem_id = add_gem(
         storage,
@@ -297,8 +288,8 @@ pub fn issue_merchant_gem(
             owner,
             promis_load_minor: promis_load,
             entry_price_minor: entry_price,
-            issuance_currency: record.issuance_currency,
-            reference_currency: record.reference_currency,
+            issuance_currency,
+            reference_currency,
             issued_at: now,
             call_terms: None,
         },
@@ -446,9 +437,6 @@ pub fn position_data(
         merchant: record.merchant,
         sourceIntexId: record.source_intex_id.into(),
         remainingCapacityMinor: factory.remaining_capacity(&record)?,
-        sourceEntryPriceMinor: record.source_entry_price_minor,
-        issuanceCurrency: record.issuance_currency,
-        referenceCurrency: record.reference_currency,
         issuedAt: record.issued_at,
         expiresAt: record.expires_at,
     })
@@ -491,9 +479,25 @@ pub fn mine_promis(
     })
 }
 
+/// Any ISO 4217 code issues a gem; only an oracle reference currency can call and price it.
+fn check_gem_currencies(issuance_currency: u16, reference_currency: u16) -> Result<()> {
+    if iso_4217_alpha(issuance_currency).is_none() {
+        return Err(GemFactoryError::InvalidCurrency {
+            currency: issuance_currency,
+        }
+        .into());
+    }
+    outbe_oracle::api::check_reference_currency(reference_currency)
+}
+
 /// COEN price of `iso_code` from the last closed UTC day.
 fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
     let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
+    read_day_price(storage, day, iso_code)
+}
+
+/// COEN price of `iso_code` on the closed UTC day `day`.
+fn read_day_price(storage: &StorageHandle<'_>, day: u32, iso_code: u16) -> Result<U256> {
     get_utc_day_vwap_for_iso(storage.clone(), day, iso_code)?
         .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }

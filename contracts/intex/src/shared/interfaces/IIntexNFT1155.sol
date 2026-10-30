@@ -65,21 +65,21 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint64 entryPriceMinor;
         /// @notice Call price in ISO stable-units (1e6).
         uint64 callPriceMinor;
+        /// @notice Series identifier - the readable id this record belongs to.
+        bytes14 seriesId;
         /// @notice Forced-call trigger (window/threshold/period).
         IntexCallTrigger callTrigger;
         /// @notice Timestamp when the series was created (UNIX seconds).
-        uint32 issuedAt;
+        uint64 issuedAt;
         /// @notice Timestamp when the series entered the Called state (UNIX seconds, 0 if not
         ///         called).
-        uint32 calledAt;
+        uint64 calledAt;
         /// @notice Total supply of this token id across all owners.
         uint32 totalSupply;
         /// @notice Current series lifecycle state.
         IntexState state;
         /// @notice Worldwide day whose tributes fed this series.
         uint32 worldwideDay;
-        /// @notice Series identifier - the readable id this record belongs to.
-        bytes14 seriesId;
     }
 
     // --- Events ---
@@ -91,22 +91,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param units Issued units minted to `to`.
     event IntexIssued(address indexed operator, uint256 indexed tokenId, address indexed to, uint256 units);
 
-    /// @notice Emitted when a series lifecycle state changes.
-    /// @param operator Caller that drove the transition (`RELAYER_ROLE`).
-    /// @param tokenId Issued token id (= `uint256(seriesId)`).
-    /// @param fromState Lifecycle state before the transition.
-    /// @param toState Lifecycle state after the transition.
-    /// @param at Timestamp of the state change.
-    /// @param settlementDeadline Effective settlement deadline (`calledAt + callNoticePeriod`,
-    ///        capped at `uint32.max`). It is 0 if not applicable.
-    event IntexStatusUpdated(
-        address indexed operator,
-        uint256 indexed tokenId,
-        IntexState fromState,
-        IntexState toState,
-        uint32 at,
-        uint32 settlementDeadline
-    );
+    /// @notice Emitted when this chain records the call notice of a series.
+    /// @param seriesId Series identifier.
+    /// @param calledAt Unix time the origin marked the series Called.
+    /// @param settlementDeadline `calledAt + callNoticePeriod`, capped at `uint64.max`.
+    event IntexSeriesCalled(bytes14 indexed seriesId, uint64 calledAt, uint64 settlementDeadline);
 
     /// @notice Emitted when token metadata is updated (ERC-4906). Per the EIP, `tokenId` is
     ///         non-indexed.
@@ -126,22 +115,22 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice `createSeries` was called with a zero issued-intex count.
     error ZeroIssuedUnits();
     /// @notice `issuedAt` is zero (the existence sentinel) or dated after this chain's clock.
-    error InvalidIssuedAt(uint32 issuedAt);
+    error InvalidIssuedAt(uint64 issuedAt);
     /// @notice A burn of zero units.
     error ZeroUnits();
     /// @notice A mint or crosschainMint exceeds the units its packed storage field can hold.
     error UnitsTooLarge(uint256 units);
     /// @notice Owner-to-owner transfer attempted on a `Called` series after its settlement deadline.
-    error TransferAfterDeadline(uint256 tokenId, uint32 deadline);
+    error TransferAfterDeadline(uint256 tokenId, uint64 deadline);
     /// @notice Bridge attempted on a `Called` series after it closed: crosschainBurn after the
     ///         settlement deadline, crosschainMint after the transit margin past it.
-    error BridgeAfterDeadline(uint256 tokenId, uint32 closedAt);
+    error BridgeAfterDeadline(uint256 tokenId, uint64 closedAt);
     /// @notice Issue attempted on a `Called` series after the transit margin past its settlement
     ///         deadline ended.
-    error IssueAfterDeadline(uint256 tokenId, uint32 closedAt);
+    error IssueAfterDeadline(uint256 tokenId, uint64 closedAt);
     /// @notice `markCalled` was given a call time of zero or one the destination clock has not
     ///         reached.
-    error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
+    error CalledAtInvalid(uint64 calledAt, uint64 nowTs);
     /// @notice An `issueIntex` or `crosschainMint` would push `totalSupply` past
     ///         `type(uint32).max`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
@@ -157,7 +146,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         bytes14 seriesId;
         uint32 worldwideDay;
         /// @notice When the origin created the series. The call window is dated from it.
-        uint32 issuedAt;
+        uint64 issuedAt;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint32 issuedUnits;
@@ -183,7 +172,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Mark a series as Called (Issued -> Called).
     /// @param seriesId Series identifier.
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
-    function markCalled(bytes14 seriesId, uint32 calledAt) external;
+    function markCalled(bytes14 seriesId, uint64 calledAt) external;
 
     /// @notice Burn `units` of `owner`'s Issued Intex on Outbe: settled, or sent to the Gem Factory.
     /// @dev Entry point of the IntexFactory and GemFactory precompiles under BURNER_ROLE. They own

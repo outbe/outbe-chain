@@ -336,11 +336,6 @@
   },
   {
     "type": "error",
-    "name": "BlockTimestampExceedsU32",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "DateStep",
     "inputs": [
       {

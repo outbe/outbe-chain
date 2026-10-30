@@ -169,7 +169,16 @@ fn local_g1_path() -> std::path::PathBuf {
         return p.into();
     }
     let home = std::env::var("HOME").unwrap_or_default();
-    std::path::Path::new(&home).join(".bb-crs/bn254_g1.dat")
+    let home_path = std::path::Path::new(&home).join(".bb-crs/bn254_g1.dat");
+    if home_path.exists() {
+        return home_path;
+    }
+    if let Ok(cargo_home) = std::env::var("CARGO_HOME") {
+        if !cargo_home.is_empty() {
+            return std::path::Path::new(&cargo_home).join(".bb-crs/bn254_g1.dat");
+        }
+    }
+    home_path
 }
 
 /// The SRS subgroup size (G1 points) the prover needs, via bb `circuit_stats`.
@@ -223,22 +232,51 @@ fn local_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
 /// fetch the trusted setup at proving time — `reqwest::blocking` also panics on
 /// the mobile event loop. The SRS is provided via [`set_srs_path`] instead.
 #[cfg(feature = "with-network-srs")]
-fn net_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
+fn fetch_g1_once(num_points: u32) -> Result<Vec<u8>, CrsError> {
     let g1_end = num_points * G1_POINT_SIZE - 1;
-    let resp = reqwest::blocking::Client::new()
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| CrsError::SrsDownload(e.to_string()))?;
+    let resp = client
         .get(AZTEC_CRS_G1)
         .header(reqwest::header::RANGE, format!("bytes=0-{g1_end}"))
         .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|e| CrsError::SrsDownload(e.to_string()))?;
     let bytes = resp
         .bytes()
         .map_err(|e| CrsError::SrsDownloadBody(e.to_string()))?
         .to_vec();
+    verify_g1(num_points, &bytes)?;
     Ok(bytes)
 }
 
-/// Best-effort write-through of verified G1 bytes to the local cache, so the
-/// next call — and any smaller circuit — reads locally instead of re-downloading.
+#[cfg(feature = "with-network-srs")]
+fn net_g1(num_points: u32) -> Result<Vec<u8>, CrsError> {
+    const MAX_ATTEMPTS: u64 = 3;
+    let mut last_err = None;
+    for attempt in 1..=MAX_ATTEMPTS {
+        if attempt > 1 {
+            if let Ok(cached) = local_g1(num_points) {
+                if verify_g1(num_points, &cached).is_ok() {
+                    return Ok(cached);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(attempt));
+        }
+        match fetch_g1_once(num_points) {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) => last_err = Some(err),
+        }
+    }
+    Err(last_err.expect("MAX_ATTEMPTS is non-zero"))
+}
+
+/// Atomic write-through of verified G1 bytes to the local cache, so concurrent
+/// test processes never observe a truncated file and subsequent calls read
+/// locally instead of re-downloading.
 /// Only with `with-network-srs` (nothing is ever downloaded to cache otherwise).
 #[cfg(feature = "with-network-srs")]
 fn cache_g1(bytes: &[u8]) {
@@ -246,7 +284,11 @@ fn cache_g1(bytes: &[u8]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(&path, bytes);
+    let tmp_path = path.with_extension(format!("dat.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp_path, bytes).is_ok() {
+        let _ = std::fs::rename(&tmp_path, &path);
+        let _ = std::fs::remove_file(&tmp_path);
+    }
 }
 
 pub(crate) fn load_srs() -> Result<(Vec<u8>, u32, Vec<u8>), CrsError> {

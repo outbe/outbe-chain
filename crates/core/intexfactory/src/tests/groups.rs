@@ -5,7 +5,6 @@ mod group_scans {
     use alloy_primitives::U256;
     use outbe_intex::SeriesId;
     use outbe_primitives::storage::StorageHandle;
-    use outbe_primitives::time::WorldwideDay;
 
     use crate::runtime;
     use crate::schema::IssuanceParams;
@@ -24,12 +23,7 @@ mod group_scans {
 
     fn params(worldwide_day: u32, issuance_currency: u16) -> IssuanceParams {
         IssuanceParams {
-            series_id: SeriesId::for_pair(
-                WorldwideDay::new(worldwide_day),
-                issuance_currency,
-                REFERENCE_ISO,
-            )
-            .unwrap(),
+            series_id: SeriesId::for_pair(worldwide_day, issuance_currency, REFERENCE_ISO).unwrap(),
             worldwide_day: worldwide_day.into(),
             issued_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,

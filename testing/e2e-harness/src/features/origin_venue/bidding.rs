@@ -234,13 +234,13 @@ fn issue_wins_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u
             &side.url,
             side.auction,
             &bidder.key,
-            &IWinClaim::issueIntexCall {
+            &IWinClaim::redeemWinNoteCall {
                 worldwideDay: worldwide_day,
                 bidder: bidder.address,
             },
             None,
         )
-        .expect("issue the winner's units");
+        .expect("redeem the winner's WinNote");
     }
 }
 

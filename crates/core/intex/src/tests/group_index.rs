@@ -15,7 +15,7 @@ fn call_bin(price: u64) -> u32 {
     outbe_primitives::call_bins::price_to_bin(U256::from(price)).unwrap()
 }
 
-fn issue(s: &StorageHandle, day: u32, issued_at: u32, call_price: u64) -> SeriesId {
+fn issue(s: &StorageHandle, day: u32, issued_at: u64, call_price: u64) -> SeriesId {
     let mut params = sample_params(day);
     params.issued_at = issued_at;
     params.call_price_minor = U256::from(call_price);
@@ -51,7 +51,7 @@ fn series_sharing_their_terms_share_one_bin_entry() {
 fn another_call_price_or_first_full_day_opens_another_group() {
     with_registry(|s| {
         let day = u64::from(SECONDS_PER_DAY_U32);
-        let midnight = u32::try_from(u64::from(ISSUED_AT).div_ceil(day) * day).unwrap();
+        let midnight = ISSUED_AT.div_ceil(day) * day;
         let first = issue(&s, 1, midnight, CALL_PRICE_MINOR);
         let later = issue(&s, 2, midnight + 1, CALL_PRICE_MINOR);
         let pricier = issue(&s, 3, midnight + 1, CALL_PRICE_MINOR * 4);

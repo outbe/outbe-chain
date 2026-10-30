@@ -2,7 +2,7 @@
 //! consumes the capabilities it was handed instead of reading the parent again.
 
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api, precompile::IGem, GemAddParams, GemContract};
 use outbe_primitives::addresses::GEM_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -49,7 +49,23 @@ fn reverted_issuance_rolls_back_state_and_events() {
         assert_eq!(gem.total_supply().unwrap(), 1);
         let owned = api::list_by_owner(&storage, owner).unwrap();
         assert_eq!(owned.len(), 1);
-        assert_eq!(owned[0].gem_id.to_u256(), gem_id);
+        assert_eq!(owned[0].gem_id, gem_id);
+        assert_eq!(
+            api::get_item(&storage, gem_id).unwrap().unwrap().gem_id,
+            gem_id
+        );
+        assert_eq!(api::tokens_by_owner(&storage, owner).unwrap(), vec![gem_id]);
+        let output = outbe_gem::precompile::dispatch(
+            storage.clone(),
+            &IGem::getGemCall { gemId: gem_id }.abi_encode(),
+            owner,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            IGem::getGemCall::abi_decode_returns(&output).unwrap().gemId,
+            gem_id
+        );
         gem_id
     });
     let events = provider.get_events(GEM_ADDRESS);

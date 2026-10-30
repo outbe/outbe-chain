@@ -4,7 +4,7 @@ use super::lifecycle::{fill_days, setup_pair};
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 /// Well past issuance: the closed day before it is one every seeded series held in full.
-const MATURE_TS: u64 = ISSUED_AT as u64 + 21 * DAY + 1;
+const MATURE_TS: u64 = ISSUED_AT + 21 * DAY + 1;
 
 #[test]
 fn scan_and_call_force_calls_breached_series() {
@@ -12,7 +12,7 @@ fn scan_and_call_force_calls_breached_series() {
         runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
@@ -30,7 +30,7 @@ fn scan_and_call_force_calls_breached_series() {
 fn a_called_series_reports_its_settlement_deadline() {
     use alloy_sol_types::SolEvent;
 
-    let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+    let scan_ts = ISSUED_AT + 60 * DAY;
     let mut storage = factory_provider();
     let notice = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
@@ -59,7 +59,7 @@ fn a_called_series_reports_its_settlement_deadline() {
         })
         .collect();
     assert_eq!(events.len(), 1);
-    assert_eq!(u64::from(events[0].calledAt), scan_ts);
+    assert_eq!(events[0].calledAt, scan_ts);
     assert_eq!(events[0].settlementDeadline, scan_ts + u64::from(notice));
 }
 
@@ -77,7 +77,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
         let oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
-        let scan_ts = (ISSUED_AT as u64 / DAY + 60) * DAY;
+        let scan_ts = (ISSUED_AT / DAY + 60) * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
 
@@ -115,7 +115,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         runtime::issue_intex(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         // Out-of-range VWAP for the completed day: price_to_bin overflows.
         fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
@@ -133,7 +133,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 #[test]
 fn a_node_local_failure_while_calling_fails_the_scan() {
     let mut provider = factory_provider();
-    let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+    let scan_ts = ISSUED_AT + 60 * DAY;
     let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
@@ -179,7 +179,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     seed_issued_at(s, id, ISSUED_AT);
 }
 
-fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
+fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u64) {
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {
@@ -205,19 +205,19 @@ fn seed_issued_at(s: &StorageHandle<'_>, id: u32, issued_at: u32) {
 
 #[test]
 fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
-    let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+    let scan_ts = ISSUED_AT + 60 * DAY;
     let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     // Oldest day of a breach run exactly as long as the series' threshold.
     let mut oldest_breach = last_closed_day;
     for _ in 1..21 {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach) as u32;
+    let midnight = date_key_to_utc_timestamp(oldest_breach);
 
     // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, 1), (midnight + 1, 0)] {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.set_timestamp(U256::from(ISSUED_AT as u64));
+        storage.set_timestamp(U256::from(ISSUED_AT));
         storage.stub_sub_call_at(
             crate::constants::INTEX_NFT1155_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
@@ -256,7 +256,7 @@ fn call_survives_router_failure() {
     // No OriginRouter stub: notify_called fails silently.
     // The Issued -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     storage.stub_sub_call_at(
         crate::constants::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
@@ -267,7 +267,7 @@ fn call_survives_router_failure() {
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
-        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let scan_ts = ISSUED_AT + 60 * DAY;
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
         fill_days(
             &oracle,
@@ -379,7 +379,7 @@ fn series_in(s: &StorageHandle<'_>, worldwide_day: u32, group_day: u32) -> Serie
                 call_notice_period_seconds: (7 * DAY) as u32,
                 transit_margin_seconds: 3_600,
             },
-            issued_at: ISSUED_AT - (group_day % 1000) * SECONDS_PER_DAY_U32,
+            issued_at: ISSUED_AT - u64::from((group_day % 1000) * SECONDS_PER_DAY_U32),
             issuance_currency: 840,
             reference_currency: REFERENCE_ISO,
         },
@@ -414,7 +414,7 @@ fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
 fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
     with_factory(|s| {
         let f = IntexContract::new(s.clone());
-        let now = ISSUED_AT as u64;
+        let now = ISSUED_AT;
         called_series(&s, 20260101, now + 10 * DAY);
         called_series(&s, 20260102, now + DAY);
 
@@ -443,7 +443,7 @@ fn a_group_due_sooner_is_retired_even_when_a_later_one_was_called_first() {
 #[test]
 fn a_group_waits_for_its_transit_close_before_it_forfeits() {
     with_factory(|s| {
-        let deadline_day = IntexContract::deadline_day(ISSUED_AT as u64 + DAY);
+        let deadline_day = IntexContract::deadline_day(ISSUED_AT + DAY);
         let deadline = IntexContract::day_end(deadline_day) - 1_800;
         let member = called_series(&s, 20260101, deadline);
 
@@ -468,7 +468,7 @@ fn a_group_waits_for_its_transit_close_before_it_forfeits() {
 fn an_uncalled_group_never_enters_the_deadline_queue() {
     with_factory(|s| {
         runtime::issue_intex(&s, sample(7)).unwrap();
-        sweep_expiry(&s, ISSUED_AT as u64 + 400 * DAY);
+        sweep_expiry(&s, ISSUED_AT + 400 * DAY);
         let f = IntexContract::new(s.clone());
         assert_eq!(f.first_expiry_day().unwrap(), None);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
@@ -479,7 +479,7 @@ fn an_uncalled_group_never_enters_the_deadline_queue() {
 #[test]
 fn a_node_local_failure_while_expiring_fails_the_sweep() {
     let mut provider = factory_provider();
-    let now = ISSUED_AT as u64;
+    let now = ISSUED_AT;
     let due = IntexContract::day_end(IntexContract::deadline_day(now + DAY));
     let member = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
@@ -507,7 +507,7 @@ fn a_node_local_failure_while_expiring_fails_the_sweep() {
 #[test]
 fn a_node_local_failure_while_deferring_fails_the_sweep() {
     let mut provider = factory_provider();
-    let now = ISSUED_AT as u64;
+    let now = ISSUED_AT;
     let day = IntexContract::deadline_day(now + DAY);
     let member = StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
@@ -544,7 +544,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
 fn a_day_the_sweep_cannot_finish_is_retired_rather_than_left_in_front() {
     with_factory(|s| {
         let f = IntexContract::new(s.clone());
-        let now = ISSUED_AT as u64;
+        let now = ISSUED_AT;
         let member = called_series(&s, 20260101, now + DAY);
         let day = IntexContract::deadline_day(now + DAY);
         f.called_deadline
@@ -573,7 +573,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     use alloy_sol_types::SolEvent;
 
     let mut provider = factory_provider();
-    let now = ISSUED_AT as u64;
+    let now = ISSUED_AT;
     let day = IntexContract::deadline_day(now + DAY);
     let later = IntexContract::deadline_day(now + 3 * DAY);
     StorageHandle::enter(&mut provider, |s| {
@@ -616,7 +616,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
 fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
     with_factory(|s| {
         let f = IntexContract::new(s.clone());
-        let now = ISSUED_AT as u64;
+        let now = ISSUED_AT;
         let deadline = now + DAY;
         let day = IntexContract::deadline_day(deadline);
 
@@ -662,7 +662,7 @@ fn a_day_wider_than_one_block_resumes_where_it_gave_out() {
 fn a_short_notice_waits_for_its_deadline_day_to_close() {
     with_factory(|s| {
         let f = IntexContract::new(s.clone());
-        let now = (ISSUED_AT as u64 / DAY) * DAY;
+        let now = (ISSUED_AT / DAY) * DAY;
         let deadline = now + 600;
         called_series(&s, 20260101, deadline);
 
@@ -690,7 +690,7 @@ fn a_short_notice_waits_for_its_deadline_day_to_close() {
 #[test]
 fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
     with_factory(|s| {
-        let now = ISSUED_AT as u64;
+        let now = ISSUED_AT;
         let deadline = now + DAY;
         let spent = grouped_series(&s, 20260101);
         let kept = series_in(&s, 20260102, 20260101);
@@ -734,7 +734,7 @@ fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeCont
 #[test]
 fn an_unindexable_window_price_marks_the_currency_for_the_day() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.set_timestamp(U256::from(ISSUED_AT));
     StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
         seed_issued(&s, 7);

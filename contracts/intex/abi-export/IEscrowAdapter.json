@@ -39,30 +39,6 @@
     },
     {
       "type": "function",
-      "name": "closeWin",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "internalType": "address"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "units",
-          "type": "uint16",
-          "internalType": "uint16"
-        }
-      ],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "currentAssetVersion",
       "inputs": [],
       "outputs": [
@@ -435,6 +411,30 @@
     },
     {
       "type": "function",
+      "name": "redeemWinNote",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "bidder",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "units",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "releaseCommitBond",
       "inputs": [
         {
@@ -749,31 +749,6 @@
           "type": "address",
           "indexed": false,
           "internalType": "address"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "WinClosed",
-      "inputs": [
-        {
-          "name": "worldwideDay",
-          "type": "uint32",
-          "indexed": true,
-          "internalType": "uint32"
-        },
-        {
-          "name": "bidder",
-          "type": "address",
-          "indexed": true,
-          "internalType": "address"
-        },
-        {
-          "name": "units",
-          "type": "uint16",
-          "indexed": false,
-          "internalType": "uint16"
         }
       ],
       "anonymous": false

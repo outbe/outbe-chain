@@ -8,7 +8,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::WorldwideDay,
 };
 use outbe_promislimit::PromisLimitContract;
 
@@ -48,11 +47,8 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
                 .add_position(&GemPosition {
                     position_id: U256::from(id),
                     merchant: Address::repeat_byte(1),
-                    source_intex_id: SeriesId::pack(WorldwideDay::new(1), *b"USD", b'U').unwrap(),
+                    source_intex_id: SeriesId::pack(1, *b"USD", b'U').unwrap(),
                     remaining_capacity_minor: U256::from(REMAINDER),
-                    source_entry_price_minor: U256::from(1_000_000),
-                    issuance_currency: 840,
-                    reference_currency: 840,
                     issued_at: 0,
                     expires_at,
                 })
@@ -154,12 +150,8 @@ fn world() -> HashMapStorageProvider {
             .add_position(&GemPosition {
                 position_id: U256::from(1),
                 merchant: Address::repeat_byte(1),
-                source_intex_id: SeriesId::pack(WorldwideDay::new(20_240_101), *b"USD", b'U')
-                    .unwrap(),
+                source_intex_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                 remaining_capacity_minor: U256::from(REMAINDER),
-                source_entry_price_minor: U256::from(1_000_000),
-                issuance_currency: 840,
-                reference_currency: 840,
                 issued_at: EXPIRES - SECONDS_PER_DAY,
                 expires_at: EXPIRES,
             })

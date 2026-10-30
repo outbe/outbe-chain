@@ -61,7 +61,7 @@ fn item_count(profile: Profile) -> usize {
 }
 
 fn params(index: usize) -> IssuanceParams {
-    let series_id = SeriesId::pack(TARGET_WWD, SERIES_CODES[index], b'U')
+    let series_id = SeriesId::pack(TARGET_WWD.value(), SERIES_CODES[index], b'U')
         .expect("benchmark Intex id is canonical");
     // The PROD call terms, which the auction start fixes while the PROD profile is live.
     let prod = outbe_intex::config::IntexParams::PROD;

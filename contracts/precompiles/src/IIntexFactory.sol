@@ -21,7 +21,6 @@ interface IIntexFactory {
     error ForfeitedPromisLoadOverflow();
     error NoCalledGroupForTest();
     error IssueForTestCurrencyCountMismatch();
-    error BlockTimestampExceedsU32();
     error IssuanceChunkCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();

@@ -20,6 +20,9 @@ pub enum LysisError {
 
     #[error("lysis: {shares} interest shares for {groups} population groups")]
     GroupLengthMismatch { shares: usize, groups: usize },
+
+    #[error("lysis: kernel arithmetic overflow")]
+    KernelArithmeticOverflow,
 }
 
 impl From<LysisError> for PrecompileError {

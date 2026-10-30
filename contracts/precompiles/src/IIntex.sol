@@ -33,8 +33,8 @@ interface IIntex {
         /// @notice Read-time state: 0 Issued, 1 Called, 2 Forfeited (a Called series past its
         ///         notice period).
         uint8 state;
-        uint32 issuedAt;
-        uint32 calledAt;
+        uint64 issuedAt;
+        uint64 calledAt;
         uint32 callNoticePeriod;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
@@ -114,7 +114,7 @@ interface IIntex {
 
     /// @notice The call group was force-called. Each of its series settles until
     ///         `settlementDeadline`, inclusive.
-    event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint32 calledAt, uint64 settlementDeadline);
+    event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint64 calledAt, uint64 settlementDeadline);
 
     /// @notice The group is forfeited: its settlement window closed. Both are zero when
     ///         every unit was realized in time.

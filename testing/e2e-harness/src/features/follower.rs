@@ -339,14 +339,29 @@ fn keyless_full_node_replays_confidential_lysis_and_rejects_private_call(world: 
 }
 
 fn assert_keyless_enclave_health(rpc: &Rpc, port: u16) {
-    let health = crate::internal::eth::raw_json_result(
+    let status = crate::internal::eth::raw_json_result(
         &rpc.url(port),
-        "outbe_teeEnclaveHealth",
+        "outbe_consensusStatus",
         serde_json::json!([]),
     )
-    .expect("query outbe_teeEnclaveHealth on keyless FullNode");
-    assert_eq!(health["configured"].as_bool(), Some(false));
-    assert_eq!(health["healthy"].as_bool(), Some(false));
+    .expect("query outbe_consensusStatus on keyless FullNode");
+    let health = status["enclave"]
+        .as_object()
+        .expect("keyless FullNode status must contain an enclave health object");
+    assert_eq!(
+        health.get("state").and_then(serde_json::Value::as_str),
+        Some("disabled")
+    );
+    assert_eq!(
+        health.get("ready").and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        health
+            .get("offerKeyReady")
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
 }
 
 fn assert_keyless_nod_state_and_private_call_rejection(

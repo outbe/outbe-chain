@@ -5,7 +5,6 @@ use outbe_primitives::call_breach::group_key;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::first_full_day;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::date_step_error;
 use crate::schema::{
@@ -24,7 +23,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
     let full_day = first_full_day(params.issued_at).map_err(date_step_error)?;
     let item = GemItemState {
-        gem_id: WwdEntityId::from(gem_id),
+        gem_id,
         owner: params.owner,
         promis_load_minor: params.promis_load_minor,
         issuance_currency: params.issuance_currency,
@@ -51,7 +50,7 @@ pub fn record_issued(
 
 /// Loads a gem while retaining its exact stored state for mutation.
 pub fn load_item(storage: &StorageHandle<'_>, gem_id: U256) -> Result<Option<LoadedGem>> {
-    crate::state_api::load_item(storage, WwdEntityId::from(gem_id))
+    crate::state_api::load_item(storage, gem_id)
 }
 
 /// Loads a gem group while retaining its exact stored state for mutation.
@@ -119,13 +118,10 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
 
 /// The ids of one owner's gems, read from the owner index alone.
 pub fn tokens_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<U256>> {
-    Ok(GemContract::new(storage.clone())
+    GemContract::new(storage.clone())
         .owner_ids
         .list(&owner)
-        .read_all()?
-        .into_iter()
-        .map(|id| id.to_u256())
-        .collect())
+        .read_all()
 }
 
 /// One owner's gems, read through the owner index.

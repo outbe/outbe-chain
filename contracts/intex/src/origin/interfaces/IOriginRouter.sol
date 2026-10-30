@@ -184,7 +184,7 @@ interface IOriginRouter {
         ///         destination NFT).
         uint32 worldwideDay;
         /// @notice When the origin created the series. Every chain dates the series from this.
-        uint32 issuedAt;
+        uint64 issuedAt;
         uint32 issuedUnits;
         uint128 promisLoadMinor;
         uint64 entryPriceMinor;
@@ -307,7 +307,7 @@ interface IOriginRouter {
     ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
-    function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
+    function sendMarkCalled(uint32 worldwideDay, uint64 calledAt, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
     function resendParkedMessage(uint256 idx) external;

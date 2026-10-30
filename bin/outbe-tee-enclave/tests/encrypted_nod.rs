@@ -46,6 +46,9 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
         reference_currency: 978,
     };
     for invalid_id in [
+        U256::from_be_bytes(
+            outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner_address, day).0,
+        ),
         outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner_address, day).to_u256(),
         outbe_primitives::nod_rules::derive_nod_id(Address::repeat_byte(9), day),
         outbe_primitives::nod_rules::derive_nod_id(owner_address, WorldwideDay::new(20250116)),

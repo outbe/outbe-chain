@@ -35,7 +35,7 @@ pub struct GemAddParams {
 #[storage_record(exists_field = owner)]
 pub struct GemItemState {
     #[key]
-    pub gem_id: WwdEntityId,
+    pub gem_id: U256,
     #[attribute(order = 0)]
     pub owner: Address,
     #[attribute(order = 1)]
@@ -286,16 +286,14 @@ pub struct GemContract {
     #[attribute(order = 35)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
     #[attribute(order = 36)]
-    pub records: outbe_primitives::storage::dsl::Map<WwdEntityId, GemItemState>,
+    pub records: outbe_primitives::storage::dsl::Map<U256, GemItemState>,
     #[attribute(order = 37)]
     pub groups: outbe_primitives::storage::dsl::Map<B256, GemGroupState>,
     #[attribute(order = 39)]
-    pub owner_ids: outbe_primitives::storage::dsl::Map<
-        Address,
-        outbe_primitives::storage::dsl::List<WwdEntityId>,
-    >,
+    pub owner_ids:
+        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 41)]
-    pub owner_id_position: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+    pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     /// Promis load of the group's unpaid gems, returned at once when it is forfeited.
     #[attribute(order = 42)]
@@ -349,5 +347,38 @@ impl GemContract<'_> {
         buf[65..67].copy_from_slice(&params.reference_currency.to_be_bytes());
         buf[67..75].copy_from_slice(&total_supply.to_be_bytes());
         U256::from_be_bytes(keccak256(buf).0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn item_ids_round_trip_with_native_u256_serde_and_preserve_group_identity() {
+        let mut group = GemGroupState::with_key(B256::repeat_byte(3));
+        group.full_day_after_issue = WorldwideDay::new(20261016);
+        group.reference_currency = 840;
+        let group_json = serde_json::to_value(&group).unwrap();
+        assert_eq!(
+            serde_json::from_value::<GemGroupState>(group_json).unwrap(),
+            group
+        );
+
+        for id in [U256::from(7), U256::MAX] {
+            let mut item = GemItemState::with_key(id);
+            item.owner = Address::repeat_byte(1);
+            item.issued_at = WorldwideDay::new(20261015).to_timestamp_utc() + 1;
+            item.group_key = group.group_key;
+            let json = serde_json::to_value(&item).unwrap();
+            assert_eq!(json["gem_id"], serde_json::to_value(id).unwrap());
+            assert_eq!(
+                serde_json::from_value::<U256>(json["gem_id"].clone()).unwrap(),
+                id
+            );
+            let decoded: GemItemState = serde_json::from_value(json).unwrap();
+            assert_eq!(decoded, item);
+            assert_eq!(decoded.group_id().unwrap(), group.entity_id());
+        }
     }
 }

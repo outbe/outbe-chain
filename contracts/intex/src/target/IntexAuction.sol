@@ -168,7 +168,7 @@ contract IntexAuction is
 
         IntexAuctionStorage storage $ = _s();
         IIntexNFT1155 current = $.intexContract;
-        // Open wins issue on the collection their series live on.
+        // Open WinNotes issue on the collection their series live on.
         IEscrowAdapter escrow = $.escrowContract;
         bool changing = address(current) != address(0) && _intex != address(current);
         if (changing && address(escrow) != address(0) && escrow.hasOutstandingLocks()) {
@@ -413,7 +413,7 @@ contract IntexAuction is
     }
 
     /// @inheritdoc IIntexAuction
-    function issueIntex(uint32 worldwideDay, address bidder) external override nonReentrant {
+    function redeemWinNote(uint32 worldwideDay, address bidder) external override nonReentrant {
         IntexAuctionStorage storage $ = _s();
         uint256 position = $.revealedBidIndex[worldwideDay][bidder];
         if (position == 0) revert BidNotFound();
@@ -424,17 +424,16 @@ contract IntexAuction is
         bytes14 seriesId = intex.seriesIdOf(worldwideDay, issuanceCurrency, referenceCurrency);
         if (seriesId == bytes14(0)) revert SeriesNotCreated(worldwideDay, issuanceCurrency, referenceCurrency);
 
-        // A win exists only after the day cleared, so the bids relay no longer reads this bid.
+        // A WinNote exists only after the day cleared, so the bids relay no longer reads this bid.
         delete $.revealedBids[worldwideDay][position - 1];
         delete $.revealedBidIndex[worldwideDay][bidder];
 
-        uint16 units = $.escrowContract.closeWin(worldwideDay, bidder);
-        if (intex.readData(seriesId).state == IIntexNFT1155.IntexState.Forfeited) {
-            emit WinExpired(worldwideDay, bidder, seriesId, units);
-            return;
+        uint16 units = $.escrowContract.redeemWinNote(worldwideDay, bidder);
+        emit WinNoteRedeemed(worldwideDay, bidder, seriesId);
+        // A forfeited series took the units with it.
+        if (intex.readData(seriesId).state != IIntexNFT1155.IntexState.Forfeited) {
+            intex.issueIntex(bidder, units, seriesId);
         }
-        intex.issueIntex(bidder, units, seriesId);
-        emit WinIssued(worldwideDay, bidder, seriesId, units);
     }
 
     /// @inheritdoc IIntexAuction

@@ -117,6 +117,7 @@ pub(crate) fn apply_lysis_limit(
 pub(crate) fn apply_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
+    emission_day: u32,
     split: &LimitSplit,
     logical_anchor: u64,
 ) -> Result<()> {
@@ -126,6 +127,7 @@ pub(crate) fn apply_auction_brief(
             storage.clone(),
             outbe_desis::api::AuctionBrief {
                 worldwide_day,
+                emission_day,
                 desis_limit_minor: split.desis_limit_minor,
                 has_limit: is_active,
             },
@@ -173,7 +175,8 @@ mod tests {
                     U256::from(remaining as u64)
                 );
                 let day = WorldwideDay::new(20260101);
-                apply_auction_brief(storage.clone(), day, &split, 1_699_920_005).unwrap();
+                apply_auction_brief(storage.clone(), day, day.value(), &split, 1_699_920_005)
+                    .unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
                     desis.pending_desis_limit_minor.read(&day).unwrap(),
@@ -224,6 +227,7 @@ mod tests {
                     apply_auction_brief(
                         storage.clone(),
                         WorldwideDay::new(20260101),
+                        20260101,
                         &split,
                         1_699_920_005,
                     )

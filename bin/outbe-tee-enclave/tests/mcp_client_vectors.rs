@@ -1,5 +1,6 @@
 //! Check historical TypeScript MCP client vectors against the enclave.
 //! The fixture preserves the JSON from commit 6c6cb705 before MCP moved to outbe-mcp.
+//! NOD issuance outputs were regenerated with enclave encryption for Keccak256 NOD IDs.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_signatures::recover_signer;

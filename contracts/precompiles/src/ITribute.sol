@@ -5,7 +5,7 @@ interface ITribute {
     error TributeNotFound();
     error TributeAlreadyExists();
     error InvalidOwner();
-    error SettlementAmountMustBePositive();
+    error IssuanceAmountMustBePositive();
     error WorldwideDaySealed();
     error OwnerBalanceOverflow();
     error QueryLimitExceeded();

@@ -57,7 +57,7 @@ sol! {
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
             uint32 worldwideDay,
-            uint32 issuedAt,
+            uint64 issuedAt,
             uint32 issuedUnits,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
@@ -154,7 +154,9 @@ pub struct IssueSeries<'a> {
     pub url: &'a str,
     pub sender_key: &'a str,
     pub worldwide_day: u32,
-    pub issued_at: u32,
+    /// The date the series ids lead with.
+    pub emission_day: u32,
+    pub issued_at: u64,
     pub reference_currency: u16,
     pub reference_byte: u8,
     pub entry_price_minor: U256,
@@ -172,6 +174,7 @@ pub fn issue_series(request: IssueSeries<'_>) -> Result<Vec<FixedBytes<14>>> {
         url,
         sender_key,
         worldwide_day,
+        emission_day,
         issued_at,
         reference_currency,
         reference_byte,
@@ -183,7 +186,7 @@ pub fn issue_series(request: IssueSeries<'_>) -> Result<Vec<FixedBytes<14>>> {
     } = request;
     let ids: Vec<FixedBytes<14>> = specs
         .iter()
-        .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
+        .map(|spec| series_id(emission_day, spec.issuance, reference_byte))
         .collect();
 
     // Send one call for the whole day. The engine counts issuance chunks over the

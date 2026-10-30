@@ -174,6 +174,13 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
         assert_ne!(body.nod_id, legacy);
         for invalid_id in [
             legacy,
+            U256::from_be_bytes(
+                outbe_primitives::wwd_entity_id::derive_poseidon_digest(
+                    body.owner,
+                    body.worldwide_day,
+                )
+                .0,
+            ),
             crate::identity::generate_nod_id(Address::repeat_byte(0x43), body.worldwide_day),
             crate::identity::generate_nod_id(body.owner, WorldwideDay::new(20_260_716)),
         ] {

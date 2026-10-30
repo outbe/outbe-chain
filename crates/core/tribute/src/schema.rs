@@ -22,18 +22,21 @@ pub struct TributeData {
     #[attribute(order = 1)]
     pub worldwide_day: WorldwideDay,
 
+    /// Issuance-currency minor units (six-decimal fixed scale).
     #[attribute(order = 2)]
     pub issuance_amount_minor: U256,
 
     #[attribute(order = 3)]
     pub issuance_currency: u16,
 
+    /// Pre-COEN nominal spend aggregate, in issuance-currency minor units (six-decimal fixed scale).
     #[attribute(order = 4)]
     pub nominal_amount_minor: U256,
 
     #[attribute(order = 5)]
     pub reference_currency: u16,
 
+    /// COEN-denominated effective reference price, in issuance-currency minor units (six-decimal fixed scale).
     #[attribute(order = 6)]
     pub tribute_price_minor: U256,
 }
@@ -48,6 +51,7 @@ pub struct DayTotals {
 
     pub tribute_count: u32,
 
+    /// Enclave-read nominal sum for the day, in six-decimal minor units.
     pub tribute_nominal_total_minor: U256,
 
     pub is_sealed: bool,

@@ -85,8 +85,8 @@ contract EscrowAdapter is
         uint8 currentAssetVersion;
         /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
         mapping(uint32 worldwideDay => DayClearing) dayClearing;
-        /// @dev Wins the auction has not closed yet, across all days. A win may hold no money.
-        uint256 openWins;
+        /// @dev WinNotes the auction has not redeemed yet, across all days. One may hold no money.
+        uint256 openWinNotes;
         /// @dev Payment-token units in one protocol unit for the active asset.
         uint256 paymentScale;
     }
@@ -426,7 +426,7 @@ contract EscrowAdapter is
             lock.lockedAmount = change;
             totalOwed += change;
             ++settled;
-            ++$.openWins;
+            ++$.openWinNotes;
         }
 
         if (totalPaid > 0) state.totalLocked -= totalPaid;
@@ -510,7 +510,7 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function closeWin(uint32 worldwideDay, address bidder)
+    function redeemWinNote(uint32 worldwideDay, address bidder)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -523,8 +523,7 @@ contract EscrowAdapter is
         units = lock.quantity;
         uint128 change = lock.lockedAmount;
         delete $.bidLocks[worldwideDay][bidder];
-        --$.openWins;
-        emit WinClosed(worldwideDay, bidder, units);
+        --$.openWinNotes;
         if (change > 0) _payOut(worldwideDay, $.auctionEscrowState[worldwideDay], bidder, change);
     }
 
@@ -591,10 +590,10 @@ contract EscrowAdapter is
         return _hasOutstandingLocks();
     }
 
-    /// @dev Whether any win is open or any asset version still holds money in its Compact.
+    /// @dev Whether any WinNote is open or any asset version still holds money in its Compact.
     function _hasOutstandingLocks() private view returns (bool) {
         EscrowAdapterStorage storage $ = _s();
-        if ($.openWins != 0) return true;
+        if ($.openWinNotes != 0) return true;
         if ($.lockId != 0 && IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0) return true;
         for (uint8 v = 0; v < $.currentAssetVersion; ++v) {
             AssetVersion storage retired = $.assetVersions[v];
