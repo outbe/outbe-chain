@@ -382,6 +382,8 @@ impl Localnet {
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
         self.ensure_node_key_material(index)?;
+        self.ensure_radicle_key_material(index)?;
+        self.start_radicle(index)?;
         let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
         if !reth_secret_path.is_file() {
             fs::write(&reth_secret_path, random_hex_32()?)?;
@@ -394,6 +396,10 @@ impl Localnet {
             node_dir.join("signing-key.hex").display(),
             "--validator.evm-key",
             node_dir.join("evm-key.hex").display(),
+            "--radicle.control-socket",
+            self.radicle_control_socket(index).display(),
+            "--radicle.status-address",
+            format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--p2p-secret-key",
             p2p_secret_file.display(),
             "--upstream",
