@@ -71,6 +71,7 @@ pub fn dispatch_auction_brief(
     let AuctionBrief {
         worldwide_day,
         desis_limit_minor,
+        has_limit,
         ..
     } = brief;
     storage.clone().with_checkpoint(|| {

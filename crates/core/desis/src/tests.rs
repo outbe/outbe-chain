@@ -486,6 +486,7 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
                 desis_limit_minor: U256::ZERO,
                 has_limit: false,
             },
@@ -505,6 +506,7 @@ fn dispatch_auction_brief_records_a_brief_with_no_limit() {
             s.clone(),
             crate::api::AuctionBrief {
                 worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
                 desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
                 has_limit: true,
             },

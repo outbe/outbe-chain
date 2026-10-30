@@ -129,7 +129,7 @@ fn settle_empty_day(
     let wwd = emission_day.wwd;
     let day_limit = emission_day.metadosis_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let to_promis = dispatch_brief(ctx, wwd, U256::ZERO)?;
+    let to_promis = dispatch_brief(ctx, wwd, emission_day.day, U256::ZERO)?;
     let returned = to_promis
         .checked_add(day_limit)
         .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
