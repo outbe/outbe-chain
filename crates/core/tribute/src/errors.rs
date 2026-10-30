@@ -20,8 +20,8 @@ pub enum TributeError {
     #[error("invalid owner")]
     InvalidOwner,
 
-    #[error("settlement amount must be positive")]
-    SettlementAmountMustBePositive,
+    #[error("issuance amount must be positive")]
+    IssuanceAmountMustBePositive,
 
     #[error("worldwide day is sealed")]
     WorldwideDaySealed,
@@ -46,9 +46,6 @@ pub enum TributeError {
 
     #[error("Tribute total supply overflow during issuance")]
     TotalSupplyOverflowDuringIssuance,
-
-    #[error("{0}")]
-    EntityIdDerivation(String),
 
     #[error("{0}")]
     CalculationView(String),
@@ -140,11 +137,6 @@ pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> Precomp
 }
 
 impl TributeError {
-    /// Converts an entity-ID derivation failure into a precompile error.
-    pub(crate) fn entity_id_derivation(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EntityIdDerivation(error.to_string()).into()
-    }
-
     /// Converts a private amount read failure into a precompile error.
     pub(crate) fn private_amount_read_failed(error: outbe_tee::TransportError) -> PrecompileError {
         let reason = error.to_string();
@@ -184,14 +176,13 @@ impl From<TributeError> for PrecompileError {
             TributeError::TributeNotFound => revert_with(I::TributeNotFound {}),
             TributeError::TributeAlreadyExists => revert_with(I::TributeAlreadyExists {}),
             TributeError::InvalidOwner => revert_with(I::InvalidOwner {}),
-            TributeError::SettlementAmountMustBePositive => {
-                revert_with(I::SettlementAmountMustBePositive {})
+            TributeError::IssuanceAmountMustBePositive => {
+                revert_with(I::IssuanceAmountMustBePositive {})
             }
             TributeError::WorldwideDaySealed => revert_with(I::WorldwideDaySealed {}),
             TributeError::OwnerBalanceOverflow => revert_with(I::OwnerBalanceOverflow {}),
             TributeError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
             TributeError::DayResponseScopeMismatch => revert_with(I::DayResponseScopeMismatch {}),
-            TributeError::EntityIdDerivation(value) => revert_with(I::EntityIdDerivation { value }),
             TributeError::CalculationView(value) => revert_with(I::CalculationView { value }),
             TributeError::WorldwideDayNotCompletedAndEmpty => {
                 revert_with(I::WorldwideDayNotCompletedAndEmpty {})

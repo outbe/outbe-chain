@@ -178,8 +178,7 @@ mod tests {
                 reference_scurve_minor: U256::from(300),
                 zk_context: None,
             };
-            let digest =
-                outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, day).unwrap();
+            let digest = outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, day);
             let body = outbe_tee_enclave::tribute_encryption::encrypt_tribute(
                 &[7; 32],
                 TributeContextV2 {

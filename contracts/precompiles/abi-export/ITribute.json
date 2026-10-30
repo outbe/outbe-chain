@@ -441,17 +441,6 @@
   },
   {
     "type": "error",
-    "name": "EntityIdDerivation",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "EntryPriceUnavailable",
     "inputs": [
       {
@@ -480,6 +469,11 @@
   {
     "type": "error",
     "name": "InvalidOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IssuanceAmountMustBePositive",
     "inputs": []
   },
   {
@@ -522,11 +516,6 @@
   {
     "type": "error",
     "name": "QueryLimitExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SettlementAmountMustBePositive",
     "inputs": []
   },
   {

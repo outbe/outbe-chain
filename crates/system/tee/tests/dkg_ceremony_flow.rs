@@ -5,7 +5,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 use alloy_primitives::B256;
 use outbe_tee::{
     errors::TransportError,
-    protocol::{EnclaveRequest, EnclaveResponse},
+    protocol::{EnclaveRequest, EnclaveResponse, ParticipantAnnounce},
     tee_dkg::{
         run_tee_dkg_ceremony, Ack, CeremonyCoordinator, CeremonyError, CeremonyOutcome,
         DealerBundle, DkgGossip, DkgWireMessage, EnclaveChannel, FinalizedLog,
@@ -18,11 +18,26 @@ const CHAIN: B256 = B256::repeat_byte(8);
 const ME: u8 = 2;
 const PEER: u8 = 1;
 
+fn ceremony_participants() -> Vec<ParticipantAnnounce> {
+    [PEER, ME, 3]
+        .into_iter()
+        .map(|bls| ParticipantAnnounce {
+            bls_pub: vec![bls],
+            enc_pub: [0; 32],
+            ceremony_id: CEREMONY,
+            round: 9,
+            participant_set_hash: B256::ZERO,
+            enc_sig: Vec::new(),
+        })
+        .collect()
+}
+
 enum Step {
     Request(Box<EnclaveRequest>, Box<EnclaveResponse>),
     Send(Vec<u8>, DkgWireMessage),
     Broadcast(DkgWireMessage),
     Receive(DkgWireMessage),
+    ReceiveFrom(Vec<u8>, DkgWireMessage),
     Closed,
 }
 
@@ -56,7 +71,7 @@ impl Script {
         })));
         let mut enclave = script.clone();
         let mut gossip = script.clone();
-        let coordinator = CeremonyCoordinator::new(CEREMONY, 9, vec![ME], Vec::new());
+        let coordinator = CeremonyCoordinator::new(CEREMONY, 9, vec![ME], ceremony_participants());
         let result = run_tee_dkg_ceremony(
             &coordinator,
             &mut enclave,
@@ -115,7 +130,8 @@ impl DkgGossip for Script {
 
     async fn recv(&mut self) -> Option<(Vec<u8>, DkgWireMessage)> {
         match self.take() {
-            Some(Step::Receive(message)) => Some((vec![0xff], message)),
+            Some(Step::Receive(message)) => Some((message.claimed_sender().to_vec(), message)),
+            Some(Step::ReceiveFrom(from, message)) => Some((from, message)),
             Some(Step::Closed) => None,
             _ => {
                 self.0.borrow_mut().mismatch = true;
@@ -181,7 +197,7 @@ fn opening(two_participants: bool) -> Vec<Step> {
             EnclaveRequest::DkgOpen {
                 ceremony_id: CEREMONY,
                 round: 9,
-                participants: Vec::new(),
+                participants: ceremony_participants(),
             },
             EnclaveResponse::Ack,
         ),
@@ -266,6 +282,10 @@ fn install_offer(partials: Vec<Vec<u8>>) -> Step {
 }
 
 fn assert_outcome(outcome: CeremonyOutcome) {
+    assert_outcome_with_mismatches(outcome, 0);
+}
+
+fn assert_outcome_with_mismatches(outcome: CeremonyOutcome, identity_mismatches: usize) {
     assert_eq!(
         outcome,
         CeremonyOutcome {
@@ -273,6 +293,7 @@ fn assert_outcome(outcome: CeremonyOutcome) {
             share_commitment: B256::repeat_byte(71),
             tribute_offer_public: [72; 32],
             tribute_offer_group_public_key: vec![73],
+            identity_mismatches,
         }
     );
 }
@@ -325,15 +346,15 @@ async fn accepted_dealers_are_deduplicated_and_rejected_dealers_can_retry(
 }
 
 #[tokio::test]
-async fn early_partials_overwrite_by_signer_and_recovery_uses_sorted_keys(
+async fn early_partials_keep_first_by_signer_and_recovery_uses_sorted_keys(
 ) -> Result<(), CeremonyError> {
     let mut steps = opening(true);
     steps.extend([
-        Step::Receive(partial(PEER, ME, 42)),
         Step::Receive(partial(PEER, ME, 43)),
+        Step::Receive(partial(PEER, ME, 42)),
         Step::Receive(partial(3, PEER, 99)),
-        Step::Receive(log(PEER, 50)),
         Step::Receive(log(PEER, 51)),
+        Step::Receive(log(PEER, 50)),
         Step::Receive(DkgWireMessage::Ack(Ack {
             player_bls: vec![ME],
             ack: vec![13],
@@ -349,6 +370,40 @@ async fn early_partials_overwrite_by_signer_and_recovery_uses_sorted_keys(
     steps.push(Step::Broadcast(partial(ME, PEER, 62)));
     steps.push(install_offer(vec![vec![43], vec![61]]));
     assert_outcome(Script::run(steps, 2).await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn spoofed_and_unauthorized_senders_are_ignored_and_counted() -> Result<(), CeremonyError> {
+    let mut steps = opening(true);
+    steps.extend([
+        Step::ReceiveFrom(vec![3], DkgWireMessage::DealerBundle(bundle(PEER))),
+        Step::ReceiveFrom(
+            vec![3],
+            DkgWireMessage::Ack(Ack {
+                player_bls: vec![PEER],
+                ack: vec![14],
+            }),
+        ),
+        Step::ReceiveFrom(vec![3], log(PEER, 99)),
+        Step::ReceiveFrom(vec![99], log(99, 99)),
+        Step::ReceiveFrom(vec![3], partial(PEER, ME, 99)),
+        Step::Receive(log(PEER, 51)),
+        Step::Receive(DkgWireMessage::Ack(Ack {
+            player_bls: vec![PEER],
+            ack: vec![14],
+        })),
+        record_ack(PEER, 14),
+    ]);
+    steps.extend(own_log());
+    steps.extend(recover_share(true));
+    steps.extend([
+        Step::Broadcast(partial(ME, PEER, 62)),
+        Step::ReceiveFrom(vec![3], partial(PEER, ME, 98)),
+        Step::Receive(partial(PEER, ME, 43)),
+        install_offer(vec![vec![43], vec![61]]),
+    ]);
+    assert_outcome_with_mismatches(Script::run(steps, 2).await?, 6);
     Ok(())
 }
 

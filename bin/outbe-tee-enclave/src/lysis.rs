@@ -70,9 +70,7 @@ pub fn execute(
         let invalid_owners = || fidelity.owner != context.owner || entry.owner != context.owner;
         if invalid_context
             || invalid_owners()
-            || derive_poseidon_entity_id(context.owner, context.worldwide_day)
-                .map_err(|_| rejected())?
-                != context.tribute_id
+            || derive_poseidon_entity_id(context.owner, context.worldwide_day) != context.tribute_id
         {
             return Err(rejected());
         }
@@ -180,7 +178,7 @@ pub(crate) mod tests {
                     &tribute_key,
                     TributeContextV2 {
                         chain_id: 1,
-                        tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+                        tribute_id: derive_poseidon_entity_id(owner, day),
                         owner,
                         worldwide_day: day,
                         issuance_currency: 840,

@@ -95,7 +95,7 @@ pub(crate) fn usd_offer_terms_at(
             assert_eq!(curves.peakDays.len(), curves.values.len());
             let terms = (
                 prices[0],
-                curves.values.into_iter().max().unwrap_or(U256::ZERO),
+                curves.values.last().copied().unwrap_or(U256::ZERO),
             );
             assert_eq!(
                 *expected.get_or_insert(terms),

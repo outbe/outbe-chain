@@ -279,7 +279,7 @@ pub fn tribute_pricing_inputs(
     let reference_scurve_minor = if reference_index == 0 {
         U256::ZERO
     } else {
-        get_max_active_scurve_value(storage, worldwide_day, reference_pair)?
+        get_scurve_value(storage, worldwide_day, reference_pair)?
     };
     Ok(Some(TributePricingInputs {
         issuance_wwd_vwap_minor,
@@ -428,14 +428,13 @@ pub fn get_utc_day_vwap_for_iso(
     get_utc_day_vwap(storage, utc_day, index)
 }
 
-pub fn get_max_active_scurve_value(
+pub fn get_scurve_value(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
     pair: AddressPair,
 ) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let scurve_timestamp = worldwide_day.to_timestamp_utc();
-    scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
+    scurve::scurve_value(&oracle, pair, worldwide_day)
 }
 
 /// Annualized policy rate (scale `1e6`) for an independently registered ISO

@@ -16,14 +16,13 @@ use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
 use outbe_nod::schema::{CallTerms, NodItemState};
 use outbe_primitives::nod_encryption::EncryptedNodV1;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::errors::{date_step_error, NodFactoryError};
 use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
-pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<WwdEntityId> {
+pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
@@ -49,14 +48,14 @@ pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     issue_nod_with_cost(storage, encrypted, issued_at, IssueNodHints::default())
 }
 
 pub fn issue_lysis_nod(
     storage: &StorageHandle<'_>,
     verified: &outbe_tee::lysis::VerifiedLysisNod,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     storage.require_metadosis_process_ready()?;
     issue_nod_with_cost(
         storage,
@@ -74,7 +73,7 @@ pub fn issue_tribute_nod(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     gratis_load_minor: U256,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     let cost =
         nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
     if cost.is_zero() {
@@ -98,7 +97,7 @@ pub fn issue_tribute_nod_in_series(
     encrypted: &EncryptedNodV1,
     gratis_load_minor: U256,
     series_group_key: alloy_primitives::B256,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     let cost =
         nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
     if cost.is_zero() {
@@ -156,7 +155,7 @@ fn issue_nod_with_cost(
     encrypted: &EncryptedNodV1,
     issued_at: u64,
     hints: IssueNodHints,
-) -> Result<WwdEntityId> {
+) -> Result<U256> {
     let IssueNodHints {
         verified_cost,
         gratis_load_minor,
@@ -166,7 +165,7 @@ fn issue_nod_with_cost(
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
-    let nod_id = outbe_nod::identity::generate_nod_id(terms.owner, terms.worldwide_day)?;
+    let nod_id = outbe_nod::identity::generate_nod_id(terms.owner, terms.worldwide_day);
     if terms.nod_id != nod_id
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
@@ -226,7 +225,7 @@ fn issue_nod_with_cost(
         storage,
         INodFactory::NodIssued {
             owner: terms.owner,
-            nodId: nod_id.to_u256(),
+            nodId: nod_id,
             worldwideDay: U256::from(u32::from(terms.worldwide_day)),
             leagueId: U256::from(terms.league_id),
             callPriceMinor: call_price_minor,
@@ -242,7 +241,7 @@ fn issue_nod_with_cost(
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
-    pub nod_id: WwdEntityId,
+    pub nod_id: U256,
     pub nonce: u64,
     pub auth: outbe_gratisfactory::api::ModifyAuth,
 }
@@ -251,7 +250,7 @@ pub struct MineGratisRequest {
 /// issuance-currency payment must name the VWAP snapshot required at this block.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
-    nod_id: WwdEntityId,
+    nod_id: U256,
     payment: SettlementPayment,
 ) -> Result<()> {
     let SettlementPayment {
@@ -290,7 +289,7 @@ pub fn settle_nod(
             storage,
             INodFactory::NodSettled {
                 owner,
-                nodId: nod_id.to_u256(),
+                nodId: nod_id,
                 asset,
                 paymentMinor: quote.payment_minor,
             },
@@ -385,7 +384,7 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
             storage,
             INodFactory::NodMined {
                 owner,
-                nodId: nod_id.to_u256(),
+                nodId: nod_id,
                 encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             },
         )?;
@@ -393,10 +392,7 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
     })
 }
 
-fn load_nod(
-    storage: &StorageHandle<'_>,
-    nod_id: WwdEntityId,
-) -> Result<(LoadedNodItem, LoadedNodGroup)> {
+fn load_nod(storage: &StorageHandle<'_>, nod_id: U256) -> Result<(LoadedNodItem, LoadedNodGroup)> {
     let item = nod_api::load_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     let group = nod_api::load_group(storage, item.body().group_key)?
         .ok_or(NodFactoryError::GroupNotFound)?;
@@ -407,7 +403,7 @@ fn load_nod(
 /// snapshot an issuance-currency payment must name (zero on the reference rail).
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
-    nod_id: WwdEntityId,
+    nod_id: U256,
     asset: Address,
 ) -> Result<(u16, U256, U256)> {
     let (item, _) = load_nod(storage, nod_id)?;
@@ -427,10 +423,10 @@ pub fn quote_settlement(
 /// PoW gate for `mine_gratis`. The preimage is
 /// `OUTBE_NOD_MINING_V1 || nodId || owner || miningSequence=0 || nonce`. The caller is not in
 /// it.
-pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<()> {
+pub fn validate_pow(nod_id: U256, owner: Address, nonce: u64) -> Result<()> {
     pow::validate_mining_pow(
         pow::MiningDomain::Nod,
-        nod_id.to_u256(),
+        nod_id,
         owner,
         pow::SINGLE_MINING_SEQUENCE,
         nonce,
@@ -440,10 +436,10 @@ pub fn validate_pow(nod_id: WwdEntityId, owner: Address, nonce: u64) -> Result<(
 
 /// SHA256 over `OUTBE_NOD_MINING_V1 || nodId_be32 || owner_20 || miningSequence_be8 ||
 /// nonce_be8` with `miningSequence = 0`.
-pub fn compute_pow_hash(nod_id: WwdEntityId, owner: Address, nonce: u64) -> [u8; 32] {
+pub fn compute_pow_hash(nod_id: U256, owner: Address, nonce: u64) -> [u8; 32] {
     pow::compute_mining_pow_hash(
         pow::MiningDomain::Nod,
-        nod_id.to_u256(),
+        nod_id,
         owner,
         pow::SINGLE_MINING_SEQUENCE,
         nonce,

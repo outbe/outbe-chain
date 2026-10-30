@@ -9,7 +9,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
 };
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 fn seed_entry_price(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, vwap: U256) {
     let index = outbe_oracle::api::register_pair(
@@ -100,9 +99,12 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             crate::errors::TributeError::NodCreationBeforeCompletion.into();
         assert_eq!(early.to_string(), expected_early.to_string());
         assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
-        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day)
+        )
+        .unwrap()
+        .is_none());
         assert_eq!(tc.total_supply().unwrap(), 2);
         storage.set_block_timestamp(U256::from(base_ts)).unwrap();
 
@@ -112,9 +114,12 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             crate::errors::TributeError::CallerNotTributeOwner.into();
         assert_eq!(stranger_err.to_string(), expected_owner.to_string());
         assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
-        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day)
+        )
+        .unwrap()
+        .is_none());
 
         // Owner1 creates a Nod three days after completion.
         storage
@@ -126,16 +131,38 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             tributeId: t1.tribute_id.to_u256(),
         }
         .abi_encode();
+        let reverted: outbe_primitives::error::Result<()> = storage.with_checkpoint(|| {
+            crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO)?;
+            assert!(tc.get_record(t1.tribute_id)?.is_none());
+            Err(PrecompileError::Revert(
+                "containing transaction reverted".into(),
+            ))
+        });
+        assert!(reverted.is_err());
+        assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
+        assert!(outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day),
+        )
+        .unwrap()
+        .is_none());
         let ret =
             crate::precompile::dispatch(storage.clone(), &call_bytes, owner1, U256::ZERO).unwrap();
         let nod_id_u256 =
             crate::precompile::ITribute::createNodCall::abi_decode_returns(&ret).unwrap();
-        assert_eq!(WwdEntityId::from(nod_id_u256), t1.tribute_id);
+        assert_eq!(
+            nod_id_u256,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day)
+        );
+        assert_ne!(nod_id_u256, t1.tribute_id.to_u256());
 
         // Verify Nod exists in outbe-nod and Tribute is burned with consistent partition counters!
-        let nod_item = outbe_nod::api::get_item(&storage, t1.tribute_id)
-            .unwrap()
-            .expect("Nod must be created");
+        let nod_item = outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day),
+        )
+        .unwrap()
+        .expect("Nod must be created");
         assert_eq!(nod_item.owner, owner1);
         assert_eq!(nod_item.league_id, 100);
         assert_eq!(
@@ -198,12 +225,18 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         // A claim after seven days still creates the Nod and deletes only that Tribute.
         let late = base_ts + 7 * outbe_primitives::time::SECONDS_PER_DAY + 1;
         storage.set_block_timestamp(U256::from(late)).unwrap();
-        assert_eq!(tc.create_nod(owner2, t2.tribute_id).unwrap(), t2.tribute_id);
+        assert_eq!(
+            tc.create_nod(owner2, t2.tribute_id).unwrap(),
+            outbe_primitives::nod_rules::derive_nod_id(t2.owner, t2.worldwide_day)
+        );
         assert!(tc.get_record(t2.tribute_id).unwrap().is_none());
         assert_eq!(tc.total_supply().unwrap(), 0);
-        let late_nod = outbe_nod::api::get_item(&storage, t2.tribute_id)
-            .unwrap()
-            .expect("late Nod");
+        let late_nod = outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t2.owner, t2.worldwide_day),
+        )
+        .unwrap()
+        .expect("late Nod");
         assert_eq!(late_nod.owner, owner2);
         assert_eq!(late_nod.league_id, 4000);
         assert_eq!(late_nod.issued_at, late);
@@ -211,9 +244,12 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert_eq!(totals_after_t2.tribute_count, 0);
         assert!(totals_after_t2.tribute_nominal_total_minor.is_zero());
         assert!(tc.get_fi_groups(day).unwrap().is_empty());
-        assert!(outbe_nod::api::get_item(&storage, t1.tribute_id)
-            .unwrap()
-            .is_some());
+        assert!(outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day)
+        )
+        .unwrap()
+        .is_some());
     });
 
     let events = provider.get_events(TRIBUTE_ADDRESS);
@@ -226,6 +262,21 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
     assert_eq!(burned_events[0].owner, owner1);
     assert_eq!(burned_events[1].tributeId, t2.tribute_id.to_u256());
     assert_eq!(burned_events[1].owner, owner2);
+    let issued_ids: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            outbe_nodfactory::precompile::INodFactory::NodIssued::decode_log_data(log).ok()
+        })
+        .map(|event| event.nodId)
+        .collect();
+    assert_eq!(
+        issued_ids,
+        [
+            outbe_primitives::nod_rules::derive_nod_id(t1.owner, t1.worldwide_day),
+            outbe_primitives::nod_rules::derive_nod_id(t2.owner, t2.worldwide_day),
+        ]
+    );
 }
 
 #[test]
@@ -278,9 +329,12 @@ fn create_nod_reverts_without_a_completion_day_price() {
         assert_eq!(unpriced.unwrap_err().to_string(), expected_err.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
         assert_eq!(tc.total_supply().unwrap(), 1);
-        assert!(outbe_nod::api::get_item(&storage, tribute.tribute_id)
-            .unwrap()
-            .is_none());
+        assert!(outbe_nod::api::get_item(
+            &storage,
+            outbe_primitives::nod_rules::derive_nod_id(tribute.owner, tribute.worldwide_day)
+        )
+        .unwrap()
+        .is_none());
 
         seed_entry_price(
             &storage,
@@ -394,10 +448,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         );
 
         // Cleaning live Nod t1 must revert with NodNotForfeited
-        let clean_nod_call = outbe_nod::precompile::INod::cleanCall {
-            nodId: nod_id.to_u256(),
-        }
-        .abi_encode();
+        let clean_nod_call = outbe_nod::precompile::INod::cleanCall { nodId: nod_id }.abi_encode();
         let live_nod_clean_err =
             outbe_nod::precompile::dispatch(storage.clone(), &clean_nod_call, stranger, U256::ZERO)
                 .unwrap_err();
@@ -706,10 +757,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         let mut stored_nod = nod_contract.records.get(nod_id).unwrap().unwrap();
         stored_nod.is_settled = true;
         nod_contract.records.update(&stored_nod).unwrap();
-        let clean_nod_call = outbe_nod::precompile::INod::cleanCall {
-            nodId: nod_id.to_u256(),
-        }
-        .abi_encode();
+        let clean_nod_call = outbe_nod::precompile::INod::cleanCall { nodId: nod_id }.abi_encode();
         let settled_err =
             outbe_nod::precompile::dispatch(storage.clone(), &clean_nod_call, stranger, U256::ZERO)
                 .unwrap_err();

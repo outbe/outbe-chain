@@ -180,15 +180,15 @@ fn start_auction(
     if unpriced || no_limit || below_one_unit || late {
         send_stage_start(storage, start, DAY_STATE_CANCELLED)?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-        if unpriced {
+        if no_limit {
+            contract.emit(IDesis::AuctionCancelledNoLimit {
+                worldwideDay: worldwide_day.into(),
+            })?;
+        } else if unpriced {
             contract.emit(IDesis::AuctionCancelledUnpriced {
                 worldwideDay: worldwide_day.into(),
             })?;
             refund_unused_desis_limit(storage, contract, worldwide_day)?;
-        } else if no_limit {
-            contract.emit(IDesis::AuctionCancelledNoLimit {
-                worldwideDay: worldwide_day.into(),
-            })?;
         } else if below_one_unit {
             contract.emit(IDesis::AuctionCancelledBelowOneUnit {
                 worldwideDay: worldwide_day.into(),

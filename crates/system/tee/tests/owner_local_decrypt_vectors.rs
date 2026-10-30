@@ -30,7 +30,12 @@ fn fixed_nod() -> EncryptedNodV1 {
     let nod = EncryptedNodV1 {
         terms: NodTermsV1 {
             chain_id: 31_337,
-            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xab)),
+            // Fixed external crypto vector, not a production issuance identity.
+            nod_id: U256::from_str_radix(
+                "013527d8abababababababababababababababababababababababababababab",
+                16,
+            )
+            .unwrap(),
             owner: Address::repeat_byte(0x42),
             worldwide_day: day,
             league_id: 7,

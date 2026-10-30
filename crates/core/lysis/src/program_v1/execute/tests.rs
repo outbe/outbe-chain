@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn nod_action_uses_independent_keccak_vector_and_preserves_source_tribute() {
+    let owner = alloy_primitives::Address::repeat_byte(0x42);
+    let day = WorldwideDay::new(0x01020304);
+    let source_id = derive_poseidon_entity_id(owner, day);
+    let source = TributeInputV1 {
+        tribute_id: source_id,
+        owner,
+        worldwide_day: day,
+        issuance_currency: 840,
+        nominal_amount_minor: SCALE,
+        reference_currency: 978,
+        tribute_price_minor: U256::ZERO,
+    };
+    let mut execution = prepare(day, vec![source], vec![1], SCALE).unwrap();
+    let pending = execution.quote_next().unwrap();
+    let action = execution.commit_next(pending, SCALE, 1, true).unwrap();
+    assert_eq!(
+        action.nod_id,
+        U256::from_str_radix(
+            "501ba769d4ff8f2faa11545b1608051d3009bb0cdd2518ef005b88ec71b5243b",
+            16,
+        )
+        .unwrap()
+    );
+    assert_eq!(action.source_tribute_id, source_id);
+    assert_eq!(
+        source_id.to_u256(),
+        U256::from_str_radix(
+            "0102030405beb34363ddabb6c010e0b5883bfe90d9e06ff2eeffa66f61683c0b",
+            16,
+        )
+        .unwrap()
+    );
+    assert_ne!(action.nod_id, source_id.to_u256());
+}
+
+#[test]
 fn gratis_load_cap_preserves_fraction_math_and_full_precision() {
     let nod_gratis_load_max = U256::from(1000);
     for (nominal, fraction, expected) in [
@@ -40,7 +77,7 @@ fn frozen_budget_cap_boundaries_and_remaining_accounting() {
     let tributes = [1_u8, 2].map(|seed| {
         let owner = alloy_primitives::Address::repeat_byte(seed);
         TributeInputV1 {
-            tribute_id: derive_poseidon_entity_id(owner, day).unwrap(),
+            tribute_id: derive_poseidon_entity_id(owner, day),
             owner,
             worldwide_day: day,
             issuance_currency: 840,

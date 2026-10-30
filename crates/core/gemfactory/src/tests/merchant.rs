@@ -769,7 +769,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
         .collect();
     assert_eq!(issued.len(), 2);
     for (event, (item, position_id, group)) in issued.iter().zip(&expected) {
-        assert_eq!(event.gemId, item.item.gem_id.to_u256());
+        assert_eq!(event.gemId, item.item.gem_id);
         assert_eq!(event.callPriceMinor, item.terms.call_price_minor);
         assert_eq!(event.callWindow, item.terms.call_window_seconds);
         assert_eq!(event.callThreshold, item.terms.call_threshold_seconds);

@@ -1,7 +1,5 @@
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{
-    nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
-};
+use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
 use outbe_tee::{
     nod_mine::MineEncryptedNodRequestV1,
     protocol::{
@@ -20,7 +18,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
     let day = WorldwideDay::new(20250115);
     let terms = NodTermsV1 {
         chain_id: 1,
-        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(4)),
+        nod_id: U256::from_be_bytes([4; 32]),
         owner: account,
         worldwide_day: day,
         league_id: 0,

@@ -687,17 +687,6 @@
   },
   {
     "type": "error",
-    "name": "EntityIdDerivation",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "GroupExistenceDisagreesWithMemberCount",
     "inputs": [
       {

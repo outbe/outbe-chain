@@ -179,10 +179,7 @@ fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
                 let Some(owner) = crate::internal::eth::address_of(key) else {
                     return false;
                 };
-                let Ok(id) = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, day)
-                else {
-                    return false;
-                };
+                let id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(owner, day);
                 world
                     .rpc
                     .tributes_by_owner(port, owner)

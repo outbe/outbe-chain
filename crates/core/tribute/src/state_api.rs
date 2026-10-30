@@ -67,8 +67,7 @@ pub fn issue_encrypted_with_league(
         }
     }
     let record = crate::record::from_encrypted(body.clone());
-    let expected = derive_poseidon_entity_id(record.owner, record.worldwide_day)
-        .map_err(TributeError::entity_id_derivation)?;
+    let expected = derive_poseidon_entity_id(record.owner, record.worldwide_day);
     if record.owner.is_zero() || record.tribute_id != expected {
         return Err(TributeError::InvalidOwner.into());
     }
@@ -262,7 +261,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let day = WorldwideDay::new(20261015);
             let owner = Address::repeat_byte(1);
-            let id = derive_poseidon_entity_id(owner, day).unwrap();
+            let id = derive_poseidon_entity_id(owner, day);
             let mut totals = crate::day_schema::StoredDayTotals::with_key(day);
             totals.initialized = true;
             let contract = TributeContract::new(storage.clone());

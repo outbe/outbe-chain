@@ -673,15 +673,13 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
 
 /// One second past the largest block timestamp that fits in `u64`.
 fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
-    use outbe_primitives::{
-        nod_encryption::NodTermsV1, time::WorldwideDay, wwd_entity_id::WwdEntityId,
-    };
+    use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
     let day = WorldwideDay::new(20250115);
     outbe_tee_enclave::nod_encryption::encrypt_nod(
         &[0x5a; 32],
         NodTermsV1 {
             chain_id: CHAIN_ID,
-            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+            nod_id: U256::from_be_bytes([7; 32]),
             owner: alice(),
             worldwide_day: day,
             league_id: 0,

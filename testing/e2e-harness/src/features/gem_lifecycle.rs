@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 use outbe_gem::{GemGroupState, GemItemState};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until, verify_checkpoint,
@@ -335,7 +334,7 @@ fn gem_bodies_match_on_every_committee_port(world: &mut World) {
         let id = gem(world, index);
         let view = read_gem(world, id);
         let (item, group) = gem_bodies(world, id, minimum);
-        assert_eq!(item.gem_id, WwdEntityId::from(id));
+        assert_eq!(item.gem_id, id);
         assert_eq!(item.owner, owner_address(index));
         assert_eq!(item.promis_load_minor, view.promisLoadMinor);
         assert_eq!(item.issued_at, view.issuedAt);
@@ -513,7 +512,7 @@ impl Lifecycle for GemLifecycle {
                             .rpc
                             .checkpoint_at(world.validators.primary_port(), height)
                             .expect("forfeit EVM checkpoint"),
-                        WwdEntityId::from(id)
+                        id
                     )
                     .expect("forfeited Gem state")
                     .is_none(),
@@ -743,7 +742,7 @@ fn gem_bodies(world: &World, id: U256, minimum: u64) -> (GemItemState, GemGroupS
     for port in world.validators.committee_ports() {
         let (item, group) = world
             .rpc
-            .gem_state_at(port, checkpoint, WwdEntityId::from(id))
+            .gem_state_at(port, checkpoint, id)
             .expect("Gem EVM state")
             .expect("Gem is present");
         let bodies = (item, group);

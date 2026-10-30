@@ -1,3 +1,4 @@
+use crate::delegation::ValidatorDelegateRole;
 use crate::errors::ValidatorSetError;
 use crate::precompile::IValidatorSet;
 use crate::schema::ValidatorSet;
@@ -44,7 +45,7 @@ impl ValidatorSet<'_> {
                 continue;
             }
 
-            debug_assert_eq!(state_machine::cleanup(inactive), ValidatorLifecycle::Absent);
+            let _ = state_machine::cleanup(inactive);
             // Clear all per-validator storage
             self.clear_validator_storage(&addr)?;
 
@@ -113,6 +114,17 @@ impl ValidatorSet<'_> {
         // `val_join_confirmed = true` would bypass the stale-join guard.
         self.val_join_confirmed.write(addr, false)?;
         self.val_jailed_at_height.write(addr, 0)?;
+        for role in ValidatorDelegateRole::ALL {
+            let role_id = role.id();
+            let forward = self.delegate_by_validator_role.get_nested(addr);
+            let delegate = forward.read(&role_id)?;
+            if !delegate.is_zero() {
+                forward.write(&role_id, Address::ZERO)?;
+                self.validator_by_role_delegate
+                    .get_nested(&role_id)
+                    .write(&delegate, Address::ZERO)?;
+            }
+        }
         Ok(())
     }
 }

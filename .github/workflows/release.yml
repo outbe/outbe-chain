@@ -61,7 +61,7 @@ jobs:
   # Pushing vX.Y.Z-testnet.N starts the protected SGX release. It is dispatched
   # rather than triggered directly because testnet-release.yml must run with
   # `refs/heads/main` as its workflow ref: the Sigstore certificate identity it
-  # signs and re-verifies is pinned to that ref in xtask/src/release/sgx.rs and
+  # signs and re-verifies is pinned to that ref in xtask/src/release/sgx/spec.rs and
   # release/release-manifest-v1.schema.json. The dispatched run checks out the
   # tag itself and re-verifies the signed tag object before it signs anything.
   dispatch-testnet-release:

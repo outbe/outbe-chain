@@ -16,7 +16,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use alloy_primitives::{keccak256, Address, B256};
-use commonware_codec::Encode as _;
 use commonware_cryptography::bls12381;
 use commonware_p2p::{Receiver as P2pReceiver, Recipients, Sender as P2pSender};
 use commonware_runtime::Clock;

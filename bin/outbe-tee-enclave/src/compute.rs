@@ -69,8 +69,10 @@ pub fn compute_token_id(
 ) -> EnclaveResult<B256> {
     // Validate the draft id (reject malformed input) but keep it out of the hash.
     parse_draft_id(draft_id)?;
-    outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, worldwide_day)
-        .map_err(|error| ComputeError::from(error).into())
+    Ok(outbe_primitives::wwd_entity_id::derive_poseidon_digest(
+        owner,
+        worldwide_day,
+    ))
 }
 
 /// Computes the Tribute-only S-curve pricing contract:
@@ -288,7 +290,7 @@ mod tests {
         let owner = Address::repeat_byte(0x42);
         assert_eq!(
             compute_token_id(owner, DAY, DRAFT_A).unwrap(),
-            outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, DAY).unwrap()
+            outbe_primitives::wwd_entity_id::derive_poseidon_digest(owner, DAY)
         );
     }
 }

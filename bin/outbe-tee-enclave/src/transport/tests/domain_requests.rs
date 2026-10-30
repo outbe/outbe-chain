@@ -267,7 +267,6 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
     use alloy_primitives::U256;
     use outbe_primitives::{
         nod_encryption::NodTermsV1, time::WorldwideDay, tribute_encryption::TributeAmountsV2,
-        wwd_entity_id::WwdEntityId,
     };
 
     let mut enclave = resident_enclave(4);
@@ -301,7 +300,7 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
 
     let terms = NodTermsV1 {
         chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,
-        nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x66)),
+        nod_id: outbe_primitives::nod_rules::derive_nod_id(owner_addr, day),
         owner: owner_addr,
         worldwide_day: day,
         league_id: 0,

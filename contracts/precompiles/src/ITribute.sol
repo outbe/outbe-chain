@@ -5,12 +5,11 @@ interface ITribute {
     error TributeNotFound();
     error TributeAlreadyExists();
     error InvalidOwner();
-    error SettlementAmountMustBePositive();
+    error IssuanceAmountMustBePositive();
     error WorldwideDaySealed();
     error OwnerBalanceOverflow();
     error QueryLimitExceeded();
     error DayResponseScopeMismatch();
-    error EntityIdDerivation(string value);
     error CalculationView(string value);
     error WorldwideDayNotCompletedAndEmpty();
     error PrivateAmountReadFailed(string value);

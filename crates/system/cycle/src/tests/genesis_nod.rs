@@ -333,7 +333,7 @@ fn issue_nod(
     let mut body = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day)?,
+            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day),
             owner,
             gratis_load_minor: U256::from(11),
             worldwide_day,

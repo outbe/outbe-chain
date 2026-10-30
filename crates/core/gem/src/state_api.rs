@@ -2,8 +2,8 @@ use crate::errors::{date_step_error, GemError};
 use crate::precompile::IGem;
 use crate::schema::{CallTerms, GemContract, GemGroupState, GemItemState};
 use crate::GemState;
-use alloy_primitives::{Address, B256};
-use outbe_primitives::{error::Result, storage::StorageHandle, wwd_entity_id::WwdEntityId};
+use alloy_primitives::{Address, B256, U256};
+use outbe_primitives::{error::Result, storage::StorageHandle};
 
 /// A gem exactly as stored when it was loaded; mutation re-checks storage against it.
 pub struct LoadedGem {
@@ -31,7 +31,7 @@ impl LoadedGemGroup {
     }
 }
 
-pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<LoadedGem>> {
+pub fn load_item(storage: &StorageHandle<'_>, id: U256) -> Result<Option<LoadedGem>> {
     let contract = GemContract::new(storage.clone());
     contract
         .records
@@ -132,7 +132,7 @@ impl GemContract<'_> {
             .checked_add(1)
             .ok_or(GemError::TotalSupplyOverflow)?;
         self.total_supply.write(supply)?;
-        self.insert_group_member(group_key, item.gem_id.to_u256())?;
+        self.insert_group_member(group_key, item.gem_id)?;
         self.insert_state_record(item)?;
         if let Some(group) = new_group {
             self.groups.create(&group)?;
@@ -140,7 +140,7 @@ impl GemContract<'_> {
         self.emit(IGem::Transfer {
             from: Address::ZERO,
             to: item.owner,
-            tokenId: item.gem_id.to_u256(),
+            tokenId: item.gem_id,
         })
     }
 
@@ -155,7 +155,7 @@ impl GemContract<'_> {
             .settled_gems
             .checked_add(1)
             .ok_or(GemError::SettledCountOverflow)?;
-        self.remove_group_member(item.group_key, item.gem_id.to_u256())?;
+        self.remove_group_member(item.group_key, item.gem_id)?;
         self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
         item.settled_at = self.storage.now_secs()?;
@@ -163,7 +163,7 @@ impl GemContract<'_> {
         self.records.update(&item)?;
         self.groups.update(&group)?;
         self.emit(IGem::MetadataUpdate {
-            _tokenId: item.gem_id.to_u256(),
+            _tokenId: item.gem_id,
         })
     }
 
@@ -186,7 +186,7 @@ impl GemContract<'_> {
             self.group_gem_count.read(&item.group_key)?
         } else {
             self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
-            self.remove_group_member(item.group_key, item.gem_id.to_u256())?
+            self.remove_group_member(item.group_key, item.gem_id)?
         };
         self.delete_state_record(item.gem_id)?;
         if remaining == 0 && group.settled_gems == 0 {
@@ -198,7 +198,7 @@ impl GemContract<'_> {
         self.emit(IGem::Transfer {
             from: item.owner,
             to: Address::ZERO,
-            tokenId: item.gem_id.to_u256(),
+            tokenId: item.gem_id,
         })
     }
 }
@@ -218,7 +218,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let day = WorldwideDay::new(20261015);
             let item = GemItemState {
-                gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                gem_id: U256::from_be_bytes([7; 32]),
                 owner: Address::repeat_byte(1),
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,
@@ -274,7 +274,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let day = WorldwideDay::new(20261015);
             let item = GemItemState {
-                gem_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+                gem_id: U256::from_be_bytes([7; 32]),
                 owner: Address::ZERO,
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,

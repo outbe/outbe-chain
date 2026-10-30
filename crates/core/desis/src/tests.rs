@@ -482,6 +482,39 @@ fn dispatch_auction_brief_records_the_brief() {
 #[test]
 fn dispatch_auction_brief_records_a_brief_with_no_limit() {
     with_storage(|s| {
+        let zero_wwd_receipt = crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
+                desis_limit_minor: U256::ZERO,
+                has_limit: false,
+            },
+            NOW,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
+        )
+        .unwrap();
+        assert_eq!(zero_wwd_receipt, AuctionBriefReceipt::Accepted);
+        assert_eq!(
+            s.contract::<DesisContract>()
+                .sched_active_count
+                .read()
+                .unwrap(),
+            0
+        );
+        assert!(crate::api::dispatch_auction_brief(
+            s.clone(),
+            crate::api::AuctionBrief {
+                worldwide_day: WorldwideDay::new(0),
+                emission_day: 0,
+                desis_limit_minor: U256::from(PROMIS_LOAD_MINOR),
+                has_limit: true,
+            },
+            NOW,
+            crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
+        )
+        .is_err());
+
         let receipt = crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
@@ -1939,6 +1972,7 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
     let stage = StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, WORLDWIDE_DAY, 0, false);
+        unprice_day(&s, NOW);
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.brief_has_limit.read(&WORLDWIDE_DAY).unwrap(), 0);
         runtime::schedule_tick(&s, NOW).unwrap();

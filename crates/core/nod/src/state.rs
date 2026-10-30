@@ -2,7 +2,6 @@ use alloy_primitives::{B256, U256};
 use outbe_primitives::call_bins;
 use outbe_primitives::deadline_queue;
 use outbe_primitives::error::Result;
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 
 use crate::{
     errors::NodError,
@@ -42,11 +41,7 @@ impl NodContract<'_> {
     // and reverse map for O(1) swap removal.
 
     /// Appends `nod_id` and increments the group's authoritative unpaid count.
-    pub(crate) fn insert_group_member(
-        &mut self,
-        group_key: B256,
-        nod_id: WwdEntityId,
-    ) -> Result<()> {
+    pub(crate) fn insert_group_member(&mut self, group_key: B256, nod_id: U256) -> Result<()> {
         let index = self.group_nod_count.read(&group_key)?;
         let next = index
             .checked_add(1)
@@ -59,11 +54,7 @@ impl NodContract<'_> {
     }
 
     /// Swap-removes `nod_id` and returns the remaining member count.
-    pub(crate) fn remove_group_member(
-        &mut self,
-        group_key: B256,
-        nod_id: WwdEntityId,
-    ) -> Result<u32> {
+    pub(crate) fn remove_group_member(&mut self, group_key: B256, nod_id: U256) -> Result<u32> {
         let index = self.group_nod_index.read(&nod_id)?;
         let last = self
             .group_nod_count
@@ -92,7 +83,7 @@ impl NodContract<'_> {
                 .write(&crate::index_keys::group_nod_key(group_key, index), moved)?;
             self.group_nod_index.write(&moved, index)?;
         }
-        self.group_nods.write(&last_key, WwdEntityId::ZERO)?;
+        self.group_nods.write(&last_key, U256::ZERO)?;
         self.group_nod_index.clear(&nod_id)?;
         self.group_nod_count.write(&group_key, last)?;
         Ok(last)

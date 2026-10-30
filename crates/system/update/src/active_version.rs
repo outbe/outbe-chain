@@ -8,8 +8,11 @@ use crate::ProtocolVersion;
 
 impl Update<'_> {
     /// Reads the active protocol version (`0` = baseline / pre-upgrade chain).
+    ///
+    /// Rejects non-canonical storage words wider than `u32::MAX` with
+    /// [`UpdateError::ActiveVersionDoesNotFitU32`].
     pub fn get_active_version(&self) -> Result<ProtocolVersion> {
-        self.active_version.read()
+        crate::api::resolve_active_version(self.storage.clone())
     }
 
     /// Reads the activation height of the current active version.

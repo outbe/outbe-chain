@@ -7,7 +7,6 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     nod_encryption::NOD_BLOB_LEN,
     storage::StorageHandle,
-    wwd_entity_id::WwdEntityId,
 };
 
 /// A Nod item exactly as stored when it was loaded; mutation re-checks storage against it.
@@ -37,7 +36,7 @@ impl LoadedNodGroup {
     }
 }
 
-pub fn load_item(storage: &StorageHandle<'_>, id: WwdEntityId) -> Result<Option<LoadedNodItem>> {
+pub fn load_item(storage: &StorageHandle<'_>, id: U256) -> Result<Option<LoadedNodItem>> {
     let contract = NodContract::new(storage.clone());
     let entry = contract.records.entry(id);
     if !entry.exists()? {
@@ -96,7 +95,7 @@ pub fn add_series_item(
         )
     })
 }
-pub fn clean_item(storage: &StorageHandle<'_>, nod_id: WwdEntityId) -> Result<()> {
+pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
         let item = load_item(storage, nod_id)?.ok_or(NodError::NodNotFound)?;
         if item.body().is_settled {
@@ -206,7 +205,7 @@ impl NodContract<'_> {
         self.emit(INod::Transfer {
             from: Address::ZERO,
             to: item.owner,
-            tokenId: item.nod_id.to_u256(),
+            tokenId: item.nod_id,
         })
     }
 
@@ -231,7 +230,7 @@ impl NodContract<'_> {
         self.records.update(&StoredNod::from(&item))?;
         self.groups.update(&group)?;
         self.emit(INod::MetadataUpdate {
-            _tokenId: item.nod_id.to_u256(),
+            _tokenId: item.nod_id,
         })
     }
 
@@ -273,7 +272,7 @@ impl NodContract<'_> {
         self.emit(INod::Transfer {
             from: item.owner,
             to: Address::ZERO,
-            tokenId: item.nod_id.to_u256(),
+            tokenId: item.nod_id,
         })
     }
 }
@@ -289,7 +288,7 @@ mod tests {
 
     fn stored_fixture() -> StoredNod {
         let day = WorldwideDay::new(20261015);
-        let id = WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7));
+        let id = U256::from_be_bytes([7; 32]);
         let mut record = StoredNod::with_key(id);
         record.owner = Address::repeat_byte(1);
         record.chain_id = 1;
@@ -303,7 +302,7 @@ mod tests {
     fn stored_nod_survives_the_item_state_round_trip_exactly() {
         let day = WorldwideDay::new(20261015);
         let stored = StoredNod {
-            nod_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(7)),
+            nod_id: U256::from_be_bytes([7; 32]),
             owner: Address::repeat_byte(1),
             chain_id: 2,
             worldwide_day: day,
@@ -338,7 +337,15 @@ mod tests {
             assert!(load_item(&storage, id).is_err());
             record.worldwide_day = WorldwideDay::new(20261016);
             contract.records.update(&record).unwrap();
-            assert!(load_item(&storage, id).is_err());
+            // Structural reads do not infer a day from an opaque identity.
+            assert_eq!(
+                load_item(&storage, id)
+                    .unwrap()
+                    .unwrap()
+                    .body()
+                    .worldwide_day,
+                record.worldwide_day
+            );
         });
     }
 

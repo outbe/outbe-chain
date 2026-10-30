@@ -1,10 +1,9 @@
 //! Cleanup sweep: deletes the unpaid Nods of the forfeited groups. It moves no value:
 //! the forfeit already returned their load.
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_nod::state::CleanupQueue;
 use outbe_nod::{api, schema::NodContract};
-use outbe_primitives::wwd_entity_id::WwdEntityId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     deadline_queue::{self, DeadlineHandler, Due},
@@ -45,7 +44,7 @@ impl<'a, 's> NodCleanup<'a, 's> {
 
 /// A forfeited group's members are its unpaid Nods.
 impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
-    type Member = WwdEntityId;
+    type Member = U256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         Ok(match self.nod.group_nod_count.read(&group)? {
@@ -58,7 +57,7 @@ impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
         self.nod.group_nod_count.read(&group)
     }
 
-    fn member_at(&self, group: B256, index: u32) -> Result<WwdEntityId> {
+    fn member_at(&self, group: B256, index: u32) -> Result<U256> {
         self.nod
             .group_nods
             .read(&outbe_nod::index_keys::group_nod_key(group, index))
@@ -68,7 +67,7 @@ impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
         error.record_pass_failure()
     }
 
-    fn process_member(&mut self, group_key: B256, nod_id: WwdEntityId) -> Result<()> {
+    fn process_member(&mut self, group_key: B256, nod_id: U256) -> Result<()> {
         if nod_id.is_zero() {
             return Err(NodFactoryError::EmptyGroupMemberSlotDuringCleanup { group_key }.into());
         }
