@@ -190,6 +190,9 @@ impl NodContract<'_> {
         if unclaimed_tribute_count == 0 {
             return Ok(());
         }
+        if self.sealed_series_group(series_id)?.is_some() {
+            return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
+        }
         let current_group = self.groups.get(group_key)?;
         let next_count = self
             .group_unclaimed_tribute_count
@@ -205,9 +208,6 @@ impl NodContract<'_> {
             .write(&group_key, next_count)?;
         self.group_unclaimed_tribute_load
             .write(&group_key, next_load)?;
-        if self.sealed_series_group(series_id)?.is_some() {
-            return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
-        }
         self.series_group.write(&series_id, group_key)?;
         self.series_entry_price_minor
             .write(&series_id, entry_price_minor)?;
