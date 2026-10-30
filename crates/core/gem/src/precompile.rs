@@ -100,6 +100,7 @@ fn to_abi_data(gem: &GemView, now: u64) -> IGem::GemData {
     IGem::GemData {
         gemId: gem.item.gem_id,
         owner: gem.item.owner,
+        seriesId: gem.item.series_id.into(),
         state: gem.effective_state(now),
         promisLoadMinor: gem.item.promis_load_minor,
         entryPriceMinor: gem.item.entry_price_minor,

@@ -98,6 +98,8 @@ interface IGemFactory {
         uint256 positionId;
         address merchant;
         uint256 sourceIntexId;
+        /// @notice The source Intex series, readable after the series is gone.
+        bytes14 sourceSeriesId;
         /// @notice 0 once the position expired.
         uint256 remainingCapacityMinor;
         /// @notice When the position was issued.

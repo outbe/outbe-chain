@@ -22,6 +22,8 @@ interface IGem {
     struct GemData {
         uint256 gemId;
         address owner;
+        /// The UTC day before the issue `YYYYMMDD` and the Gem's currencies.
+        bytes14 seriesId;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled,
         /// 3 Forfeited (a Called gem past its notice period, until the cleanup deletes it).
         uint8 state;

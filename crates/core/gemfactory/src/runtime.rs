@@ -436,6 +436,7 @@ pub fn position_data(
         positionId: record.position_id,
         merchant: record.merchant,
         sourceIntexId: outbe_intex::intex_id(record.source_series_id),
+        sourceSeriesId: record.source_series_id.into(),
         remainingCapacityMinor: factory.remaining_capacity(&record)?,
         issuedAt: record.issued_at,
         expiresAt: record.expires_at,

@@ -82,6 +82,11 @@
             "internalType": "address"
           },
           {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"

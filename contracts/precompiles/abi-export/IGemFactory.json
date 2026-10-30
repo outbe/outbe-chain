@@ -50,6 +50,11 @@
             "internalType": "uint256"
           },
           {
+            "name": "sourceSeriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
             "name": "remainingCapacityMinor",
             "type": "uint256",
             "internalType": "uint256"

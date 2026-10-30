@@ -771,6 +771,7 @@ mod claim_tests {
         eth::IGem::GemData {
             gemId: U256::from(7),
             owner: Address::repeat_byte(1),
+            seriesId: Default::default(),
             state: 0,
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),
