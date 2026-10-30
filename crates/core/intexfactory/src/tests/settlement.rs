@@ -285,7 +285,7 @@ fn settlement_quote_dispatch() {
         let out = precompile::dispatch(
             s.clone(),
             &IIntexFactory::quoteSettlementCall {
-                seriesId: sid(7).into(),
+                intexId: outbe_intex::intex_id(sid(7)),
                 asset: settlement_asset(),
                 units: U256::from(2u64),
             }
@@ -770,7 +770,7 @@ fn the_unit_counts_view_reports_the_disjoint_classes() {
         let out = outbe_intex::precompile::dispatch(
             s.clone(),
             &outbe_intex::precompile::IIntex::seriesUnitCountsCall {
-                seriesId: sid(7).into(),
+                intexId: outbe_intex::intex_id(sid(7)),
             }
             .abi_encode(),
             owner(),
@@ -798,7 +798,7 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         let out = precompile::dispatch(
             s.clone(),
             &IIntexFactory::ownerBalancesCall {
-                seriesId: sid(7).into(),
+                intexId: outbe_intex::intex_id(sid(7)),
                 owner: owner(),
             }
             .abi_encode(),

@@ -47,7 +47,7 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
                 .add_position(&GemPosition {
                     position_id: U256::from(id),
                     merchant: Address::repeat_byte(1),
-                    source_intex_id: SeriesId::pack(1, *b"USD", b'U').unwrap(),
+                    source_series_id: SeriesId::pack(1, *b"USD", b'U').unwrap(),
                     remaining_capacity_minor: U256::from(REMAINDER),
                     issued_at: 0,
                     expires_at,
@@ -150,7 +150,7 @@ fn world() -> HashMapStorageProvider {
             .add_position(&GemPosition {
                 position_id: U256::from(1),
                 merchant: Address::repeat_byte(1),
-                source_intex_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
+                source_series_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                 remaining_capacity_minor: U256::from(REMAINDER),
                 issued_at: EXPIRES - SECONDS_PER_DAY,
                 expires_at: EXPIRES,

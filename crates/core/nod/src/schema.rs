@@ -1,6 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::NOD_ADDRESS;
+use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
 use outbe_primitives::wwd_entity_id::WwdEntityId;
 use serde::{Deserialize, Serialize};
@@ -16,12 +17,13 @@ pub enum EffectiveState {
 }
 
 /// Plain calculation inputs. Production issuance stores an authenticated encrypted NOD.
-/// The identity is derived from owner and day; settlement uses the entry price and load.
+/// The identity is derived from the series and owner; settlement uses the entry price and load.
 /// `issued_at` comes from the block rather than these inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
-    pub worldwide_day: WorldwideDay,
+    /// The UTC day whose VWAP prices the Nod, `YYYYMMDD`.
+    pub emission_day: u32,
     pub league_id: u16,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
@@ -40,7 +42,8 @@ pub struct NodItemState {
 
     pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV1,
 
-    pub worldwide_day: WorldwideDay,
+    /// The emission day and currencies of the Tribute the Nod comes from.
+    pub series_id: SeriesId,
 
     pub league_id: u16,
 
@@ -303,11 +306,11 @@ pub struct NodContract {
     #[attribute(order = 103)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// Count of unclaimed Tributes belonging to a Lysis-sealed series group.
+    /// Unclaimed Tributes of the Lysis series in the group.
     #[attribute(order = 104)]
     pub group_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// Exact sum of `gratis_load_minor` across unclaimed Tributes in a Lysis-sealed series group.
+    /// Exact `gratis_load_minor` sum of those Tributes.
     #[attribute(order = 105)]
     pub group_unclaimed_tribute_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
@@ -315,7 +318,13 @@ pub struct NodContract {
     #[attribute(order = 106)]
     pub group_is_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
 
-    /// Entry price sealed on a Lysis series group (`emission_day` VWAP).
+    /// The call group Lysis sealed the series into.
     #[attribute(order = 107)]
-    pub group_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub series_group: outbe_primitives::storage::dsl::Map<SeriesId, B256>,
+    /// The series' entry price, its emission day VWAP, sealed at Lysis.
+    #[attribute(order = 108)]
+    pub series_entry_price_minor: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
+    /// Unclaimed Tributes of the series; at zero its records are cleared.
+    #[attribute(order = 109)]
+    pub series_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
 }

@@ -19,10 +19,10 @@ fn item(owner: Address) -> NodItemState {
     crate::test_support::item(
         crate::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: crate::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: crate::test_support::nod_id_of(owner, worldwide_day.value(), 840, 978),
             owner,
             gratis_load_minor: U256::from(11),
-            worldwide_day,
+            emission_day: worldwide_day.value(),
             league_id: 4,
             group_key: crate::test_support::group_key(
                 date_key_to_utc_timestamp(
@@ -168,7 +168,7 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
         super::seed_production_nod_genesis(&storage);
         let legacy = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
             body.owner,
-            body.worldwide_day,
+            WorldwideDay::new(body.series_id.day()),
         )
         .to_u256();
         assert_ne!(body.nod_id, legacy);
@@ -177,12 +177,17 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
             U256::from_be_bytes(
                 outbe_primitives::wwd_entity_id::derive_poseidon_digest(
                     body.owner,
-                    body.worldwide_day,
+                    WorldwideDay::new(body.series_id.day()),
                 )
                 .0,
             ),
-            crate::identity::generate_nod_id(Address::repeat_byte(0x43), body.worldwide_day),
-            crate::identity::generate_nod_id(body.owner, WorldwideDay::new(20_260_716)),
+            crate::identity::generate_nod_id(body.series_id, Address::repeat_byte(0x43)),
+            crate::test_support::nod_id_of(
+                body.owner,
+                20_260_716,
+                body.issuance_currency,
+                body.reference_currency,
+            ),
         ] {
             let mut invalid = body.clone();
             invalid.nod_id = invalid_id;

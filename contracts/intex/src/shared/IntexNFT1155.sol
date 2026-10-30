@@ -20,7 +20,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev Series lifecycle: Issued -> Called.
  *      Forfeit is not an on-chain state. It is derived against the clock once the transit margin
  *      past `calledAt + callNoticePeriod` ends (issue/bridge gates, metadata rendering).
- * @dev A series' units are the token id `uint112(seriesId)`. Settled units live in the Intex
+ * @dev A series' units are the token id `uint256(keccak256(seriesId))`. Settled units live in the Intex
  *      precompile on Outbe: a settlement burns them here.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
@@ -257,7 +257,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         uint256 newTotal = uint256(data.totalSupply) + amount;
         if (newTotal > type(uint32).max) {
-            revert SupplyCapExceeded(bytes14(uint112(tokenId)), newTotal, type(uint32).max);
+            revert SupplyCapExceeded(data.seriesId, newTotal, type(uint32).max);
         }
 
         // CEI ok: write totalSupply before _mint (see issueIntex()).
@@ -292,7 +292,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @dev Pure helper used internally and exposed via `issuedTokenId`.
     function _issuedTokenId(bytes14 seriesId) private pure returns (uint256) {
-        return uint256(uint112(seriesId));
+        return uint256(keccak256(abi.encodePacked(seriesId)));
     }
 
     /// @dev `calledAt + callNoticePeriod`, widened so the sum cannot overflow.
@@ -307,8 +307,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function readData(bytes14 seriesId) external view returns (IIntexNFT1155.SeriesData memory) {
+        return readTokenData(_issuedTokenId(seriesId));
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function readTokenData(uint256 tokenId) public view returns (IIntexNFT1155.SeriesData memory) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = _issuedTokenId(seriesId);
         // `issuedAt == 0` is the canonical existence sentinel for seriesData entries.
         // slither-disable-next-line incorrect-equality
         if ($.seriesData[tokenId].issuedAt == 0) {

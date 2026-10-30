@@ -92,7 +92,7 @@ fn native_lysis_completes(world: &mut World) {
         .expect("numeric WWD");
     let ports = world.validators.committee_ports();
     let height = wait_for_native_lysis(world);
-    let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
+    let (nod_height, nod_blocks) = issue_nods_for_completed_day(world, day, &ports, height);
     let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {
@@ -106,7 +106,7 @@ fn native_lysis_completes(world: &mut World) {
 /// Waits until confidential Lysis has succeeded on every validator.
 ///
 /// Does not mint Nods. The native scenario mints afterwards; a lifecycle scenario
-/// mints through each owner's `ITribute::createNod`.
+/// mints through each owner's `ITribute::issueNod`.
 pub(crate) fn wait_for_native_lysis(world: &World) -> u64 {
     let day = world
         .state
@@ -255,7 +255,7 @@ fn assert_claimed_tributes_left_owner_lists(
     for &port in ports {
         let port_url = world.rpc.url(port);
         for (tribute_id, key) in calls {
-            let owner = eth::address_of(key).expect("createNod owner");
+            let owner = eth::address_of(key).expect("issueNod owner");
             let still_owner: Option<Address> = eth::read_call(
                 &port_url,
                 addresses::TRIBUTE_ADDR,
@@ -265,18 +265,18 @@ fn assert_claimed_tributes_left_owner_lists(
             );
             assert!(
                 still_owner.is_none(),
-                "tribute {tribute_id} remains after createNod on port {port}"
+                "tribute {tribute_id} remains after issueNod on port {port}"
             );
             let owned = world.rpc.tributes_by_owner(port, owner).unwrap_or_default();
             assert!(
                 !owned.contains(tribute_id),
-                "owner list on port {port} still contains tribute {tribute_id} after createNod"
+                "owner list on port {port} still contains tribute {tribute_id} after issueNod"
             );
         }
     }
 }
 
-fn create_nods_for_completed_day(
+fn issue_nods_for_completed_day(
     world: &World,
     day: u32,
     ports: &[u16],
@@ -303,7 +303,7 @@ fn create_nods_for_completed_day(
                 tributeId: *tribute_id,
             },
         )
-        .expect("tribute owner before createNod");
+        .expect("tribute owner before issueNod");
         let league: u16 = eth::read_call(
             &url,
             addresses::TRIBUTE_ADDR,
@@ -311,7 +311,7 @@ fn create_nods_for_completed_day(
                 tributeId: *tribute_id,
             },
         )
-        .expect("tribute league before createNod");
+        .expect("tribute league before issueNod");
         assert!(
             (1..=4096).contains(&league),
             "expected valid league in 1..=4096, got {league}"
@@ -350,25 +350,25 @@ fn create_nods_for_completed_day(
                             &url,
                             addresses::TRIBUTE_ADDR,
                             key,
-                            &eth::ITribute::createNodCall {
+                            &eth::ITribute::issueNodCall {
                                 tributeId: tribute_id,
                             },
                             Some(U256::ZERO),
                         )
-                        .expect("submit ITribute::createNod")
+                        .expect("submit ITribute::issueNod")
                     })
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
-                .map(|handle| handle.join().expect("join createNod worker"))
+                .map(|handle| handle.join().expect("join issueNod worker"))
                 .collect::<Vec<_>>()
         });
         for ((tribute_id, _), outcome) in chunk.iter().zip(&outcomes) {
-            crate::features::settlement::assert_mined_success(outcome, "ITribute::createNod");
+            crate::features::settlement::assert_mined_success(outcome, "ITribute::issueNod");
             let block_number = world
                 .rpc
                 .receipt_block_number(&outcome.transaction_hash, primary)
-                .expect("createNod receipt block number");
+                .expect("issueNod receipt block number");
             blocks.insert(*tribute_id, block_number);
             last_height = last_height.max(block_number);
         }
@@ -377,7 +377,7 @@ fn create_nods_for_completed_day(
     world
         .rpc
         .wait_finalized_checkpoint(ports, last_height, 120)
-        .expect("createNod finalized on all validators");
+        .expect("issueNod finalized on all validators");
     assert_claimed_tributes_left_owner_lists(world, ports, &calls);
     (last_height, blocks)
 }

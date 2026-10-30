@@ -129,6 +129,11 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
         outbe_gem::config::read(storage)?,
     )?;
     reissued.issued_at = issued_at;
+    reissued.series_id = GemContract::series_of(
+        issued_at,
+        reissued.issuance_currency,
+        reissued.reference_currency,
+    )?;
     reissued.group_key = outbe_primitives::call_breach::group_key(
         outbe_primitives::time::first_full_day(issued_at).expect("date step"),
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),

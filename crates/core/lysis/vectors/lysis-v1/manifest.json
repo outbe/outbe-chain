@@ -5,9 +5,9 @@
   "migration_baseline_revision": "04606071023a237e43d5a3ca47642ee202983e86",
   "decision_reference": "outbe-plan/off-chain-poc-lysis-v1-semantics.md",
   "reference_path": "testing/lysis-v1-reference/src",
-  "reference_sha256": "ed3f389b4a36b1fb7f94cf0e31f56b2e17652c0d1a40b45b884dc909d4fd9a44",
+  "reference_sha256": "c551dfe35aa1ce967bd2f9a8b1605d513dc2e9e71eaba4c3db21e286d7c5b6a2",
   "case_path": "crates/core/lysis/vectors/lysis-v1/cases.jsonl",
-  "case_file_sha256": "ce84c514bbf70a83675559d4c0527763c331e8176009bdac63fb99de24ad8db4",
+  "case_file_sha256": "98a26e269146adacf2c29ea64feb7fcb5f9047f08bf38d390865d4d1e85c5290",
   "case_count": 16,
   "required_arithmetic_vectors": [
     "u256-wrapping-multiply",
@@ -33,13 +33,13 @@
       "name": "positive-input-minimum-monetary-cost",
       "description": "Positive entry price and Gratis load produce at least one reference-currency minor unit; the independent reference includes this policy.",
       "case_id": "positive-price-and-load-minimum-cost",
-      "expected_source": "A frozen budget of 1 now has a zero per-Nod cap and rejects before cost calculation. Positive-load minimum-cost behavior remains covered by execution planner dust vectors."
+      "expected_source": "A frozen budget of 1 gives the only Tribute a load of 1 at entry price 1; its cost is the one-minor-unit minimum."
     },
     {
       "name": "entry-derived-nod-floor",
       "description": "A Nod action carries the observed entry price, from which its floor derives; the tribute price does not enter it.",
       "case_id": "non840-entry-floor",
-      "expected_source": "The action carries entry price 3000000, not tribute price 4000000. Its load is capped to floor(32000000 / 1024) = 31250; its cost is 93750."
+      "expected_source": "The action carries entry price 3000000, not tribute price 4000000. Its load is 32000000; its cost is 96000000."
     }
   ]
 }

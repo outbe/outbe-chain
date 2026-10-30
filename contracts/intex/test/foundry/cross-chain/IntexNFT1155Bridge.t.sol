@@ -41,8 +41,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     bytes14 internal constant SERIES_A = "20260601-USD-U";
     uint32 internal constant SERIES_B_DAY = 20260602;
     bytes14 internal constant SERIES_B = "20260602-USD-U";
-    uint256 internal constant TID_A = uint256(uint112(SERIES_A));
-    uint256 internal constant TID_B = uint256(uint112(SERIES_B));
+    uint256 internal constant TID_A = uint256(keccak256(abi.encodePacked(SERIES_A)));
+    uint256 internal constant TID_B = uint256(keccak256(abi.encodePacked(SERIES_B)));
 
     function setUp() public {
         _setUpBridge();

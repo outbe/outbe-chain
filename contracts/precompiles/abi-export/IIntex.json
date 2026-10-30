@@ -52,9 +52,9 @@
     "name": "getIntexSeries",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -63,6 +63,11 @@
         "type": "tuple",
         "internalType": "struct IIntex.SeriesData",
         "components": [
+          {
+            "name": "intexId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
           {
             "name": "seriesId",
             "type": "bytes14",
@@ -290,9 +295,9 @@
     "name": "seriesExists",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -309,9 +314,9 @@
     "name": "seriesUnitCounts",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [

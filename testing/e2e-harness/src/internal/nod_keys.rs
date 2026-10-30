@@ -2,10 +2,7 @@
 use crate::internal::{eth, tribute_keys};
 use crate::world::World;
 use alloy_primitives::U256;
-use outbe_primitives::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
-    time::WorldwideDay,
-};
+use outbe_primitives::nod_encryption::{EncryptedNodV1, NodTermsV1};
 
 pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
     EncryptedNodV1 {
@@ -13,7 +10,7 @@ pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
             chain_id: data.chainId,
             nod_id: data.nodId,
             owner: data.owner,
-            worldwide_day: WorldwideDay::new(data.worldwideDay),
+            emission_day: outbe_primitives::series_id::SeriesId::from(data.seriesId).day(),
             league_id: data.leagueId,
             entry_price_minor: data.entryPriceMinor,
             issuance_currency: data.issuanceCurrency,

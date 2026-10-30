@@ -53,7 +53,7 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
         begin_block_at(&storage, first_due_block(&storage, gem_id));
         assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
+        assert_eq!(api::balance_of(&storage, ALICE).unwrap(), 0);
         (gem_id, load)
     });
     let events = provider.get_events(GEM_ADDRESS);
@@ -254,7 +254,7 @@ fn a_group_whose_member_fails_to_burn_is_deferred_and_burned_later() {
 #[test]
 fn a_group_whose_credit_fails_is_deferred_whole() {
     with_storage(|storage| {
-        let gems = alice_gems(storage, &[1, 1_000]);
+        let gems = gems_with_loads(storage, &[1, 1_000]);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
         // Room for the small load's credit only, not the group's.
@@ -285,7 +285,7 @@ fn a_group_whose_credit_fails_is_deferred_whole() {
 fn a_broken_group_index_holds_back_only_the_cleanup() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
-        let gems = alice_gems(&storage, &[1, 2]);
+        let gems = gems_with_loads(&storage, &[1, 2]);
         call_gem(&storage, gems[0], T_NOW);
         GemContract::new(storage.clone())
             .group_gem_index
@@ -309,7 +309,7 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         let loads: Vec<u64> = (0..=u64::from(SWEEP_WRITES_PER_BLOCK))
             .map(|n| 1_000 + n)
             .collect();
-        let gems = alice_gems(storage, &loads);
+        let gems = gems_with_loads(storage, &loads);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
         let live = || {

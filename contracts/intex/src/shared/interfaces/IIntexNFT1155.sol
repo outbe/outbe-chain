@@ -9,7 +9,8 @@ import {IERC1155Bridgeable} from "./IERC1155Bridgeable.sol";
  * @author Outbe
  * @notice Public API, events, errors, and data types for `IntexNFT1155`.
  * @dev Series are keyed by `seriesId` (bytes14). A series' Issued units are the ERC1155 token id
- * `uint112(seriesId)`. Settled units live in the Intex precompile on Outbe.
+ * `uint256(keccak256(seriesId))`, the series' `intexId`. Settled units live in the Intex
+ * precompile on Outbe.
  * Also implements `IERC1155Bridgeable` for ERC-7786 cross-chain compatibility.
  * @dev Keep continuation lines flush against the leading `*`. The Rust
  * precompiles bind this interface with `sol!`, which re-emits this block as a
@@ -86,7 +87,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Emitted when a new Intex series is issued.
     /// @param operator Caller that minted the Issued tokens (`AUCTION_ROLE`).
-    /// @param tokenId Issued token id (= `uint256(seriesId)`).
+    /// @param tokenId Issued token id (= `keccak256(seriesId)`).
     /// @param to Recipient of the minted Issued tokens.
     /// @param units Issued units minted to `to`.
     event IntexIssued(address indexed operator, uint256 indexed tokenId, address indexed to, uint256 units);
@@ -189,7 +190,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return True once `createSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
-    /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
+    /// @notice Issued token id for a series (= `uint256(keccak256(seriesId))`, its `intexId`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
@@ -218,6 +219,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);
+
+    /// @notice Read series data by its token id, `keccak256(seriesId)`, as `readData` does.
+    /// @param tokenId Issued token id.
+    /// @return The full series data for the token id.
+    function readTokenData(uint256 tokenId) external view returns (SeriesData memory);
 
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.

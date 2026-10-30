@@ -49,7 +49,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     uint32 internal constant SERIES_ID_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
-    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     address internal owner = address(0xCAFE);
 
     function setUp() public {

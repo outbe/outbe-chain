@@ -45,9 +45,9 @@ interface IIntexFactory {
     ///        the trailing VWAP snapshot required at this block.
     /// @param snapshotId The snapshot `quoteSettlement` returned. An issuance-currency
     ///        payment naming any other snapshot reverts. Ignored on the reference rail.
-    function settleIntex(bytes14 seriesId, address owner, uint256 units, address asset, uint256 snapshotId) external;
+    function settleIntex(uint256 intexId, address owner, uint256 units, address asset, uint256 snapshotId) external;
 
-    /// @notice What settling `units` of `seriesId` with `asset` costs,
+    /// @notice What settling `units` of `intexId` with `asset` costs,
     ///         and which of the series' two currencies that asset settles on. Priced
     ///         exactly as `settleIntex` charges it. Reverts for an asset the series does
     ///         not accept.
@@ -55,7 +55,7 @@ interface IIntexFactory {
     /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on the
     ///         reference rail. It goes stale at the next update cutoff.
-    function quoteSettlement(bytes14 seriesId, address asset, uint256 units)
+    function quoteSettlement(uint256 intexId, address asset, uint256 units)
         external
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
@@ -68,7 +68,7 @@ interface IIntexFactory {
     ///         op-nonce (fetch it via `outbe_deriveKeys` + `IPromis.opNonceOf`). The
     ///         bound amount is `promis_load_minor * units`. Returns the minted
     ///         Promis.
-    function minePromis(bytes14 seriesId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(uint256 intexId, address owner, uint256 units, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisMinor);
 
@@ -95,8 +95,8 @@ interface IIntexFactory {
         uint32 ownerUnits;
     }
 
-    /// @notice Read `owner`'s units of `seriesId`. Reverts if the series does not exist.
-    function ownerBalances(bytes14 seriesId, address owner) external view returns (OwnerBalances memory);
+    /// @notice Read `owner`'s units of `intexId`. Reverts if the series does not exist.
+    function ownerBalances(uint256 intexId, address owner) external view returns (OwnerBalances memory);
 
     /// @notice A new series was created from a cleared auction.
     event IntexSeriesIssued(

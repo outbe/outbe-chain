@@ -43,7 +43,7 @@ interface INod {
     /// ERC-4906: emitted when a Nod is settled.
     event MetadataUpdate(uint256 _tokenId);
     /// ERC-4906: emitted over the whole id range when a group is called. A group holds
-    /// Nods of several Worldwide Days, so no narrower range covers it.
+    /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
     /// Group force-called by the daily Call scan: the reference price
@@ -58,11 +58,11 @@ interface INod {
     event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
-        // Full Keccak256 of raw owner (20 bytes) || worldwide_day (u32 big-endian).
-        // The day is stored separately.
+        // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
-        uint32 worldwideDay;
+        /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
+        bytes14 seriesId;
         uint16 leagueId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;

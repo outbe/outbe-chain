@@ -23,7 +23,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     uint32 private constant SERIES_ID_DAY = 20260401;
     bytes14 private constant SERIES_ID = "20260401-USD-U";
-    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
+    uint256 private constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
     uint32 private constant ISSUED_UNITS = 10_000;
 
     IntexNFT1155 private tokenA;
@@ -92,7 +92,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // minted on B - the missing amount lives in failedCrosschainMints.
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
-        uint256 parkTokenId = uint256(uint112(parkSeries));
+        uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
         tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
@@ -130,7 +130,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // A series that exists on A but not B: bridging A->B parks on B (crosschainMint reverts).
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
-        uint256 parkTokenId = uint256(uint112(parkSeries));
+        uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
         tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
 
         uint256 minted = 100;
@@ -164,7 +164,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     function test_LateReclaimParksOnTheCalledOriginAndConservesSupply() public {
         uint32 day = 20260602;
         bytes14 series = "20260602-USD-U";
-        uint256 id = uint256(uint112(series));
+        uint256 id = uint256(keccak256(abi.encodePacked(series)));
         tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
@@ -210,7 +210,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     function test_CalledHop_KeepsCalledAtAndDeadlineOnBothChains() public {
         uint32 day = 20260603;
         bytes14 series = "20260603-USD-U";
-        uint256 id = uint256(uint112(series));
+        uint256 id = uint256(keccak256(abi.encodePacked(series)));
         tokenA.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenB.createSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenA.issueIntex(user, 100, series);

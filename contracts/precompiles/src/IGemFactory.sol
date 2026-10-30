@@ -29,14 +29,15 @@ interface IGemFactory {
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
 
-    /// @notice Send the caller's Intex series `sourceIntexId` to the Gem Factory (burning `units`
-    ///         via IntexNFT1155) and issue a GemPosition NFT to the caller.
+    /// @notice Send the caller's Intex units of `sourceIntexId` to the Gem Factory (burning
+    ///         `units` via IntexNFT1155) and issue a GemPosition NFT to the caller.
     ///         Returns the new `positionId`.
-    function issueGemPosition(bytes14 sourceIntexId, uint256 units) external returns (uint256 positionId);
+    function issueGemPosition(uint256 sourceIntexId, uint256 units) external returns (uint256 positionId);
     /// @notice Issue one Merchant gem to `owner` in the currencies the merchant names,
     ///         draining the position's capacity. Only the position's merchant (the caller)
     ///         may call. `issuanceCurrency` is any ISO 4217 code, `referenceCurrency` an
-    ///         oracle reference currency.
+    ///         oracle reference currency. One owner gets one Gem of a series in each block,
+    ///         so a second one in the same currencies and block reverts `AlreadyExists`.
     function issueGem(
         uint256 positionId,
         address owner,
@@ -97,7 +98,9 @@ interface IGemFactory {
     struct PositionData {
         uint256 positionId;
         address merchant;
-        bytes14 sourceIntexId;
+        uint256 sourceIntexId;
+        /// @notice The source Intex series, readable after the series is gone.
+        bytes14 sourceSeriesId;
         /// @notice 0 once the position expired.
         uint256 remainingCapacityMinor;
         /// @notice When the position was issued.
@@ -130,7 +133,7 @@ interface IGemFactory {
     event GemPositionIssued(
         uint256 indexed positionId,
         address indexed merchant,
-        bytes14 sourceIntexId,
+        uint256 sourceIntexId,
         uint256 capacityMinor,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,

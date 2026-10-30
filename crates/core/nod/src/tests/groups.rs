@@ -91,7 +91,7 @@ fn same_day_and_currency_at_two_entries_are_two_groups_with_their_own_terms() {
     let high_entry = U256::from(3_000_000u64);
     let low = item(Address::repeat_byte(0x11), low_entry, USD);
     let high = item(Address::repeat_byte(0x22), high_entry, USD);
-    assert_eq!(low.worldwide_day, high.worldwide_day);
+    assert_eq!(low.series_id, high.series_id);
     assert_ne!(low.group_key, high.group_key);
 
     let mut provider = HashMapStorageProvider::new(1);

@@ -16,6 +16,8 @@ use crate::{
 pub struct LysisRequest {
     pub chain_id: u64,
     pub worldwide_day: WorldwideDay,
+    /// The UTC day whose VWAP prices the Nods; it names their series.
+    pub emission_day: u32,
     pub timestamp: u64,
     pub lysis_limit_minor: U256,
     pub tributes: Vec<EncryptedTributeV2>,
@@ -84,10 +86,16 @@ fn matches_tribute_terms(
     context: &outbe_primitives::tribute_encryption::TributeContextV2,
 ) -> bool {
     let basic_match =
-        terms.chain_id == request.chain_id && terms.worldwide_day == request.worldwide_day;
+        terms.chain_id == request.chain_id && terms.emission_day == request.emission_day;
+    let series_id = outbe_primitives::series_id::SeriesId::for_pair(
+        request.emission_day,
+        context.issuance_currency,
+        context.reference_currency,
+    );
     let identity_match = terms.owner == context.owner
-        && terms.nod_id
-            == outbe_primitives::nod_rules::derive_nod_id(context.owner, context.worldwide_day);
+        && series_id
+            .map(|series_id| outbe_primitives::nod_rules::derive_nod_id(series_id, context.owner))
+            == Ok(terms.nod_id);
     let currency_match = terms.issuance_currency == context.issuance_currency
         && terms.reference_currency == context.reference_currency;
     basic_match && identity_match && currency_match

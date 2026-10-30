@@ -1,5 +1,5 @@
 //! Self-contained encrypted NOD amounts.
-use crate::time::WorldwideDay;
+use crate::series_id::{InvalidSeriesId, SeriesId};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
 pub const NOD_AMOUNT_KEY_INFO: &[u8] = b"outbe/nod/amount-key/v2";
@@ -10,19 +10,28 @@ pub struct NodTermsV1 {
     pub chain_id: u64,
     pub nod_id: U256,
     pub owner: Address,
-    pub worldwide_day: WorldwideDay,
+    /// The UTC day whose VWAP prices the Nod, `YYYYMMDD`. With the currencies it names the series.
+    pub emission_day: u32,
     pub league_id: u16,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
 }
 impl NodTermsV1 {
+    pub fn series_id(&self) -> Result<SeriesId, InvalidSeriesId> {
+        SeriesId::for_pair(
+            self.emission_day,
+            self.issuance_currency,
+            self.reference_currency,
+        )
+    }
+
     pub fn digest(&self) -> B256 {
         let mut bytes = b"outbe/nod/terms/v2".to_vec();
         bytes.extend_from_slice(&self.chain_id.to_be_bytes());
         bytes.extend_from_slice(&self.nod_id.to_be_bytes::<32>());
         bytes.extend_from_slice(self.owner.as_slice());
-        bytes.extend_from_slice(&self.worldwide_day.value().to_be_bytes());
+        bytes.extend_from_slice(&self.emission_day.to_be_bytes());
         bytes.extend_from_slice(&self.league_id.to_be_bytes());
         bytes.extend_from_slice(&self.entry_price_minor.to_be_bytes::<32>());
         bytes.extend_from_slice(&self.issuance_currency.to_be_bytes());
@@ -67,7 +76,7 @@ mod tests {
             chain_id: 1,
             nod_id: U256::ONE,
             owner: Address::repeat_byte(0x42),
-            worldwide_day: WorldwideDay::new(20261029),
+            emission_day: 20261030,
             league_id: 2,
             entry_price_minor: U256::from(3),
             issuance_currency: 840,
@@ -82,7 +91,7 @@ mod tests {
         id[31] = 1;
         expected.extend_from_slice(&id);
         expected.extend_from_slice(&[0x42; 20]);
-        expected.extend_from_slice(&20261029u32.to_be_bytes());
+        expected.extend_from_slice(&20261030u32.to_be_bytes());
         expected.extend_from_slice(&2u16.to_be_bytes());
         let mut entry_price = [0u8; 32];
         entry_price[31] = 3;

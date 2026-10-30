@@ -1,7 +1,7 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_primitives::{error::Result, series_id::SeriesId, storage::StorageHandle};
 
 use crate::schema::{CallTerms, EffectiveState, NodContract, NodGroupState, NodItemState};
 
@@ -66,27 +66,22 @@ pub fn add_nod(
     crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
-/// Inserts a Nod item claimed from a Lysis series, moving `gratis_load_minor` from
-/// `group_unclaimed_tribute_load` to `group_unpaid_load` and decrementing `group_unclaimed_tribute_count`.
+/// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group,
+/// moving `gratis_load_minor` from the group's unclaimed Tribute load to its unpaid load.
 pub fn add_series_nod(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
     call_terms: Option<CallTerms>,
     gratis_load_minor: U256,
-    series_group_key: B256,
+    series_id: SeriesId,
 ) -> Result<()> {
-    crate::state_api::add_series_item(
-        storage,
-        item,
-        call_terms,
-        gratis_load_minor,
-        series_group_key,
-    )
+    crate::state_api::add_series_item(storage, item, call_terms, gratis_load_minor, series_id)
 }
 
-/// Parameters for sealing a Lysis series group `(E, issuance_currency, reference_currency)`.
+/// A Lysis series `(E, issuance_currency, reference_currency)` and the call group it joins.
 #[derive(Debug, Clone, Copy)]
 pub struct LysisSeriesSeal {
+    pub series_id: SeriesId,
     pub group_key: B256,
     pub full_day_after_issue: outbe_primitives::time::WorldwideDay,
     pub reference_currency: u16,
@@ -96,8 +91,7 @@ pub struct LysisSeriesSeal {
     pub unclaimed_tribute_load: U256,
 }
 
-/// Seals a Lysis series group `(E, issuance_currency, reference_currency)` with its
-/// initial `unclaimed_tribute_count` and exact `unclaimed_tribute_load`.
+/// Seals a Lysis series into its call group with its unclaimed Tributes and their exact load.
 pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> Result<()> {
     storage.with_checkpoint(|| NodContract::new(storage.clone()).seal_lysis_series_state(seal))
 }
@@ -109,21 +103,26 @@ pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Resul
         .read(&group_key)
 }
 
-/// Reads the entry price sealed on `group_key` at Lysis, or `U256::ZERO` if none.
-pub fn group_entry_price_minor(storage: &StorageHandle<'_>, group_key: B256) -> Result<U256> {
-    NodContract::new(storage.clone())
-        .group_entry_price_minor
-        .read(&group_key)
+/// The call group Lysis sealed `series_id` into, while the series has unclaimed Tributes.
+pub fn series_group(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Option<B256>> {
+    NodContract::new(storage.clone()).sealed_series_group(series_id)
 }
 
-/// Decrements `group_unclaimed_tribute_count` when a forfeited Tribute is cleaned,
-/// deleting the group if all counters (`group_nod_count`, `settled_nods`, `unclaimed_tribute_count`) reach zero.
+/// The entry price Lysis sealed on `series_id`, or `U256::ZERO` if none.
+pub fn series_entry_price_minor(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U256> {
+    NodContract::new(storage.clone())
+        .series_entry_price_minor
+        .read(&series_id)
+}
+
+/// Takes a cleaned forfeited Tribute off its series and call group, deleting the group
+/// once it holds no Nod and no unclaimed Tribute.
 pub fn record_unclaimed_tribute_cleaned(
     storage: &StorageHandle<'_>,
-    group_key: B256,
+    series_id: SeriesId,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_unclaimed_tribute_cleaned_state(group_key)
+        NodContract::new(storage.clone()).record_unclaimed_tribute_cleaned_state(series_id)
     })
 }
 

@@ -4,7 +4,7 @@ use super::*;
 fn dispatch_rejects_value() {
     with_factory(|s| {
         let data = IIntexFactory::settleIntexCall {
-            seriesId: sid(7).into(),
+            intexId: outbe_intex::intex_id(sid(7)),
             owner: owner(),
             units: U256::from(1),
             asset: Address::ZERO,
@@ -20,7 +20,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
     with_factory(|s| {
         // Missing series -> the runtime error surfaces through dispatch.
         let data = IIntexFactory::minePromisCall {
-            seriesId: sid(7).into(),
+            intexId: outbe_intex::intex_id(sid(7)),
             owner: owner(),
             units: U256::from(1),
             nonce: 0,

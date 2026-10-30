@@ -2,7 +2,7 @@
 Feature: Nod from issuance to Gratis and COEN
   # The Nod half of the shared lifecycle. Five owners each submit one encrypted
   # Tribute. Metadosis Lysis seals the Nods, each owner mints through
-  # ITribute::createNod, and the harness moves the group stamp so the phases every
+  # ITribute::issueNod, and the harness moves the group stamp so the phases every
   # entity shares run on one chain.
   #
   # Every Nod is issued in MYR against a USD reference. Two are paid while issued

@@ -18,7 +18,7 @@ pub(crate) mod state;
 pub use config::IntexParams;
 pub use errors::IntexError;
 pub use schema::{
-    CallStamp, CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesId,
+    intex_id, CallStamp, CreateSeriesParams, IntexCallTrigger, IntexContract, IntexState, SeriesId,
     SeriesRecord, SERIES_ID_LEN,
 };
 pub use state::{CallBins, CleanupQueue, ForfeitQueue};

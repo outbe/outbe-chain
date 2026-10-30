@@ -80,11 +80,17 @@ pub(crate) fn owned(storage: &StorageHandle, owner: Address) -> Vec<U256> {
         .collect()
 }
 
-pub(crate) fn alice_gems(storage: &StorageHandle, loads: &[u64]) -> Vec<U256> {
-    loads
-        .iter()
-        .map(|load| {
-            let mut params = sample_params(ALICE);
+/// A holder of its own per `index`: one block issues one gem per owner and series.
+pub(crate) fn holder(index: u64) -> Address {
+    Address::left_padding_from(&(index + 1).to_be_bytes())
+}
+
+/// One gem per load, each with its own holder.
+pub(crate) fn gems_with_loads(storage: &StorageHandle, loads: &[u64]) -> Vec<U256> {
+    (0u64..)
+        .zip(loads)
+        .map(|(index, load)| {
+            let mut params = sample_params(holder(index));
             params.promis_load_minor = U256::from(*load);
             add(storage, params)
         })
@@ -248,7 +254,7 @@ pub(crate) fn mature_gem(storage: &StorageHandle) -> U256 {
 }
 
 /// A gem of `iso` issued at `issued_at` whose own entry price opens its own group;
-/// `nonce` keeps the ids and the groups apart.
+/// `nonce` keeps the holders and the groups apart.
 pub(crate) fn callable_gem_of(
     storage: &StorageHandle,
     iso: u16,
@@ -256,7 +262,7 @@ pub(crate) fn callable_gem_of(
     issued_at: u64,
     entry_price: U256,
 ) -> U256 {
-    let mut p = sample_params(ALICE);
+    let mut p = sample_params(holder(u64::from(iso) << 32 | nonce));
     p.promis_load_minor = U256::from(1_000_000 + u64::from(iso) * 1_000 + nonce);
     p.reference_currency = iso;
     p.issued_at = issued_at;

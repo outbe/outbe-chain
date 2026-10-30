@@ -156,8 +156,8 @@ fn the_position_uri_quotes_its_source_series() {
             .unwrap();
         let json = String::from_utf8(json).unwrap();
         assert!(json.contains(&format!(
-            "{{\"trait_type\":\"source_intex_id\",\"value\":\"{}\"}}",
-            source_intex_id()
+            "{{\"trait_type\":\"source_series_id\",\"value\":\"{}\"}}",
+            source_series_id()
         )));
     });
 }

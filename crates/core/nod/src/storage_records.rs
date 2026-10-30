@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
+use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
-use outbe_primitives::time::WorldwideDay;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[storage_record(exists_field = owner)]
@@ -13,7 +13,7 @@ pub struct StoredNod {
     #[attribute(order = 1)]
     pub chain_id: u64,
     #[attribute(order = 2)]
-    pub worldwide_day: WorldwideDay,
+    pub series_id: SeriesId,
     #[attribute(order = 3)]
     pub league_id: u16,
     #[attribute(order = 4)]
@@ -40,7 +40,7 @@ impl From<&crate::NodItemState> for StoredNod {
             nod_id: item.nod_id,
             owner: item.owner,
             chain_id: item.encrypted.terms.chain_id,
-            worldwide_day: item.worldwide_day,
+            series_id: item.series_id,
             league_id: item.league_id,
             entry_price_minor: item.encrypted.terms.entry_price_minor,
             issuance_currency: item.issuance_currency,
@@ -59,7 +59,7 @@ impl From<StoredNod> for crate::NodItemState {
         Self {
             nod_id: item.nod_id,
             owner: item.owner,
-            worldwide_day: item.worldwide_day,
+            series_id: item.series_id,
             league_id: item.league_id,
             group_key: item.group_key,
             issuance_currency: item.issuance_currency,
@@ -71,7 +71,7 @@ impl From<StoredNod> for crate::NodItemState {
                     chain_id: item.chain_id,
                     nod_id: item.nod_id,
                     owner: item.owner,
-                    worldwide_day: item.worldwide_day,
+                    emission_day: item.series_id.day(),
                     league_id: item.league_id,
                     entry_price_minor: item.entry_price_minor,
                     issuance_currency: item.issuance_currency,
@@ -141,6 +141,7 @@ impl<'storage> crate::NodContract<'storage> {
 mod tests {
     use super::*;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::time::WorldwideDay;
 
     #[test]
     fn indexed_record_creation_reverts_if_an_index_rejects_it() {
@@ -167,7 +168,7 @@ mod tests {
             let mut record = StoredNod::with_key(id);
             record.owner = Address::repeat_byte(1);
             record.chain_id = 54322345;
-            record.worldwide_day = WorldwideDay::new(20261015);
+            record.series_id = SeriesId::for_pair(20261015, 840, 978).unwrap();
             record.encrypted_gratis_amount = vec![0x5a; 88];
             assert!(contract.records.get(id).unwrap().is_none());
             contract.records.create(&record).unwrap();

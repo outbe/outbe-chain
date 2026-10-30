@@ -46,6 +46,11 @@
           },
           {
             "name": "sourceIntexId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "sourceSeriesId",
             "type": "bytes14",
             "internalType": "bytes14"
           },
@@ -132,8 +137,8 @@
     "inputs": [
       {
         "name": "sourceIntexId",
-        "type": "bytes14",
-        "internalType": "bytes14"
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "units",
@@ -456,9 +461,9 @@
       },
       {
         "name": "sourceIntexId",
-        "type": "bytes14",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes14"
+        "internalType": "uint256"
       },
       {
         "name": "capacityMinor",

@@ -177,7 +177,7 @@ impl TributeContract<'_> {
         )
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn(&mut self, tribute_id: WwdEntityId) -> Result<()> {
         let loaded = self
@@ -191,13 +191,13 @@ impl TributeContract<'_> {
         crate::state_api::load(&self.storage_handle(), tribute_id)
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn_loaded(&mut self, loaded: LoadedTribute) -> Result<()> {
         crate::state_api::burn_loaded(&self.storage_handle(), loaded)
     }
 
-    /// Test helper. Production deletion is only `create_nod` after Nod issuance.
+    /// Test helper. Production deletion is only `issue_nod` after Nod issuance.
     #[cfg(test)]
     pub fn burn_all_by_wwd(&mut self, day: WorldwideDay) -> Result<()> {
         let storage = self.storage_handle();
@@ -219,16 +219,14 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
+    /// Records the Stage 3 Metadosis league fractions for `day`.
     pub fn record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
-        lysis_limit_minor: U256,
         fractions: &std::collections::BTreeMap<u16, u64>,
         completed_at: u64,
     ) -> Result<()> {
         self.storage_handle().require_metadosis_process_ready()?;
-        self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
         for (&league, &fraction) in fractions {
             let key = crate::schema::day_league_key(day, league);
@@ -242,10 +240,6 @@ impl TributeContract<'_> {
         u256_fractions: &std::collections::BTreeMap<u16, U256>,
         lysis_limit_minor: U256,
     ) -> U256 {
-        let nod_max: U256 = lysis_limit_minor >> 10usize;
-        if nod_max.is_zero() {
-            return U256::ZERO;
-        }
         let scale = U256::from(1_000_000u64);
         let mut total_allocated = U256::ZERO;
         for (&league, &(count, nominal_sum)) in fi_groups {
@@ -256,14 +250,13 @@ impl TributeContract<'_> {
             if fraction.is_zero() {
                 continue;
             }
-            let league_cap = nod_max.saturating_mul(U256::from(count));
             let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
                 nominal_sum,
                 fraction,
                 scale,
             )
-            .unwrap_or(league_cap);
-            total_allocated = total_allocated.saturating_add(league_raw.min(league_cap));
+            .unwrap_or(lysis_limit_minor);
+            total_allocated = total_allocated.saturating_add(league_raw);
         }
         total_allocated.min(lysis_limit_minor)
     }
@@ -308,7 +301,7 @@ impl TributeContract<'_> {
             .iter()
             .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
             .collect();
-        self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
+        self.record_metadosis_fractions(day, &fractions, completed_at)?;
         let mut allocated =
             Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
         if !outbe_tee::lysis::is_test_transport_installed() && !lysis_limit_minor.is_zero() {
@@ -327,12 +320,12 @@ impl TributeContract<'_> {
 
     /// Stage 5: Creates a `Nod` for `tribute_id` after Metadosis completion
     /// and deletes that Tribute only when Nod issuance succeeds.
-    pub fn create_nod(
+    pub fn issue_nod(
         &mut self,
         caller: alloy_primitives::Address,
         tribute_id: WwdEntityId,
     ) -> Result<U256> {
-        forfeiture::create_nod_from_tribute(self, caller, tribute_id)
+        forfeiture::issue_nod_from_tribute(self, caller, tribute_id)
     }
 
     /// Permissionless cleanup of a forfeited Tribute (`ITribute.clean(uint256)`).

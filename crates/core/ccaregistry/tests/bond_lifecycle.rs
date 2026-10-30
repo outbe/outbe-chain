@@ -123,7 +123,17 @@ fn claim_reward(
     data: Vec<u8>,
     now: u64,
 ) -> Result<(Bytes, Vec<alloy_primitives::Log>), String> {
-    let mut provider = DirectStorageProvider::new(db, BlockContext::empty_for_tests(1, now, 1));
+    claim_reward_in_block(db, data, now, 1)
+}
+
+/// [`claim_reward`] in block `block`: one owner gets one Gem of a series in each block.
+fn claim_reward_in_block(
+    db: &mut CacheDB<EmptyDB>,
+    data: Vec<u8>,
+    now: u64,
+    block: u64,
+) -> Result<(Bytes, Vec<alloy_primitives::Log>), String> {
+    let mut provider = DirectStorageProvider::new(db, BlockContext::empty_for_tests(block, now, 1));
     let result = StorageHandle::enter(&mut provider, |storage| {
         outbe_agentreward::precompile::dispatch(storage, &data, CCA, U256::ZERO)
             .map_err(|error| error.to_string())
@@ -351,8 +361,9 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             .write(&CCA, reward)
             .unwrap();
     });
-    for (load, requested) in [(100, U256::from(100)), (220, U256::ZERO)] {
-        let (output, logs) = claim_reward(&mut db, claim(requested), claim_time).unwrap();
+    for (block, (load, requested)) in (1..).zip([(100, U256::from(100)), (220, U256::ZERO)]) {
+        let (output, logs) =
+            claim_reward_in_block(&mut db, claim(requested), claim_time, block).unwrap();
         let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
         let claimed = logs
             .iter()
