@@ -12,6 +12,7 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "src/interfaces/IERC7786.
 import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the
 /// recorded metadata.
@@ -42,11 +43,11 @@ contract HyperlaneGatewayAdapterTest is Test {
         mailboxA = new MockHyperlaneMailbox(domainA);
         mailboxB = new MockHyperlaneMailbox(domainB);
 
-        adapterA = new HyperlaneGatewayAdapter(address(mailboxA), owner);
-        adapterB = new HyperlaneGatewayAdapter(address(mailboxB), owner);
+        adapterA = Proxies.hyperlane(address(mailboxA), owner);
+        adapterB = Proxies.hyperlane(address(mailboxB), owner);
 
-        facadeA = new ERC7786Bridge(owner, address(adapterA));
-        facadeB = new ERC7786Bridge(owner, address(adapterB));
+        facadeA = Proxies.bridge(owner, address(adapterA));
+        facadeB = Proxies.bridge(owner, address(adapterB));
 
         recipient = new ERC7786RecipientMock(address(facadeB));
 

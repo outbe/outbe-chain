@@ -2,8 +2,9 @@
 
 pragma solidity ^0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfaces/IERC7786.sol";
 
@@ -14,8 +15,17 @@ import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfa
  * ({ERC7786BridgeUnauthorizedGateway}), and they never execute. To recover, send the message again
  * from the source through the new gateway. This is safe against double-execution because the
  * in-flight message never executes.
+ *
+ * UUPS upgradeable behind an ERC1967 proxy. The owner authorizes upgrades.
  */
-contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote, Ownable, Pausable {
+contract ERC7786Bridge is
+    IERC7786GatewaySource,
+    IERC7786Recipient,
+    IGatewayQuote,
+    OwnableUpgradeable,
+    PausableUpgradeable,
+    UUPSUpgradeable
+{
     using InteroperableAddress for bytes;
 
     event MessageExecuted(bytes32 indexed receiveId, address indexed recipient);
@@ -34,25 +44,42 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
 
     // =================================================== Storage ===================================================
 
-    /// @dev Address of the matching router on a given chain (keyed by ERC-7930 chain type and reference).
-    mapping(bytes2 chainType => mapping(bytes chainReference => bytes addr)) private _remotes;
+    /// @custom:storage-location erc7201:outbe.crosschain.ERC7786Bridge
+    struct ERC7786BridgeStorage {
+        /// @dev Address of the matching router on a given chain (keyed by ERC-7930 chain type and reference).
+        mapping(bytes2 chainType => mapping(bytes chainReference => bytes addr)) remotes;
+        /// @dev Messages already delivered to their recipient, keyed by keccak256(sender, wrapped payload).
+        mapping(bytes32 id => bool executed) executed;
+        /// @dev The default gateway: used for any chain without a per-chain override.
+        address activeGateway;
+        /// @dev Per-chain gateway override, for outbound sends to and inbound trust from that chain.
+        /// Zero means "use the default gateway".
+        mapping(uint256 chainId => address gateway) gateways;
+        /// @dev Nonce for message deduplication (internal)
+        uint256 nonce;
+    }
 
-    /// @dev Messages already delivered to their recipient, keyed by keccak256(sender, wrapped payload).
-    mapping(bytes32 id => bool executed) private _executed;
+    // keccak256(abi.encode(uint256(keccak256("outbe.crosschain.ERC7786Bridge")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x696df609c606d0af2f8da96c1a60528e14b893bf85578d6ced5a6e7962b88b00;
 
-    /// @dev The default gateway: used for any chain without a per-chain override.
-    address private _activeGateway;
+    function _s() private pure returns (ERC7786BridgeStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
 
-    /// @dev Per-chain gateway override, for outbound sends to and inbound trust from that chain.
-    /// Zero means "use the default gateway".
-    mapping(uint256 chainId => address gateway) private _gateways;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
-    /// @dev Nonce for message deduplication (internal)
-    uint256 private _nonce;
-
-    constructor(address owner_, address gateway_) Ownable(owner_) {
+    function initialize(address owner_, address gateway_) external initializer {
+        __Ownable_init(owner_);
+        __Pausable_init();
         if (gateway_ != address(0)) _setGateway(gateway_);
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ============================================ IERC7786GatewaySource ============================================
 
@@ -80,7 +107,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
 
         // wrapping the payload
-        bytes memory wrappedPayload = abi.encode(++_nonce, sender, recipient, payload);
+        bytes memory wrappedPayload = abi.encode(++_s().nonce, sender, recipient, payload);
 
         // Post on the active gateway, forwarding any native fee (fee-bearing transports charge
         // per message).
@@ -102,7 +129,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
         bytes memory bridge = getRemoteBridge(recipient);
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
-        bytes memory wrappedPayload = abi.encode(_nonce + 1, sender, recipient, payload);
+        bytes memory wrappedPayload = abi.encode(_s().nonce + 1, sender, recipient, payload);
         return IGatewayQuote(gateway).quote(bridge, wrappedPayload);
     }
 
@@ -118,7 +145,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         require(gateway != address(0), ERC7786BridgeGatewayNotSet());
         bytes memory bridge = getRemoteBridge(recipient);
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
-        bytes memory wrappedPayload = abi.encode(_nonce + 1, sender, recipient, payload);
+        bytes memory wrappedPayload = abi.encode(_s().nonce + 1, sender, recipient, payload);
         return IGatewayQuote(gateway).quote(bridge, wrappedPayload, attributes);
     }
 
@@ -165,10 +192,10 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
         // Deduplicate. The id binds the source bridge (sender) and the wrapped payload (which
         // carries the nonce).
         bytes32 id = keccak256(abi.encode(sender, payload));
-        require(!_executed[id], ERC7786BridgeAlreadyExecuted());
+        require(!_s().executed[id], ERC7786BridgeAlreadyExecuted());
         // Effects before interaction (CEI). If the recipient reverts, this write rolls back with
         // the tx, and the message stays retryable.
-        _executed[id] = true;
+        _s().executed[id] = true;
 
         (, bytes memory originalSender, bytes memory recipient, bytes memory unwrappedPayload) =
             abi.decode(payload, (uint256, bytes, bytes, bytes));
@@ -186,13 +213,14 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     // =================================================== Getters ===================================================
 
     function getGateway() public view virtual returns (address) {
-        return _activeGateway;
+        return _s().activeGateway;
     }
 
     /// @dev Gateway for `chainId`: the per-chain override when set, the default gateway otherwise.
     function getGateway(uint256 chainId) public view virtual returns (address) {
-        address gateway = _gateways[chainId];
-        return gateway == address(0) ? _activeGateway : gateway;
+        ERC7786BridgeStorage storage $ = _s();
+        address gateway = $.gateways[chainId];
+        return gateway == address(0) ? $.activeGateway : gateway;
     }
 
     function getRemoteBridge(bytes memory chain) public view virtual returns (bytes memory) {
@@ -201,7 +229,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     }
 
     function getRemoteBridge(bytes2 chainType, bytes memory chainReference) public view virtual returns (bytes memory) {
-        bytes memory addr = _remotes[chainType][chainReference];
+        bytes memory addr = _s().remotes[chainType][chainReference];
         require(bytes(addr).length != 0, ERC7786BridgeRemoteNotRegistered(chainType, chainReference));
         return InteroperableAddress.formatV1(chainType, chainReference, addr);
     }
@@ -214,7 +242,7 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
 
     /// @dev Sets the gateway override for `chainId`. The zero address clears it back to the default gateway.
     function setGateway(uint256 chainId, address gateway) public virtual onlyOwner {
-        _gateways[chainId] = gateway;
+        _s().gateways[chainId] = gateway;
         emit ChainGatewayUpdated(chainId, gateway);
     }
 
@@ -233,13 +261,13 @@ contract ERC7786Bridge is IERC7786GatewaySource, IERC7786Recipient, IGatewayQuot
     // ================================================== Internal ===================================================
 
     function _setGateway(address gateway) internal virtual {
-        _activeGateway = gateway;
+        _s().activeGateway = gateway;
         emit GatewayUpdated(gateway);
     }
 
     function _registerRemoteBridge(bytes calldata bridge) internal virtual {
         (bytes2 chainType, bytes calldata chainReference, bytes calldata addr) = bridge.parseV1Calldata();
-        _remotes[chainType][chainReference] = addr;
+        _s().remotes[chainType][chainReference] = addr;
         emit RemoteRegistered(bridge);
     }
 }

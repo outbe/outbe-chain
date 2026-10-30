@@ -5,9 +5,10 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 
-/// @dev Deploys the {ERC7786Bridge} facade via CREATE3, with one adapter as the active gateway.
+/// @dev Deploys the {ERC7786Bridge} facade as a UUPS proxy via CREATE3, with one adapter as the active gateway.
 ///      The script derives the adapter address deterministically (CREATE3), so the bridge does not
 ///      depend on the adapter script's output. The deployer owns the bridge until `4_HandOver` gives
 ///      it to governance.
@@ -38,8 +39,9 @@ contract DeployBridge is Script {
         returns (address)
     {
         bytes32 saltHash = keccak256(abi.encodePacked("ERC7786Bridge", salt));
-        bytes memory code = abi.encodePacked(type(ERC7786Bridge).creationCode, abi.encode(owner, gateway));
-        return Create3Factory(factory).deploy(saltHash, code);
+        address impl = address(new ERC7786Bridge());
+        bytes memory init = abi.encodeCall(ERC7786Bridge.initialize, (owner, gateway));
+        return Create3Proxy.deploy(Create3Factory(factory), saltHash, impl, init);
     }
 
     /// @dev Deterministic CREATE3 address of the adapter selected by `active` ("hyperlane" or "lz").

@@ -12,6 +12,7 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "src/interfaces/IERC7786.
 import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the
 /// recorded options.
@@ -43,11 +44,11 @@ contract LayerZeroGatewayAdapterTest is Test {
         endpointA = new EndpointV2Mock(aEid);
         endpointB = new EndpointV2Mock(bEid);
 
-        adapterA = new LayerZeroGatewayAdapter(address(endpointA), owner);
-        adapterB = new LayerZeroGatewayAdapter(address(endpointB), owner);
+        adapterA = Proxies.layerZero(address(endpointA), owner);
+        adapterB = Proxies.layerZero(address(endpointB), owner);
 
-        facadeA = new ERC7786Bridge(owner, address(adapterA));
-        facadeB = new ERC7786Bridge(owner, address(adapterB));
+        facadeA = Proxies.bridge(owner, address(adapterA));
+        facadeB = Proxies.bridge(owner, address(adapterB));
 
         recipient = new ERC7786RecipientMock(address(facadeB));
 
