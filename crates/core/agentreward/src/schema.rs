@@ -88,6 +88,10 @@ pub struct AgentRewardContract {
     // slot 16: queued day pools per pool, the part not yet credited
     #[attribute(order = 16)]
     pub pending_total_minor: outbe_primitives::storage::dsl::Map<u8, U256>,
+
+    // slot 17: deadline per pool+address, key = keccak(pool byte, address bytes)
+    #[attribute(order = 17)]
+    pub reward_balance_deadlines: outbe_primitives::storage::dsl::Map<B256, u64>,
 }
 
 /// One settled WAA or SRA day pool. Blocks credit its addresses in list order,
@@ -164,6 +168,13 @@ impl<'s> AgentRewardContract<'s> {
 }
 
 impl AgentRewardContract<'_> {
+    pub fn reward_balance_key(pool: RewardPool, address: Address) -> B256 {
+        let mut buf = [0u8; 21];
+        buf[0] = pool as u8;
+        buf[1..].copy_from_slice(address.as_slice());
+        alloy_primitives::keccak256(buf)
+    }
+
     /// Computes the composite key for per-address per-day tribute counts.
     pub fn tribute_count_key(day: WorldwideDay, address: Address) -> B256 {
         use alloy_primitives::keccak256;

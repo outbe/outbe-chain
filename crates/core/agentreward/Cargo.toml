@@ -13,6 +13,7 @@ outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true
 outbe-oracle.workspace = true
+outbe-promislimit.workspace = true
 outbe-rewards.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
