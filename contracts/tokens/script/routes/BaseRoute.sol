@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
@@ -218,9 +219,10 @@ abstract contract BaseRoute is Script {
         }
 
         if (tokenBridge.code.length == 0) {
-            bytes memory args =
-                abi.encode(token, hub, _bridgeMode(spec, canonical), _bridgeOwner(), _bridgePeers(tokenBridge));
-            Create3Factory(factory).deploy(bridgeSalt, abi.encodePacked(type(ERC7786TokenBridge).creationCode, args));
+            address impl = address(new ERC7786TokenBridge(token, hub, _bridgeMode(spec, canonical)));
+            bytes memory init =
+                abi.encodeCall(ERC7786TokenBridge.initialize, (_bridgeOwner(), _bridgePeers(tokenBridge)));
+            Create3Proxy.deploy(Create3Factory(factory), bridgeSalt, impl, init);
         }
     }
 
