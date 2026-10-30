@@ -351,9 +351,10 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
         let owner = Address::repeat_byte(1);
+        assert_eq!(nods[0].series_id.day(), DAY);
         assert_eq!(
             nods[0].nod_id,
-            outbe_primitives::nod_rules::derive_nod_id(owner, WWD)
+            outbe_primitives::nod_rules::derive_nod_id(nods[0].series_id, owner)
         );
         assert_ne!(
             nods[0].nod_id,

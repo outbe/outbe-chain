@@ -42,7 +42,7 @@ pub struct LysisSeriesInput {
 struct IssueNodHints {
     verified_cost: Option<U256>,
     gratis_load_minor: Option<U256>,
-    series_id: Option<SeriesId>,
+    sealed_series: Option<SeriesId>,
 }
 
 pub(crate) fn issue_nod_at(
@@ -87,7 +87,7 @@ pub fn issue_tribute_nod(
         IssueNodHints {
             verified_cost: Some(cost),
             gratis_load_minor: Some(gratis_load_minor),
-            series_id: None,
+            sealed_series: None,
         },
     )
 }
@@ -111,7 +111,7 @@ pub fn issue_tribute_nod_in_series(
         IssueNodHints {
             verified_cost: Some(cost),
             gratis_load_minor: Some(gratis_load_minor),
-            series_id: Some(series_id),
+            sealed_series: Some(series_id),
         },
     )
 }
@@ -165,14 +165,18 @@ fn issue_nod_with_cost(
     let IssueNodHints {
         verified_cost,
         gratis_load_minor,
-        series_id,
+        sealed_series,
     } = hints;
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
-    let nod_id = outbe_nod::identity::generate_nod_id(terms.owner, terms.worldwide_day);
+    let series_id = terms
+        .series_id()
+        .map_err(|_| NodFactoryError::InvalidEncryptedNod)?;
+    let nod_id = outbe_nod::identity::generate_nod_id(series_id, terms.owner);
     if terms.nod_id != nod_id
+        || sealed_series.is_some_and(|sealed| sealed != series_id)
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
     {
@@ -186,7 +190,7 @@ fn issue_nod_with_cost(
     }
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     let mut call_price_minor = call_terms.map_or(U256::ZERO, |t| t.call_price_minor);
-    let group_key = match series_id {
+    let group_key = match sealed_series {
         Some(series_id) => {
             let key = nod_api::series_group(storage, series_id)?
                 .ok_or(NodFactoryError::InvalidEncryptedNod)?;
@@ -209,6 +213,7 @@ fn issue_nod_with_cost(
         owner: terms.owner,
         encrypted: encrypted.clone(),
         worldwide_day: terms.worldwide_day,
+        series_id,
         league_id: terms.league_id,
         group_key,
         issuance_currency: terms.issuance_currency,
@@ -224,7 +229,7 @@ fn issue_nod_with_cost(
         Some(cost) => cost,
         None => nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?,
     };
-    if let Some(series_id) = series_id {
+    if let Some(series_id) = sealed_series {
         nod_api::add_series_nod(storage, &item, call_terms, gratis_load_minor, series_id)?;
     } else {
         nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;

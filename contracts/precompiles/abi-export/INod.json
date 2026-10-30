@@ -100,6 +100,11 @@
             "internalType": "uint32"
           },
           {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
             "name": "leagueId",
             "type": "uint16",
             "internalType": "uint16"

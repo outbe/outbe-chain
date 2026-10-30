@@ -180,7 +180,7 @@ fn contract_originated_policy_call_receives_its_calldata() {
 fn subcall_reaches_nod_in_the_same_evm_state() {
     let owner = Address::repeat_byte(0x11);
     let day = WorldwideDay::new(20_260_715);
-    let nod_id = outbe_nod::identity::generate_nod_id(owner, day);
+    let nod_id = outbe_nod::test_support::nod_id_of(owner, day, 840, 978);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::DEV,
         1_700_000_000,

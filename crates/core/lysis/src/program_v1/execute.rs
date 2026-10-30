@@ -236,14 +236,11 @@ impl ProgramExecutionV1 {
             });
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
-        let nod_id =
-            outbe_primitives::nod_rules::derive_nod_id(tribute.owner, tribute.worldwide_day);
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
         let action = NodActionV1 {
             source_tribute_id: tribute.tribute_id,
-            nod_id,
             owner: tribute.owner,
             worldwide_day: tribute.worldwide_day,
             league_id: second_league,

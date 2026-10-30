@@ -682,6 +682,7 @@ fn encrypted_nod(amount: U256) -> outbe_primitives::nod_encryption::EncryptedNod
             nod_id: U256::from_be_bytes([7; 32]),
             owner: alice(),
             worldwide_day: day,
+            emission_day: day.value(),
             league_id: 0,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,

@@ -300,9 +300,13 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
 
     let terms = NodTermsV1 {
         chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,
-        nod_id: outbe_primitives::nod_rules::derive_nod_id(owner_addr, day),
+        nod_id: outbe_primitives::nod_rules::derive_nod_id(
+            outbe_primitives::series_id::SeriesId::for_pair(day.value(), 840, 978).unwrap(),
+            owner_addr,
+        ),
         owner: owner_addr,
         worldwide_day: day,
+        emission_day: day.value(),
         league_id: 0,
         entry_price_minor: U256::from(700),
         issuance_currency: 840,

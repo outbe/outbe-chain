@@ -114,9 +114,18 @@ pub fn execute(
             tribute,
             NodTermsV1 {
                 chain_id: request.chain_id,
-                nod_id: action.nod_id,
+                nod_id: outbe_primitives::nod_rules::derive_nod_id(
+                    outbe_primitives::series_id::SeriesId::for_pair(
+                        request.emission_day,
+                        action.issuance_currency,
+                        action.reference_currency,
+                    )
+                    .map_err(|_| rejected())?,
+                    action.owner,
+                ),
                 owner: action.owner,
                 worldwide_day: action.worldwide_day,
+                emission_day: request.emission_day,
                 league_id: action.league_id,
                 entry_price_minor: action.entry_price_minor,
                 issuance_currency: action.issuance_currency,
@@ -209,6 +218,7 @@ pub(crate) mod tests {
         LysisRequest {
             chain_id: 1,
             worldwide_day: day,
+            emission_day: day.value(),
             timestamp,
             lysis_limit_minor: U256::from(1_000_000),
             tributes,

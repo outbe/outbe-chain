@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn nod_action_uses_independent_keccak_vector_and_preserves_source_tribute() {
+fn nod_action_preserves_source_tribute() {
     let owner = alloy_primitives::Address::repeat_byte(0x42);
     let day = WorldwideDay::new(0x01020304);
     let source_id = derive_poseidon_entity_id(owner, day);
@@ -17,14 +17,6 @@ fn nod_action_uses_independent_keccak_vector_and_preserves_source_tribute() {
     let mut execution = prepare(day, vec![source], vec![1], SCALE).unwrap();
     let pending = execution.quote_next().unwrap();
     let action = execution.commit_next(pending, SCALE, 1, true).unwrap();
-    assert_eq!(
-        action.nod_id,
-        U256::from_str_radix(
-            "501ba769d4ff8f2faa11545b1608051d3009bb0cdd2518ef005b88ec71b5243b",
-            16,
-        )
-        .unwrap()
-    );
     assert_eq!(action.source_tribute_id, source_id);
     assert_eq!(
         source_id.to_u256(),
@@ -34,7 +26,6 @@ fn nod_action_uses_independent_keccak_vector_and_preserves_source_tribute() {
         )
         .unwrap()
     );
-    assert_ne!(action.nod_id, source_id.to_u256());
 }
 
 #[test]

@@ -19,7 +19,7 @@ fn item(owner: Address) -> NodItemState {
     crate::test_support::item(
         crate::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: crate::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: crate::test_support::nod_id_of(owner, worldwide_day, 840, 978),
             owner,
             gratis_load_minor: U256::from(11),
             worldwide_day,
@@ -181,8 +181,13 @@ fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
                 )
                 .0,
             ),
-            crate::identity::generate_nod_id(Address::repeat_byte(0x43), body.worldwide_day),
-            crate::identity::generate_nod_id(body.owner, WorldwideDay::new(20_260_716)),
+            crate::identity::generate_nod_id(body.series_id, Address::repeat_byte(0x43)),
+            crate::test_support::nod_id_of(
+                body.owner,
+                WorldwideDay::new(20_260_716),
+                body.issuance_currency,
+                body.reference_currency,
+            ),
         ] {
             let mut invalid = body.clone();
             invalid.nod_id = invalid_id;

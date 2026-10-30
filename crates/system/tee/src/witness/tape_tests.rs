@@ -25,6 +25,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             nod_id: U256::ZERO,
             owner: Default::default(),
             worldwide_day: WorldwideDay::new(20261028),
+            emission_day: 20261028,
             league_id: 2,
             entry_price_minor: U256::from(3),
             issuance_currency: 4,

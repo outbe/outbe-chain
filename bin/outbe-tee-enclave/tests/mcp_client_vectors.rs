@@ -202,11 +202,17 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let terms = NodTermsV1 {
         chain_id: v["chainId"].as_str().unwrap().parse().unwrap(),
         nod_id: outbe_primitives::nod_rules::derive_nod_id(
+            outbe_primitives::series_id::SeriesId::for_pair(
+                v["emissionDay"].as_u64().unwrap() as u32,
+                v["issuanceCurrency"].as_u64().unwrap() as u16,
+                v["referenceCurrency"].as_u64().unwrap() as u16,
+            )
+            .unwrap(),
             v["owner"].as_str().unwrap().parse().unwrap(),
-            WorldwideDay::new(v["worldwideDay"].as_u64().unwrap() as u32),
         ),
         owner: v["owner"].as_str().unwrap().parse().unwrap(),
         worldwide_day: WorldwideDay::new(v["worldwideDay"].as_u64().unwrap() as u32),
+        emission_day: v["emissionDay"].as_u64().unwrap() as u32,
         league_id: v["leagueId"].as_u64().unwrap() as u16,
         entry_price_minor: decimal(&v["entryPriceMinor"]),
         issuance_currency: v["issuanceCurrency"].as_u64().unwrap() as u16,

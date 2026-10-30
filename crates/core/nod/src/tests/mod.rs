@@ -34,7 +34,7 @@ fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     crate::test_support::item(
         crate::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: crate::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: crate::test_support::nod_id_of(owner, worldwide_day, 840, reference_currency),
             owner,
             gratis_load_minor: U256::from(11),
             worldwide_day,

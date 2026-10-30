@@ -43,6 +43,9 @@ pub struct NodItemState {
 
     pub worldwide_day: WorldwideDay,
 
+    /// The emission day and currencies of the Tribute the Nod comes from.
+    pub series_id: SeriesId,
+
     pub league_id: u16,
 
     pub group_key: B256,

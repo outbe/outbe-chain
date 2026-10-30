@@ -583,6 +583,7 @@ mod tests {
                     nod_id: U256::MAX,
                     owner,
                     worldwide_day: day,
+                    emission_day: day.value(),
                     league_id: 3,
                     entry_price_minor: U256::from(1_000_000u64),
                     issuance_currency: 840,

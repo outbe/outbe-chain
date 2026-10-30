@@ -11,7 +11,7 @@ pub(crate) fn validate_item(
     call_price_minor: U256,
     expected_group_key: Option<alloy_primitives::B256>,
 ) -> Result<()> {
-    let canonical_id = derive_nod_id(item.owner, item.worldwide_day);
+    let canonical_id = derive_nod_id(item.series_id, item.owner);
     if item.nod_id != canonical_id {
         return Err(NodError::CanonicalIdentityMismatch {
             expected: canonical_id,
@@ -21,6 +21,7 @@ pub(crate) fn validate_item(
     }
     let terms = &item.encrypted.terms;
     if !item.encrypted.has_valid_encoding()
+        || terms.series_id().ok() != Some(item.series_id)
         || (
             terms.nod_id,
             terms.owner,

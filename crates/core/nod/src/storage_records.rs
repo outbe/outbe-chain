@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_macros::storage_record;
+use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 use outbe_primitives::time::WorldwideDay;
 
@@ -32,6 +33,8 @@ pub struct StoredNod {
     pub encryption_binding: B256,
     #[attribute(order = 11)]
     pub encrypted_gratis_amount: Vec<u8>,
+    #[attribute(order = 12)]
+    pub series_id: SeriesId,
 }
 
 impl From<&crate::NodItemState> for StoredNod {
@@ -50,6 +53,7 @@ impl From<&crate::NodItemState> for StoredNod {
             is_settled: item.is_settled,
             encryption_binding: item.encrypted.encryption_binding,
             encrypted_gratis_amount: item.encrypted.encrypted_gratis_amount.clone(),
+            series_id: item.series_id,
         }
     }
 }
@@ -60,6 +64,7 @@ impl From<StoredNod> for crate::NodItemState {
             nod_id: item.nod_id,
             owner: item.owner,
             worldwide_day: item.worldwide_day,
+            series_id: item.series_id,
             league_id: item.league_id,
             group_key: item.group_key,
             issuance_currency: item.issuance_currency,
@@ -72,6 +77,7 @@ impl From<StoredNod> for crate::NodItemState {
                     nod_id: item.nod_id,
                     owner: item.owner,
                     worldwide_day: item.worldwide_day,
+                    emission_day: item.series_id.day(),
                     league_id: item.league_id,
                     entry_price_minor: item.entry_price_minor,
                     issuance_currency: item.issuance_currency,

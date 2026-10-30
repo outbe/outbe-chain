@@ -1,5 +1,6 @@
 //! Fixed external HKDF-SHA256 and ChaCha20-Poly1305 vectors for owner-local views.
-//! Ciphertexts were generated independently with Python cryptography 41.0.7.
+//! Ciphertexts were generated independently with Python cryptography 41.0.7; the Nod ones with
+//! Node.js crypto and `cast keccak`, the wrong nonce domain being the Tribute amount's.
 
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_primitives::{
@@ -17,9 +18,9 @@ use outbe_tee::{
 const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
 const GRATIS_BLOB: &str = "111213141516171847524132515151515151515151515151515151515151515151515151515151515151515146185e002fe9d80f2f80daea54dcfbd2faa5ce7014252c82b2d6dccd3455cc7a79fdb10771779339ce5f26d6aa2f2027";
 const PROMIS_BLOB: &str = "111213141516171850524f325151515151515151515151515151515151515151515151515151515151515151950f76eb13183701977ca3510b80c426f3dacad91248fa9961b5857074a00025091a5da1a6224be9617c475e65c22d71";
-const NOD_CONTEXT_DIGEST: &str = "9f5ed554cb633715b10ef9300eee7572dd8d7bd9b7ee96f47b23f87152ae6720";
-const NOD_AMOUNT_BLOB: &str = "000000000000000137f1780dda06389d4099f641acdc47b29f3834a3915aebccfda1eeb5cb1be0eb266f7e6a40d529099d3ea3df0ee44c17";
-const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001b4cb27b25a97fb3f37dc0a8ee5525ce83bce9c4fdd1efb170fd412e8a76ea5bcd8feaf71b8df565d8b0d2b7d838b26cd";
+const NOD_CONTEXT_DIGEST: &str = "d49e63d5569ccda5a40961608f49e2d4db8a45052854431175fda528bc70512f";
+const NOD_AMOUNT_BLOB: &str = "00000000000000010bfc7476dee3fb106621092e330174f0419c9640d82cdeafb6eb36da35224d785fc3ecdeeb72242fe764e13b99882bff";
+const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "000000000000000157f5e7b4fe805744aec428e5498dcd3dea37d173208294db2ddd597c971a6074689a48d94316cfa97a49d829831edc85";
 const TRIBUTE_CONTEXT_DIGEST: &str =
     "79d19e3d69598d12698496e748a6ddef52b72392b6722778db2de3c2ef493d8a";
 const TRIBUTE_AMOUNT_BLOB: &str = "000000000000000179a55ad0e1010fe5e34697e51f7cd2437e3825a0b0fd20c9095ca5186559021c48a5068d2190e57034954031961c1261d83647abd7ca0081e6c6d3f80aa4dcde6ef60e38fb95d1696d93c830a06309f3";
@@ -38,6 +39,7 @@ fn fixed_nod() -> EncryptedNodV1 {
             .unwrap(),
             owner: Address::repeat_byte(0x42),
             worldwide_day: day,
+            emission_day: day.value(),
             league_id: 7,
             entry_price_minor: U256::from(123_456u64),
             issuance_currency: 840,

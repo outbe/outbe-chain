@@ -327,6 +327,7 @@ mod tests {
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
+            series_id: SeriesId::for_pair(20261016, 840, 978).unwrap(),
         };
         let item = NodItemState::from(stored.clone());
         assert_eq!(StoredNod::from(&item), stored);
@@ -407,6 +408,11 @@ mod tests {
                 nod_id: encrypted.terms.nod_id,
                 owner: params.owner,
                 worldwide_day: params.worldwide_day,
+                series_id: test_support::series_of(
+                    params.worldwide_day,
+                    params.issuance_currency,
+                    params.reference_currency,
+                ),
                 league_id: params.league_id,
                 group_key: crate::identity::group_key(
                     date_key_to_utc_timestamp(20_200_101),

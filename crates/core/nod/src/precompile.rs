@@ -134,6 +134,7 @@ fn to_abi_data(
         nodId: item.nod_id,
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
+        seriesId: item.series_id.into(),
         leagueId: item.league_id,
         encryptedGratisAmount: item.encrypted.encrypted_gratis_amount.clone().into(),
         encryptionBinding: item.encrypted.encryption_binding,

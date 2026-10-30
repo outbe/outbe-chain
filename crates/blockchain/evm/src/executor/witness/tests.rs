@@ -567,7 +567,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         entry_price_minor,
         840,
     );
-    let nod_id = outbe_nod::identity::generate_nod_id(proposer, worldwide_day);
+    let nod_id = outbe_nod::test_support::nod_id_of(proposer, worldwide_day, 840, 840);
     let nod_item = {
         let _enclave = outbe_nod::test_support::scope();
         outbe_nod::test_support::item(

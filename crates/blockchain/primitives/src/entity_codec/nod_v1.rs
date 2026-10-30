@@ -30,6 +30,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_optional_varint_field(12, body.issued_at, &mut out);
     encode_optional_varint_field(13, u64::from(body.is_settled), &mut out);
     encode_bytes_field(14, body.encrypted.encryption_binding.as_slice(), &mut out);
+    encode_optional_varint_field(15, u64::from(t.emission_day), &mut out);
     Ok(out)
 }
 pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
@@ -47,6 +48,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let issued_at = optional_varint(&mut f, 12)?;
     let is_settled = optional_bool(&mut f, 13)?;
     let encryption_binding = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 14)?, 14)?);
+    let emission_day = optional_u32(&mut f, 15)?;
     f.finish()?;
     let body = NodItemBodyV1 {
         encrypted: EncryptedNodV1 {
@@ -55,6 +57,7 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
                 nod_id,
                 owner,
                 worldwide_day,
+                emission_day,
                 league_id,
                 entry_price_minor,
                 issuance_currency,

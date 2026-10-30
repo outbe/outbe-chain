@@ -58,11 +58,12 @@ interface INod {
     event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
 
     struct NodData {
-        // Full Keccak256 of raw owner (20 bytes) || worldwide_day (u32 big-endian).
-        // The day is stored separately.
+        // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
         uint32 worldwideDay;
+        /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
+        bytes14 seriesId;
         uint16 leagueId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;

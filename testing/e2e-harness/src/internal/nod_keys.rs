@@ -14,6 +14,7 @@ pub(crate) fn encrypted(data: &eth::INod::NodData) -> EncryptedNodV1 {
             nod_id: data.nodId,
             owner: data.owner,
             worldwide_day: WorldwideDay::new(data.worldwideDay),
+            emission_day: outbe_primitives::series_id::SeriesId::from(data.seriesId).day(),
             league_id: data.leagueId,
             entry_price_minor: data.entryPriceMinor,
             issuance_currency: data.issuanceCurrency,

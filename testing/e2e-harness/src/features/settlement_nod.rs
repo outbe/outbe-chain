@@ -790,6 +790,7 @@ mod tests {
                     nod_id: U256::from_be_bytes([1; 32]),
                     owner: Address::repeat_byte(3),
                     worldwide_day: day,
+                    emission_day: day.value(),
                     league_id: 0,
                     entry_price_minor: U256::from(9),
                     issuance_currency: 840,
