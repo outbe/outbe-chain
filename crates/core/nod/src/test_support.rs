@@ -8,9 +8,10 @@ use outbe_primitives::{
     time::WorldwideDay,
 };
 
-/// The series fixtures put a Nod of `day` in: the day stands in for its emission day.
+/// The series fixtures put a Nod of `day` in: the day stands in for its emission day. Currencies
+/// that spell no series give the default one, which issuance rejects.
 pub fn series_of(day: WorldwideDay, issuance_currency: u16, reference_currency: u16) -> SeriesId {
-    SeriesId::for_pair(day.value(), issuance_currency, reference_currency).unwrap()
+    SeriesId::for_pair(day.value(), issuance_currency, reference_currency).unwrap_or_default()
 }
 
 /// The id of the owner's Nod of `day` in the fixture series.

@@ -11,6 +11,13 @@ pub(crate) fn validate_item(
     call_price_minor: U256,
     expected_group_key: Option<alloy_primitives::B256>,
 ) -> Result<()> {
+    // ISO 0 is not a currency, and its bin namespace aliases the
+    // un-namespaced key while never appearing in the oracle's
+    // reference-currency registry — a group parked there would be
+    // invisible to the call scan forever.
+    if item.reference_currency == 0 {
+        return Err(NodError::ZeroReferenceCurrency.into());
+    }
     let canonical_id = derive_nod_id(item.series_id, item.owner);
     if item.nod_id != canonical_id {
         return Err(NodError::CanonicalIdentityMismatch {
@@ -42,13 +49,6 @@ pub(crate) fn validate_item(
     }
     if item.is_settled {
         return Err(NodError::CannotIssueSettledNod.into());
-    }
-    // ISO 0 is not a currency, and its bin namespace aliases the
-    // un-namespaced key while never appearing in the oracle's
-    // reference-currency registry — a group parked there would be
-    // invisible to the call scan forever.
-    if item.reference_currency == 0 {
-        return Err(NodError::ZeroReferenceCurrency.into());
     }
 
     let canonical_group_key = match expected_group_key {

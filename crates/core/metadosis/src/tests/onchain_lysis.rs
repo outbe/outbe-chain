@@ -410,6 +410,10 @@ fn existing_full_digest_target_rejects_lysis_before_mutation() {
     let mut provider = fixture();
     StorageHandle::enter(&mut provider, |storage| {
         let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), WWD);
+        item.reference_currency = 840;
+        item.series_id = outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap();
+        item.nod_id = outbe_primitives::nod_rules::derive_nod_id(item.series_id, item.owner);
+        outbe_nod::test_support::set_terms(&mut item);
         let terms =
             outbe_nod::test_support::sealed_terms(&storage, &item, item.entry_price_minor())
                 .unwrap();
