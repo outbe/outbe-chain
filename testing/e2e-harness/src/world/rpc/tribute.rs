@@ -108,14 +108,37 @@ impl Rpc {
         Some(public.to_be_bytes())
     }
 
-    /// Tribute total supply on the node at `port` (decimal, for parity checks).
-    pub fn supply(&self, port: u16) -> Option<String> {
+    /// Live Tributes of `wwd` on the node at `port` (decimal, for parity checks).
+    pub fn day_tributes(&self, port: u16, wwd: &str) -> Option<String> {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
-            &ITribute::totalSupplyCall {},
+            &ITribute::getDayTotalsCall {
+                worldwideDay: wwd.parse().ok()?,
+            },
         )
-        .map(|v| v.to_string())
+        .map(|totals| totals.tributeCount.to_string())
+    }
+
+    /// Live Tributes of `wwd` on the node at `port`, at `height`.
+    pub fn day_tributes_at(
+        &self,
+        port: u16,
+        wwd: &str,
+        height: u64,
+    ) -> std::result::Result<U256, String> {
+        let worldwide_day = wwd
+            .parse()
+            .map_err(|_| format!("invalid worldwide day {wwd}"))?;
+        eth::read_call_at_result(
+            &self.url(port),
+            addresses::TRIBUTE_ADDR,
+            &ITribute::getDayTotalsCall {
+                worldwideDay: worldwide_day,
+            },
+            height,
+        )
+        .map(|totals| U256::from(totals.tributeCount))
     }
 
     /// Canonical Tribute identities indexed by one owner.
@@ -508,9 +531,8 @@ impl Rpc {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("unknown");
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} tx={tx_hash} receipt_block={receipt_block} supply={:?} head={:?} finalized={:?}",
+            "E2E_TRIBUTE_TIMELINE stage={stage} wall_ms={} tx={tx_hash} receipt_block={receipt_block} head={:?} finalized={:?}",
             unix_time_millis(),
-            self.supply(port),
             self.head(port),
             self.finalized(port),
         );
@@ -629,7 +651,7 @@ impl Rpc {
         parse::extract_tx_hash(&out)
     }
 
-    /// Retry a tribute offer until `supply(primary)` reaches `want` (6s polls).
+    /// Retry a tribute offer until `day_tributes(primary, wwd)` reaches `want` (6s polls).
     pub fn offer_until_supply(
         &self,
         key: &str,
@@ -642,7 +664,7 @@ impl Rpc {
             .is_some()
     }
 
-    /// Retry one Tribute offer until `supply(primary)` reaches `want`, returning
+    /// Retry one Tribute offer until `day_tributes(primary, wwd)` reaches `want`, returning
     /// the included transaction hash for projection/index verification.
     pub fn offer_until_supply_hash(
         &self,
@@ -658,7 +680,7 @@ impl Rpc {
                 pending_tx = self.tribute_offer(key, wwd);
             }
             sleep(Duration::from_secs(6));
-            if self.supply(primary).as_deref() == Some(want) {
+            if self.day_tributes(primary, wwd).as_deref() == Some(want) {
                 if let Some(tx_hash) = pending_tx.as_deref() {
                     self.trace_tribute_state(tx_hash, "state-visible", primary);
                 }
@@ -679,7 +701,7 @@ impl Rpc {
                 pending_tx = None;
             }
         }
-        (self.supply(primary).as_deref() == Some(want))
+        (self.day_tributes(primary, wwd).as_deref() == Some(want))
             .then_some(pending_tx)
             .flatten()
     }

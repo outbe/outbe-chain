@@ -165,12 +165,6 @@ fn precompile_balance_and_owner_views() {
             )
             .to_string()
         );
-
-        let out = call(storage, IGem::totalSupplyCall {}.abi_encode()).unwrap();
-        assert_eq!(
-            IGem::totalSupplyCall::abi_decode_returns(&out).unwrap(),
-            U256::from(1u64)
-        );
     });
 }
 

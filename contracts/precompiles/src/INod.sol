@@ -17,10 +17,8 @@ interface INod {
     error GroupIdentityMismatch(bytes32 expected, bytes32 found);
     error NodAlreadyExists();
     error GroupExistenceDisagreesWithMemberCount(uint256 groupId, uint32 memberCount);
-    error TotalSupplyOverflowDuringIssuance();
     error GroupUnpaidLoadOverflow(bytes32 groupKey);
     error GroupUnpaidLoadUnderflow(bytes32 groupKey);
-    error TotalSupplyUnderflowDuringRemoval();
     error GroupSettledCountUnderflow(uint256 groupId);
     error AlreadySettled();
     error SettledCountOverflow();
@@ -118,8 +116,6 @@ interface INod {
     function tokenURI(uint256 nodId) external view returns (string memory);
 
     // Enumeration reads
-    function totalSupply() external view returns (uint256);
-    function tokenByIndex(uint256 index) external view returns (uint256);
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific

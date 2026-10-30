@@ -93,10 +93,14 @@ fn native_lysis_completes(world: &mut World) {
     let ports = world.validators.committee_ports();
     let height = wait_for_native_lysis(world);
     let (nod_height, nod_blocks) = create_nods_for_completed_day(world, day, &ports, height);
-    let supply = world.rpc.nod_supply(ports[0]).expect("native Nod supply");
+    let owners: Vec<_> = tribute_owner_keys(world).into_keys().collect();
+    let supply = world
+        .rpc
+        .nods_of(ports[0], &owners)
+        .expect("native Nod supply");
     assert!(supply > 0);
     for port in ports {
-        assert_eq!(world.rpc.nod_supply(port), Some(supply));
+        assert_eq!(world.rpc.nods_of(port, &owners), Some(supply));
     }
     world.state.lysis_completion_height = Some(height);
     world.state.nod_creation_height = Some(nod_height);

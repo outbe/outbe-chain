@@ -334,13 +334,11 @@ fn committee_supply_at(
             .expect("supply checkpoint"),
         checkpoint
     );
-    let supply = crate::internal::eth::read_call_at_result(
-        &world.rpc.url(port),
-        crate::internal::addresses::TRIBUTE_ADDR,
-        &crate::internal::eth::ITribute::totalSupplyCall {},
-        checkpoint.height,
-    )
-    .expect("read Tribute supply at exact finalized checkpoint");
+    let wwd = world.state.wwd.as_deref().expect("wwd");
+    let supply = world
+        .rpc
+        .day_tributes_at(port, wwd, checkpoint.height)
+        .expect("read Tribute supply at exact finalized checkpoint");
     assert_eq!(
         world
             .rpc

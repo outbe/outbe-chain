@@ -94,11 +94,11 @@ impl<'storage> CredisContract<'storage> {
         take_from(&self.owner_outstanding_minor, owner, repaid)
     }
 
-    fn record_indexes(&self, owner: Address) -> [IndexedList<'storage, U256>; 2] {
-        [
-            IndexedList::new(self.owner_ids.list(&owner), self.owner_id_position.clone()),
-            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
-        ]
+    fn record_indexes(&self, owner: Address) -> [IndexedList<'storage, U256>; 1] {
+        [IndexedList::new(
+            self.owner_ids.list(&owner),
+            self.owner_id_position.clone(),
+        )]
     }
 
     /// Widens the currency's scan terms to cover a newly opened Credis.
@@ -129,16 +129,6 @@ impl<'storage> CredisContract<'storage> {
 
     pub fn owner_credis_ids(&self, account: Address) -> Result<Vec<U256>> {
         self.owner_ids.list(&account).read_all()
-    }
-
-    pub fn live_credis_count(&self) -> Result<u32> {
-        self.all_ids.len()
-    }
-
-    pub fn live_credis_id(&self, index: u32) -> Result<U256> {
-        self.all_ids
-            .get(index)?
-            .ok_or_else(|| CredisError::IndexOutOfBounds.into())
     }
 
     // ---------------------------------------------------------------------

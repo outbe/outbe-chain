@@ -132,10 +132,6 @@ pub struct NodGroupState {
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
-    // slot 0: total nod items
-    #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
-
     // --- Group member index: lets the cleanup enumerate a group's unpaid Nods.
     // U256 occupies one storage word; IDs require no reconstruction.
     /// Authoritative unpaid member count, stored outside the shared group body.
@@ -259,13 +255,9 @@ pub struct NodContract {
     pub records: outbe_primitives::storage::dsl::Map<U256, crate::storage_records::StoredNod>,
     #[attribute(order = 84)]
     pub groups: outbe_primitives::storage::dsl::Map<B256, NodGroupState>,
-    #[attribute(order = 85)]
-    pub all_ids: outbe_primitives::storage::dsl::List<U256>,
     #[attribute(order = 86)]
     pub owner_ids:
         outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
-    #[attribute(order = 87)]
-    pub global_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 

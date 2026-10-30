@@ -56,8 +56,6 @@ pub enum TributeCmd {
         /// Owner address
         owner: Address,
     },
-    /// Show total Tribute supply
-    Supply,
     /// Show current owner for a Tribute token ID
     Owner {
         /// Tribute token ID (`0x`-hex)
@@ -126,18 +124,10 @@ impl TributeCmd {
             Self::Show { token_id } => show(client, token_id).await,
             Self::DayTotals { worldwide_day } => day_totals(client, worldwide_day).await,
             Self::ByOwner { owner } => by_owner(client, owner).await,
-            Self::Supply => supply(client).await,
             Self::Owner { token_id } => owner(client, token_id).await,
             Self::Offer(args) => offer(client, private_key, *args).await,
         }
     }
-}
-
-async fn fetch_total_supply(client: &(impl Rpc + Sync)) -> Result<U256> {
-    let result = client
-        .eth_call(TRIBUTE_ADDR, &ITribute::totalSupplyCall {}.abi_encode())
-        .await?;
-    Ok(ITribute::totalSupplyCall::abi_decode_returns(&result)?)
 }
 
 async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: U256) -> Result<Address> {
@@ -212,12 +202,6 @@ async fn by_owner(client: &(impl Rpc + Sync), owner: Address) -> Result<()> {
     for token_id in token_ids {
         println!("- {token_id:?}");
     }
-    Ok(())
-}
-
-async fn supply(client: &(impl Rpc + Sync)) -> Result<()> {
-    let total_supply = fetch_total_supply(client).await?;
-    println!("Tribute total supply: {total_supply}");
     Ok(())
 }
 
@@ -457,10 +441,6 @@ mod tests {
 
         let mut map = HashMap::new();
         map.insert(
-            (TRIBUTE_ADDR, ITribute::totalSupplyCall::SELECTOR),
-            ITribute::totalSupplyCall::abi_encode_returns(&U256::from(3u64)),
-        );
-        map.insert(
             (TRIBUTE_ADDR, ITribute::ownerOfCall::SELECTOR),
             ITribute::ownerOfCall::abi_encode_returns(&owner),
         );
@@ -516,12 +496,6 @@ mod tests {
         let mock = tribute_mock();
 
         show(&mock, sample_token_id()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_supply_returns_without_error() {
-        let mock = tribute_mock();
-        supply(&mock).await.unwrap();
     }
 
     #[test]

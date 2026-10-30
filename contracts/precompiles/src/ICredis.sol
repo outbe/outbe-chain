@@ -125,7 +125,6 @@ interface ICredis {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 credisId) external view returns (string memory);
 
-    function totalSupply() external view returns (uint256);
     function getCredis(uint256 credisId) external view returns (Credis memory);
     function ownerOf(uint256 credisId) external view returns (address);
 
@@ -142,9 +141,7 @@ interface ICredis {
 
     function credisExists(uint256 credisId) external view returns (bool);
 
-    // ERC-721 Enumerable over the live Credis, globally and per owner. Deleting one moves
-    // the last into its place.
-    function tokenByIndex(uint256 index) external view returns (uint256);
+    // Each owner's live Credis. Deleting one moves the last into its place.
     function balanceOf(address owner) external view returns (uint256 balance);
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 

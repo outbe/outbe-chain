@@ -239,7 +239,6 @@ fn assert_paid_transition(
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NodIndexSnapshot {
     owner_ids: Vec<U256>,
-    total_supply: U256,
 }
 
 struct NodSnapshot {
@@ -509,8 +508,6 @@ fn nod_snapshot(world: &World, owner: Address, id: U256, minimum: u64) -> NodSna
                 count,
                 "duplicate Nod owner index"
             );
-            let total_supply =
-                eth::read_call_result(&url, addresses::NOD_ADDR, &eth::INod::totalSupplyCall {})?;
             let body = if owner_ids.contains(&id) {
                 let body = eth::read_call_result(
                     &url,
@@ -524,10 +521,7 @@ fn nod_snapshot(world: &World, owner: Address, id: U256, minimum: u64) -> NodSna
                 None
             };
             Ok(NodSnapshot {
-                index: NodIndexSnapshot {
-                    owner_ids,
-                    total_supply,
-                },
+                index: NodIndexSnapshot { owner_ids },
                 body,
             })
         });
@@ -543,7 +537,7 @@ fn nod_snapshot(world: &World, owner: Address, id: U256, minimum: u64) -> NodSna
 fn assert_same_snapshot(before: &NodSnapshot, after: &NodSnapshot) {
     assert_eq!(
         before.index, after.index,
-        "live Nod inventory/supply parity or rollback"
+        "live Nod inventory parity or rollback"
     );
     assert_eq!(
         before.body.as_ref().map(|body| body.abi_encode()),
@@ -588,18 +582,8 @@ fn assert_index_transition(
             "mining must remove only the target Nod"
         );
         assert_eq!(after.owner_ids.len() + 1, before.owner_ids.len());
-        assert_eq!(
-            after
-                .total_supply
-                .checked_add(U256::ONE)
-                .expect("Nod supply increment"),
-            before.total_supply
-        );
     } else {
-        assert_eq!(
-            after, before,
-            "settlement must preserve the owner index and supply"
-        );
+        assert_eq!(after, before, "settlement must preserve the owner index");
     }
 }
 
@@ -735,35 +719,26 @@ mod tests {
     }
 
     #[test]
-    fn nod_index_oracle_rejects_duplicate_substitution_and_wrong_supply() {
+    fn nod_index_oracle_rejects_duplicate_and_substitution() {
         let id = U256::from(2);
         let before = NodIndexSnapshot {
             owner_ids: vec![U256::ONE, id, U256::from(3)],
-            total_supply: U256::from(8),
         };
         // Swap-removal may reorder surviving IDs without changing ownership.
         let after = NodIndexSnapshot {
             owner_ids: vec![U256::from(3), U256::ONE],
-            total_supply: U256::from(7),
         };
         assert_index_transition(&before, &before, id, false);
         assert_index_transition(&before, &after, id, true);
         for bad in [
             NodIndexSnapshot {
                 owner_ids: vec![U256::ONE, U256::ONE],
-                ..after.clone()
             },
             NodIndexSnapshot {
                 owner_ids: vec![U256::ONE, U256::from(4)],
-                ..after.clone()
             },
             NodIndexSnapshot {
                 owner_ids: vec![U256::ONE, id],
-                ..after.clone()
-            },
-            NodIndexSnapshot {
-                total_supply: before.total_supply,
-                ..after.clone()
             },
         ] {
             assert!(
@@ -772,7 +747,7 @@ mod tests {
             );
         }
         let mut changed = before.clone();
-        changed.total_supply -= U256::ONE;
+        changed.owner_ids.pop();
         assert!(
             std::panic::catch_unwind(|| assert_index_transition(&before, &changed, id, false))
                 .is_err()

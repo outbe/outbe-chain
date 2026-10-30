@@ -1274,7 +1274,6 @@ fn the_owner_forfeits_an_issued_credis_out_of_the_call_index() {
         assert_eq!(forfeit.principal_written_off, U256::from(PRINCIPAL));
         assert!(!credis.credis_exists(id).unwrap());
         assert!(bin_groups(&credis, &record).is_empty());
-        assert_eq!(credis.total_credis().unwrap(), 0);
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
         assert_eq!(
             outbe_ccaregistry::api::reward_weight(&storage, cca(), day).unwrap(),
@@ -1304,7 +1303,7 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
         provider.set_timestamp(U256::from(deadline + u64::from(past_deadline)));
         StorageHandle::enter(&mut provider, |storage| {
             let mut credis = CredisContract::new(storage);
-            let id = credis.token_by_index(0).unwrap();
+            let id = credis.token_of_owner_by_index(alice(), 0).unwrap();
             let group = credis
                 .get_credis(id)
                 .unwrap()
@@ -1479,10 +1478,7 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
 
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 2);
         assert_eq!(credis.credis_count_of(bob()).unwrap(), 1);
-        assert_eq!(credis.total_credis().unwrap(), 3);
 
-        // Both enumerations address the same Credis, from either end.
-        assert_eq!(credis.token_by_index(0).unwrap(), first);
         assert_eq!(credis.token_of_owner_by_index(alice(), 0).unwrap(), first);
         let bobs = credis.token_of_owner_by_index(bob(), 0).unwrap();
         assert_eq!(credis.get_credis(bobs).unwrap().owner, bob());
@@ -1495,13 +1491,8 @@ fn enumeration_rejects_an_out_of_range_index() {
         let mut credis = CredisContract::new(storage);
         rules::issue(&mut credis, params(alice())).unwrap();
 
-        // One Credis exists, so index 1 is past the end of both indexes. An
+        // One Credis exists, so index 1 is past the end of the owner index. An
         // out-of-range read must fail rather than report a zeroed Credis.
-        assert_eq!(
-            credis.token_by_index(1).unwrap_err().to_string(),
-            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
-                .to_string()
-        );
         assert_eq!(
             credis
                 .token_of_owner_by_index(alice(), 1)
@@ -1607,7 +1598,7 @@ fn precompile_get_credis_returns_the_full_record() {
 }
 
 #[test]
-fn precompile_enumerates_credis_globally_and_per_owner() {
+fn precompile_enumerates_credis_per_owner() {
     with_credis(|storage| {
         let (first, second) = {
             let mut credis = CredisContract::new(storage.clone());
@@ -1618,28 +1609,10 @@ fn precompile_enumerates_credis_globally_and_per_owner() {
 
         let call = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
 
-        let out = call(ICredis::totalSupplyCall {}.abi_encode());
-        assert_eq!(
-            ICredis::totalSupplyCall::abi_decode_returns(&out).unwrap(),
-            U256::from(2u64)
-        );
-
         let out = call(ICredis::balanceOfCall { owner: alice() }.abi_encode());
         assert_eq!(
             ICredis::balanceOfCall::abi_decode_returns(&out).unwrap(),
             U256::from(1u64)
-        );
-
-        // The global index is creation-ordered across owners.
-        let out = call(
-            ICredis::tokenByIndexCall {
-                index: U256::from(1u64),
-            }
-            .abi_encode(),
-        );
-        assert_eq!(
-            ICredis::tokenByIndexCall::abi_decode_returns(&out).unwrap(),
-            second
         );
 
         // The per-owner index addresses only that owner's Credis.
@@ -1820,7 +1793,7 @@ fn precompile_interest_views_use_the_storage_timestamp() {
 #[test]
 fn precompile_rejects_msg_value() {
     with_credis(|storage| {
-        let data = ICredis::totalSupplyCall {}.abi_encode();
+        let data = ICredis::nameCall {}.abi_encode();
         let err = dispatch(storage, &data, alice(), U256::from(1u64)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("value"));
     });
@@ -2171,29 +2144,9 @@ fn supported_interfaces_match_the_implemented_selectors() {
             ICredis::BatchMetadataUpdate::SIGNATURE,
             "BatchMetadataUpdate(uint256,uint256)"
         );
-        assert!(supports(ERC721_ENUMERABLE_INTERFACE_ID));
+        assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
     });
-}
-
-#[test]
-fn the_enumerable_interface_id_is_the_xor_of_its_selectors() {
-    use alloy_sol_types::SolCall;
-    let xor = [
-        ICredis::totalSupplyCall::SELECTOR,
-        ICredis::tokenByIndexCall::SELECTOR,
-        ICredis::tokenOfOwnerByIndexCall::SELECTOR,
-    ]
-    .into_iter()
-    .fold([0u8; 4], |acc, sel| {
-        [
-            acc[0] ^ sel[0],
-            acc[1] ^ sel[1],
-            acc[2] ^ sel[2],
-            acc[3] ^ sel[3],
-        ]
-    });
-    assert_eq!(xor, outbe_primitives::erc::ERC721_ENUMERABLE_INTERFACE_ID);
 }
 
 fn token_uri_parts(storage: &StorageHandle, credis_id: U256) -> (serde_json::Value, String) {

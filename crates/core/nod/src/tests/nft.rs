@@ -142,15 +142,6 @@ fn supported_interfaces_match_the_implemented_selectors() {
         ]),
         ERC721_METADATA_INTERFACE_ID
     );
-    assert_eq!(
-        interface_id(&[
-            INod::totalSupplyCall::SELECTOR,
-            INod::tokenByIndexCall::SELECTOR,
-            INod::tokenOfOwnerByIndexCall::SELECTOR,
-        ]),
-        ERC721_ENUMERABLE_INTERFACE_ID
-    );
-
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let supports = |id: [u8; 4]| {
@@ -165,11 +156,11 @@ fn supported_interfaces_match_the_implemented_selectors() {
             ERC165_INTERFACE_ID,
             ERC721_INTERFACE_ID,
             ERC721_METADATA_INTERFACE_ID,
-            ERC721_ENUMERABLE_INTERFACE_ID,
             ERC4906_INTERFACE_ID,
         ] {
             assert!(supports(id), "{id:02x?}");
         }
+        assert!(!supports(ERC721_ENUMERABLE_INTERFACE_ID));
         assert!(!supports(ERC20_INTERFACE_ID));
         assert!(!supports([0xff; 4]));
     });

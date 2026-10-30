@@ -85,14 +85,8 @@ impl From<StoredNod> for crate::NodItemState {
 }
 
 impl<'storage> crate::NodContract<'storage> {
-    pub fn state_records(
-        &self,
-        owner: Option<Address>,
-    ) -> outbe_primitives::error::Result<Vec<StoredNod>> {
-        let mut ids = match owner {
-            Some(owner) => self.owner_ids.list(&owner).read_all()?,
-            None => self.all_ids.read_all()?,
-        };
+    pub fn state_records(&self, owner: Address) -> outbe_primitives::error::Result<Vec<StoredNod>> {
+        let mut ids = self.owner_ids.list(&owner).read_all()?;
         ids.sort_unstable();
         if ids.windows(2).any(|ids| ids[0] == ids[1]) {
             return Err(outbe_primitives::error::PrecompileError::fatal(
@@ -108,7 +102,7 @@ impl<'storage> crate::NodContract<'storage> {
                         )
                     })?;
                 let record = StoredNod::from(loaded.body());
-                if owner.is_some_and(|owner| record.owner != owner) {
+                if record.owner != owner {
                     return Err(outbe_primitives::error::PrecompileError::fatal(
                         "nod owner index does not match its record",
                     ));
@@ -118,14 +112,11 @@ impl<'storage> crate::NodContract<'storage> {
             .collect()
     }
 
-    fn record_indexes(&self, record: &StoredNod) -> [IndexedList<'storage, U256>; 2] {
-        [
-            IndexedList::new(
-                self.owner_ids.list(&record.owner),
-                self.owner_id_position.clone(),
-            ),
-            IndexedList::new(self.all_ids.clone(), self.global_id_position.clone()),
-        ]
+    fn record_indexes(&self, record: &StoredNod) -> [IndexedList<'storage, U256>; 1] {
+        [IndexedList::new(
+            self.owner_ids.list(&record.owner),
+            self.owner_id_position.clone(),
+        )]
     }
 
     pub fn insert_state_record(&self, record: &StoredNod) -> outbe_primitives::error::Result<()> {

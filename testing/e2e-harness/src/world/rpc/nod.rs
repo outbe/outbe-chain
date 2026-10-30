@@ -97,13 +97,19 @@ impl Rpc {
         )
     }
 
-    pub fn nod_supply(&self, port: u16) -> Option<u64> {
-        eth::read_call(
-            &self.url(port),
-            addresses::NOD_ADDR,
-            &INod::totalSupplyCall {},
-        )
-        .and_then(|value| u64::try_from(value).ok())
+    /// Nods `owners` hold together on the node at `port`.
+    pub fn nods_of(&self, port: u16, owners: &[Address]) -> Option<u64> {
+        owners
+            .iter()
+            .map(|owner| {
+                eth::read_call(
+                    &self.url(port),
+                    addresses::NOD_ADDR,
+                    &INod::balanceOfCall { owner: *owner },
+                )
+                .and_then(|value| u64::try_from(value).ok())
+            })
+            .sum()
     }
 }
 

@@ -54,7 +54,6 @@ interface ITribute {
 
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);
-    function totalSupply() external view returns (uint256);
     function balanceOf(address owner) external view returns (uint256);
     function ownerOf(uint256 tributeId) external view returns (address);
     function tokenURI(uint256 tributeId) external view returns (string memory);

@@ -86,7 +86,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         assert!(allocated > U256::ZERO);
         assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
         assert!(tc.get_record(t2.tribute_id).unwrap().is_some());
-        assert_eq!(tc.total_supply().unwrap(), 2);
         assert_eq!(tc.balance_of(owner1).unwrap(), 1);
         assert_eq!(tc.balance_of(owner2).unwrap(), 1);
         assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 2);
@@ -105,7 +104,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
         )
         .unwrap()
         .is_none());
-        assert_eq!(tc.total_supply().unwrap(), 2);
+        assert_eq!(tc.balance_of(t1.owner).unwrap(), 1);
         storage.set_block_timestamp(U256::from(base_ts)).unwrap();
 
         // A non-owner claim preserves the Tribute and issues no Nod.
@@ -203,7 +202,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             "encrypted_gratis_amount must not contain plaintext U256 bytes"
         );
         assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(t1.owner).unwrap(), 0);
         let totals_after_t1 = tc.get_day_totals(day).unwrap();
         assert_eq!(totals_after_t1.tribute_count, 1);
         assert_eq!(
@@ -230,7 +229,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             outbe_primitives::nod_rules::derive_nod_id(t2.owner, t2.worldwide_day)
         );
         assert!(tc.get_record(t2.tribute_id).unwrap().is_none());
-        assert_eq!(tc.total_supply().unwrap(), 0);
+        assert_eq!(tc.balance_of(t2.owner).unwrap(), 0);
         let late_nod = outbe_nod::api::get_item(
             &storage,
             outbe_primitives::nod_rules::derive_nod_id(t2.owner, t2.worldwide_day),
@@ -328,7 +327,7 @@ fn create_nod_reverts_without_a_completion_day_price() {
         .into();
         assert_eq!(unpriced.unwrap_err().to_string(), expected_err.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);
         assert!(outbe_nod::api::get_item(
             &storage,
             outbe_primitives::nod_rules::derive_nod_id(tribute.owner, tribute.worldwide_day)

@@ -114,12 +114,6 @@ impl TributeContract<'_> {
         {
             return Err(TributeError::LysisInputMismatch.into());
         }
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(u64::from(verified_count))
-            .ok_or(TributeError::TotalSupplyUnderflowDuringLysis)?;
-        self.total_supply.write(supply)?;
         self.reset_day_nominal(&totals)?;
         totals.tribute_count = 0;
         totals.tribute_nominal_total_minor = alloy_primitives::U256::ZERO;

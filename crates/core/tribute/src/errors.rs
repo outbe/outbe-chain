@@ -44,26 +44,17 @@ pub enum TributeError {
     #[error("Tribute chain identity mismatch")]
     ChainIdentityMismatch,
 
-    #[error("Tribute total supply overflow during issuance")]
-    TotalSupplyOverflowDuringIssuance,
-
     #[error("{0}")]
     CalculationView(String),
 
     #[error("Lysis input count/nominal does not match sealed Tribute DayTotals")]
     LysisInputMismatch,
 
-    #[error("Tribute total supply underflow during Lysis")]
-    TotalSupplyUnderflowDuringLysis,
-
     #[error("MissedOffering requires a sealed empty Tribute partition")]
     MissedOfferingRequiresSealedEmptyPartition,
 
     #[error("Tribute WWD is not completed and empty")]
     WorldwideDayNotCompletedAndEmpty,
-
-    #[error("Tribute total supply underflow during burn")]
-    TotalSupplyUnderflowDuringBurn,
 
     #[error("day metadata write differs from encrypted amount")]
     DayMetadataDiffersFromEncryptedAmount,
@@ -82,9 +73,6 @@ pub enum TributeError {
         expected: WwdEntityId,
         found: WwdEntityId,
     },
-
-    #[error("Tribute total supply underflow during CapacityForfeiture")]
-    TotalSupplyUnderflowDuringCapacityForfeiture,
 
     #[error("CapacityForfeiture requires a sealed Tribute partition")]
     CapacityForfeitureRequiresSealedPartition,
@@ -161,15 +149,11 @@ impl From<TributeError> for PrecompileError {
             TributeError::InvalidEncryptedDayIdentity
             | TributeError::InvalidEncryptedEncoding
             | TributeError::ChainIdentityMismatch
-            | TributeError::TotalSupplyOverflowDuringIssuance
             | TributeError::LysisInputMismatch
-            | TributeError::TotalSupplyUnderflowDuringLysis
             | TributeError::MissedOfferingRequiresSealedEmptyPartition
-            | TributeError::TotalSupplyUnderflowDuringBurn
             | TributeError::DayMetadataDiffersFromEncryptedAmount
             | TributeError::SealedDayMetadataDiffersFromEncryptedAmount
             | TributeError::DayCountOverflowOrUnderflow
-            | TributeError::TotalSupplyUnderflowDuringCapacityForfeiture
             | TributeError::CapacityForfeitureRequiresSealedPartition
             | TributeError::CapacityForfeitureRequiresUnretiredPartition
             | TributeError::DayAmountCodec(_) => PrecompileError::BodyReadCorruption(message),

@@ -333,8 +333,11 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let mut read_provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut failed_state, ctx);
     StorageHandle::enter(&mut read_provider, |storage| {
-        assert_eq!(TributeContract::new(storage.clone()).total_supply()?, 0);
-        assert_eq!(NodContract::new(storage).total_supply()?, 0);
+        let tribute = tribute_fixture();
+        assert!(TributeContract::new(storage.clone())
+            .get_record(tribute.tribute_id)?
+            .is_none());
+        assert!(outbe_nod::api::get_item(&storage, nod_fixture().nod_id)?.is_none());
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .unwrap();

@@ -64,8 +64,7 @@ interface IGem {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 gemId) external view returns (string memory);
 
-    // Supply and per-owner lookup; the ERC-721 Enumerable interface id is not supported.
-    function totalSupply() external view returns (uint256);
+    // Per-owner lookup; the ERC-721 Enumerable interface id is not supported.
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific views

@@ -58,8 +58,8 @@ pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 1_200;
 
 pub const INTEX_PROFILE_SLOT: u64 = 15;
 pub const GEM_PROFILE_SLOT: u64 = 32;
-pub const NOD_PROFILE_SLOT: u64 = 25;
-pub const CREDIS_PROFILE_SLOT: u64 = 40;
+pub const NOD_PROFILE_SLOT: u64 = 24;
+pub const CREDIS_PROFILE_SLOT: u64 = 38;
 
 pub const MARKER_CODE: &str = "0xef";
 pub const P2P_ADDRESS_VERSION_V1: u64 = 1;

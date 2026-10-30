@@ -68,9 +68,6 @@ impl DayTotals {
 #[storage_schema]
 #[contract(addr = TRIBUTE_ADDRESS)]
 pub struct TributeContract {
-    #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
-
     #[attribute(order = 2)]
     pub day_totals:
         outbe_primitives::storage::dsl::Map<WorldwideDay, crate::day_schema::StoredDayTotals>,

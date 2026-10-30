@@ -572,10 +572,6 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
         let stored = contract
             .get_record(tribute_id)
             .map_err(|error| error.to_string())?;
-        let supply = contract
-            .total_supply
-            .read()
-            .map_err(|error| error.to_string())?;
         let owner_ids = contract
             .owner_ids
             .list(&CALLER)
@@ -586,8 +582,8 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
             .list(&TARGET_WWD)
             .read_all()
             .map_err(|error| error.to_string())?;
-        if supply != 1 || owner_ids != [tribute_id] || day_ids != [tribute_id] {
-            return Err("created Tribute has inconsistent native supply or indexes".to_owned());
+        if owner_ids != [tribute_id] || day_ids != [tribute_id] {
+            return Err("created Tribute has inconsistent indexes".to_owned());
         }
         Ok::<_, String>(stored)
     })?

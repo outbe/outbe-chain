@@ -10,10 +10,7 @@ use alloy_sol_types::{Revert, SolCall, SolError};
 use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
 
 use crate::{
-    internal::{
-        addresses::TRIBUTE_ADDR,
-        eth::{self, ITribute, ITributeFactory},
-    },
+    internal::eth::{self, ITributeFactory},
     world::World,
 };
 
@@ -351,6 +348,11 @@ pub(super) fn assert_supply(world: &World, expected: u64) {
         .rpc
         .wait_finalized_checkpoint(&ports, head, 60)
         .expect("supply finality");
+    let wwd = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("worldwide-day set at setup");
     for port in ports {
         assert_eq!(
             world
@@ -360,13 +362,10 @@ pub(super) fn assert_supply(world: &World, expected: u64) {
             checkpoint
         );
         assert_eq!(
-            eth::read_call_at_result(
-                &world.rpc.url(port),
-                TRIBUTE_ADDR,
-                &ITribute::totalSupplyCall {},
-                checkpoint.height
-            )
-            .expect("finalized Tribute supply"),
+            world
+                .rpc
+                .day_tributes_at(port, wwd, checkpoint.height)
+                .expect("finalized Tribute supply"),
             U256::from(expected)
         );
         assert_eq!(

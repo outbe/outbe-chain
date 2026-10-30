@@ -459,7 +459,9 @@ mod tests {
     #[test]
     fn tribute_state_read_does_not_require_body_readers() {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-        let call = outbe_tribute::precompile::ITribute::totalSupplyCall {};
+        let call = outbe_tribute::precompile::ITribute::balanceOfCall {
+            owner: Address::repeat_byte(1),
+        };
         let output = lookup(&TRIBUTE_ADDRESS)
             .unwrap()
             .dispatch(
@@ -473,7 +475,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            outbe_tribute::precompile::ITribute::totalSupplyCall::abi_decode_returns(&output)
+            outbe_tribute::precompile::ITribute::balanceOfCall::abi_decode_returns(&output)
                 .unwrap(),
             U256::ZERO
         );

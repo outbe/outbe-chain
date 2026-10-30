@@ -214,13 +214,13 @@ fn read_at(world: &World, port: u16, checkpoint: FinalizedCheckpoint) -> Result<
     );
     let url = world.rpc.url(port);
     let height = checkpoint.height;
-    let supply = eth::read_call_at_result(
-        &url,
-        addresses::TRIBUTE_ADDR,
-        &eth::ITribute::totalSupplyCall {},
-        height,
-    )
-    .map_err(|error| eyre!(error))?;
+    let supply = match world.state.wwd.as_deref() {
+        Some(wwd) => world
+            .rpc
+            .day_tributes_at(port, wwd, height)
+            .map_err(|error| eyre!(error))?,
+        None => U256::ZERO,
+    };
     let active = eth::read_call_at_result(
         &url,
         addresses::VS_ADDR,

@@ -144,14 +144,6 @@ impl Rpc {
         })
     }
 
-    pub fn tribute_supply_at(&self, port: u16, checkpoint: FinalizedCheckpoint) -> Result<u64> {
-        self.read_state_at(port, checkpoint, |storage| {
-            outbe_tribute::TributeContract::new(storage)
-                .total_supply
-                .read()
-        })
-    }
-
     pub fn authenticated_tribute_at(
         &self,
         port: u16,
