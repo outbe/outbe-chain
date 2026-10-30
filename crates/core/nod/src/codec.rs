@@ -29,7 +29,6 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
     NodItemState {
         nod_id: terms.nod_id,
         owner: terms.owner,
-        worldwide_day: terms.worldwide_day,
         series_id: terms.series_id().unwrap_or_default(),
         league_id: terms.league_id,
         issuance_currency: terms.issuance_currency,

@@ -24,7 +24,7 @@ interface INodFactory {
     event NodIssued(
         address indexed owner,
         uint256 nodId,
-        uint256 worldwideDay,
+        bytes14 seriesId,
         uint256 leagueId,
         uint256 callPriceMinor,
         bytes encryptedGratisAmount,

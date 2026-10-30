@@ -12,7 +12,6 @@ fn encrypted_nod() -> EncryptedNodV1 {
         chain_id: 54322345,
         nod_id: U256::from_be_bytes([6; 32]),
         owner: Address::repeat_byte(3),
-        worldwide_day: day,
         emission_day: day.value(),
         league_id: 0,
         entry_price_minor: U256::from(700),

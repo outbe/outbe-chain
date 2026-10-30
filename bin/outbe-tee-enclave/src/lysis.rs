@@ -124,7 +124,6 @@ pub fn execute(
                     action.owner,
                 ),
                 owner: action.owner,
-                worldwide_day: action.worldwide_day,
                 emission_day: request.emission_day,
                 league_id: action.league_id,
                 entry_price_minor: action.entry_price_minor,

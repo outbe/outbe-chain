@@ -92,7 +92,7 @@ fn attest(
             return signed_response(request, result, &keys);
         }
         5 => {
-            result.nods[0].nod.terms.worldwide_day = WorldwideDay::new(20261016);
+            result.nods[0].nod.terms.emission_day = DAY + 1;
             return signed_response(request, result, &keys);
         }
         6 => {
@@ -409,7 +409,7 @@ fn existing_full_digest_target_rejects_lysis_before_mutation() {
     let _nod_enclave = outbe_nod::test_support::scope();
     let mut provider = fixture();
     StorageHandle::enter(&mut provider, |storage| {
-        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), WWD);
+        let mut item = outbe_nod::test_support::sample_item(Address::repeat_byte(1), DAY);
         item.reference_currency = 840;
         item.series_id = outbe_primitives::series_id::SeriesId::for_pair(DAY, 840, 840).unwrap();
         item.nod_id = outbe_primitives::nod_rules::derive_nod_id(item.series_id, item.owner);

@@ -39,14 +39,12 @@ pub fn encrypt_nod_for_tribute(
     let source_terms = (
         source.chain_id,
         source.owner,
-        source.worldwide_day,
         source.issuance_currency,
         source.reference_currency,
     );
     let issued_terms = (
         terms.chain_id,
         terms.owner,
-        terms.worldwide_day,
         terms.issuance_currency,
         terms.reference_currency,
     );

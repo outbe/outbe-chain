@@ -212,7 +212,6 @@ fn issue_nod_with_cost(
         nod_id,
         owner: terms.owner,
         encrypted: encrypted.clone(),
-        worldwide_day: terms.worldwide_day,
         series_id,
         league_id: terms.league_id,
         group_key,
@@ -239,7 +238,7 @@ fn issue_nod_with_cost(
         INodFactory::NodIssued {
             owner: terms.owner,
             nodId: nod_id,
-            worldwideDay: U256::from(u32::from(terms.worldwide_day)),
+            seriesId: series_id.into(),
             leagueId: U256::from(terms.league_id),
             callPriceMinor: call_price_minor,
             encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),

@@ -201,7 +201,6 @@ impl Evaluation {
         self.actions.push(json!({
             "source_tribute_id": tribute.tribute_id,
             "owner": tribute.owner,
-            "worldwide_day": tribute.worldwide_day,
             "league": second,
             "entry_price": entry_price.to_string(),
             "issuance_currency": tribute.issuance_currency,

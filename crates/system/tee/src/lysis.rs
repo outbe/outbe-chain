@@ -85,9 +85,8 @@ fn matches_tribute_terms(
     terms: &outbe_primitives::nod_encryption::NodTermsV1,
     context: &outbe_primitives::tribute_encryption::TributeContextV2,
 ) -> bool {
-    let basic_match = terms.chain_id == request.chain_id
-        && terms.worldwide_day == request.worldwide_day
-        && terms.emission_day == request.emission_day;
+    let basic_match =
+        terms.chain_id == request.chain_id && terms.emission_day == request.emission_day;
     let series_id = outbe_primitives::series_id::SeriesId::for_pair(
         request.emission_day,
         context.issuance_currency,

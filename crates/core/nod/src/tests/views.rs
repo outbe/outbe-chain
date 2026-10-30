@@ -239,11 +239,11 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(row("Entry Price") < row("Call Price"));
 
         let hex = format!("{:064x}", body.nod_id);
-        let id = format!("{}-{}", body.worldwide_day, &hex[..8]);
+        let id = format!("{}-{}", body.series_id, &hex[..8]);
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(value(&json, "Worldwide Day").unwrap(), 20_260_715);
+        assert_eq!(value(&json, "Series").unwrap(), body.series_id.to_string());
         assert_eq!(value(&json, "League").unwrap(), 4);
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert!(value(&json, "Floor Price").is_none());

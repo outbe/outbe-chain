@@ -98,7 +98,6 @@ pub enum SemanticObservationV1 {
 pub struct NodActionV1 {
     pub source_tribute_id: WwdEntityId,
     pub owner: Address,
-    pub worldwide_day: WorldwideDay,
     pub league_id: u16,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,

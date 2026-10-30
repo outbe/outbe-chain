@@ -194,7 +194,6 @@ pub(super) fn issue_nod_from_tribute(
                 chain_id: storage.chain_id()?,
                 nod_id: outbe_primitives::nod_rules::derive_nod_id(series_id, record.owner),
                 owner: record.owner,
-                worldwide_day: day,
                 emission_day: series_id.day(),
                 league_id: league,
                 issuance_currency: record.issuance_currency,

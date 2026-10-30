@@ -111,14 +111,13 @@
     "chainId": "54322345",
     "nodId": "95917739879757436541213720947316054566636781989754332168412108264760970689905",
     "owner": "0x0303030303030303030303030303030303030303",
-    "worldwideDay": 20261009,
     "emissionDay": 20261010,
     "leagueId": 2,
     "entryPriceMinor": "2000000",
     "issuanceCurrency": 840,
     "referenceCurrency": 978,
-    "encryptionBinding": "0x1843e555ade7f7f48688c4979861f3686a9dcd9328ad139ca6893747598cb45b",
-    "encryptedGratisAmount": "0x000000000000000106640c3dfe719ef5b5dea148a07c0f736ba37cb66264e73e2fabde811aaf3f6524102ff5b519a2e90f77336eadb43549",
+    "encryptionBinding": "0x9734139402ec86cd949d7ec3e598a0e4bec2fe3b167af52864452ef2353011cc",
+    "encryptedGratisAmount": "0x0000000000000001c5d6afcc3d45d380a334832f7ed18a071210668dc4e26b4b0fbd7b4d6dbf0a13a5376fdb67c15f9dd757f5d67d9a94cb",
     "gratisAmount": "4500000"
   },
   "fidelityQuery": {

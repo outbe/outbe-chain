@@ -42,7 +42,6 @@ fn self_contained_nod_rederives_keys_and_separates_divergent_amounts() {
             owner_address,
         ),
         owner: owner_address,
-        worldwide_day: day,
         emission_day: day.value(),
         league_id: 0,
         entry_price_minor: U256::from(700),

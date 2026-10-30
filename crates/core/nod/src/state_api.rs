@@ -294,17 +294,15 @@ mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
     use outbe_primitives::{
-        storage::hashmap::HashMapStorageProvider,
-        time::{date_key_to_utc_timestamp, WorldwideDay},
+        storage::hashmap::HashMapStorageProvider, time::date_key_to_utc_timestamp,
     };
 
     fn stored_fixture() -> StoredNod {
-        let day = WorldwideDay::new(20261015);
         let id = U256::from_be_bytes([7; 32]);
         let mut record = StoredNod::with_key(id);
         record.owner = Address::repeat_byte(1);
         record.chain_id = 1;
-        record.worldwide_day = day;
+        record.series_id = SeriesId::for_pair(20261015, 840, 978).unwrap();
         record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
         record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
         record
@@ -312,12 +310,10 @@ mod tests {
 
     #[test]
     fn stored_nod_survives_the_item_state_round_trip_exactly() {
-        let day = WorldwideDay::new(20261015);
         let stored = StoredNod {
             nod_id: U256::from_be_bytes([7; 32]),
             owner: Address::repeat_byte(1),
             chain_id: 2,
-            worldwide_day: day,
             league_id: 3,
             entry_price_minor: U256::from(4),
             issuance_currency: 5,
@@ -348,16 +344,12 @@ mod tests {
             invalid.encrypted_gratis_amount[0] = 2;
             contract.records.update(&invalid).unwrap();
             assert!(load_item(&storage, id).is_err());
-            record.worldwide_day = WorldwideDay::new(20261016);
+            record.series_id = SeriesId::for_pair(20261016, 840, 978).unwrap();
             contract.records.update(&record).unwrap();
-            // Structural reads do not infer a day from an opaque identity.
+            // Structural reads do not infer the series from an opaque identity.
             assert_eq!(
-                load_item(&storage, id)
-                    .unwrap()
-                    .unwrap()
-                    .body()
-                    .worldwide_day,
-                record.worldwide_day
+                load_item(&storage, id).unwrap().unwrap().body().series_id,
+                record.series_id
             );
         });
     }
@@ -396,7 +388,7 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let params = NodIssueParams {
                 owner: Address::repeat_byte(1),
-                worldwide_day: WorldwideDay::new(20261015),
+                emission_day: 20261015,
                 league_id: 1,
                 gratis_load_minor: U256::from(5_000_000),
                 entry_price_minor: U256::from(1_000_000),
@@ -407,9 +399,8 @@ mod tests {
             let item = NodItemState {
                 nod_id: encrypted.terms.nod_id,
                 owner: params.owner,
-                worldwide_day: params.worldwide_day,
                 series_id: test_support::series_of(
-                    params.worldwide_day,
+                    params.emission_day,
                     params.issuance_currency,
                     params.reference_currency,
                 ),

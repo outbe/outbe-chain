@@ -156,7 +156,6 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
             json!({
                 "source_tribute_id": hex::encode(action.source_tribute_id.as_slice()),
                 "owner": lowercase_address(action.owner),
-                "worldwide_day": u32::from(action.worldwide_day),
                 "league": action.league_id,
                 "entry_price": action.entry_price_minor.to_string(),
                 "issuance_currency": action.issuance_currency,

@@ -20,7 +20,6 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         chain_id: 1,
         nod_id: U256::from_be_bytes([4; 32]),
         owner: account,
-        worldwide_day: day,
         emission_day: day.value(),
         league_id: 0,
         entry_price_minor: U256::ONE,

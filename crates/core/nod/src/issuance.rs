@@ -32,14 +32,12 @@ pub(crate) fn validate_item(
         || (
             terms.nod_id,
             terms.owner,
-            terms.worldwide_day,
             terms.league_id,
             terms.issuance_currency,
             terms.reference_currency,
         ) != (
             item.nod_id,
             item.owner,
-            item.worldwide_day,
             item.league_id,
             item.issuance_currency,
             item.reference_currency,

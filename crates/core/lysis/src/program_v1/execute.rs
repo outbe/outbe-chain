@@ -237,7 +237,6 @@ impl ProgramExecutionV1 {
         let action = NodActionV1 {
             source_tribute_id: tribute.tribute_id,
             owner: tribute.owner,
-            worldwide_day: tribute.worldwide_day,
             league_id: second_league,
             entry_price_minor,
             issuance_currency: tribute.issuance_currency,

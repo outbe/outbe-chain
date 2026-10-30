@@ -238,8 +238,8 @@ impl Lifecycle for NodLifecycle {
                 data.callNoticePeriod
             );
             assert_eq!(
-                (data.worldwideDay, data.entryPriceMinor),
-                (first.worldwideDay, first.entryPriceMinor),
+                (data.seriesId, data.entryPriceMinor),
+                (first.seriesId, first.entryPriceMinor),
                 "every Nod must share one group"
             );
         }

@@ -17,12 +17,13 @@ pub enum EffectiveState {
 }
 
 /// Plain calculation inputs. Production issuance stores an authenticated encrypted NOD.
-/// The identity is derived from owner and day; settlement uses the entry price and load.
+/// The identity is derived from the series and owner; settlement uses the entry price and load.
 /// `issued_at` comes from the block rather than these inputs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NodIssueParams {
     pub owner: Address,
-    pub worldwide_day: WorldwideDay,
+    /// The UTC day whose VWAP prices the Nod, `YYYYMMDD`.
+    pub emission_day: u32,
     pub league_id: u16,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
@@ -40,8 +41,6 @@ pub struct NodItemState {
     pub owner: Address,
 
     pub encrypted: outbe_primitives::nod_encryption::EncryptedNodV1,
-
-    pub worldwide_day: WorldwideDay,
 
     /// The emission day and currencies of the Tribute the Nod comes from.
     pub series_id: SeriesId,

@@ -4,7 +4,7 @@ use super::*;
 fn nod_pow_binds_owner_and_zero_sequence() {
     let owner = Address::repeat_byte(0x11);
     let other = Address::repeat_byte(0x22);
-    let nod_id = outbe_nod::test_support::nod_id_of(owner, WorldwideDay::new(20_241_201), 840, 840);
+    let nod_id = outbe_nod::test_support::nod_id_of(owner, 20_241_201, 840, 840);
     let nonce = 42;
     let bound = runtime::compute_pow_hash(nod_id, owner, nonce);
     assert_ne!(bound, runtime::compute_pow_hash(nod_id, other, nonce));
@@ -154,7 +154,7 @@ fn direct_issuance_beyond_the_issuable_entry_writes_nothing() {
     assert_eq!(world.provider.get_ordered_events().len(), events_before);
     let nod_id = outbe_nod::test_support::nod_id_of(
         input.owner,
-        input.worldwide_day,
+        input.emission_day,
         input.issuance_currency,
         input.reference_currency,
     );

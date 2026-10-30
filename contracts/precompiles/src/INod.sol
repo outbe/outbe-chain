@@ -61,7 +61,6 @@ interface INod {
         // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
-        uint32 worldwideDay;
         /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
         bytes14 seriesId;
         uint16 leagueId;

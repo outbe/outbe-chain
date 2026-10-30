@@ -305,7 +305,6 @@ fn derive_account_keys_opens_tribute_and_nod_ciphertexts_from_dispatchers() {
             owner_addr,
         ),
         owner: owner_addr,
-        worldwide_day: day,
         emission_day: day.value(),
         league_id: 0,
         entry_price_minor: U256::from(700),

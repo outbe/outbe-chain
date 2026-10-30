@@ -21,7 +21,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_bytes_field(3, &body.encrypted.encrypted_gratis_amount, &mut out);
     // Field 4 is retired (formerly encrypted_creator_public_key); never reuse tag 4.
     encode_optional_varint_field(5, t.chain_id, &mut out);
-    encode_optional_varint_field(6, u64::from(t.worldwide_day.value()), &mut out);
+    // Field 6 is retired (formerly worldwide_day); never reuse tag 6.
     encode_optional_varint_field(7, u64::from(t.league_id), &mut out);
     encode_bytes_field(8, &t.entry_price_minor.to_be_bytes::<32>(), &mut out);
     encode_optional_varint_field(9, u64::from(t.issuance_currency), &mut out);
@@ -39,7 +39,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut f, 2)?, 2)?);
     let encrypted_gratis_amount = required_bytes(&mut f, 3)?.to_vec();
     let chain_id = optional_varint(&mut f, 5)?;
-    let worldwide_day = WorldwideDay::new(optional_u32(&mut f, 6)?);
     let league_id = optional_u16(&mut f, 7)?;
     let entry_price_minor = decode_u256(required_bytes(&mut f, 8)?, 8)?;
     let issuance_currency = optional_u16(&mut f, 9)?;
@@ -56,7 +55,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
                 chain_id,
                 nod_id,
                 owner,
-                worldwide_day,
                 emission_day,
                 league_id,
                 entry_price_minor,

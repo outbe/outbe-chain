@@ -11,7 +11,6 @@ use outbe_primitives::{
     addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS},
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallStatus},
-    time::WorldwideDay,
 };
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
@@ -38,7 +37,7 @@ impl Rail for Nod {
         let params = NodIssueParams {
             owner: OWNER,
             gratis_load_minor: U256::from(GRATIS_LOAD),
-            worldwide_day: WorldwideDay::new(20_241_220),
+            emission_day: 20_241_220,
             league_id: 1,
             entry_price_minor: self.cost * U256::from(1_000),
             issuance_currency,
