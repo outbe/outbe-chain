@@ -25,6 +25,14 @@ pub enum AgentRewardError {
     NoClaimableBalance,
     #[error("insufficient claimable balance")]
     InsufficientClaimableBalance,
+    #[error("reward claim deadline {0} has passed")]
+    ClaimDeadlinePassed(u64),
+    #[error("reward balance has not expired at deadline {0}")]
+    RewardBalanceNotExpired(u64),
+    #[error("reward balance deadline overflow")]
+    RewardDeadlineOverflow,
+    #[error("nonempty reward balance has no deadline")]
+    RewardDeadlineMissing,
     #[error("agentreward has no previous-day COEN price in {0}")]
     MissingPreviousDayPrice(u16),
     #[error("agentreward entry price overflow")]
@@ -64,6 +72,14 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::InsufficientClaimableBalance => {
                 revert_with(I::InsufficientClaimableBalance {})
             }
+            AgentRewardError::ClaimDeadlinePassed(deadline) => {
+                revert_with(I::ClaimDeadlinePassed { deadline })
+            }
+            AgentRewardError::RewardBalanceNotExpired(deadline) => {
+                revert_with(I::RewardBalanceNotExpired { deadline })
+            }
+            AgentRewardError::RewardDeadlineOverflow => revert_with(I::RewardDeadlineOverflow {}),
+            AgentRewardError::RewardDeadlineMissing => revert_with(I::RewardDeadlineMissing {}),
             AgentRewardError::MissingPreviousDayPrice(value) => {
                 revert_with(I::MissingPreviousDayPrice { value })
             }
@@ -92,6 +108,25 @@ mod tests {
     #[test]
     fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
         for (error, expected) in [
+            (
+                AgentRewardError::ClaimDeadlinePassed(u64::MAX),
+                IAgentReward::ClaimDeadlinePassed { deadline: u64::MAX }.abi_encode(),
+            ),
+            (
+                AgentRewardError::RewardBalanceNotExpired(31_536_000),
+                IAgentReward::RewardBalanceNotExpired {
+                    deadline: 31_536_000,
+                }
+                .abi_encode(),
+            ),
+            (
+                AgentRewardError::RewardDeadlineOverflow,
+                IAgentReward::RewardDeadlineOverflow {}.abi_encode(),
+            ),
+            (
+                AgentRewardError::RewardDeadlineMissing,
+                IAgentReward::RewardDeadlineMissing {}.abi_encode(),
+            ),
             (
                 AgentRewardError::MissingPreviousDayPrice(840),
                 IAgentReward::MissingPreviousDayPrice { value: 840 }.abi_encode(),

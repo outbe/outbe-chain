@@ -1339,6 +1339,8 @@ fn iagentreward_sol_matches_contract_public_annotations() {
     let expected = [
         ("getClaimableBalance", "address", true, "uint256"),
         ("getPoolClaimableBalance", "address,uint8", true, "uint256"),
+        ("getPoolBalanceDeadline", "address,uint8", true, "uint64"),
+        ("returnExpiredReward", "address,uint8", false, "uint256"),
         (
             "claimReward",
             "uint8,uint256,uint16,uint16",
@@ -1414,6 +1416,7 @@ fn reward_timestamp_narrowing_rejects_overflow() {
 }
 
 mod cca;
+mod expiration;
 
 #[test]
 fn accrual_and_claim_emit_their_events_for_any_pool() {
