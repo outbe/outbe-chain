@@ -34,10 +34,15 @@ fn item(owner: Address, entry: U256, reference_currency: u16) -> NodItemState {
     crate::test_support::item(
         crate::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: crate::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: crate::test_support::nod_id_of(
+                owner,
+                worldwide_day.value(),
+                840,
+                reference_currency,
+            ),
             owner,
             gratis_load_minor: U256::from(11),
-            worldwide_day,
+            emission_day: worldwide_day.value(),
             league_id: 4,
             group_key: crate::test_support::group_key(1_752_534_000, entry, reference_currency),
             issuance_currency: 840,

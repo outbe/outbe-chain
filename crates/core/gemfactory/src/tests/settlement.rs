@@ -320,7 +320,7 @@ fn a_series_in_any_reference_currency_can_be_sent() {
         outbe_intex::api::create_series(
             storage,
             outbe_intex::CreateSeriesParams {
-                series_id: source_intex_id(),
+                series_id: source_series_id(),
                 worldwide_day: WorldwideDay::new(0),
                 issued_units: SENT_UNITS as u32,
                 promis_load_minor: six_decimal_u128(),
@@ -334,7 +334,7 @@ fn a_series_in_any_reference_currency_can_be_sent() {
             },
         )
         .unwrap();
-        runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+        runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
             .unwrap();
     });
 }
@@ -681,6 +681,7 @@ fn gem_cost_load(item: &GemItemState) -> U256 {
         called_at: _,
         settled_at: _,
         entry_price_minor: _,
+        series_id: _,
     } = item;
     *promis_load_minor
 }
@@ -746,11 +747,23 @@ fn settlement_cost_reads_entry_price_from_the_group() {
 
 #[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
-    let series = SeriesId::pack(7, *b"USD", b'U').unwrap();
-    let block = 1u64;
+    let series = SeriesId::for_pair(20261029, 949, 840).unwrap();
+    // Independently computed with `cast keccak` over `20261029-TRY-U || ALICE || 1u64`.
+    assert_eq!(
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        U256::from_str_radix(
+            "1e9e7d912dd7875c7a236e4af4b55978340306d900e119fb9b489e554b6c66c7",
+            16
+        )
+        .unwrap()
+    );
     assert_ne!(
-        GemFactoryContract::generate_position_id(ALICE, series, block),
-        GemFactoryContract::generate_position_id(BOB, series, block),
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        GemFactoryContract::generate_position_id(series, BOB, 1),
         "a series has many owners and any of them may send units to the Gem Factory"
+    );
+    assert_ne!(
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        GemFactoryContract::generate_position_id(series, ALICE, 2)
     );
 }

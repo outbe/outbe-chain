@@ -82,6 +82,11 @@
             "internalType": "address"
           },
           {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
@@ -623,6 +628,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidSeriesId",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonTransferable",
     "inputs": []
   },
@@ -641,16 +651,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "TotalSupplyOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TotalSupplyUnderflow",
-    "inputs": []
   },
   {
     "type": "error",

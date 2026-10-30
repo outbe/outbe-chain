@@ -579,8 +579,8 @@ fn assert_snapshot_bodies(snapshot: &NodSnapshot, bodies: &(NodItemBodyV1, NodGr
     assert_eq!(body.nodId, item.encrypted.terms.nod_id);
     assert_eq!(body.owner, item.encrypted.terms.owner);
     assert_eq!(
-        body.worldwideDay,
-        item.encrypted.terms.worldwide_day.value()
+        Ok(outbe_primitives::series_id::SeriesId::from(body.seriesId)),
+        item.encrypted.terms.series_id()
     );
     assert_eq!(body.leagueId, item.encrypted.terms.league_id);
     assert_eq!(
@@ -750,7 +750,7 @@ mod tests {
                     chain_id: 1,
                     nod_id: U256::from_be_bytes([1; 32]),
                     owner: Address::repeat_byte(3),
-                    worldwide_day: day,
+                    emission_day: day.value(),
                     league_id: 0,
                     entry_price_minor: U256::from(9),
                     issuance_currency: 840,

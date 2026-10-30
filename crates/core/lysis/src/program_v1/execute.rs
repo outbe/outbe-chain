@@ -182,13 +182,8 @@ impl ProgramExecutionV1 {
             .get(&self.first_leagues[ordinal])
             .copied()
             .unwrap_or(U256::ZERO);
-        let nod_gratis_load_max = self.lysis_limit_minor / U256::from(1024);
-        let gratis_load_minor = calculate_gratis_load(
-            tribute.nominal_amount_minor,
-            fraction,
-            nod_gratis_load_max,
-            ordinal,
-        )?;
+        let gratis_load_minor =
+            calculate_gratis_load(tribute.nominal_amount_minor, fraction, ordinal)?;
         let remaining_after = validate_required_gratis(self.remaining, gratis_load_minor, ordinal)?;
         Ok(PendingNodV1 {
             ordinal,
@@ -236,16 +231,12 @@ impl ProgramExecutionV1 {
             });
         }
         calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
-        let nod_id =
-            outbe_primitives::nod_rules::derive_nod_id(tribute.owner, tribute.worldwide_day);
         if !nod_target_available || tribute.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
         let action = NodActionV1 {
             source_tribute_id: tribute.tribute_id,
-            nod_id,
             owner: tribute.owner,
-            worldwide_day: tribute.worldwide_day,
             league_id: second_league,
             entry_price_minor,
             issuance_currency: tribute.issuance_currency,
@@ -394,10 +385,9 @@ fn scaled_floor(
 pub fn calculate_gratis_load(
     nominal_amount_minor: U256,
     fraction: U256,
-    nod_gratis_load_max: U256,
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
-    let load = scaled_floor(nominal_amount_minor, fraction, SCALE)?.min(nod_gratis_load_max);
+    let load = scaled_floor(nominal_amount_minor, fraction, SCALE)?;
     if load.is_zero() {
         return Err(ProgramErrorV1::ZeroGratisLoad { ordinal });
     }

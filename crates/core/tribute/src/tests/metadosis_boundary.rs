@@ -70,14 +70,9 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
         );
         assert_eq!(tc.seal_day(day).unwrap_err().to_string(), MISMATCH);
         assert_eq!(
-            tc.record_metadosis_fractions(
-                day,
-                U256::from(1u64),
-                &std::collections::BTreeMap::new(),
-                1
-            )
-            .unwrap_err()
-            .to_string(),
+            tc.record_metadosis_fractions(day, &std::collections::BTreeMap::new(), 1)
+                .unwrap_err()
+                .to_string(),
             MISMATCH
         );
         assert_eq!(

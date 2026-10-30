@@ -95,7 +95,7 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
 
         // The paid unit still mines, relayed by a stranger.
         let call = IIntexFactory::minePromisCall {
-            seriesId: sid(7).into(),
+            intexId: outbe_intex::intex_id(sid(7)),
             owner: owner(),
             units: U256::ONE,
             nonce,

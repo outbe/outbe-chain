@@ -32,8 +32,8 @@ contract InboundFailureIsolationTest is CrossChainTest {
     bytes14 internal constant SERIES_GOOD = "20260201-USD-U";
     uint32 internal constant SERIES_BAD_DAY = 20260202;
     bytes14 internal constant SERIES_BAD = "20260202-USD-U";
-    uint256 internal constant TOKEN_GOOD = uint256(uint112(SERIES_GOOD));
-    uint256 internal constant TOKEN_BAD = uint256(uint112(SERIES_BAD));
+    uint256 internal constant TOKEN_GOOD = uint256(keccak256(abi.encodePacked(SERIES_GOOD)));
+    uint256 internal constant TOKEN_BAD = uint256(keccak256(abi.encodePacked(SERIES_BAD)));
 
     function setUp() public {
         _setUpBridge();

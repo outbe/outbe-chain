@@ -35,14 +35,8 @@ pub enum GemError {
         member_count: u32,
     },
 
-    #[error("gem total supply overflow")]
-    TotalSupplyOverflow,
-
     #[error("gem settled count overflow")]
     SettledCountOverflow,
-
-    #[error("gem total supply underflow")]
-    TotalSupplyUnderflow,
 
     #[error("gem group {group_id} settled count underflow")]
     SettledCountUnderflow { group_id: WwdEntityId },
@@ -61,6 +55,15 @@ pub enum GemError {
 
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
+
+    #[error("gem currencies spell no series id")]
+    InvalidSeriesId,
+}
+
+impl From<outbe_primitives::series_id::InvalidSeriesId> for GemError {
+    fn from(_: outbe_primitives::series_id::InvalidSeriesId) -> Self {
+        Self::InvalidSeriesId
+    }
 }
 
 pub(crate) fn date_step_error(
@@ -118,9 +121,7 @@ impl From<GemError> for PrecompileError {
                 groupId: group_id.to_u256(),
                 memberCount: member_count,
             }),
-            GemError::TotalSupplyOverflow => revert_with(I::TotalSupplyOverflow {}),
             GemError::SettledCountOverflow => revert_with(I::SettledCountOverflow {}),
-            GemError::TotalSupplyUnderflow => revert_with(I::TotalSupplyUnderflow {}),
             GemError::SettledCountUnderflow { group_id } => revert_with(I::SettledCountUnderflow {
                 groupId: group_id.to_u256(),
             }),
@@ -137,6 +138,7 @@ impl From<GemError> for PrecompileError {
                 kind,
                 dateKey: date_key,
             }),
+            GemError::InvalidSeriesId => revert_with(I::InvalidSeriesId {}),
         }
     }
 }

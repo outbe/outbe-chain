@@ -515,7 +515,7 @@ fn a_node_local_failure_while_deferring_fails_the_sweep() {
         // More settled than issued: the group cannot expire, so the sweep defers it.
         IntexContract::new(s)
             .settled_units
-            .write(&member, 1_000)
+            .write(&outbe_intex::intex_id(member), 1_000)
             .unwrap();
         member
     });

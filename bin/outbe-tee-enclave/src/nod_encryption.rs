@@ -39,21 +39,19 @@ pub fn encrypt_nod_for_tribute(
     let source_terms = (
         source.chain_id,
         source.owner,
-        source.worldwide_day,
         source.issuance_currency,
         source.reference_currency,
     );
     let issued_terms = (
         terms.chain_id,
         terms.owner,
-        terms.worldwide_day,
         terms.issuance_currency,
         terms.reference_currency,
     );
-    if issued_terms != source_terms
-        || terms.nod_id
-            != outbe_primitives::nod_rules::derive_nod_id(terms.owner, terms.worldwide_day)
-    {
+    let canonical_id = terms
+        .series_id()
+        .map(|series_id| outbe_primitives::nod_rules::derive_nod_id(series_id, terms.owner));
+    if issued_terms != source_terms || canonical_id != Ok(terms.nod_id) {
         return Err(TeeError::TributeOfferReject(
             "NOD source terms mismatch".into(),
         ));

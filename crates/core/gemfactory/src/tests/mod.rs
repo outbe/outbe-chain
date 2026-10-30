@@ -261,7 +261,7 @@ fn record_settled(storage: &StorageHandle<'_>, gem_id: U256) {
 
 // --- Merchant gems ---
 
-fn source_intex_id() -> SeriesId {
+fn source_series_id() -> SeriesId {
     SeriesId::pack(20_260_212, *b"USD", b'U').unwrap()
 }
 
@@ -284,7 +284,7 @@ fn seed_source_series(
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
-            series_id: source_intex_id(),
+            series_id: source_series_id(),
             worldwide_day: WorldwideDay::new(0),
             issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
@@ -301,7 +301,7 @@ fn seed_source_series(
     if let Some(index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840).unwrap() {
         if !entry.is_zero() {
             OracleContract::new(storage.clone())
-                .record_utc_day_vwap(source_intex_id().day(), index, entry)
+                .record_utc_day_vwap(source_series_id().day(), index, entry)
                 .unwrap();
         }
     }
@@ -316,7 +316,7 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U25
         promis_load,
         outbe_intex::IntexCallTrigger::default(),
     );
-    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS)).unwrap()
+    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS)).unwrap()
 }
 
 const SOURCE_NOTICE_SECONDS: u32 = 3_600;
@@ -333,11 +333,11 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
             ..Default::default()
         },
     );
-    outbe_intex::api::call_group_of(storage, source_intex_id(), called_at).unwrap();
+    outbe_intex::api::call_group_of(storage, source_series_id(), called_at).unwrap();
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
-    runtime::issue_gem_position(storage, ALICE, source_intex_id(), U256::from(SENT_UNITS))
+    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
 }
 
 /// The refusal leaves storage and events as they were, before any burn.

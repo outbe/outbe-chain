@@ -29,10 +29,6 @@ impl GemContract<'_> {
         Ok(U256::from_be_bytes(buf))
     }
 
-    pub fn total_supply(&self) -> Result<u64> {
-        self.total_supply.read()
-    }
-
     // --- Group member index ----------------------------------------------------
 
     pub fn group_member_key(group: B256, index: u32) -> B256 {

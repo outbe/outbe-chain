@@ -52,7 +52,7 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
                 &url,
                 addresses::INTEX_FACTORY_ADDR,
                 &eth::IIntexFactory::quoteSettlementCall {
-                    seriesId: *id,
+                    intexId: crate::world::venue_probes::intex_id(*id),
                     asset,
                     units: U256::from(*units),
                 },
@@ -197,7 +197,7 @@ fn settle_erc20(
             payer_key,
             addresses::INTEX_FACTORY_ADDR,
             &eth::IIntexFactory::settleIntexCall {
-                seriesId: *id,
+                intexId: crate::world::venue_probes::intex_id(*id),
                 owner: target.owner,
                 units: U256::from(*units),
                 asset,

@@ -76,7 +76,7 @@ fn params(owner: Address) -> NodIssueParams {
     NodIssueParams {
         owner,
         gratis_load_minor: U256::from(1_000),
-        worldwide_day: WorldwideDay::new(20_241_220),
+        emission_day: 20_241_220,
         league_id: 1,
         entry_price_minor: U256::from(500_000),
         issuance_currency: 840,

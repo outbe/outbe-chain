@@ -118,7 +118,17 @@ fn prepare_relayed_nod(
     assert!(world.rpc.wait_successful_receipt(&funding, 120));
     let (id_bytes, initial) = wait_materialized_nod(world, port, owner);
     let id = U256::from_be_slice(&id_bytes);
-    assert_eq!(initial.worldwideDay, day);
+    let emission_day = eth::read_call(
+        &world.rpc.url(port),
+        addresses::TRIBUTE_FACTORY_ADDR,
+        &crate::world::rpc::ITributeFactory::getWorldwideDayCall { wwd: day },
+    )
+    .expect("the Tribute day's emission day")
+    .day;
+    assert_eq!(
+        outbe_primitives::series_id::SeriesId::from(initial.seriesId).day(),
+        emission_day
+    );
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
     assert!(!initial.settlementCostMinor.is_zero());

@@ -37,13 +37,20 @@ fn validate_encrypted_tribute(
     ctx: &BlockRuntimeContext<'_>,
     owners: &mut BTreeSet<alloy_primitives::Address>,
     encrypted: &EncryptedTributeV2,
+    emission_day: u32,
 ) -> Result<()> {
     let source = &encrypted.context;
     let valid_source = source.chain_id == ctx.block.chain_id && encrypted.has_valid_encoding();
+    let series_id = outbe_primitives::series_id::SeriesId::for_pair(
+        emission_day,
+        source.issuance_currency,
+        source.reference_currency,
+    )
+    .map_err(|_| mismatch())?;
     let unique_owner = owners.insert(source.owner)
         && outbe_nod::api::get_item(
             &ctx.storage,
-            outbe_primitives::nod_rules::derive_nod_id(source.owner, source.worldwide_day),
+            outbe_primitives::nod_rules::derive_nod_id(series_id, source.owner),
         )?
         .is_none();
     if valid_source && unique_owner {
@@ -57,6 +64,7 @@ fn validate_day_records(
     ctx: &BlockRuntimeContext<'_>,
     tribute: &TributeContract<'_>,
     day: WorldwideDay,
+    emission_day: u32,
     expected_count: u32,
 ) -> Result<Vec<EncryptedTributeV2>> {
     let records = tribute.state_records_by_day(day)?;
@@ -67,7 +75,7 @@ fn validate_day_records(
     let mut tributes = Vec::with_capacity(records.len());
     for record in records {
         let encrypted: EncryptedTributeV2 = record.into();
-        validate_encrypted_tribute(ctx, &mut owners, &encrypted)?;
+        validate_encrypted_tribute(ctx, &mut owners, &encrypted, emission_day)?;
         tributes.push(encrypted);
     }
     Ok(tributes)
@@ -221,6 +229,7 @@ fn build_enclave_lysis_request(
     Ok(LysisRequest {
         chain_id: ctx.block.chain_id,
         worldwide_day: emission_day.wwd,
+        emission_day: emission_day.day,
         timestamp: ctx.block.timestamp,
         lysis_limit_minor,
         tributes,
@@ -259,7 +268,8 @@ fn execute_legacy_enclave(
 ) -> Result<()> {
     let wwd = emission_day.wwd;
     let (mut tribute, totals) = load_ready_tribute(ctx, wwd)?;
-    let tributes = validate_day_records(ctx, &tribute, wwd, totals.tribute_count)?;
+    let tributes =
+        validate_day_records(ctx, &tribute, wwd, emission_day.day, totals.tribute_count)?;
     let request =
         build_enclave_lysis_request(ctx, emission_day, calculation.lysis_limit_minor, tributes)?;
     let outcome = outbe_tee::lysis::execute(request)

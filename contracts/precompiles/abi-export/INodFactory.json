@@ -107,10 +107,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "worldwideDay",
-        "type": "uint256",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes14"
       },
       {
         "name": "leagueId",

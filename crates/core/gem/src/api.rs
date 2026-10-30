@@ -16,8 +16,12 @@ pub use crate::state_api::{LoadedGem, LoadedGemGroup};
 /// Records a gem in the group of its first full day, call price and reference currency,
 /// opening that group if it is the first. Returns the gem id. GemFactory decides the issue.
 pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
-    let total_supply = GemContract::new(storage.clone()).total_supply()?;
-    let gem_id = GemContract::generate_gem_id(&params, storage.block_number()?, total_supply);
+    let series_id = GemContract::series_of(
+        params.issued_at,
+        params.issuance_currency,
+        params.reference_currency,
+    )?;
+    let gem_id = GemContract::generate_gem_id(series_id, params.owner, storage.block_number()?);
     let call_price = params
         .call_terms
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
@@ -34,6 +38,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         called_at: 0,
         settled_at: 0,
         entry_price_minor: params.entry_price_minor,
+        series_id,
     };
     record_issued(storage, &item, params.call_terms)?;
     Ok(gem_id)

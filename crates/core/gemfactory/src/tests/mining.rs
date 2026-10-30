@@ -21,9 +21,8 @@ fn mine_promis_full_flow() {
         .unwrap();
         assert_eq!(minted, load);
 
-        let gem = GemContract::new(storage.clone());
         assert!(gem_api::get_item(storage, gem_id).unwrap().is_none());
-        assert_eq!(gem.total_supply().unwrap(), 0);
+        assert_eq!(gem_api::balance_of(storage, ALICE).unwrap(), 0);
 
         // Promis is confidential: decrypt the ciphertext balance with the view key.
         let sk = outbe_promis::enclave_client::test_enclave::state_key();
@@ -113,11 +112,8 @@ fn statistics_track_mint_count() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let base = U256::from(1u64) * six_decimal_unit();
-        // `gem_id = keccak(owner || amount || block_number)`. Vary `load`
-        // per issue so the same (owner, block) pair does not collide.
-        for i in 0..3 {
-            let load = base + U256::from(i as u64);
-            issue_at_live_rate(storage, ALICE, load, 840, 840).unwrap();
+        for owner in [ALICE, BOB, Address::repeat_byte(0x33)] {
+            issue_at_live_rate(storage, owner, base, 840, 840).unwrap();
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));

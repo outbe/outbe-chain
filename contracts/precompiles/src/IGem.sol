@@ -9,19 +9,20 @@ interface IGem {
     error ZeroOwner();
     error UnknownProfileSelector(uint8 value);
     error GroupExistenceMismatch(uint256 groupId, uint32 memberCount);
-    error TotalSupplyOverflow();
     error SettledCountOverflow();
-    error TotalSupplyUnderflow();
     error SettledCountUnderflow(uint256 groupId);
     error EmptyGroup(bytes32 group);
     error GemNotInGroup(uint256 gemId, bytes32 group);
     error EmptyGroupSlotOnRemoval(bytes32 group, uint32 slot);
     error GemStateChangedAfterLoading();
     error DateStep(uint8 kind, uint32 dateKey);
+    error InvalidSeriesId();
 
     struct GemData {
         uint256 gemId;
         address owner;
+        /// The UTC day before the issue `YYYYMMDD` and the Gem's currencies.
+        bytes14 seriesId;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled,
         /// 3 Forfeited (a Called gem past its notice period, until the cleanup deletes it).
         uint8 state;

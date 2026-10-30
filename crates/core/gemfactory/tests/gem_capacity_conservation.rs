@@ -37,6 +37,13 @@ fn prod_terms(entry: U256) -> CallTerms {
     }
 }
 
+/// Gems the world's owners still hold.
+fn held(s: &StorageHandle<'_>) -> u32 {
+    (1..=GEMS)
+        .map(|byte| api::balance_of(s, Address::repeat_byte(byte)).unwrap())
+        .sum()
+}
+
 fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
     let mut p = HashMapStorageProvider::new(1);
     p.set_block_number(1);
@@ -93,7 +100,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
                 GemState::Called as u8
             );
         }
-        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 5);
+        assert_eq!(held(&s), 5);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
@@ -185,7 +192,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
     sweep(&mut p, DEADLINE).unwrap();
     conserved(&mut p, &rights);
     StorageHandle::enter(&mut p, |s| {
-        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 5);
+        assert_eq!(held(&s), 5);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
@@ -197,7 +204,7 @@ fn every_included_gem_subtype_returns_its_full_load_once_after_forfeiture() {
     sweep(&mut p, due + DAY).unwrap();
     conserved(&mut p, &rights);
     StorageHandle::enter(&mut p, |s| {
-        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+        assert_eq!(held(&s), 0);
         assert_eq!(
             GemContract::new(s).forfeit_tree_root.read().unwrap(),
             U256::ZERO
@@ -225,7 +232,7 @@ fn a_paid_then_mined_gem_returns_no_capacity_while_unpaid_siblings_forfeit() {
     sweep(&mut p, due).unwrap();
     sweep(&mut p, due + DAY).unwrap();
     StorageHandle::enter(&mut p, |s| {
-        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+        assert_eq!(held(&s), 0);
         let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
@@ -254,7 +261,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
     let total = rights.iter().map(|(_, load)| *load).sum::<U256>();
     let group_key = StorageHandle::enter(&mut p, |s| {
         let gem = GemContract::new(s.clone());
-        assert_eq!(gem.total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(&s, owner).unwrap(), 1);
         let view = api::get_view(&s, paid).unwrap().unwrap();
         assert_eq!(view.effective_state(due + DAY), GemState::Settled as u8);
         let out = outbe_gem::precompile::dispatch(
@@ -300,7 +307,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         let (item, group) = api::load_pair(&s, paid).unwrap().unwrap();
         api::remove_gem(&s, item, group).unwrap();
         assert!(api::get_group(&s, group_key).unwrap().is_none());
-        assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+        assert_eq!(held(&s), 0);
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             total - paid_load
@@ -331,7 +338,7 @@ fn failures_before_and_after_every_expiry_mutation_conserve_load_and_retry_once(
             sweep(&mut p, due + DAY).unwrap();
             conserved(&mut p, &rights);
             StorageHandle::enter(&mut p, |s| {
-                assert_eq!(GemContract::new(s.clone()).total_supply().unwrap(), 0);
+                assert_eq!(held(&s), 0);
                 assert_eq!(
                     GemContract::new(s).forfeit_tree_root.read().unwrap(),
                     U256::ZERO

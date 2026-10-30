@@ -441,7 +441,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         last_executed_at: u64,
         day_settled: bool,
         voter_claimable: U256,
-        voter_gems: u64,
+        voter_gems: u32,
         feeder_vote_exists: bool,
         formation_exists: bool,
     }
@@ -548,7 +548,6 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         StorageHandle::enter(&mut provider, |storage| {
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-            let gem = outbe_gem::GemContract::new(storage.clone());
             Observation {
                 active_day: outbe_cycle::handler::derive_active_utc_day(
                     storage.clone(),
@@ -572,7 +571,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                         voter,
                     )
                     .unwrap(),
-                voter_gems: gem.total_supply().unwrap(),
+                voter_gems: outbe_gem::api::balance_of(&storage, voter).unwrap(),
                 feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                 formation_exists: outbe_metadosis::api::emission_day(storage, PREVIOUS_DAY)
                     .unwrap()

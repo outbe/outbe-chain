@@ -572,14 +572,17 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .unwrap(),
             outbe_nod::config::PROFILE_PROD
         );
-        let gem = GemContract::new(storage);
+        let gem = GemContract::new(storage.clone());
         assert_eq!(
             gem.config_profile.read().unwrap(),
             outbe_gem::config::PROFILE_PROD
         );
         assert_eq!(
-            gem.total_supply().unwrap(),
-            0,
+            outbe_gemfactory::schema::GemFactoryContract::new(storage)
+                .total_gems_issued
+                .read()
+                .unwrap(),
+            alloy_primitives::U256::ZERO,
             "genesis carries no Gem bodies"
         );
     });

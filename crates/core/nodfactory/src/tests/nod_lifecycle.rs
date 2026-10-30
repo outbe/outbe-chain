@@ -98,10 +98,10 @@ fn nod_item_issued(
     outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
-            nod_id: outbe_nod::identity::generate_nod_id(owner, worldwide_day),
+            nod_id: outbe_nod::test_support::nod_id_of(owner, worldwide_day.value(), iso, iso),
             owner,
             gratis_load_minor: U256::from(11),
-            worldwide_day,
+            emission_day: worldwide_day.value(),
             league_id: 4,
             group_key: outbe_nod::identity::group_key(
                 issued_at,

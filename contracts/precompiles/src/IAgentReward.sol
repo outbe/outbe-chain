@@ -51,6 +51,8 @@ interface IAgentReward {
     /// the balance deadline. A successful partial claim renews the remaining balance's
     /// deadline for 365 days; a full claim clears it. The first positive credit starts
     /// a 365-day lifetime, while later credits preserve its deadline, even after expiration.
+    /// One owner gets one Gem of a series in each block, so a second claim in the same
+    /// currencies and block reverts `AlreadyExists`.
     /// @return gemId the Gem issued for the caller.
     function claimReward(uint8 pool, uint256 promisLoadMinor, uint16 issuanceCurrency, uint16 referenceCurrency)
         external

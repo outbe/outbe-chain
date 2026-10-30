@@ -37,7 +37,7 @@ fn fixed_nod() -> EncryptedNodV1 {
             )
             .unwrap(),
             owner: Address::repeat_byte(0x42),
-            worldwide_day: day,
+            emission_day: day.value(),
             league_id: 7,
             entry_price_minor: U256::from(123_456u64),
             issuance_currency: 840,

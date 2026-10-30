@@ -64,8 +64,8 @@ pub fn dispatch(
             getDayLeagueFraction(c) => view(c, |c| {
                 tribute.get_day_league_fraction(c.worldwideDay.into(), c.league)
             }),
-            createNod(c) => mutate(&storage, c, caller, |sender, c| {
-                let nod_id = tribute.create_nod(sender, WwdEntityId::from(c.tributeId))?;
+            issueNod(c) => mutate(&storage, c, caller, |sender, c| {
+                let nod_id = tribute.issue_nod(sender, WwdEntityId::from(c.tributeId))?;
                 Ok(nod_id)
             }),
             clean(c) => mutate(&storage, c, caller, |_, c| {

@@ -95,9 +95,9 @@
             "internalType": "address"
           },
           {
-            "name": "worldwideDay",
-            "type": "uint32",
-            "internalType": "uint32"
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
           },
           {
             "name": "leagueId",

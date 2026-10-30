@@ -58,7 +58,6 @@ pub(super) fn seal_series_and_sum_exact_loads(
     let storage = contract.storage_handle();
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let price_day = resolve_price_day(contract, day, completed_at)?;
-    let nod_max: U256 = lysis_limit_minor >> 10usize;
     let scale = U256::from(1_000_000u64);
     let mut series_totals: std::collections::BTreeMap<(u16, u16), (u64, U256)> =
         std::collections::BTreeMap::new();
@@ -73,8 +72,11 @@ pub(super) fn seal_series_and_sum_exact_loads(
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
         let load =
-            outbe_primitives::math::scaled_math::checked_mul_div_floor(nominal, fraction, scale)?
-                .min(nod_max);
+            outbe_primitives::math::scaled_math::checked_mul_div_floor(nominal, fraction, scale)?;
+        // Lysis gave it no load, so it has no Nod to issue and is cleaned at once.
+        if load.is_zero() {
+            continue;
+        }
         let entry = series_totals
             .entry((record.issuance_currency, record.reference_currency))
             .or_insert((0, U256::ZERO));
@@ -95,21 +97,33 @@ pub(super) fn seal_series_and_sum_exact_loads(
         exact_total = exact_total
             .checked_add(load)
             .ok_or(outbe_emission::errors::EmissionError::AmountOverflow)?;
-        let group_key =
-            outbe_nod::identity::series_group_key(price_day, issuance_currency, reference_currency);
         outbe_nodfactory::api::seal_lysis_series(
             &storage,
             outbe_nodfactory::api::LysisSeriesInput {
-                group_key,
-                emission_day: price_day,
+                series_id: series_of(price_day, issuance_currency, reference_currency)?,
+                sealed_at: completed_at,
                 reference_currency,
-                entry_price_minor: Some(vwap),
+                entry_price_minor: vwap,
                 unclaimed_tribute_count: count,
                 unclaimed_tribute_load: load,
             },
         )?;
     }
     Ok(Some(exact_total.min(lysis_limit_minor)))
+}
+
+/// The Nod series of a Tribute's emission day and currencies.
+fn series_of(
+    price_day: u32,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> Result<outbe_primitives::series_id::SeriesId> {
+    outbe_primitives::series_id::SeriesId::for_pair(
+        price_day,
+        issuance_currency,
+        reference_currency,
+    )
+    .map_err(|_| PrecompileError::fatal("Tribute currencies spell no series id"))
 }
 
 fn issuable_day_vwap(
@@ -126,7 +140,7 @@ fn issuable_day_vwap(
     )
 }
 
-pub(super) fn create_nod_from_tribute(
+pub(super) fn issue_nod_from_tribute(
     contract: &mut TributeContract<'_>,
     caller: alloy_primitives::Address,
     tribute_id: WwdEntityId,
@@ -143,7 +157,7 @@ pub(super) fn create_nod_from_tribute(
             return Err(TributeError::MetadosisNotCompleted.into());
         }
         if storage.now_secs()? < completed_at {
-            return Err(TributeError::NodCreationBeforeCompletion.into());
+            return Err(TributeError::NodIssueBeforeCompletion.into());
         }
         let record = crate::state_api::get_retained_record(&storage, tribute_id)?
             .ok_or(TributeError::TributeNotFound)?;
@@ -152,26 +166,19 @@ pub(super) fn create_nod_from_tribute(
         }
         let raw_league = contract.tribute_leagues.read(&tribute_id)?;
         let league = raw_league.max(1);
-        let fraction = U256::from(
-            contract
-                .day_fractions
-                .read(&crate::schema::day_league_key(day, league))?,
-        );
-        let lysis_limit = contract.day_lysis_limit_minor.read(&day)?;
         let nominal = record
             .calculation_view()
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
         let gratis_load_minor = outbe_lysis::program_v1::calculate_gratis_load(
             nominal,
-            fraction,
-            lysis_limit >> 10usize,
+            league_fraction(contract, day, league)?,
             0,
         )
         .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
 
-        let (group_key, gratis_day_price) =
-            resolve_series_key_and_price(contract, &storage, &record, completed_at)?;
+        let (series_id, gratis_day_price) =
+            resolve_series_and_price(contract, &storage, &record, completed_at)?;
         let encrypted_tribute = record
             .encrypted()
             .ok_or(TributeError::InvalidEncryptedEncoding)?;
@@ -179,12 +186,9 @@ pub(super) fn create_nod_from_tribute(
             encrypted_tribute,
             outbe_primitives::nod_encryption::NodTermsV1 {
                 chain_id: storage.chain_id()?,
-                nod_id: outbe_primitives::nod_rules::derive_nod_id(
-                    record.owner,
-                    record.worldwide_day,
-                ),
+                nod_id: outbe_primitives::nod_rules::derive_nod_id(series_id, record.owner),
                 owner: record.owner,
-                worldwide_day: day,
+                emission_day: series_id.day(),
                 league_id: league,
                 issuance_currency: record.issuance_currency,
                 reference_currency: record.reference_currency,
@@ -197,7 +201,7 @@ pub(super) fn create_nod_from_tribute(
             &storage,
             &encrypted_nod,
             gratis_load_minor,
-            group_key,
+            series_id,
         )?;
 
         burn_live_tribute_record(contract, &record, raw_league, nominal)?;
@@ -205,36 +209,27 @@ pub(super) fn create_nod_from_tribute(
     })
 }
 
-fn resolve_series_key_and_price(
+/// The Tribute's series and the entry price Lysis sealed on it. A series Lysis left unsealed, its
+/// price then unquoted, gives no Nod: its load already went back to the Promis Limit.
+fn resolve_series_and_price(
     contract: &TributeContract<'_>,
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
     completed_at: u64,
-) -> Result<(alloy_primitives::B256, U256)> {
+) -> Result<(outbe_primitives::series_id::SeriesId, U256)> {
     let price_day = resolve_price_day(contract, record.worldwide_day, completed_at)?;
-    let group_key = outbe_nod::identity::series_group_key(
+    let series_id = series_of(
         price_day,
         record.issuance_currency,
         record.reference_currency,
-    );
+    )?;
+    let group_key =
+        outbe_nod::api::series_group(storage, series_id)?.ok_or(TributeError::TributeForfeited)?;
     if outbe_nod::api::is_group_forfeited(storage, group_key)? {
         return Err(TributeError::TributeForfeited.into());
     }
-    let sealed_price = outbe_nod::api::group_entry_price_minor(storage, group_key)?;
-    let gratis_day_price = if !sealed_price.is_zero() {
-        sealed_price
-    } else {
-        outbe_oracle::api::get_utc_day_vwap_for_iso(
-            storage.clone(),
-            price_day,
-            record.reference_currency,
-        )?
-        .ok_or(TributeError::EntryPriceUnavailable {
-            price_day,
-            currency: record.reference_currency,
-        })?
-    };
-    Ok((group_key, gratis_day_price))
+    let sealed_price = outbe_nod::api::series_entry_price_minor(storage, series_id)?;
+    Ok((series_id, sealed_price))
 }
 
 fn burn_live_tribute_record(
@@ -270,19 +265,19 @@ pub(super) fn clean_forfeited_tribute(
             .ok_or(TributeError::TributeNotFound)?;
         let day = record.worldwide_day;
         let retired = contract.retired_days.read(&day)?;
-        let (is_forfeited, series_key) =
-            check_tribute_forfeited(contract, &storage, &record, retired)?;
-        if !is_forfeited {
-            return Err(TributeError::TributeNotForfeited.into());
-        }
-        if let Some(group_key) = series_key {
-            outbe_nod::api::record_unclaimed_tribute_cleaned(&storage, group_key)?;
-        }
         let raw_league = contract.tribute_leagues.read(&tribute_id)?;
         let nominal = record
             .calculation_view()
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
+        let (is_forfeited, series_id) =
+            check_tribute_forfeited(contract, &storage, &record, nominal, retired)?;
+        if !is_forfeited {
+            return Err(TributeError::TributeNotForfeited.into());
+        }
+        if let Some(series_id) = series_id {
+            outbe_nod::api::record_unclaimed_tribute_cleaned(&storage, series_id)?;
+        }
         if !retired {
             burn_live_tribute_record(contract, &record, raw_league, nominal)?;
             return Ok(());
@@ -304,8 +299,9 @@ fn check_tribute_forfeited(
     contract: &TributeContract<'_>,
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
+    nominal: U256,
     retired: bool,
-) -> Result<(bool, Option<alloy_primitives::B256>)> {
+) -> Result<(bool, Option<outbe_primitives::series_id::SeriesId>)> {
     if retired {
         return Ok((true, None));
     }
@@ -328,18 +324,39 @@ fn check_tribute_forfeited(
             });
         return Ok((is_aborted, None));
     }
+    let league = contract.tribute_leagues.read(&record.tribute_id)?.max(1);
+    let fraction = league_fraction(contract, day, league)?;
+    let load = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+        nominal,
+        fraction,
+        U256::from(1_000_000u64),
+    )?;
+    if load.is_zero() {
+        return Ok((true, None));
+    }
     let price_day = resolve_price_day(contract, day, completed_at)?;
-    let group_key = outbe_nod::identity::series_group_key(
+    let series_id = series_of(
         price_day,
         record.issuance_currency,
         record.reference_currency,
-    );
-    if outbe_nod::api::is_group_forfeited(storage, group_key)? {
-        return Ok((true, Some(group_key)));
+    )?;
+    // A series Lysis left unsealed gives no Nod, so its Tributes are forfeited at once.
+    match outbe_nod::api::series_group(storage, series_id)? {
+        Some(group_key) => Ok((
+            outbe_nod::api::is_group_forfeited(storage, group_key)?,
+            Some(series_id),
+        )),
+        None => Ok((true, None)),
     }
-    let unquoted = outbe_nod::api::group_entry_price_minor(storage, group_key)?.is_zero()
-        && issuable_day_vwap(storage, price_day, record.reference_currency)?.is_none();
-    Ok((unquoted, None))
+}
+
+/// The Gratis fraction Metadosis recorded for `league` on `day`.
+fn league_fraction(contract: &TributeContract<'_>, day: WorldwideDay, league: u16) -> Result<U256> {
+    Ok(U256::from(
+        contract
+            .day_fractions
+            .read(&crate::schema::day_league_key(day, league))?,
+    ))
 }
 
 fn derive_wwd_emission_day(day: WorldwideDay) -> u32 {
