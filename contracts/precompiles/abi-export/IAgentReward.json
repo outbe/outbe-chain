@@ -54,6 +54,30 @@
   },
   {
     "type": "function",
+    "name": "getPoolBalanceDeadline",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPoolClaimableBalance",
     "inputs": [
       {
@@ -115,6 +139,30 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "returnExpiredReward",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "RewardAccrued",
     "inputs": [
@@ -135,6 +183,31 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      },
+      {
+        "name": "promisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardBalanceExpired",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "pool",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
       },
       {
         "name": "promisLoadMinor",
@@ -182,6 +255,17 @@
     "inputs": [
       {
         "name": "value",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ClaimDeadlinePassed",
+    "inputs": [
+      {
+        "name": "deadline",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -252,6 +336,27 @@
   {
     "type": "error",
     "name": "PoolTotalMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardBalanceNotExpired",
+    "inputs": [
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardDeadlineMissing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardDeadlineOverflow",
     "inputs": []
   },
   {

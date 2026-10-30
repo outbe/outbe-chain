@@ -495,6 +495,69 @@ mod reward_activity_tests {
     }
 
     #[test]
+    fn zero_reward_addresses_receive_expiring_balances_through_activity_and_distribution() {
+        use outbe_agentreward::{
+            constants::REWARD_BALANCE_IDLE_SECONDS,
+            distribution::{advance_accruals, distribute_daily, PoolKind},
+            schema::RewardPool,
+        };
+        use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+
+        let now = date_key_to_utc_timestamp(20260803) + 43_200;
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_timestamp(U256::from(now));
+        StorageHandle::enter(&mut provider, |storage| {
+            let zero = format!("{:#x}", Address::ZERO);
+            let (wallets, sras) = validate_agent_reward_addresses(
+                std::slice::from_ref(&zero),
+                std::slice::from_ref(&zero),
+            )
+            .unwrap();
+            TributeFactoryContract::new(storage.clone())
+                .record_agent_reward_activity(&wallets, &sras)
+                .unwrap();
+            let ctx =
+                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, now, 1), storage.clone());
+            let day = WorldwideDay::new(timestamp_to_date_key(now));
+            assert_eq!(
+                distribute_daily(
+                    &ctx,
+                    day,
+                    &[
+                        (PoolKind::Waa, U256::from(10)),
+                        (PoolKind::Sra, U256::from(20))
+                    ]
+                )
+                .unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
+            let mut rewards = AgentRewardContract::new(storage.clone());
+            for (pool, amount) in [(RewardPool::Waa, 10), (RewardPool::Sra, 20)] {
+                assert_eq!(
+                    rewards
+                        .get_pool_claimable_reward(pool, Address::ZERO)
+                        .unwrap(),
+                    U256::from(amount)
+                );
+                assert_eq!(
+                    rewards
+                        .get_pool_balance_deadline(pool, Address::ZERO)
+                        .unwrap(),
+                    now + REWARD_BALANCE_IDLE_SECONDS
+                );
+                storage
+                    .set_block_timestamp(U256::from(now + REWARD_BALANCE_IDLE_SECONDS))
+                    .unwrap();
+                assert_eq!(
+                    rewards.return_expired_reward(pool, Address::ZERO).unwrap(),
+                    U256::from(amount)
+                );
+            }
+        });
+    }
+
+    #[test]
     fn tribute_counter_late_sra_overflow_rolls_back_waa_and_allows_retry() {
         let day = WorldwideDay::new(20_260_803);
         let count_key = AgentRewardContract::tribute_count_key(day, SRA);
