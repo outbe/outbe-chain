@@ -248,18 +248,18 @@ mod tests {
         assert_eq!(
             bid_digest(auction, 56, 20_260_108, &bidder),
             alloy_primitives::b256!(
-                "35d31042ad5daa0f569876090530a923d6fb2a49bdf3f20874ed24358d35a45a"
+                "7f26be2b1d489635cd22fb2019f31e13972acad1b7e36a17a196fe49be06611e"
             )
         );
         let signature = bid_signature(auction, 56, 20_260_108, &bidder).expect("sign the bid");
         assert_eq!(
             hex::encode(&signature),
-            "afca4e3dfbb39f0850864924229d4d636ec7256d6358912a27e04aab0bb4c91428f1146fc84838a11695e3c030f55901af4185312485edbd1be25bd4212e97cc1c"
+            "7437b13d15709b11ed69749f7cbe1a25eed7f7f8446648e7333f77425659f4a37ccc8d5b10792f253f3a14251ab8cb69b7f9648c987dfaf63f1053d43b0cb48a1c"
         );
         assert_eq!(
             keccak256(&signature),
             alloy_primitives::b256!(
-                "6bcf37c8a30f41999cc39e61771ca752662730d4fc87620703876283092c2101"
+                "537a1bb70ac6dc25baa8ac58896c8af7ab9f3c0afec2c5bbc230bcefde277969"
             )
         );
     }
