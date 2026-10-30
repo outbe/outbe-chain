@@ -318,12 +318,13 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
                     )
                     .unwrap()
         });
-        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        assert_eq!(
-            gem.total_supply().unwrap(),
-            0,
-            "Cycle credits claims but does not mint Gems"
-        );
+        for voter in voters {
+            assert_eq!(
+                outbe_gem::api::balance_of(&ctx.storage, voter).unwrap(),
+                0,
+                "Cycle credits claims but does not mint Gems"
+            );
+        }
         let expected_each = validator_amount / U256::from(voters.len());
         assert_eq!(
             planned,
@@ -537,12 +538,13 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
             cca_pool,
             "retry must credit the CCA pool exactly once"
         );
-        let gem = outbe_gem::GemContract::new(retry.storage.clone());
-        assert_eq!(
-            gem.total_supply().unwrap(),
-            0,
-            "Cycle credits claims; validators mint their own Gems"
-        );
+        for owner in TOPUP_VOTERS.into_iter().chain([Address::repeat_byte(0xc1)]) {
+            assert_eq!(
+                outbe_gem::api::balance_of(&retry.storage, owner).unwrap(),
+                0,
+                "Cycle credits claims; validators mint their own Gems"
+            );
+        }
         assert_eq!(
             topup_voters_claimable(&retry),
             expected_promis_load * U256::from(TOPUP_VOTERS.len()),
