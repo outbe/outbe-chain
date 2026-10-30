@@ -75,6 +75,163 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         block_hash
     )
     .is_err());
+
+    let witness_proof = format!(
+        "ERROR outbe_consensus::executor::actor::finalization: CRITICAL: certified finalized \
+         block failed enclave witness verification height={height} digest={block_hash:#x} \
+         witness_reason=LocalUnavailable reason=witness fault during transaction execution"
+    );
+    let fatal = "ERROR outbe_chain::launch::node::consensus: consensus stack failed e=executor actor returned fatal error";
+    let actor = "0: executor actor returned fatal error";
+    let dependency = format!(
+        "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+         execution stopped on a node-local dependency failure: witness fault during transaction execution"
+    );
+    let start = "INFO reth::cli: Starting Reth version=example";
+    let witness_logs = vec![
+        (
+            PathBuf::from("validator-3/node.log"),
+            [start, &witness_proof, fatal, actor, &dependency].join("\n"),
+        ),
+        (
+            PathBuf::from("validator-3/logs/54322345/reth.log"),
+            [start, &witness_proof, fatal].join("\n"),
+        ),
+    ];
+    let accepted =
+        super::expected_tee_sidecar_outage_records(&witness_logs, 4, 3, &tx, height, block_hash)
+            .expect("the observed typed local-unavailability outage must match");
+    assert_eq!(accepted.len(), 4);
+    let audit = |logs: &[(PathBuf, String)]| {
+        super::audit_loaded_logs_with_all_expectations(
+            logs,
+            super::AuditExpectations {
+                validators: 4,
+                unsupported_version: None,
+                expected_dkg_reveal: None,
+                expected_tee_lease_guard_shutdown_validator: None,
+                expected_tee_sidecar_outage: Some((3, &tx, height, block_hash)),
+                expected_tee_lease_guard_shutdown_full_node: None,
+            },
+        )
+    };
+    let result = audit(&witness_logs);
+    assert!(result.findings.is_empty(), "{:?}", result.findings);
+    assert_eq!(result.counts.fatal, 0);
+
+    let replace = |needle: &str, replacement: &str| {
+        witness_logs
+            .iter()
+            .map(|(path, text)| (path.clone(), text.replace(needle, replacement)))
+            .collect::<Vec<_>>()
+    };
+    let mut invalid = vec![
+        ("invalid tape", replace("LocalUnavailable", "TapeInvalid")),
+        (
+            "semantic mismatch",
+            replace("LocalUnavailable", "SemanticMismatch"),
+        ),
+        ("unknown reason", replace("LocalUnavailable", "Unknown")),
+        (
+            "missing reason",
+            replace(" witness_reason=LocalUnavailable", ""),
+        ),
+        (
+            "wrong detail",
+            replace(
+                "reason=witness fault during transaction execution",
+                "reason=unrelated failure",
+            ),
+        ),
+        (
+            "wrong target",
+            replace(
+                "outbe_consensus::executor::actor::finalization",
+                "outbe_consensus::unrelated",
+            ),
+        ),
+        (
+            "wrong proof height",
+            replace(&format!("height={height}"), "height=12"),
+        ),
+        (
+            "wrong proof hash",
+            replace(
+                &format!("digest={block_hash:#x}"),
+                &format!("digest={other_tx}"),
+            ),
+        ),
+        (
+            "wrong trailer height",
+            replace("height 11 digest", "height 12 digest"),
+        ),
+        (
+            "missing trailer",
+            replace(&dependency, "INFO no dependency trailer"),
+        ),
+        ("missing actor", replace(actor, "INFO no actor trailer")),
+        (
+            "proof before restart",
+            replace(fatal, &format!("{start}\n{fatal}")),
+        ),
+        (
+            "restart before trailer",
+            replace(actor, &format!("{start}\n{actor}")),
+        ),
+        (
+            "proof after fatal",
+            replace(
+                &format!("{witness_proof}\n{fatal}"),
+                &format!("{fatal}\n{witness_proof}"),
+            ),
+        ),
+        (
+            "duplicate fatal",
+            replace(fatal, &format!("{fatal}\n{fatal}")),
+        ),
+        (
+            "duplicate proof",
+            replace(&witness_proof, &format!("{witness_proof}\n{witness_proof}")),
+        ),
+        (
+            "conflicting proof",
+            replace(
+                &witness_proof,
+                &format!(
+                    "{witness_proof}\n{}",
+                    witness_proof.replace("LocalUnavailable", "TapeInvalid")
+                ),
+            ),
+        ),
+        ("missing sink", witness_logs[..1].to_vec()),
+        (
+            "wrong validator",
+            witness_logs
+                .iter()
+                .map(|(path, text)| {
+                    (
+                        PathBuf::from(path.to_string_lossy().replace("validator-3", "validator-2")),
+                        text.clone(),
+                    )
+                })
+                .collect(),
+        ),
+    ];
+    for sink in 0..2 {
+        let mut missing = witness_logs.clone();
+        missing[sink].1 = missing[sink].1.replace(&witness_proof, "");
+        invalid.push(("missing sink proof", missing));
+    }
+    for (case, logs) in invalid {
+        assert!(
+            super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash)
+                .is_err(),
+            "accepted {case}"
+        );
+    }
+    let mut unrelated = witness_logs;
+    unrelated[0].1.push_str("\nERROR unrelated fatal failure");
+    assert!(!audit(&unrelated).findings.is_empty());
 }
 
 fn event(fields: &str, human_message: &str) -> String {
