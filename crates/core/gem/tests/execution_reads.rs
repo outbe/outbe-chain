@@ -19,6 +19,7 @@ fn params(owner: Address) -> GemAddParams {
         reference_currency: 840,
         issued_at: ISSUED_AT,
         call_terms: None,
+        market_price: true,
     }
 }
 
@@ -38,7 +39,8 @@ fn reverted_issuance_rolls_back_state_and_events() {
             params.reference_currency,
         )
         .unwrap();
-        let expected = GemContract::generate_gem_id(series, owner, storage.block_number().unwrap());
+        let expected =
+            GemContract::generate_gem_id(series, 0, owner, storage.block_number().unwrap());
         let outcome: Result<U256> = storage.with_checkpoint(|| {
             let gem_id = api::add_gem(&storage, params.clone())?;
             assert_eq!(gem_id, expected);

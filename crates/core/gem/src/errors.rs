@@ -58,6 +58,9 @@ pub enum GemError {
 
     #[error("gem currencies spell no series id")]
     InvalidSeriesId,
+
+    #[error("gem series has no free sub-series number")]
+    SubSeriesOverflow,
 }
 
 impl From<outbe_primitives::series_id::InvalidSeriesId> for GemError {
@@ -139,6 +142,7 @@ impl From<GemError> for PrecompileError {
                 dateKey: date_key,
             }),
             GemError::InvalidSeriesId => revert_with(I::InvalidSeriesId {}),
+            GemError::SubSeriesOverflow => revert_with(I::SubSeriesOverflow {}),
         }
     }
 }

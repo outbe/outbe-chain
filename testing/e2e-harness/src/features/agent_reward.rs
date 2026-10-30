@@ -758,6 +758,7 @@ mod claim_tests {
             gemId: U256::from(7),
             owner: Address::repeat_byte(1),
             seriesId: Default::default(),
+            subSeriesId: 0,
             state: 0,
             promisLoadMinor: U256::from(123),
             entryPriceMinor: U256::from(1_000_001),

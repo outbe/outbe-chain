@@ -87,6 +87,11 @@
             "internalType": "bytes14"
           },
           {
+            "name": "subSeriesId",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
             "name": "state",
             "type": "uint8",
             "internalType": "uint8"
@@ -651,6 +656,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SubSeriesOverflow",
+    "inputs": []
   },
   {
     "type": "error",

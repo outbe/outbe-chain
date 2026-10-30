@@ -32,6 +32,10 @@ pub(crate) fn token_uri(view: &GemView, now: u64) -> String {
     ));
     let mut traits = vec![
         Trait::text("State", state.label),
+        Trait::text(
+            "Series",
+            format!("{}-{}", item.series_id, item.sub_series_id),
+        ),
         Trait::amount("Entry Price", item.entry_price_minor, PRICE_PRECISION),
         Trait::amount("Call Price", view.terms.call_price_minor, PRICE_PRECISION),
         Trait::amount("Promis Load", item.promis_load_minor, AMOUNT_PRECISION),

@@ -3,6 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::call_breach::group_key;
 use outbe_primitives::error::Result;
+use outbe_primitives::series_id::SeriesId;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::first_full_day;
 
@@ -21,10 +22,16 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         params.issuance_currency,
         params.reference_currency,
     )?;
-    let gem_id = GemContract::generate_gem_id(series_id, params.owner, storage.block_number()?);
     let call_price = params
         .call_terms
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
+    let sub_series_id = sub_series_of(storage, series_id, call_price, params.market_price)?;
+    let gem_id = GemContract::generate_gem_id(
+        series_id,
+        sub_series_id,
+        params.owner,
+        storage.block_number()?,
+    );
     let full_day = first_full_day(params.issued_at).map_err(date_step_error)?;
     let item = GemItemState {
         gem_id,
@@ -39,9 +46,21 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         settled_at: 0,
         entry_price_minor: params.entry_price_minor,
         series_id,
+        sub_series_id,
     };
     record_issued(storage, &item, params.call_terms)?;
     Ok(gem_id)
+}
+
+/// The sub-series of `call_price_minor` in `series_id`: 0 for the series-date VWAP, else
+/// its number, given on first use.
+pub fn sub_series_of(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    call_price_minor: U256,
+    market_price: bool,
+) -> Result<u16> {
+    GemContract::new(storage.clone()).sub_series_of(series_id, call_price_minor, market_price)
 }
 
 /// Records an already built gem, opening its group with `call_terms` if it is the first.

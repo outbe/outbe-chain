@@ -149,28 +149,32 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
 }
 
 #[test]
-fn gem_id_derivation_binds_the_series_owner_and_block() {
+fn gem_id_derivation_binds_the_series_sub_series_owner_and_block() {
     let series = |issuance, reference| GemContract::series_of(T_NOW, issuance, reference).unwrap();
-    let baseline = GemContract::generate_gem_id(series(USD, USD), ALICE, 1);
+    let baseline = GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 1);
     assert_eq!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), ALICE, 1)
+        GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(EUR, USD), ALICE, 1)
+        GemContract::generate_gem_id(series(EUR, USD), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, EUR), ALICE, 1)
+        GemContract::generate_gem_id(series(USD, EUR), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), BOB, 1)
+        GemContract::generate_gem_id(series(USD, USD), 1, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), ALICE, 2)
+        GemContract::generate_gem_id(series(USD, USD), 0, BOB, 1)
+    );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 2)
     );
 }
 
@@ -531,6 +535,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             gem_id,
             GemContract::generate_gem_id(
                 GemContract::series_of(T_NOW, USD, USD).unwrap(),
+                0,
                 ALICE,
                 storage.block_number().unwrap(),
             )
