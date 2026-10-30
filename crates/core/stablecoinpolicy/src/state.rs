@@ -149,15 +149,15 @@ impl StablecoinPolicyRegistryContract<'_> {
             }
             .into());
         }
-        let cancelled_pending_admin = descriptor.pending_admin;
+        let canceled_pending_admin = descriptor.pending_admin;
         descriptor.pending_admin = Address::ZERO;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.policies.update(&descriptor)?;
-            self.emit(IStablecoinPolicyRegistry::PolicyAdminTransferCancelled {
+            self.emit(IStablecoinPolicyRegistry::PolicyAdminTransferCanceled {
                 policyId: policy_id,
                 admin: caller,
-                cancelledPendingAdmin: cancelled_pending_admin,
+                canceledPendingAdmin: canceled_pending_admin,
             })
         })
     }
