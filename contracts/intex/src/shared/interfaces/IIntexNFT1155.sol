@@ -87,7 +87,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Emitted when a new Intex series is issued.
     /// @param operator Caller that minted the Issued tokens (`AUCTION_ROLE`).
-    /// @param tokenId Issued token id (= `uint256(seriesId)`).
+    /// @param tokenId Issued token id (= `keccak256(seriesId)`).
     /// @param to Recipient of the minted Issued tokens.
     /// @param units Issued units minted to `to`.
     event IntexIssued(address indexed operator, uint256 indexed tokenId, address indexed to, uint256 units);
