@@ -226,8 +226,9 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
                     expected
                 );
             }
+            // Another series than the partial claim: one Gem per owner, series and block.
             contract
-                .claim_reward(pool, ALICE, U256::ZERO, (USD, USD))
+                .claim_reward(pool, ALICE, U256::ZERO, (EUR, USD))
                 .unwrap();
             assert_eq!(contract.get_pool_balance_deadline(pool, ALICE).unwrap(), 0);
             assert_eq!(
