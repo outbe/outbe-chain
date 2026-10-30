@@ -11,6 +11,7 @@ use crate::api;
 use crate::precompile::{dispatch, IGem};
 use crate::schema::{CallTerms, GemAddParams, GemContract, GemItemState, GemView};
 
+mod storage_snapshot;
 mod views;
 
 pub(crate) const T_NOW: u64 = 1_700_000_000;

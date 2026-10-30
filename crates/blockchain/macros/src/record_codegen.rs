@@ -7,7 +7,7 @@ use super::{
     is_deprecated_type, is_ident_type, is_optional_type, last_type_ident, type_args,
     unwrap_single_generic_type,
 };
-use packed::{compute_placements, emit_packed_slot_ops, FieldPlacement};
+use packed::{compute_placements, emit_packed_slot_ops, record_field_byte_width, FieldPlacement};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
@@ -199,10 +199,12 @@ fn emit_record(description: &RecordDescription) -> TokenStream2 {
     let write_fields = packed_ops.writes;
     let delete_fields = packed_ops.deletes;
     let entry_trait_name = format_ident!("{}EntryExt", name);
+    let layout_table = emit_record_layout_table(description);
 
     quote! {
         #cleaned_struct
         #helper_impl
+        #layout_table
 
         impl ::outbe_primitives::storage::types::StorableType for #name {
             const SLOTS: usize = #total_slots as usize;
@@ -259,6 +261,48 @@ fn emit_record(description: &RecordDescription) -> TokenStream2 {
 
         impl<'storage> #entry_trait_name<'storage> for ::outbe_primitives::storage::dsl::RecordEntry<'storage, #key_ty, #name> {
             #(#accessor_impl_methods)*
+        }
+    }
+}
+
+/// Emits `RECORD_LAYOUT`: the slot offset and byte range of each non-key
+/// attribute, in slot order.
+fn emit_record_layout_table(description: &RecordDescription) -> TokenStream2 {
+    let name = &description.input.ident;
+    let mut placed: Vec<_> = description
+        .non_key_fields
+        .iter()
+        .zip(description.non_key_placements.iter())
+        .collect();
+    placed.sort_by_key(|(_, placement)| (placement.slot_offset, placement.byte_offset));
+    let entries = placed.into_iter().map(|(field, placement)| {
+        let field_name = field.name.to_string();
+        let slot_offset = placement.slot_offset;
+        let slots = record_field_storage_slots(&field.ty).unwrap_or(1);
+        let byte_offset = placement.byte_offset as u64;
+        let bytes = if placement.packed {
+            record_field_byte_width(&field.ty).unwrap_or(32) as u64
+        } else {
+            32u64
+        };
+        let ty = crate::layout_type_label(&field.ty);
+        quote! {
+            ::outbe_primitives::storage::layout::RecordFieldLayout {
+                name: #field_name,
+                slot_offset: #slot_offset,
+                slots: #slots,
+                byte_offset: #byte_offset,
+                bytes: #bytes,
+                ty: #ty,
+            }
+        }
+    });
+    quote! {
+        impl #name {
+            /// Non-key attributes in slot order, with the offsets the macro gave them.
+            pub const RECORD_LAYOUT: &'static [::outbe_primitives::storage::layout::RecordFieldLayout] = &[
+                #(#entries,)*
+            ];
         }
     }
 }

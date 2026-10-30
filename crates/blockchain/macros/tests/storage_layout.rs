@@ -411,3 +411,69 @@ fn packed_storage_record_packs_subword_fields_without_clobbering() {
         assert_eq!(entry.load().unwrap(), None);
     });
 }
+
+#[test]
+fn layout_tables_report_the_allocated_slots() {
+    let fields: Vec<_> = Ordered::STORAGE_LAYOUT
+        .iter()
+        .map(|f| (f.name, f.slot, f.slots, f.ty))
+        .collect();
+    assert_eq!(
+        fields,
+        vec![
+            ("set", 0, 2, "StorageSet<u64>"),
+            ("tied", 2, 1, "Value<u64>"),
+            ("records", 3, 5, "Map<u64, MixedRecord>"),
+            ("tail", 8, 1, "Value<u64>"),
+        ]
+    );
+    let explicit: Vec<_> = Explicit::STORAGE_LAYOUT
+        .iter()
+        .map(|f| (f.name, f.slot))
+        .collect();
+    assert_eq!(explicit, vec![("first", 0), ("reset", 12), ("next", 13)]);
+
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let c = Ordered::new(storage);
+        assert_eq!(
+            c.records.base_slot(),
+            U256::from(Ordered::STORAGE_LAYOUT[2].slot)
+        );
+        assert_eq!(c.tail.slot(), U256::from(Ordered::STORAGE_LAYOUT[3].slot));
+    });
+}
+
+#[test]
+fn record_layout_tables_report_offsets_and_packed_bytes() {
+    let mixed: Vec<_> = MixedRecord::RECORD_LAYOUT
+        .iter()
+        .map(|f| (f.name, f.slot_offset, f.slots, f.bytes))
+        .collect();
+    assert_eq!(
+        mixed,
+        vec![
+            ("text", 0, 1, 32),
+            ("optional", 1, 2, 32),
+            ("active", 3, 1, 32),
+            ("bytes", 4, 1, 32),
+        ]
+    );
+
+    let packed: Vec<_> = PackedRecord::RECORD_LAYOUT
+        .iter()
+        .map(|f| (f.name, f.slot_offset, f.byte_offset, f.bytes))
+        .collect();
+    assert_eq!(
+        packed,
+        vec![
+            ("principal", 0, 0, 32),
+            ("owner", 1, 0, 20),
+            ("timestamp", 1, 20, 8),
+            ("currency", 1, 28, 2),
+            ("status", 1, 30, 1),
+            ("active", 1, 31, 1),
+            ("next_counter", 2, 0, 8),
+        ]
+    );
+}

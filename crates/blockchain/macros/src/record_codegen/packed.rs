@@ -51,7 +51,7 @@ pub(super) fn compute_placements(
     Ok((placements, total))
 }
 
-fn record_field_byte_width(ty: &Type) -> Option<usize> {
+pub(super) fn record_field_byte_width(ty: &Type) -> Option<usize> {
     if is_optional_type(ty) || dynamic_field_kind(ty).is_some() {
         return None;
     }

@@ -7,6 +7,7 @@ pub mod handle;
 pub mod hashmap;
 pub mod indexed_list;
 pub mod keys;
+pub mod layout;
 pub mod metadosis_mutation;
 pub mod proof;
 pub mod readonly;

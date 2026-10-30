@@ -19,6 +19,7 @@ mod precompile;
 mod series;
 mod series_id;
 mod settled;
+mod storage_snapshot;
 mod units;
 
 const CHAIN_ID: u64 = 1;

@@ -198,12 +198,46 @@ fn emit_contract(
     let storage_backed_impl = emit_storage_backed(name, config.address.as_ref());
     let constructor = emit_constructor(name, config.address.as_ref(), &field_inits);
     let layout_assertions = emit_layout_assertions(fields, layout);
+    let layout_table = emit_layout_table(name, fields, layout);
 
     quote! {
         #struct_def
         #constructor
         #storage_backed_impl
         #layout_assertions
+        #layout_table
+    }
+}
+
+/// Emits `STORAGE_LAYOUT`: the base slot and slot count of each field, in the
+/// order the allocator placed them.
+fn emit_layout_table(
+    name: &Ident,
+    fields: &[ContractFieldInfo],
+    layout: &SlotLayout,
+) -> TokenStream2 {
+    let entries = layout.allocation_order.iter().map(|&idx| {
+        let field = &fields[idx];
+        let field_name = field.name.to_string();
+        let slot = &layout.slots[idx];
+        let count = contract_slot_count_expr(&field.ty);
+        let ty = crate::layout_type_label(&field.ty);
+        quote! {
+            ::outbe_primitives::storage::layout::FieldLayout {
+                name: #field_name,
+                slot: #slot,
+                slots: #count,
+                ty: #ty,
+            }
+        }
+    });
+    quote! {
+        impl<'storage> #name<'storage> {
+            /// Storage fields in allocation order, with the slots the macro gave them.
+            pub const STORAGE_LAYOUT: &'static [::outbe_primitives::storage::layout::FieldLayout] = &[
+                #(#entries,)*
+            ];
+        }
     }
 }
 

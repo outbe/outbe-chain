@@ -107,6 +107,17 @@ fn is_deprecated_type(ty: &Type) -> bool {
     is_ident_type(ty, &["Deprecated"])
 }
 
+/// Type text for the layout tables: no whitespace inside paths and generics,
+/// and no storage DSL module path.
+fn layout_type_label(ty: &Type) -> String {
+    let text: String = quote::quote!(#ty).to_string().split_whitespace().collect();
+    text.replace(',', ", ")
+        .replace("::outbe_primitives::storage::dsl::", "")
+        .replace("outbe_primitives::storage::dsl::", "")
+        .replace("::outbe_primitives::storage::types::", "")
+        .replace("outbe_primitives::storage::types::", "")
+}
+
 fn unwrap_single_generic_type(ty: &Type) -> Option<Type> {
     let args = type_args(ty)?;
     match args.first() {
