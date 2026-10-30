@@ -6,6 +6,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     nod_encryption::NOD_BLOB_LEN,
+    series_id::SeriesId,
     storage::StorageHandle,
 };
 
@@ -84,14 +85,14 @@ pub fn add_series_item(
     item: &NodItemState,
     terms: Option<CallTerms>,
     gratis_load_minor: U256,
-    series_group_key: B256,
+    series_id: SeriesId,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
         NodContract::new(storage.clone()).record_nod_issued_state(
             item,
             terms,
             gratis_load_minor,
-            Some(series_group_key),
+            Some(series_id),
         )
     })
 }
@@ -146,12 +147,19 @@ impl NodContract<'_> {
         item: &NodItemState,
         call_terms: Option<CallTerms>,
         gratis_load_minor: U256,
-        series_group_key: Option<B256>,
+        series_id: Option<SeriesId>,
     ) -> Result<()> {
+        let series_group = match series_id {
+            Some(series_id) => Some(
+                self.sealed_series_group(series_id)?
+                    .ok_or_else(|| PrecompileError::fatal("a Nod claims an unsealed series"))?,
+            ),
+            None => None,
+        };
         crate::issuance::validate_item(
             item,
             call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
-            series_group_key,
+            series_group,
         )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
@@ -193,8 +201,12 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
         self.total_supply.write(supply)?;
-        if series_group_key.is_some() {
-            self.consume_unclaimed_tribute_from_series(item.group_key, gratis_load_minor)?;
+        if let Some(series_id) = series_id {
+            self.consume_unclaimed_tribute_from_series(
+                series_id,
+                item.group_key,
+                gratis_load_minor,
+            )?;
         }
         self.add_unpaid_load(item.group_key, gratis_load_minor)?;
         self.insert_group_member(item.group_key, item.nod_id)?;

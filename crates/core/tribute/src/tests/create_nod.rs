@@ -400,7 +400,12 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
             })
             .unwrap();
 
-        let group_key = outbe_nod::identity::series_group_key(emission_day_key, 840, 840);
+        let group_key = outbe_nod::api::series_group(
+            &storage,
+            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
+        )
+        .unwrap()
+        .expect("the 840 series is sealed");
         let mut nod = outbe_nod::NodContract::new(storage.clone());
         assert_eq!(
             nod.group_unclaimed_tribute_count.read(&group_key).unwrap(),
@@ -591,10 +596,12 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             .unwrap();
 
         // Unquoted 978 must not have sealed a series; 840 sealed a 0-Nod series with 2 Tributes
-        let unquoted_group_key = outbe_nod::identity::series_group_key(emission_day_key, 840, 978);
-        assert!(outbe_nod::api::get_group(&storage, unquoted_group_key)
-            .unwrap()
-            .is_none());
+        assert!(outbe_nod::api::series_group(
+            &storage,
+            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 978).unwrap(),
+        )
+        .unwrap()
+        .is_none());
         let clean_unquoted = crate::precompile::ITribute::cleanCall {
             tributeId: t_unquoted.tribute_id.to_u256(),
         }
@@ -603,7 +610,12 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             .unwrap();
         assert!(tc.get_record(t_unquoted.tribute_id).unwrap().is_none());
 
-        let group_key = outbe_nod::identity::series_group_key(emission_day_key, 840, 840);
+        let group_key = outbe_nod::api::series_group(
+            &storage,
+            outbe_primitives::series_id::SeriesId::for_pair(emission_day_key, 840, 840).unwrap(),
+        )
+        .unwrap()
+        .expect("the 840 series is sealed");
         assert_eq!(
             nod_contract
                 .group_unclaimed_tribute_count

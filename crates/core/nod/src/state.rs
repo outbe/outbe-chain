@@ -1,7 +1,8 @@
 use alloy_primitives::{B256, U256};
 use outbe_primitives::call_bins;
 use outbe_primitives::deadline_queue;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::series_id::SeriesId;
 
 use crate::{
     errors::NodError,
@@ -164,16 +165,17 @@ impl NodContract<'_> {
         self.group_unclaimed_tribute_count.clear(&group_key)?;
         self.group_unclaimed_tribute_load.clear(&group_key)?;
         self.group_is_forfeited.clear(&group_key)?;
-        self.group_entry_price_minor.clear(&group_key)?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
     }
 
-    /// Seals or updates a Lysis series group with its unclaimed tribute count and exact load sum.
+    /// Seals a Lysis series into its call group, opening the group on `call_terms` if it is
+    /// the first, and adds the series' unclaimed Tributes to the group's.
     pub(crate) fn seal_lysis_series_state(
         &mut self,
         seal: crate::api::LysisSeriesSeal,
     ) -> Result<()> {
         let crate::api::LysisSeriesSeal {
+            series_id,
             group_key,
             full_day_after_issue,
             reference_currency,
@@ -189,23 +191,28 @@ impl NodContract<'_> {
             return Ok(());
         }
         let current_group = self.groups.get(group_key)?;
-        let prev_count = self.group_unclaimed_tribute_count.read(&group_key)?;
-        let next_count = prev_count
+        let next_count = self
+            .group_unclaimed_tribute_count
+            .read(&group_key)?
             .checked_add(unclaimed_tribute_count)
             .ok_or(NodError::GroupMemberIndexOverflow { group_key })?;
-        let prev_load = self.group_unclaimed_tribute_load.read(&group_key)?;
-        let next_load = prev_load
+        let next_load = self
+            .group_unclaimed_tribute_load
+            .read(&group_key)?
             .checked_add(unclaimed_tribute_load)
             .ok_or(NodError::GroupUnpaidLoadOverflow { group_key })?;
         self.group_unclaimed_tribute_count
             .write(&group_key, next_count)?;
         self.group_unclaimed_tribute_load
             .write(&group_key, next_load)?;
-        self.group_currency.write(&group_key, reference_currency)?;
-        if !entry_price_minor.is_zero() {
-            self.group_entry_price_minor
-                .write(&group_key, entry_price_minor)?;
+        if self.sealed_series_group(series_id)?.is_some() {
+            return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
         }
+        self.series_group.write(&series_id, group_key)?;
+        self.series_entry_price_minor
+            .write(&series_id, entry_price_minor)?;
+        self.series_unclaimed_tribute_count
+            .write(&series_id, unclaimed_tribute_count)?;
         if current_group.is_none() {
             if let Some(terms) = call_terms {
                 self.seal_group_call_terms(group_key, terms)?;
@@ -221,34 +228,41 @@ impl NodContract<'_> {
         Ok(())
     }
 
+    /// The call group Lysis sealed `series_id` into, while it has unclaimed Tributes.
+    pub(crate) fn sealed_series_group(&self, series_id: SeriesId) -> Result<Option<B256>> {
+        let group_key = self.series_group.read(&series_id)?;
+        Ok((!group_key.is_zero()).then_some(group_key))
+    }
+
+    /// Takes one claimed Tribute and its `gratis_load_minor` off its series and group.
     pub(crate) fn consume_unclaimed_tribute_from_series(
         &mut self,
+        series_id: SeriesId,
         group_key: B256,
         gratis_load_minor: U256,
     ) -> Result<()> {
-        let count = self.group_unclaimed_tribute_count.read(&group_key)?;
-        if count > 0 {
-            self.group_unclaimed_tribute_count
-                .write(&group_key, count - 1)?;
-            let load = self.group_unclaimed_tribute_load.read(&group_key)?;
-            let next_load = load
-                .checked_sub(gratis_load_minor)
-                .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
-            self.group_unclaimed_tribute_load
-                .write(&group_key, next_load)?;
-        }
-        Ok(())
+        let load = self.group_unclaimed_tribute_load.read(&group_key)?;
+        let next_load = load
+            .checked_sub(gratis_load_minor)
+            .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
+        self.group_unclaimed_tribute_load
+            .write(&group_key, next_load)?;
+        self.release_series_tribute(series_id, group_key)
     }
 
-    pub(crate) fn record_unclaimed_tribute_cleaned_state(&mut self, group_key: B256) -> Result<()> {
-        let count = self.group_unclaimed_tribute_count.read(&group_key)?;
-        if count == 0 {
+    /// Takes one cleaned forfeited Tribute off its series and group, deleting the group once
+    /// nothing is left in it.
+    pub(crate) fn record_unclaimed_tribute_cleaned_state(
+        &mut self,
+        series_id: SeriesId,
+    ) -> Result<()> {
+        let Some(group_key) = self.sealed_series_group(series_id)? else {
             return Ok(());
-        }
-        let remaining_unclaimed = count - 1;
-        self.group_unclaimed_tribute_count
-            .write(&group_key, remaining_unclaimed)?;
-        if remaining_unclaimed == 0 && self.group_nod_count.read(&group_key)? == 0 {
+        };
+        self.release_series_tribute(series_id, group_key)?;
+        if self.group_unclaimed_tribute_count.read(&group_key)? == 0
+            && self.group_nod_count.read(&group_key)? == 0
+        {
             if let Some(group) = self.groups.get(group_key)? {
                 if group.settled_nods == 0 {
                     self.group_nod_count.clear(&group_key)?;
@@ -258,6 +272,26 @@ impl NodContract<'_> {
             }
         }
         Ok(())
+    }
+
+    fn release_series_tribute(&mut self, series_id: SeriesId, group_key: B256) -> Result<()> {
+        let group_count = self.group_unclaimed_tribute_count.read(&group_key)?;
+        let series_count = self.series_unclaimed_tribute_count.read(&series_id)?;
+        if group_count == 0 || series_count == 0 {
+            return Err(PrecompileError::fatal(
+                "a Lysis series has no unclaimed Tribute left",
+            ));
+        }
+        self.group_unclaimed_tribute_count
+            .write(&group_key, group_count - 1)?;
+        if series_count > 1 {
+            return self
+                .series_unclaimed_tribute_count
+                .write(&series_id, series_count - 1);
+        }
+        self.series_unclaimed_tribute_count.clear(&series_id)?;
+        self.series_entry_price_minor.clear(&series_id)?;
+        self.series_group.clear(&series_id)
     }
 
     // --- Unpaid load ----------------------------------------------------------

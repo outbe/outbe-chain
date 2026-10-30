@@ -20,20 +20,6 @@ pub fn group_key(
     ))
 }
 
-/// Series group identity sealed at Lysis: `(emission_day E, issuance_currency, reference_currency)` (OIP-00343 / OIP-00328).
-#[must_use]
-pub fn series_group_key(
-    emission_day: u32,
-    issuance_currency: u16,
-    reference_currency: u16,
-) -> B256 {
-    let mut bytes = [0u8; 8];
-    bytes[..4].copy_from_slice(&emission_day.to_be_bytes());
-    bytes[4..6].copy_from_slice(&issuance_currency.to_be_bytes());
-    bytes[6..8].copy_from_slice(&reference_currency.to_be_bytes());
-    alloy_primitives::keccak256(bytes)
-}
-
 /// Deterministic full-width Keccak256 NOD identity: raw owner (20 bytes)
 /// followed by worldwide_day (u32 big-endian). The typed Nod collection is its namespace.
 pub fn generate_nod_id(owner: Address, worldwide_day: WorldwideDay) -> U256 {
