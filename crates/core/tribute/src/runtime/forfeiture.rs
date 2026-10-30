@@ -64,7 +64,6 @@ pub(super) fn seal_series_and_sum_exact_loads(
     let storage = contract.storage_handle();
     let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let price_day = resolve_price_day(contract, day, completed_at)?;
-    let nod_max: U256 = lysis_limit_minor >> 10usize;
     let scale = U256::from(1_000_000u64);
     let mut series_totals: std::collections::BTreeMap<(u16, u16), (u64, U256)> =
         std::collections::BTreeMap::new();
@@ -79,8 +78,7 @@ pub(super) fn seal_series_and_sum_exact_loads(
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
         let load =
-            outbe_primitives::math::scaled_math::checked_mul_div_floor(nominal, fraction, scale)?
-                .min(nod_max);
+            outbe_primitives::math::scaled_math::checked_mul_div_floor(nominal, fraction, scale)?;
         let entry = series_totals
             .entry((record.issuance_currency, record.reference_currency))
             .or_insert((0, U256::ZERO));
@@ -175,18 +173,13 @@ pub(super) fn create_nod_from_tribute(
                 .day_fractions
                 .read(&crate::schema::day_league_key(day, league))?,
         );
-        let lysis_limit = contract.day_lysis_limit_minor.read(&day)?;
         let nominal = record
             .calculation_view()
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
-        let gratis_load_minor = outbe_lysis::program_v1::calculate_gratis_load(
-            nominal,
-            fraction,
-            lysis_limit >> 10usize,
-            0,
-        )
-        .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
+        let gratis_load_minor =
+            outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, 0)
+                .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
 
         let (series_id, sealed, gratis_day_price) =
             resolve_series_and_price(contract, &storage, &record, completed_at)?;

@@ -362,7 +362,17 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
         );
         let load = outbe_tee_enclave::nod_encryption::decrypt_nod(&[0x5a; 32], &nods[0].encrypted)
             .unwrap();
-        assert_eq!(load, U256::from(LIMIT / 1024));
+        let fraction = tribute
+            .day_fractions
+            .read(&outbe_tribute::schema::day_league_key(
+                WWD,
+                nods[0].league_id,
+            ))
+            .unwrap();
+        assert_eq!(
+            load,
+            U256::from(NOMINAL) * U256::from(fraction) / U256::from(1_000_000u64)
+        );
     });
     let before = provider.storage.clone();
     let logs = provider.get_ordered_events().to_vec();

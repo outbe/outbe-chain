@@ -29,41 +29,34 @@ fn nod_action_preserves_source_tribute() {
 }
 
 #[test]
-fn gratis_load_cap_preserves_fraction_math_and_full_precision() {
-    let nod_gratis_load_max = U256::from(1000);
+fn gratis_load_preserves_fraction_math_and_full_precision() {
     for (nominal, fraction, expected) in [
         (1000, 500_000, 500),
         (2000, 500_000, 1000),
-        (5000, 500_000, 1000),
-        (1000, 2_000_000, 1000),
+        (5000, 500_000, 2500),
+        (1000, 2_000_000, 2000),
     ] {
         assert_eq!(
-            calculate_gratis_load(
-                U256::from(nominal),
-                U256::from(fraction),
-                nod_gratis_load_max,
-                0
-            )
-            .unwrap(),
+            calculate_gratis_load(U256::from(nominal), U256::from(fraction), 0).unwrap(),
             U256::from(expected)
         );
     }
     assert_eq!(
-        calculate_gratis_load(U256::MAX / SCALE, SCALE, U256::MAX / U256::from(1024), 0).unwrap(),
+        calculate_gratis_load(U256::MAX / SCALE, SCALE, 0).unwrap(),
         U256::MAX / SCALE
     );
     assert!(matches!(
-        calculate_gratis_load(U256::MAX, SCALE, nod_gratis_load_max, 0),
+        calculate_gratis_load(U256::MAX, SCALE, 0),
         Err(ProgramErrorV1::Arithmetic { .. })
     ));
     assert!(matches!(
-        calculate_gratis_load(U256::ZERO, SCALE, nod_gratis_load_max, 7),
+        calculate_gratis_load(U256::ZERO, SCALE, 7),
         Err(ProgramErrorV1::ZeroGratisLoad { ordinal: 7 })
     ));
 }
 
 #[test]
-fn frozen_budget_cap_boundaries_and_remaining_accounting() {
+fn frozen_budget_boundaries_and_remaining_accounting() {
     let day = WorldwideDay::new(20_260_724);
     let tributes = [1_u8, 2].map(|seed| {
         let owner = alloy_primitives::Address::repeat_byte(seed);
@@ -77,28 +70,28 @@ fn frozen_budget_cap_boundaries_and_remaining_accounting() {
             tribute_price_minor: U256::ZERO,
         }
     });
-    for budget in [1023_u64, 1024, 1025, 1_025_023] {
+    for budget in [1_u64, 2, 1024, 1_025_023] {
         let mut tributes = tributes.to_vec();
         tributes.sort_by_key(|tribute| tribute.tribute_id);
         let mut execution = prepare(day, tributes, vec![1, 1], U256::from(budget)).unwrap();
         let fractions = execution.fractions.clone();
-        if budget < 1024 {
+        let load = U256::from(1_000_000) * fractions[&1] / SCALE;
+        if load.is_zero() {
             assert!(matches!(
                 execution.quote_next(),
                 Err(ProgramErrorV1::ZeroGratisLoad { ordinal: 0 })
             ));
             continue;
         }
-        let cap = U256::from(budget / 1024);
         for _ in 0..2 {
             let pending = execution.quote_next().unwrap();
-            assert_eq!(pending.gratis_load_minor, cap);
+            assert_eq!(pending.gratis_load_minor, load);
             execution.commit_next(pending, SCALE, 1, true).unwrap();
         }
         assert_eq!(execution.fractions, fractions);
         assert_eq!(
             execution.finish().unwrap().remaining_lysis_limit_minor,
-            U256::from(budget) - cap * U256::from(2)
+            U256::from(budget) - load * U256::from(2)
         );
     }
 }

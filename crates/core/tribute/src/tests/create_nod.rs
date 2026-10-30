@@ -86,7 +86,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_create_nod_burns_tribute() {
             outbe_nod::openings::entry_price_day(base_ts).expect("date step"),
             U256::from(1_234_567u64),
         );
-        let lysis_limit = U256::from(500_000_000_000u64); // large enough so nod_max = lysis_limit / 1024 >= loads
+        let lysis_limit = U256::from(500_000_000_000u64);
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),

@@ -242,10 +242,6 @@ impl TributeContract<'_> {
         u256_fractions: &std::collections::BTreeMap<u16, U256>,
         lysis_limit_minor: U256,
     ) -> U256 {
-        let nod_max: U256 = lysis_limit_minor >> 10usize;
-        if nod_max.is_zero() {
-            return U256::ZERO;
-        }
         let scale = U256::from(1_000_000u64);
         let mut total_allocated = U256::ZERO;
         for (&league, &(count, nominal_sum)) in fi_groups {
@@ -256,14 +252,13 @@ impl TributeContract<'_> {
             if fraction.is_zero() {
                 continue;
             }
-            let league_cap = nod_max.saturating_mul(U256::from(count));
             let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
                 nominal_sum,
                 fraction,
                 scale,
             )
-            .unwrap_or(league_cap);
-            total_allocated = total_allocated.saturating_add(league_raw.min(league_cap));
+            .unwrap_or(lysis_limit_minor);
+            total_allocated = total_allocated.saturating_add(league_raw);
         }
         total_allocated.min(lysis_limit_minor)
     }
