@@ -12,7 +12,8 @@ import {HandOver} from "./4_HandOver.s.sol";
 ///   1. Adapters - each deployed only when its endpoint env is set (`LZ_ENDPOINT` / `HYPERLANE_MAILBOX`)
 ///   2. Bridge (with the active gateway)
 ///   3. Wire remotes for each `REMOTE_CHAIN_IDS` (remote addresses == local CREATE3 addresses)
-///   4. Give the bridge and the adapters to governance (`4_HandOver`)
+///   4. Give the bridge and the adapters to governance (`4_HandOver`), unless
+///      `KEEP_DEPLOYER_AS_OWNER` is true
 /// This script does not deploy the CREATE3 factory. The factory is built and deployed once from
 /// contracts/shared.
 /// Remote addresses are deterministic, so step 3 is safe even before other chains are deployed.
@@ -20,17 +21,20 @@ import {HandOver} from "./4_HandOver.s.sol";
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `OUTBE_CHAIN_ID`, at
 ///   least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane"),
-///   `REMOTE_CHAIN_IDS` (csv, step 4 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for
+///   `REMOTE_CHAIN_IDS` (csv, step 3 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for
 ///   LayerZero,
 ///   `WIRE_LOOPBACK` (route the local chain through the loopback adapter),
-///   `OUTBE_RPC` (an `rpc_endpoints` alias to read the governance account, default `outbe-testnet`).
+///   `OUTBE_RPC` (an `rpc_endpoints` alias to read the governance account, default `outbe-testnet`),
+///   `KEEP_DEPLOYER_AS_OWNER` (skip step 4 and keep the deployer as the owner. Run `4_HandOver`
+///   later).
 contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
     function run() public override(DeployAdapters, DeployBridge, ConfigureBridge, HandOver) {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
         string memory salt = vm.envString("CONTRACT_SALT");
         address deployer = vm.addr(deployerPk);
+        bool keepDeployer = vm.envOr("KEEP_DEPLOYER_AS_OWNER", false);
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
-        address governance = governanceOwner();
+        address governance = keepDeployer ? address(0) : governanceOwner();
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
         address mailbox = vm.envOr("HYPERLANE_MAILBOX", address(0));
@@ -75,8 +79,12 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
         if (lb != address(0)) configureLoopback(bridge, lb);
 
         // 4. Give every owner role to governance
-        console2.log("[4/4] Hand over to governance...");
-        handOver(governance, bridge, lz, hl, lb);
+        if (keepDeployer) {
+            console2.log("[4/4] Skipped: the deployer keeps every owner role");
+        } else {
+            console2.log("[4/4] Hand over to governance...");
+            handOver(governance, bridge, lz, hl, lb);
+        }
 
         vm.stopBroadcast();
 
