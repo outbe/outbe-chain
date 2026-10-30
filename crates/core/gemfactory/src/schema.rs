@@ -1,4 +1,4 @@
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
@@ -150,19 +150,13 @@ pub struct GemFactoryContract {
 }
 
 impl GemFactoryContract<'_> {
-    /// `position_id = keccak256("gemposition" || merchant || source_intex_id_be || block_number_be)`.
-    /// A series is held by many owners and any may send units, so the merchant is
-    /// what tells two positions on the same series in one block apart.
+    /// `keccak256(source_series_id || merchant || block_number_be)`. A series is held by many
+    /// owners and any may send units, so the merchant tells two positions of one block apart.
     pub fn generate_position_id(
+        source_series_id: SeriesId,
         merchant: Address,
-        source_intex_id: U256,
         block_number: u64,
     ) -> U256 {
-        let mut buf = [0u8; 11 + 20 + 32 + 8];
-        buf[0..11].copy_from_slice(b"gemposition");
-        buf[11..31].copy_from_slice(merchant.as_slice());
-        buf[31..63].copy_from_slice(&source_intex_id.to_be_bytes::<32>());
-        buf[63..].copy_from_slice(&block_number.to_be_bytes());
-        U256::from_be_bytes(keccak256(buf).0)
+        source_series_id.right_id(&[merchant.as_slice(), &block_number.to_be_bytes()])
     }
 }

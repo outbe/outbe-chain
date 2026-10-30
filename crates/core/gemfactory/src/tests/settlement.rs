@@ -747,11 +747,23 @@ fn settlement_cost_reads_entry_price_from_the_group() {
 
 #[test]
 fn two_merchants_sending_one_series_in_a_block_get_separate_positions() {
-    let series = outbe_intex::intex_id(SeriesId::pack(7, *b"USD", b'U').unwrap());
-    let block = 1u64;
+    let series = SeriesId::for_pair(20261029, 949, 840).unwrap();
+    // Independently computed with `cast keccak` over `20261029-TRY-U || ALICE || 1u64`.
+    assert_eq!(
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        U256::from_str_radix(
+            "1e9e7d912dd7875c7a236e4af4b55978340306d900e119fb9b489e554b6c66c7",
+            16
+        )
+        .unwrap()
+    );
     assert_ne!(
-        GemFactoryContract::generate_position_id(ALICE, series, block),
-        GemFactoryContract::generate_position_id(BOB, series, block),
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        GemFactoryContract::generate_position_id(series, BOB, 1),
         "a series has many owners and any of them may send units to the Gem Factory"
+    );
+    assert_ne!(
+        GemFactoryContract::generate_position_id(series, ALICE, 1),
+        GemFactoryContract::generate_position_id(series, ALICE, 2)
     );
 }
