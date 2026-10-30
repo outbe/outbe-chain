@@ -97,6 +97,17 @@ contract IntexNFT1155Test is Test {
         assertEq(data.callTrigger.callNoticePeriod, callPeriod);
     }
 
+    function test_ReadTokenData_ReadsTheSeriesByItsTokenId() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+
+        IIntexNFT1155.SeriesData memory byId = nft.readTokenData(TOKEN_ID_1);
+        assertEq(byId.seriesId, SERIES_ID_1);
+        assertEq(keccak256(abi.encode(byId)), keccak256(abi.encode(nft.readData(SERIES_ID_1))));
+
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1 + 1));
+        nft.readTokenData(TOKEN_ID_1 + 1);
+    }
+
     function test_OnlyBridgeCanCreateSeries() public {
         vm.prank(user);
         vm.expectRevert();

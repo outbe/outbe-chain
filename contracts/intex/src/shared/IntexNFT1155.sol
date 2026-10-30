@@ -307,8 +307,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function readData(bytes14 seriesId) external view returns (IIntexNFT1155.SeriesData memory) {
+        return readTokenData(_issuedTokenId(seriesId));
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function readTokenData(uint256 tokenId) public view returns (IIntexNFT1155.SeriesData memory) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = _issuedTokenId(seriesId);
         // `issuedAt == 0` is the canonical existence sentinel for seriesData entries.
         // slither-disable-next-line incorrect-equality
         if ($.seriesData[tokenId].issuedAt == 0) {

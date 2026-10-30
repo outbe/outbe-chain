@@ -220,6 +220,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The full series data for the Issued token id.
     function readData(bytes14 seriesId) external view returns (SeriesData memory);
 
+    /// @notice Read series data by its token id, `keccak256(seriesId)`, as `readData` does.
+    /// @param tokenId Issued token id.
+    /// @return The full series data for the token id.
+    function readTokenData(uint256 tokenId) external view returns (SeriesData memory);
+
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.
     /// @return The total supply of that token id across all owners.
