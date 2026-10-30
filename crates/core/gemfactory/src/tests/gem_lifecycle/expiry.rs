@@ -53,7 +53,7 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
         begin_block_at(&storage, first_due_block(&storage, gem_id));
         assert!(item(&storage, gem_id).is_none());
         assert_eq!(unallocated(&storage), load);
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
+        assert_eq!(api::balance_of(&storage, ALICE).unwrap(), 0);
         (gem_id, load)
     });
     let events = provider.get_events(GEM_ADDRESS);

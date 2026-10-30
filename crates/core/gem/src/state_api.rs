@@ -126,12 +126,6 @@ impl GemContract<'_> {
         };
         self.add_unpaid_load(group_key, item.promis_load_minor)?;
 
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(GemError::TotalSupplyOverflow)?;
-        self.total_supply.write(supply)?;
         self.insert_group_member(group_key, item.gem_id)?;
         self.insert_state_record(item)?;
         if let Some(group) = new_group {
@@ -172,12 +166,6 @@ impl GemContract<'_> {
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
         let group_id = group.entity_id();
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(GemError::TotalSupplyUnderflow)?;
-        self.total_supply.write(supply)?;
         let remaining = if item.is_settled() {
             group.settled_gems = group
                 .settled_gems
@@ -237,7 +225,7 @@ mod tests {
             };
             add_item(&storage, &item, None).unwrap();
             let contract = GemContract::new(storage.clone());
-            assert_eq!(contract.total_supply.read().unwrap(), 1);
+            assert_eq!(crate::api::balance_of(&storage, item.owner).unwrap(), 1);
             let stale_item = load_item(&storage, item.gem_id).unwrap().unwrap();
             let stale_group = load_group(&storage, item.group_key).unwrap().unwrap();
             record_settled(
@@ -263,7 +251,7 @@ mod tests {
                 load_group(&storage, item.group_key).unwrap().unwrap(),
             )
             .unwrap();
-            assert_eq!(contract.total_supply.read().unwrap(), 0);
+            assert_eq!(crate::api::balance_of(&storage, item.owner).unwrap(), 0);
             assert!(contract.state_records(item.owner).unwrap().is_empty());
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
@@ -298,7 +286,7 @@ mod tests {
                     if bytes.as_ref() == IGem::ZeroOwner {}.abi_encode().as_slice()
             ));
             let contract = GemContract::new(storage.clone());
-            assert_eq!(contract.total_supply.read().unwrap(), 0);
+            assert_eq!(crate::api::balance_of(&storage, item.owner).unwrap(), 0);
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }

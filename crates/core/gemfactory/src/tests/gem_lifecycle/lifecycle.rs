@@ -25,7 +25,7 @@ fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
 #[test]
 fn initial_state_empty() {
     with_storage(|storage| {
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 0);
         assert!(owned(storage, ALICE).is_empty());
     });
 }
@@ -34,7 +34,7 @@ fn initial_state_empty() {
 fn add_gem_mints_the_gem_and_its_group_and_bumps_counters() {
     with_storage(|storage| {
         let gem_id = add(storage, sample_params(ALICE));
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
         assert_eq!(owned(storage, ALICE), [gem_id]);
         let stored = item(storage, gem_id).unwrap();
         assert_eq!(stored.owner, ALICE);
@@ -104,7 +104,7 @@ fn same_block_issuances_with_different_currencies_have_distinct_ids() {
         owned.sort_unstable();
         ids.sort_unstable();
         assert_eq!(owned, ids);
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 3);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 3);
     });
 }
 
@@ -123,7 +123,7 @@ fn a_second_gem_in_the_same_series_and_block_reverts() {
                     &IGem::AlreadyExists {}
                 ).as_slice()
         ));
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
         assert_eq!(owned(storage, ALICE), [first]);
         assert_eq!(view(storage, first), before);
     });
@@ -142,7 +142,7 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
                     &IGem::AlreadyExists {}
                 ).as_slice()
         ));
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
         assert_eq!(owned(storage, ALICE), [gem_id]);
         assert_eq!(view(storage, gem_id), before);
     });
@@ -188,7 +188,6 @@ fn enumerable_returns_only_owned_gems() {
         assert!(alice.contains(&g1));
         assert!(alice.contains(&g2));
         assert_eq!(owned(storage, BOB).len(), 1);
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 3);
     });
 }
 
@@ -201,7 +200,7 @@ fn burn_requires_settled_state() {
         settle(storage, gem_id);
         burn_settled(storage, gem_id);
 
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 0);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 0);
         assert!(owned(storage, ALICE).is_empty());
         assert!(item(storage, gem_id).is_none());
     });
@@ -506,7 +505,7 @@ fn stale_group_capability_is_rejected() {
         let error = api::remove_gem(storage, first, stale_group).unwrap_err();
         assert!(!format!("{error:?}").is_empty());
         assert!(item(storage, gems[0]).is_some(), "rolled back");
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 2);
+        assert_eq!(api::balance_of(storage, holder(0)).unwrap(), 1);
     });
 }
 
@@ -520,7 +519,7 @@ fn member_count_overflow_and_underflow_roll_back_gem_mutations() {
         call_gem(storage, gem_id, T_NOW);
         assert!(try_settle(storage, gem_id).is_err());
         assert_eq!(item(storage, gem_id).unwrap().state, GemState::Issued as u8);
-        assert_eq!(gem.total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
     });
 }
 
@@ -591,7 +590,7 @@ fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
             group.full_day_after_issue,
             after.full_day_after_issue().expect("date step")
         );
-        assert_eq!(GemContract::new(storage.clone()).total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
         assert_eq!(owned(storage, ALICE), vec![gem_id]);
     });
 }
@@ -622,6 +621,6 @@ fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
         assert_eq!(group.settled_gems, 1);
         let contract = GemContract::new(storage.clone());
         assert_eq!(contract.group_gem_count.read(&gem.group_key).unwrap(), 0);
-        assert_eq!(contract.total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(storage, params.owner).unwrap(), 1);
     });
 }

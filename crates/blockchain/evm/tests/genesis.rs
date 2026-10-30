@@ -577,10 +577,5 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
             gem.config_profile.read().unwrap(),
             outbe_gem::config::PROFILE_PROD
         );
-        assert_eq!(
-            gem.total_supply().unwrap(),
-            0,
-            "genesis carries no Gem bodies"
-        );
     });
 }

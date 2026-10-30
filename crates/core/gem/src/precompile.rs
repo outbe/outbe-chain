@@ -39,9 +39,7 @@ pub fn dispatch(
     dispatch_call(data, IGem::IGemCalls::abi_decode, |call| {
         use IGem::IGemCalls::*;
         match call {
-            call @ (supportsInterface(_) | name(_) | symbol(_) | totalSupply(_)) => {
-                dispatch_metadata(&storage, call)
-            }
+            call @ (supportsInterface(_) | name(_) | symbol(_)) => dispatch_metadata(call),
             transferFrom(_)
             | safeTransferFrom_0(_)
             | safeTransferFrom_1(_)
@@ -58,20 +56,12 @@ pub fn dispatch(
     })
 }
 
-fn dispatch_metadata(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    call: IGem::IGemCalls,
-) -> Result<Bytes> {
+fn dispatch_metadata(call: IGem::IGemCalls) -> Result<Bytes> {
     use IGem::IGemCalls::*;
     match call {
         supportsInterface(c) => view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0))),
         name(_) => metadata::<IGem::nameCall>(|| Ok(GemContract::name().to_string())),
         symbol(_) => metadata::<IGem::symbolCall>(|| Ok(GemContract::symbol().to_string())),
-        totalSupply(_) => metadata::<IGem::totalSupplyCall>(|| {
-            GemContract::new(storage.clone())
-                .total_supply()
-                .map(U256::from)
-        }),
         _ => Err(crate::errors::GemFatalError::MetadataRouteEntityCall.into()),
     }
 }

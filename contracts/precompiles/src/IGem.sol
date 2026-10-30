@@ -10,9 +10,7 @@ interface IGem {
     error ZeroOwner();
     error UnknownProfileSelector(uint8 value);
     error GroupExistenceMismatch(uint256 groupId, uint32 memberCount);
-    error TotalSupplyOverflow();
     error SettledCountOverflow();
-    error TotalSupplyUnderflow();
     error SettledCountUnderflow(uint256 groupId);
     error EmptyGroup(bytes32 group);
     error GemNotInGroup(uint256 gemId, bytes32 group);
@@ -65,8 +63,7 @@ interface IGem {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 gemId) external view returns (string memory);
 
-    // Supply and per-owner lookup; the ERC-721 Enumerable interface id is not supported.
-    function totalSupply() external view returns (uint256);
+    // Per-owner lookup; the ERC-721 Enumerable interface id is not supported.
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
 
     // outbe-specific views

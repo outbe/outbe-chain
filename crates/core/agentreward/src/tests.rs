@@ -628,13 +628,7 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
         for gem in owned {
             assert!(ids.contains(&gem.gem_id));
         }
-        assert_eq!(
-            outbe_gem::GemContract::new(storage.clone())
-                .total_supply
-                .read()
-                .unwrap(),
-            3
-        );
+        assert_eq!(outbe_gem::api::balance_of(&storage, alice).unwrap(), 3);
     });
 }
 

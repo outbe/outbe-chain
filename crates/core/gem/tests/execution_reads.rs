@@ -46,13 +46,11 @@ fn reverted_issuance_rolls_back_state_and_events() {
             Err(PrecompileError::Revert("nested caller reverted".into()))
         });
         assert!(outcome.is_err());
-        let gem = GemContract::new(storage.clone());
-        assert_eq!(gem.total_supply().unwrap(), 0);
         assert!(api::list_by_owner(&storage, owner).unwrap().is_empty());
         assert!(api::get_item(&storage, expected).unwrap().is_none());
         let gem_id = api::add_gem(&storage, params).unwrap();
         assert_eq!(gem_id, expected);
-        assert_eq!(gem.total_supply().unwrap(), 1);
+        assert_eq!(api::balance_of(&storage, owner).unwrap(), 1);
         let owned = api::list_by_owner(&storage, owner).unwrap();
         assert_eq!(owned.len(), 1);
         assert_eq!(owned[0].gem_id, gem_id);
@@ -96,6 +94,6 @@ fn removal_consumes_loaded_state() {
         api::remove_gem(&storage, item, group).unwrap();
 
         assert!(api::get_item(&storage, gem_id).unwrap().is_none());
-        assert_eq!(GemContract::new(storage).total_supply().unwrap(), 0);
+        assert_eq!(api::balance_of(&storage, owner).unwrap(), 0);
     });
 }

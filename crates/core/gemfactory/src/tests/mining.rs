@@ -21,9 +21,8 @@ fn mine_promis_full_flow() {
         .unwrap();
         assert_eq!(minted, load);
 
-        let gem = GemContract::new(storage.clone());
         assert!(gem_api::get_item(storage, gem_id).unwrap().is_none());
-        assert_eq!(gem.total_supply().unwrap(), 0);
+        assert_eq!(gem_api::balance_of(storage, ALICE).unwrap(), 0);
 
         // Promis is confidential: decrypt the ciphertext balance with the view key.
         let sk = outbe_promis::enclave_client::test_enclave::state_key();

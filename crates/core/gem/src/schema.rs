@@ -186,9 +186,6 @@ impl GemView {
 #[storage_schema]
 #[contract(addr = GEM_ADDRESS)]
 pub struct GemContract {
-    #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
-
     // --- Group membership: unpaid gems for the cleanup, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]

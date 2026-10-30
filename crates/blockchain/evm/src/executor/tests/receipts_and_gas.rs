@@ -466,8 +466,12 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             day_record.state == outbe_emission::schema::emission_day_state::PROCESSING
                 || day_record.state == outbe_emission::schema::emission_day_state::COMPLETED
         );
-        let gem = outbe_gem::GemContract::new(storage);
-        assert_eq!(gem.total_supply()?, 0);
+        for n in 0..DENSE_ADDRESS_COUNT {
+            for prefix in [0x10, 0x11] {
+                let agent = numbered_test_address(prefix, n);
+                assert_eq!(outbe_gem::api::balance_of(&storage, agent)?, 0);
+            }
+        }
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("GAS-05 dense AgentReward state should be readable after CycleTick");
