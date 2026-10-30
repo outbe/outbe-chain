@@ -480,32 +480,18 @@ fn nod_snapshot(world: &World, owner: Address, id: U256, minimum: u64) -> NodSna
     for port in world.validators.committee_ports() {
         let url = world.rpc.url(port);
         let snapshot = stable_live_read(world, port, minimum, || -> Result<_, String> {
-            let count: usize = eth::read_call_result(
+            let owner_ids = eth::read_call_result(
                 &url,
                 addresses::NOD_ADDR,
-                &eth::INod::balanceOfCall { owner },
-            )?
-            .try_into()
-            .expect("bounded Nod count");
-            assert!(count <= 32, "bounded Nod owner inventory");
-            let owner_ids = (0..count)
-                .map(|index| {
-                    eth::read_call_result(
-                        &url,
-                        addresses::NOD_ADDR,
-                        &eth::INod::tokenOfOwnerByIndexCall {
-                            owner,
-                            index: U256::from(index),
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>, String>>()?;
+                &eth::INod::tokensByOwnerCall { owner },
+            )?;
+            assert!(owner_ids.len() <= 32, "bounded Nod owner inventory");
             assert_eq!(
                 owner_ids
                     .iter()
                     .collect::<std::collections::BTreeSet<_>>()
                     .len(),
-                count,
+                owner_ids.len(),
                 "duplicate Nod owner index"
             );
             let body = if owner_ids.contains(&id) {

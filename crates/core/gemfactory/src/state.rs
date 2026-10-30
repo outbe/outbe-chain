@@ -134,11 +134,8 @@ impl<'s> GemFactoryContract<'s> {
         Ok(pos.merchant)
     }
 
-    pub fn token_of_owner_by_index(&self, owner: Address, index: u32) -> Result<U256> {
-        self.owner_position_ids
-            .list(&owner)
-            .get(index)?
-            .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
+    pub fn tokens_by_owner(&self, owner: Address) -> Result<Vec<U256>> {
+        self.owner_position_ids.list(&owner).read_all()
     }
 
     pub fn token_uri(&self, position_id: U256) -> Result<String> {

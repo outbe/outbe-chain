@@ -146,7 +146,7 @@ impl Rpc {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
-            &ITribute::getTributesByOwnerCall { owner },
+            &ITribute::tokensByOwnerCall { owner },
         )
     }
 

@@ -327,27 +327,16 @@ impl PaidGem {
                 promis_before + gem.promisLoadMinor,
                 "exact finalized Promis mint"
             );
-            let count = gem_view_at(
+            let remaining = gem_view_at(
                 &peer_url,
-                &eth::IGem::balanceOfCall { owner },
+                &eth::IGem::tokensByOwnerCall { owner },
                 height,
-                "Gem enumeration count",
+                "read remaining Gems, not RPC failure as absence",
             );
-            for index in 0..u64::try_from(count).expect("Gem enumeration fits u64") {
-                let remaining = gem_view_at(
-                    &peer_url,
-                    &eth::IGem::tokenOfOwnerByIndexCall {
-                        owner,
-                        index: U256::from(index),
-                    },
-                    height,
-                    "read remaining Gem, not RPC failure as absence",
-                );
-                assert_ne!(
-                    remaining, gem_id,
-                    "mined Gem must leave the owner's inventory"
-                );
-            }
+            assert!(
+                !remaining.contains(&gem_id),
+                "mined Gem must leave the owner's inventory"
+            );
         }
     }
 }

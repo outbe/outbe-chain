@@ -60,10 +60,7 @@ pub fn dispatch(
             isApprovedForAll(c) => view(c, |_| Ok(false)),
             credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
             balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
-            tokenOfOwnerByIndex(c) => view(c, |c| {
-                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
-                contract.token_of_owner_by_index(c.owner, index)
-            }),
+            tokensByOwner(c) => view(c, |c| contract.tokens_by_owner(c.owner)),
             interestAccruedMinor(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
                 let timestamp = contract.storage.now_secs()?;

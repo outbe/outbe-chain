@@ -41,17 +41,14 @@ alloy_sol_types::sol! {
 
 /// The first Gem of `owner`.
 fn gem_of(url: &str, owner: Address) -> U256 {
-    eth::read_call_result(
+    let ids = eth::read_call_result(
         url,
         addresses::GEM_ADDR,
-        &eth::IGem::tokenOfOwnerByIndexCall {
-            owner,
-            index: U256::ZERO,
-        },
+        &eth::IGem::tokensByOwnerCall { owner },
     )
-    .unwrap_or_else(|error| {
-        panic!("the Gem issued to {owner} is not in its owner's index: {error}")
-    })
+    .unwrap_or_else(|error| panic!("read the Gems of {owner}: {error}"));
+    *ids.first()
+        .unwrap_or_else(|| panic!("the Gem issued to {owner} is not in its owner's list"))
 }
 
 #[given("a prepared Credis localnet with funded actors and vault liquidity")]

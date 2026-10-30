@@ -53,7 +53,7 @@ pub fn dispatch(
                 )
                     .into())
             }),
-            getTributesByOwner(c) => view(c, |c| {
+            tokensByOwner(c) => view(c, |c| {
                 Ok(tribute
                     .get_tribute_ids_by_owner(c.owner)?
                     .into_iter()

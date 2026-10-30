@@ -23,9 +23,6 @@ pub enum NodError {
     #[error("group not found")]
     GroupNotFound,
 
-    #[error("index out of bounds")]
-    IndexOutOfBounds,
-
     #[error("nod query exceeds the runtime result limit")]
     QueryLimitExceeded,
 
@@ -125,7 +122,6 @@ impl From<NodError> for PrecompileError {
             NodError::InvalidNodIdHex => revert_with(I::InvalidNodIdHex {}),
             NodError::NodNotFound => revert_with(I::NodNotFound {}),
             NodError::GroupNotFound => revert_with(I::GroupNotFound {}),
-            NodError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
             NodError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
             NodError::ZeroReferenceCurrency => revert_with(I::ZeroReferenceCurrency {}),
             NodError::NonTransferable => revert_with(I::NonTransferable {}),

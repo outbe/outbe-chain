@@ -136,35 +136,12 @@ fn precompile_balance_and_owner_views() {
         let out = call(storage, IGem::ownerOfCall { gemId: gem_id }.abi_encode()).unwrap();
         assert_eq!(IGem::ownerOfCall::abi_decode_returns(&out).unwrap(), ALICE);
 
-        let out = call(
-            storage,
-            IGem::tokenOfOwnerByIndexCall {
-                owner: ALICE,
-                index: U256::ZERO,
-            }
-            .abi_encode(),
-        )
-        .unwrap();
-        assert_eq!(
-            IGem::tokenOfOwnerByIndexCall::abi_decode_returns(&out).unwrap(),
-            gem_id
-        );
-        let err = call(
-            storage,
-            IGem::tokenOfOwnerByIndexCall {
-                owner: ALICE,
-                index: U256::from(1u64),
-            }
-            .abi_encode(),
-        )
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemError::IndexOutOfBounds
-            )
-            .to_string()
-        );
+        let tokens = |owner| {
+            let out = call(storage, IGem::tokensByOwnerCall { owner }.abi_encode()).unwrap();
+            IGem::tokensByOwnerCall::abi_decode_returns(&out).unwrap()
+        };
+        assert_eq!(tokens(ALICE), vec![gem_id]);
+        assert!(tokens(BOB).is_empty());
     });
 }
 

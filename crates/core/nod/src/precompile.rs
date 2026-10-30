@@ -51,11 +51,9 @@ pub fn dispatch(
                 api::clean(&storage, c.nodId)?;
                 Ok(INod::cleanReturn {})
             }),
-            call @ (balanceOf(_)
-            | ownerOf(_)
-            | tokenURI(_)
-            | tokenOfOwnerByIndex(_)
-            | getNod(_)) => dispatch_entity(storage, &nod, call),
+            call @ (balanceOf(_) | ownerOf(_) | tokenURI(_) | tokensByOwner(_) | getNod(_)) => {
+                dispatch_entity(storage, &nod, call)
+            }
         }
     })
 }
@@ -89,11 +87,7 @@ fn dispatch_entity(
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
             crate::metadata::token_uri(nod, &item, storage.timestamp()?)
         }),
-        tokenOfOwnerByIndex(c) => view(c, |c| {
-            let index = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::token_of_owner_by_index(&storage, c.owner, index)?
-                .ok_or_else(|| NodError::IndexOutOfBounds.into())
-        }),
+        tokensByOwner(c) => view(c, |c| api::tokens_by_owner(&storage, c.owner)),
         getNod(c) => view(c, |c| {
             let nod_id = c.nodId;
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;

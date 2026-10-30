@@ -488,7 +488,7 @@ fn day_list_selector_rejects_and_owner_balance_stays() {
         tc.issue(&second).unwrap();
 
         let storage = tc.storage_handle();
-        let owner_call = crate::precompile::ITribute::getTributesByOwnerCall { owner: alice };
+        let owner_call = crate::precompile::ITribute::tokensByOwnerCall { owner: alice };
         let output = crate::precompile::dispatch(
             storage.clone(),
             &owner_call.abi_encode(),
@@ -497,8 +497,7 @@ fn day_list_selector_rejects_and_owner_balance_stays() {
         )
         .unwrap();
         let owner_ids =
-            crate::precompile::ITribute::getTributesByOwnerCall::abi_decode_returns(&output)
-                .unwrap();
+            crate::precompile::ITribute::tokensByOwnerCall::abi_decode_returns(&output).unwrap();
         assert_eq!(owner_ids, vec![first.tribute_id.to_u256()]);
         assert_eq!(tc.balance_of(alice).unwrap(), 1);
         assert_eq!(tc.balance_of(bob).unwrap(), 1);

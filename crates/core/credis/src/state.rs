@@ -120,13 +120,6 @@ impl<'storage> CredisContract<'storage> {
         self.owner_ids.list(&account).len()
     }
 
-    pub fn owner_credis_id(&self, account: Address, index: u32) -> Result<U256> {
-        self.owner_ids
-            .list(&account)
-            .get(index)?
-            .ok_or_else(|| CredisError::IndexOutOfBounds.into())
-    }
-
     pub fn owner_credis_ids(&self, account: Address) -> Result<Vec<U256>> {
         self.owner_ids.list(&account).read_all()
     }

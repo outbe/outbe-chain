@@ -208,11 +208,9 @@ fn park_units(world: &mut World) {
     let position_id = eth::read_call(
         &url,
         addresses::GEM_FACTORY_ADDR,
-        &eth::IGemFactory::tokenOfOwnerByIndexCall {
-            owner: merchant,
-            index: U256::ZERO,
-        },
+        &eth::IGemFactory::tokensByOwnerCall { owner: merchant },
     )
+    .and_then(|ids| ids.first().copied())
     .expect("the parked position was issued to the merchant");
     world.state.gem_position = Some(position_id);
 }

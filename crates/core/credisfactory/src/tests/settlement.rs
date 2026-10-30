@@ -887,11 +887,7 @@ fn credis_views(storage: &StorageHandle<'_>, id: U256) -> B256 {
         ICredis::getCredisCall { credisId: id }.abi_encode(),
         ICredis::credisExistsCall { credisId: id }.abi_encode(),
         ICredis::balanceOfCall { owner: alice() }.abi_encode(),
-        ICredis::tokenOfOwnerByIndexCall {
-            owner: alice(),
-            index: U256::ZERO,
-        }
-        .abi_encode(),
+        ICredis::tokensByOwnerCall { owner: alice() }.abi_encode(),
         ICredis::interestAccruedMinorCall { credisId: id }.abi_encode(),
         ICredis::interestPaidMinorCall { credisId: id }.abi_encode(),
     ];
@@ -960,8 +956,8 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0x0a7197b4b975885b22e86d284db2463e9d06cd7e5049eb0f18a6baeff33ccd06"),
-            b256!("0x8ed76630f2526d6f889ccaf1b051bd3f083c543949dd85c137f70c959bcc200d"),
+            b256!("0xca96785236a17305aaf93d64814dcb5971a0b697144df0928e38c080dd8b8e70"),
+            b256!("0xe1ee272483f1a74fb4d9e8a7fcda9d556eab6d702ec3e076553cc343df1581b9"),
         ]
     );
     assert_eq!(

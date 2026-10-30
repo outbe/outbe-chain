@@ -1303,7 +1303,7 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
         provider.set_timestamp(U256::from(deadline + u64::from(past_deadline)));
         StorageHandle::enter(&mut provider, |storage| {
             let mut credis = CredisContract::new(storage);
-            let id = credis.token_of_owner_by_index(alice(), 0).unwrap();
+            let id = credis.tokens_by_owner(alice()).unwrap()[0];
             let group = credis
                 .get_credis(id)
                 .unwrap()
@@ -1479,36 +1479,24 @@ fn sums_and_indexes_span_all_of_an_accounts_credis() {
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 2);
         assert_eq!(credis.credis_count_of(bob()).unwrap(), 1);
 
-        assert_eq!(credis.token_of_owner_by_index(alice(), 0).unwrap(), first);
-        let bobs = credis.token_of_owner_by_index(bob(), 0).unwrap();
-        assert_eq!(credis.get_credis(bobs).unwrap().owner, bob());
+        assert_eq!(credis.tokens_by_owner(alice()).unwrap()[0], first);
+        let bobs = credis.tokens_by_owner(bob()).unwrap();
+        assert_eq!(bobs.len(), 1);
+        assert_eq!(credis.get_credis(bobs[0]).unwrap().owner, bob());
     });
 }
 
 #[test]
-fn enumeration_rejects_an_out_of_range_index() {
+fn tokens_by_owner_lists_only_the_owners_live_credis() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
-        rules::issue(&mut credis, params(alice())).unwrap();
+        let id = rules::issue(&mut credis, params(alice())).unwrap();
 
-        // One Credis exists, so index 1 is past the end of the owner index. An
-        // out-of-range read must fail rather than report a zeroed Credis.
-        assert_eq!(
-            credis
-                .token_of_owner_by_index(alice(), 1)
-                .unwrap_err()
-                .to_string(),
-            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
-                .to_string()
-        );
-        assert_eq!(
-            credis
-                .token_of_owner_by_index(bob(), 0)
-                .unwrap_err()
-                .to_string(),
-            outbe_primitives::error::PrecompileError::from(CredisError::IndexOutOfBounds)
-                .to_string()
-        );
+        assert_eq!(credis.tokens_by_owner(alice()).unwrap(), vec![id]);
+        assert!(credis.tokens_by_owner(bob()).unwrap().is_empty());
+
+        rules::forfeit_by_owner(&mut credis, id, alice()).unwrap();
+        assert!(credis.tokens_by_owner(alice()).unwrap().is_empty());
     });
 }
 
@@ -1615,17 +1603,11 @@ fn precompile_enumerates_credis_per_owner() {
             U256::from(1u64)
         );
 
-        // The per-owner index addresses only that owner's Credis.
-        let out = call(
-            ICredis::tokenOfOwnerByIndexCall {
-                owner: alice(),
-                index: U256::ZERO,
-            }
-            .abi_encode(),
-        );
+        // The owner list holds only that owner's Credis.
+        let out = call(ICredis::tokensByOwnerCall { owner: alice() }.abi_encode());
         assert_eq!(
-            ICredis::tokenOfOwnerByIndexCall::abi_decode_returns(&out).unwrap(),
-            first
+            ICredis::tokensByOwnerCall::abi_decode_returns(&out).unwrap(),
+            vec![first]
         );
 
         // `credisExists` answers without reverting.

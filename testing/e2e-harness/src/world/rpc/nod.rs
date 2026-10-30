@@ -1,6 +1,5 @@
 //! Native Nod reads from EVM state.
 use super::*;
-use alloy_sol_types::SolError as _;
 
 impl Rpc {
     pub fn assert_one_nod_for_owner(
@@ -50,37 +49,20 @@ impl Rpc {
                 "balanceOf returned {balance}, expected exactly one"
             ));
         }
-        let nod_id = self
-            .nod_id_of_owner_by_index_on(port, owner, 0)?
-            .ok_or_else(|| "index zero unexpectedly reported absence".to_owned())?;
-        if self.nod_id_of_owner_by_index_on(port, owner, 1)?.is_some() {
-            return Err("owner has more than one NOD".to_owned());
-        }
-        let body = self.nod_data_on(port, &nod_id)?;
-        Ok(Some((nod_id, body)))
-    }
-
-    pub(crate) fn nod_id_of_owner_by_index_on(
-        &self,
-        port: u16,
-        owner: Address,
-        index: u64,
-    ) -> std::result::Result<Option<Vec<u8>>, String> {
-        let result = eth::read_call_with_revert(
+        let ids = eth::read_call_result(
             &self.url(port),
             addresses::NOD_ADDR,
-            &INod::tokenOfOwnerByIndexCall {
-                owner,
-                index: U256::from(index),
-            },
-        )
-        .map(|outcome| match outcome {
-            eth::ViewCallOutcome::Returned(value) => {
-                eth::ViewCallOutcome::Returned(value.to_be_bytes::<32>().to_vec())
-            }
-            eth::ViewCallOutcome::Reverted(data) => eth::ViewCallOutcome::Reverted(data),
-        });
-        classify_owner_index_result(index, result)
+            &INod::tokensByOwnerCall { owner },
+        )?;
+        let [id] = ids[..] else {
+            return Err(format!(
+                "tokensByOwner returned {} Nods, expected exactly one",
+                ids.len()
+            ));
+        };
+        let nod_id = id.to_be_bytes::<32>().to_vec();
+        let body = self.nod_data_on(port, &nod_id)?;
+        Ok(Some((nod_id, body)))
     }
 
     pub(crate) fn nod_data_on(
@@ -110,28 +92,5 @@ impl Rpc {
                 .and_then(|value| u64::try_from(value).ok())
             })
             .sum()
-    }
-}
-
-pub(in crate::world::rpc) fn classify_owner_index_result(
-    index: u64,
-    result: std::result::Result<eth::ViewCallOutcome<Vec<u8>>, String>,
-) -> std::result::Result<Option<Vec<u8>>, String> {
-    match result {
-        Ok(eth::ViewCallOutcome::Returned(nod_id)) if nod_id.len() == 32 => Ok(Some(nod_id)),
-        Ok(eth::ViewCallOutcome::Returned(nod_id)) => Err(format!(
-            "tokenOfOwnerByIndex returned a {}-byte NOD id",
-            nod_id.len()
-        )),
-        Ok(eth::ViewCallOutcome::Reverted(data))
-            if index > 0 && data.as_ref() == INod::IndexOutOfBounds::SELECTOR.as_slice() =>
-        {
-            Ok(None)
-        }
-        Ok(eth::ViewCallOutcome::Reverted(data)) => Err(format!(
-            "tokenOfOwnerByIndex reverted with {}",
-            alloy_primitives::hex::encode_prefixed(data)
-        )),
-        Err(error) => Err(error),
     }
 }

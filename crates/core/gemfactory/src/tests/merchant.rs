@@ -65,7 +65,7 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         // Position NFT issued to the merchant.
         assert_eq!(factory.owner_of(id).unwrap(), ALICE);
         assert_eq!(factory.balance_of(ALICE).unwrap(), 1);
-        assert_eq!(factory.token_of_owner_by_index(ALICE, 0).unwrap(), id);
+        assert_eq!(factory.tokens_by_owner(ALICE).unwrap(), vec![id]);
     });
 }
 
