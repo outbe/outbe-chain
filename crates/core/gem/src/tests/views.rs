@@ -320,6 +320,11 @@ fn token_uri_renders_the_gem_card() {
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
         assert_eq!(trait_value(&json, "Promis Load").unwrap(), 1);
         assert_eq!(trait_value(&json, "Issued At").unwrap(), T_NOW);
+        let item = crate::api::get_item(storage, gem_id).unwrap().unwrap();
+        assert_eq!(
+            trait_value(&json, "Series").unwrap(),
+            format!("{}-0", item.series_id)
+        );
         assert!(trait_value(&json, "Call Deadline").is_none());
 
         assert!(svg.contains(">GEM</text>"));

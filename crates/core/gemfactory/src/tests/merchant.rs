@@ -793,3 +793,91 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     assert_eq!(opened[0].capacityMinor, sent_capacity(six_decimal_u128()));
     assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
 }
+
+fn set_source_price(storage: &StorageHandle<'_>, price: U256) {
+    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+        .unwrap()
+        .expect("COEN pair registered");
+    OracleContract::new(storage.clone())
+        .record_utc_day_vwap(source_series_id().day(), index, price)
+        .unwrap();
+}
+
+fn merchant_gem_to(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+    owner: Address,
+) -> outbe_primitives::error::Result<U256> {
+    runtime::issue_merchant_gem(
+        storage,
+        crate::schema::MerchantGemIssueParams {
+            caller: ALICE,
+            position_id,
+            owner,
+            promis_load_minor: six_decimal_unit(),
+            issuance_currency: 840,
+            reference_currency: 840,
+        },
+    )
+}
+
+#[test]
+fn a_series_numbers_each_source_call_price_on_first_use() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        // (source VWAP, sub-series): above the market numbers it, at or below takes 0.
+        for (owner, source, sub_series) in [
+            (0x31, 3u64, 1u16),
+            (0x32, 4, 2),
+            (0x33, 3, 1),
+            (0x34, 1, 0),
+            (0x35, 2, 0),
+            (0x36, 4, 2),
+        ] {
+            set_source_price(storage, U256::from(source) * unit);
+            let gem_id = merchant_gem_to(storage, id, Address::repeat_byte(owner)).unwrap();
+            let item = gem_item(storage, gem_id);
+            assert_eq!(item.sub_series_id, sub_series, "source {source}");
+            assert_eq!(
+                gem_id,
+                GemContract::generate_gem_id(
+                    item.series_id,
+                    sub_series,
+                    item.owner,
+                    storage.block_number().unwrap(),
+                )
+            );
+        }
+    });
+}
+
+#[test]
+fn one_owner_gets_one_gem_of_a_sub_series_in_a_block() {
+    let unit = six_decimal_unit();
+    with_storage(Some(U256::from(2u64) * unit), |storage| {
+        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        merchant_gem_to(storage, id, BOB).unwrap();
+        set_source_price(storage, U256::from(4u64) * unit);
+        merchant_gem_to(storage, id, BOB).unwrap();
+        set_source_price(storage, U256::from(3u64) * unit);
+        let err = merchant_gem_to(storage, id, BOB).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gem::errors::GemError::AlreadyExists
+            )
+            .to_string()
+        );
+    });
+}
+
+#[test]
+fn a_reward_gem_is_in_the_market_sub_series() {
+    with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
+        let gem_id = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
+        assert_eq!(gem_item(storage, gem_id).sub_series_id, 0);
+    });
+}
