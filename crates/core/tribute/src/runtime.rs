@@ -219,16 +219,14 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Records the Stage 3 Metadosis league fractions and lysis limit for `day`.
+    /// Records the Stage 3 Metadosis league fractions for `day`.
     pub fn record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
-        lysis_limit_minor: U256,
         fractions: &std::collections::BTreeMap<u16, u64>,
         completed_at: u64,
     ) -> Result<()> {
         self.storage_handle().require_metadosis_process_ready()?;
-        self.day_lysis_limit_minor.write(&day, lysis_limit_minor)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
         for (&league, &fraction) in fractions {
             let key = crate::schema::day_league_key(day, league);
@@ -303,7 +301,7 @@ impl TributeContract<'_> {
             .iter()
             .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
             .collect();
-        self.record_metadosis_fractions(day, lysis_limit_minor, &fractions, completed_at)?;
+        self.record_metadosis_fractions(day, &fractions, completed_at)?;
         let mut allocated =
             Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
         if !outbe_tee::lysis::is_test_transport_installed() && !lysis_limit_minor.is_zero() {
