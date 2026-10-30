@@ -133,7 +133,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
         );
 
         let nod = NodContract::new(storage.clone());
-        assert_eq!(nod.total_supply().unwrap(), 0);
+        assert_eq!(crate::api::balance_of(&storage, body.owner).unwrap(), 0);
         assert!(nod.call_bin_tree_root.read(&0).unwrap().is_zero());
     });
 }
@@ -160,6 +160,6 @@ fn a_group_key_that_does_not_match_its_inputs_is_rejected() {
             )
             .to_string()
         );
-        assert_eq!(NodContract::new(storage).total_supply().unwrap(), 0);
+        assert_eq!(crate::api::balance_of(&storage, body.owner).unwrap(), 0);
     });
 }

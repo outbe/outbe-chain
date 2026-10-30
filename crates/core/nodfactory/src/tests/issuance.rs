@@ -86,13 +86,14 @@ fn second_same_block_issue_reuses_the_group() {
             .unwrap(),
         2
     );
-    assert_eq!(
-        world
-            .enter(|storage| nod_api::list_all(&storage))
-            .unwrap()
-            .len(),
-        2
-    );
+    for owner in [first_item.owner, second_item.owner] {
+        assert_eq!(
+            world
+                .enter(|storage| nod_api::balance_of(&storage, owner))
+                .unwrap(),
+            1
+        );
+    }
 }
 
 #[test]

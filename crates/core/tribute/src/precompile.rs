@@ -35,9 +35,6 @@ pub fn dispatch(
         match call {
             name(_) => metadata::<ITribute::nameCall>(|| Ok("tribute".to_string())),
             symbol(_) => metadata::<ITribute::symbolCall>(|| Ok("TRIBUTE".to_string())),
-            totalSupply(_) => metadata::<ITribute::totalSupplyCall>(|| {
-                Ok(alloy_primitives::U256::from(tribute.total_supply()?))
-            }),
             balanceOf(c) => view(c, |c| {
                 Ok(alloy_primitives::U256::from(tribute.balance_of(c.owner)?))
             }),
@@ -56,7 +53,7 @@ pub fn dispatch(
                 )
                     .into())
             }),
-            getTributesByOwner(c) => view(c, |c| {
+            tokensByOwner(c) => view(c, |c| {
                 Ok(tribute
                     .get_tribute_ids_by_owner(c.owner)?
                     .into_iter()

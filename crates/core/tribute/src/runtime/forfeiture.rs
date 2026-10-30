@@ -13,12 +13,6 @@ pub(super) fn apply(
     }
     let forfeited_count = totals.tribute_count;
     let forfeited_nominal = totals.tribute_nominal_total_minor;
-    let supply = contract
-        .total_supply
-        .read()?
-        .checked_sub(u64::from(forfeited_count))
-        .ok_or(TributeError::TotalSupplyUnderflowDuringCapacityForfeiture)?;
-    contract.total_supply.write(supply)?;
     contract.freeze_day_nominal(&totals)?;
     contract.reset_day_nominal(&totals)?;
     totals.tribute_count = 0;
@@ -251,12 +245,6 @@ fn burn_live_tribute_record(
         contract.adjust_fi_group(day, raw_league, nominal, false)?;
         contract.tribute_leagues.clear(&tribute_id)?;
     }
-    let supply = contract
-        .total_supply
-        .read()?
-        .checked_sub(1)
-        .ok_or(TributeError::TotalSupplyUnderflowDuringBurn)?;
-    contract.total_supply.write(supply)?;
     contract.delete_loaded_state_record(record)?;
     contract.emit(ITribute::TributeBurned {
         tributeId: tribute_id.to_u256(),

@@ -886,13 +886,8 @@ fn credis_views(storage: &StorageHandle<'_>, id: U256) -> B256 {
         ICredis::tokenURICall { credisId: id }.abi_encode(),
         ICredis::getCredisCall { credisId: id }.abi_encode(),
         ICredis::credisExistsCall { credisId: id }.abi_encode(),
-        ICredis::tokenByIndexCall { index: U256::ZERO }.abi_encode(),
         ICredis::balanceOfCall { owner: alice() }.abi_encode(),
-        ICredis::tokenOfOwnerByIndexCall {
-            owner: alice(),
-            index: U256::ZERO,
-        }
-        .abi_encode(),
+        ICredis::tokensByOwnerCall { owner: alice() }.abi_encode(),
         ICredis::interestAccruedMinorCall { credisId: id }.abi_encode(),
         ICredis::interestPaidMinorCall { credisId: id }.abi_encode(),
     ];
@@ -961,55 +956,55 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
     assert_eq!(
         [views, called_views],
         [
-            b256!("0x72bcab7503ff2e351206c869ce918115e26750a206cae214596b7fa03928dde9"),
-            b256!("0x5b6092c1ff70df9258866b73972aad235121ba0b98193e92639c210c02596a42"),
+            b256!("0xca96785236a17305aaf93d64814dcb5971a0b697144df0928e38c080dd8b8e70"),
+            b256!("0xe1ee272483f1a74fb4d9e8a7fcda9d556eab6d702ec3e076553cc343df1581b9"),
         ]
     );
     assert_eq!(
         [issue, partial, read, close, called_read, void],
         [
             Footprint {
-                gas: 229200,
-                reads: 92,
-                writes: 44,
+                gas: 213900,
+                reads: 89,
+                writes: 41,
                 logs: b256!("0x59b3ca3f3148e9e0003f491a3ca360375164f443e75533f2e54a2c3aded618c2"),
-                state: b256!("0x78dcd886a3243f7c508674295e2e482bad3238cd093bc45c07b6b873c3ac980d"),
+                state: b256!("0x029a07fcf8f95755682002a1eb4e4fcbd0dc0d4e5e62a72abfe607c7c64b1183"),
             },
             Footprint {
                 gas: 135800,
                 reads: 108,
                 writes: 25,
                 logs: b256!("0xfa9255ee438839b0520014084f89e0ce1198398f2c6d5ac90a2deaef5d6e3cfe"),
-                state: b256!("0xed753484753a9f47f16a3030ed5901ceecd27d2e721afe94d938ee979b0bc157"),
+                state: b256!("0xc060109d93aa93ec5b2924c3d5d30be00c6210ed9d4581bdb99d90b0837aa0b7"),
             },
             Footprint {
-                gas: 7800,
-                reads: 78,
+                gas: 7600,
+                reads: 76,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
-                state: b256!("0xed753484753a9f47f16a3030ed5901ceecd27d2e721afe94d938ee979b0bc157"),
+                state: b256!("0xc060109d93aa93ec5b2924c3d5d30be00c6210ed9d4581bdb99d90b0837aa0b7"),
             },
             Footprint {
                 gas: 236800,
                 reads: 118,
                 writes: 45,
                 logs: b256!("0xd29e96c90ec5d2d18b6ba358502c03c9857a2354e6c5c6dd748b1ef1746fd260"),
-                state: b256!("0x4288a55902e1b083369772e7ed40e8be9fdf24c5abd34e3214b5086c1011034b"),
+                state: b256!("0x94a8cb3e82ed9b0421e340ec4c0002c599bc4a2654b776a46922a45bdebd45f2"),
             },
             Footprint {
-                gas: 7800,
-                reads: 78,
+                gas: 7600,
+                reads: 76,
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
                 // Daily scheduling keys and nonzero queue locations change stored state.
-                state: b256!("0xb2f355fd3b69f53544008a935fdf27afb3428814712057fffc031f1e7f679496"),
+                state: b256!("0xd27d66fab41ea7f353d16469f9a481a8d210923a7c7180a1ce57129e57e7306a"),
             },
             Footprint {
-                gas: 370100,
-                reads: 151,
-                writes: 71,
+                gas: 354200,
+                reads: 142,
+                writes: 68,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0x0099a42f939c83cfd81df42b9f41cd838d3b6cab217c5ad2a955708db5738cd9"),
+                state: b256!("0xfe019f46baba0f01dc01cb0e9964e90ec16c04a284358bc7ec8db5be8e993bc8"),
             },
         ]
     );

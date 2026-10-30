@@ -13,12 +13,12 @@ pub(crate) const VS_ADDR: Address = address!("0x00000000000000000000000000000000
 pub(crate) const STK_ADDR: Address = address!("0x000000000000000000000000000000000000EE02");
 /// SlashIndicator precompile.
 pub(crate) const SLASH_ADDR: Address = address!("0x000000000000000000000000000000000000EE01");
-/// Tribute precompile (`totalSupply()`).
+/// Tribute precompile (`getDayTotals()`).
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 /// TributeFactory precompile (`offerTribute`, `getWorldwideDay`, `getActiveWorldwideDays`).
 pub(crate) const TRIBUTE_FACTORY_ADDR: Address =
     address!("0x0000000000000000000000000000000000001100");
-/// Nod precompile (`totalSupply()`).
+/// Nod precompile (`balanceOf()`).
 pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
 /// NodFactory precompile (`mineGratis`).
 pub(crate) const NOD_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001007");

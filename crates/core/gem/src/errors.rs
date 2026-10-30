@@ -20,9 +20,6 @@ pub enum GemError {
     #[error("gem is already settled")]
     AlreadySettled,
 
-    #[error("index out of bounds")]
-    IndexOutOfBounds,
-
     #[error("gem already exists")]
     AlreadyExists,
 
@@ -112,7 +109,6 @@ impl From<GemError> for PrecompileError {
             GemError::NonTransferable => revert_with(I::NonTransferable {}),
             GemError::GemNotFound => revert_with(I::GemNotFound {}),
             GemError::AlreadySettled => revert_with(I::AlreadySettled {}),
-            GemError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
             GemError::AlreadyExists => revert_with(I::AlreadyExists {}),
             GemError::ZeroOwner => revert_with(I::ZeroOwner {}),
             GemError::UnknownProfileSelector(value) => {

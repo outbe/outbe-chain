@@ -121,16 +121,12 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
         .len()
 }
 
-/// The owner's `index`-th gem in its owner index, read in one slot.
-pub fn token_of_owner_by_index(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    index: u32,
-) -> Result<Option<U256>> {
+/// The ids of one owner's gems, read from the owner index alone.
+pub fn tokens_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<U256>> {
     GemContract::new(storage.clone())
         .owner_ids
         .list(&owner)
-        .get(index)
+        .read_all()
 }
 
 /// One owner's gems, read through the owner index.

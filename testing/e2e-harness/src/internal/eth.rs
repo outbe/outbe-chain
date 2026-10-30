@@ -275,46 +275,6 @@ where
     })
 }
 
-#[derive(Debug)]
-pub(crate) enum ViewCallOutcome<T> {
-    Returned(T),
-    Reverted(Bytes),
-}
-
-pub(crate) fn read_call_with_revert<C: SolCall>(
-    url: &str,
-    to: Address,
-    call: &C,
-) -> std::result::Result<ViewCallOutcome<C::Return>, String>
-where
-    C::Return: Send + 'static,
-{
-    let url = url.to_string();
-    let data = call.abi_encode();
-    block_on(async move {
-        let endpoint = url
-            .parse()
-            .map_err(|error| format!("invalid RPC URL: {error}"))?;
-        let provider = ProviderBuilder::new().connect_http(endpoint);
-        let tx = TransactionRequest::default()
-            .to(to)
-            .input(Bytes::from(data).into());
-        match provider.call(tx).block(BlockId::latest()).await {
-            Ok(out) => C::abi_decode_returns(&out)
-                .map(ViewCallOutcome::Returned)
-                .map_err(|error| format!("ABI decode failed: {error}")),
-            Err(error) => error
-                .as_error_resp()
-                .filter(|payload| payload.code == 3)
-                .and_then(|payload| payload.try_data_as::<Bytes>())
-                .and_then(std::result::Result::ok)
-                .filter(|data| !data.is_empty())
-                .map(ViewCallOutcome::Reverted)
-                .ok_or_else(|| format!("eth_call failed: {error}")),
-        }
-    })
-}
-
 /// `eth_call` a view function and decode its return, or `None` on any transport /
 /// decode error (the analogue of the old `cast ... 2>/dev/null`).
 pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>

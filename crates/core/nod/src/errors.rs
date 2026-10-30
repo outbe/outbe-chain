@@ -23,9 +23,6 @@ pub enum NodError {
     #[error("group not found")]
     GroupNotFound,
 
-    #[error("index out of bounds")]
-    IndexOutOfBounds,
-
     #[error("nod query exceeds the runtime result limit")]
     QueryLimitExceeded,
 
@@ -59,17 +56,11 @@ pub enum NodError {
         member_count: u32,
     },
 
-    #[error("Nod total supply overflow during issuance")]
-    TotalSupplyOverflowDuringIssuance,
-
     #[error("Nod group {group_key} unpaid load overflow")]
     GroupUnpaidLoadOverflow { group_key: alloy_primitives::B256 },
 
     #[error("Nod group {group_key} unpaid load underflow")]
     GroupUnpaidLoadUnderflow { group_key: alloy_primitives::B256 },
-
-    #[error("Nod total supply underflow during removal")]
-    TotalSupplyUnderflowDuringRemoval,
 
     #[error("Nod group {group_id} settled count underflow")]
     GroupSettledCountUnderflow { group_id: WwdEntityId },
@@ -131,7 +122,6 @@ impl From<NodError> for PrecompileError {
             NodError::InvalidNodIdHex => revert_with(I::InvalidNodIdHex {}),
             NodError::NodNotFound => revert_with(I::NodNotFound {}),
             NodError::GroupNotFound => revert_with(I::GroupNotFound {}),
-            NodError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
             NodError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
             NodError::ZeroReferenceCurrency => revert_with(I::ZeroReferenceCurrency {}),
             NodError::NonTransferable => revert_with(I::NonTransferable {}),
@@ -154,9 +144,6 @@ impl From<NodError> for PrecompileError {
                 groupId: group_id.to_u256(),
                 memberCount: member_count,
             }),
-            NodError::TotalSupplyOverflowDuringIssuance => {
-                revert_with(I::TotalSupplyOverflowDuringIssuance {})
-            }
             NodError::GroupUnpaidLoadOverflow { group_key } => {
                 revert_with(I::GroupUnpaidLoadOverflow {
                     groupKey: group_key,
@@ -166,9 +153,6 @@ impl From<NodError> for PrecompileError {
                 revert_with(I::GroupUnpaidLoadUnderflow {
                     groupKey: group_key,
                 })
-            }
-            NodError::TotalSupplyUnderflowDuringRemoval => {
-                revert_with(I::TotalSupplyUnderflowDuringRemoval {})
             }
             NodError::GroupSettledCountUnderflow { group_id } => {
                 revert_with(I::GroupSettledCountUnderflow {

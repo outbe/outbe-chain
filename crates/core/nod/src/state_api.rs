@@ -195,12 +195,6 @@ impl NodContract<'_> {
             }
         };
 
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_add(1)
-            .ok_or(NodError::TotalSupplyOverflowDuringIssuance)?;
-        self.total_supply.write(supply)?;
         if let Some(series_id) = series_id {
             self.consume_unclaimed_tribute_from_series(
                 series_id,
@@ -255,12 +249,6 @@ impl NodContract<'_> {
         let mut group = group.into_body();
         check_loaded(self, &item, &group)?;
         let group_id = item.group_id().map_err(date_step_error)?;
-        let supply = self
-            .total_supply
-            .read()?
-            .checked_sub(1)
-            .ok_or(NodError::TotalSupplyUnderflowDuringRemoval)?;
-        self.total_supply.write(supply)?;
         let remaining = if item.is_settled {
             group.settled_nods = group
                 .settled_nods
@@ -419,8 +407,7 @@ mod tests {
             };
             add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
             let contract = NodContract::new(storage.clone());
-            assert_eq!(contract.total_supply().unwrap(), 1);
-            assert_eq!(contract.state_records(Some(item.owner)).unwrap().len(), 1);
+            assert_eq!(contract.state_records(item.owner).unwrap().len(), 1);
             let stale_item = load_item(&storage, item.nod_id).unwrap().unwrap();
             let stale_group = load_group(&storage, item.group_key).unwrap().unwrap();
             record_settled(
@@ -446,8 +433,7 @@ mod tests {
                 load_group(&storage, item.group_key).unwrap().unwrap(),
             )
             .unwrap();
-            assert_eq!(contract.total_supply().unwrap(), 0);
-            assert!(contract.state_records(None).unwrap().is_empty());
+            assert!(contract.state_records(item.owner).unwrap().is_empty());
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }

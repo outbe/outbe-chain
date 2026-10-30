@@ -558,28 +558,14 @@ fn observe_gem_state<T>(
 
 fn gem_inventory(world: &World, port: u16, owner: Address) -> Result<Vec<U256>, String> {
     let url = world.rpc.url(port);
-    let count: usize = eth::read_call_result(
+    let ids = eth::read_call_result(
         &url,
         addresses::GEM_ADDR,
-        &eth::IGem::balanceOfCall { owner },
-    )?
-    .try_into()
-    .map_err(|_| "Gem inventory size overflow".to_owned())?;
-    if count > 32 {
+        &eth::IGem::tokensByOwnerCall { owner },
+    )?;
+    if ids.len() > 32 {
         return Err("unbounded beneficiary Gem inventory".to_owned());
     }
-    let ids: Vec<_> = (0..count)
-        .map(|index| {
-            eth::read_call_result(
-                &url,
-                addresses::GEM_ADDR,
-                &eth::IGem::tokenOfOwnerByIndexCall {
-                    owner,
-                    index: U256::from(index),
-                },
-            )
-        })
-        .collect::<Result<_, _>>()?;
     if ids
         .iter()
         .copied()

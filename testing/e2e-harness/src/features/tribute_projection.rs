@@ -202,8 +202,9 @@ fn successful_receipt_and_supply(world: &mut World) {
         "tribute transaction did not produce a successful receipt: {tx_hash}"
     );
     let primary = world.validators.primary_port();
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     for _ in 0..30 {
-        if world.rpc.supply(primary).as_deref() == Some("1") {
+        if world.rpc.day_tributes(primary, &wwd).as_deref() == Some("1") {
             world
                 .rpc
                 .trace_tribute_state(tx_hash, "state-visible", primary);
@@ -212,7 +213,7 @@ fn successful_receipt_and_supply(world: &mut World) {
         }
         sleep(Duration::from_millis(500));
     }
-    panic!("successful tribute did not increase totalSupply to 1");
+    panic!("successful tribute did not raise the day's Tribute count to 1");
 }
 
 #[then("every validator stores the same Tribute and indexes in EVM state")]
@@ -371,9 +372,10 @@ fn day_absent(world: &mut World) {
 
 #[then("no validator stores a Tribute")]
 fn no_tribute_state(world: &mut World) {
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     world
         .projection
-        .assert_no_tribute_projection()
+        .assert_no_tribute_projection(&wwd)
         .expect("no Tribute state");
 }
 
@@ -469,9 +471,10 @@ fn independent_user_offers_through_network(world: &mut World) {
         super::tribute_negatives::Rejection::InvalidSignature,
     );
     super::tribute_negatives::assert_supply(world, 0);
+    let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
     world
         .projection
-        .assert_no_tribute_projection()
+        .assert_no_tribute_projection(&wwd)
         .expect("wrong-network signature left no projection");
     assert!(l2_fixture::verify_merkle_root(
         &l2_fixture::root_signing_public_key(network),

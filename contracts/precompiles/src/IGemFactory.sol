@@ -89,8 +89,7 @@ interface IGemFactory {
     function ownerOf(uint256 positionId) external view returns (address);
     /// @notice Metadata URI for the position `positionId`.
     function tokenURI(uint256 positionId) external view returns (string memory);
-    /// @notice `positionId` at `index` within `owner`'s positions.
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
     /// @notice Full terms of the position `positionId`.
     function getPosition(uint256 positionId) external view returns (PositionData memory);
 

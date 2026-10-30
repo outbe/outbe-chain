@@ -5,7 +5,6 @@ interface IGem {
     error NonTransferable();
     error GemNotFound();
     error AlreadySettled();
-    error IndexOutOfBounds();
     error AlreadyExists();
     error ZeroOwner();
     error UnknownProfileSelector(uint8 value);
@@ -65,8 +64,7 @@ interface IGem {
     function symbol() external view returns (string memory);
     function tokenURI(uint256 gemId) external view returns (string memory);
 
-    // Per-owner lookup; the ERC-721 Enumerable interface id is not supported.
-    function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
 
     // outbe-specific views
     function getGem(uint256 gemId) external view returns (GemData memory);

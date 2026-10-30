@@ -77,6 +77,3 @@ use zero_fee::zerofee_rollover_wait_budget_secs;
 use tribute::RewardBearingTribute;
 pub use tribute::TributeOfferParams;
 pub(crate) use tribute::TributeProofInput;
-
-#[cfg(test)]
-use nod::classify_owner_index_result;

@@ -2,8 +2,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, view};
 use outbe_primitives::erc::{
-    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_ENUMERABLE_INTERFACE_ID, ERC721_INTERFACE_ID,
-    ERC721_METADATA_INTERFACE_ID,
+    ERC165_INTERFACE_ID, ERC4906_INTERFACE_ID, ERC721_INTERFACE_ID, ERC721_METADATA_INTERFACE_ID,
 };
 use outbe_primitives::error::Result;
 
@@ -16,11 +15,10 @@ use crate::schema::{NodContract, NodItemState};
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-const SUPPORTED_INTERFACES: [[u8; 4]; 5] = [
+const SUPPORTED_INTERFACES: [[u8; 4]; 4] = [
     ERC165_INTERFACE_ID,
     ERC721_INTERFACE_ID,
     ERC721_METADATA_INTERFACE_ID,
-    ERC721_ENUMERABLE_INTERFACE_ID,
     ERC4906_INTERFACE_ID,
 ];
 
@@ -41,9 +39,7 @@ pub fn dispatch(
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
         match call {
-            call @ (supportsInterface(_) | name(_) | symbol(_) | totalSupply(_)) => {
-                dispatch_metadata(&nod, call)
-            }
+            call @ (supportsInterface(_) | name(_) | symbol(_)) => dispatch_metadata(call),
             transferFrom(_)
             | safeTransferFrom_0(_)
             | safeTransferFrom_1(_)
@@ -55,23 +51,19 @@ pub fn dispatch(
                 api::clean(&storage, c.nodId)?;
                 Ok(INod::cleanReturn {})
             }),
-            call @ (balanceOf(_)
-            | ownerOf(_)
-            | tokenURI(_)
-            | tokenByIndex(_)
-            | tokenOfOwnerByIndex(_)
-            | getNod(_)) => dispatch_entity(storage, &nod, call),
+            call @ (balanceOf(_) | ownerOf(_) | tokenURI(_) | tokensByOwner(_) | getNod(_)) => {
+                dispatch_entity(storage, &nod, call)
+            }
         }
     })
 }
 
-fn dispatch_metadata(nod: &NodContract<'_>, call: INod::INodCalls) -> Result<Bytes> {
+fn dispatch_metadata(call: INod::INodCalls) -> Result<Bytes> {
     use INod::INodCalls::*;
     match call {
         supportsInterface(c) => view(c, |c| Ok(SUPPORTED_INTERFACES.contains(&c.interfaceId.0))),
         name(_) => metadata::<INod::nameCall>(|| Ok(NodContract::name().to_string())),
         symbol(_) => metadata::<INod::symbolCall>(|| Ok(NodContract::symbol().to_string())),
-        totalSupply(_) => metadata::<INod::totalSupplyCall>(|| nod.total_supply().map(U256::from)),
         _ => unreachable!("metadata route requires a metadata call"),
     }
 }
@@ -95,15 +87,7 @@ fn dispatch_entity(
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;
             crate::metadata::token_uri(nod, &item, storage.timestamp()?)
         }),
-        tokenByIndex(c) => view(c, |c| {
-            let index = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::token_by_index(&storage, index)?.ok_or_else(|| NodError::IndexOutOfBounds.into())
-        }),
-        tokenOfOwnerByIndex(c) => view(c, |c| {
-            let index = u32::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
-            api::token_of_owner_by_index(&storage, c.owner, index)?
-                .ok_or_else(|| NodError::IndexOutOfBounds.into())
-        }),
+        tokensByOwner(c) => view(c, |c| api::tokens_by_owner(&storage, c.owner)),
         getNod(c) => view(c, |c| {
             let nod_id = c.nodId;
             let item = api::get_item(&storage, nod_id)?.ok_or(NodError::NodNotFound)?;

@@ -257,15 +257,11 @@ fn native_fraction_completion_keeps_tributes_for_owner_issue_nod() {
         );
 
         let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 3);
         assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
         assert!(!tribute.retired_days.read(&WWD).unwrap());
-        assert_eq!(
-            outbe_nod::schema::NodContract::new(storage)
-                .total_supply()
-                .unwrap(),
-            0
-        );
+        assert!((1..=3u8).all(|byte| {
+            outbe_nod::api::balance_of(&storage, Address::repeat_byte(byte)).unwrap() == 0
+        }));
     });
 }
 
@@ -346,7 +342,6 @@ fn production_command_issues_encrypted_nods_and_completes_without_worker() {
             emission_day_state::SUCCEEDED
         );
         let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 0);
         assert!(tribute.retired_days.read(&WWD).unwrap());
         let nods = outbe_nod::api::list_by_owner(&storage, Address::repeat_byte(1)).unwrap();
         assert_eq!(nods.len(), 1);
@@ -472,15 +467,16 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
                 emission_day_state::FAILED
             );
             let tribute = TributeContract::new(storage.clone());
-            assert_eq!(tribute.total_supply().unwrap(), amounts.len() as u64);
+            assert_eq!(
+                tribute.state_records_by_day(WWD).unwrap().len(),
+                amounts.len()
+            );
             assert!(!tribute.retired_days.read(&WWD).unwrap());
             assert!(tribute.get_day_totals(WWD).unwrap().is_sealed);
-            assert_eq!(
-                outbe_nod::schema::NodContract::new(storage)
-                    .total_supply()
-                    .unwrap(),
-                0
-            );
+            assert!((1..=amounts.len()).all(|index| {
+                let owner = Address::repeat_byte(u8::try_from(index).unwrap());
+                outbe_nod::api::balance_of(&storage, owner).unwrap() == 0
+            }));
         });
         let after = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();
@@ -590,6 +586,6 @@ fn tribute_consumption_requires_the_exact_metadosis_command() {
                 },
             )
             .unwrap();
-        assert_eq!(tribute.total_supply().unwrap(), 3);
+        assert_eq!(tribute.state_records_by_day(WWD).unwrap().len(), 3);
     });
 }

@@ -101,10 +101,15 @@ fn set_day(tribute: &mut TributeData, day: outbe_primitives::time::WorldwideDay)
 
 fn open_sample_day(_tc: &mut TributeContract) {}
 
+/// Pin the day totals base slot: the genesis seeder writes a raw slot.
+#[test]
+fn day_totals_slot_matches_seeder_layout() {
+    with_tribute(|tc| assert_eq!(tc.day_totals.base_slot(), U256::ZERO));
+}
+
 #[test]
 fn test_initial_state() {
     with_tribute(|tc| {
-        assert_eq!(tc.total_supply().unwrap(), 0);
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
         assert_eq!(totals.tribute_count, 0);
         assert_eq!(totals.tribute_nominal_total_minor, U256::ZERO);
@@ -126,7 +131,7 @@ fn test_issue_accepts_unsealed_day_and_rejects_sealed_day() {
 
         let tribute = sample_tribute();
         tc.issue(&tribute).unwrap();
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);
 
         tc.seal_day(tribute.worldwide_day).unwrap();
         let mut second = sample_tribute();
@@ -274,7 +279,6 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
 
         let second_shard = tc.get_day_totals(day).unwrap();
         assert_eq!(second_shard.tribute_count, 257);
-        assert_eq!(tc.total_supply().unwrap(), 257);
 
         for seed in 258_u16..=513 {
             let mut tribute = sample_tribute();
@@ -287,7 +291,6 @@ fn tribute_population_crosses_multiple_work_shards_without_a_total_cap() {
 
         let third_shard = tc.get_day_totals(day).unwrap();
         assert_eq!(third_shard.tribute_count, 513);
-        assert_eq!(tc.total_supply().unwrap(), 513);
 
         let last = {
             let mut tribute = sample_tribute();
@@ -332,7 +335,7 @@ fn test_burn_tribute() {
 
         tc.burn(tribute.tribute_id).unwrap();
 
-        assert_eq!(tc.total_supply().unwrap(), 0);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 0);
         assert!(tc.get_tribute(tribute.tribute_id).unwrap().is_none());
 
         let totals = tc.get_day_totals(20241220u32.into()).unwrap();
@@ -406,7 +409,6 @@ fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
             unchanged.tribute_nominal_total_minor,
             tribute.nominal_amount_minor
         );
-        assert_eq!(tc.total_supply().unwrap(), 1);
 
         tc.consume_lysis_partition(tribute.worldwide_day, 1, tribute.nominal_amount_minor)
             .unwrap();
@@ -415,7 +417,6 @@ fn lysis_bulk_accounting_rejects_count_and_nominal_mismatch_before_zeroing() {
         assert!(completed.is_sealed);
         assert_eq!(completed.tribute_count, 0);
         assert_eq!(completed.tribute_nominal_total_minor, U256::ZERO);
-        assert_eq!(tc.total_supply().unwrap(), 0);
     });
 }
 
@@ -502,7 +503,7 @@ fn day_list_selector_rejects_and_owner_balance_stays() {
         tc.issue(&second).unwrap();
 
         let storage = tc.storage_handle();
-        let owner_call = crate::precompile::ITribute::getTributesByOwnerCall { owner: alice };
+        let owner_call = crate::precompile::ITribute::tokensByOwnerCall { owner: alice };
         let output = crate::precompile::dispatch(
             storage.clone(),
             &owner_call.abi_encode(),
@@ -511,19 +512,16 @@ fn day_list_selector_rejects_and_owner_balance_stays() {
         )
         .unwrap();
         let owner_ids =
-            crate::precompile::ITribute::getTributesByOwnerCall::abi_decode_returns(&output)
-                .unwrap();
+            crate::precompile::ITribute::tokensByOwnerCall::abi_decode_returns(&output).unwrap();
         assert_eq!(owner_ids, vec![first.tribute_id.to_u256()]);
         assert_eq!(tc.balance_of(alice).unwrap(), 1);
         assert_eq!(tc.balance_of(bob).unwrap(), 1);
-        assert_eq!(tc.total_supply().unwrap(), 2);
 
         let mut calldata = alloy_primitives::keccak256(b"getTributesByDay(uint32)")[..4].to_vec();
         calldata.extend(U256::from(day.value()).to_be_bytes::<32>());
         assert!(
             crate::precompile::dispatch(storage, &calldata, Address::ZERO, U256::ZERO).is_err()
         );
-        assert_eq!(tc.total_supply().unwrap(), 2);
         assert_eq!(tc.get_tribute_ids_by_day(day).unwrap().len(), 2);
         assert_eq!(tc.balance_of(alice).unwrap(), 1);
         assert_eq!(tc.balance_of(bob).unwrap(), 1);
@@ -611,7 +609,6 @@ fn test_burn_all_by_wwd() {
 
         tc.burn_all_by_wwd(20241220u32.into()).unwrap();
 
-        assert_eq!(tc.total_supply().unwrap(), 0);
         assert!(tc.get_tribute(t1.tribute_id).unwrap().is_none());
         assert!(tc.get_tribute(t2.tribute_id).unwrap().is_none());
         assert!(tc
@@ -642,7 +639,6 @@ fn sealed_day_rejects_burn_all_by_wwd_without_partial_mutation() {
         tc.seal_day(day).unwrap();
 
         assert!(tc.burn_all_by_wwd(day).is_err());
-        assert_eq!(tc.total_supply().unwrap(), 2);
         assert!(tc.get_tribute(t1.tribute_id).unwrap().is_some());
         assert!(tc.get_tribute(t2.tribute_id).unwrap().is_some());
         assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 2);
@@ -698,7 +694,6 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
             assert!(reverted.is_err());
             let contract = TributeContract::new(storage);
             assert!(contract.get_tribute(tribute.tribute_id).unwrap().is_none());
-            assert_eq!(contract.total_supply().unwrap(), 0);
             assert_eq!(
                 contract
                     .get_day_totals(tribute.worldwide_day)
@@ -728,7 +723,6 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
                 .get_tribute(oog_tribute.tribute_id)
                 .unwrap()
                 .is_none());
-            assert_eq!(contract.total_supply().unwrap(), 0);
             assert_eq!(
                 contract
                     .get_day_totals(oog_tribute.worldwide_day)
@@ -812,7 +806,6 @@ fn failed_burn_transaction_restores_tribute_state_and_events() {
                 assert_eq!(restored.tribute_id, tribute.tribute_id);
                 assert_eq!(restored.owner, tribute.owner);
                 assert_eq!(restored.nominal_amount_minor, tribute.nominal_amount_minor);
-                assert_eq!(contract.total_supply().unwrap(), 1);
                 assert_eq!(
                     contract
                         .get_day_totals(tribute.worldwide_day)
@@ -887,9 +880,9 @@ fn old_digest_is_rejected_without_issuing_a_tribute() {
         );
         tribute.tribute_id = WwdEntityId::from_day_and_digest(tribute.worldwide_day, digest);
         assert!(tc.issue(&tribute).is_err());
-        assert_eq!(tc.total_supply().unwrap(), 0);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 0);
         tribute.tribute_id = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day);
         tc.issue(&tribute).unwrap();
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);
     });
 }

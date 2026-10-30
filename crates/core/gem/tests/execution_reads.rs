@@ -58,10 +58,7 @@ fn reverted_issuance_rolls_back_state_and_events() {
             api::get_item(&storage, gem_id).unwrap().unwrap().gem_id,
             gem_id
         );
-        assert_eq!(
-            api::token_of_owner_by_index(&storage, owner, 0).unwrap(),
-            Some(gem_id)
-        );
+        assert_eq!(api::tokens_by_owner(&storage, owner).unwrap(), vec![gem_id]);
         let output = outbe_gem::precompile::dispatch(
             storage.clone(),
             &IGem::getGemCall { gemId: gem_id }.abi_encode(),

@@ -102,7 +102,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert!(allocated > U256::ZERO);
         assert!(tc.get_record(t1.tribute_id).unwrap().is_some());
         assert!(tc.get_record(t2.tribute_id).unwrap().is_some());
-        assert_eq!(tc.total_supply().unwrap(), 2);
         assert_eq!(tc.balance_of(owner1).unwrap(), 1);
         assert_eq!(tc.balance_of(owner2).unwrap(), 1);
         assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 2);
@@ -118,7 +117,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &t1))
             .unwrap()
             .is_none());
-        assert_eq!(tc.total_supply().unwrap(), 2);
+        assert_eq!(tc.balance_of(t1.owner).unwrap(), 1);
         storage.set_block_timestamp(U256::from(base_ts)).unwrap();
 
         // A non-owner claim preserves the Tribute and issues no Nod.
@@ -204,7 +203,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             "encrypted_gratis_amount must not contain plaintext U256 bytes"
         );
         assert!(tc.get_record(t1.tribute_id).unwrap().is_none());
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(t1.owner).unwrap(), 0);
         let totals_after_t1 = tc.get_day_totals(day).unwrap();
         assert_eq!(totals_after_t1.tribute_count, 1);
         assert_eq!(
@@ -231,7 +230,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             nod_id_of(&tc, &t2)
         );
         assert!(tc.get_record(t2.tribute_id).unwrap().is_none());
-        assert_eq!(tc.total_supply().unwrap(), 0);
+        assert_eq!(tc.balance_of(t2.owner).unwrap(), 0);
         let late_nod = outbe_nod::api::get_item(&storage, nod_id_of(&tc, &t2))
             .unwrap()
             .expect("late Nod");
@@ -314,7 +313,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
             crate::precompile::dispatch(storage.clone(), &call, tribute.owner, U256::ZERO);
         assert_eq!(unpriced.unwrap_err().to_string(), forfeited.to_string());
         assert!(tc.get_record(tribute.tribute_id).unwrap().is_some());
-        assert_eq!(tc.total_supply().unwrap(), 1);
+        assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);
         assert!(outbe_nod::api::get_item(&storage, nod_id_of(&tc, &tribute))
             .unwrap()
             .is_none());

@@ -118,14 +118,13 @@ pub fn seed_tributes(storage: &mut StorageBuilder, tributes: &[Value]) -> Result
     for (owner, count) in owner_counts {
         storage.set_mapping(10, &address_bytes(&owner)?, count);
     }
-    storage.set_slot(0u64, tributes.len());
     Ok(())
 }
 
-/// Initialize the Tribute `day_totals` DSL record for OFFERING days (`slot 1`).
+/// Initialize the Tribute `day_totals` DSL record for OFFERING days (`slot 0`).
 pub fn seed_tribute_day_totals(storage: &mut StorageBuilder, days: &[u32]) {
     for &wwd in days {
-        storage.set_mapping(1, &u32_bytes(wwd), 1u64);
+        storage.set_mapping(0, &u32_bytes(wwd), 1u64);
     }
 }
 

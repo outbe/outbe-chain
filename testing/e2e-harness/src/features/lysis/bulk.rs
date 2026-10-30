@@ -163,17 +163,13 @@ fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
     let transaction_hashes = &world.state.tribute_transactions;
     assert_eq!(transaction_hashes.len(), count);
     let expected_supply = count.to_string();
-    let worldwide_day = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("capacity WorldwideDay")
-        .parse::<u32>()
-        .expect("numeric capacity WorldwideDay");
+    let wwd = world.state.wwd.as_deref().expect("capacity WorldwideDay");
+    let worldwide_day = wwd.parse::<u32>().expect("numeric capacity WorldwideDay");
     for port in world.validators.committee_ports() {
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
-            let supply_matches = world.rpc.supply(port).as_deref() == Some(&expected_supply);
+            let supply_matches =
+                world.rpc.day_tributes(port, wwd).as_deref() == Some(&expected_supply);
             let day = outbe_primitives::time::WorldwideDay::new(worldwide_day);
             let day_matches = world.state.tribute_owner_keys[..count].iter().all(|key| {
                 let Some(owner) = crate::internal::eth::address_of(key) else {

@@ -12,12 +12,6 @@ use crate::{
 impl NodContract<'_> {
     // --- ID helpers ---
 
-    // --- View functions ---
-
-    pub fn total_supply(&self) -> Result<u64> {
-        self.total_supply.read()
-    }
-
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
     /// Parks a new group in the bin of its sealed call price.

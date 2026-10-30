@@ -181,13 +181,13 @@ pub(super) fn restart_public_state(
             height,
         )
         .map_err(|e| eyre!(e))?,
-        supply: eth::read_call_at_result(
-            &url,
-            addresses::TRIBUTE_ADDR,
-            &eth::ITribute::totalSupplyCall {},
-            height,
-        )
-        .map_err(|e| eyre!(e))?,
+        supply: match world.state.wwd.as_deref() {
+            Some(wwd) => world
+                .rpc
+                .day_tributes_at(port, wwd, height)
+                .map_err(|e| eyre!(e))?,
+            None => alloy_primitives::U256::ZERO,
+        },
     })
 }
 

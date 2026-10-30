@@ -277,10 +277,7 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         assert_eq!(data.calledAt, CALLED);
         assert_ne!(data.settlementDeadline, 0);
         assert_eq!(api::balance_of(&s, owner).unwrap(), 1);
-        assert_eq!(
-            api::token_of_owner_by_index(&s, owner, 0).unwrap(),
-            Some(paid)
-        );
+        assert_eq!(api::tokens_by_owner(&s, owner).unwrap(), vec![paid]);
 
         let group_key = api::get_item(&s, paid).unwrap().unwrap().group_key;
         let group = api::get_group(&s, group_key).unwrap().unwrap();

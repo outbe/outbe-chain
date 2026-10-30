@@ -92,8 +92,9 @@ impl ProjectionFixture {
         })
     }
 
-    pub fn assert_no_tribute_projection(&self) -> Result<()> {
-        self.run(|cfg| {
+    pub fn assert_no_tribute_projection(&self, wwd: &str) -> Result<()> {
+        let wwd = wwd.to_owned();
+        self.run(move |cfg| {
             let rpc = crate::world::rpc::Rpc::new(cfg.clone());
             let ports = (0..cfg.validators)
                 .map(|index| cfg.http_port(index))
@@ -110,7 +111,11 @@ impl ProjectionFixture {
                 .unwrap_or(1);
             let checkpoint = rpc.wait_finalized_checkpoint(&ports, height, 60)?;
             for port in ports {
-                if rpc.tribute_supply_at(port, checkpoint)? != 0 {
+                if !rpc
+                    .day_tributes_at(port, &wwd, checkpoint.height)
+                    .map_err(|error| eyre!(error))?
+                    .is_zero()
+                {
                     bail!("Tribute state is populated on port {port}");
                 }
             }

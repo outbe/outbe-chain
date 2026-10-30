@@ -168,28 +168,12 @@ pub fn get_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<Option<
     load_group(storage, group_key).map(|loaded| loaded.map(|loaded| loaded.into_body()))
 }
 
-/// The `index`-th Nod in the global index, read in one slot.
-pub fn token_by_index(storage: &StorageHandle<'_>, index: u32) -> Result<Option<U256>> {
-    NodContract::new(storage.clone()).all_ids.get(index)
-}
-
-/// The owner's `index`-th Nod in its owner index, read in one slot.
-pub fn token_of_owner_by_index(
-    storage: &StorageHandle<'_>,
-    owner: Address,
-    index: u32,
-) -> Result<Option<U256>> {
+/// The ids of one owner's Nods, read from the owner index alone.
+pub fn tokens_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<U256>> {
     NodContract::new(storage.clone())
         .owner_ids
         .list(&owner)
-        .get(index)
-}
-
-/// Loads the complete Nod collection.
-pub fn list_all(storage: &StorageHandle<'_>) -> Result<Vec<NodItemState>> {
-    NodContract::new(storage.clone())
-        .state_records(None)
-        .map(|records| records.into_iter().map(Into::into).collect())
+        .read_all()
 }
 
 /// How many Nods one owner holds, read from the owner index alone.
@@ -203,7 +187,7 @@ pub fn balance_of(storage: &StorageHandle<'_>, owner: Address) -> Result<u32> {
 /// Loads one owner's Nod collection.
 pub fn list_by_owner(storage: &StorageHandle<'_>, owner: Address) -> Result<Vec<NodItemState>> {
     NodContract::new(storage.clone())
-        .state_records(Some(owner))
+        .state_records(owner)
         .map(|records| records.into_iter().map(Into::into).collect())
 }
 

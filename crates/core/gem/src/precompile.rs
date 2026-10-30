@@ -47,11 +47,9 @@ pub fn dispatch(
             | setApprovalForAll(_) => Err(GemError::NonTransferable.into()),
             getApproved(c) => view(c, |_| Ok(Address::ZERO)),
             isApprovedForAll(c) => view(c, |_| Ok(false)),
-            call @ (balanceOf(_)
-            | ownerOf(_)
-            | tokenURI(_)
-            | tokenOfOwnerByIndex(_)
-            | getGem(_)) => dispatch_entity(&storage, call),
+            call @ (balanceOf(_) | ownerOf(_) | tokenURI(_) | tokensByOwner(_) | getGem(_)) => {
+                dispatch_entity(&storage, call)
+            }
         }
     })
 }
@@ -83,11 +81,7 @@ fn dispatch_entity(
             let now = storage.now_secs()?;
             Ok(crate::metadata::token_uri(&gem, now))
         }),
-        tokenOfOwnerByIndex(c) => view(c, |c| {
-            let index = u32::try_from(c.index).map_err(|_| GemError::IndexOutOfBounds)?;
-            api::token_of_owner_by_index(storage, c.owner, index)?
-                .ok_or_else(|| GemError::IndexOutOfBounds.into())
-        }),
+        tokensByOwner(c) => view(c, |c| api::tokens_by_owner(storage, c.owner)),
         getGem(c) => view(c, |c| {
             let gem = api::get_view(storage, c.gemId)?.ok_or(GemError::GemNotFound)?;
             Ok(to_abi_data(&gem, storage.now_secs()?))

@@ -84,7 +84,6 @@ fn day_mutators_reject_a_missing_lease_without_writes() {
         assert_eq!(tc.day_metadosis_completed_at.read(&day).unwrap(), 0);
         assert!(!tc.retired_days.read(&day).unwrap());
 
-        assert_eq!(tc.total_supply().unwrap(), 1);
         assert_eq!(tc.get_day_totals(day).unwrap().tribute_count, 1);
         assert_eq!(
             tc.get_day_totals(day).unwrap().tribute_nominal_total_minor,

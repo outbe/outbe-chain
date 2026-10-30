@@ -799,7 +799,6 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
             crate::precompile::ITributeFactory::EmptySuHashList {}.abi_encode()
         );
         let tribute = TributeContract::new(storage.clone());
-        assert_eq!(tribute.total_supply().unwrap(), 0);
         assert_eq!(tribute.balance_of(CALLER).unwrap(), 0);
         assert!(!TributeFactoryContract::new(storage.clone())
             .has_used_su_hash(B256::repeat_byte(0x22))

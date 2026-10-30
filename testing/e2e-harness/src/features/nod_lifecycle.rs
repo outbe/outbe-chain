@@ -458,17 +458,14 @@ where
 }
 
 fn nod_of(url: &str, owner: Address) -> U256 {
-    eth::read_call_result(
+    let ids = eth::read_call_result(
         url,
         addresses::NOD_ADDR,
-        &eth::INod::tokenOfOwnerByIndexCall {
-            owner,
-            index: U256::ZERO,
-        },
+        &eth::INod::tokensByOwnerCall { owner },
     )
-    .unwrap_or_else(|error| {
-        panic!("the Nod issued to {owner} is not in its owner's index: {error}")
-    })
+    .unwrap_or_else(|error| panic!("read the Nods of {owner}: {error}"));
+    *ids.first()
+        .unwrap_or_else(|| panic!("the Nod issued to {owner} is not in its owner's list"))
 }
 
 fn paid_nod_mining_call(
