@@ -806,3 +806,75 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         assert!(tc.get_fi_groups(day_retired).unwrap().is_empty());
     });
 }
+
+#[test]
+fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
+    use alloy_sol_types::SolCall;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    let base_ts = 1_750_000_000u64;
+    provider.set_timestamp(U256::from(base_ts));
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
+
+    let day: outbe_primitives::time::WorldwideDay = 20241221u32.into();
+    let owner1 = address!("0x1111111111111111111111111111111111111111");
+    let owner2 = address!("0x2222222222222222222222222222222222222222");
+    let stranger = address!("0x9999999999999999999999999999999999999999");
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let _enclave = crate::enclave_client::test_enclave::scope();
+        let mut tc = TributeContract::new(storage.clone());
+
+        let mut t_tiny = sample_tribute();
+        set_owner(&mut t_tiny, owner1);
+        set_day(&mut t_tiny, day);
+        t_tiny.nominal_amount_minor = U256::from(1u64);
+        let mut t_normal = sample_tribute();
+        set_owner(&mut t_normal, owner2);
+        set_day(&mut t_normal, day);
+        t_normal.nominal_amount_minor = U256::from(500_000_000u64);
+
+        let price_day = outbe_nod::openings::entry_price_day(base_ts).unwrap();
+        seed_entry_price(&storage, 840, price_day, U256::from(2_000_000u64));
+        tc.issue_with_league(&t_tiny, Some(100)).unwrap();
+        tc.issue_with_league(&t_normal, Some(4000)).unwrap();
+        in_process_ready(&storage, || tc.seal_day(day));
+        let binding = metadosis_process_ready_binding(1, 0, base_ts);
+        storage
+            .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                tc.compute_and_record_metadosis_fractions(day, U256::from(100_000u64), base_ts)
+            })
+            .unwrap();
+        let tiny_fraction = tc
+            .day_fractions
+            .read(&crate::schema::day_league_key(day, 100))
+            .unwrap();
+        assert!(
+            (U256::from(tiny_fraction) / U256::from(1_000_000u64)).is_zero(),
+            "the tiny Tribute's load rounds to zero"
+        );
+
+        let series = outbe_primitives::series_id::SeriesId::for_pair(price_day, 840, 840).unwrap();
+        let group = outbe_nod::api::series_group(&storage, series)
+            .unwrap()
+            .expect("the normal Tribute seals the series");
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 1);
+        assert_eq!(nod.series_unclaimed_tribute_count.read(&series).unwrap(), 1);
+
+        assert!(tc.issue_nod(owner1, t_tiny.tribute_id).is_err());
+        let clean_tiny = crate::precompile::ITribute::cleanCall {
+            tributeId: t_tiny.tribute_id.to_u256(),
+        }
+        .abi_encode();
+        crate::precompile::dispatch(storage.clone(), &clean_tiny, stranger, U256::ZERO).unwrap();
+        assert!(tc.get_record(t_tiny.tribute_id).unwrap().is_none());
+        assert_eq!(nod.series_unclaimed_tribute_count.read(&series).unwrap(), 1);
+
+        tc.issue_nod(owner2, t_normal.tribute_id).unwrap();
+        assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 0);
+        assert!(outbe_nod::api::series_group(&storage, series)
+            .unwrap()
+            .is_none());
+    });
+}

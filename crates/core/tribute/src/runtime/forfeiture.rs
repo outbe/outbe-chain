@@ -79,6 +79,10 @@ pub(super) fn seal_series_and_sum_exact_loads(
             .nominal_amount_minor;
         let load =
             outbe_primitives::math::scaled_math::checked_mul_div_floor(nominal, fraction, scale)?;
+        // Lysis gave it no load, so it has no Nod to issue and is cleaned at once.
+        if load.is_zero() {
+            continue;
+        }
         let entry = series_totals
             .entry((record.issuance_currency, record.reference_currency))
             .or_insert((0, U256::ZERO));
@@ -168,18 +172,16 @@ pub(super) fn issue_nod_from_tribute(
         }
         let raw_league = contract.tribute_leagues.read(&tribute_id)?;
         let league = raw_league.max(1);
-        let fraction = U256::from(
-            contract
-                .day_fractions
-                .read(&crate::schema::day_league_key(day, league))?,
-        );
         let nominal = record
             .calculation_view()
             .map_err(TributeError::private_amount_read_failed)?
             .nominal_amount_minor;
-        let gratis_load_minor =
-            outbe_lysis::program_v1::calculate_gratis_load(nominal, fraction, 0)
-                .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
+        let gratis_load_minor = outbe_lysis::program_v1::calculate_gratis_load(
+            nominal,
+            league_fraction(contract, day, league)?,
+            0,
+        )
+        .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?;
 
         let (series_id, sealed, gratis_day_price) =
             resolve_series_and_price(contract, &storage, &record, completed_at)?;
@@ -290,19 +292,19 @@ pub(super) fn clean_forfeited_tribute(
             .ok_or(TributeError::TributeNotFound)?;
         let day = record.worldwide_day;
         let retired = contract.retired_days.read(&day)?;
+        let raw_league = contract.tribute_leagues.read(&tribute_id)?;
+        let nominal = record
+            .calculation_view()
+            .map_err(TributeError::private_amount_read_failed)?
+            .nominal_amount_minor;
         let (is_forfeited, series_id) =
-            check_tribute_forfeited(contract, &storage, &record, retired)?;
+            check_tribute_forfeited(contract, &storage, &record, nominal, retired)?;
         if !is_forfeited {
             return Err(TributeError::TributeNotForfeited.into());
         }
         if let Some(series_id) = series_id {
             outbe_nod::api::record_unclaimed_tribute_cleaned(&storage, series_id)?;
         }
-        let raw_league = contract.tribute_leagues.read(&tribute_id)?;
-        let nominal = record
-            .calculation_view()
-            .map_err(TributeError::private_amount_read_failed)?
-            .nominal_amount_minor;
         if !retired {
             burn_live_tribute_record(contract, &record, raw_league, nominal)?;
             return Ok(());
@@ -324,6 +326,7 @@ fn check_tribute_forfeited(
     contract: &TributeContract<'_>,
     storage: &StorageHandle<'_>,
     record: &crate::TributeRecord,
+    nominal: U256,
     retired: bool,
 ) -> Result<(bool, Option<outbe_primitives::series_id::SeriesId>)> {
     if retired {
@@ -348,6 +351,16 @@ fn check_tribute_forfeited(
             });
         return Ok((is_aborted, None));
     }
+    let league = contract.tribute_leagues.read(&record.tribute_id)?.max(1);
+    let fraction = league_fraction(contract, day, league)?;
+    let load = outbe_primitives::math::scaled_math::checked_mul_div_floor(
+        nominal,
+        fraction,
+        U256::from(1_000_000u64),
+    )?;
+    if load.is_zero() {
+        return Ok((true, None));
+    }
     let price_day = resolve_price_day(contract, day, completed_at)?;
     let series_id = series_of(
         price_day,
@@ -362,6 +375,15 @@ fn check_tribute_forfeited(
     }
     let unquoted = issuable_day_vwap(storage, price_day, record.reference_currency)?.is_none();
     Ok((unquoted, None))
+}
+
+/// The Gratis fraction Metadosis recorded for `league` on `day`.
+fn league_fraction(contract: &TributeContract<'_>, day: WorldwideDay, league: u16) -> Result<U256> {
+    Ok(U256::from(
+        contract
+            .day_fractions
+            .read(&crate::schema::day_league_key(day, league))?,
+    ))
 }
 
 fn derive_wwd_emission_day(day: WorldwideDay) -> u32 {
