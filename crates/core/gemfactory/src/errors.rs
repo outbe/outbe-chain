@@ -23,6 +23,9 @@ pub enum GemFactoryError {
     #[error("gem group is not called")]
     GemNotCalled,
 
+    #[error("gem is not Issued")]
+    GemNotIssued,
+
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
 
@@ -111,6 +114,7 @@ impl From<GemFactoryError> for PrecompileError {
             GemFactoryError::GemAlreadySettled => revert_with(I::GemAlreadySettled {}),
             GemFactoryError::GemNotSettled => revert_with(I::GemNotSettled {}),
             GemFactoryError::GemNotCalled => revert_with(I::GemNotCalled {}),
+            GemFactoryError::GemNotIssued => revert_with(I::GemNotIssued {}),
             GemFactoryError::SettlementDeadlinePassed => {
                 revert_with(I::SettlementDeadlinePassed {})
             }

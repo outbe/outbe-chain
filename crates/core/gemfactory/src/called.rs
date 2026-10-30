@@ -231,17 +231,21 @@ pub(crate) fn call_if_breached(
         .get(group)?
         .ok_or(GemFactoryError::MissingGroupForCall { group })?
         .full_day_after_issue;
-    let breached = window.breached(&BreachTerms {
-        call_price: terms.call_price_minor,
-        window_seconds: terms.call_window_seconds,
-        threshold_seconds: terms.call_threshold_seconds,
-        start_day: start_day.value(),
-    });
-    if !breached {
+    if !window.breached(&breach_terms(&terms, start_day.value())) {
         return Ok(false);
     }
     mark_called(gem, group, &terms, now)?;
     Ok(true)
+}
+
+/// The terms a group is decided on: the ones it sealed, from its first full day.
+pub(crate) fn breach_terms(terms: &CallTerms, full_day_after_issue: u32) -> BreachTerms {
+    BreachTerms {
+        call_price: terms.call_price_minor,
+        window_seconds: terms.call_window_seconds,
+        threshold_seconds: terms.call_threshold_seconds,
+        start_day: full_day_after_issue,
+    }
 }
 
 /// `Issued -> Called` for every unpaid member at once: the group leaves the trie for the

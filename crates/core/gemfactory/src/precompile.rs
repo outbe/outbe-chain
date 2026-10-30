@@ -100,6 +100,9 @@ pub fn dispatch(
             }),
 
             getPosition(c) => view(c, |c| runtime::position_data(&storage, c.positionId)),
+            getCallProgress(c) => view(c, |c| {
+                crate::call_progress::call_progress(&storage, c.gemId)
+            }),
 
             balanceOf(c) => view(c, |c| {
                 GemFactoryContract::new(storage.clone())
