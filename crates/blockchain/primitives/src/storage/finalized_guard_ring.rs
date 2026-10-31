@@ -1,9 +1,10 @@
-//! Bounded prune ring of recent finalized-block hashes.
+//! Bounded prune ring of recent replay-guard hashes.
 //!
-//! System contracts keep per-finalized-block replay guards. A guard of a block
-//! older than the late-finalize window can never be used again. Each contract
-//! records every finalized block in a ring of [`FINALIZED_GUARD_RETAIN`] entries
-//! and clears the guards of the block that the new entry replaces.
+//! System and core contracts keep replay guards whose entries only need to stay
+//! live across a bounded retention window. Consensus hooks record finalized
+//! blocks in a ring of [`FINALIZED_GUARD_RETAIN`] entries via
+//! [`FinalizedGuardRing::record`]; other contracts supply their own retention
+//! window via [`FinalizedGuardRing::record_with_retain`].
 
 use alloy_primitives::B256;
 
@@ -20,14 +21,14 @@ const _: () = assert!(FINALIZED_GUARD_RETAIN > LATE_FINALIZE_WINDOW_K);
 
 /// The storage of one prune ring: the entries and the write cursor.
 pub struct FinalizedGuardRing<'a, 'storage> {
-    /// Ring entries, keyed by `cursor % FINALIZED_GUARD_RETAIN`.
+    /// Ring entries, keyed by `cursor % RETAIN` (defaulting to [`FINALIZED_GUARD_RETAIN`]).
     pub entries: &'a Mapping<'storage, u64, B256>,
-    /// Monotonic count of recorded blocks.
+    /// Monotonic count of recorded entries.
     pub cursor: &'a Slot<'storage, u64>,
 }
 
 impl FinalizedGuardRing<'_, '_> {
-    /// Records `fb_hash` in the ring.
+    /// Records `fb_hash` in the ring using [`FINALIZED_GUARD_RETAIN`].
     ///
     /// The operations occur in this order:
     /// 1. Read the cursor and the entry at `cursor % FINALIZED_GUARD_RETAIN`.
@@ -41,13 +42,26 @@ impl FinalizedGuardRing<'_, '_> {
         evict: impl FnOnce(B256) -> Result<()>,
         overflow: impl FnOnce() -> PrecompileError,
     ) -> Result<()> {
+        self.record_with_retain::<FINALIZED_GUARD_RETAIN>(fb_hash, evict, overflow)
+    }
+
+    /// Records `hash` in a prune ring of size `RETAIN`.
+    pub fn record_with_retain<const RETAIN: u64>(
+        &self,
+        hash: B256,
+        evict: impl FnOnce(B256) -> Result<()>,
+        overflow: impl FnOnce() -> PrecompileError,
+    ) -> Result<()> {
+        const {
+            assert!(RETAIN > 0);
+        }
         let seq = self.cursor.read()?;
-        let idx = seq % FINALIZED_GUARD_RETAIN;
+        let idx = seq % RETAIN;
         let evicted = self.entries.read(&idx)?;
-        if evicted != B256::ZERO && evicted != fb_hash {
+        if evicted != B256::ZERO && evicted != hash {
             evict(evicted)?;
         }
-        self.entries.write(&idx, fb_hash)?;
+        self.entries.write(&idx, hash)?;
         self.cursor
             .write(seq.checked_add(1).ok_or_else(overflow)?)?;
         Ok(())
@@ -74,8 +88,20 @@ pub struct RingPosition {
 impl FinalizedGuardRing<'_, '_> {
     /// Writes the cursor `seq`, then `entry` at `seq % FINALIZED_GUARD_RETAIN`.
     pub fn seed_for_test(&self, seq: u64, entry: B256) -> Result<()> {
+        self.seed_for_test_with_retain::<FINALIZED_GUARD_RETAIN>(seq, entry)
+    }
+
+    /// Writes the cursor `seq`, then `entry` at `seq % RETAIN`.
+    pub fn seed_for_test_with_retain<const RETAIN: u64>(
+        &self,
+        seq: u64,
+        entry: B256,
+    ) -> Result<()> {
+        const {
+            assert!(RETAIN > 0);
+        }
         self.cursor.write(seq)?;
-        self.entries.write(&(seq % FINALIZED_GUARD_RETAIN), entry)
+        self.entries.write(&(seq % RETAIN), entry)
     }
 
     /// Reads the entry at `idx`, then the cursor.

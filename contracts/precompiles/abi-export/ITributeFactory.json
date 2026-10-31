@@ -451,6 +451,11 @@
   },
   {
     "type": "error",
+    "name": "SuHashRingSeqOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "TeeNotConfigured",
     "inputs": []
   },

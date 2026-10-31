@@ -15,6 +15,7 @@ interface ITributeFactory {
     error TributeAlreadyExists();
     error InvalidCanonicalIdentity();
     error SuHashAlreadyUsed();
+    error SuHashRingSeqOverflow();
     error EmptySuHashList();
     error InvalidSuHashHex(string hash);
     error InvalidSuHashLength(uint64 length);
