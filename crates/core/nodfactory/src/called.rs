@@ -99,9 +99,9 @@ impl<'storage> CallPass<'storage> for NodCallPass<'storage> {
         _phase: u8,
         budget: &mut PassBudget,
     ) -> Result<Progress> {
-        let through_day = outbe_primitives::deadline_queue::deadline_day(
-            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
-        )?;
+        let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
+            .map_err(crate::errors::date_step_error)?;
+        let through_day = outbe_primitives::deadline_queue::deadline_day(pinned_ts)?;
         crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 
@@ -253,7 +253,10 @@ fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Re
         .get(group_key)?
         .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
         .full_day_after_issue;
-    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+    let start_ts = start_day
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    if now <= start_ts {
         return Ok(false);
     }
     nod.remove_call_bin(group_key)?;

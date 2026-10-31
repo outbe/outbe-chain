@@ -23,7 +23,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
 
         // 2020-01-02 keeps the 12-second gap. A block on 2020-01-01 makes the
         // zero watermark step 2019-12-31, and begin_block refuses that step.
-        let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102);
+        let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap();
         // Block 1: not a vote period boundary (period=2), no tally
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(1, day + 12, 1),
@@ -308,9 +308,9 @@ fn begin_block_finalizes_the_closed_utc_day() {
         let day_d = 20260624u32;
         let day_d1 = 20260625u32;
         let day_d2 = 20260626u32;
-        let d_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d);
-        let d1_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d1);
-        let d2_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d2);
+        let d_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d).unwrap();
+        let d1_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d1).unwrap();
+        let d2_start = outbe_primitives::time::date_key_to_utc_timestamp(day_d2).unwrap();
 
         // Day D saw blocks in every hour and a snapshot in each one. The
         // first block of D+1 follows the last noted one.

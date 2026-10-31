@@ -182,7 +182,7 @@ fn a_group_issued_inside_the_window_counts_only_its_own_days() {
 }
 
 fn day_start(date_key: u32) -> u64 {
-    outbe_primitives::time::date_key_to_utc_timestamp(date_key)
+    outbe_primitives::time::date_key_to_utc_timestamp(date_key).unwrap()
 }
 
 /// A series with the protocol call parameters and the given trigger.

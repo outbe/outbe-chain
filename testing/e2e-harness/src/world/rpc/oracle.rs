@@ -32,7 +32,7 @@ impl Rpc {
             &IOracle::getScurveValuesCall {
                 base: Address::ZERO,
                 quote,
-                timestamp: outbe_primitives::time::date_key_to_utc_timestamp(worldwide_day),
+                timestamp: outbe_primitives::time::date_key_to_utc_timestamp(worldwide_day).ok()?,
             },
         )?;
         Some((vwap, curve.values.last().copied().unwrap_or(U256::ZERO)))

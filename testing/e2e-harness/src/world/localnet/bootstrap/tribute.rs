@@ -283,7 +283,9 @@ impl MeasurementDay {
         .previous_date_key()
         .map_err(|error| eyre!("native Tribute fixture date: {error}"))?;
         let (forming_start, forming_end) = loop {
-            let start = worldwide_day.start_timestamp();
+            let start = worldwide_day
+                .start_timestamp()
+                .map_err(|error| eyre!("native Tribute fixture date: {error}"))?;
             let end = start
                 .checked_add(forming_period_seconds)
                 .ok_or_else(|| eyre!("native Tribute fixture forming end overflow"))?;
@@ -459,6 +461,7 @@ fn seed_native_lysis_fixture(
     let genesis_midnight = timestamp - timestamp % outbe_primitives::time::SECONDS_PER_DAY;
     let day_number = WorldwideDay::new(projection.day)
         .to_timestamp_utc()
+        .map_err(|error| eyre!("native Lysis emission day: {error}"))?
         .checked_sub(genesis_midnight)
         .ok_or_else(|| eyre!("native Lysis emission day precedes genesis"))?
         / outbe_primitives::time::SECONDS_PER_DAY;
@@ -713,11 +716,14 @@ mod tests {
             (20240301, 36_000, 60, 20240229),
         ] {
             let execution_day = WorldwideDay::new(utc_day);
-            let timestamp = execution_day.to_timestamp_utc() + seconds;
+            let timestamp = execution_day.to_timestamp_utc().unwrap() + seconds;
             let day = MeasurementDay::new(timestamp, forming, 600).unwrap();
             assert_eq!(day.worldwide_day.value(), expected);
             assert!(day.worldwide_day < execution_day);
-            assert_eq!(day.forming_start, day.worldwide_day.start_timestamp());
+            assert_eq!(
+                day.forming_start,
+                day.worldwide_day.start_timestamp().unwrap()
+            );
             assert_eq!(day.forming_end - day.forming_start, forming);
             assert!(day.forming_end <= timestamp);
             assert_eq!(day.genesis_timestamp, timestamp);
@@ -730,7 +736,7 @@ mod tests {
             }}}),
         )
         .unwrap();
-        let timestamp = WorldwideDay::new(20260101).to_timestamp_utc();
+        let timestamp = WorldwideDay::new(20260101).to_timestamp_utc().unwrap();
         let day = MeasurementDay::new(timestamp, parameters.metadosis_forming_period_seconds, 600)
             .unwrap();
         assert_eq!(day.worldwide_day.value(), 20251230);

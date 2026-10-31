@@ -77,9 +77,9 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
         phase: u8,
         budget: &mut PassBudget,
     ) -> Result<outbe_primitives::day_pass::Progress> {
-        let through_day = outbe_primitives::deadline_queue::deadline_day(
-            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
-        )?;
+        let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
+            .map_err(crate::errors::date_step_error)?;
+        let through_day = outbe_primitives::deadline_queue::deadline_day(pinned_ts)?;
         match phase {
             1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
             2 => crate::positions_expired::expire_through(ctx, through_day, budget),
@@ -204,7 +204,10 @@ fn retire_paid_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Result
         .get(group)?
         .ok_or(GemFactoryError::MissingGroupForCall { group })?
         .full_day_after_issue;
-    if now <= outbe_primitives::time::date_key_to_utc_timestamp(start_day.value()) {
+    let start_ts = start_day
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    if now <= start_ts {
         return Ok(false);
     }
     gem.remove_call_bin(group)?;

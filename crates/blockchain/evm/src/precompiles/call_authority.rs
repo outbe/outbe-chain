@@ -73,14 +73,12 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
         return entitlements;
     };
     if let outbe_cycle::handler::ProtocolDayAction::SettlePrevious { day } = day_action {
-        entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
-            Purpose::CycleLifecycle,
-            metadosis_cycle_allocation_binding(
-                chain_id,
-                block_number,
-                outbe_primitives::time::date_key_to_utc_timestamp(day),
-            ),
-        ));
+        if let Ok(day_ts) = outbe_primitives::time::date_key_to_utc_timestamp(day) {
+            entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+                Purpose::CycleLifecycle,
+                metadosis_cycle_allocation_binding(chain_id, block_number, day_ts),
+            ));
+        }
     }
     entitlements
         .union(MetadosisMutationEntitlements::exact(

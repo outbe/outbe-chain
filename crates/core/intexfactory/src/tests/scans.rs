@@ -212,7 +212,7 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
     for _ in 1..21 {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach);
+    let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
 
     // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, 1), (midnight + 1, 0)] {

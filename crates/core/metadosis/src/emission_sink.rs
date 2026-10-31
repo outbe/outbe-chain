@@ -15,11 +15,10 @@ use crate::schema::MetadosisContract;
 
 /// Writes or updates the emission allocation for the target UTC day in `EmissionDay`.
 pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<()> {
-    let binding = metadosis_cycle_allocation_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        date_key_to_utc_timestamp(timestamp_to_date_key(ctx.block.timestamp)),
-    );
+    let day_ts = date_key_to_utc_timestamp(timestamp_to_date_key(ctx.block.timestamp))
+        .map_err(crate::lifecycle::date_step_error)?;
+    let binding =
+        metadosis_cycle_allocation_binding(ctx.block.chain_id, ctx.block.block_number, day_ts);
     crate::commit::commit_transition::<MetadosisCycleLifecycle, _>(
         ctx.storage.clone(),
         binding,

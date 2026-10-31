@@ -467,7 +467,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(0, date_key_to_utc_timestamp(20260101), 1),
+                BlockContext::empty_for_tests(0, date_key_to_utc_timestamp(20260101).unwrap(), 1),
                 storage.clone(),
             );
             let mut sweep = TestSweep::new(storage, Address::with_last_byte(99));
@@ -478,7 +478,7 @@ mod tests {
 
     fn ready(ctx: &mut BlockRuntimeContext<'_>, height: u64) {
         ctx.block.block_number = height;
-        ctx.block.timestamp = date_key_to_utc_timestamp(20260104);
+        ctx.block.timestamp = date_key_to_utc_timestamp(20260104).unwrap();
         OracleContract::new(ctx.storage.clone())
             .utc_day_vwap_last_finalized
             .write(20260103)
@@ -524,7 +524,7 @@ mod tests {
     #[test]
     fn oracle_readiness_retries_without_losing_genesis_or_empty_call_forfeits() {
         fixture(|mut ctx, sweep| {
-            ctx.block.timestamp = date_key_to_utc_timestamp(20260104);
+            ctx.block.timestamp = date_key_to_utc_timestamp(20260104).unwrap();
             ctx.block.block_number = 1;
             sweep.remaining.write(&1, 1).unwrap();
             continue_day(&ctx, sweep).unwrap();

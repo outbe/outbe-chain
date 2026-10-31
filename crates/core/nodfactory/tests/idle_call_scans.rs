@@ -15,7 +15,7 @@ fn provider() -> HashMapStorageProvider {
 #[test]
 fn idle_daily_scans_do_not_reopen_a_completed_day() {
     let mut provider = provider();
-    let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716);
+    let midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260716).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         NodContract::new(storage.clone())
             .config_profile

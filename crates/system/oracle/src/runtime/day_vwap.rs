@@ -138,7 +138,8 @@ impl OracleContract<'_> {
     }
 
     fn finalize_utc_day_vwap_inner(&mut self, utc_day: u32) -> Result<()> {
-        let day_start = date_key_to_utc_timestamp(utc_day);
+        let day_start =
+            date_key_to_utc_timestamp(utc_day).map_err(crate::errors::date_step_error)?;
         let day_end = day_start.saturating_add(SECONDS_PER_DAY);
 
         // A pair with no covered VWAP stays unwritten, so the day reads as
@@ -178,7 +179,9 @@ fn require_worldwide_day_window(
     // The forming window is a protocol parameter, not an oracle constant.
     // A chain that shortens it (localnet, E2E) still hands Metadosis'
     // real window here. A second hardcoded copy would reject it.
-    let expected_start = worldwide_day.start_timestamp();
+    let Ok(expected_start) = worldwide_day.start_timestamp() else {
+        return Err(OracleError::InvalidVwapRange.into());
+    };
     let expected_end = expected_start
         .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
         .ok_or(OracleError::InvalidVwapRange)?;

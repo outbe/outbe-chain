@@ -17,7 +17,7 @@ pub fn worldwide_day(
     let Some(record) = contract.worldwide_days.get(wwd)? else {
         return Ok(None);
     };
-    Ok(Some(WwdProjection::from_record(wwd, &record)))
+    Ok(Some(WwdProjection::from_record(wwd, &record)?))
 }
 
 /// Reads the complete bounded typed WWD aggregate without exposing indexes or

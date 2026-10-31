@@ -211,7 +211,7 @@ mod tests {
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: day.start_timestamp(),
+                issued_at: day.start_timestamp().unwrap(),
                 group_key: outbe_primitives::call_breach::group_key(
                     day.value(),
                     U256::from(2_280_000),
@@ -269,7 +269,7 @@ mod tests {
                 promis_load_minor: U256::from(5_000_000),
                 issuance_currency: 840,
                 reference_currency: 840,
-                issued_at: day.start_timestamp(),
+                issued_at: day.start_timestamp().unwrap(),
                 group_key: outbe_primitives::call_breach::group_key(
                     day.value(),
                     U256::from(2_280_000),

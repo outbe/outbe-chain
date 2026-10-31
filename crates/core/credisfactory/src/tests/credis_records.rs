@@ -1890,7 +1890,7 @@ fn cca_buckets_follow_current_utc_day_without_cycle_state() {
     });
     // Crossing UTC midnight selects a new bucket without any Cycle state.
     let next_day = 20231115;
-    let midnight = date_key_to_utc_timestamp(next_day);
+    let midnight = date_key_to_utc_timestamp(next_day).unwrap();
     provider.set_timestamp(U256::from(midnight));
     let mut pending = params(alice());
     pending.issued_at = midnight;

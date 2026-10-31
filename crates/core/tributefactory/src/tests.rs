@@ -363,7 +363,7 @@ fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
     let pair = AddressPair::new_coen_to(840);
     for worldwide_day in target_days {
-        let start = worldwide_day.start_timestamp();
+        let start = worldwide_day.start_timestamp().unwrap();
         oracle
             .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
             .unwrap();
@@ -550,7 +550,9 @@ fn assert_real_zk_offer_with_key_source(
                 .into(),
         );
     }
-    provider.set_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_DAY) + 43_200));
+    provider.set_timestamp(U256::from(
+        date_key_to_utc_timestamp(REWARD_DAY).unwrap() + 43_200,
+    ));
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -742,7 +744,9 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
     proof.resize(DEMO_TRIBUTE_COMBINED_LEN, 0);
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    provider.set_timestamp(U256::from(date_key_to_utc_timestamp(20_260_803) + 43_200));
+    provider.set_timestamp(U256::from(
+        date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
+    ));
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), &[TARGET_WWD_A]);

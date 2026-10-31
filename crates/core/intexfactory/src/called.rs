@@ -84,9 +84,9 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         _phase: u8,
         budget: &mut PassBudget,
     ) -> Result<outbe_primitives::day_pass::Progress> {
-        let through_day = outbe_primitives::deadline_queue::deadline_day(
-            outbe_primitives::time::date_key_to_utc_timestamp(pinned_day),
-        )?;
+        let pinned_ts = outbe_primitives::time::date_key_to_utc_timestamp(pinned_day)
+            .map_err(crate::errors::date_step_error)?;
+        let through_day = outbe_primitives::deadline_queue::deadline_day(pinned_ts)?;
         crate::forfeited::forfeit_through(ctx, through_day, budget)
     }
 

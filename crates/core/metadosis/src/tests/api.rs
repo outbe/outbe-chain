@@ -13,7 +13,7 @@ fn typed_queries_distinguish_missing_days_from_active_schedule() {
         super::precompile::seed_offering_day(storage.clone());
 
         let day = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-        let expected_forming_start = wwd.start_timestamp();
+        let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let expected_offerings_start =

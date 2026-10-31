@@ -68,7 +68,8 @@ fn system_entitlements(input: SystemTxInputV2) -> MetadosisMutationEntitlements 
 fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
     let current_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
     let previous_day = outbe_primitives::time::previous_date_key(current_day).expect("date step");
-    let allocation_timestamp = outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
+    let allocation_timestamp =
+        outbe_primitives::time::date_key_to_utc_timestamp(previous_day).expect("date timestamp");
     MetadosisMutationEntitlements::exact(
         Purpose::CycleLifecycle,
         metadosis_cycle_allocation_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, allocation_timestamp),
@@ -158,7 +159,7 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
         metadosis_cycle_allocation_binding(
             TEST_CHAIN_ID,
             TEST_BLOCK_NUMBER,
-            outbe_primitives::time::date_key_to_utc_timestamp(active_day),
+            outbe_primitives::time::date_key_to_utc_timestamp(active_day).expect("date timestamp"),
         ),
     ));
     let mut day = outbe_primitives::time::next_date_key(active_day).expect("date step");
@@ -168,7 +169,7 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
             metadosis_cycle_allocation_binding(
                 TEST_CHAIN_ID,
                 TEST_BLOCK_NUMBER,
-                outbe_primitives::time::date_key_to_utc_timestamp(day),
+                outbe_primitives::time::date_key_to_utc_timestamp(day).expect("date timestamp"),
             ),
         ));
         day = outbe_primitives::time::next_date_key(day).expect("date step");

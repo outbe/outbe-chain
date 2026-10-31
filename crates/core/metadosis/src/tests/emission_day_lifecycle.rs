@@ -5,7 +5,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key, Worldwide
 #[test]
 fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_form_limits() {
     with_storage(|storage| {
-        let genesis_ts = date_key_to_utc_timestamp(20260920) + 12 * 3_600;
+        let genesis_ts = date_key_to_utc_timestamp(20260920).unwrap() + 12 * 3_600;
         storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
@@ -32,7 +32,7 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
         assert_eq!(ed_11.wwd, WorldwideDay::new(20260920));
         assert_eq!(
             ed_11.metadosis_start,
-            date_key_to_utc_timestamp(next_date_key(20261011).expect("date step")) + 1
+            date_key_to_utc_timestamp(next_date_key(20261011).expect("date step")).unwrap() + 1
         );
         assert_eq!(ed_11.state, emission_day_state::NONE);
         assert_eq!(ed_11.emission_limit_minor, U256::ZERO);
@@ -59,7 +59,8 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
             assert_eq!(ed_proj.emission_limit_minor, U256::ZERO);
             assert_eq!(
                 ed_proj.metadosis_start,
-                date_key_to_utc_timestamp(next_date_key(ed_proj.day).expect("date step")) + 1
+                date_key_to_utc_timestamp(next_date_key(ed_proj.day).expect("date step")).unwrap()
+                    + 1
             );
             wwd_key = next_date_key(wwd_key).expect("date step");
         }
@@ -70,7 +71,7 @@ fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_
 fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_halt() {
     with_storage(|storage| {
         let wwd_sep_01 = WorldwideDay::new(20260901);
-        let genesis_ts = date_key_to_utc_timestamp(20260901) + 12 * 3_600;
+        let genesis_ts = date_key_to_utc_timestamp(20260901).unwrap() + 12 * 3_600;
         storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
@@ -87,11 +88,11 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         );
         assert_eq!(
             wwd_proj.offering_end,
-            date_key_to_utc_timestamp(20260922) + 12 * 3_600
+            date_key_to_utc_timestamp(20260922).unwrap() + 12 * 3_600
         );
         assert_eq!(wwd_proj.day, 20260922);
 
-        let expected_metadosis_start = date_key_to_utc_timestamp(20260923) + 1;
+        let expected_metadosis_start = date_key_to_utc_timestamp(20260923).unwrap() + 1;
         assert_eq!(
             expected_metadosis_start,
             wwd_proj.offering_end + 12 * 3_600 + 1
@@ -110,7 +111,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         crate::commands::dispatch_terminal_remainder_at(
             &ctx,
             U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20260922),
+            date_key_to_utc_timestamp(20260922).unwrap(),
         )
         .unwrap();
 
@@ -137,7 +138,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
         // Simulate a halt from 22 Sep to 25 Sep 2026: the first block after restart
         // must still select and execute the oldest due emission day (20260922).
-        let restart_ts = date_key_to_utc_timestamp(20260925) + 3_600;
+        let restart_ts = date_key_to_utc_timestamp(20260925).unwrap() + 3_600;
         arm_reference_price(&storage, restart_ts);
         let restart_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(4, restart_ts, CHAIN_ID),
@@ -176,7 +177,7 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
     // Genesis on 2026-10-01 before 12:00 UTC -> first_wwd = 20260930 (G - 1),
     // offering_end on 20261021 (G + 20) -> 20 empty EmissionDays (20261001..=20261020).
     with_storage(|storage| {
-        let genesis_before_noon = date_key_to_utc_timestamp(20261001) + 12 * 3_600 - 1;
+        let genesis_before_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600 - 1;
         assert_eq!(
             outbe_tributefactory::worldwideday::first_wwd_for_genesis(genesis_before_noon),
             WorldwideDay::new(20260930)
@@ -212,10 +213,10 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
         crate::commands::dispatch_terminal_remainder_at(
             &ctx,
             U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20261001),
+            date_key_to_utc_timestamp(20261001).unwrap(),
         )
         .unwrap();
-        let empty_due_ts = date_key_to_utc_timestamp(20261002) + 1;
+        let empty_due_ts = date_key_to_utc_timestamp(20261002).unwrap() + 1;
         storage
             .set_block_timestamp(U256::from(empty_due_ts))
             .unwrap();
@@ -232,7 +233,7 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
     // Genesis on 2026-10-01 at 12:00 UTC -> first_wwd = 20261001 (G),
     // offering_end on 20261022 (G + 21) -> 21 empty EmissionDays (20261001..=20261021).
     with_storage(|storage| {
-        let genesis_at_noon = date_key_to_utc_timestamp(20261001) + 12 * 3_600;
+        let genesis_at_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
         assert_eq!(
             outbe_tributefactory::worldwideday::first_wwd_for_genesis(genesis_at_noon),
             WorldwideDay::new(20261001)
@@ -271,7 +272,7 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
 fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
     with_storage(|storage| {
         let wwd = WorldwideDay::new(20261001);
-        let genesis_ts = date_key_to_utc_timestamp(20261001) + 12 * 3_600;
+        let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
         storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
         let bn = storage.block_number().unwrap();
         let ctx = BlockRuntimeContext::new(

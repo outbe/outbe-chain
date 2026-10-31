@@ -354,7 +354,7 @@ fn a_stranger_can_mine_with_the_owners_auth() {
 fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     use outbe_primitives::series_id::SeriesId;
     let mut world = World::new();
-    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020) + 3_600;
+    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
     world.enter(|storage| {
         let seal = |series_id, count, load: u64| {
             crate::api::seal_lysis_series(

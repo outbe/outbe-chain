@@ -526,7 +526,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
 
     let mut provider = HashMapStorageProvider::new(1);
     let emission_day_key = 20250110u32;
-    let base_ts = date_key_to_utc_timestamp(emission_day_key) + 3_600;
+    let base_ts = date_key_to_utc_timestamp(emission_day_key).unwrap() + 3_600;
     provider.set_timestamp(U256::from(base_ts));
     provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 3);
 
@@ -637,7 +637,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         nod_contract.daily_genesis_day.write(latest_closed).unwrap();
 
         // Run automatic call scan (`schedule_call_pass` + `scan_and_call`) with 0 minted Nods!
-        let call_ts = date_key_to_utc_timestamp(cursor_day) + 3_600;
+        let call_ts = date_key_to_utc_timestamp(cursor_day).unwrap() + 3_600;
         storage.set_block_timestamp(U256::from(call_ts)).unwrap();
         let call_ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext::empty_for_tests(20, call_ts, 1),

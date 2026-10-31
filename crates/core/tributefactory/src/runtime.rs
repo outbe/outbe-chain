@@ -503,7 +503,7 @@ mod reward_activity_tests {
         };
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-        let now = date_key_to_utc_timestamp(20260803) + 43_200;
+        let now = date_key_to_utc_timestamp(20260803).unwrap() + 43_200;
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(now));
         StorageHandle::enter(&mut provider, |storage| {
@@ -563,7 +563,9 @@ mod reward_activity_tests {
         let count_key = AgentRewardContract::tribute_count_key(day, SRA);
         let index_key = AgentRewardContract::address_index_key(day, 0);
         let mut provider = HashMapStorageProvider::new(1);
-        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day.into()) + 43_200));
+        provider.set_timestamp(U256::from(
+            date_key_to_utc_timestamp(day.into()).unwrap() + 43_200,
+        ));
         StorageHandle::enter(&mut provider, |storage| {
             let rewards = AgentRewardContract::new(storage);
             rewards.sra_addresses.write(&index_key, SRA).unwrap();
@@ -636,7 +638,7 @@ mod reward_activity_tests {
     fn reward_updates_accumulate_on_the_execution_day() {
         let day = 20_260_803;
         let mut provider = HashMapStorageProvider::new(1);
-        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day) + 43_200));
+        provider.set_timestamp(U256::from(date_key_to_utc_timestamp(day).unwrap() + 43_200));
         StorageHandle::enter(&mut provider, |storage| {
             record(storage.clone()).unwrap();
             record(storage.clone()).unwrap();
@@ -656,7 +658,7 @@ mod reward_activity_tests {
     fn reward_updates_follow_utc_midnight() {
         let old_day = 20_261_231;
         let new_day = 20_270_101;
-        let midnight = date_key_to_utc_timestamp(new_day);
+        let midnight = date_key_to_utc_timestamp(new_day).unwrap();
         let mut provider = HashMapStorageProvider::new(1);
         provider.set_timestamp(U256::from(midnight - 1));
         StorageHandle::enter(&mut provider, |storage| {

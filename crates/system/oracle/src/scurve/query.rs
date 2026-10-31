@@ -52,16 +52,28 @@ pub(super) fn curve_at(
 
 /// The value at `wwd` of the curve that starts at `start` with `peak_price`.
 /// `wwd` must not be before `start`.
-pub(super) fn curve_value(start: WorldwideDay, peak_price: U256, wwd: WorldwideDay) -> U256 {
-    let days = (wwd.to_timestamp_utc() - start.to_timestamp_utc()) / SECONDS_PER_DAY;
-    compute_scurve_value(peak_price, days as usize)
+pub(super) fn curve_value(
+    start: WorldwideDay,
+    peak_price: U256,
+    wwd: WorldwideDay,
+) -> Result<U256> {
+    let wwd_ts = wwd
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    let start_ts = start
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    let days = (wwd_ts - start_ts) / SECONDS_PER_DAY;
+    Ok(compute_scurve_value(peak_price, days as usize))
 }
 
 /// The S-curve value of `pair` at `wwd`, or 0 when no curve starts at `wwd` or
 /// earlier.
 pub fn scurve_value(oracle: &OracleContract, pair: AddressPair, wwd: WorldwideDay) -> Result<U256> {
-    Ok(curve_at(oracle, pair, wwd)?
-        .map_or(U256::ZERO, |(start, price)| curve_value(start, price, wwd)))
+    match curve_at(oracle, pair, wwd)? {
+        Some((start, price)) => curve_value(start, price, wwd),
+        None => Ok(U256::ZERO),
+    }
 }
 
 /// The curves of `pair` that start at `wwd` or earlier, oldest first, as
@@ -78,7 +90,7 @@ pub fn get_scurve_entries(
         if start <= wwd {
             starts.push(start.into());
             prices.push(price);
-            values.push(curve_value(start, price, wwd));
+            values.push(curve_value(start, price, wwd)?);
         }
     }
     Ok((starts, prices, values))
