@@ -33,7 +33,7 @@ contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
     using InteroperableAddress for bytes;
 
     /// @notice The ERC-7786 bridge this router sends through and accepts deliveries from. It is fixed
-    ///         at deploy. Swap the cross-chain protocol on the bridge itself (its `setGateway`), not by
+    ///         in the implementation. Swap the cross-chain protocol on the bridge itself (its `setGateway`), not by
     ///         repointing here.
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IERC7786GatewaySource public immutable bridge;

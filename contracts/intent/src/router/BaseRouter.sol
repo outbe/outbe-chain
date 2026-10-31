@@ -31,8 +31,8 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, OwnableUpgrad
     ISolverEscrow public immutable SOLVER_ESCROW;
 
     /// @notice The Auction contract - competitive solver selection. It is immutable. Replacing it
-    ///         would strand the quotes of in-flight orders in the old contract. Thus it is fixed at
-    ///         deploy, and only a router redeploy can swap it.
+    ///         would strand the quotes of in-flight orders in the old contract. Thus it is fixed in
+    ///         the implementation, and only a router upgrade can swap it.
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IAuction public immutable AUCTION;
 
