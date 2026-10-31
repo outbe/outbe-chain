@@ -74,9 +74,9 @@ impl StablecoinContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.pending_admin.write(Address::ZERO)?;
-            self.emit(IStablecoin::AdminTransferCancelled {
+            self.emit(IStablecoin::AdminTransferCanceled {
                 admin: actor,
-                cancelledPendingAdmin: pending,
+                canceledPendingAdmin: pending,
             })
         })
     }

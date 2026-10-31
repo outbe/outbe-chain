@@ -16,7 +16,7 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall as _};
 use eyre::{ensure, eyre, Result, WrapErr as _};
 
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use serde::{Deserialize, Serialize};
 
 use crate::internal::eth::{IDesis, IPromisLimit};

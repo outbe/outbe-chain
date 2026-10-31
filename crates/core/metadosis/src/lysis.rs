@@ -109,7 +109,7 @@ fn finalize_lysis_settlement(
     if credit.credited != completion.unused {
         return Err(mismatch());
     }
-    apply_auction_brief(storage, wwd, emission_day.day, &split, ctx.block.timestamp)?;
+    apply_auction_brief(storage, emission_day.day, &split)?;
     let promis_limit_added = emission_day
         .metadosis_limit_minor()
         .checked_sub(completion.used)

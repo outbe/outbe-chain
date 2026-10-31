@@ -19,7 +19,7 @@ contract MockDesis {
     ///      OM dispatch path rely on this no-op so `_handleBidsBatch` can complete without
     ///      pulling in the full Desis dependency graph.
     function processBidsBatch(
-        uint32, /* worldwideDay */
+        uint32, /* emissionDay */
         uint32, /* srcChainId */
         uint16, /* batchIndex */
         uint16, /* totalBatches */
@@ -30,14 +30,14 @@ contract MockDesis {
     /// @dev Accepts every BIDS_DONE completeness marker and discards it, as `processBidsBatch`
     ///      does.
     function processBidsDone(
-        uint32, /* worldwideDay */
+        uint32, /* emissionDay */
         uint32, /* srcChainId */
         uint16, /* totalBatches */
         uint32 /* totalBids */
     ) external {}
 
     /// @dev Open for intake by default, so a day under relay behaves as the common case.
-    IDesis.AuctionStage private _stage = IDesis.AuctionStage.Revealing;
+    IDesis.AuctionStage private _stage = IDesis.AuctionStage.RevealingBids;
 
     function setAuctionStage(IDesis.AuctionStage stage) external {
         _stage = stage;

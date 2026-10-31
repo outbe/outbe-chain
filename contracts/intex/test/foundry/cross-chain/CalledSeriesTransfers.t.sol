@@ -14,7 +14,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///      the bridge. Past the deadline its unpaid units are forfeited and stay where they are.
 contract CalledSeriesTransfersTest is CrossChainTest {
     uint32 internal constant DST_CHAIN_ID = 2;
-    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    uint32 internal constant EMISSION_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
 
     IntexNFT1155 internal intex;
@@ -32,7 +32,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
 
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 1 days));
+        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
         tokenId = intex.issuedTokenId(SERIES_ID);
         intex.markCalled(SERIES_ID, uint32(block.timestamp));

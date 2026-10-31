@@ -3,10 +3,10 @@
 use super::*;
 
 /// Create a series and drive it to `Called` so expiry can be exercised.
-fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
-    api::create_series(storage, sample_params(worldwide_day)).unwrap();
-    api::call_group_of(storage, sid(worldwide_day), ISSUED_AT).unwrap();
-    sid(worldwide_day)
+fn called_series(storage: &StorageHandle, emission_day: u32) -> SeriesId {
+    api::create_series(storage, sample_params(emission_day)).unwrap();
+    api::call_group_of(storage, sid(emission_day), ISSUED_AT).unwrap();
+    sid(emission_day)
 }
 
 #[test]

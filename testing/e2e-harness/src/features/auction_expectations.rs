@@ -15,7 +15,7 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IBidSettlement {
         struct BidLock { uint128 lockedAmount; uint32 lockedAt; uint8 status; uint32 bidRate; uint16 quantity; }
-        function getBidLock(uint32 worldwideDay, address bidder) external view returns (BidLock memory);
+        function getBidLock(uint32 emissionDay, address bidder) external view returns (BidLock memory);
     }
 }
 
@@ -153,13 +153,7 @@ fn revealed_inputs(
 
 /// Read the native Desis input at the completed Lysis checkpoint, before clearing.
 fn canonical_desis_limit_minor(world: &World) -> (u32, U256) {
-    let day: u32 = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("offering day")
-        .parse()
-        .expect("numeric day");
+    let day = super::origin_venue::settled_day(world);
     let height = world
         .state
         .lysis_completion_height
@@ -195,7 +189,7 @@ fn frozen_targets(world: &World, sides: &[VenueSide], day: u32) -> Vec<u32> {
     let targets = eth::read_call(
         &world.rpc.url(ports[0]),
         origin.origin_router,
-        &IOriginTargets::targetsOfCall { worldwideDay: day },
+        &IOriginTargets::targetsOfCall { emissionDay: day },
     )
     .expect("frozen auction target order");
     assert_eq!(
@@ -231,7 +225,7 @@ fn submitted_bids(
             let auction = eth::read_call_at(
                 url,
                 side.auction,
-                &IVenueSchedule::getAuctionInfoCall { worldwideDay: day },
+                &IVenueSchedule::getAuctionInfoCall { emissionDay: day },
                 input_height,
             )
             .expect("auction input terms");
@@ -325,7 +319,7 @@ fn assert_allocation(
         url,
         side.escrow,
         &IBidSettlement::getBidLockCall {
-            worldwideDay: day,
+            emissionDay: day,
             bidder,
         },
         height,
@@ -362,7 +356,7 @@ fn assert_venue_result(
         view.url,
         view.side.auction,
         &IVenueSchedule::getAuctionInfoCall {
-            worldwideDay: view.day,
+            emissionDay: view.day,
         },
         view.height,
     )

@@ -359,7 +359,7 @@
   },
   {
     "type": "event",
-    "name": "PolicyAdminTransferCancelled",
+    "name": "PolicyAdminTransferCanceled",
     "inputs": [
       {
         "name": "policyId",
@@ -374,7 +374,7 @@
         "internalType": "address"
       },
       {
-        "name": "cancelledPendingAdmin",
+        "name": "canceledPendingAdmin",
         "type": "address",
         "indexed": true,
         "internalType": "address"

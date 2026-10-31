@@ -8,9 +8,23 @@ pub enum KeygenError {
     /// The consensus BLS MinPk key argument is not 48 bytes of hex.
     #[error("consensus BLS MinPk key must be exactly 48 bytes of hex: {0}")]
     InvalidConsensusBlsMinPkHex(#[from] hex::FromHexError),
-    /// The encrypted key backend requires a passphrase.
-    #[error("--passphrase (or BLS_PASSPHRASE env) required for encrypted backend")]
+    /// Passphrase is required when using the encrypted backend.
+    #[error(
+        "--passphrase, BLS_PASSPHRASE, or --passphrase-file is required when --key-backend is 'encrypted'"
+    )]
     MissingPassphrase,
+
+    /// Passphrase file has group or world permissions.
+    #[error("passphrase file {path} has mode {mode:o}, expected 600")]
+    InsecurePassphraseFileMode { path: PathBuf, mode: u32 },
+
+    /// Passphrase file is empty after trimming trailing newlines.
+    #[error("passphrase file is empty: {0}")]
+    EmptyPassphraseFile(PathBuf),
+
+    /// Target key file already exists and overwrite was not confirmed or forced.
+    #[error("key file already exists: {0} (use --force to overwrite)")]
+    KeyFileAlreadyExists(PathBuf),
     /// The `blst` library rejected the secret key bytes.
     #[error("failed to create blst SecretKey: {0:?}")]
     BlstSecretKey(blst::BLST_ERROR),

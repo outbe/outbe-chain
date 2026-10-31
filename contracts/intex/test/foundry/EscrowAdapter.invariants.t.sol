@@ -9,9 +9,9 @@ import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev Property test for the per-series escrow invariant:
-///   sum bidLocks[worldwideDay][bidder].lockedAmount, status == Locked
+///   sum bidLocks[emissionDay][bidder].lockedAmount, status == Locked
 ///   + sum (lockedAmount - payment at the day's clearing terms), status == Won
-///     == auctionEscrowState[worldwideDay].totalLocked
+///     == auctionEscrowState[emissionDay].totalLocked
 /// Holds across every state transition (lock, finalize, claim).
 contract EscrowAdapterInvariantsTest is Test {
     EscrowAdapter escrow;
@@ -50,18 +50,18 @@ contract EscrowAdapterInvariantsTest is Test {
         }
     }
 
-    function _refund(uint32 worldwideDay, address bidder) internal {
+    function _refund(uint32 emissionDay, address bidder) internal {
         vm.prank(auction);
-        escrow.releaseRefund(worldwideDay, bidder);
+        escrow.releaseRefund(emissionDay, bidder);
     }
 
-    function _assertSeriesInvariant(uint32 worldwideDay, address[3] memory bidders) internal view {
+    function _assertSeriesInvariant(uint32 emissionDay, address[3] memory bidders) internal view {
         uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
             // A winner's lock holds only its change.
-            sum += escrow.getBidLock(worldwideDay, bidders[i]).lockedAmount;
+            sum += escrow.getBidLock(emissionDay, bidders[i]).lockedAmount;
         }
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay);
+        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
     }
 
@@ -104,16 +104,16 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s2, bidders);
     }
 
-    function _lock(uint32 worldwideDay, address bidder, uint32 bidRate, uint16 quantity) internal {
+    function _lock(uint32 emissionDay, address bidder, uint32 bidRate, uint16 quantity) internal {
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay, bidder, BASIS, bidRate, quantity);
+        escrow.lockFunds(emissionDay, bidder, BASIS, bidRate, quantity);
     }
 
-    function _finalize(uint32 worldwideDay, address winner) internal {
+    function _finalize(uint32 emissionDay, address winner) internal {
         address[] memory winners = new address[](1);
         winners[0] = winner;
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay, bytes32(uint256(worldwideDay)), winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.finalizeAuction(emissionDay, bytes32(uint256(emissionDay)), winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     /// @dev Sanity check that the invariant helper catches injected drift.
@@ -136,8 +136,8 @@ contract EscrowAdapterInvariantsTest is Test {
         this._externalAssertInvariant(s1, bidders);
     }
 
-    function _externalAssertInvariant(uint32 worldwideDay, address[3] memory bidders) external view {
-        _assertSeriesInvariant(worldwideDay, bidders);
+    function _externalAssertInvariant(uint32 emissionDay, address[3] memory bidders) external view {
+        _assertSeriesInvariant(emissionDay, bidders);
     }
 
     /// @dev Storage slot of the `auctionEscrowState` mapping inside the contract's ERC-7201

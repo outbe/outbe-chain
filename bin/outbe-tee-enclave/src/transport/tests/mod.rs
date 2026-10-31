@@ -11,6 +11,7 @@ mod harness;
 mod offer_key;
 mod onboarding;
 mod readiness;
+mod server;
 mod session;
 
 use fixtures::{

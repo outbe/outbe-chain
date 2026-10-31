@@ -371,6 +371,87 @@ impl StorageKey for WorldwideDay {
     }
 }
 
+/// Typed emission day identifier: the UTC day the protocol emits for, in YYYYMMDD format.
+#[repr(transparent)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct EmissionDate(u32);
+
+impl EmissionDate {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+
+    /// Returns true if this value encodes a valid YYYYMMDD calendar date.
+    pub fn is_valid(self) -> bool {
+        WorldwideDay(self.0).is_valid()
+    }
+
+    /// Returns the UTC day of a unix timestamp.
+    pub fn from_timestamp(timestamp: u64) -> Self {
+        Self(timestamp_to_date_key(timestamp))
+    }
+
+    /// Returns the unix timestamp of 00:00 UTC of this day.
+    pub fn start_timestamp(self) -> u64 {
+        date_key_to_utc_timestamp(self.0)
+    }
+
+    pub fn previous(self) -> Result<Self, TimeError> {
+        Ok(Self(previous_date_key(self.0)?))
+    }
+
+    pub fn next(self) -> Result<Self, TimeError> {
+        Ok(Self(next_date_key(self.0)?))
+    }
+}
+
+impl fmt::Display for EmissionDate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<u32> for EmissionDate {
+    fn from(value: u32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<EmissionDate> for u32 {
+    fn from(value: EmissionDate) -> Self {
+        value.value()
+    }
+}
+
+impl StorableType for EmissionDate {
+    const SLOTS: usize = 1;
+}
+
+impl Storable for EmissionDate {
+    const BYTES: usize = 4;
+
+    fn from_word(word: U256) -> Self {
+        Self(word.saturating_to::<u32>())
+    }
+
+    fn to_word(&self) -> U256 {
+        U256::from(self.0)
+    }
+}
+
+impl StorageKey for EmissionDate {
+    fn key_bytes(&self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,5 +766,20 @@ mod tests {
     fn parse_rejects_invalid_date() {
         let err = "20240230".parse::<WorldwideDay>().unwrap_err();
         assert!(err.contains("valid YYYYMMDD"));
+    }
+
+    #[test]
+    fn an_emission_date_starts_at_utc_midnight_and_steps_across_a_year() {
+        let day = EmissionDate::new(20241231);
+        assert!(day.is_valid());
+        assert!(!EmissionDate::new(20240230).is_valid());
+        assert_eq!(day.start_timestamp(), date_key_to_utc_timestamp(20241231));
+        assert_eq!(
+            EmissionDate::from_timestamp(day.start_timestamp() + 86_399),
+            day
+        );
+        assert_eq!(day.next(), Ok(EmissionDate::new(20250101)));
+        assert_eq!(EmissionDate::new(20250101).previous(), Ok(day));
+        assert_eq!(day.key_bytes(), 20241231u32.to_be_bytes().to_vec());
     }
 }

@@ -26,7 +26,7 @@ contract IntexAuctionClaimsTest is Test {
     // MockWCOEN has 18 decimals: 1e12 token units per protocol unit.
     uint256 internal constant WCOEN_SCALE = 1e12;
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 emissionDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
     uint32 internal constant DAY = 20250101;
     uint16 internal constant USD = 840;
@@ -68,7 +68,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.prank(relayer);
         auction.auctionStart(
             DAY,
-            IIntexAuction.WorldwideDayState.Live,
+            IIntexAuction.DayState.Live,
             IIntexAuction.AuctionSchedule({
                 commitEnd: uint32(startTs + 100), revealEnd: uint32(startTs + 200), issuanceEnd: uint32(startTs + 300)
             }),
