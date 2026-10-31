@@ -179,6 +179,26 @@ fn gem_id_derivation_binds_the_series_sub_series_owner_and_block() {
 }
 
 #[test]
+fn gems_of_two_issuance_days_are_in_two_series() {
+    with_storage(|storage| {
+        let first = add(storage, sample_params(ALICE));
+        let mut next_day = sample_params(ALICE);
+        next_day.issued_at = T_NOW + SECONDS_PER_DAY;
+        let second = add(storage, next_day);
+        let series = |gem_id| item(storage, gem_id).unwrap().series_id;
+        assert_eq!(
+            series(first),
+            GemContract::series_of(T_NOW, USD, USD).unwrap()
+        );
+        assert_eq!(
+            series(second),
+            GemContract::series_of(T_NOW + SECONDS_PER_DAY, USD, USD).unwrap()
+        );
+        assert_ne!(series(first), series(second));
+    });
+}
+
+#[test]
 fn enumerable_returns_only_owned_gems() {
     with_storage(|storage| {
         let g1 = add(storage, sample_params(ALICE));

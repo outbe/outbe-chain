@@ -881,3 +881,40 @@ fn a_reward_gem_is_in_the_market_sub_series() {
         assert_eq!(gem_item(storage, gem_id).sub_series_id, 0);
     });
 }
+
+#[test]
+fn a_discounted_reward_gem_shares_the_market_sub_series_with_a_merchant_gem() {
+    let unit = six_decimal_unit();
+    let market = U256::from(2u64) * unit;
+    with_storage(Some(market), |storage| {
+        seed_day_vwap(storage, 840, market);
+        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+        set_source_price(storage, unit);
+        let merchant = gem_item(storage, merchant_gem_to(storage, id, BOB).unwrap());
+        let discounted = market * U256::from(96u64) / U256::from(100u64);
+        let reward = runtime::issue_gem(
+            storage,
+            GemIssueParams {
+                owner: ALICE,
+                promis_load_minor: unit,
+                issuance_currency: 840,
+                reference_currency: 840,
+                entry_price_minor: discounted,
+                call_anchor_price_minor: market,
+            },
+        )
+        .unwrap();
+        let reward = gem_item(storage, reward);
+        assert_eq!(
+            (reward.series_id, reward.sub_series_id, reward.group_key),
+            (
+                merchant.series_id,
+                merchant.sub_series_id,
+                merchant.group_key
+            )
+        );
+        assert_eq!(merchant.sub_series_id, 0);
+        assert_eq!(merchant.entry_price_minor, market);
+        assert_eq!(reward.entry_price_minor, discounted);
+    });
+}
