@@ -84,6 +84,61 @@ fn call_scan_reads_each_gem_own_pair_window() {
     });
 }
 
+fn call_progress_revert(storage: &StorageHandle, gem_id: U256) -> alloy_primitives::Bytes {
+    match crate::call_progress::call_progress(storage, gem_id) {
+        Err(outbe_primitives::error::PrecompileError::RevertBytes(reason)) => reason,
+        other => panic!("expected a revert, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_call_progress_counts_the_newest_days_and_stops_at_the_call() {
+    use crate::precompile::IGemFactory;
+    use alloy_sol_types::SolError;
+
+    with_storage(|storage| {
+        let gem_id = mature_gem(storage);
+        let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
+        let call_price = view(storage, gem_id).terms.call_price_minor;
+        let above = call_price + U256::from(1u64);
+        let last_closed_day = window_at(storage, pair, call_price);
+        let oracle = OracleContract::new(storage.clone());
+        let mut day = last_closed_day;
+        for _ in 0..15 {
+            oracle.record_utc_day_vwap(day, pair, above).unwrap();
+            day = previous_date_key(day).expect("date step");
+        }
+
+        let progress = crate::call_progress::call_progress(storage, gem_id).unwrap();
+        assert_eq!(
+            (progress.callWindowDays, progress.callThresholdDays),
+            (28, 21)
+        );
+        assert_eq!(
+            (
+                progress.daysChecked,
+                progress.daysAboveCallPrice,
+                progress.minDaysToCall
+            ),
+            (28, 15, 6)
+        );
+        assert_eq!(progress.referenceCurrency, USD);
+        assert_eq!(progress.callPriceMinor, call_price);
+        assert_eq!(progress.lastDayPriceMinor, above);
+
+        window_at(storage, pair, above);
+        assert_eq!(scan_and_call(&block_ctx(storage)).unwrap(), 1);
+        assert_eq!(
+            call_progress_revert(storage, gem_id),
+            IGemFactory::GemNotIssued {}.abi_encode()
+        );
+        assert_eq!(
+            call_progress_revert(storage, U256::from(1u64)),
+            IGemFactory::GemNotFound {}.abi_encode()
+        );
+    });
+}
+
 #[test]
 fn the_call_pass_resumes_from_its_bin_cursor() {
     with_storage(|storage| {

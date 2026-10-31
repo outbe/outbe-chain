@@ -34,6 +34,8 @@ pub enum CredisFactoryError {
     PaymentBelowAccruedInterest,
     #[error("Credis is not called")]
     NotCalled,
+    #[error("Credis is not Issued")]
+    CredisNotIssued,
     #[error("settlement deadline has not passed")]
     SettlementDeadlineNotPassed,
     #[error("settlement deadline has passed")]
@@ -86,6 +88,7 @@ impl From<CredisFactoryError> for PrecompileError {
                 revert_with(I::PaymentBelowAccruedInterest {})
             }
             CredisFactoryError::NotCalled => revert_with(I::NotCalled {}),
+            CredisFactoryError::CredisNotIssued => revert_with(I::CredisNotIssued {}),
             CredisFactoryError::SettlementDeadlineNotPassed => {
                 revert_with(I::SettlementDeadlineNotPassed {})
             }

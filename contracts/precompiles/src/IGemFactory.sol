@@ -6,6 +6,7 @@ interface IGemFactory {
     error GemAlreadySettled();
     error GemNotSettled();
     error GemNotCalled();
+    error GemNotIssued();
     error SettlementDeadlinePassed();
     error SourceIntexNotFound();
     error SourceIntexNotIssued();
@@ -92,6 +93,28 @@ interface IGemFactory {
     function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
     /// @notice Full terms of the position `positionId`.
     function getPosition(uint256 positionId) external view returns (PositionData memory);
+
+    /// @notice How close a right is to its group's call. The window ends at the last
+    ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
+    struct CallProgress {
+        uint32 callWindowDays;
+        uint32 callThresholdDays;
+        /// Window days since the group's start, priced or not.
+        uint32 daysChecked;
+        /// Of them, days whose VWAP was above `callPriceMinor`.
+        uint32 daysAboveCallPrice;
+        /// The fewest further days above the call price before the call, as the oldest
+        /// days leave the window. 0 once the call is decided.
+        uint32 minDaysToCall;
+        uint16 referenceCurrency;
+        uint256 callPriceMinor;
+        /// VWAP of the last finalized day, 0 when it has none.
+        uint256 lastDayPriceMinor;
+    }
+
+    /// @notice Read the call progress of `gemId`. Reverts `GemNotFound`, or
+    ///         `GemNotIssued` once it is Called, Settled or Forfeited.
+    function getCallProgress(uint256 gemId) external view returns (CallProgress memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct PositionData {

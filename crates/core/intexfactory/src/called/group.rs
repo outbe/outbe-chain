@@ -1,6 +1,6 @@
 use alloy_primitives::B256;
 use outbe_intex::precompile::IIntex;
-use outbe_intex::IntexContract;
+use outbe_intex::{IntexContract, SeriesRecord};
 
 use crate::errors::date_step_error;
 use outbe_oracle::call_window::CallWindow;
@@ -35,13 +35,7 @@ pub(crate) fn call_if_breached(
         return Ok(0);
     };
     let series = outbe_intex::api::get_series(storage, first)?;
-    let breached = window.breached(&BreachTerms {
-        call_price: series.call_price_minor,
-        window_seconds: intex.call_group_window_seconds.read(&group)?,
-        threshold_seconds: intex.call_group_threshold_seconds.read(&group)?,
-        start_day: first_full_day(series.issued_at).map_err(date_step_error)?,
-    });
-    if !breached {
+    if !window.breached(&breach_terms(intex, &series, group)?) {
         return Ok(0);
     }
 
@@ -60,4 +54,19 @@ pub(crate) fn call_if_breached(
         settlementDeadline: stamp.deadline,
     })?;
     Ok(members.len() as u32)
+}
+
+/// The terms a group is decided on: the call price and start day its key carries, and
+/// the window and threshold its first series sealed.
+pub(crate) fn breach_terms(
+    intex: &IntexContract<'_>,
+    member: &SeriesRecord,
+    group: B256,
+) -> Result<BreachTerms> {
+    Ok(BreachTerms {
+        call_price: member.call_price_minor,
+        window_seconds: intex.call_group_window_seconds.read(&group)?,
+        threshold_seconds: intex.call_group_threshold_seconds.read(&group)?,
+        start_day: first_full_day(member.issued_at).map_err(date_step_error)?,
+    })
 }

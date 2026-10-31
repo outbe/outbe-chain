@@ -34,6 +34,9 @@ pub enum NodFactoryError {
     #[error("nod is not settled")]
     NodNotSettled,
 
+    #[error("nod is not Issued")]
+    NodNotIssued,
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
@@ -88,6 +91,7 @@ impl From<NodFactoryError> for PrecompileError {
             NodFactoryError::GroupNotFound => revert_with(I::GroupNotFound {}),
             NodFactoryError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
             NodFactoryError::NodNotSettled => revert_with(I::NodNotSettled {}),
+            NodFactoryError::NodNotIssued => revert_with(I::NodNotIssued {}),
             NodFactoryError::InsufficientProofOfWork => revert_with(I::InsufficientProofOfWork {}),
             NodFactoryError::SettlementDeadlinePassed => {
                 revert_with(I::SettlementDeadlinePassed {})

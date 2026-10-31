@@ -51,6 +51,23 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 
 pub use outbe_primitives::settlement::settlement_deadline_of;
 
+/// The Nod's state as of this block, as `getNod` reports it: an unpaid Nod of a
+/// forfeited group reads Forfeited.
+pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
+    let nod = NodContract::new(storage.clone());
+    if !item.is_settled && nod.group_is_forfeited.read(&item.group_key)? {
+        return Ok(EffectiveState::Forfeited);
+    }
+    let called_at = nod.group_called_at.read(&item.group_key)?;
+    let deadline = settlement_deadline(storage, item.group_key)?;
+    Ok(effective_state(
+        item,
+        called_at,
+        deadline,
+        storage.timestamp()?,
+    ))
+}
+
 pub use crate::state_api::{LoadedNodGroup, LoadedNodItem};
 
 /// Inserts a Nod item, increments membership and creates its group if absent atomically.

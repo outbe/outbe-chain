@@ -32,6 +32,8 @@ interface IIntexFactory {
     error PromisOverflow();
     error MiningSequenceOverflow();
     error MinedUnitsExceedSeries();
+    error SeriesNotFound();
+    error SeriesNotIssued();
     error DateStep(uint8 kind, uint32 dateKey);
 
     /// @notice Settle `units` Issued Intexes of `seriesId` held by
@@ -97,6 +99,28 @@ interface IIntexFactory {
 
     /// @notice Read `owner`'s units of `intexId`. Reverts if the series does not exist.
     function ownerBalances(uint256 intexId, address owner) external view returns (OwnerBalances memory);
+
+    /// @notice How close a right is to its group's call. The window ends at the last
+    ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
+    struct CallProgress {
+        uint32 callWindowDays;
+        uint32 callThresholdDays;
+        /// Window days since the group's start, priced or not.
+        uint32 daysChecked;
+        /// Of them, days whose VWAP was above `callPriceMinor`.
+        uint32 daysAboveCallPrice;
+        /// The fewest further days above the call price before the call, as the oldest
+        /// days leave the window. 0 once the call is decided.
+        uint32 minDaysToCall;
+        uint16 referenceCurrency;
+        uint256 callPriceMinor;
+        /// VWAP of the last finalized day, 0 when it has none.
+        uint256 lastDayPriceMinor;
+    }
+
+    /// @notice Read the call progress of `intexId`. Reverts `SeriesNotFound`, or
+    ///         `SeriesNotIssued` once the series is Called or Forfeited.
+    function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
 
     /// @notice A new series was created from a cleared auction.
     event IntexSeriesIssued(

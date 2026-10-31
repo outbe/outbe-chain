@@ -3,6 +3,7 @@
 //! keeps.
 
 pub mod api;
+pub(crate) mod call_progress;
 pub mod called;
 pub(crate) mod cleanup;
 pub mod constants;

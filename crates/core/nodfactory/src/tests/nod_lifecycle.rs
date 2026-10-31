@@ -646,6 +646,55 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
     });
 }
 
+fn call_progress_revert(storage: &StorageHandle<'_>, nod_id: U256) -> alloy_primitives::Bytes {
+    match crate::call_progress::call_progress(storage, nod_id) {
+        Err(outbe_primitives::error::PrecompileError::RevertBytes(reason)) => reason,
+        other => panic!("expected a revert, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_call_progress_is_one_day_short_until_the_group_is_called() {
+    use crate::precompile::INodFactory;
+    use alloy_sol_types::SolError;
+
+    harness(|storage| {
+        let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
+        let at = START + 30 * DAY;
+        let latest = last_closed_day(at);
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
+        fill_days(storage, latest, CALL_THRESHOLD_DAYS - 1, above_call());
+
+        let progress = crate::call_progress::call_progress(storage, item.nod_id).unwrap();
+        assert_eq!(
+            (progress.callWindowDays, progress.callThresholdDays),
+            (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS)
+        );
+        assert_eq!(
+            (
+                progress.daysChecked,
+                progress.daysAboveCallPrice,
+                progress.minDaysToCall
+            ),
+            (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS - 1, 1)
+        );
+        assert_eq!(progress.referenceCurrency, ISO);
+        assert_eq!(progress.callPriceMinor, at_call());
+        assert_eq!(progress.lastDayPriceMinor, above_call());
+
+        fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
+        assert_eq!(scan(storage, at), 1);
+        assert_eq!(
+            call_progress_revert(storage, item.nod_id),
+            INodFactory::NodNotIssued {}.abi_encode()
+        );
+        assert_eq!(
+            call_progress_revert(storage, U256::from(1u64)),
+            INodFactory::NodNotFound {}.abi_encode()
+        );
+    });
+}
+
 #[test]
 fn the_window_absorbs_below_call_days_up_to_the_slack() {
     harness(|storage| {

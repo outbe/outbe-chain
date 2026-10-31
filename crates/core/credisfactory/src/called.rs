@@ -178,13 +178,7 @@ fn call_if_breached(
     group: B256,
     now: u64,
 ) -> Result<bool> {
-    let breached = window.breached(&BreachTerms {
-        call_price: credis.group_call_price_minor.read(&group)?,
-        window_seconds: credis.group_call_window_seconds.read(&group)?,
-        threshold_seconds: credis.group_call_threshold_seconds.read(&group)?,
-        start_day: credis.group_full_day.read(&group)?,
-    });
-    if !breached {
+    if !window.breached(&breach_terms(credis, group)?) {
         return Ok(false);
     }
     let deadline = credis.record_group_called(group, now)?;
@@ -194,6 +188,16 @@ fn call_if_breached(
         settlementDeadline: deadline,
     })?;
     Ok(true)
+}
+
+/// The terms a group is decided on: the ones its first Credis sealed.
+pub(crate) fn breach_terms(credis: &CredisContract<'_>, group: B256) -> Result<BreachTerms> {
+    Ok(BreachTerms {
+        call_price: credis.group_call_price_minor.read(&group)?,
+        window_seconds: credis.group_call_window_seconds.read(&group)?,
+        threshold_seconds: credis.group_call_threshold_seconds.read(&group)?,
+        start_day: credis.group_full_day.read(&group)?,
+    })
 }
 
 /// The live profile is the terms the next Credis is issued with.

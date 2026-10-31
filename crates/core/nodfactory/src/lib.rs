@@ -3,6 +3,7 @@
 //! [`outbe_primitives::addresses::NOD_ADDRESS`]; NodFactory carries no storage of its own.
 
 pub mod api;
+pub(crate) mod call_progress;
 pub mod called;
 mod cleanup;
 pub mod errors;

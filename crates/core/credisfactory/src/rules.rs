@@ -19,7 +19,7 @@ fn reward_day(storage: &StorageHandle<'_>) -> Result<u32> {
     Ok(timestamp_to_date_key(storage.now_secs()?))
 }
 
-fn date_step_error(
+pub(crate) fn date_step_error(
     err: outbe_primitives::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {

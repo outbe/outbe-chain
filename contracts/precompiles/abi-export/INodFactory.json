@@ -1,6 +1,67 @@
 [
   {
     "type": "function",
+    "name": "getCallProgress",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct INodFactory.CallProgress",
+        "components": [
+          {
+            "name": "callWindowDays",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "callThresholdDays",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "daysChecked",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "daysAboveCallPrice",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minDaysToCall",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "callPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "lastDayPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mineGratis",
     "inputs": [
       {
@@ -330,6 +391,11 @@
   {
     "type": "error",
     "name": "NodNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NodNotIssued",
     "inputs": []
   },
   {

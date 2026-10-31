@@ -3,7 +3,7 @@
 
 use crate::error::{PrecompileError, Result};
 use crate::storage::dsl::Value;
-use crate::time::{next_date_key, TimeError};
+use crate::time::{next_date_key, previous_date_key, TimeError};
 
 /// A pass step failed in storage or in the date helper.
 #[derive(Debug)]
@@ -60,6 +60,14 @@ impl PassDays {
             Scheduled::Queued
         };
         Ok((self, scheduled))
+    }
+
+    /// The newest day walked to its end, 0 for none.
+    pub fn last_walked(self) -> std::result::Result<u32, TimeError> {
+        match self.current {
+            0 => Ok(self.latest),
+            current => previous_date_key(current),
+        }
     }
 
     /// The current day was walked to its end, so the next one starts, or the pass idles.
