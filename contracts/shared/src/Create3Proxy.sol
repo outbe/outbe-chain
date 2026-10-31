@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Create3Factory} from "./Create3Factory.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
 
 /// @title Create3Proxy
 /// @notice Deploys a UUPS ERC1967 proxy through the CREATE3 factory. The proxy address depends only on
