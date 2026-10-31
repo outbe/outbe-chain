@@ -46,7 +46,7 @@ pub const BLOCK_GUARD_RETAIN: u64 = FINALIZED_GUARD_RETAIN;
 /// instead (see `late_settlement::settle_window`), where the credited voter
 /// set is known.
 fn prune_block_guards(rewards: &Rewards<'_>, fb_hash: B256) -> Result<()> {
-    FinalizedGuardRing {
+    FinalizedGuardRing::<BLOCK_GUARD_RETAIN> {
         entries: &rewards.block_guard_ring,
         cursor: &rewards.block_guard_ring_seq,
     }
