@@ -219,7 +219,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     };
     let view_key = derive_view_key(&nod_state_key, terms.owner).unwrap();
     assert_eq!(terms.nod_id, decimal(&v["nodId"]));
-    assert_eq!(view_key, word(&v["viewKey"]));
+    assert_eq!(*view_key, word(&v["viewKey"]));
     let nod = encrypt_nod(&nod_state_key, terms, decimal(&v["gratisAmount"])).unwrap();
     assert_eq!(
         nod.encryption_binding,

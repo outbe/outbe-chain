@@ -69,7 +69,7 @@ pub mod test_enclave {
         let key =
             outbe_tee_enclave::gratis::derive_gratis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
                 .expect("derive dev gratis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(key));
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
     }
 
     /// Remove the in-process enclave for the current thread.

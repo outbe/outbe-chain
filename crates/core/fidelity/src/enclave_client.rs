@@ -442,7 +442,7 @@ pub mod test_enclave {
             DEV_EPOCH,
         )
         .expect("derive dev fidelity state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(key));
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
     }
 
     /// Remove the in-process enclave for the current thread.

@@ -3,23 +3,28 @@ use crate::confidential::{FIELD_BALANCE, GRATIS};
 use crate::errors::{GratisRejectReason, Result};
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus};
+use zeroize::Zeroizing;
 
 /// Pledged-blob field tag; differs from `FIELD_BALANCE` so the two blobs never share a nonce.
 const FIELD_PLEDGED: u8 = 1;
 /// Derive the resident Gratis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
-pub fn derive_gratis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
+pub fn derive_gratis_state_key(
+    group_sig: &[u8],
+    chain_id: B256,
+    epoch: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     GRATIS.derive_state_key(group_sig, chain_id, epoch)
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance blobs, so a holder can decrypt its own state client-side.
-pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
+pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
     GRATIS.account_keys.derive_view_key(state_key, account)
 }
 
 /// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
-pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
+pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
     GRATIS.account_keys.derive_modify_key(state_key, account)
 }
 
@@ -193,7 +198,7 @@ mod tests {
     use outbe_tee::protocol::ModifyAuth;
     const CHAIN: B256 = B256::repeat_byte(0xC1);
     fn state_key() -> [u8; 32] {
-        derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
+        *derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
     }
     fn alice() -> Address {
         Address::repeat_byte(0x11)
@@ -234,7 +239,7 @@ mod tests {
         const KAT_GROUP_SIG: &[u8] = b"kat-fixed-gratis-group-signature-48b-padding";
         let sk = derive_gratis_state_key(KAT_GROUP_SIG, CHAIN, 0).unwrap();
         assert_eq!(
-            alloy_primitives::hex::encode(sk),
+            alloy_primitives::hex::encode(sk.as_slice()),
             "ee0bcead11e31dbafbf16c5b7fb2aa659045c38a7259db9002aa66bc9d9b08b3"
         );
         let vk = derive_view_key(&sk, alice()).unwrap();
@@ -504,5 +509,159 @@ mod tests {
             apply_op(&sk, &b).status,
             GratisOpStatus::Rejected { .. }
         ));
+    }
+
+    #[test]
+    fn derive_view_key_returns_zeroizing() {
+        let sk: Zeroizing<[u8; 32]> =
+            derive_gratis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)
+                .unwrap();
+        assert_eq!(
+            *sk,
+            alloy_primitives::hex!(
+                "b0acf797d345d88dfebd4b12df2f1b62852e8136e54e0d8a35a001c20a7aab7c"
+            )
+        );
+        let vk: Zeroizing<[u8; 32]> = derive_view_key(&sk, alice()).unwrap();
+        assert_eq!(
+            *vk,
+            alloy_primitives::hex!(
+                "56a2b1d12dbc33ca80a830adf878434eb278584a2e1cb87645cb42fe133f1598"
+            )
+        );
+        let mk: Zeroizing<[u8; 32]> = derive_modify_key(&sk, alice()).unwrap();
+        assert_eq!(
+            *mk,
+            alloy_primitives::hex!(
+                "2c1a89c4080e2e568dd2aa76ea4a72d0b1af8685655278b465e232ca25c8a602"
+            )
+        );
+    }
+
+    use alloy_primitives::U512;
+    use proptest::prelude::*;
+
+    fn op_strategy() -> impl Strategy<Value = (GratisOp, U256)> {
+        let op = prop_oneof![
+            Just(GratisOp::Mint),
+            Just(GratisOp::Burn),
+            Just(GratisOp::Pledge),
+            Just(GratisOp::ReleasePledged),
+            Just(GratisOp::BurnPledged),
+        ];
+        let amount = prop_oneof![
+            (0u64..=1_000u64).prop_map(U256::from),
+            Just(U256::MAX),
+            Just(U256::MAX - U256::from(1u64)),
+        ];
+        (op, amount)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn gratis_ledgers_conserve_value(ops in prop::collection::vec(op_strategy(), 0..32)) {
+            let sk = state_key();
+            let vk = derive_view_key(&sk, alice()).unwrap();
+            let mut balance_blob = Vec::new();
+            let mut pledged_blob = Vec::new();
+            let mut op_nonce = 0u64;
+            let mut model_liquid = U256::ZERO;
+            let mut model_pledged = U256::ZERO;
+            let mut total_minted = U512::ZERO;
+            let mut total_burned = U512::ZERO;
+            let mut total_burned_pledged = U512::ZERO;
+
+            for (op, amount) in ops {
+                let should_apply = !amount.is_zero()
+                    && match op {
+                        GratisOp::Mint => model_liquid.checked_add(amount).is_some(),
+                        GratisOp::Burn => model_liquid >= amount,
+                        GratisOp::Pledge => {
+                            model_liquid >= amount && model_pledged.checked_add(amount).is_some()
+                        }
+                        GratisOp::ReleasePledged => {
+                            model_pledged >= amount && model_liquid.checked_add(amount).is_some()
+                        }
+                        GratisOp::BurnPledged => model_pledged >= amount,
+                    };
+
+                let mut r = req(op, alice(), amount, op_nonce);
+                r.current_balance = balance_blob.clone();
+                r.current_pledged = pledged_blob.clone();
+                if matches!(op, GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge) {
+                    r.modify_auth = auth(&sk, alice(), op, amount, op_nonce);
+                }
+
+                let res = apply_op(&sk, &r);
+                prop_assert_eq!(matches!(res.status, GratisOpStatus::Applied), should_apply);
+
+                match res.status {
+                    GratisOpStatus::Applied => {
+                        match op {
+                            GratisOp::Mint => {
+                                prop_assert!(!res.new_balance.is_empty());
+                                prop_assert!(res.new_pledged.is_empty());
+                                prop_assert_eq!(res.next_op_nonce, op_nonce + 1);
+                                op_nonce += 1;
+                                model_liquid += amount;
+                                total_minted += U512::from(amount);
+                            }
+                            GratisOp::Burn => {
+                                prop_assert!(!res.new_balance.is_empty());
+                                prop_assert!(res.new_pledged.is_empty());
+                                prop_assert_eq!(res.next_op_nonce, op_nonce + 1);
+                                op_nonce += 1;
+                                model_liquid -= amount;
+                                total_burned += U512::from(amount);
+                            }
+                            GratisOp::Pledge => {
+                                prop_assert!(!res.new_balance.is_empty());
+                                prop_assert!(!res.new_pledged.is_empty());
+                                prop_assert_eq!(res.next_op_nonce, op_nonce + 1);
+                                op_nonce += 1;
+                                model_liquid -= amount;
+                                model_pledged += amount;
+                            }
+                            GratisOp::ReleasePledged => {
+                                prop_assert!(!res.new_balance.is_empty());
+                                prop_assert!(!res.new_pledged.is_empty());
+                                prop_assert_eq!(res.next_op_nonce, 0);
+                                model_pledged -= amount;
+                                model_liquid += amount;
+                            }
+                            GratisOp::BurnPledged => {
+                                prop_assert!(res.new_balance.is_empty());
+                                prop_assert!(!res.new_pledged.is_empty());
+                                prop_assert_eq!(res.next_op_nonce, 0);
+                                model_pledged -= amount;
+                                total_burned_pledged += U512::from(amount);
+                            }
+                        }
+                        if !res.new_balance.is_empty() {
+                            balance_blob = res.new_balance;
+                        }
+                        if !res.new_pledged.is_empty() {
+                            pledged_blob = res.new_pledged;
+                        }
+                    }
+                    GratisOpStatus::Rejected { .. } => {
+                        prop_assert!(res.new_balance.is_empty());
+                        prop_assert!(res.new_pledged.is_empty());
+                        prop_assert_eq!(res.next_op_nonce, 0);
+                    }
+                }
+
+                let liquid = decrypt_balance(&vk, alice(), &balance_blob).unwrap();
+                let pledged = decrypt_pledged(&vk, alice(), &pledged_blob).unwrap();
+                prop_assert_eq!(liquid, model_liquid);
+                prop_assert_eq!(pledged, model_pledged);
+                prop_assert_eq!(
+                    U512::from(liquid) + U512::from(pledged),
+                    total_minted - total_burned - total_burned_pledged
+                );
+            }
+        }
     }
 }
