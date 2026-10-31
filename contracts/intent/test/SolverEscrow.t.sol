@@ -710,6 +710,13 @@ contract SolverEscrowTest is Test {
         new SolverEscrow(address(0), lockTag);
     }
 
+    function test_initialize_invalidBps_reverts() public {
+        vm.expectRevert(ISolverEscrow.InvalidBps.selector);
+        Proxies.solverEscrow(address(compact), lockTag, 0, address(this));
+        vm.expectRevert(ISolverEscrow.InvalidBps.selector);
+        Proxies.solverEscrow(address(compact), lockTag, 10_001, address(this));
+    }
+
     function test_setAuthorizedCaller_emits() public {
         SolverEscrow fresh = Proxies.solverEscrow(address(compact), lockTag, COLLATERAL_BPS, address(this));
         vm.expectEmit(true, false, false, false);
