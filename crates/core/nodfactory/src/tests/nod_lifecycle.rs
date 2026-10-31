@@ -216,17 +216,48 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     decided
 }
 
-/// One block's forfeits and cleanup under one checkpoint, as the native transaction runs them.
+/// One block's daily pass and cleanup under one checkpoint, as the native transaction runs
+/// them. Returns the groups forfeited.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
-    let ctx = block_at(storage, timestamp);
     storage.with_checkpoint(|| {
-        let forfeited = crate::forfeited::sweep_expired(&ctx)?;
-        crate::cleanup::cleanup(&ctx)?;
+        let forfeited = forfeit_pass(storage, timestamp)?;
+        crate::cleanup::cleanup(&block_at(storage, timestamp))?;
         Ok(forfeited)
     })
+}
+
+/// The daily pass through the closed days before `timestamp`, one day per block, without its
+/// cleanup. Returns the groups that left the forfeit queue.
+fn forfeit_pass(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<u32> {
+    let queued: Vec<_> = ISSUED_GROUPS.with(|groups| {
+        groups
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|group| is_queued(storage, *group))
+            .collect()
+    });
+    let nod = NodContract::new(storage.clone());
+    loop {
+        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        let selected =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read()?)?
+                .map_or(0, |allowance| allowance.day);
+        let next = nod.call_sweep_day.read()?;
+        if next == 0 || next == selected {
+            break;
+        }
+    }
+    Ok(queued
+        .into_iter()
+        .filter(|group| !is_queued(storage, *group))
+        .count() as u32)
 }
 
 fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
@@ -1170,8 +1201,7 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
         seed_production_nod_genesis(&storage);
         register(&storage, ISO);
         let (group_key, items) = arm_lapsed(&storage, &[(0x61, 5, false), (0x62, 7, false)]);
-        let ctx = block_at(&storage, past);
-        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
+        assert_eq!(forfeit_pass(&storage, past).unwrap(), 1);
         assert_eq!(reserve(&storage), U256::from(12u64));
         for item in &items {
             let stored = api::get_item(&storage, item.nod_id).unwrap().unwrap();
@@ -1186,7 +1216,10 @@ fn a_forfeited_group_reads_forfeited_until_the_cleanup_deletes_it() {
             );
         }
 
-        assert_eq!(crate::cleanup::cleanup(&ctx).unwrap(), 2);
+        assert_eq!(
+            crate::cleanup::cleanup(&block_at(&storage, past)).unwrap(),
+            2
+        );
         assert_eq!(
             reserve(&storage),
             U256::from(12u64),
@@ -1263,9 +1296,11 @@ fn failing_members_do_not_hold_the_cleanup() {
         }
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
-        let ctx = block_at(storage, past);
-        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
-        assert_eq!(crate::cleanup::cleanup(&ctx).unwrap(), 3);
+        assert_eq!(forfeit_pass(storage, past).unwrap(), 1);
+        assert_eq!(
+            crate::cleanup::cleanup(&block_at(storage, past)).unwrap(),
+            3
+        );
         assert_eq!(reserve(storage), U256::from(25u64));
         let (day, _) = outbe_primitives::deadline_queue::unpack_slot(
             nod.cleanup_group_slot.read(&group_key).unwrap(),
@@ -1282,11 +1317,11 @@ fn failing_members_do_not_hold_the_cleanup() {
 fn a_forfeit_does_not_need_the_enclave() {
     harness(|storage| {
         let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
-        let ctx = block_at(storage, START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY);
+        let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
 
         outbe_nod::test_support::uninstall();
-        let forfeited = crate::forfeited::sweep_expired(&ctx);
-        let deleted = crate::cleanup::cleanup(&ctx);
+        let forfeited = forfeit_pass(storage, past);
+        let deleted = crate::cleanup::cleanup(&block_at(storage, past));
         outbe_nod::test_support::install();
         assert_eq!(forfeited.unwrap(), 1);
         assert_eq!(deleted.unwrap(), 1);
@@ -1573,7 +1608,7 @@ fn a_running_call_sweep_keeps_its_day() {
 }
 
 #[test]
-fn every_cycle_tick_forfeits_without_the_daily_trigger() {
+fn the_daily_pass_forfeits_without_the_daily_trigger() {
     harness(|storage| {
         let (group_key, _) = arm_lapsed(storage, &[(0x97, 3, false)]);
         let nod = NodContract::new(storage.clone());
@@ -1584,10 +1619,8 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
         );
 
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
-        let ctx = block_at(storage, past);
-        crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::called::process_call_pass(&ctx).unwrap();
-        crate::hooks::cleanup(&ctx).unwrap();
+        forfeit_pass(storage, past).unwrap();
+        crate::hooks::cleanup(&block_at(storage, past)).unwrap();
         assert_eq!(nod.group_nod_count.read(&group_key).unwrap(), 0);
         assert!(!is_queued(storage, group_key));
         assert_eq!(reserve(storage), U256::from(3u64));
@@ -1848,9 +1881,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
         arm_lapsed(&storage, &[(0x81, 3, false)]).0
     });
     provider.fail_after_mutation_at(0);
-    let result = StorageHandle::enter(&mut provider, |storage| {
-        crate::forfeited::sweep_expired(&block_at(&storage, past))
-    });
+    let result = StorageHandle::enter(&mut provider, |storage| forfeit_pass(&storage, past));
     provider.clear_mutation_failure();
     assert!(matches!(
         result,
