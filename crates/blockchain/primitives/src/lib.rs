@@ -21,7 +21,6 @@ pub mod erc;
 pub mod error;
 pub mod errors;
 pub mod filesystem;
-pub mod governance_journal;
 pub mod header;
 pub mod hook_events;
 mod journal_writer;

@@ -262,6 +262,9 @@ fn read_u8(data: &[u8], offset: &mut usize) -> Result<u8> {
     Ok(b)
 }
 
+/// Wire width of one missed-proposer record: an 8-byte view and a 20-byte validator.
+const MISSED_PROPOSER_RECORD_LEN: usize = 8 + 20;
+
 fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedProposerEvent>> {
     let count_end = offset.saturating_add(2);
     let Some(count_bytes) = data.get(*offset..count_end) else {
@@ -274,6 +277,14 @@ fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedPr
             .map_err(|_| ConsensusMetadataError::InvalidMissedProposerCountSlice)?,
     ) as usize;
 
+    // Each record is an 8-byte view and a 20-byte validator. Reject a count
+    // that the remaining bytes cannot hold before the allocation.
+    let remaining = data.len().saturating_sub(*offset);
+    if count > remaining / MISSED_PROPOSER_RECORD_LEN {
+        return Err(
+            ConsensusMetadataError::MissedProposerListExceedsBody { count, remaining }.into(),
+        );
+    }
     let mut events = Vec::with_capacity(count);
     for _ in 0..count {
         let view = read_u64(data, offset)?;
@@ -413,6 +424,33 @@ fn read_byte_payload(data: &[u8], offset: &mut usize, len: usize) -> Result<Vec<
 mod reader_tests {
     use super::*;
     use crate::error::PrecompileError;
+
+    #[test]
+    fn metadata_allocation_is_bounded() {
+        // The body declares 0xFFFF records but holds only one record's bytes.
+        let mut body = vec![0xFF, 0xFF];
+        body.extend_from_slice(&[0u8; MISSED_PROPOSER_RECORD_LEN]);
+        let mut offset = 0;
+        assert!(
+            matches!(read_missed_proposers(&body, &mut offset), Err(PrecompileError::Revert(message))
+                if message == "missed-proposer list declares 65535 records but only 28 bytes remain")
+        );
+
+        // A count that the body can hold still decodes.
+        let mut exact = vec![0x00, 0x01];
+        exact.extend_from_slice(&7u64.to_be_bytes());
+        exact.extend_from_slice(&[0xAA; 20]);
+        let mut offset = 0;
+        let events = read_missed_proposers(&exact, &mut offset).unwrap();
+        assert_eq!(offset, exact.len());
+        assert_eq!(
+            events,
+            [MissedProposerEvent {
+                view: 7,
+                validator: Address::repeat_byte(0xAA),
+            }]
+        );
+    }
 
     #[test]
     fn byte_readers_preserve_cursor_at_prefix_and_payload_failures() {

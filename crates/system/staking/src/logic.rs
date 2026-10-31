@@ -74,7 +74,7 @@ impl Staking<'_> {
         // Register in ValidatorSet before writing `stake_amount` so that
         // `ValidatorSet::validator_state(validator)` decodes `Absent` or
         // `Inactive` with zero prior bonded stake.
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.register_with_initial_stake(
             caller,
@@ -90,7 +90,7 @@ impl Staking<'_> {
             amount,
             bonded: new_stake,
         })?;
-        guard.commit();
+        guard.commit()?;
 
         Ok(())
     }
@@ -107,7 +107,7 @@ impl Staking<'_> {
         let (new_stake, new_total) = self.checked_stake_credit(validator, amount)?;
         let min_stake = self.min_stake()?;
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.record_stake_increase(validator, new_stake, min_stake)?;
         self.stake_amount.write(&validator, new_stake)?;
@@ -117,7 +117,7 @@ impl Staking<'_> {
             amount,
             bonded: new_stake,
         })?;
-        guard.commit();
+        guard.commit()?;
 
         Ok(())
     }
@@ -224,7 +224,7 @@ impl Staking<'_> {
             self.ensure_unbonding_capacity(caller, new_stake.is_zero())?;
         }
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         if !amount.is_zero() {
             self.stake_amount.write(&caller, new_stake)?;
             self.total_staked.write(new_total)?;
@@ -248,7 +248,7 @@ impl Staking<'_> {
                 automatic: false,
             })?;
         }
-        guard.commit();
+        guard.commit()?;
 
         Ok(())
     }
@@ -352,7 +352,7 @@ impl Staking<'_> {
             return Err(StakingError::InvalidSlashPercent.into());
         }
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let current = self.stake_amount.read(&validator)?;
         let timestamp = self.storage.now_secs()?;
         let mut total_slashed = U256::ZERO;
@@ -429,7 +429,7 @@ impl Staking<'_> {
                 unbondingSlashed: unbonding_slashed,
             })?;
         }
-        guard.commit();
+        guard.commit()?;
 
         Ok(total_slashed)
     }

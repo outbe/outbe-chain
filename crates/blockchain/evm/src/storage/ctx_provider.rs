@@ -16,8 +16,8 @@
 //!
 //! The ctx-dispatch hook that [`crate::precompiles::extend_outbe_precompiles`]
 //! installs builds a `CtxStorageProvider` for every Outbe precompile dispatch,
-//! read-only or not, sub-call or not. This crate does not use the legacy
-//! [`outbe_primitives::storage::evm::EvmStorageProvider`].
+//! read-only or not, sub-call or not. `CtxStorageProvider` is the production
+//! storage provider for precompile execution.
 
 //! ## Storage gas schedule
 //!
@@ -30,7 +30,7 @@ use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
 use core::fmt::Debug;
 use outbe_primitives::{
-    error::{PrecompileError, Result},
+    error::{PrecompileError, PrimitivesStorageError, Result},
     storage::{
         MetadosisMutationEntitlements, MetadosisMutationPurposeTag, PrecompileStorageProvider,
         SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
@@ -150,6 +150,10 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
 
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
+    /// Live checkpoints opened through this provider, outermost first.
+    /// revm's journal commit carries no checkpoint identity, so the provider
+    /// enforces LIFO order itself.
+    checkpoints: Vec<JournalCheckpoint>,
 }
 
 impl CtxStorageProviderConfig {
@@ -252,6 +256,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             dispatch_frames: DispatchFrameAuthority {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
+            checkpoints: Vec::new(),
         }
         .with_genesis_timestamp(config.genesis_timestamp)
     }
@@ -451,15 +456,40 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
-        internals(self.ctx).checkpoint()
+        let checkpoint = internals(self.ctx).checkpoint();
+        self.checkpoints.push(checkpoint);
+        checkpoint
     }
 
-    fn checkpoint_commit(&mut self) {
-        internals(self.ctx).checkpoint_commit()
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        if self.checkpoints.last() != Some(&checkpoint) {
+            return Err(PrimitivesStorageError::CheckpointCommitOutOfOrder {
+                journal_i: checkpoint.journal_i,
+            }
+            .into());
+        }
+        self.checkpoints.pop();
+        internals(self.ctx).checkpoint_commit();
+        Ok(())
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        internals(self.ctx).checkpoint_revert(checkpoint)
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        let Some(position) = self
+            .checkpoints
+            .iter()
+            .rposition(|live| *live == checkpoint)
+        else {
+            return Err(PrimitivesStorageError::CheckpointRevertOutOfRange {
+                journal_i: checkpoint.journal_i,
+            }
+            .into());
+        };
+        // Revert the inner checkpoints first, so revm's journal depth stays
+        // balanced with the checkpoints this provider opened.
+        for live in self.checkpoints.drain(position..).rev() {
+            internals(self.ctx).checkpoint_revert(live);
+        }
+        Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {

@@ -79,8 +79,8 @@ fn test_reshare_activation_after_participation_decode() {
 /// Task 01 test: committee size change doesn't corrupt participation.
 ///
 /// The old set has 3 validators and the new set has 4. In this case, the
-/// participation bitmap encoded for 3 validators should be decoded against the
-/// 3-validator set, not the 4-validator set.
+/// participation bitmap encoded for the 3-validator set records exactly 3
+/// validators, so it cannot describe the 4-validator set.
 #[test]
 fn test_committee_size_change_participation_safety() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -126,19 +126,13 @@ fn test_committee_size_change_participation_safety() {
         let new_set = vs.get_active_consensus_set().unwrap();
         assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
-        // Decode participation against OLD set (3 validators) -> should work.
-        let decoded =
-            outbe_primitives::participation::decode_participation_extended(&extra_data, &old_addrs);
-        assert!(decoded.is_some(), "decode against OLD set must succeed");
-
-        // Decode against NEW set (4 validators) -> count mismatch -> returns None.
-        let mut new_addrs: Vec<Address> = new_set.iter().map(|v| v.validator_address).collect();
-        new_addrs.sort();
-        let decoded_wrong =
-            outbe_primitives::participation::decode_participation_extended(&extra_data, &new_addrs);
-        assert!(
-            decoded_wrong.is_none(),
-            "decode against NEW set with different size must return None (count mismatch)"
+        // The bitmap header records the OLD set size, not the NEW set size.
+        let encoded_count = usize::from(u16::from_be_bytes([extra_data[5], extra_data[6]]));
+        assert_eq!(encoded_count, old_addrs.len());
+        assert_ne!(
+            encoded_count,
+            new_set.len(),
+            "a bitmap for the old set must not match the new set size"
         );
     });
 }

@@ -47,6 +47,17 @@ pub(super) fn encode_payload(credits: &LateFinalizeCreditsArtifact) -> Result<Ve
     Ok(payload)
 }
 
+/// Decodes a late-finalize record inside a block artifact envelope.
+///
+/// The encoder omits an empty batch list, so an empty record is not canonical.
+pub(super) fn decode_record(payload: &[u8]) -> Result<LateFinalizeCreditsArtifact> {
+    let credits = decode_payload(payload)?;
+    if credits.batches.is_empty() {
+        return Err(ReshareArtifactError::EmptyLateFinalizeCreditsRecord.into());
+    }
+    Ok(credits)
+}
+
 pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifact> {
     if payload.len() < 2 {
         return Err(ReshareArtifactError::LateFinalizePayloadTooShort.into());

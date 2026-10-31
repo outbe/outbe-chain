@@ -1,6 +1,5 @@
 pub mod direct;
 pub mod dsl;
-pub mod evm;
 pub mod finalized_guard_ring;
 pub mod gas;
 pub mod handle;
@@ -143,31 +142,43 @@ pub enum SubCallError {
 /// unless [`CheckpointGuard::commit`] was called.
 pub struct CheckpointGuard<'storage> {
     storage: StorageHandle<'storage>,
-    checkpoint: Option<revm::context::journaled_state::JournalCheckpoint>,
+    checkpoint: Option<JournalCheckpoint>,
 }
 
 impl<'storage> CheckpointGuard<'storage> {
-    pub(crate) fn new(
-        storage: StorageHandle<'storage>,
-        checkpoint: revm::context::journaled_state::JournalCheckpoint,
-    ) -> Self {
+    pub(crate) fn new(storage: StorageHandle<'storage>, checkpoint: JournalCheckpoint) -> Self {
         Self {
             storage,
             checkpoint: Some(checkpoint),
         }
     }
 
-    pub fn commit(mut self) {
-        if self.checkpoint.take().is_some() {
-            self.storage.checkpoint_commit();
+    /// Commits the guarded checkpoint.
+    ///
+    /// If the provider rejects the commit, the guard keeps the checkpoint.
+    /// The drop then reverts it.
+    pub fn commit(mut self) -> Result<()> {
+        let Some(checkpoint) = self.checkpoint.take() else {
+            return Ok(());
+        };
+        let result = self.storage.checkpoint_commit(checkpoint);
+        if result.is_err() {
+            self.checkpoint = Some(checkpoint);
         }
+        result
     }
 }
 
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
         if let Some(checkpoint) = self.checkpoint.take() {
-            self.storage.checkpoint_revert(checkpoint);
+            if let Err(error) = self.storage.checkpoint_revert(checkpoint) {
+                tracing::error!(
+                    %error,
+                    journal_i = checkpoint.journal_i,
+                    "checkpoint guard could not revert its checkpoint on drop"
+                );
+            }
         }
     }
 }
@@ -191,8 +202,12 @@ pub trait StorageBacked<'storage>: Sized {
 ///
 /// # Implementations
 ///
-/// - [`evm::EvmStorageProvider`] - Production EVM storage via `EvmInternals`
-/// - [`hashmap::HashMapStorageProvider`] - Test storage
+/// - `outbe_evm::storage::CtxStorageProvider` - Production storage for every
+///   Outbe precompile dispatch. It wraps the revm context.
+/// - [`direct::DirectStorageProvider`] - Production storage for block-level
+///   hooks. It wraps a mutable state database.
+/// - [`readonly::ReadOnlyStorageProvider`] - Read-only storage for view calls.
+/// - [`hashmap::HashMapStorageProvider`] - Test storage only.
 ///
 /// Runtime code reaches providers through explicit [`StorageHandle`] values
 /// created by precompile, transaction, or block lifecycle entrypoints.
@@ -323,11 +338,24 @@ pub trait PrecompileStorageProvider {
     /// Creates a new journal checkpoint.
     fn checkpoint(&mut self) -> JournalCheckpoint;
 
-    /// Commits all state changes since the last checkpoint.
-    fn checkpoint_commit(&mut self);
+    /// Commits all state changes since `checkpoint`.
+    ///
+    /// Commits are strictly LIFO. Providers return
+    /// [`PrimitivesStorageError::CheckpointCommitOutOfOrder`] when `checkpoint`
+    /// is not the innermost live checkpoint. The checkpoint stack then stays
+    /// unchanged.
+    ///
+    /// [`PrimitivesStorageError::CheckpointCommitOutOfOrder`]: crate::error::PrimitivesStorageError::CheckpointCommitOutOfOrder
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()>;
 
-    /// Reverts all state changes back to the given checkpoint.
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint);
+    /// Reverts all state changes back to `checkpoint`.
+    ///
+    /// The revert also discards every live checkpoint inside `checkpoint`.
+    /// Providers return [`PrimitivesStorageError::CheckpointRevertOutOfRange`]
+    /// when `checkpoint` is not a live checkpoint.
+    ///
+    /// [`PrimitivesStorageError::CheckpointRevertOutOfRange`]: crate::error::PrimitivesStorageError::CheckpointRevertOutOfRange
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()>;
 
     /// Transfers native token balance from one address to another.
     ///
@@ -358,6 +386,39 @@ pub trait PrecompileStorageProvider {
         _input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
         Err(SubCallError::NotAvailable)
+    }
+}
+
+/// Requires `checkpoint` to be the innermost of `live` index-keyed checkpoints.
+///
+/// Index-keyed providers store checkpoint `n` at stack position `n`.
+pub(crate) fn require_innermost_checkpoint(
+    live: usize,
+    checkpoint: JournalCheckpoint,
+) -> Result<()> {
+    if checkpoint.journal_i.checked_add(1) == Some(live) {
+        Ok(())
+    } else {
+        Err(
+            crate::error::PrimitivesStorageError::CheckpointCommitOutOfOrder {
+                journal_i: checkpoint.journal_i,
+            }
+            .into(),
+        )
+    }
+}
+
+/// Requires `checkpoint` to be one of `live` index-keyed checkpoints.
+pub(crate) fn require_live_checkpoint(live: usize, checkpoint: JournalCheckpoint) -> Result<()> {
+    if checkpoint.journal_i < live {
+        Ok(())
+    } else {
+        Err(
+            crate::error::PrimitivesStorageError::CheckpointRevertOutOfRange {
+                journal_i: checkpoint.journal_i,
+            }
+            .into(),
+        )
     }
 }
 

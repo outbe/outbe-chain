@@ -340,7 +340,7 @@ impl<'storage> StorageHandle<'storage> {
     {
         let chain_id = self.chain_id()?;
         let block_number = self.block_number()?;
-        let checkpoint: CheckpointGuard<'storage> = self.checkpoint_guard();
+        let checkpoint: CheckpointGuard<'storage> = self.checkpoint_guard()?;
         let frame = MetadosisMutationFrameGuard::open::<P>(self, binding, chain_id, block_number)?;
         let lease = MetadosisMutationLease::<P>::new(binding, chain_id, block_number);
         let outcome = f();
@@ -348,7 +348,7 @@ impl<'storage> StorageHandle<'storage> {
         let _ = (lease.binding, lease.chain_id, lease.block_number);
         frame.close(outcome.is_ok())?;
         let value = outcome?;
-        checkpoint.commit();
+        checkpoint.commit()?;
         Ok(value)
     }
 }

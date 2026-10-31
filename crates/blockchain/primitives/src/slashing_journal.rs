@@ -18,14 +18,19 @@
 //!
 //! ## Best-effort semantics
 //!
-//! The journal is **best-effort** observability. When a write fails (disk
-//! full, permission error, file unwritable), the journal emits a
-//! `tracing::warn!` and drops the write. A failed write never blocks the
-//! consensus / state-transition path that produced it. Determinism is
-//! unaffected because the journal is off-chain. Its content is not identical
-//! on every node: each record carries the local wall-clock time, and only a
-//! node that called [`init`] writes records. The absence of the journal does
-//! not change the on-chain state.
+//! The journal is **best-effort** observability. [`record`] serializes the
+//! record and pushes it into a bounded in-memory queue. It does no file I/O on
+//! the caller's thread. A dedicated writer thread appends the queued lines and
+//! flushes once each time the queue becomes empty. When the queue is full, the
+//! journal drops the oldest record and logs a warning. When a write fails
+//! (disk full, permission error, file unwritable), the writer thread emits a
+//! `tracing::warn!` and drops the write. A record queued just before the
+//! process exits can be lost. The journal never blocks the consensus /
+//! state-transition path that produced it. Determinism is unaffected because
+//! the journal is off-chain. Its content is not identical on every node: each
+//! record carries the local wall-clock time, and only a node that called
+//! [`init`] writes records. The absence of the journal does not change the
+//! on-chain state.
 //!
 //! ## Initialization
 //!
@@ -35,7 +40,6 @@
 use crate::journal_writer::Journal;
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -214,7 +218,7 @@ pub fn init(datadir: &Path) -> std::io::Result<()> {
     }
 
     let path = journal_path(datadir);
-    let _ = JOURNAL.set(Journal::open(&path)?);
+    let _ = JOURNAL.set(Journal::open(&path, "slashing")?);
     tracing::info!(
         target: "outbe::slashing::journal",
         path = %path.display(),
@@ -228,49 +232,24 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
     datadir.join(JOURNAL_FILENAME)
 }
 
-/// Append `record` to the journal. If nothing called [`init`], this is a
-/// no-op (test-friendly). This function logs write errors at WARN and
-/// swallows them. It never blocks the caller's state-transition path.
+/// Queue `record` for the journal writer thread. If nothing called [`init`],
+/// this is a no-op (test-friendly). This function does no file I/O. The
+/// writer thread logs write errors at WARN and swallows them. It never blocks
+/// the caller's state-transition path.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;
     };
 
-    let line = match serde_json::to_string(&record) {
-        Ok(s) => s,
+    match serde_json::to_string(&record) {
+        Ok(line) => journal.submit(line),
         Err(e) => {
             tracing::warn!(
                 target: "outbe::slashing::journal",
                 error = %e,
                 "failed to serialize journal record",
             );
-            return;
         }
-    };
-
-    let mut guard = match journal.writer.lock() {
-        Ok(g) => g,
-        Err(poisoned) => {
-            // Recover from poison. A previous panic in a writer thread
-            // does not corrupt the file pointer.
-            poisoned.into_inner()
-        }
-    };
-
-    if let Err(e) = writeln!(guard, "{line}") {
-        tracing::warn!(
-            target: "outbe::slashing::journal",
-            error = %e,
-            "failed to append journal record",
-        );
-        return;
-    }
-    if let Err(e) = guard.flush() {
-        tracing::warn!(
-            target: "outbe::slashing::journal",
-            error = %e,
-            "failed to flush journal record",
-        );
     }
 }
 
@@ -324,6 +303,7 @@ mod tests {
                 block_number,
                 validator: "0x2cf6fbd0".into(),
             });
+            JOURNAL.get().expect("initialized journal").wait_idle();
             return;
         }
 

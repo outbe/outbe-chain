@@ -313,11 +313,11 @@ impl ValidatorSet<'_> {
         after: &ValidatorState,
         emit: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.persist_validator_state_delta(before, after)?;
         self.pending_set_change.write(true)?;
         emit(self)?;
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 }

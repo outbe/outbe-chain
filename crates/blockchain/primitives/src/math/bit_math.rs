@@ -48,22 +48,24 @@ pub fn most_significant_bit(mut x: U256) -> u8 {
 }
 
 /// Mirrors `BitMath.leastSignificantBit(uint256)` (BitMath.sol L74-117).
-/// Returns the index (0..=255) of the lowest set bit. Returns 255 for zero
-/// (matches LB sentinel-ish behavior). No caller should pass zero in
-/// performance-critical paths.
+/// Returns the index (0..=255) of the lowest set bit, or `None` for zero.
+///
+/// Divergence from LB: LB returns the sentinel 255 for zero, which is also a
+/// real bit index. This port returns `None`, so a caller cannot mistake an
+/// empty word for bit 255.
 ///
 /// Implementation: walks alloy's little-endian limb array (limb[0] = bits
 /// 0..63) and uses `u64::trailing_zeros`, which is deterministic across
 /// every Rust target (defined for 0 -> 64, never CPU-intrinsic-dependent).
-pub fn least_significant_bit(word: U256) -> u32 {
+pub fn least_significant_bit(word: U256) -> Option<u32> {
     let limbs = word.as_limbs();
     // SAFETY: i in {0,1,2,3}, so (i as u32) * 64 in {0,64,128,192}. No narrowing.
     for (i, &limb) in limbs.iter().enumerate() {
         if limb != 0 {
-            return limb.trailing_zeros() + (i as u32) * 64;
+            return Some(limb.trailing_zeros() + (i as u32) * 64);
         }
     }
-    255 // unreachable per precondition. Matches LB's "leastSignificantBit(0) == 255".
+    None
 }
 
 /// Returns `word` with all bits below `from_bit` cleared.
@@ -93,13 +95,14 @@ mod tests {
 
     #[test]
     fn least_significant_bit_known_values() {
-        assert_eq!(least_significant_bit(U256::ONE), 0);
-        assert_eq!(least_significant_bit(U256::from(0b1000u64)), 3);
-        assert_eq!(least_significant_bit(U256::ONE << 64), 64);
-        assert_eq!(least_significant_bit(U256::ONE << 128), 128);
-        assert_eq!(least_significant_bit(U256::ONE << 200), 200);
-        assert_eq!(least_significant_bit(U256::ONE << 255), 255);
-        assert_eq!(least_significant_bit(U256::MAX), 0);
+        assert_eq!(least_significant_bit(U256::ONE), Some(0));
+        assert_eq!(least_significant_bit(U256::from(0b1000u64)), Some(3));
+        assert_eq!(least_significant_bit(U256::ONE << 64), Some(64));
+        assert_eq!(least_significant_bit(U256::ONE << 128), Some(128));
+        assert_eq!(least_significant_bit(U256::ONE << 200), Some(200));
+        assert_eq!(least_significant_bit(U256::ONE << 255), Some(255));
+        assert_eq!(least_significant_bit(U256::MAX), Some(0));
+        assert_eq!(least_significant_bit(U256::ZERO), None);
     }
 
     #[test]

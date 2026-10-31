@@ -62,6 +62,19 @@ fn envelope(records: &[(u8, &[u8])]) -> Vec<u8> {
     bytes
 }
 
+/// Returns the record tags of a well-formed envelope, in wire order.
+fn record_tags(bytes: &[u8]) -> Vec<u8> {
+    let mut tags = Vec::new();
+    let mut offset = HEADER_LEN;
+    for _ in 0..bytes[6] {
+        tags.push(bytes[offset]);
+        let len = u16::from_be_bytes([bytes[offset + 1], bytes[offset + 2]]) as usize;
+        offset += 3 + len;
+    }
+    assert_eq!(offset, bytes.len());
+    tags
+}
+
 fn assert_fatal(bytes: &[u8], expected: &str) {
     match decode_outbe_block_artifacts(bytes).unwrap_err() {
         PrecompileError::Revert { 0: message } => assert_eq!(message, expected),
@@ -77,19 +90,19 @@ fn mixed_record_wire_vectors_are_pinned() {
         (
             521,
             alloy_primitives::b256!(
-                "4bee5a9d6f662538180758a7a20cbfe482412bd92cf32ee0c1225fa1a810a1a9"
+                "f5195dfa12becfc0d73f13f1d4576d946f2b1a0dba180623dd8706eff3fb316e"
             ),
         ),
         (
             263,
             alloy_primitives::b256!(
-                "e470bdcbd5ac9dc0f083aa806ac64f301d48a4be376cd5f9643d70b21dd07e4e"
+                "844c9f8d27fb7e9f5670d13b3b5158ab75f49d7a6b73dabdf02035b2e15f8842"
             ),
         ),
         (
             276,
             alloy_primitives::b256!(
-                "d01a3287a7ba00a92a7168941534de8ed767910a11489d8ab007a231a754b6e2"
+                "0f8d3b1b06993422ed2cba6db78ae255420b496ece6a129b528f76f16efca22f"
             ),
         ),
     ];
@@ -104,6 +117,11 @@ fn mixed_record_wire_vectors_are_pinned() {
     for (index, consensus) in consensus.into_iter().enumerate() {
         let artifacts = mixed_artifacts(consensus);
         let bytes = encode_outbe_block_artifacts(&artifacts).unwrap();
+        let tags = record_tags(&bytes);
+        assert!(
+            tags.is_sorted_by(|a, b| a < b),
+            "tags {tags:?} not ascending"
+        );
         assert_eq!(bytes.len(), expected[index].0);
         assert_eq!(alloy_primitives::keccak256(&bytes), expected[index].1);
         assert_eq!(decode_outbe_block_artifacts(&bytes).unwrap(), artifacts);
@@ -111,39 +129,43 @@ fn mixed_record_wire_vectors_are_pinned() {
 }
 
 #[test]
-fn duplicate_checks_precede_record_payload_validation() {
-    for (tag, payload, message) in [
-        (1, vec![0; 32], "duplicate execution summary artifact"),
-        (
-            5,
-            7_u64.to_be_bytes().to_vec(),
-            "duplicate timestamp_millis_part",
-        ),
-        (6, vec![0, 0], "duplicate late finalize credits artifact"),
-        (0x0A, vec![0x01], "duplicate enclave witness artifact"),
+fn order_and_duplicate_checks_precede_record_payload_validation() {
+    for (tag, payload) in [
+        (1, vec![0; 32]),
+        (5, 7_u64.to_be_bytes().to_vec()),
+        (0x0A, vec![0x01]),
     ] {
-        assert_fatal(&envelope(&[(tag, &payload), (tag, &[])]), message);
+        assert_fatal(
+            &envelope(&[(tag, &payload), (tag, &[])]),
+            &format!("block artifact record tags out of order: {tag} after {tag}"),
+        );
     }
     // All consensus tags share one slot. The decoder never inspects the second payload.
-    for tag in [2, 3, 7] {
+    assert_fatal(
+        &envelope(&[(3, b"dealer"), (7, &[])]),
+        "duplicate consensus header artifact",
+    );
+    for tag in [2, 3] {
         assert_fatal(
             &envelope(&[(3, b"dealer"), (tag, &[])]),
-            "duplicate consensus header artifact",
+            &format!("block artifact record tags out of order: {tag} after 3"),
         );
     }
 }
 
 #[test]
-fn zero_timestamp_sentinel_and_structural_ranges_are_preserved() {
+fn zero_timestamp_record_is_rejected_and_structural_ranges_are_preserved() {
     let zero = 0_u64.to_be_bytes();
     let out_of_range = u64::MAX.to_be_bytes();
-    let decoded =
-        decode_outbe_block_artifacts(&envelope(&[(5, &zero), (5, &zero), (5, &out_of_range)]))
-            .unwrap();
+    assert_fatal(
+        &envelope(&[(5, &zero)]),
+        "block artifact timestamp_millis_part record is zero",
+    );
+    let decoded = decode_outbe_block_artifacts(&envelope(&[(5, &out_of_range)])).unwrap();
     assert_eq!(decoded.timestamp_millis_part, u64::MAX);
     assert_fatal(
         &envelope(&[(5, &out_of_range), (5, &zero)]),
-        "duplicate timestamp_millis_part",
+        "block artifact record tags out of order: 5 after 5",
     );
 }
 
@@ -185,7 +207,11 @@ fn malformed_envelope_preserves_framing_error_precedence() {
             "truncated block artifact record payload",
         ),
         (
-            &b"OART\x01\x00\x00\x00"[..],
+            &b"OART\x01\x00\x00"[..],
+            "block artifact envelope has no records and no publication flag",
+        ),
+        (
+            &b"OART\x01\x01\x00\x00"[..],
             "trailing bytes in block artifacts",
         ),
     ] {
@@ -232,5 +258,56 @@ fn late_credit_malformed_payloads_keep_caps_order_and_trailing_errors() {
     assert_fatal(
         &envelope(&[(6, &payload)]),
         "late finalize batches not in strictly ascending canonical order",
+    );
+}
+
+#[test]
+fn artifact_decode_requires_order() {
+    let artifacts = mixed_artifacts(ConsensusHeaderArtifact::CommitteePreAnnounce {
+        epoch: 9,
+        outcome: Bytes::from_static(b"preannounce"),
+    });
+    let bytes = encode_outbe_block_artifacts(&artifacts).unwrap();
+    assert_eq!(record_tags(&bytes), [0x01, 0x05, 0x06, 0x07]);
+
+    // Swap the first two records: the decoder rejects the permutation.
+    let summary_end = HEADER_LEN + 3 + EXECUTION_SUMMARY_LEN;
+    let timestamp_end = summary_end + 3 + TIMESTAMP_MILLIS_PART_LEN;
+    let mut permuted = bytes[..HEADER_LEN].to_vec();
+    permuted.extend_from_slice(&bytes[summary_end..timestamp_end]);
+    permuted.extend_from_slice(&bytes[HEADER_LEN..summary_end]);
+    permuted.extend_from_slice(&bytes[timestamp_end..]);
+    assert_eq!(permuted.len(), bytes.len());
+    assert_fatal(
+        &permuted,
+        "block artifact record tags out of order: 1 after 5",
+    );
+
+    // Every encoder output re-encodes byte-identically after a decode.
+    let mut publication_only = OutbeBlockArtifacts {
+        radicle_publication_enabled: true,
+        ..Default::default()
+    };
+    let empty_envelope = encode_outbe_block_artifacts(&publication_only).unwrap();
+    assert_eq!(empty_envelope.as_ref(), b"OART\x01\x01\x00");
+    publication_only.enclave_witness = Some(Bytes::from_static(b"witness"));
+    let mut outputs = vec![bytes, empty_envelope];
+    outputs.push(encode_outbe_block_artifacts(&publication_only).unwrap());
+    outputs.push(
+        encode_outbe_block_artifacts(&mixed_artifacts(ConsensusHeaderArtifact::BoundaryOutcome(
+            boundary(),
+        )))
+        .unwrap(),
+    );
+    for encoded in outputs {
+        let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
+        assert_eq!(encode_outbe_block_artifacts(&decoded).unwrap(), encoded);
+    }
+
+    // The encoder omits an empty late-finalize batch list, so the decoder
+    // rejects an explicit empty record.
+    assert_fatal(
+        &envelope(&[(6, &[0, 0])]),
+        "block artifact late finalize credits record has no batches",
     );
 }

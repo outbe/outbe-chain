@@ -18,7 +18,7 @@
 
 use alloy_primitives::U256;
 
-use crate::error::Result;
+use crate::error::{PrimitivesMathError, Result};
 use crate::math::bit_math::{least_significant_bit, mask_from};
 use crate::math::constants::MAX_BIN_ID;
 
@@ -53,6 +53,25 @@ fn mid_key(top: u8) -> u32 {
 #[inline]
 fn assemble(top: u8, mid: u8, lo: u8) -> u32 {
     ((top as u32) << 16) | ((mid as u32) << 8) | (lo as u32)
+}
+
+/// Rejects an id outside the 24-bit bin domain.
+#[inline]
+fn split_in_domain(id: u32) -> Result<(u8, u8, u8)> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::BinIdOutOfRange { id }.into());
+    }
+    Ok(split(id))
+}
+
+/// Returns the lowest set bit of a word that the trie invariant keeps
+/// non-empty. An empty word means a corrupt trie, so this returns a typed
+/// error and never a sentinel bit index.
+#[inline]
+fn lowest_set_bit(word: U256, level: &'static str) -> Result<u8> {
+    least_significant_bit(word)
+        .and_then(|bit| u8::try_from(bit).ok())
+        .ok_or_else(|| PrimitivesMathError::TreeMathEmptyWordOnDescent { level }.into())
 }
 
 // --- Storage abstraction ---------------------------------------------------
@@ -144,9 +163,10 @@ macro_rules! impl_bin_tree_storage {
 // --- TreeMath port ---------------------------------------------------------
 
 /// Mirrors `TreeMath.contains(level2, id)` (TreeMath.sol L11-14).
-/// Returns true iff `id` is set in the leaf bitmap.
+/// Returns true iff `id` is set in the leaf bitmap. Errors for
+/// `id > MAX_BIN_ID`.
 pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
-    let (top, mid, lo) = split(id);
+    let (top, mid, lo) = split_in_domain(id)?;
     let leaf = s.read_leaf(leaf_key(top, mid))?;
     Ok(!(leaf & (U256::ONE << (lo as usize))).is_zero())
 }
@@ -154,9 +174,9 @@ pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// Mirrors `TreeMath.add(level0, level1, level2, id)` (TreeMath.sol L18-39).
 /// Sets the bit. Cascades to mid and root if the lower-level word transitions
 /// from zero. Returns `true` iff the bit transitioned 0 -> 1 (i.e., this was
-/// a real insertion, not a re-insertion).
+/// a real insertion, not a re-insertion). Errors for `id > MAX_BIN_ID`.
 pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
-    let (top, mid, lo) = split(id);
+    let (top, mid, lo) = split_in_domain(id)?;
     let leaf_k = leaf_key(top, mid);
 
     let leaves = s.read_leaf(leaf_k)?;
@@ -186,9 +206,9 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// Mirrors `TreeMath.remove(level0, level1, level2, id)`
 /// (TreeMath.sol L45-65). Clears the bit. Cascades to mid and root if the
 /// lower-level word transitions to zero. Returns `true` iff the bit
-/// transitioned 1 -> 0.
+/// transitioned 1 -> 0. Errors for `id > MAX_BIN_ID`.
 pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
-    let (top, mid, lo) = split(id);
+    let (top, mid, lo) = split_in_domain(id)?;
     let leaf_k = leaf_key(top, mid);
 
     let leaves = s.read_leaf(leaf_k)?;
@@ -227,6 +247,10 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// iteration of a typical drain loop. The mid and root descents remain
 /// strict-greater: by the time we ascend, we already exhausted the start
 /// leaf.
+///
+/// Returns `Ok(None)` for `start_id > MAX_BIN_ID`. Returns
+/// [`PrimitivesMathError::TreeMathEmptyWordOnDescent`] when a set bit points
+/// to an empty lower-level word.
 pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Result<Option<u32>> {
     if start_id > MAX_BIN_ID {
         return Ok(None);
@@ -237,7 +261,7 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     let leaf = s.read_leaf(leaf_key(top0, mid0))?;
     let leaf_masked = mask_from(leaf, lo0);
     if !leaf_masked.is_zero() {
-        let bit = least_significant_bit(leaf_masked) as u8;
+        let bit = lowest_set_bit(leaf_masked, "leaf")?;
         return Ok(Some(assemble(top0, mid0, bit)));
     }
 
@@ -247,10 +271,10 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     if mid0 != u8::MAX {
         let mid_masked = mask_from(mid_word, mid_threshold);
         if !mid_masked.is_zero() {
-            let mid_bit = least_significant_bit(mid_masked) as u8;
+            let mid_bit = lowest_set_bit(mid_masked, "mid")?;
             // Descend: leaf at (top0, mid_bit) is non-empty by invariant.
             let leaf2 = s.read_leaf(leaf_key(top0, mid_bit))?;
-            let lo_bit = least_significant_bit(leaf2) as u8;
+            let lo_bit = lowest_set_bit(leaf2, "leaf")?;
             return Ok(Some(assemble(top0, mid_bit, lo_bit)));
         }
     }
@@ -265,11 +289,11 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     if root_masked.is_zero() {
         return Ok(None);
     }
-    let top_bit = least_significant_bit(root_masked) as u8;
+    let top_bit = lowest_set_bit(root_masked, "root")?;
     let mid2 = s.read_mid(mid_key(top_bit))?;
-    let mid_bit = least_significant_bit(mid2) as u8;
+    let mid_bit = lowest_set_bit(mid2, "mid")?;
     let leaf3 = s.read_leaf(leaf_key(top_bit, mid_bit))?;
-    let lo_bit = least_significant_bit(leaf3) as u8;
+    let lo_bit = lowest_set_bit(leaf3, "leaf")?;
     Ok(Some(assemble(top_bit, mid_bit, lo_bit)))
 }
 
@@ -315,6 +339,54 @@ mod tests {
     fn with_store<F: FnOnce(&TestStore)>(f: F) {
         let store = TestStore::default();
         f(&store);
+    }
+
+    #[test]
+    fn trie_rejects_out_of_domain() {
+        with_store(|s| {
+            add(s, MAX_BIN_ID).unwrap();
+            for id in [MAX_BIN_ID + 1, 0x0100_00FF, u32::MAX] {
+                let message = format!("revert: bin id {id} exceeds MAX_BIN_ID");
+                assert_eq!(contains(s, id).unwrap_err().to_string(), message);
+                assert_eq!(add(s, id).unwrap_err().to_string(), message);
+                assert_eq!(remove(s, id).unwrap_err().to_string(), message);
+                assert_eq!(find_first_left_inclusive(s, id).unwrap(), None);
+            }
+            // The rejected calls did not alias onto the in-domain id.
+            assert!(contains(s, MAX_BIN_ID).unwrap());
+            assert!(remove(s, MAX_BIN_ID).unwrap());
+            assert_eq!(s.read_root().unwrap(), U256::ZERO);
+        });
+    }
+
+    #[test]
+    fn corrupt_descent_returns_typed_error_not_bit_255() {
+        let empty = |level: &str| format!("revert: tree_math: empty {level} word on descent");
+        // Root bit 1 set, but the mid word at top 1 is empty.
+        with_store(|s| {
+            s.write_root(U256::ONE << 1).unwrap();
+            assert_eq!(
+                find_first_left_inclusive(s, 0).unwrap_err().to_string(),
+                empty("mid")
+            );
+        });
+        // Mid bit 1 set at top 0, but the leaf word at (0, 1) is empty.
+        with_store(|s| {
+            s.write_mid(mid_key(0), U256::ONE << 1).unwrap();
+            assert_eq!(
+                find_first_left_inclusive(s, 0).unwrap_err().to_string(),
+                empty("leaf")
+            );
+        });
+        // Root and mid bits set, but the leaf word at (1, 0) is empty.
+        with_store(|s| {
+            s.write_root(U256::ONE << 1).unwrap();
+            s.write_mid(mid_key(1), U256::ONE).unwrap();
+            assert_eq!(
+                find_first_left_inclusive(s, 0).unwrap_err().to_string(),
+                empty("leaf")
+            );
+        });
     }
 
     #[test]

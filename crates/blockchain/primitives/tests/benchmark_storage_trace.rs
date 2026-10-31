@@ -20,7 +20,7 @@ fn benchmark_trace_reverts_with_the_storage_checkpoint() {
     provider
         .sstore(address, reverted_slot, U256::from(2))
         .unwrap();
-    provider.checkpoint_revert(checkpoint);
+    provider.checkpoint_revert(checkpoint).unwrap();
 
     assert_eq!(
         provider.storage_trace(),
