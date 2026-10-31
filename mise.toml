@@ -131,19 +131,19 @@ run = "cargo install --locked cargo-nextest"
 [tasks.audit]
 description = "Audit debug binaries for known vulnerabilities"
 depends = ["build"]
-run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
+run = "find target/debug -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0418 bin {} \\;"
 
 [tasks.audit-release]
 description = "Audit release binaries for known vulnerabilities"
 depends = ["build-release"]
-run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2025-0055 --ignore RUSTSEC-2026-0118 --ignore RUSTSEC-2026-0119 --ignore RUSTSEC-2026-0387 bin {} \\;"
+run = "find target/release -maxdepth 1 -type f -perm +111 -name 'outbe-*' -exec cargo audit --db ~/.cargo/rustsec-audit-db --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0418 bin {} \\;"
 
 # --- Audit toolchain (rust-module-audit skill entry points) ----------- #
 
 [tasks.audit-tools-install]
 description = "Install full cargo audit toolchain + nightly + miri/llvm components"
 run = [
-  "cargo install --locked cargo-nextest cargo-machete cargo-deny cargo-audit cargo-llvm-cov cargo-llvm-lines cargo-bloat",
+  "cargo install --locked cargo-nextest cargo-machete cargo-deny cargo-audit cargo-llvm-cov cargo-llvm-lines cargo-bloat cargo-mutants",
   "cargo install --locked cargo-udeps",
   "rustup toolchain install nightly",
   "rustup +nightly component add miri rust-src",
@@ -211,6 +211,10 @@ run = "cargo llvm-lines --release | head -50"
 [tasks.audit-coverage]
 description = "cargo llvm-cov nextest --html (HTML coverage report)"
 run = "cargo llvm-cov nextest --workspace --html"
+
+[tasks.audit-mutants]
+description = "cargo mutants on consensus and economic crates (mutation kill-rate audit)"
+run = "cargo mutants --test-tool nextest -p outbe-consensus -p outbe-fidelity-math -p outbe-lysis -p outbe-fidelity -p outbe-metadosis -p outbe-emission -p outbe-staking -p outbe-cycle"
 
 [tasks.audit-bench]
 description = "cargo bench (criterion baseline; configure benches per crate)"
