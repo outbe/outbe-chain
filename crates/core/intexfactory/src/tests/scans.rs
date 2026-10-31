@@ -481,6 +481,7 @@ fn an_uncalled_group_never_enters_the_deadline_queue() {
 fn every_failed_pass_write_rolls_back(
     arm: impl Fn(&StorageHandle<'_>) -> SeriesId,
     at: u64,
+    done: impl Fn(&StorageHandle<'_>, SeriesId),
     check: impl Fn(&StorageHandle<'_>, SeriesId),
 ) {
     let armed = || {
@@ -503,13 +504,15 @@ fn every_failed_pass_write_rolls_back(
                 BlockContext::empty_for_tests(1, at, CHAIN_ID),
                 s,
             ))
+            .map(|_| ())
         })
     };
-    let (mut probe, _) = armed();
+    let (mut probe, member) = armed();
     probe.fail_after_mutation_at(usize::MAX);
     pass(&mut probe).unwrap();
     let writes = probe.clear_mutation_failure();
     assert!(writes > 0);
+    StorageHandle::enter(&mut probe, |s| done(&s, member));
     for write in 0..writes {
         let (mut provider, member) = armed();
         let before = provider.storage.clone();
@@ -535,6 +538,7 @@ fn a_node_local_failure_while_expiring_fails_the_pass() {
     every_failed_pass_write_rolls_back(
         |s| called_series(s, 20260101, now + DAY),
         due,
+        |s, member| assert!(!queued(s, member)),
         |s, member| {
             assert!(queued(s, member));
             assert_eq!(
@@ -560,6 +564,16 @@ fn a_node_local_failure_while_deferring_fails_the_pass() {
             member
         },
         IntexContract::day_end(day),
+        |s, member| {
+            assert!(queued(s, member));
+            assert_eq!(
+                IntexContract::new(s.clone())
+                    .forfeit_day_live
+                    .read(&day)
+                    .unwrap(),
+                0
+            );
+        },
         |s, member| {
             assert!(queued(s, member));
             let f = IntexContract::new(s.clone());
@@ -733,8 +747,8 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
-        called::daily_pass(&ctx).unwrap();
-        crate::hooks::cleanup(&ctx).unwrap();
+        let block = called::daily_pass(&ctx).unwrap();
+        crate::hooks::cleanup(&block).unwrap();
 
         let f = IntexContract::new(s.clone());
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());

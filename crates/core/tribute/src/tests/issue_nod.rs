@@ -906,6 +906,10 @@ fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u
                 .map_or(0, |allowance| allowance.day);
         let next = nod.call_sweep_day.read().unwrap();
         if next == 0 || next == selected {
+            assert!(
+                next == 0 || selected == nod.call_latest_day.read().unwrap(),
+                "the pass stopped on day {selected} before the last closed day"
+            );
             break;
         }
         height += 1;

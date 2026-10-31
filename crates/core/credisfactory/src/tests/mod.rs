@@ -379,9 +379,8 @@ pub fn queued_for_forfeit(
     Ok(live)
 }
 
-/// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
-/// forfeits and cleanup, one block for each closed day it still has to catch up.
-pub fn daily_pass(
+/// Finalizes the UTC day before `timestamp` and, on a fresh fixture, starts the pass there.
+pub fn prepare_daily_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
@@ -394,6 +393,17 @@ pub fn daily_pass(
     if credis.daily_genesis_day.read()? == 0 {
         credis.daily_genesis_day.write(closed)?;
     }
+    Ok(())
+}
+
+/// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
+/// forfeits and cleanup, one block for each closed day it still has to catch up.
+pub fn daily_pass(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<()> {
+    prepare_daily_pass(storage, timestamp)?;
+    let credis = CredisContract::new(storage.clone());
     loop {
         crate::called::process_call_pass(&block_at(storage, timestamp))?;
         let selected =
@@ -401,16 +411,53 @@ pub fn daily_pass(
                 .map_or(0, |allowance| allowance.day);
         let next = credis.call_sweep_day.read()?;
         if next == 0 || next == selected {
+            assert!(
+                next == 0 || selected == credis.call_latest_day.read()?,
+                "the pass stopped on day {selected} before the last closed day"
+            );
             return Ok(());
         }
     }
 }
 
+/// Runs `pass` and returns the groups due by `timestamp` it forfeited: they left the forfeit
+/// queue for the cleanup, which may have deleted their Credis already.
+pub fn forfeited_by(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+    pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
+) -> outbe_primitives::error::Result<u32> {
+    let credis = CredisContract::new(storage.clone());
+    let queue = outbe_credis::ForfeitQueue(&credis);
+    let mut due = Vec::new();
+    if let Some(first) = outbe_primitives::deadline_queue::first_day(&queue)? {
+        for day in first..=outbe_primitives::deadline_queue::deadline_day(timestamp)? {
+            for slot in 0..credis.forfeit_day_len.read(&day)? {
+                if let Some(group) = outbe_primitives::deadline_queue::entry_at(&queue, day, slot)?
+                {
+                    if credis.group_member_count(group)? != 0 {
+                        due.push(group);
+                    }
+                }
+            }
+        }
+    }
+    pass()?;
+    let mut forfeited = 0;
+    for group in due {
+        if credis.called_group_slot.read(&group)? == 0
+            && (credis.cleanup_group_slot.read(&group)? != 0
+                || credis.group_member_count(group)? == 0)
+        {
+            forfeited += 1;
+        }
+    }
+    Ok(forfeited)
+}
+
 /// The daily pass at `timestamp`. Returns the called groups it forfeited.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let before = queued_for_forfeit(storage, timestamp).unwrap();
-    daily_pass(storage, timestamp).unwrap();
-    before - queued_for_forfeit(storage, timestamp).unwrap()
+    forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.

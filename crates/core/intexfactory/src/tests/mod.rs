@@ -73,11 +73,12 @@ mod called {
 
     /// The daily pass through the UTC day before `ctx`, as the Cycle runs it: one block at the
     /// next height, and one more block for each closed day it still has to catch up. Returns
-    /// the groups called.
-    pub(super) fn daily_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+    /// the context of the last block.
+    pub(super) fn daily_pass<'s>(
+        ctx: &BlockRuntimeContext<'s>,
+    ) -> outbe_primitives::error::Result<BlockRuntimeContext<'s>> {
         prepare_daily_pass(ctx)?;
         let intex = IntexContract::new(ctx.storage.clone());
-        let mut called = 0;
         loop {
             let mut height = ctx.block.block_number;
             for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
@@ -91,13 +92,17 @@ mod called {
                 BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
                 ctx.storage.clone(),
             );
-            called += crate::called::process_call_pass(&block)?;
+            crate::called::process_call_pass(&block)?;
             let selected =
                 outbe_primitives::pass_budget::BlockAllowance::unpack(intex.daily_budget.read()?)?
                     .map_or(0, |allowance| allowance.day);
             let next = intex.call_sweep_day.read()?;
             if next == 0 || next == selected {
-                return Ok(called);
+                assert!(
+                    next == 0 || selected == intex.call_latest_day.read()?,
+                    "the pass stopped on day {selected} before the last closed day"
+                );
+                return Ok(block);
             }
         }
     }

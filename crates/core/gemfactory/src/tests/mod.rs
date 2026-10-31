@@ -461,6 +461,10 @@ pub(crate) fn daily_pass<'s>(
                 .map_or(0, |allowance| allowance.day);
         let next = gem.call_sweep_day.read()?;
         if next == 0 || next == selected {
+            assert!(
+                next == 0 || selected == gem.call_latest_day.read()?,
+                "the pass stopped on day {selected} before the last closed day"
+            );
             return Ok(block);
         }
         height += 1;

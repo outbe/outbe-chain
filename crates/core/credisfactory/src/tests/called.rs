@@ -1079,9 +1079,10 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         };
         assert_eq!(expire(&storage, lapsed), 1);
         let deleted = ids.iter().filter(|id| is_deleted(&storage, **id)).count();
-        assert!(
-            deleted > 0 && deleted < ids.len(),
-            "one block deletes what its write budget leaves after the forfeit, got {deleted}"
+        assert_eq!(
+            deleted,
+            budget as usize - 1,
+            "one block deletes what its write budget leaves after the forfeit"
         );
         assert_eq!(reserve(), pledge_cost() * U256::from(deleted as u64));
         assert_eq!(expire(&storage, lapsed), 0);
@@ -1248,11 +1249,7 @@ fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
-    storage.with_checkpoint(|| {
-        let before = queued_for_forfeit(storage, timestamp)?;
-        daily_pass(storage, timestamp)?;
-        Ok(before - queued_for_forfeit(storage, timestamp)?)
-    })
+    storage.with_checkpoint(|| forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)))
 }
 
 /// Every write of a group's forfeit and of its cleanup (CCA default, pledge burn, credit,

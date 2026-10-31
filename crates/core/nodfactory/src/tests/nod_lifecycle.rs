@@ -216,8 +216,8 @@ fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     decided
 }
 
-/// One block's daily pass and cleanup under one checkpoint, as the native transaction runs
-/// them. Returns the groups forfeited.
+/// The daily pass and its cleanup under one checkpoint, as the native transaction runs them.
+/// Returns the groups forfeited.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -230,7 +230,7 @@ fn forfeit_block(
 }
 
 /// The daily pass through the closed days before `timestamp`, one day per block, without its
-/// cleanup. Returns the groups that left the forfeit queue.
+/// cleanup. Returns the groups it forfeited.
 fn forfeit_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -251,12 +251,16 @@ fn forfeit_pass(
                 .map_or(0, |allowance| allowance.day);
         let next = nod.call_sweep_day.read()?;
         if next == 0 || next == selected {
+            assert!(
+                next == 0 || selected == nod.call_latest_day.read()?,
+                "the pass stopped on day {selected} before the last closed day"
+            );
             break;
         }
     }
     Ok(queued
         .into_iter()
-        .filter(|group| !is_queued(storage, *group))
+        .filter(|group| !is_queued(storage, *group) && nod.group_is_forfeited.read(group).unwrap())
         .count() as u32)
 }
 
@@ -1880,7 +1884,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
         register(&storage, ISO);
         arm_lapsed(&storage, &[(0x81, 3, false)]).0
     });
-    provider.fail_after_mutation_at(0);
+    provider.fail_mutation_at_address(outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS);
     let result = StorageHandle::enter(&mut provider, |storage| forfeit_pass(&storage, past));
     provider.clear_mutation_failure();
     assert!(matches!(
