@@ -65,7 +65,7 @@ fn proceeds_burn_into_the_promis_limit_pool() {
 }
 
 #[test]
-fn wei_below_one_protocol_unit_carries_into_the_next_delivery() {
+fn coen_below_one_protocol_minor_carries_into_the_next_delivery() {
     let mut storage = factory_provider();
     let unit = UNITS_PER_PROTOCOL_MINOR;
     let rest = U256::from(7u64);

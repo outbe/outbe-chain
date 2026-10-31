@@ -61,14 +61,14 @@ impl PromisLimitContract<'_> {
 
         let guard = self.storage.checkpoint_guard();
         let prev_rest = self.rest_minor.read()?;
-        let total_unit = prev_rest
+        let total_minor = prev_rest
             .checked_add(amount_minor)
             .ok_or(PromisLimitError::Overflow)?;
-        let credited_units = total_unit / UNITS_PER_PROTOCOL_MINOR;
-        let new_rest = total_unit % UNITS_PER_PROTOCOL_MINOR;
+        let credited_minor = total_minor / UNITS_PER_PROTOCOL_MINOR;
+        let new_rest = total_minor % UNITS_PER_PROTOCOL_MINOR;
 
-        if !credited_units.is_zero() {
-            self.checked_credit(credited_units)?;
+        if !credited_minor.is_zero() {
+            self.checked_credit(credited_minor)?;
         }
         self.storage.decrease_balance(escrow, amount_minor)?;
         self.rest_minor.write(new_rest)?;
@@ -82,7 +82,7 @@ impl PromisLimitContract<'_> {
         )?;
         guard.commit();
 
-        Ok(credited_units)
+        Ok(credited_minor)
     }
 
     pub fn checked_credit(&mut self, amount: U256) -> Result<PromisLimitCredit> {

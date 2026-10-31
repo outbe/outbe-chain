@@ -109,7 +109,7 @@ mod tests {
     }
 
     #[test]
-    fn native_remainder_is_dropped_only_when_returning_to_protocol_precision() {
+    fn native_remainder_is_dropped_only_on_the_protocol_minor_floor() {
         assert_eq!(
             units_to_protocol_minor_floor(UNITS_PER_PROTOCOL_MINOR - U256::ONE),
             U256::ZERO

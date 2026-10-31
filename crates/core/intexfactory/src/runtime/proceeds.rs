@@ -2,7 +2,7 @@ use super::*;
 
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 
-/// Burns the proceeds into the Promis Limit; wei below one unit carries in its shared rest.
+/// Burns the proceeds into the Promis Limit; COEN below one minor carries in its shared rest.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,

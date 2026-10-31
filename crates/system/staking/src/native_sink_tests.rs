@@ -1,5 +1,5 @@
 //! Slashed stake is a native burn from the staking escrow that credits the
-//! Promis Limit and stores any sub-protocol-unit remainder in `rest_minor`.
+//! Promis Limit and stores any sub-protocol-minor remainder in `rest_minor`.
 
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::addresses::{
@@ -79,7 +79,7 @@ fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
 }
 
 #[test]
-fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
+fn two_one_point_five_protocol_minor_slashes_credit_one_then_two_minors() {
     with_staking(|storage, staking| {
         register_validator(storage.clone(), VALIDATOR);
         let initial_stake = UNITS_PER_PROTOCOL_MINOR * U256::from(15u64);

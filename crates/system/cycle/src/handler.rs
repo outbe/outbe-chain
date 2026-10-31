@@ -619,19 +619,18 @@ mod unit_tests {
     #[test]
     fn validator_fees_stay_native_until_the_remaining_budget_is_floored() {
         let allocation = U256::from(2u64);
-        let one_protocol_unit_native = UNITS_PER_PROTOCOL_MINOR;
+        let one_protocol_minor = UNITS_PER_PROTOCOL_MINOR;
 
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native - U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor - U256::ONE).unwrap(),
             U256::ONE
         );
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native + U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor + U256::ONE).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native * U256::from(2u64))
-                .unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor * U256::from(2u64)).unwrap(),
             U256::ZERO
         );
     }

@@ -8,7 +8,7 @@
 //! payout_i = pending_fees[N] * w(k_i) / D       D = committee_size * w_max
 //! ```
 //! Payouts and escrow are native COEN minor units (wei; 10^18 per COEN).
-//! One six-decimal protocol unit equals 10^12 native units; weights and D are unitless.
+//! One six-decimal protocol minor equals 10^12 native minors; weights and D are unitless.
 //!
 //! `D` is constant per block (independent of who voted), so excluding a peer
 //! enriches nobody. Thus there is no censorship incentive. Settlement never pays out
@@ -320,8 +320,8 @@ fn recycle_residue(
     if residue.is_zero() {
         return Ok((U256::ZERO, rewards.late_residue_dust_native.read()?));
     }
-    // The residue is native wei, and the Promis Limit counts six-decimal units. Thus
-    // this function burns and recycles only whole units. The rest waits on REWARDS
+    // The residue is native wei, and the Promis Limit counts six-decimal minors. Thus
+    // this function burns and recycles only whole minors. The rest waits on REWARDS
     // for the next window.
     let native = residue
         .checked_add(rewards.late_residue_dust_native.read()?)
