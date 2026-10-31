@@ -49,6 +49,7 @@ impl Rail for Gem {
                     call_threshold_seconds: profile.call_threshold_seconds,
                     call_notice_period_seconds: profile.call_notice_period_seconds,
                 }),
+                entry_at_series_vwap: true,
             },
         )
         .unwrap();

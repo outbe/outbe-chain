@@ -149,29 +149,53 @@ fn a_duplicate_id_is_rejected_and_rolls_back() {
 }
 
 #[test]
-fn gem_id_derivation_binds_the_series_owner_and_block() {
+fn gem_id_derivation_binds_the_series_sub_series_owner_and_block() {
     let series = |issuance, reference| GemContract::series_of(T_NOW, issuance, reference).unwrap();
-    let baseline = GemContract::generate_gem_id(series(USD, USD), ALICE, 1);
+    let baseline = GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 1);
     assert_eq!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), ALICE, 1)
+        GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(EUR, USD), ALICE, 1)
+        GemContract::generate_gem_id(series(EUR, USD), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, EUR), ALICE, 1)
+        GemContract::generate_gem_id(series(USD, EUR), 0, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), BOB, 1)
+        GemContract::generate_gem_id(series(USD, USD), 1, ALICE, 1)
     );
     assert_ne!(
         baseline,
-        GemContract::generate_gem_id(series(USD, USD), ALICE, 2)
+        GemContract::generate_gem_id(series(USD, USD), 0, BOB, 1)
     );
+    assert_ne!(
+        baseline,
+        GemContract::generate_gem_id(series(USD, USD), 0, ALICE, 2)
+    );
+}
+
+#[test]
+fn gems_of_two_issuance_days_are_in_two_series() {
+    with_storage(|storage| {
+        let first = add(storage, sample_params(ALICE));
+        let mut next_day = sample_params(ALICE);
+        next_day.issued_at = T_NOW + SECONDS_PER_DAY;
+        let second = add(storage, next_day);
+        let series = |gem_id| item(storage, gem_id).unwrap().series_id;
+        assert_eq!(
+            series(first),
+            GemContract::series_of(T_NOW, USD, USD).unwrap()
+        );
+        assert_eq!(
+            series(second),
+            GemContract::series_of(T_NOW + SECONDS_PER_DAY, USD, USD).unwrap()
+        );
+        assert_ne!(series(first), series(second));
+    });
 }
 
 #[test]
@@ -531,6 +555,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             gem_id,
             GemContract::generate_gem_id(
                 GemContract::series_of(T_NOW, USD, USD).unwrap(),
+                0,
                 ALICE,
                 storage.block_number().unwrap(),
             )

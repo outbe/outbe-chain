@@ -31,6 +31,8 @@ pub struct GemAddParams {
     /// The terms the gem's group seals if this gem opens it. `None` leaves the group
     /// out of the call index.
     pub call_terms: Option<CallTerms>,
+    /// The entry price is the VWAP of the series date: sub-series 0.
+    pub entry_at_series_vwap: bool,
 }
 
 /// One gem record. The call terms are its group's, read through [`GemView`].
@@ -67,6 +69,9 @@ pub struct GemItemState {
     /// The UTC day before the issue, in the gem's currencies.
     #[attribute(order = 10)]
     pub series_id: SeriesId,
+    /// The call price of the gem inside its series: 0 for the series-date VWAP.
+    #[attribute(order = 11)]
+    pub sub_series_id: u16,
 }
 
 impl GemItemState {
@@ -333,12 +338,30 @@ pub struct GemContract {
     pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 56)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+
+    /// The number the next new call price of a series gets. 0 = none yet, so it starts at 1;
+    /// the last one a series gives is 65534.
+    #[attribute(order = 57)]
+    pub series_next_sub_series: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
+    /// `sub_series_key(series, call price)` -> its sub-series number + 1. 0 = not numbered.
+    #[attribute(order = 58)]
+    pub sub_series_of_price: outbe_primitives::storage::dsl::Map<B256, u16>,
 }
 
 impl GemContract<'_> {
-    /// `keccak256(series_id || owner || block_number_be)`: one gem per owner, series and block.
-    pub fn generate_gem_id(series_id: SeriesId, owner: Address, block_number: u64) -> U256 {
-        series_id.right_id(&[owner.as_slice(), &block_number.to_be_bytes()])
+    /// `keccak256(series_id || sub_series_id_be || owner || block_number_be)`: one gem per
+    /// owner, sub-series and block.
+    pub fn generate_gem_id(
+        series_id: SeriesId,
+        sub_series_id: u16,
+        owner: Address,
+        block_number: u64,
+    ) -> U256 {
+        series_id.right_id(&[
+            &sub_series_id.to_be_bytes(),
+            owner.as_slice(),
+            &block_number.to_be_bytes(),
+        ])
     }
 
     /// The series of a gem issued at `issued_at`: the UTC day before it, in its currencies.
@@ -357,6 +380,30 @@ impl GemContract<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gem_id_hashes_the_series_sub_series_owner_and_block() {
+        let series = SeriesId::from_bytes(*b"20261102-EUR-U");
+        let owner = Address::repeat_byte(0x11);
+        assert_eq!(
+            GemContract::generate_gem_id(series, 0, owner, 1),
+            U256::from_be_bytes(
+                alloy_primitives::b256!(
+                    "f784299ac3118dc85ddb52184520b287410841519878181a0b741fa2f865c219"
+                )
+                .0
+            )
+        );
+        assert_eq!(
+            GemContract::generate_gem_id(series, 1, owner, 1),
+            U256::from_be_bytes(
+                alloy_primitives::b256!(
+                    "55f14188e745f03dcf717aafed0aecd574862369e409bf4b3ca77c12c57b6718"
+                )
+                .0
+            )
+        );
+    }
 
     #[test]
     fn item_ids_round_trip_with_native_u256_serde_and_preserve_group_identity() {

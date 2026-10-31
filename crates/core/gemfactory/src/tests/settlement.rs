@@ -682,6 +682,7 @@ fn gem_cost_load(item: &GemItemState) -> U256 {
         settled_at: _,
         entry_price_minor: _,
         series_id: _,
+        sub_series_id: _,
     } = item;
     *promis_load_minor
 }

@@ -222,6 +222,7 @@ mod tests {
                 settled_at: 0,
                 entry_price_minor: U256::from(1_000_000),
                 series_id: Default::default(),
+                sub_series_id: 0,
             };
             add_item(&storage, &item, None).unwrap();
             let contract = GemContract::new(storage.clone());
@@ -279,6 +280,7 @@ mod tests {
                 settled_at: 0,
                 entry_price_minor: U256::from(1_000_000),
                 series_id: Default::default(),
+                sub_series_id: 0,
             };
             assert!(matches!(
                 add_item(&storage, &item, None),

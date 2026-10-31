@@ -320,6 +320,11 @@ fn token_uri_renders_the_gem_card() {
         assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.14);
         assert_eq!(trait_value(&json, "Promis Load").unwrap(), 1);
         assert_eq!(trait_value(&json, "Issued At").unwrap(), T_NOW);
+        let item = crate::api::get_item(storage, gem_id).unwrap().unwrap();
+        assert_eq!(
+            trait_value(&json, "Series").unwrap(),
+            format!("{}-0", item.series_id)
+        );
         assert!(trait_value(&json, "Call Deadline").is_none());
 
         assert!(svg.contains(">GEM</text>"));
@@ -328,6 +333,44 @@ fn token_uri_renders_the_gem_card() {
         assert!(svg.contains(">Call Price</text>"));
         assert!(svg.contains(">1.14</text>"));
         assert!(!svg.contains("Floor Price"));
+    });
+}
+
+#[test]
+fn a_numbered_sub_series_reads_in_the_status_and_the_card() {
+    with_storage(|storage| {
+        let gem_id = add(
+            storage,
+            GemAddParams {
+                entry_at_series_vwap: false,
+                ..sample_params(ALICE)
+            },
+        );
+        let series = item(storage, gem_id).unwrap().series_id;
+        assert_eq!(status(storage, gem_id).subSeriesId, 1);
+        let (json, _) = token_uri_parts(storage, gem_id);
+        assert_eq!(trait_value(&json, "Series").unwrap(), format!("{series}-1"));
+    });
+}
+
+#[test]
+fn a_series_numbers_up_to_sub_series_65534() {
+    with_storage(|storage| {
+        let series = GemContract::series_of(T_NOW, USD, USD).unwrap();
+        GemContract::new(storage.clone())
+            .series_next_sub_series
+            .write(&series, u16::MAX - 1)
+            .unwrap();
+        let last = crate::api::sub_series_of(storage, series, U256::from(1u64), false).unwrap();
+        assert_eq!(last, u16::MAX - 1);
+        let err = crate::api::sub_series_of(storage, series, U256::from(2u64), false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemError::SubSeriesOverflow
+            )
+            .to_string()
+        );
     });
 }
 

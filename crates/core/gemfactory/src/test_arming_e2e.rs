@@ -108,6 +108,7 @@ fn issue_settled(
             reference_currency: call.currency,
             issued_at: storage.now_secs()?,
             call_terms: None,
+            entry_at_series_vwap: true,
         },
     )?;
     let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
@@ -134,9 +135,16 @@ fn backdate(storage: &StorageHandle<'_>, gem_id: U256, issued_at: u64) -> Result
         reissued.issuance_currency,
         reissued.reference_currency,
     )?;
+    let call_price = terms.map_or(U256::ZERO, |terms| terms.call_price_minor);
+    reissued.sub_series_id = gem_api::sub_series_of(
+        storage,
+        reissued.series_id,
+        call_price,
+        reissued.sub_series_id == 0,
+    )?;
     reissued.group_key = outbe_primitives::call_breach::group_key(
         outbe_primitives::time::first_full_day(issued_at).expect("date step"),
-        terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
+        call_price,
         reissued.reference_currency,
     );
     storage.clone().with_checkpoint(|| {
