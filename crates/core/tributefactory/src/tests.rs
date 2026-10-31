@@ -856,14 +856,188 @@ fn su_hash_can_only_be_used_once() {
 
 #[test]
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
+    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let factory = TributeFactoryContract::new(storage.clone());
+        assert_eq!(factory.used_su_hashes.base_slot(), U256::ZERO);
+        assert_eq!(factory.worldwide_days.base_slot(), U256::from(1));
+        // A set has no base-slot accessor. Its length word is at the base slot.
+        let wwd = WorldwideDay::new(20_260_101);
+        assert!(factory.active_wwd.insert(wwd).unwrap());
+        assert!(factory.pipeline_wwd.insert(wwd).unwrap());
+        assert!(factory
+            .pipeline_wwd
+            .insert(WorldwideDay::new(20_260_102))
+            .unwrap());
+        let sload = |slot: u64| {
+            storage
+                .sload(TRIBUTE_FACTORY_ADDRESS, U256::from(slot))
+                .unwrap()
+        };
+        assert_eq!(sload(2), U256::from(1), "active_wwd at slots 2..3");
+        assert_eq!(sload(4), U256::from(2), "pipeline_wwd at slots 4..5");
         assert_eq!(
-            factory.used_su_hashes.base_slot(),
-            alloy_primitives::U256::ZERO
+            factory.forming_snapshot_finalized.base_slot(),
+            U256::from(6)
         );
+        assert_eq!(factory.su_hash_ring.base_slot(), U256::from(7));
+        assert_eq!(factory.su_hash_ring_seq.slot(), U256::from(8));
     });
+}
+
+mod su_hash_ring {
+    use alloy_primitives::B256;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::error::PrecompileError;
+    use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+
+    use super::CHAIN_ID;
+    use crate::errors::TributeFactoryError;
+    use crate::precompile::ITributeFactory;
+    use crate::schema::{TributeFactoryContract, SU_HASH_RETAIN};
+
+    fn with_factory<R>(f: impl FnOnce(&mut TributeFactoryContract<'_>) -> R) -> R {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            f(&mut TributeFactoryContract::new(storage))
+        })
+    }
+
+    fn position(factory: &TributeFactoryContract<'_>, idx: u64) -> RingPosition {
+        factory.su_hash_prune_ring().position_for_test(idx).unwrap()
+    }
+
+    fn assert_reused(result: outbe_primitives::error::Result<()>) {
+        let error = result.unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            PrecompileError::from(TributeFactoryError::SuHashAlreadyUsed).to_string()
+        );
+    }
+
+    #[test]
+    fn replay_inside_the_window_is_rejected() {
+        with_factory(|factory| {
+            let hash = test_ring_hash(1);
+            factory.mark_su_hash_used(hash).unwrap();
+            assert_reused(factory.mark_su_hash_used(hash));
+            assert!(factory.has_used_su_hash(hash).unwrap());
+            assert_eq!(
+                position(factory, 0),
+                RingPosition {
+                    entry: hash,
+                    seq: 1
+                },
+                "a rejected replay does not record the hash again"
+            );
+        });
+    }
+
+    /// The test records the first three hashes at cursors 0..=2. Then it moves
+    /// the cursor to `SU_HASH_RETAIN - 2`, as if more distinct hashes came in
+    /// between. Two more hashes fill the ring. The next hash wraps the ring.
+    /// It evicts only the first hash.
+    #[test]
+    fn wrap_evicts_only_the_oldest_hash() {
+        with_factory(|factory| {
+            let hashes: Vec<B256> = (1..=6).map(test_ring_hash).collect();
+            factory.mark_su_hashes_used(&hashes[..3]).unwrap();
+            factory.su_hash_ring_seq.write(SU_HASH_RETAIN - 2).unwrap();
+            factory.mark_su_hashes_used(&hashes[3..5]).unwrap();
+            for hash in &hashes[..5] {
+                assert!(factory.has_used_su_hash(*hash).unwrap(), "{hash} live");
+            }
+
+            factory.mark_su_hash_used(hashes[5]).unwrap();
+            assert!(!factory.has_used_su_hash(hashes[0]).unwrap(), "evicted");
+            for hash in &hashes[1..] {
+                assert!(factory.has_used_su_hash(*hash).unwrap(), "{hash} retained");
+            }
+            assert_eq!(
+                position(factory, 0),
+                RingPosition {
+                    entry: hashes[5],
+                    seq: SU_HASH_RETAIN + 1
+                }
+            );
+            assert_eq!(position(factory, 1).entry, hashes[1]);
+            assert_eq!(position(factory, SU_HASH_RETAIN - 1).entry, hashes[4]);
+
+            // The window is finite: an evicted hash is accepted again.
+            factory.mark_su_hash_used(hashes[0]).unwrap();
+            assert!(!factory.has_used_su_hash(hashes[1]).unwrap(), "evicted");
+            assert!(factory.has_used_su_hash(hashes[0]).unwrap());
+        });
+    }
+
+    #[test]
+    fn self_eviction_is_skipped() {
+        with_factory(|factory| {
+            let hash = test_ring_hash(7);
+            let seq = SU_HASH_RETAIN * 3 + 4;
+            factory
+                .su_hash_prune_ring()
+                .seed_for_test(seq, hash)
+                .unwrap();
+            assert!(!factory.has_used_su_hash(hash).unwrap());
+
+            factory.mark_su_hash_used(hash).unwrap();
+            assert!(factory.has_used_su_hash(hash).unwrap(), "guard stays set");
+            assert_eq!(
+                position(factory, 4),
+                RingPosition {
+                    entry: hash,
+                    seq: seq + 1
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn multi_hash_tribute_advances_the_cursor_once_per_hash() {
+        with_factory(|factory| {
+            let hashes: Vec<B256> = (1..=3).map(test_ring_hash).collect();
+            factory.mark_su_hashes_used(&hashes).unwrap();
+            for (idx, hash) in (0u64..).zip(&hashes) {
+                assert_eq!(position(factory, idx).entry, *hash);
+                assert!(factory.has_used_su_hash(*hash).unwrap());
+            }
+            assert_eq!(position(factory, 0).seq, 3);
+        });
+    }
+
+    #[test]
+    fn cursor_overflow_reverts_with_the_ring_error() {
+        with_factory(|factory| {
+            let evicted = test_ring_hash(1);
+            let hash = test_ring_hash(2);
+            factory
+                .su_hash_prune_ring()
+                .seed_for_test(u64::MAX, evicted)
+                .unwrap();
+            factory.used_su_hashes.write(&evicted, true).unwrap();
+
+            let error = factory.mark_su_hash_used(hash).unwrap_err();
+            let PrecompileError::RevertBytes(bytes) = error else {
+                panic!("expected ring overflow revert bytes, got {error:?}");
+            };
+            assert_eq!(
+                bytes.as_ref(),
+                ITributeFactory::SuHashRingSeqOverflow {}.abi_encode()
+            );
+            assert_eq!(
+                position(factory, u64::MAX % SU_HASH_RETAIN),
+                RingPosition {
+                    entry: hash,
+                    seq: u64::MAX
+                },
+                "the cursor stays at its maximum"
+            );
+        });
+    }
 }
 
 #[test]
