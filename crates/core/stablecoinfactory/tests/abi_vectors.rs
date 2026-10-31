@@ -44,7 +44,7 @@ fn complete_exported_abis_match_golden_hashes() {
 
     assert_eq!(
         canonical_abi_hash(token),
-        b256!("d8b6eb011c35cce3d2c3f18596944d8e56c2d63c245d940e9179f02fad9aceb0")
+        b256!("15fe8d185f25ceff91f3c1e1f3a6eb2db06f7cde09f287f71a9d12234a1a6ef0")
     );
     assert_eq!(
         canonical_abi_hash(factory),
@@ -52,7 +52,7 @@ fn complete_exported_abis_match_golden_hashes() {
     );
     assert_eq!(
         canonical_abi_hash(policy),
-        b256!("82b8e648b836c37d92851360826ee852ba37ad5afb84f9c5ab381a4c719b9940")
+        b256!("2adf78db2a4b1cef88cd655e8e5cf9df6568a281035743fb8743e476fb905c14")
     );
     assert_eq!(
         canonical_abi_hash(vote),
@@ -180,6 +180,14 @@ fn alloy_event_and_error_selectors_match_solidity_vectors() {
     assert_eq!(
         IStablecoin::TransferWithMemo::SIGNATURE_HASH,
         b256!("57bc7354aa85aed339e000bccffabbc529466af35f0772c8f8ee1145927de7f0")
+    );
+    assert_eq!(
+        IStablecoin::AdminTransferCanceled::SIGNATURE_HASH,
+        b256!("012014d40e69ecaa410e0186be24b4f60c813a38bb7df57297748bb2b4727add")
+    );
+    assert_eq!(
+        IStablecoinPolicyRegistry::PolicyAdminTransferCanceled::SIGNATURE_HASH,
+        b256!("31974c65c1cd5fc64f2b0cd2bc0ed34c3e05ea9f879b50fad107131356024050")
     );
     assert_eq!(
         IVote::ProposalBondBurned::SIGNATURE_HASH,
