@@ -24,10 +24,28 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
         bytes fillerData;
     }
 
-    // ============ Public Storage ============
+    // ============ Storage ============
 
-    /// @notice Tracks filled orders and their associated data
-    mapping(bytes32 orderId => FilledOrder filledOrder) public filledOrders;
+    /// @custom:storage-location erc7201:outbe.intent.DestinationSettler
+    struct DestinationSettlerStorage {
+        /// @notice Tracks filled orders and their associated data
+        mapping(bytes32 orderId => FilledOrder filledOrder) filledOrders;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intent.DestinationSettler")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _DESTINATION_SETTLER_SLOT =
+        0x5a01f503ce744717efca3b81b66d738e7e2535723f1b994cbd500b7314490900;
+
+    function _destination() internal pure returns (DestinationSettlerStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _DESTINATION_SETTLER_SLOT
+        }
+    }
+
+    function filledOrders(bytes32 orderId) public view returns (bytes memory originData, bytes memory fillerData) {
+        FilledOrder storage filled = _destination().filledOrders[orderId];
+        return (filled.originData, filled.fillerData);
+    }
 
     // ============ External Functions ============
 
@@ -38,10 +56,10 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
      * @param _fillerData Data from the filler that informs the fill or expresses the filler's preferences
      */
     function fill(bytes32 _orderId, bytes calldata _originData, bytes calldata _fillerData) external payable virtual {
-        if (destinationOrderStatus[_orderId] != CLAIMED) revert InvalidOrderStatus();
+        if (_statuses().destinationOrderStatus[_orderId] != CLAIMED) revert InvalidOrderStatus();
 
-        destinationOrderStatus[_orderId] = FILLED;
-        filledOrders[_orderId] = FilledOrder({originData: _originData, fillerData: _fillerData});
+        _statuses().destinationOrderStatus[_orderId] = FILLED;
+        _destination().filledOrders[_orderId] = FilledOrder({originData: _originData, fillerData: _fillerData});
 
         _fillOrder(_orderId, _originData, _fillerData);
 
@@ -60,12 +78,12 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
         bytes[] memory ordersFillerData = new bytes[](_orderIds.length);
 
         for (uint256 i = 0; i < _orderIds.length; i++) {
-            if (destinationOrderStatus[_orderIds[i]] != FILLED) {
+            if (_statuses().destinationOrderStatus[_orderIds[i]] != FILLED) {
                 revert InvalidOrderStatus();
             }
 
-            ordersOriginData[i] = filledOrders[_orderIds[i]].originData;
-            ordersFillerData[i] = filledOrders[_orderIds[i]].fillerData;
+            ordersOriginData[i] = _destination().filledOrders[_orderIds[i]].originData;
+            ordersFillerData[i] = _destination().filledOrders[_orderIds[i]].fillerData;
         }
 
         _settleOrders(_orderIds, ordersOriginData, ordersFillerData);
@@ -85,7 +103,7 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
             bytes32 orderId = _getOrderId(_orders[i]);
             orderIds[i] = orderId;
 
-            bytes32 status = destinationOrderStatus[orderId];
+            bytes32 status = _statuses().destinationOrderStatus[orderId];
             if (!_isNotProcessed(status) && status != CLAIMED) revert InvalidOrderStatus();
             if (block.timestamp <= _orders[i].fillDeadline) {
                 revert OrderFillNotExpired();

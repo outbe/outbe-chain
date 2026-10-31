@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {Auction} from "../src/Auction.sol";
 import {IAuction} from "../src/interfaces/IAuction.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 contract AuctionTest is Test {
     Auction internal auction;
@@ -15,7 +16,7 @@ contract AuctionTest is Test {
     bytes32 constant SALT = bytes32(uint256(42));
 
     function setUp() public {
-        auction = new Auction(address(this));
+        auction = Proxies.auction(address(this));
         _setOrder(0);
     }
 

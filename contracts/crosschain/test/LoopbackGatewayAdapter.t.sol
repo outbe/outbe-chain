@@ -10,6 +10,7 @@ import {ERC7786RecipientMock} from "@openzeppelin/contracts/mocks/crosschain/ERC
 import {IERC7786Recipient} from "src/interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev Recipient that reverts until unlocked, to exercise the park/retry path.
 contract FlakyRecipientMock is IERC7786Recipient {
@@ -54,8 +55,8 @@ contract LoopbackGatewayAdapterTest is Test {
     address internal defaultGw = makeAddr("defaultGateway");
 
     function setUp() public {
-        bridge = new ERC7786Bridge(owner, defaultGw);
-        loopback = new LoopbackGatewayAdapter(address(bridge), owner);
+        bridge = Proxies.bridge(owner, defaultGw);
+        loopback = Proxies.loopback(address(bridge), owner);
 
         vm.startPrank(owner);
         bridge.registerRemoteBridge(_interop(address(bridge)));

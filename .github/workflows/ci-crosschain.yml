@@ -24,3 +24,4 @@ jobs:
     uses: ./.github/workflows/_contract-ci.yml
     with:
       project: crosschain
+      upgrade-check: true

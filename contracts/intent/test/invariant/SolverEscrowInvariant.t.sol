@@ -11,6 +11,7 @@ import {MockTheCompact} from "../mocks/MockTheCompact.sol";
 import {SolverAllocator} from "../../src/allocators/SolverAllocator.sol";
 import {SolverEscrow} from "../../src/SolverEscrow.sol";
 import {SolverEscrowHandler} from "./handlers/SolverEscrowHandler.sol";
+import {Proxies} from "../utils/Proxies.sol";
 
 /// @title SolverEscrowInvariant
 /// @notice Custody accounting: the escrow's ERC6909 balance is exactly the collateral it holds --
@@ -24,9 +25,9 @@ contract SolverEscrowInvariant is Test {
     function setUp() public {
         token = new MockERC20("Test Token", "TT");
         compact = new MockTheCompact();
-        SolverAllocator allocator = new SolverAllocator(address(compact));
+        SolverAllocator allocator = Proxies.solverAllocator(address(compact), address(this));
         bytes12 lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
-        escrow = new SolverEscrow(address(compact), lockTag, 1000);
+        escrow = Proxies.solverEscrow(address(compact), lockTag, 1000, address(this));
         allocator.setArbiter(address(escrow));
 
         handler = new SolverEscrowHandler(escrow, compact, token);

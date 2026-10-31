@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -19,10 +20,12 @@ import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 /// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
 ///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
 ///         ERC-1363-style receiver hook on the destination after the tokens are credited.
-/// @dev The constructor sets the peer bridge on each remote domain. Nothing can change or remove a
-///      peer later. The owner is governance: the HyperlaneController precompile on Outbe, and its
-///      Interchain Account on other chains. The owner can only add a peer for a new domain.
-contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipient {
+/// @dev The initializer sets the peer bridge on each remote domain. No function changes or removes
+///      a peer. The owner is governance: the HyperlaneController precompile on Outbe, and its
+///      Interchain Account on other chains. The owner adds a peer for a new domain and authorizes
+///      upgrades. UUPS upgradeable behind an ERC1967 proxy: the token, the hub, the mode and the
+///      decimals are implementation immutables, so every upgrade must pass the same values.
+contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardTransient, IERC7786Recipient {
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
 
@@ -38,14 +41,24 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         address bridge;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IERC20 public immutable token;
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IERC7786GatewaySource public immutable bridge;
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     TokenBridgeMode public immutable mode;
     /// @notice Decimals of `token`. A transfer moves raw amounts, so both sides must agree on them.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     uint8 public immutable tokenDecimals;
 
-    /// @notice The peer bridge on each remote domain. Zero means the domain is not connected.
-    mapping(uint32 domain => address bridge) public remoteBridges;
+    /// @custom:storage-location erc7201:outbe.tokens.ERC7786TokenBridge
+    struct ERC7786TokenBridgeStorage {
+        /// @notice The peer bridge on each remote domain. Zero means the domain is not connected.
+        mapping(uint32 domain => address bridge) remoteBridges;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.tokens.ERC7786TokenBridge")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x306d6711a9c05487813f9253b20252074e596a70fbba8fc44e8ecac485b8ae00;
 
     event PeerAdded(uint32 indexed domain, address bridge);
     event CrosschainTransferSent(
@@ -71,19 +84,36 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
     bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
 
-    constructor(address token_, address bridge_, TokenBridgeMode mode_, address owner_, Peer[] memory peers_)
-        Ownable(owner_)
-    {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address token_, address bridge_, TokenBridgeMode mode_) {
         if (token_ == address(0)) revert InvalidToken();
         if (bridge_ == address(0)) revert InvalidBridge();
-        for (uint256 i = 0; i < peers_.length; i++) {
-            _addPeer(peers_[i].domain, peers_[i].bridge);
-        }
 
         token = IERC20(token_);
         bridge = IERC7786GatewaySource(bridge_);
         mode = mode_;
         tokenDecimals = IERC20Metadata(token_).decimals();
+        _disableInitializers();
+    }
+
+    function initialize(address owner_, Peer[] calldata peers_) external initializer {
+        __Ownable_init(owner_);
+        for (uint256 i = 0; i < peers_.length; i++) {
+            _addPeer(peers_[i].domain, peers_[i].bridge);
+        }
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _s() private pure returns (ERC7786TokenBridgeStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @notice The peer bridge on `domain`. Zero means the domain is not connected.
+    function remoteBridges(uint32 domain) public view returns (address) {
+        return _s().remoteBridges[domain];
     }
 
     /// @notice Connects a new domain. A peer that is already set cannot change.
@@ -154,7 +184,7 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
         (uint256 srcChainId, address srcBridge) = sender.parseEvmV1Calldata();
         if (srcChainId > type(uint32).max) revert DomainTooLarge(srcChainId);
         uint32 sourceDomain = uint32(srcChainId);
-        if (srcBridge == address(0) || srcBridge != remoteBridges[sourceDomain]) {
+        if (srcBridge == address(0) || srcBridge != _s().remoteBridges[sourceDomain]) {
             revert UnauthorizedRemoteBridge(sender);
         }
 
@@ -176,15 +206,16 @@ contract ERC7786TokenBridge is Ownable, ReentrancyGuardTransient, IERC7786Recipi
     }
 
     function _addPeer(uint32 domain, address peerBridge) internal {
-        if (peerBridge == address(0) || domain == block.chainid || remoteBridges[domain] != address(0)) {
+        ERC7786TokenBridgeStorage storage $ = _s();
+        if (peerBridge == address(0) || domain == block.chainid || $.remoteBridges[domain] != address(0)) {
             revert InvalidPeer(domain);
         }
-        remoteBridges[domain] = peerBridge;
+        $.remoteBridges[domain] = peerBridge;
         emit PeerAdded(domain, peerBridge);
     }
 
     function _remoteBridge(uint32 domain) internal view returns (bytes memory) {
-        address peer = remoteBridges[domain];
+        address peer = _s().remoteBridges[domain];
         if (peer == address(0)) revert RemoteBridgeNotSet(domain);
         return InteroperableAddress.formatEvmV1(domain, peer);
     }

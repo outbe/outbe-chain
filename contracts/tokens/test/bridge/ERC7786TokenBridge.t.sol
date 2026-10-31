@@ -13,6 +13,7 @@ import {WCOEN as NativeWCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 import {MockStablecoin} from "../mocks/MockStablecoin.sol";
+import {TokenBridgeProxy} from "../utils/TokenBridgeProxy.sol";
 
 /// @dev Burns 1% of every transfer between two holders.
 contract FeeOnTransferToken is ERC20("Fee", "FEE") {
@@ -172,8 +173,8 @@ contract ERC7786TokenBridgeTest is Test {
 
     function test_FeeOnTransferLock_CreditsReceivedAmount() public {
         FeeOnTransferToken feeToken = new FeeOnTransferToken();
-        ERC7786TokenBridge feeBridge = _bridge(address(feeToken), bnbGateway, LOCK, OUTBE, _nextAddress(2));
-        SyntheticWCOEN feeSynthetic = new SyntheticWCOEN("Fee", "FEE", 6, _nextAddress(1));
+        ERC7786TokenBridge feeBridge = _bridge(address(feeToken), bnbGateway, LOCK, OUTBE, _nextAddress(4));
+        SyntheticWCOEN feeSynthetic = new SyntheticWCOEN("Fee", "FEE", 6, _nextAddress(2));
         _bridge(address(feeSynthetic), outbeGateway, BURN, BNB, address(feeBridge));
         feeToken.mint(sourceAddr, 100e6);
 
@@ -281,7 +282,7 @@ contract ERC7786TokenBridgeTest is Test {
     function _setUpStablecoinRoute() internal {
         stable = new MockStablecoin("USD Tether", "USDT", address(this));
 
-        bnbStableBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(1));
+        bnbStableBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(3));
         outbeStableBridge = _bridge(
             address(stable),
             outbeGateway,
@@ -296,15 +297,15 @@ contract ERC7786TokenBridgeTest is Test {
 
     function _setUpUsdtRoute() internal {
         usdt = new USDT();
-        bnbUsdtBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(2));
-        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(1));
+        bnbUsdtBridge = _bridge(address(usdt), bnbGateway, LOCK, OUTBE, _nextAddress(4));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(2));
         outbeUsdt0Bridge = _bridge(address(usdt0), outbeGateway, BURN, BNB, address(bnbUsdtBridge));
     }
 
     function _setUpWcoenRoute() internal {
         outbeWcoen = new NativeWCOEN();
-        outbeWcoenBridge = _bridge(address(outbeWcoen), outbeGateway, LOCK, BNB, _nextAddress(2));
-        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, _nextAddress(1));
+        outbeWcoenBridge = _bridge(address(outbeWcoen), outbeGateway, LOCK, BNB, _nextAddress(4));
+        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, _nextAddress(2));
         bnbWcoenBridge = _bridge(address(bnbWcoen), bnbGateway, BURN, OUTBE, address(outbeWcoenBridge));
     }
 
@@ -323,7 +324,7 @@ contract ERC7786TokenBridgeTest is Test {
     ) internal returns (ERC7786TokenBridge) {
         ERC7786TokenBridge.Peer[] memory peers = new ERC7786TokenBridge.Peer[](1);
         peers[0] = ERC7786TokenBridge.Peer(peerDomain, peer);
-        return new ERC7786TokenBridge(token, address(gateway), mode, address(this), peers);
+        return TokenBridgeProxy.deploy(token, address(gateway), mode, address(this), peers);
     }
 
     function _interop(uint256 chainId, address addr) internal pure returns (bytes memory) {

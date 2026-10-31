@@ -11,6 +11,7 @@ import {HandOver} from "script/4_HandOver.s.sol";
 import {HYPERLANE_CONTROLLER} from "@precompiles/IHyperlaneController.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {MockHyperlaneMailbox} from "./mocks/MockHyperlaneMailbox.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev A test has no Outbe node, so the harness supplies the controller's Interchain Account.
 contract HandOverHarness is HandOver {
@@ -33,10 +34,10 @@ contract HandOverTest is Test {
     function test_HandOver_GivesEveryRoleToGovernance() public {
         // The script is the deployer: it owns every contract until the hand-over.
         EndpointV2Mock endpoint = new EndpointV2Mock(1);
-        LayerZeroGatewayAdapter lz = new LayerZeroGatewayAdapter(address(endpoint), address(script));
-        HyperlaneGatewayAdapter hl = new HyperlaneGatewayAdapter(address(new MockHyperlaneMailbox(1)), address(script));
-        ERC7786Bridge bridge = new ERC7786Bridge(address(script), address(hl));
-        LoopbackGatewayAdapter lb = new LoopbackGatewayAdapter(address(bridge), address(script));
+        LayerZeroGatewayAdapter lz = Proxies.layerZero(address(endpoint), address(script));
+        HyperlaneGatewayAdapter hl = Proxies.hyperlane(address(new MockHyperlaneMailbox(1)), address(script));
+        ERC7786Bridge bridge = Proxies.bridge(address(script), address(hl));
+        LoopbackGatewayAdapter lb = Proxies.loopback(address(bridge), address(script));
 
         script.handOver(GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
 

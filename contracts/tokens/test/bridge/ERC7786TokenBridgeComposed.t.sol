@@ -10,6 +10,7 @@ import {IERC7786TokenReceiver} from "../../src/interfaces/IERC7786TokenReceiver.
 import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
+import {TokenBridgeProxy} from "../utils/TokenBridgeProxy.sol";
 
 /// @dev Records the hook invocation; configurable to misbehave.
 contract MockTokenReceiver is IERC7786TokenReceiver {
@@ -81,14 +82,14 @@ contract ERC7786TokenBridgeComposedTest is Test {
 
         usdt = new USDT();
         ERC7786TokenBridge.Peer[] memory peers = new ERC7786TokenBridge.Peer[](1);
-        peers[0] = ERC7786TokenBridge.Peer(OUTBE, _nextAddress(2));
-        bnbUsdtBridge = new ERC7786TokenBridge(
+        peers[0] = ERC7786TokenBridge.Peer(OUTBE, _nextAddress(4));
+        bnbUsdtBridge = TokenBridgeProxy.deploy(
             address(usdt), address(bnbGateway), ERC7786TokenBridge.TokenBridgeMode.LockUnlock, address(this), peers
         );
 
-        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(1));
+        usdt0 = new BridgeableERC20Stable("USDT0", "USDT0", 6, 840, _nextAddress(2));
         peers[0] = ERC7786TokenBridge.Peer(BNB, address(bnbUsdtBridge));
-        outbeUsdt0Bridge = new ERC7786TokenBridge(
+        outbeUsdt0Bridge = TokenBridgeProxy.deploy(
             address(usdt0), address(outbeGateway), ERC7786TokenBridge.TokenBridgeMode.BurnMint, address(this), peers
         );
 

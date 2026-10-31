@@ -9,6 +9,7 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Wires the local hub to its counterparts on other chains. Bridge and adapters share one
 ///      CREATE3 address across chains, so remote addresses equal the local ones (computed here).
@@ -19,13 +20,13 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 ///
 /// Run it before `4_HandOver`, while the deployer still owns the hub and the adapters.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`,
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`),
 /// `CREATE3_FACTORY_ADDRESS`, `REMOTE_CHAIN_IDS` (csv). When the script wires LayerZero, it also
 /// requires `REMOTE_EIDS` (csv, parallel).
 contract ConfigureBridge is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         address deployer = vm.addr(deployerPk);
 

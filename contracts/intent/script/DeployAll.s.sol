@@ -8,6 +8,7 @@ import {DeploySolverEscrow} from "./1_DeploySolverEscrow.s.sol";
 import {DeployAuction} from "./2_DeployAuction.s.sol";
 import {DeployRouter} from "./3_DeployRouter.s.sol";
 import {ConfigureAll} from "./4_ConfigureAll.s.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Full deployment + configuration in a single script.
 ///
@@ -22,7 +23,7 @@ import {ConfigureAll} from "./4_ConfigureAll.s.sol";
 ///
 /// Required env vars:
 ///   DEPLOYER_PK      - deployer private key
-///   CONTRACT_SALT    - salt string for deterministic deployment
+///   CONTRACT_SALT    - salt string for deterministic deployment (default SALT_VERSION)
 ///   CREATE3_FACTORY_ADDRESS - CREATE3 factory deployed from contracts/shared
 ///   BRIDGE_ADDRESS   - deployed ERC7786Bridge (the cross-chain hub facade)
 ///   ROUTER_OWNER     - contract owner (admin)
@@ -33,7 +34,7 @@ import {ConfigureAll} from "./4_ConfigureAll.s.sol";
 contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, ConfigureAll {
     function run() public override(DeployRouter, DeploySolverEscrow, DeployAuction, ConfigureAll) {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address compact = vm.envAddress("COMPACT_ADDRESS");
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
         uint256 collateralBps = vm.envOr("COLLATERAL_BPS", uint256(1000));
@@ -58,7 +59,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
 
         // 1. Deploy SolverEscrow
         console2.log("[1/4] Deploy SolverEscrow...");
-        address escrowAddress = deployEscrow(compact, collateralBps);
+        address escrowAddress = deployEscrow(compact, collateralBps, vm.addr(deployerPrivateKey));
         console2.log("  SolverEscrow:", escrowAddress);
 
         // 2. Deploy Auction
@@ -69,7 +70,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         // 3. Deploy RouterAllocator + Router via Create3Factory
         console2.log("[3/4] Deploy RouterAllocator + Router...");
         (address routerAddress, address allocatorAddress) =
-            deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress);
+            deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress, vm.addr(deployerPrivateKey));
         console2.log("  Router:", routerAddress);
 
         // 4. Wire all contracts together

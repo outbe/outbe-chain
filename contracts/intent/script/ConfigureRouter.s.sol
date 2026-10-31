@@ -7,6 +7,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Router} from "../src/router/Router.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Registers the matching Router on each remote chain. Routers share one CREATE3 address
 ///      across chains, so the remote address equals the local address (computed here). The env
@@ -14,14 +15,14 @@ import {Router} from "../src/router/Router.sol";
 ///
 /// Required env vars (DEPLOYER_PK must be the Router owner):
 ///   DEPLOYER_PK      - owner private key
-///   CONTRACT_SALT    - salt string used at deploy
+///   CONTRACT_SALT    - salt string used at deploy (default SALT_VERSION)
 ///   CREATE3_FACTORY_ADDRESS - deployed Create3Factory (from contracts/shared)
 ///   ROUTER_ADDRESS   - local Router to configure
 ///   REMOTE_CHAIN_IDS - csv of remote EVM chain ids
 contract ConfigureRouter is Script {
     function run() public {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         address routerAddress = vm.envAddress("ROUTER_ADDRESS");
         address deployer = vm.addr(deployerPk);

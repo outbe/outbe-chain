@@ -25,3 +25,4 @@ jobs:
     with:
       project: tokens
       abi-check: true
+      upgrade-check: true

@@ -135,6 +135,27 @@ jobs:
             exit 1
           fi
 
+  upgrade:
+    name: Upgrade Safety Check
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    needs: [compile]
+    defaults:
+      run:
+        working-directory: contracts/intex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup
+        uses: ./.github/actions/setup-node-yarn-foundry
+        with:
+          working-directory: contracts/intex
+
+      - name: Validate upgrade safety
+        run: yarn validate:upgrades
+
   slither:
     name: Slither
     runs-on: ubuntu-24.04
@@ -203,6 +224,7 @@ jobs:
       - compile
       - test-foundry
       - abi
+      - upgrade
       - slither
       - aderyn
     timeout-minutes: 5

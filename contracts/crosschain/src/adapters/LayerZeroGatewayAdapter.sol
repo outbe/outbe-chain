@@ -2,9 +2,13 @@
 
 pragma solidity ^0.8.30;
 
-import {OApp, Origin, MessagingFee} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import {OptionsBuilder} from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OptionsBuilder.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {
+    OAppUpgradeable,
+    Origin,
+    MessagingFee
+} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
+import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
@@ -27,19 +31,26 @@ import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
  *
  * NOTE: EVM chains only. This adapter parses the ERC-7930 recipient as an EVM v1 interoperable
  * address.
+ *
+ * UUPS upgradeable behind an ERC1967 proxy. The endpoint is an implementation immutable, so every
+ * upgrade must pass the same endpoint to the constructor.
  */
-contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
+contract LayerZeroGatewayAdapter is OAppUpgradeable, UUPSUpgradeable, IERC7786GatewaySource, IGatewayQuote {
     using OptionsBuilder for bytes;
     using InteroperableAddress for bytes;
 
-    /// @dev ERC-7930 EVM chainId => LayerZero endpoint id. Zero means "not registered".
-    mapping(uint256 chainId => uint32 eid) public chainIdToEid;
+    /// @custom:storage-location erc7201:outbe.crosschain.LayerZeroGatewayAdapter
+    struct LayerZeroGatewayAdapterStorage {
+        /// @dev ERC-7930 EVM chainId => LayerZero endpoint id. Zero means "not registered".
+        mapping(uint256 chainId => uint32 eid) chainIdToEid;
+        /// @dev LayerZero endpoint id => ERC-7930 EVM chainId (reverse of {chainIdToEid}).
+        mapping(uint32 eid => uint256 chainId) eidToChainId;
+        /// @dev Gas granted to the recipient's execution on the destination chain.
+        uint128 defaultGasLimit;
+    }
 
-    /// @dev LayerZero endpoint id => ERC-7930 EVM chainId (reverse of {chainIdToEid}).
-    mapping(uint32 eid => uint256 chainId) public eidToChainId;
-
-    /// @dev Gas granted to the recipient's execution on the destination chain.
-    uint128 public defaultGasLimit;
+    // keccak256(abi.encode(uint256(keccak256("outbe.crosschain.LayerZeroGatewayAdapter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xf82677abd6da6aac4bbf225d3f3184852009da66eb49ef6e427071fcce374a00;
 
     event ChainRegistered(uint256 indexed chainId, uint32 indexed eid, bytes32 peer);
     event DefaultGasLimitUpdated(uint128 gasLimit);
@@ -48,8 +59,37 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     error UnknownDestinationChain(uint256 chainId);
     error RecipientExecutionFailed();
 
-    constructor(address endpoint_, address owner_) OApp(endpoint_, owner_) Ownable(owner_) {
-        defaultGasLimit = 200_000;
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address endpoint_) OAppUpgradeable(endpoint_) {
+        _disableInitializers();
+    }
+
+    function initialize(address owner_) external initializer {
+        __Ownable_init(owner_);
+        __OApp_init(owner_);
+        _s().defaultGasLimit = 200_000;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _s() private pure returns (LayerZeroGatewayAdapterStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    // =================================================== Getters ===================================================
+
+    function chainIdToEid(uint256 chainId) public view returns (uint32) {
+        return _s().chainIdToEid[chainId];
+    }
+
+    function eidToChainId(uint32 eid) public view returns (uint256) {
+        return _s().eidToChainId[eid];
+    }
+
+    function defaultGasLimit() public view returns (uint128) {
+        return _s().defaultGasLimit;
     }
 
     // =================================================== Config ====================================================
@@ -60,14 +100,15 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
      * ERC-7786 layer needs.
      */
     function setPeerWithChain(uint32 eid, bytes32 peer, uint256 chainId) public virtual onlyOwner {
-        _setPeer(eid, peer);
-        chainIdToEid[chainId] = eid;
-        eidToChainId[eid] = chainId;
+        setPeer(eid, peer);
+        LayerZeroGatewayAdapterStorage storage $ = _s();
+        $.chainIdToEid[chainId] = eid;
+        $.eidToChainId[eid] = chainId;
         emit ChainRegistered(chainId, eid, peer);
     }
 
     function setDefaultGasLimit(uint128 gasLimit) public virtual onlyOwner {
-        defaultGasLimit = gasLimit;
+        _s().defaultGasLimit = gasLimit;
         emit DefaultGasLimitUpdated(gasLimit);
     }
 
@@ -91,7 +132,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         // ERC-7786.
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit));
+        bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit()));
 
         // msg.value funds the LayerZero native fee. Excess is refunded to the caller (the facade).
         _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
@@ -103,7 +144,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
     /// @inheritdoc IGatewayQuote
     /// @dev Quotes the LayerZero native fee using `defaultGasLimit` for destination execution.
     function quote(bytes calldata recipient, bytes calldata payload) public view virtual returns (uint256 nativeFee) {
-        return _quoteWithGas(recipient, payload, defaultGasLimit);
+        return _quoteWithGas(recipient, payload, defaultGasLimit());
     }
 
     /// @dev Quotes the native fee. Takes the destination gas from the executionGasLimit attribute
@@ -114,7 +155,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
         virtual
         returns (uint256 nativeFee)
     {
-        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit));
+        return _quoteWithGas(recipient, payload, GasLimitAttribute.resolve(attributes, defaultGasLimit()));
     }
 
     // ============================================== LayerZero inbound ==============================================
@@ -146,7 +187,7 @@ contract LayerZeroGatewayAdapter is OApp, IERC7786GatewaySource, IGatewayQuote {
 
     function _eidForRecipient(bytes calldata recipient) internal view virtual returns (uint32 dstEid) {
         (uint256 chainId,) = recipient.parseEvmV1Calldata();
-        dstEid = chainIdToEid[chainId];
+        dstEid = _s().chainIdToEid[chainId];
         require(dstEid != 0, UnknownDestinationChain(chainId));
     }
 

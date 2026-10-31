@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
@@ -41,7 +42,7 @@ struct RouteSpec {
 ///      also puts each bridge at the same address on every chain, so the script knows every peer
 ///      before the remote chain is deployed.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
 ///   `REMOTE_CHAIN_IDS`.
 /// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
 ///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
@@ -218,9 +219,10 @@ abstract contract BaseRoute is Script {
         }
 
         if (tokenBridge.code.length == 0) {
-            bytes memory args =
-                abi.encode(token, hub, _bridgeMode(spec, canonical), _bridgeOwner(), _bridgePeers(tokenBridge));
-            Create3Factory(factory).deploy(bridgeSalt, abi.encodePacked(type(ERC7786TokenBridge).creationCode, args));
+            address impl = address(new ERC7786TokenBridge(token, hub, _bridgeMode(spec, canonical)));
+            bytes memory init =
+                abi.encodeCall(ERC7786TokenBridge.initialize, (_bridgeOwner(), _bridgePeers(tokenBridge)));
+            Create3Proxy.deploy(Create3Factory(factory), bridgeSalt, impl, init);
         }
     }
 

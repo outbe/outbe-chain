@@ -2,7 +2,8 @@
 
 pragma solidity ^0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
@@ -19,8 +20,11 @@ import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
  * Wiring: the hub registers itself as the remote bridge for the local chain and sets this adapter
  * as the local chain's gateway. Rotating the local gateway strands parked deliveries (the hub stops
  * trusting this adapter), so parked entries must be drained first.
+ *
+ * UUPS upgradeable behind an ERC1967 proxy. The hub is an implementation immutable, so every
+ * upgrade must pass the same hub to the constructor.
  */
-contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote {
+contract LoopbackGatewayAdapter is OwnableUpgradeable, UUPSUpgradeable, IERC7786GatewaySource, IGatewayQuote {
     using InteroperableAddress for bytes;
 
     struct ParkedDelivery {
@@ -31,18 +35,23 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
     }
 
     /// @dev The ERC7786Bridge hub: the only allowed caller and the delivery target of every message.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     address public immutable HUB;
 
-    /// @dev Gas granted to the delivery when the executionGasLimit attribute is absent.
-    uint128 public defaultGasLimit;
+    /// @custom:storage-location erc7201:outbe.crosschain.LoopbackGatewayAdapter
+    struct LoopbackGatewayAdapterStorage {
+        /// @dev Gas granted to the delivery when the executionGasLimit attribute is absent.
+        uint128 defaultGasLimit;
+        /// @dev Failed deliveries awaiting {retryDelivery}.
+        mapping(uint256 idx => ParkedDelivery delivery) parked;
+        uint256 nextParkedIdx;
+        /// @dev Distinguishes receive ids of otherwise identical messages (the hub deduplicates on its
+        ///      own nonce).
+        uint256 nonce;
+    }
 
-    /// @dev Failed deliveries awaiting {retryDelivery}.
-    mapping(uint256 idx => ParkedDelivery delivery) public parked;
-    uint256 public nextParkedIdx;
-
-    /// @dev Distinguishes receive ids of otherwise identical messages (the hub deduplicates on its
-    ///      own nonce).
-    uint256 private _nonce;
+    // keccak256(abi.encode(uint256(keccak256("outbe.crosschain.LoopbackGatewayAdapter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xca52c5fd7a28cdd3903145ce69611eb734334650fc7f1dce512323e6db96c400;
 
     event DefaultGasLimitUpdated(uint128 gasLimit);
     event DeliveryParked(uint256 indexed idx, bytes reason);
@@ -56,15 +65,48 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
     error AlreadyDelivered(uint256 idx);
     error RecipientExecutionFailed();
 
-    constructor(address hub_, address owner_) Ownable(owner_) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address hub_) {
         HUB = hub_;
-        defaultGasLimit = 200_000;
+        _disableInitializers();
+    }
+
+    function initialize(address owner_) external initializer {
+        __Ownable_init(owner_);
+        _s().defaultGasLimit = 200_000;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _s() private pure returns (LoopbackGatewayAdapterStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    // =================================================== Getters ===================================================
+
+    function defaultGasLimit() public view returns (uint128) {
+        return _s().defaultGasLimit;
+    }
+
+    function parked(uint256 idx)
+        public
+        view
+        returns (address target, bool done, bytes memory sender, bytes memory payload)
+    {
+        ParkedDelivery storage delivery = _s().parked[idx];
+        return (delivery.target, delivery.done, delivery.sender, delivery.payload);
+    }
+
+    function nextParkedIdx() public view returns (uint256) {
+        return _s().nextParkedIdx;
     }
 
     // =================================================== Config ====================================================
 
     function setDefaultGasLimit(uint128 gasLimit) public virtual onlyOwner {
-        defaultGasLimit = gasLimit;
+        _s().defaultGasLimit = gasLimit;
         emit DefaultGasLimitUpdated(gasLimit);
     }
 
@@ -91,9 +133,9 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
         (uint256 chainId, address target) = recipient.parseEvmV1Calldata();
         require(chainId == block.chainid, NotLocalChain(chainId));
 
-        uint128 gasLimit = GasLimitAttribute.resolve(attributes, defaultGasLimit);
+        uint128 gasLimit = GasLimitAttribute.resolve(attributes, defaultGasLimit());
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
-        bytes32 receiveId = keccak256(abi.encode(address(this), ++_nonce));
+        bytes32 receiveId = keccak256(abi.encode(address(this), ++_s().nonce));
 
         uint256 gasBefore = gasleft();
         try IERC7786Recipient(target).receiveMessage{gas: gasLimit}(receiveId, sender, payload) returns (bytes4 magic) {
@@ -108,8 +150,9 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
                 gasBefore >= uint256(gasLimit) + uint256(gasLimit) / 63 + 5_000 + payload.length / 4,
                 InsufficientForwardGas(gasLimit)
             );
-            uint256 idx = nextParkedIdx++;
-            parked[idx] = ParkedDelivery({target: target, done: false, sender: sender, payload: payload});
+            LoopbackGatewayAdapterStorage storage $ = _s();
+            uint256 idx = $.nextParkedIdx++;
+            $.parked[idx] = ParkedDelivery({target: target, done: false, sender: sender, payload: payload});
             emit DeliveryParked(idx, reason);
         }
 
@@ -134,7 +177,7 @@ contract LoopbackGatewayAdapter is Ownable, IERC7786GatewaySource, IGatewayQuote
     /// @dev Re-attempts a parked delivery with the transaction's full gas. Permissionless. A revert
     /// rolls the whole call back, and the delivery stays parked and retryable.
     function retryDelivery(uint256 idx) public virtual {
-        ParkedDelivery storage delivery = parked[idx];
+        ParkedDelivery storage delivery = _s().parked[idx];
         require(delivery.target != address(0), NoParkedDelivery(idx));
         require(!delivery.done, AlreadyDelivered(idx));
         delivery.done = true;

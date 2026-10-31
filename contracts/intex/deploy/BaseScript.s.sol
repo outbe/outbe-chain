@@ -4,6 +4,7 @@ pragma solidity 0.8.30;
 import {Script} from "forge-std/Script.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "./Create3Deploy.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @title BaseScript
 /// @author Outbe
@@ -19,7 +20,7 @@ abstract contract BaseScript is Script {
     ///         blank or unset value selects production.
     function saltVersion() internal view returns (string memory version) {
         version = vm.envOr("SALT_VERSION", string(""));
-        if (bytes(version).length == 0) version = "v4.0.0";
+        if (bytes(version).length == 0) version = SALT_VERSION;
     }
 
     /// @notice The protocol-wide CREATE3 factory, deployed from contracts/shared.

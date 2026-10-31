@@ -28,13 +28,32 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
     ///         read the auction periods. A deadline shorter than this is rejected by open().
     uint256 public constant MIN_ORDER_DURATION = 30 seconds;
 
-    // ============ Public Storage ============
+    // ============ Storage ============
 
-    /// @notice Tracks the used nonces for each address
-    mapping(address => mapping(uint256 => bool)) public usedNonces;
+    /// @custom:storage-location erc7201:outbe.intent.OriginSettler
+    struct OriginSettlerStorage {
+        /// @notice Tracks the used nonces for each address
+        mapping(address => mapping(uint256 => bool)) usedNonces;
+        /// @notice Stores the resolved orders by their ID
+        mapping(bytes32 orderId => bytes orderData) openOrders;
+    }
 
-    /// @notice Stores the resolved orders by their ID
-    mapping(bytes32 orderId => bytes orderData) public openOrders;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intent.OriginSettler")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _ORIGIN_SETTLER_SLOT = 0xdc3fb4f3ec7cf7d39437a45513f85c9d6acfdec7547abc08acbec9446d721900;
+
+    function _origin() internal pure returns (OriginSettlerStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _ORIGIN_SETTLER_SLOT
+        }
+    }
+
+    function usedNonces(address owner, uint256 nonce) public view returns (bool) {
+        return _origin().usedNonces[owner][nonce];
+    }
+
+    function openOrders(bytes32 orderId) public view returns (bytes memory) {
+        return _origin().openOrders[orderId];
+    }
 
     // ============ Events ============
 
@@ -55,8 +74,8 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
 
         (ResolvedCrossChainOrder memory resolvedOrder, bytes32 orderId, uint256 nonce) = _resolveOrder(_order);
 
-        openOrders[orderId] = abi.encode(_order.orderDataType, resolvedOrder.fillInstructions[0].originData);
-        orderStatus[orderId] = OPENED;
+        _origin().openOrders[orderId] = abi.encode(_order.orderDataType, resolvedOrder.fillInstructions[0].originData);
+        _statuses().orderStatus[orderId] = OPENED;
         _useNonce(msg.sender, nonce);
 
         ITheCompact compact = _compact();
@@ -117,7 +136,7 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
      * @return isValid True if the nonce is valid, false otherwise
      */
     function isValidNonce(address _from, uint256 _nonce) external view returns (bool) {
-        return !usedNonces[_from][_nonce];
+        return !_origin().usedNonces[_from][_nonce];
     }
 
     // ============ Internal Functions ============
@@ -128,8 +147,8 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
      * @param _nonce The nonce to mark as used
      */
     function _useNonce(address _from, uint256 _nonce) internal {
-        if (usedNonces[_from][_nonce]) revert InvalidNonce();
-        usedNonces[_from][_nonce] = true;
+        if (_origin().usedNonces[_from][_nonce]) revert InvalidNonce();
+        _origin().usedNonces[_from][_nonce] = true;
     }
 
     /**

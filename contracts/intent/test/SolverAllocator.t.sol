@@ -7,6 +7,7 @@ import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
 import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 
 import {MockTheCompact} from "./mocks/MockTheCompact.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 contract SolverAllocatorTest is Test {
     MockTheCompact internal compact;
@@ -24,7 +25,7 @@ contract SolverAllocatorTest is Test {
         solver = makeAddr("solver");
 
         compact = new MockTheCompact();
-        allocator = new SolverAllocator(address(compact));
+        allocator = Proxies.solverAllocator(address(compact), owner);
     }
 
     // ============ constructor ============
@@ -32,7 +33,7 @@ contract SolverAllocatorTest is Test {
     function test_constructor_setsState() public view {
         assertEq(address(allocator.COMPACT()), address(compact));
         assertGt(uint256(allocator.ALLOCATOR_ID()), 0, "allocatorId > 0");
-        assertEq(allocator.OWNER(), owner);
+        assertEq(allocator.owner(), owner);
         assertEq(allocator.arbiter(), address(0), "arbiter starts unset");
     }
 

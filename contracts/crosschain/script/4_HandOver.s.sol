@@ -8,6 +8,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 interface IEndpointDelegates {
     function delegates(address oapp) external view returns (address);
@@ -20,7 +21,7 @@ interface IEndpointDelegates {
 ///      any other chain. After this step, a gateway switch, a new remote, a gas default or a pause
 ///      is a governance proposal.
 ///
-/// Required env: `DEPLOYER_PK` (the current owner), `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`,
+/// Required env: `DEPLOYER_PK` (the current owner), `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`,
 ///   `OUTBE_CHAIN_ID`.
 /// Optional env: `LZ_ENDPOINT`, `HYPERLANE_MAILBOX`, `WIRE_LOOPBACK` (select the adapters, as in the
 ///   deploy), `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`).
@@ -30,7 +31,7 @@ contract HandOver is Script {
 
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         address deployer = vm.addr(deployerPk);
 

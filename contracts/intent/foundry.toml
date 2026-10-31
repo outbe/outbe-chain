@@ -8,6 +8,8 @@
   optimizer = true
   optimizer_runs = 10_000
   via_ir = true
+  build_info = true
+  extra_output = ["storageLayout"]
   dynamic_test_linking = true
   out = "out"
   script = "script"
@@ -17,12 +19,13 @@
   libs = ["dependencies"]
   remappings = [
     "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/",
+    "@openzeppelin/contracts-upgradeable/=dependencies/@openzeppelin-contracts-upgradeable-5.6.1/",
     "forge-std/=dependencies/forge-std-1.8.1/src/",
     "the-compact/=dependencies/the-compact-1.0.0/",
     "solady/=dependencies/the-compact-1.0.0/lib/solady/src/",
     "@shared/=../shared/src/",
   ]
-  # @shared files import their own vendored deps by relative path, which land outside this project.
+  # @shared sources live outside this project.
   allow_paths = ["../shared/src"]
 
 
@@ -73,3 +76,4 @@ recursive_deps = true
 the-compact = { version = "1.0.0", git = "https://github.com/Uniswap/the-compact", tag = "V1" }
 forge-std = { version = "1.8.1", git = "https://github.com/foundry-rs/forge-std", tag = "v1.8.1" }
 openzeppelin-contracts = { version = "5.6.1", git = "https://github.com/OpenZeppelin/openzeppelin-contracts", rev = "5a3b28fc5bd3976da5ea38d90d88ba26f1e0a335" }
+"@openzeppelin-contracts-upgradeable" = "5.6.1"

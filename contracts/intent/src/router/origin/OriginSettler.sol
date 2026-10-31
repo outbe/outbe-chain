@@ -39,7 +39,7 @@ abstract contract OriginSettler is OriginSettlerBase {
             return;
         }
 
-        orderStatus[_orderId] = SETTLED;
+        _statuses().orderStatus[_orderId] = SETTLED;
 
         address receiver = TypeCasts.bytes32ToAddress(_receiver);
         address inputToken = TypeCasts.bytes32ToAddress(orderData.inputToken);
@@ -53,7 +53,7 @@ abstract contract OriginSettler is OriginSettlerBase {
         }
 
         // Terminal status reached: the stored order bytes are dead weight. Reclaim the slot.
-        delete openOrders[_orderId];
+        delete _origin().openOrders[_orderId];
 
         emit Settled(_orderId, receiver);
     }
@@ -73,7 +73,7 @@ abstract contract OriginSettler is OriginSettlerBase {
             return;
         }
 
-        orderStatus[_orderId] = REFUNDED;
+        _statuses().orderStatus[_orderId] = REFUNDED;
 
         address orderSender = TypeCasts.bytes32ToAddress(orderData.sender);
         address inputToken = TypeCasts.bytes32ToAddress(orderData.inputToken);
@@ -81,7 +81,7 @@ abstract contract OriginSettler is OriginSettlerBase {
         _allocatedTransfer(inputToken, orderSender, orderData.amountIn, _orderId, "refund");
 
         // Terminal status reached: the stored order bytes are dead weight. Reclaim the slot.
-        delete openOrders[_orderId];
+        delete _origin().openOrders[_orderId];
 
         emit Refunded(_orderId, orderSender);
     }
@@ -135,9 +135,9 @@ abstract contract OriginSettler is OriginSettlerBase {
     {
         OrderData memory orderData;
 
-        if (orderStatus[_orderId] != OPENED) return (false, orderData);
+        if (_statuses().orderStatus[_orderId] != OPENED) return (false, orderData);
 
-        (, bytes memory _orderData) = abi.decode(openOrders[_orderId], (bytes32, bytes));
+        (, bytes memory _orderData) = abi.decode(_origin().openOrders[_orderId], (bytes32, bytes));
         orderData = OrderEncoder.decode(_orderData);
 
         if (orderData.destinationDomain != _messageOrigin || orderData.destinationSettler != _messageSender) {

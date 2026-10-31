@@ -11,6 +11,10 @@ on:
         description: "Verify committed abi-export/ is up to date (only where ABIs are exported)"
         type: boolean
         default: false
+      upgrade-check:
+        description: "Check that the upgradeable contracts are upgrade-safe"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -142,6 +146,39 @@ jobs:
             exit 1
           fi
 
+  upgrade:
+    name: Upgrade Safety Check
+    if: ${{ inputs.upgrade-check }}
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    defaults:
+      run:
+        working-directory: contracts/${{ inputs.project }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/${{ inputs.project }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build
+        run: forge clean && forge build
+
+      - name: Validate upgrade safety
+        run: >-
+          npx --yes @openzeppelin/upgrades-core@1.46.0 validate out/build-info --exclude 'test/**'
+          --unsafeAllow 'constructor,state-variable-immutable,missing-initializer-call,external-library-linking'
+
   ci-success:
     name: ci success
     runs-on: ubuntu-24.04
@@ -152,10 +189,11 @@ jobs:
       - test
       - lint
       - abi
+      - upgrade
     timeout-minutes: 5
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: test,abi
+          allowed-skips: test,abi,upgrade
           jobs: ${{ toJSON(needs) }}

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
+import {Create3Proxy} from "@shared/Create3Proxy.sol";
 
 /// @title Create3Deploy
 /// @author Outbe
@@ -41,8 +41,7 @@ library Create3Deploy {
         if (predicted.code.length != 0) {
             return predicted;
         }
-        bytes memory proxyInitCode = abi.encodePacked(type(ERC1967Proxy).creationCode, abi.encode(impl, initData));
-        proxy = factory.deploy(s, proxyInitCode);
+        proxy = Create3Proxy.deploy(factory, s, impl, initData);
         require(proxy == predicted, "Create3Deploy: address mismatch");
     }
 }

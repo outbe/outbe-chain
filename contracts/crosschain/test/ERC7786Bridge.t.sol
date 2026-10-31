@@ -12,6 +12,7 @@ import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev Concrete instance of the abstract OZ loopback gateway, plus a fixed quote for the
 /// passthrough test.
@@ -92,7 +93,7 @@ contract ERC7786BridgeTest is Test {
     address internal sourceBridge = makeAddr("sourceBridge");
 
     function setUp() public {
-        bridge = new ERC7786Bridge(owner, gw);
+        bridge = Proxies.bridge(owner, gw);
         vm.prank(owner);
         bridge.registerRemoteBridge(_interop(sourceBridge));
     }
@@ -144,8 +145,8 @@ contract ERC7786BridgeTest is Test {
 
     function testFuzz_SendMessage_ForwardsThroughGatewayAndRoundTrips(bytes calldata payload) public {
         GatewayMock gateway = new GatewayMock();
-        ERC7786Bridge bridgeA = new ERC7786Bridge(owner, address(gateway));
-        ERC7786Bridge bridgeB = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge bridgeA = Proxies.bridge(owner, address(gateway));
+        ERC7786Bridge bridgeB = Proxies.bridge(owner, address(gateway));
         ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridgeB));
 
         vm.startPrank(owner);
@@ -186,14 +187,14 @@ contract ERC7786BridgeTest is Test {
     }
 
     function test_RevertWhen_SendWithoutGateway() public {
-        ERC7786Bridge noGateway = new ERC7786Bridge(owner, address(0));
+        ERC7786Bridge noGateway = Proxies.bridge(owner, address(0));
         vm.prank(app);
         vm.expectRevert(ERC7786Bridge.ERC7786BridgeGatewayNotSet.selector);
         noGateway.sendMessage(_interop(address(0xBEEF)), "x", _noAttrs());
     }
 
     function test_RevertWhen_SendToUnregisteredRemote() public {
-        ERC7786Bridge fresh = new ERC7786Bridge(owner, gw);
+        ERC7786Bridge fresh = Proxies.bridge(owner, gw);
         vm.prank(app);
         vm.expectRevert();
         fresh.sendMessage(_interop(address(0xBEEF)), "x", _noAttrs());
@@ -201,7 +202,7 @@ contract ERC7786BridgeTest is Test {
 
     function test_RevertWhen_SendWithUnsupportedAttribute() public {
         AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gateway));
         vm.prank(owner);
         b.registerRemoteBridge(_interop(sourceBridge));
 
@@ -215,7 +216,7 @@ contract ERC7786BridgeTest is Test {
 
     function test_SendMessage_ForwardsGasAttributeToGateway() public {
         AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gateway));
         vm.prank(owner);
         b.registerRemoteBridge(_interop(sourceBridge));
 
@@ -230,7 +231,7 @@ contract ERC7786BridgeTest is Test {
 
     function test_Quote_DelegatesToGateway() public {
         GatewayMock gateway = new GatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gateway));
         vm.prank(owner);
         b.registerRemoteBridge(_interop(sourceBridge));
 
@@ -239,7 +240,7 @@ contract ERC7786BridgeTest is Test {
 
     function test_Quote_WithAttributes_DelegatesToGateway() public {
         AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gateway));
         vm.prank(owner);
         b.registerRemoteBridge(_interop(sourceBridge));
 
@@ -251,13 +252,13 @@ contract ERC7786BridgeTest is Test {
 
     function test_SupportsAttribute_DelegatesToGateway() public {
         AttrAwareGatewayMock gateway = new AttrAwareGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gateway));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gateway));
         assertTrue(b.supportsAttribute(GasLimitAttribute.SELECTOR), "delegates true for the gas attribute");
         assertFalse(b.supportsAttribute(bytes4(0x12345678)), "delegates false for other attributes");
     }
 
     function test_RevertWhen_QuoteWithoutGateway() public {
-        ERC7786Bridge noGateway = new ERC7786Bridge(owner, address(0));
+        ERC7786Bridge noGateway = Proxies.bridge(owner, address(0));
         vm.expectRevert(ERC7786Bridge.ERC7786BridgeGatewayNotSet.selector);
         noGateway.quote(_interop(sourceBridge), "payload");
     }
@@ -389,7 +390,7 @@ contract ERC7786BridgeTest is Test {
     function test_SendMessage_RoutesPerDestinationGateway() public {
         RecordingGatewayMock gwA = new RecordingGatewayMock();
         RecordingGatewayMock gwDefault = new RecordingGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gwDefault));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gwDefault));
 
         vm.startPrank(owner);
         b.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, address(b)));
@@ -409,7 +410,7 @@ contract ERC7786BridgeTest is Test {
     function test_Quote_UsesPerChainGateway() public {
         GatewayMock gwDefault = new GatewayMock();
         RecordingGatewayMock gwA = new RecordingGatewayMock();
-        ERC7786Bridge b = new ERC7786Bridge(owner, address(gwDefault));
+        ERC7786Bridge b = Proxies.bridge(owner, address(gwDefault));
 
         vm.startPrank(owner);
         b.registerRemoteBridge(InteroperableAddress.formatEvmV1(1111, address(b)));

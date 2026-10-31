@@ -6,6 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Switches the bridge's active gateway, i.e. the cross-chain protocol
 ///      (LayerZero <-> Hyperlane), via `bridge.setGateway`. The target adapter must already be
@@ -21,11 +22,11 @@ import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 /// that stopped before the hand-over).
 ///
 /// Required env (DEPLOYER_PK must be the bridge owner):
-///   DEPLOYER_PK, CONTRACT_SALT, CREATE3_FACTORY_ADDRESS, ACTIVE_GATEWAY ("lz" | "hyperlane").
+///   DEPLOYER_PK, CONTRACT_SALT (default SALT_VERSION), CREATE3_FACTORY_ADDRESS, ACTIVE_GATEWAY ("lz" | "hyperlane").
 contract SwitchGateway is Script {
     function run() public {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         string memory active = vm.envString("ACTIVE_GATEWAY");
         address deployer = vm.addr(deployerPk);

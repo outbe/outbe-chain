@@ -10,6 +10,7 @@ import {IReferenceCurrency} from "../../src/interfaces/IReferenceCurrency.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
+import {TokenBridgeProxy} from "../utils/TokenBridgeProxy.sol";
 
 contract BridgeableERC20StableTest is Test {
     uint16 internal constant USD = 840;
@@ -20,9 +21,9 @@ contract BridgeableERC20StableTest is Test {
 
     function setUp() public {
         gateway = new MockERC7786Bridge(block.chainid);
-        address nextBridge = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 1);
+        address nextBridge = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 2);
         token = new BridgeableERC20Stable("USDT0", "USDT0", 6, USD, nextBridge);
-        tokenBridge = new ERC7786TokenBridge(
+        tokenBridge = TokenBridgeProxy.deploy(
             address(token),
             address(gateway),
             ERC7786TokenBridge.TokenBridgeMode.BurnMint,

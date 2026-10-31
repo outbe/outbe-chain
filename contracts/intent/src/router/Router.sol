@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
@@ -25,17 +25,27 @@ import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
  *      A {setRemoteRouter} call must register the matching Router on each destination. This is
  *      explicit per-chain wiring, like LayerZero peers / Hyperlane enrolled routers. A send to an
  *      unregistered domain reverts.
+ *
+ *      UUPS upgradeable behind an ERC1967 proxy. The bridge, The Compact, the lock tag, the escrow and
+ *      the auction are implementation immutables, so every upgrade must pass the same values.
  */
-contract Router is BaseRouter, IERC7786Recipient {
+contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
     using InteroperableAddress for bytes;
 
     /// @notice The ERC-7786 bridge this router sends through and accepts deliveries from. It is fixed
-    ///         at deploy. Swap the cross-chain protocol on the bridge itself (its `setGateway`), not by
+    ///         in the implementation. Swap the cross-chain protocol on the bridge itself (its `setGateway`), not by
     ///         repointing here.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IERC7786GatewaySource public immutable bridge;
 
-    /// @notice ERC-7930 interoperable address of the matching Router on a given domain (domain == chainId).
-    mapping(uint32 domain => bytes recipient) public remoteRouters;
+    /// @custom:storage-location erc7201:outbe.intent.Router
+    struct RouterStorage {
+        /// @notice ERC-7930 interoperable address of the matching Router on a given domain (domain == chainId).
+        mapping(uint32 domain => bytes recipient) remoteRouters;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intent.Router")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _ROUTER_SLOT = 0xfa41a63d6534bdb0ae923be340a34fc254633185028c09ba09acfcfc0cacd500;
 
     /// @notice Maximum orders processed per inbound message. It bounds the loop's gas, so an oversized
     ///         batch cannot make delivery un-executable.
@@ -48,12 +58,30 @@ contract Router is BaseRouter, IERC7786Recipient {
     error RemoteRouterNotSet(uint32 domain);
     error BatchTooLarge(uint256 length);
 
-    constructor(address _bridge, address _owner, address _compact, bytes12 _lockTag, address _escrow, address _auction)
-        Ownable(_owner)
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _bridge, address _compact, bytes12 _lockTag, address _escrow, address _auction)
         BaseRouter(_compact, _lockTag, _escrow, _auction)
     {
         if (_bridge == address(0)) revert InvalidBridge();
         bridge = IERC7786GatewaySource(_bridge);
+        _disableInitializers();
+    }
+
+    function initialize(address _owner) external initializer {
+        __Ownable_init(_owner);
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _router() private pure returns (RouterStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _ROUTER_SLOT
+        }
+    }
+
+    /// @notice ERC-7930 interoperable address of the matching Router on `domain`.
+    function remoteRouters(uint32 domain) public view returns (bytes memory) {
+        return _router().remoteRouters[domain];
     }
 
     // ============ Configuration ============
@@ -61,7 +89,7 @@ contract Router is BaseRouter, IERC7786Recipient {
     /// @notice Registers the matching Router on `domain`. Pass empty bytes to remove it.
     /// @param interop ERC-7930 interoperable address of the remote Router (encodes chainId + address).
     function setRemoteRouter(uint32 domain, bytes calldata interop) external onlyOwner {
-        remoteRouters[domain] = interop;
+        _router().remoteRouters[domain] = interop;
         emit RemoteRouterRegistered(domain, interop);
     }
 
@@ -132,7 +160,7 @@ contract Router is BaseRouter, IERC7786Recipient {
 
     /// @dev ERC-7930 address of the matching Router on `_domain`. Reverts if it was never registered.
     function _remoteRouter(uint32 _domain) internal view returns (bytes memory recipient) {
-        recipient = remoteRouters[_domain];
+        recipient = _router().remoteRouters[_domain];
         require(recipient.length != 0, RemoteRouterNotSet(_domain));
     }
 }
