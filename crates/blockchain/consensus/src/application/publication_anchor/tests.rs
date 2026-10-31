@@ -86,7 +86,8 @@ async fn publication_anchor_preserves_opaque_headers_and_rejects_malformed_artif
     let genesis = B256::repeat_byte(7);
     for (extra_data, valid) in [
         (b"opaque builder header".as_slice(), true),
-        (b"OART\x01\x00\x00".as_slice(), true),
+        // A zero-record envelope is canonical only with the publication flag set.
+        (b"OART\x01\x00\x00".as_slice(), false),
         (b"OART\x01\x01\x00".as_slice(), true),
         (b"OART\x01\x02\x00".as_slice(), false),
         (b"OART\x0b\x00".as_slice(), false),
