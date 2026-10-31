@@ -4,7 +4,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::api;
@@ -46,14 +46,14 @@ fn owner() -> Address {
 }
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
-fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+fn sid(emission_day: u32) -> SeriesId {
+    SeriesId::pack(emission_day, *b"USD", b'U').unwrap()
 }
 
-fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
+fn sample_params(emission_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
-        series_id: sid(worldwide_day),
-        worldwide_day: WorldwideDay::new(worldwide_day),
+        series_id: sid(emission_day),
+        emission_day: EmissionDate::new(emission_day),
         issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),

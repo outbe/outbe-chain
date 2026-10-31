@@ -295,7 +295,7 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
             .emission_limit_minor();
         let desis = outbe_desis::schema::DesisContract::new(storage.clone())
             .pending_desis_limit_minor
-            .read(&WWD)
+            .read(&outbe_primitives::time::EmissionDate::new(DAY))
             .unwrap();
         let after = outbe_promislimit::PromisLimitContract::new(storage)
             .promis_limit()
@@ -319,7 +319,11 @@ fn native_completion_briefs_the_emission_day() {
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        assert_eq!(desis.brief_emission_day.read(&WWD).unwrap(), DAY);
+        let day = outbe_primitives::time::EmissionDate::new(DAY);
+        assert_eq!(
+            desis.auction_stage.read(&day).unwrap(),
+            outbe_desis::schema::AuctionStage::Briefed as u8
+        );
     });
 }
 

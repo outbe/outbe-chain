@@ -59,7 +59,7 @@ fn record_field_byte_width(ty: &Type) -> Option<usize> {
     match last_type_ident(&inner).as_deref() {
         Some("bool" | "u8") => Some(1),
         Some("u16") => Some(2),
-        Some("u32" | "WorldwideDay" | "WorldwideDayKey") => Some(4),
+        Some("u32" | "WorldwideDay" | "WorldwideDayKey" | "EmissionDate") => Some(4),
         Some("u64") => Some(8),
         Some("u128") => Some(16),
         Some("Address") => Some(20),

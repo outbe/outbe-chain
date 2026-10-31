@@ -16,7 +16,7 @@ sol! {
         function issueForTest(
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint64 issuedAt,
             uint32 issuedUnits,
             uint128 promisLoadMinor,
@@ -145,7 +145,7 @@ fn issue_for_test(
             storage,
             crate::schema::IssuanceParams {
                 series_id: SeriesId::from(series_id),
-                worldwide_day: call.worldwideDay.into(),
+                emission_day: call.emissionDay.into(),
                 issued_units: call.issuedUnits,
                 promis_load_minor: call.promisLoadMinor,
                 entry_price_minor: call.entryPriceMinor,

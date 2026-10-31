@@ -10,6 +10,14 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+
+/// @dev Auction stand-in whose every day reads as failed.
+contract FailedDayAuction {
+    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+        return IIntexAuction.AuctionStage.Failed;
+    }
+}
 
 /// @dev Escrow stand-in that counts finalizations and can be told the day is closed.
 contract ClosableEscrowAdapter {
@@ -69,6 +77,17 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, bytes32((uint256(DAY) << 16) | chunkIndex), reason
         );
+    }
+
+    function test_AChunkForAFailedDayIsObsolete() public {
+        TargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        failedTarget.wire(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
+        failedTarget.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        target = failedTarget;
+
+        _expectIgnored(0, InboundReason.OBSOLETE);
+        _deliverChunk(0, 1);
+        assertEq(escrow.finalizations(), 0, "a failed day settles nothing");
     }
 
     function test_ARepeatedChunkIsADuplicate() public {

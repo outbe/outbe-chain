@@ -11,14 +11,14 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     /// @dev Fixed call stamp. These tests exercise the wire, not the clock.
     uint32 internal constant CALLED_AT = 1_777_000_000;
 
-    uint32 internal constant WORLDWIDE_DAY = 20260212;
+    uint32 internal constant EMISSION_DAY = 20260212;
     bytes14 internal constant FIRST = "20260212-USD-U";
     bytes14 internal constant SECOND = "20260212-EUR-U";
 
     function exposedDecodeMarkCalled(bytes calldata p)
         external
         pure
-        returns (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds)
+        returns (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds)
     {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
@@ -28,11 +28,11 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_markCalledRoundTripsTheWholeBatch() public view {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, MarkBatchLib.two(FIRST, SECOND));
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, MarkBatchLib.two(FIRST, SECOND));
 
         (uint32 day,, bytes14[] memory ids) = this.exposedDecodeMarkCalled(packet);
 
-        assertEq(day, WORLDWIDE_DAY, "worldwideDay survives");
+        assertEq(day, EMISSION_DAY, "emissionDay survives");
         assertEq(ids.length, 2, "both series survive");
         assertEq(ids[0], FIRST, "first series");
         assertEq(ids[1], SECOND, "second series");
@@ -43,7 +43,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         bytes14[] memory batch = MarkBatchLib.sized(FIRST, max);
 
         (,, bytes14[] memory ids) =
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, batch));
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, batch));
 
         assertEq(ids.length, max, "the cap round-trips");
         for (uint256 i = 0; i < max; ++i) {
@@ -54,7 +54,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_theHeaderNamesTheMessageType() public view {
-        bytes memory called = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
+        bytes memory called = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
 
         assertEq(uint8(called[0]), BridgeMsgCodec.BODY_VERSION_V1, "called version");
         assertEq(uint8(called[1]), BridgeMsgCodec.MSG_MARK_CALLED, "called type");
@@ -64,11 +64,11 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         bytes14[] memory empty = new bytes14[](0);
 
         vm.expectRevert(BridgeMsgCodec.EmptyMarkBatch.selector);
-        this.exposedEncodeMarkCalled(WORLDWIDE_DAY, empty);
+        this.exposedEncodeMarkCalled(EMISSION_DAY, empty);
 
         // Inbound too, though the length floor gets there first: an empty batch encodes
         // shorter than the one-series minimum, so it never reaches the batch check.
-        bytes memory forged = abi.encodePacked(hex"0108", abi.encode(WORLDWIDE_DAY, empty));
+        bytes memory forged = abi.encodePacked(hex"0108", abi.encode(EMISSION_DAY, empty));
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
@@ -88,9 +88,9 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         );
 
         vm.expectRevert(expected);
-        this.exposedEncodeMarkCalled(WORLDWIDE_DAY, batch);
+        this.exposedEncodeMarkCalled(EMISSION_DAY, batch);
 
-        bytes memory forged = abi.encodePacked(hex"0108", abi.encode(WORLDWIDE_DAY, CALLED_AT, batch));
+        bytes memory forged = abi.encodePacked(hex"0108", abi.encode(EMISSION_DAY, CALLED_AT, batch));
         vm.expectRevert(expected);
         this.exposedDecodeMarkCalled(forged);
     }

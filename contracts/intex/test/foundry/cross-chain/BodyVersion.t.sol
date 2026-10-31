@@ -37,10 +37,10 @@ contract BodyVersionTest is Test {
             "stageStart.length"
         );
 
-        encoded = BridgeMsgCodec.encodeAuctionStageClearing(1);
+        encoded = BridgeMsgCodec.encodeAuctionStageCollectingBids(1);
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "stageClearing.version");
 
-        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, "stageClearing.msgType");
+        assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, "stageClearing.msgType");
         assertEq(encoded.length, 6, "stageClearing.length");
 
         encoded = BridgeMsgCodec.encodeBidsRemaining(1, 2, 3, 4);
@@ -76,14 +76,14 @@ contract BodyVersionTest is Test {
             42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(10, 7e6, 13e6), 5, 6, 7, 3, 17e6, 1
         );
         (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
+            uint32 emissionDay,
+            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(packet);
 
-        assertEq(worldwideDay, 42);
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Live));
+        assertEq(emissionDay, 42);
+        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Live));
         assertEq(schedule.commitEnd, 100);
         assertEq(schedule.revealEnd, 200);
         assertEq(schedule.issuanceEnd, 300);
@@ -101,9 +101,9 @@ contract BodyVersionTest is Test {
 
     function test_BridgeCodec_AuctionResult_RoundTrip() public view {
         bytes memory packet = BridgeMsgCodec.encodeAuctionResult(42, 7, 13e6, 5);
-        (uint32 worldwideDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
+        (uint32 emissionDay, uint32 issuedCount, uint64 clearingPrice, uint32 wonCount) =
             this.exposedDecodeAuctionResult(packet);
-        assertEq(worldwideDay, 42);
+        assertEq(emissionDay, 42);
         assertEq(issuedCount, 7);
         assertEq(clearingPrice, 13e6);
         assertEq(wonCount, 5);
@@ -147,11 +147,11 @@ contract BodyVersionTest is Test {
         this.exposedDecodeBidsBatch(packet);
     }
 
-    function test_BridgeCodec_UnknownBodyVersion_AuctionStageClearing_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(1);
+    function test_BridgeCodec_UnknownBodyVersion_AuctionStageCollectingBids_Reverts() public {
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(1);
         packet[0] = 0x10;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x10));
-        this.exposedDecodeAuctionStageClearing(packet);
+        this.exposedDecodeAuctionStageCollectingBids(packet);
     }
 
     function test_BridgeCodec_UnknownBodyVersion_RefundInstructions_Reverts() public {
@@ -225,8 +225,8 @@ contract BodyVersionTest is Test {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
 
-    function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageClearing(p);
+    function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
+        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
     function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {

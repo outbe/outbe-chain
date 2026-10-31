@@ -4,7 +4,7 @@
     "name": "distribute",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -308,7 +308,7 @@
     "name": "ProceedsBurned",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
