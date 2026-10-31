@@ -7,7 +7,7 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use crate::called;
 use outbe_intex::IntexContract;
@@ -192,7 +192,7 @@ fn seed_series(s: &StorageHandle<'_>, issued_at: u64, trigger: U256) -> SeriesId
         s,
         outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day: WorldwideDay::new(LAST_DAY),
+            emission_day: EmissionDate::new(LAST_DAY),
             issued_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: trigger,

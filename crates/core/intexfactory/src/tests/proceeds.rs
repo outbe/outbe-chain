@@ -56,7 +56,7 @@ fn proceeds_burn_into_the_promis_limit_pool() {
     assert_eq!(
         burned_events(&storage),
         vec![IIntexFactory::ProceedsBurned {
-            worldwideDay: 7,
+            emissionDay: 7,
             srcChainId: 10,
             proceedsMinor: amount,
             creditedPromisMinor: U256::from(3u64),
@@ -206,7 +206,7 @@ fn distribute_receives_the_call_value() {
     use crate::precompile::{dispatch, IIntexFactory};
 
     let data = IIntexFactory::distributeCall {
-        worldwideDay: 7u32,
+        emissionDay: 7u32,
         srcChainId: 10u32,
     }
     .abi_encode();

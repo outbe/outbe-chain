@@ -870,7 +870,7 @@
   },
   {
     "type": "event",
-    "name": "AdminTransferCancelled",
+    "name": "AdminTransferCanceled",
     "inputs": [
       {
         "name": "admin",
@@ -879,7 +879,7 @@
         "internalType": "address"
       },
       {
-        "name": "cancelledPendingAdmin",
+        "name": "canceledPendingAdmin",
         "type": "address",
         "indexed": true,
         "internalType": "address"

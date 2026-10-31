@@ -6,7 +6,7 @@ use outbe_promislimit::{BurnSource, PromisLimitContract};
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
@@ -24,7 +24,7 @@ pub fn distribute(
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsBurned {
-            worldwideDay: worldwide_day.value(),
+            emissionDay: emission_day.value(),
             srcChainId: src_chain_id,
             proceedsMinor: amount,
             creditedPromisMinor: credited,

@@ -43,9 +43,9 @@ contract EscrowAdapterClaimableTest is Test {
         _lock(other);
     }
 
-    function _refund(uint32 worldwideDay, address bidder) internal {
+    function _refund(uint32 emissionDay, address bidder) internal {
         vm.prank(auction);
-        escrow.releaseRefund(worldwideDay, bidder);
+        escrow.releaseRefund(emissionDay, bidder);
     }
 
     function _lock(address who) internal {

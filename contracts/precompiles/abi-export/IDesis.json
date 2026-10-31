@@ -4,7 +4,7 @@
     "name": "getAuctionStage",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -23,7 +23,7 @@
     "name": "getBidsCount",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       }
@@ -42,7 +42,7 @@
     "name": "getChainBidsCount",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -66,7 +66,7 @@
     "name": "isChainDone",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -90,7 +90,7 @@
     "name": "processBidsBatch",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -128,7 +128,7 @@
     "name": "processBidsDone",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -175,7 +175,7 @@
     "name": "AuctionBriefRejected",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -206,7 +206,7 @@
     "name": "AuctionCancelledBelowOneUnit",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -231,7 +231,7 @@
     "name": "AuctionCancelledLateStart",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -244,7 +244,7 @@
     "name": "AuctionCancelledNoLimit",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -257,7 +257,7 @@
     "name": "AuctionCancelledUnpriced",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -270,7 +270,7 @@
     "name": "AuctionCleared",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -301,7 +301,7 @@
     "name": "AuctionClearedEmpty",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -320,7 +320,7 @@
     "name": "AuctionCreated",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -330,13 +330,19 @@
   },
   {
     "type": "event",
-    "name": "AuctionOverdue",
+    "name": "AuctionFailed",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      },
+      {
+        "name": "stage",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -346,7 +352,7 @@
     "name": "ChainBidsDone",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -371,7 +377,7 @@
     "name": "ChainSkipped",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -390,7 +396,7 @@
     "name": "DesisAllocationRecorded",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -415,7 +421,7 @@
     "name": "InboundIgnored",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -440,7 +446,7 @@
     "name": "PromisLoadStepped",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -483,7 +489,7 @@
     "name": "UnusedDesisLimitReported",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -554,7 +560,7 @@
     "name": "DesisAllocationExceedsLimit",
     "inputs": [
       {
-        "name": "wwd",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       },
@@ -577,6 +583,17 @@
   },
   {
     "type": "error",
+    "name": "InvalidEmissionDay",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidStageTransition",
     "inputs": []
   },
@@ -584,17 +601,6 @@
     "type": "error",
     "name": "InvalidTotalBatches",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidWorldwideDay",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -606,7 +612,7 @@
     "name": "PendingClearingDataMissing",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
       }

@@ -6,7 +6,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_tee::protocol::PromisOp;
 use outbe_tee_enclave::promis::{
@@ -285,7 +285,7 @@ fn seed_source_series(
         storage,
         outbe_intex::CreateSeriesParams {
             series_id: source_series_id(),
-            worldwide_day: WorldwideDay::new(0),
+            emission_day: EmissionDate::new(0),
             issued_units: SENT_UNITS as u32,
             promis_load_minor: promis_load,
             entry_price_minor: entry,

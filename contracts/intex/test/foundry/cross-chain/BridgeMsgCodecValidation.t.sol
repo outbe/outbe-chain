@@ -75,17 +75,17 @@ contract BridgeMsgCodecValidationTest is Test {
 
     // --- remaining fixed-width decoders reject over-long payloads ---
 
-    function test_AuctionStageClearing_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionStageClearing(1), hex"00");
+    function test_AuctionStageCollectingBids_OverLong_Reverts() public {
+        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeAuctionStageCollectingBids(1), hex"00");
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING,
+                BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS,
                 tooLong.length,
-                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_CLEARING
+                BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS
             )
         );
-        this.exposedDecodeAuctionStageClearing(tooLong);
+        this.exposedDecodeAuctionStageCollectingBids(tooLong);
     }
 
     function test_AuctionResult_OverLong_Reverts() public {
@@ -150,7 +150,11 @@ contract BridgeMsgCodecValidationTest is Test {
             )
         );
         assertEq(s, 42, "stageStart");
-        assertEq(this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(7)), 7, "clearing");
+        assertEq(
+            this.exposedDecodeAuctionStageCollectingBids(BridgeMsgCodec.encodeAuctionStageCollectingBids(7)),
+            7,
+            "clearing"
+        );
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
         assertEq(
@@ -283,8 +287,8 @@ contract BridgeMsgCodecValidationTest is Test {
 
     // --- External wrappers ---
 
-    function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageClearing(p);
+    function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
+        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
     function exposedDecodeAuctionResult(bytes calldata p) external pure returns (uint32, uint32, uint64, uint32) {

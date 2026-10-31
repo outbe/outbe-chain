@@ -39,13 +39,13 @@ struct TargetRouterStorage {
     /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
     address originRouter;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
-    mapping(uint32 worldwideDay => BidsRelayProgress) bidsRelay;
+    mapping(uint32 emissionDay => BidsRelayProgress) bidsRelay;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and
     ///      how many landed. Four bytes, so one slot rather than two.
-    mapping(uint32 worldwideDay => ChunkProgress) issuanceProgress;
+    mapping(uint32 emissionDay => ChunkProgress) issuanceProgress;
     /// @dev Bit per applied issuance chunk, so a repeat is not counted twice. Mirrors
     ///      `refundChunksApplied`. One word covers `MAX_CHUNKS`.
-    mapping(uint32 worldwideDay => uint256 bitmap) issuanceChunksApplied;
+    mapping(uint32 emissionDay => uint256 bitmap) issuanceChunksApplied;
     /// @dev Origin's call time of a Called mark waiting for its series to land here (0 = none), so a slot
     ///      applied later derives the same deadline.
     mapping(bytes14 seriesId => uint64 calledAt) parkedMarks;
@@ -54,10 +54,10 @@ struct TargetRouterStorage {
     ///        a conflict, so an under-totaled header cannot close the day early.
     ///      - the number of chunks that landed.
     ///      Each chunk routes its own proceeds, so nothing accrues here.
-    mapping(uint32 worldwideDay => RefundProgress) refundProgress;
+    mapping(uint32 emissionDay => RefundProgress) refundProgress;
     /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
     ///      completes the day. One word covers `MAX_CHUNKS`.
-    mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
+    mapping(uint32 emissionDay => uint256 bitmap) refundChunksApplied;
     /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
     mapping(uint256 idx => ParkedProceeds) parkedProceeds;
     /// @dev Next index to assign in `parkedProceeds`. It is also the count ever enqueued.
@@ -68,7 +68,7 @@ struct TargetRouterStorage {
 ///         `resendParkedProceeds` retries it. The router already holds the WCOEN, so the record
 ///         snapshots only the chunk and its amount.
 struct ParkedProceeds {
-    uint32 worldwideDay;
+    uint32 emissionDay;
     uint16 chunkIndex;
     uint128 amount;
     bool exists;

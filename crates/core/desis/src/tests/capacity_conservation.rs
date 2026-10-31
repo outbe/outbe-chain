@@ -9,7 +9,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::{previous_date_key, timestamp_to_date_key, WorldwideDay},
+    time::{previous_date_key, timestamp_to_date_key, EmissionDate},
 };
 use outbe_promislimit::PromisLimitContract;
 
@@ -23,7 +23,7 @@ use crate::{
 const NOW: u64 = 1_704_067_205;
 const ANCHOR: u64 = NOW - 5;
 const CLEAR_AT: u64 = ANCHOR + 2 * SECONDS_PER_DAY;
-const DAY: WorldwideDay = WorldwideDay::new(20_240_101);
+const DAY: EmissionDate = EmissionDate::new(20_231_231);
 const LOAD: u128 = 1_000_000_000_000;
 const LIMIT: u128 = 3 * LOAD + 7;
 const CHAIN: u32 = 1;
@@ -64,12 +64,10 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
         crate::api::dispatch_auction_brief(
             s.clone(),
             crate::api::AuctionBrief {
-                worldwide_day: DAY,
-                emission_day: DAY.value(),
+                emission_day: DAY,
                 desis_limit_minor: U256::from(LIMIT),
                 has_limit: true,
             },
-            NOW,
             crate::api::BriefOverflowPolicy::ReturnToPromisLimit,
         )
         .unwrap();
@@ -95,7 +93,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: DAY,
+                emission_day: DAY,
                 src_chain_id: CHAIN,
             },
             0,
@@ -107,7 +105,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             s,
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
-                worldwide_day: DAY,
+                emission_day: DAY,
                 src_chain_id: CHAIN,
             },
             1,
@@ -148,13 +146,13 @@ fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
             U256::from(LIMIT)
         );
         if terminal {
-            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Cleared);
+            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Completed);
             assert_eq!(issued, sold);
             assert_eq!(pending, U256::ZERO);
             assert_eq!(returned, U256::from(LIMIT - u128::from(sold) * LOAD));
             assert_eq!(day.gate_active_count.read().unwrap(), 0);
         } else {
-            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::Clearing);
+            assert_eq!(day.read_stage(DAY).unwrap(), AuctionStage::CollectingBids);
             assert_eq!(pending, U256::from(LIMIT));
             assert_eq!(returned, U256::ZERO);
             assert_eq!(issued, 0);

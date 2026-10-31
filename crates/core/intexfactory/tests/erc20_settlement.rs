@@ -10,7 +10,7 @@ use outbe_intexfactory::precompile::IIntexFactory;
 use outbe_primitives::{
     addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS},
     storage::StorageHandle,
-    time::WorldwideDay,
+    time::EmissionDate,
 };
 use outbe_vaultrouter::api::IVaultRouter::StablesSource;
 use settlement::{Quote, Rail, World, ASSET, OWNER, TIMESTAMP};
@@ -38,7 +38,7 @@ impl Rail for Intex {
             storage,
             CreateSeriesParams {
                 series_id: SeriesId::from(FixedBytes(SERIES)),
-                worldwide_day: WorldwideDay::new(20_241_220),
+                emission_day: EmissionDate::new(20_241_220),
                 issued_units: 10,
                 promis_load_minor: 1_500_000,
                 entry_price_minor: U256::from(2_000_000),

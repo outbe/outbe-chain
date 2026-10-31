@@ -45,7 +45,7 @@ pub fn create_series(storage: &StorageHandle<'_>, params: CreateSeriesParams) ->
         transit_margin_seconds: params.call_trigger.transit_margin_seconds,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
-        worldwide_day: params.worldwide_day,
+        emission_day: params.emission_day,
     };
     registry.create_series_record(&record)?;
     registry.join_call_group(&record)

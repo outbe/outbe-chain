@@ -20,10 +20,10 @@ import {
 ///      `address(this)` from the delegated library context, so `msg.sender == address(this)` holds
 ///      inside the shim.
 interface ITargetRouterShims {
-    function relayBidsToOutbe(uint32 worldwideDay) external;
-    function reportBidsRemaining(uint32 worldwideDay) external;
+    function relayBidsToOutbe(uint32 emissionDay) external;
+    function reportBidsRemaining(uint32 emissionDay) external;
     function applyMarkOne(bytes14 seriesId, uint64 calledAt) external;
-    function routeProceedsExt(uint32 worldwideDay, uint16 chunkIndex, uint128 amount) external;
+    function routeProceedsExt(uint32 emissionDay, uint16 chunkIndex, uint128 amount) external;
 }
 
 /// @title TargetInbound
@@ -50,54 +50,53 @@ library TargetInbound {
         external
     {
         (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
+            uint32 emissionDay,
+            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(message);
 
-        try $.auction.auctionStart(worldwideDay, dayState, schedule, params) {
-            emit ITargetRouter.AuctionStageReceived(srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+        try $.auction.auctionStart(emissionDay, dayState, schedule, params) {
+            emit ITargetRouter.AuctionStageReceived(srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.AuctionAlreadyExists.selector) {
-                why = _sameAuction($, worldwideDay, dayState, schedule, params)
+                why = _sameAuction($, emissionDay, dayState, schedule, params)
                     ? InboundReason.DUPLICATE
                     : InboundReason.CONFLICT;
             } else if (selector == IIntexAuction.InvalidSchedule.selector) {
-                bool late = dayState == IIntexAuction.WorldwideDayState.Live && schedule.commitEnd <= block.timestamp;
+                bool late = dayState == IIntexAuction.DayState.Live && schedule.commitEnd <= block.timestamp;
                 why = late ? InboundReason.LATE : InboundReason.INVALID;
             } else if (selector == IIntexAuction.InvalidDayState.selector) {
                 why = InboundReason.INVALID;
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_START, bytes32(uint256(worldwideDay)), why);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_START, bytes32(uint256(emissionDay)), why);
         }
     }
 
-    /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
+    /// @notice Decode AUCTION_STAGE_COLLECTING_BIDS, forward to Auction, then relay revealed bids to Outbe.
     /// @dev These days cannot take the transition any more. The handler acknowledges them without
     ///      effect (and without a relay):
     ///      - a day already past clearing (Completed)
     ///      - a cancelled day
+    ///      - a failed day, which found no result in time
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
     ///      valid, so the bridge redelivers. Only the outbound relay is caught (parked on failure).
-    function handleAuctionStageClearing(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+    function handleAuctionStageCollectingBids(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
-        uint32 worldwideDay = BridgeMsgCodec.decodeAuctionStageClearing(message);
+        uint32 emissionDay = BridgeMsgCodec.decodeAuctionStageCollectingBids(message);
 
-        try $.auction.startClearingStage(worldwideDay) {}
+        try $.auction.startAwaitingResult(emissionDay) {}
         catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
-                IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
-                if (current != IIntexAuction.AuctionStage.Completed && current != IIntexAuction.AuctionStage.Cancelled)
-                {
+                if (!_ended(_stageRequiredCurrent(reason))) {
                     LowLevelCall.bubbleRevert(reason);
                 }
                 why = InboundReason.OBSOLETE;
@@ -106,57 +105,61 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, bytes32(uint256(worldwideDay)), why);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, bytes32(uint256(emissionDay)), why);
             return;
         }
 
         // Carry the relay as far as this delivery's gas allows, holding back enough to report the rest.
         // The self-call keeps a failed round from taking the stage flip with it.
-        BidsRelayProgress storage relay = $.bidsRelay[worldwideDay];
+        BidsRelayProgress storage relay = $.bidsRelay[emissionDay];
         if (!relay.done && gasleft() > IntexGas.RELAY_REPORT_GAS) {
             uint16 batchBefore = relay.nextBatch;
             // solhint-disable-next-line no-empty-blocks
             try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: gasleft() - IntexGas.RELAY_REPORT_GAS}(
-                worldwideDay
+                emissionDay
             ) {}
             catch {
-                emit ITargetRouter.BidsRelayIncomplete(worldwideDay, batchBefore, relay.totalBatches);
+                emit ITargetRouter.BidsRelayIncomplete(emissionDay, batchBefore, relay.totalBatches);
             }
             if (advanced(relay, batchBefore)) {
                 // solhint-disable-next-line no-empty-blocks
-                try ITargetRouterShims(address(this)).reportBidsRemaining(worldwideDay) {}
+                try ITargetRouterShims(address(this)).reportBidsRemaining(emissionDay) {}
                 catch {
-                    emit ITargetRouter.BidsRemainingUnreported(worldwideDay, relay.nextBatch, relay.totalBatches);
+                    emit ITargetRouter.BidsRemainingUnreported(emissionDay, relay.nextBatch, relay.totalBatches);
                 }
             }
         }
 
-        emit ITargetRouter.AuctionStageReceived(srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
+        emit ITargetRouter.AuctionStageReceived(
+            srcChainId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS
+        );
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
     /// @dev The handler acknowledges these cases without effect:
     ///      - a result the day already holds (same -> duplicate, other -> conflict)
-    ///      - a cancelled or unknown day
+    ///      - a cancelled, failed or unknown day
     ///      - a result that fails the auction's permanent sanity bounds
     ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
     ///      redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
+        (uint32 emissionDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(message);
 
-        try $.auction.executeAuctionClearing(worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount) {
-            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedUnits, auctionClearingRate);
+        try $.auction.executeAuctionClearing(emissionDay, issuedUnits, auctionClearingRate, wonBidsCount) {
+            emit ITargetRouter.AuctionResultReceived(srcChainId, emissionDay, issuedUnits, auctionClearingRate);
         } catch (bytes memory reason) {
             bytes4 selector = _selectorOf(reason);
             uint8 why;
             if (selector == IIntexAuction.StageRequired.selector) {
                 IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
                 if (current == IIntexAuction.AuctionStage.Completed) {
-                    why = _sameResult($, worldwideDay, issuedUnits, auctionClearingRate, wonBidsCount)
+                    why = _sameResult($, emissionDay, issuedUnits, auctionClearingRate, wonBidsCount)
                         ? InboundReason.DUPLICATE
                         : InboundReason.CONFLICT;
-                } else if (current == IIntexAuction.AuctionStage.Cancelled) {
+                } else if (
+                    current == IIntexAuction.AuctionStage.Cancelled || current == IIntexAuction.AuctionStage.Failed
+                ) {
                     why = InboundReason.OBSOLETE;
                 } else {
                     LowLevelCall.bubbleRevert(reason);
@@ -173,37 +176,53 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_RESULT, bytes32(uint256(worldwideDay)), why);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_RESULT, bytes32(uint256(emissionDay)), why);
         }
     }
 
-    /// @dev Whether the auction this chain holds for `worldwideDay` was opened under the START's terms. The reveal
+    /// @dev Whether the auction this chain holds for `emissionDay` was opened under the START's terms. The reveal
     ///      end is left out: CLEARING snaps it forward, and a START repeated after that is still the same START.
     function _sameAuction(
         TargetRouterStorage storage $,
-        uint32 worldwideDay,
-        IIntexAuction.WorldwideDayState dayState,
+        uint32 emissionDay,
+        IIntexAuction.DayState dayState,
         IIntexAuction.AuctionSchedule memory schedule,
         IIntexAuction.AuctionParams memory params
     ) private view returns (bool) {
-        IIntexAuction.AuctionData memory a = $.auction.getAuctionInfo(worldwideDay);
-        return a.worldwideDayState == dayState && a.schedule.commitEnd == schedule.commitEnd
+        IIntexAuction.AuctionData memory a = $.auction.getAuctionInfo(emissionDay);
+        return a.dayState == dayState && a.schedule.commitEnd == schedule.commitEnd
             && a.schedule.issuanceEnd == schedule.issuanceEnd
             && keccak256(abi.encode(a.params)) == keccak256(abi.encode(params));
     }
 
-    /// @dev Whether the result this chain holds for `worldwideDay` is the one the RESULT carries.
+    /// @dev Whether the result this chain holds for `emissionDay` is the one the RESULT carries.
     function _sameResult(
         TargetRouterStorage storage $,
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint32 issuedUnits,
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) private view returns (bool) {
-        IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(worldwideDay).result;
+        IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(emissionDay).result;
         return
             r.issuedUnits == issuedUnits && r.auctionClearingRate == auctionClearingRate
                 && r.wonBidsCount == wonBidsCount;
+    }
+
+    /// @dev Whether this chain reads the day as failed. A day it never opened is not.
+    function _failed(TargetRouterStorage storage $, uint32 emissionDay) private view returns (bool) {
+        if (address($.auction).code.length == 0) return false;
+        try $.auction.getAuctionStage(emissionDay) returns (IIntexAuction.AuctionStage stage) {
+            return stage == IIntexAuction.AuctionStage.Failed;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev Whether the day has ended: no stage message or result can apply to it any more.
+    function _ended(IIntexAuction.AuctionStage stage) private pure returns (bool) {
+        return stage == IIntexAuction.AuctionStage.Completed || stage == IIntexAuction.AuctionStage.Cancelled
+            || stage == IIntexAuction.AuctionStage.Failed;
     }
 
     /// @dev `currentStage` argument of a `StageRequired(requiredStage, currentStage)` revert payload.
@@ -236,19 +255,19 @@ library TargetInbound {
         external
     {
         (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint16 chunkIndex,
             uint16 totalChunks,
             BridgeMsgCodec.IssuanceInstructionsPayload[] memory series
         ) = BridgeMsgCodec.decodeIssuanceInstructions(message);
 
-        bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
+        bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | chunkIndex);
         uint256 bit = 1 << chunkIndex;
-        if ($.issuanceChunksApplied[worldwideDay] & bit != 0) {
+        if ($.issuanceChunksApplied[emissionDay] & bit != 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
             return;
         }
-        ChunkProgress memory progress = $.issuanceProgress[worldwideDay];
+        ChunkProgress memory progress = $.issuanceProgress[emissionDay];
         uint16 knownTotal = progress.totalChunks;
         if (knownTotal != 0 && knownTotal != totalChunks) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
@@ -279,14 +298,14 @@ library TargetInbound {
         }
 
         uint16 seen = progress.chunksSeen + 1;
-        $.issuanceProgress[worldwideDay] = ChunkProgress({totalChunks: totalChunks, chunksSeen: seen});
-        $.issuanceChunksApplied[worldwideDay] |= bit;
+        $.issuanceProgress[emissionDay] = ChunkProgress({totalChunks: totalChunks, chunksSeen: seen});
+        $.issuanceChunksApplied[emissionDay] |= bit;
 
         for (uint256 s = 0; s < series.length; s++) {
             _applyIssuance($, srcChainId, series[s], known[s]);
         }
 
-        if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
+        if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(emissionDay, totalChunks);
     }
 
     /// @dev Create the series if this chain has not seen it.
@@ -302,7 +321,7 @@ library TargetInbound {
                 .createSeries(
                     IIntexNFT1155.CreateSeriesParams({
                         seriesId: payload.seriesId,
-                        worldwideDay: payload.worldwideDay,
+                        emissionDay: payload.emissionDay,
                         issuedAt: payload.issuedAt,
                         issuanceCurrency: payload.issuanceCurrency,
                         referenceCurrency: payload.referenceCurrency,
@@ -329,7 +348,7 @@ library TargetInbound {
         BridgeMsgCodec.IssuanceInstructionsPayload memory a,
         BridgeMsgCodec.IssuanceInstructionsPayload memory b
     ) private pure returns (bool) {
-        return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
+        return a.emissionDay == b.emissionDay && a.issuanceCurrency == b.issuanceCurrency
             && a.referenceCurrency == b.referenceCurrency && a.issuedUnits == b.issuedUnits
             && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
             && a.callPriceMinor == b.callPriceMinor && a.callWindow == b.callWindow
@@ -344,7 +363,7 @@ library TargetInbound {
         returns (bool)
     {
         IIntexNFT1155.SeriesData memory d = $.intex.readData(payload.seriesId);
-        return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
+        return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
             && d.callPriceMinor == payload.callPriceMinor && d.callTrigger.callWindow == payload.callWindow
@@ -359,8 +378,8 @@ library TargetInbound {
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev `receiveId` is the escrow finalization tag. The handler acknowledges without effect a chunk
-    ///      already applied, or one arriving after the escrow closed the day. Bidders it would have
-    ///      settled recover through the auction's `claimRefund` path.
+    ///      already applied, or one arriving after the escrow closed the day or the day failed.
+    ///      Bidders it would have settled recover through the auction's `claimRefund` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -368,7 +387,7 @@ library TargetInbound {
         bytes calldata message
     ) external {
         (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint16 chunkIndex,
             uint16 totalChunks,
             uint64 clearingRate,
@@ -378,41 +397,41 @@ library TargetInbound {
             uint16 partialWon
         ) = BridgeMsgCodec.decodeRefundInstructions(message);
 
-        bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
+        bytes32 chunkKey = bytes32((uint256(emissionDay) << 16) | chunkIndex);
         uint256 bit = 1 << chunkIndex;
-        if ($.refundChunksApplied[worldwideDay] & bit != 0) {
+        if ($.refundChunksApplied[emissionDay] & bit != 0) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
             return;
         }
-        RefundProgress memory progress = $.refundProgress[worldwideDay];
+        RefundProgress memory progress = $.refundProgress[emissionDay];
         uint16 knownTotal = progress.totalChunks;
         if (knownTotal != 0 && knownTotal != totalChunks) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(worldwideDay);
-        if (finalized) {
+        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(emissionDay);
+        if (finalized || _failed($, emissionDay)) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.OBSOLETE);
             return;
         }
 
         // Counted before settling: the escrow refuses instructions once the day is closed.
-        $.refundChunksApplied[worldwideDay] |= bit;
+        $.refundChunksApplied[emissionDay] |= bit;
         uint16 seen = progress.chunksSeen + 1;
         // `>=` rather than `==`: an overshoot would otherwise never close the day in the escrow.
         bool completesDay = seen >= totalChunks;
 
         uint128 totalPaid = $.escrowAdapter
             .finalizeAuction(
-                worldwideDay, receiveId, winners, partialIndex, partialWon, clearingRate, basis, completesDay
+                emissionDay, receiveId, winners, partialIndex, partialWon, clearingRate, basis, completesDay
             );
-        $.refundProgress[worldwideDay] = RefundProgress({totalChunks: totalChunks, chunksSeen: seen});
+        $.refundProgress[emissionDay] = RefundProgress({totalChunks: totalChunks, chunksSeen: seen});
         // Each chunk sends its own payments, so a chunk that never lands holds back no other.
         if (totalPaid > 0) {
-            _routeOrParkProceeds($, worldwideDay, chunkIndex, totalPaid);
+            _routeOrParkProceeds($, emissionDay, chunkIndex, totalPaid);
         }
 
-        emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, winners.length);
+        emit ITargetRouter.RefundInstructionsReceived(srcChainId, emissionDay, winners.length);
     }
 
     /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
@@ -420,9 +439,9 @@ library TargetInbound {
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
     function handleMarkCalled(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
-        (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
+        (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(message);
         if (calledAt == 0) {
-            _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(worldwideDay)), InboundReason.INVALID);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_MARK_CALLED, bytes32(uint256(emissionDay)), InboundReason.INVALID);
             return;
         }
         for (uint256 i = 0; i < seriesIds.length; ++i) {
@@ -475,17 +494,17 @@ library TargetInbound {
     /// @dev Route a chunk's proceeds to Outbe. On failure, park the chunk and its amount, so a
     ///      transport/float hiccup never rolls back the finalization (the WCOEN is already held here).
     ///      Retried via `resendParkedProceeds`.
-    function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint16 chunkIndex, uint128 amount)
+    function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 emissionDay, uint16 chunkIndex, uint128 amount)
         private
     {
         // solhint-disable-next-line no-empty-blocks
-        try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, chunkIndex, amount) {}
+        try ITargetRouterShims(address(this)).routeProceedsExt(emissionDay, chunkIndex, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextParkedProceedsIdx++;
             $.parkedProceeds[idx] = ParkedProceeds({
-                worldwideDay: worldwideDay, chunkIndex: chunkIndex, amount: amount, exists: true, done: false
+                emissionDay: emissionDay, chunkIndex: chunkIndex, amount: amount, exists: true, done: false
             });
-            emit ITargetRouter.ProceedsParked(idx, worldwideDay, chunkIndex, amount, reason);
+            emit ITargetRouter.ProceedsParked(idx, emissionDay, chunkIndex, amount, reason);
         }
     }
 }

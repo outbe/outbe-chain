@@ -89,10 +89,10 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory json = _json(iTok);
         _assertContains(json, string.concat("\"name\":\"Intex ", string(abi.encodePacked(SERIES_ID)), "\","));
         _assertContains(
-            json, "\"description\":\"Units of Intex series 20260622-USD-U from the Worldwide Day 20260622 auction."
+            json, "\"description\":\"Units of Intex series 20260622-USD-U from the Emission Day 20260622 auction."
         );
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
-        _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Emission Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":\"USD\"}");
         _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":\"USD\"}");
         // Six fraction digits with trailing zeros trimmed, decoded from the 1e6 wire scale.
@@ -108,7 +108,7 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory json = _json(iTok);
         assertFalse(json.contains("Total Supply"), "supply is per-chain local, not rendered");
         assertFalse(json.contains("Issued Intex Count"), "cap is a series parameter, not a trait");
-        assertFalse(json.contains("Issued At"), "worldwide day carries the date semantics");
+        assertFalse(json.contains("Issued At"), "emission day carries the date semantics");
         assertFalse(json.contains("Series ID"), "composite id lives in the name");
         assertFalse(json.contains("Cost Amount"), "cost is derived at settlement, not published");
     }
@@ -168,7 +168,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_tokenURI_KeepsTheNumberOfANonIsoCurrency() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID_DAY;
+        data.emissionDay = SERIES_ID_DAY;
         data.seriesId = SERIES_ID;
         data.issuanceCurrency = 975;
         data.referenceCurrency = 840;
@@ -201,7 +201,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_tokenURI_TrimsFractionAndKeepsWholeAmounts() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID_DAY;
+        data.emissionDay = SERIES_ID_DAY;
         data.issuedAt = 1;
         data.entryPriceMinor = 12e6; // whole units render without a decimal point
         data.callPriceMinor = 1_234; // 0.001234 on the six-decimal wire

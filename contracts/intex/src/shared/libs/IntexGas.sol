@@ -12,15 +12,15 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 365_000;
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
 
-    /// @dev Floor for a CLEARING round, and what the router clamps a smaller ask up to. Driven
+    /// @dev Floor for a COLLECTING_BIDS round, and what the router clamps a smaller ask up to. Driven
     ///      through the whole inbound path, it spends 1.56M and still places a chunk
     ///      (`ClearingRelayMailboxGas.t.sol`).
-    uint256 internal constant AUCTION_STAGE_CLEARING = 2_300_000;
+    uint256 internal constant AUCTION_STAGE_COLLECTING_BIDS = 2_300_000;
 
-    /// @dev Ceiling for a CLEARING round, under the tightest per-transaction cap our targets
+    /// @dev Ceiling for a COLLECTING_BIDS round, under the tightest per-transaction cap our targets
     ///      enforce (Ethereum's EIP-7825 is 16 777 216). A heavier day takes several rounds
     ///      instead.
-    uint256 internal constant AUCTION_STAGE_CLEARING_MAX = 14_000_000;
+    uint256 internal constant AUCTION_STAGE_COLLECTING_BIDS_MAX = 14_000_000;
 
     /// @dev 147k.
     uint256 internal constant AUCTION_RESULT = 225_000;

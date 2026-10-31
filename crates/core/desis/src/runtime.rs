@@ -5,8 +5,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY};
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64};
 use outbe_promislimit::PromisLimitContract;
 
@@ -17,9 +16,9 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BID_GAS, CLEARING_CHUNK_GAS,
     CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS,
     DAY_STATE_CANCELLED, DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
-    MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT,
+    PROMIS_LOAD_OVERRIDE, RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -34,21 +33,23 @@ use crate::sol_ext::IOriginRouter;
 
 /// Validate every technical prerequisite before the API may classify
 /// an oversized Desis Limit as the sole committed business rejection. Returns the
-/// schedule anchor: the UTC midnight of `now`.
+/// schedule anchor: 00:00 UTC of the day after the emission day.
 pub(crate) fn preflight_brief(
     storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
-    now: u64,
+    emission_day: EmissionDate,
 ) -> Result<u32> {
-    if !worldwide_day.is_valid() {
-        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
+    if !emission_day.is_valid() {
+        return Err(DesisError::InvalidEmissionDay(emission_day).into());
     }
     let contract = storage.contract::<DesisContract>();
-    if contract.read_stage(worldwide_day)? != AuctionStage::None {
+    if contract.read_stage(emission_day)? != AuctionStage::None {
         return Err(DesisError::InvalidStageTransition.into());
     }
-    let midnight = now - now % SECONDS_PER_DAY;
-    u32::try_from(midnight).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
+    let anchor = emission_day
+        .next()
+        .map_err(crate::errors::date_step_error)?
+        .start_timestamp();
+    u32::try_from(anchor).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
 }
 
 /// `desis_limit_minor` is the brief's limit, already narrowed to the auction domain.
@@ -59,24 +60,20 @@ pub(crate) fn record_preflighted_brief(
     anchor: u32,
 ) -> Result<()> {
     let crate::api::AuctionBrief {
-        worldwide_day,
         emission_day,
         has_limit,
         ..
     } = brief;
     let mut contract = storage.contract::<DesisContract>();
-    contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
+    contract.write_stage(emission_day, AuctionStage::Briefed)?;
     contract
         .pending_desis_limit_minor
-        .write(&worldwide_day, U256::from(desis_limit_minor))?;
+        .write(&emission_day, U256::from(desis_limit_minor))?;
     contract
         .brief_has_limit
-        .write(&worldwide_day, u8::from(has_limit))?;
-    contract
-        .brief_emission_day
-        .write(&worldwide_day, emission_day)?;
-    contract.auction_at.write(&worldwide_day, anchor)?;
-    contract.push_sched_active(worldwide_day)?;
+        .write(&emission_day, u8::from(has_limit))?;
+    contract.auction_at.write(&emission_day, anchor)?;
+    contract.push_sched_active(emission_day)?;
     Ok(())
 }
 
@@ -195,7 +192,7 @@ fn capture_reference(
 /// one and sits the day out.
 pub(crate) fn step_promis_load(
     contract: &mut DesisContract<'_>,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     reference_prices: &[ReferenceCurrencyPrice],
 ) -> Result<u128> {
     if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
@@ -232,7 +229,7 @@ pub(crate) fn step_promis_load(
         return Ok(promis_load_minor(current));
     };
     contract.emit(IDesis::PromisLoadStepped {
-        worldwideDay: worldwide_day.into(),
+        emissionDay: emission_day.into(),
         previousLoadMinor: promis_load_minor(current),
         newLoadMinor: promis_load_minor(exponent),
         isoCode: trigger.iso_code,
@@ -258,18 +255,15 @@ fn fold_profile(
     // the ladder, so a floor left at yesterday's scale could sit above the whole
     // of today's tirage and clear the day to nothing.
     let min_bid_qty: u16 = {
-        let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
+        let last_emission_day = contract.read_last_cleared_emission_day()?;
         let today_load = config.promis_load_minor;
-        if last_worldwide_day.value() == 0 || today_load == 0 {
+        if last_emission_day.value() == 0 || today_load == 0 {
             0
         } else {
             let prev_issued = u128::from(contract.read_last_clearing_issued_count()?);
-            let prev_load = u128::try_from(
-                contract
-                    .config_promis_load_minor
-                    .read(&last_worldwide_day)?,
-            )
-            .map_err(|_| DesisError::InvalidWorldwideDay(last_worldwide_day))?;
+            let prev_load =
+                u128::try_from(contract.config_promis_load_minor.read(&last_emission_day)?)
+                    .map_err(|_| DesisError::InvalidEmissionDay(last_emission_day))?;
             let scaled = prev_issued
                 .checked_mul(prev_load)
                 .and_then(|v| v.checked_mul(u128::from(BID_QUANTITY_FLOOR_BPS)))
@@ -298,7 +292,7 @@ fn fix_call_terms(storage: &StorageHandle<'_>, config: &mut AuctionConfig) -> Re
 /// What one AUCTION_STAGE_START message announces besides its day state.
 #[derive(Clone, Copy)]
 pub(crate) struct StageStart<'a> {
-    pub(crate) worldwide_day: WorldwideDay,
+    pub(crate) emission_day: EmissionDate,
     pub(crate) config: &'a AuctionConfig,
     pub(crate) commit_end: u32,
     pub(crate) reveal_end: u32,
@@ -331,7 +325,7 @@ pub(crate) fn stage_start_params(
     day_state: u8,
 ) -> Result<IOriginRouter::AuctionStageStartParams> {
     let StageStart {
-        worldwide_day,
+        emission_day,
         config,
         commit_end,
         reveal_end,
@@ -346,7 +340,7 @@ pub(crate) fn stage_start_params(
         });
     }
     Ok(IOriginRouter::AuctionStageStartParams {
-        worldwideDay: worldwide_day.into(),
+        emissionDay: emission_day.into(),
         commitEnd: commit_end,
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
