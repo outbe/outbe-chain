@@ -47,8 +47,8 @@ pub(crate) fn preflight_brief(
     }
     let anchor = emission_day
         .next()
-        .map_err(crate::errors::date_step_error)?
-        .start_timestamp();
+        .and_then(EmissionDate::start_timestamp)
+        .map_err(crate::errors::date_step_error)?;
     u32::try_from(anchor).map_err(|_| DesisError::BriefAnchorExceedsU32.into())
 }
 

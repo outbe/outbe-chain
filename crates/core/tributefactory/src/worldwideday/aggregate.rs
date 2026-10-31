@@ -35,16 +35,23 @@ pub struct WwdProjection {
 }
 
 impl WwdProjection {
-    pub(crate) fn from_record(worldwide_day: WorldwideDay, record: &WorldwideDayRecord) -> Self {
-        Self {
+    pub(crate) fn from_record(
+        worldwide_day: WorldwideDay,
+        record: &WorldwideDayRecord,
+    ) -> Result<Self> {
+        Ok(Self {
             worldwide_day,
             day: record.emission_day,
-            forming_start: record.forming_start(),
-            forming_end: record.forming_end(),
+            forming_start: record
+                .forming_start()
+                .map_err(super::errors::date_step_error)?,
+            forming_end: record
+                .forming_end()
+                .map_err(super::errors::date_step_error)?,
             offerings_start: record.offering_start,
             offering_end: record.offering_end,
             state: record.state,
-        }
+        })
     }
 
     #[must_use]
@@ -99,7 +106,7 @@ impl ValidatedWwdAggregate {
                 .get(*wwd)?
                 .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd: *wwd })?;
             validate_record_shape(*wwd, &record)?;
-            records.insert(*wwd, WwdProjection::from_record(*wwd, &record));
+            records.insert(*wwd, WwdProjection::from_record(*wwd, &record)?);
         }
         let active_order: Vec<WorldwideDay> = combined_set.into_iter().collect();
         Ok(Self {
@@ -165,8 +172,12 @@ pub fn create_worldwide_day(
     factory.emit(ITributeFactory::WorldwideDayStarted {
         worldwideDay: worldwide_day.into(),
         day: record.emission_day,
-        formingStart: record.forming_start(),
-        formingEnd: record.forming_end(),
+        formingStart: record
+            .forming_start()
+            .map_err(super::errors::date_step_error)?,
+        formingEnd: record
+            .forming_end()
+            .map_err(super::errors::date_step_error)?,
         offeringsStart: record.offering_start,
         offeringEnd: record.offering_end,
     })?;

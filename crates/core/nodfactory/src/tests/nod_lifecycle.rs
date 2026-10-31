@@ -780,7 +780,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     for _ in 1..CALL_THRESHOLD_DAYS {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach);
+    let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
 
     for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
         harness(|storage| {
@@ -829,7 +829,8 @@ fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
         );
         let issuance_utc_day = timestamp_to_date_key(START);
         fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
-        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"));
+        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"))
+            .expect("date step");
         finalize_through(storage, scan_at);
         assert_eq!(scan(storage, scan_at), 0);
         assert_eq!(called_at(storage, item.group_key), 0);

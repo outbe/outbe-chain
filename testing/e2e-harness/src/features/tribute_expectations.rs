@@ -86,7 +86,9 @@ pub(crate) fn usd_offer_terms_at(
                 &eth::IOracle::getScurveValuesCall {
                     base: Address::ZERO,
                     quote: usd,
-                    timestamp: WorldwideDay::new(day).to_timestamp_utc(),
+                    timestamp: WorldwideDay::new(day)
+                        .to_timestamp_utc()
+                        .expect("offer day UTC timestamp"),
                 },
                 checkpoint_height,
             )

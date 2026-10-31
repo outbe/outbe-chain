@@ -78,6 +78,7 @@ pub fn compute_metadosis_start(day: u32) -> Result<u64> {
     }
     let next_day = next_date_key(day).map_err(EmissionError::from)?;
     date_key_to_utc_timestamp(next_day)
+        .map_err(EmissionError::from)?
         .checked_add(1)
         .ok_or_else(|| EmissionError::WaitingWindowOverflow.into())
 }

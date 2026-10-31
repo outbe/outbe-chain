@@ -419,7 +419,7 @@ mod tests {
         for id in [U256::from(7), U256::MAX] {
             let mut item = GemItemState::with_key(id);
             item.owner = Address::repeat_byte(1);
-            item.issued_at = WorldwideDay::new(20261015).to_timestamp_utc() + 1;
+            item.issued_at = WorldwideDay::new(20261015).to_timestamp_utc().unwrap() + 1;
             item.group_key = group.group_key;
             let json = serde_json::to_value(&item).unwrap();
             assert_eq!(json["gem_id"], serde_json::to_value(id).unwrap());

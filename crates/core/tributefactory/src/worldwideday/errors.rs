@@ -31,6 +31,13 @@ fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }
 
+pub(crate) fn date_step_error(err: outbe_primitives::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => WwdCallerError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
+}
+
 impl From<WwdCallerError> for PrecompileError {
     fn from(value: WwdCallerError) -> Self {
         use ITributeFactory as I;

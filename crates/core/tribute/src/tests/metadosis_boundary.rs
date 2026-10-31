@@ -128,7 +128,7 @@ fn day_mutators_follow_the_caller_binding() {
         let binding = metadosis_cycle_allocation_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),
-            day_b.to_timestamp_utc(),
+            day_b.to_timestamp_utc().unwrap(),
         );
         storage
             .with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {

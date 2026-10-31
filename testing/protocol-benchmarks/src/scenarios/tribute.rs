@@ -331,14 +331,14 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
             forming_start: 1,
             forming_end: 2,
             offerings_start: 3,
-            offering_end: date_key_to_utc_timestamp(REWARD_UTC_DAY) + 86_400,
+            offering_end: date_key_to_utc_timestamp(REWARD_UTC_DAY).unwrap() + 86_400,
         })
         .apply(storage.clone())
         .unwrap();
 
     let mut oracle = OracleContract::new(storage.clone());
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
-    let start = TARGET_WWD.start_timestamp();
+    let start = TARGET_WWD.start_timestamp().unwrap();
     let pair = AddressPair::new_coen_to(840);
     oracle
         .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
@@ -351,7 +351,7 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
 fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_timestamp(U256::from(
-        date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
+        date_key_to_utc_timestamp(REWARD_UTC_DAY).unwrap() + 43_200,
     ));
     provider.enable_metadosis_mutation_frames(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,

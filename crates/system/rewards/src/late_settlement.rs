@@ -827,7 +827,7 @@ mod tests {
         storage.set_block_number(156);
         seed_native_runtime(&mut storage);
         let wwd = WorldwideDay::new(20_260_728);
-        let timestamp = wwd.start_timestamp();
+        let timestamp = wwd.start_timestamp().unwrap();
         storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
         let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;

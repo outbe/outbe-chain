@@ -36,7 +36,7 @@ impl BenchmarkScenario for MetadosisScenario {
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_block_number(BLOCK_NUMBER);
-        provider.set_timestamp(U256::from(TARGET_WWD.start_timestamp()));
+        provider.set_timestamp(U256::from(TARGET_WWD.start_timestamp().unwrap()));
         Ok(provider)
     }
 
@@ -55,7 +55,7 @@ impl BenchmarkScenario for MetadosisScenario {
             outbe_metadosis::bench_support::create_worldwide_day(
                 storage,
                 BLOCK_NUMBER,
-                TARGET_WWD.start_timestamp(),
+                TARGET_WWD.start_timestamp().unwrap(),
                 CHAIN_ID,
                 TARGET_WWD,
             )

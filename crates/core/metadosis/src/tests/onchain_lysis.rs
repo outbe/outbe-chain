@@ -163,7 +163,7 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |storage| {
         install_test_enclaves();
         arm_reference_price(&storage, CLOCK);
-        let forming_start = WWD.start_timestamp();
+        let forming_start = WWD.start_timestamp().unwrap();
         let forming_end =
             forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let offerings_start =

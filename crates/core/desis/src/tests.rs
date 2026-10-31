@@ -256,7 +256,8 @@ fn brief_at_rate_from(s: &StorageHandle, brief: RateBrief) {
         .emission_day
         .next()
         .expect("date step")
-        .start_timestamp();
+        .start_timestamp()
+        .expect("date timestamp");
     seed_rate(s, start, brief.rate);
     assert_eq!(
         crate::api::dispatch_auction_brief(
@@ -1029,7 +1030,7 @@ fn a_brief_anchors_at_the_midnight_after_its_emission_day() {
         assert_eq!(u64::from(anchor), ANCHOR);
         assert_eq!(
             u64::from(anchor),
-            EMISSION_DAY.next().unwrap().start_timestamp()
+            EMISSION_DAY.next().unwrap().start_timestamp().unwrap()
         );
     });
 }

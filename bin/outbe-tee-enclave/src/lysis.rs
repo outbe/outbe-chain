@@ -172,7 +172,7 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture() -> LysisRequest {
         let day = WorldwideDay::new(20261015);
-        let timestamp = day.start_timestamp() + 3600;
+        let timestamp = day.start_timestamp().unwrap() + 3600;
         let tribute_key = tribute_state_key();
         let mut tributes = Vec::new();
         for (index, nominal, currency) in [

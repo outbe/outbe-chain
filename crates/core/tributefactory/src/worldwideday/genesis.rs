@@ -159,7 +159,8 @@ impl GenesisOperation {
             .worldwide_days
             .get(worldwide_day)?
             .ok_or(WwdStorageCorruptionError::GenesisOfferingWwdMissing)?;
-        if day.forming_end() > offering_end || day.offering_start > offering_end {
+        let forming_end = day.forming_end().map_err(super::errors::date_step_error)?;
+        if forming_end > offering_end || day.offering_start > offering_end {
             return Err(WwdStorageCorruptionError::GenesisWwdPhasesEndAfterOfferingDeadline.into());
         }
         let operation_changed = day.offering_end != offering_end;

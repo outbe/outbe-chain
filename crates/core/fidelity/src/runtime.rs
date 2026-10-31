@@ -155,7 +155,8 @@ impl FidelityContract<'_> {
         if first == 0 || !wwd.is_valid() {
             return Ok(U256::ZERO);
         }
-        let ts = outbe_primitives::time::date_key_to_utc_timestamp(wwd.value());
+        let ts = outbe_primitives::time::date_key_to_utc_timestamp(wwd.value())
+            .map_err(|err| outbe_primitives::error::PrecompileError::Fatal(err.to_string()))?;
         let eval_day = outbe_primitives::time::utc_day_from_timestamp(ts);
         Ok(t_dec(eval_day.saturating_sub(first)))
     }

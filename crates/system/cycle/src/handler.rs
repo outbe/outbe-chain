@@ -81,7 +81,7 @@ pub fn derive_active_utc_day(
         return Ok(start_date);
     }
     let yesterday = previous_date_key(block_utc_day).map_err(calendar_step_error)?;
-    let yesterday_ts = date_key_to_utc_timestamp(yesterday);
+    let yesterday_ts = date_key_to_utc_timestamp(yesterday).map_err(calendar_step_error)?;
     let catchup_span_secs = u64::from(MAX_REWARD_CATCHUP_DAYS.saturating_sub(1))
         * outbe_primitives::time::SECONDS_PER_DAY;
     let catchup_floor = timestamp_to_date_key(yesterday_ts.saturating_sub(catchup_span_secs));
@@ -165,7 +165,7 @@ fn is_valid_utc_day(date_key: u32) -> bool {
     year >= 1970
         && (1..=12).contains(&month)
         && (1..=31).contains(&day)
-        && timestamp_to_date_key(date_key_to_utc_timestamp(date_key)) == date_key
+        && date_key_to_utc_timestamp(date_key).is_ok_and(|ts| timestamp_to_date_key(ts) == date_key)
 }
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
@@ -431,7 +431,7 @@ fn dispatch_terminal_remainder(
     prev_day: u32,
     metadosis_total: U256,
 ) -> Result<()> {
-    let prev_day_ts = date_key_to_utc_timestamp(prev_day);
+    let prev_day_ts = date_key_to_utc_timestamp(prev_day).map_err(calendar_step_error)?;
     wrap(
         "dispatch_terminal_remainder_at",
         dispatch_terminal_remainder_at(ctx, metadosis_total, prev_day_ts),

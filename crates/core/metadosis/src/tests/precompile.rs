@@ -41,7 +41,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
         let wwd: outbe_primitives::time::WorldwideDay = 20260920.into();
-        let expected_forming_start = wwd.start_timestamp();
+        let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let expected_offerings_start =
@@ -90,7 +90,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
 pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     let wwd: outbe_primitives::time::WorldwideDay = 20260920.into();
     let day = 20261014u32;
-    let forming_start = wwd.start_timestamp();
+    let forming_start = wwd.start_timestamp().unwrap();
     let forming_end = forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
     let offerings_start =
         forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();

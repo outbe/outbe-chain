@@ -47,9 +47,10 @@ mod tests {
 
     #[test]
     fn boundary_profile_keeps_forming_open_after_the_genesis_clock_shift() {
-        let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(20260812)
+        let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(20260812).unwrap()
             - outbe_primitives::time::UTC_PLUS_14_OFFSET;
-        let shifted_genesis = outbe_primitives::time::date_key_to_utc_timestamp(20260812) - 2 * 60;
+        let shifted_genesis =
+            outbe_primitives::time::date_key_to_utc_timestamp(20260812).unwrap() - 2 * 60;
 
         assert!(
             wwd_start + ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS > shifted_genesis,
