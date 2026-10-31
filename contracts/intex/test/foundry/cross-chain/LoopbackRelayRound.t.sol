@@ -21,15 +21,15 @@ contract LoopStub {
 
     function auctionStart(
         uint32,
-        IIntexAuction.WorldwideDayState,
+        IIntexAuction.DayState,
         IIntexAuction.AuctionSchedule calldata,
         IIntexAuction.AuctionParams calldata
     ) external {}
 
-    function startClearingStage(uint32) external {}
+    function startAwaitingResult(uint32) external {}
 
     function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
     function revealedBidsCount(uint32) external view returns (uint256) {
@@ -95,7 +95,7 @@ contract LoopbackRelayRoundTest is CrossChainTest {
 
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        p.worldwideDay = DAY;
+        p.emissionDay = DAY;
         p.dayState = 1;
         vm.prank(desis);
         origin.sendAuctionStageStart(p);
@@ -109,7 +109,7 @@ contract LoopbackRelayRoundTest is CrossChainTest {
         stub.setCount(130);
 
         vm.prank(desis);
-        origin.sendAuctionStageClearing(DAY, self, 4_500_000);
+        origin.sendAuctionStageCollectingBids(DAY, self, 4_500_000);
 
         (uint16 nextBatch, uint16 totalBatches, bool done) = target.bidsRelay(DAY);
         assertEq(totalBatches, 3, "130 bids span three chunks");
@@ -119,7 +119,9 @@ contract LoopbackRelayRoundTest is CrossChainTest {
 
         assertEq(origin.parkedMessageCount(), 1, "the next round is parked, not lost");
         IOriginRouter.ParkedMessage memory parked = origin.parkedMessage(0);
-        assertEq(uint8(parked.payload[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, "and it is a clearing round");
+        assertEq(
+            uint8(parked.payload[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, "and it is a clearing round"
+        );
         assertEq(parked.dstChainId, self, "addressed to the chain that asked");
 
         // The drain trigger resends it in its own transaction, where no guard is held.

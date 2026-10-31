@@ -3,22 +3,23 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
-/// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
-/// commit window, `Revealing` for the reveal window, `Clearing` while the
-/// fan-in aggregates bids, then terminal `Cleared` / `Cancelled`.
+/// Auction lifecycle stage, in order: a day is `Briefed`, takes commits in `CommittingBids`,
+/// reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`. It ends
+/// `Completed`, `Cancelled` (it could not start) or `Failed` (it started and found no result).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
     #[default]
     None = 0,
     Briefed = 1,
-    Started = 2,
-    Revealing = 3,
-    Clearing = 4,
-    Cleared = 5,
+    CommittingBids = 2,
+    RevealingBids = 3,
+    CollectingBids = 4,
+    Completed = 5,
     Cancelled = 6,
+    Failed = 7,
 }
 
 impl AuctionStage {
@@ -26,11 +27,12 @@ impl AuctionStage {
         match value {
             0 => Ok(Self::None),
             1 => Ok(Self::Briefed),
-            2 => Ok(Self::Started),
-            3 => Ok(Self::Revealing),
-            4 => Ok(Self::Clearing),
-            5 => Ok(Self::Cleared),
+            2 => Ok(Self::CommittingBids),
+            3 => Ok(Self::RevealingBids),
+            4 => Ok(Self::CollectingBids),
+            5 => Ok(Self::Completed),
             6 => Ok(Self::Cancelled),
+            7 => Ok(Self::Failed),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
@@ -148,21 +150,21 @@ pub struct ClearingResult {
 #[contract(addr = DESIS_ADDRESS)]
 pub struct DesisContract {
     // --- Auction config (per series) ---
-    /// worldwide_day -> promis_load_minor.
+    /// emission_day -> promis_load_minor.
     #[attribute(order = 0)]
-    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
     #[attribute(order = 1)]
-    pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
     #[attribute(order = 2)]
-    pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Auction stage ---
-    /// worldwide_day -> AuctionStage (u8).
+    /// emission_day -> AuctionStage (u8).
     #[attribute(order = 4)]
-    pub auction_stage: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
+    pub auction_stage: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
 
     // --- Bid storage (per chain) ---
-    /// keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32) -> bidder address.
+    /// keccak256(emission_day_be32 ++ chain_be32 ++ index_be32) -> bidder address.
     #[attribute(order = 5)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
     /// Packed bid fields: limbs[0]=rate(u32); limbs[1]=issuance(u16)<<48|
@@ -171,46 +173,46 @@ pub struct DesisContract {
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Pending clearing ---
-    /// worldwide_day -> Desis Limit in whole Intex units, pending at clearing stage.
+    /// emission_day -> Desis Limit in whole Intex units, pending at clearing stage.
     #[attribute(order = 7)]
-    pub pending_desis_limit_units: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub pending_desis_limit_units: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Global clearing state ---
-    /// Most recently cleared worldwide_day (for minBidQty 4% derivation).
+    /// Most recently cleared emission_day (for minBidQty 4% derivation).
     #[attribute(order = 8)]
-    pub last_cleared_worldwide_day: outbe_primitives::storage::dsl::Value<WorldwideDay>,
+    pub last_cleared_emission_day: outbe_primitives::storage::dsl::Value<EmissionDate>,
     /// issuedUnits from the most recent clearing (for minBidQty 4% derivation).
     #[attribute(order = 9)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 
-    /// worldwide_day -> 1 once `arm_clearing` has run. This lets `force_clear` tell a
+    /// emission_day -> 1 once `arm_clearing` has run. This lets `force_clear` tell a
     /// genuine zero Desis Limit from a clearing that was never initiated.
     #[attribute(order = 10)]
-    pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
+    pub clearing_initiated: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
 
     // --- Extended auction config ---
-    /// worldwide_day -> call-trigger window (seconds).
+    /// emission_day -> call-trigger window (seconds).
     #[attribute(order = 13)]
-    pub config_call_window_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> call-trigger threshold (seconds).
+    pub config_call_window_seconds: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    /// emission_day -> call-trigger threshold (seconds).
     #[attribute(order = 14)]
-    pub config_call_threshold_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> call cooldown (seconds).
+    pub config_call_threshold_seconds: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    /// emission_day -> call cooldown (seconds).
     #[attribute(order = 15)]
-    pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> transit margin past the settlement deadline (seconds).
+    pub config_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    /// emission_day -> transit margin past the settlement deadline (seconds).
     #[attribute(order = 42)]
-    pub config_transit_margin_seconds: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub config_transit_margin_seconds: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
-    /// worldwide_day -> commit-entry bond (protocol units).
+    /// emission_day -> commit-entry bond (protocol units).
     #[attribute(order = 16)]
-    pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+    pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
 
     /// series/day -> scheduled auction timestamp, recorded at start (bounded until 2106).
     #[attribute(order = 17)]
-    pub auction_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub auction_at: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
-    // --- Per-chain bid intake (keyed keccak256(worldwide_day_be32 ++ chain_be32)) ---
+    // --- Per-chain bid intake (keyed keccak256(emission_day_be32 ++ chain_be32)) ---
     /// totalBatches the chain's first batch declared; every later batch must carry the same.
     #[attribute(order = 19)]
     pub chain_total_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -229,56 +231,53 @@ pub struct DesisContract {
     /// totalBids claimed by the chain's BIDS_DONE marker.
     #[attribute(order = 24)]
     pub chain_done_bids: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// worldwide_day -> bids accepted across all chains (getBidsCount view).
+    /// emission_day -> bids accepted across all chains (getBidsCount view).
     #[attribute(order = 25)]
-    pub day_bid_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub day_bid_count: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Clearing fan-in gate ---
-    /// worldwide_day -> deadline after which clearing proceeds without the missing chains.
+    /// emission_day -> deadline after which clearing proceeds without the missing chains.
     #[attribute(order = 26)]
-    pub clearing_deadline: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+    pub clearing_deadline: outbe_primitives::storage::dsl::Map<EmissionDate, u64>,
     /// Days awaiting the clearing gate (dense active set for the begin-block tick).
     #[attribute(order = 27)]
     pub gate_active_count: outbe_primitives::storage::dsl::Value<u32>,
-    /// dense index -> worldwide_day. Raw `u32` on the value side: the contract
+    /// dense index -> emission_day. Raw `u32` on the value side: the contract
     /// macro treats a non-scalar map value as a `StorageRecord` and would size the
     /// slot span from it, so the day is converted at the read/write sites.
     #[attribute(order = 28)]
     pub gate_active_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> (active index + 1); 0 = not active.
+    /// emission_day -> (active index + 1); 0 = not active.
     #[attribute(order = 29)]
-    pub gate_active_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub gate_active_slot: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Auction brief ---
-    /// worldwide_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
+    /// emission_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
-    pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
-    /// worldwide_day -> 1 when the day was briefed with a limit to sell.
+    pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
+    /// emission_day -> 1 when the day was briefed with a limit to sell.
     #[attribute(order = 31)]
-    pub brief_has_limit: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
-    /// worldwide_day -> the emission day the auction sells, as `YYYYMMDD`.
-    #[attribute(order = 43)]
-    pub brief_emission_day: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub brief_has_limit: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
     /// Days with a scheduled auction (dense active set for the begin-block tick).
     #[attribute(order = 32)]
     pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,
-    /// dense index -> worldwide_day. Raw `u32` on the value side: the contract
+    /// dense index -> emission_day. Raw `u32` on the value side: the contract
     /// macro treats a non-scalar map value as a `StorageRecord` and would size the
     /// slot span from it, so the day is converted at the read/write sites.
     #[attribute(order = 33)]
     pub sched_active_at: outbe_primitives::storage::dsl::Map<u32, u32>,
-    /// worldwide_day -> (active index + 1); 0 = not active.
+    /// emission_day -> (active index + 1); 0 = not active.
     #[attribute(order = 34)]
-    pub sched_active_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub sched_active_slot: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Entry and call price per reference currency, fixed at auction start ---
-    /// worldwide_day -> number of priced reference currencies.
+    /// emission_day -> number of priced reference currencies.
     #[attribute(order = 35)]
-    pub reference_price_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> reference currency ISO code.
+    pub reference_price_count: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    /// keccak256(emission_day_be32 ++ index_be32) -> reference currency ISO code.
     #[attribute(order = 36)]
     pub reference_price_iso: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
+    /// keccak256(emission_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
     /// The call price derived from it at auction start is stored in `reference_call_price_minor`.
     #[attribute(order = 37)]
     pub reference_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
@@ -296,33 +295,33 @@ pub struct DesisContract {
     #[attribute(order = 40)]
     pub promis_load_reference_exponent: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> call price in ISO stable-units (1e6),
+    /// keccak256(emission_day_be32 ++ index_be32) -> call price in ISO stable-units (1e6),
     /// fixed at auction start. Same key as `reference_entry_price_minor`.
     #[attribute(order = 41)]
     pub reference_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl DesisContract<'_> {
-    /// Composite key for per-(day, chain) fields: `keccak256(worldwide_day_be32 ++ chain_be32)`.
-    pub fn chain_key(worldwide_day: WorldwideDay, chain_id: u32) -> B256 {
+    /// Composite key for per-(day, chain) fields: `keccak256(emission_day_be32 ++ chain_be32)`.
+    pub fn chain_key(emission_day: EmissionDate, chain_id: u32) -> B256 {
         let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
+        buf[0..4].copy_from_slice(&emission_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
     }
 
     /// Composite key for per-(day, row) price fields.
-    pub fn reference_price_key(worldwide_day: WorldwideDay, index: u32) -> B256 {
+    pub fn reference_price_key(emission_day: EmissionDate, index: u32) -> B256 {
         let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
+        buf[0..4].copy_from_slice(&emission_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 
-    /// Composite key for per-bid fields: `keccak256(worldwide_day_be32 ++ chain_be32 ++ index_be32)`.
-    pub fn bid_key(worldwide_day: WorldwideDay, chain_id: u32, index: u32) -> B256 {
+    /// Composite key for per-bid fields: `keccak256(emission_day_be32 ++ chain_be32 ++ index_be32)`.
+    pub fn bid_key(emission_day: EmissionDate, chain_id: u32, index: u32) -> B256 {
         let mut buf = [0u8; 12];
-        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
+        buf[0..4].copy_from_slice(&emission_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         buf[8..12].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)

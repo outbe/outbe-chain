@@ -23,7 +23,7 @@ use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::types::Storable;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
@@ -47,10 +47,10 @@ fn seed(handle: &StorageHandle<'_>, count: u32) {
 
 /// A notice goes out only while its series exists. Its auction ran on the day the id names.
 fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
-    record_on(handle, series_id, WorldwideDay::new(series_id.day()));
+    record_on(handle, series_id, EmissionDate::new(series_id.day()));
 }
 
-fn record_on(handle: &StorageHandle<'_>, series_id: SeriesId, worldwide_day: WorldwideDay) {
+fn record_on(handle: &StorageHandle<'_>, series_id: SeriesId, emission_day: EmissionDate) {
     if outbe_intex::api::series_exists(handle, series_id).unwrap() {
         return;
     }
@@ -58,7 +58,7 @@ fn record_on(handle: &StorageHandle<'_>, series_id: SeriesId, worldwide_day: Wor
         handle,
         outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day,
+            emission_day,
             issued_units: 1,
             promis_load_minor: 1,
             entry_price_minor: U256::from(1u64),
@@ -139,7 +139,7 @@ fn a_backlog_drains_one_block_worth_at_a_time() {
 fn a_paused_entry_waits_out_its_pause_behind_a_due_one() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let day = WorldwideDay::new(20_260_101);
+        let day = EmissionDate::new(20_260_101);
         let due = SeriesId::pack(day.value(), *b"USD", b'U').unwrap();
         let paused = SeriesId::pack(day.value(), *b"EUR", b'U').unwrap();
         record(&handle, due);
@@ -435,7 +435,7 @@ fn the_series_record_day_cuts_the_runs() {
     StorageHandle::enter(&mut storage, |handle| {
         let ids: Vec<SeriesId> = (0..4u8).map(same_day_series).collect();
         for (offset, id) in (0u32..).zip(&ids) {
-            record_on(&handle, *id, WorldwideDay::new(20_260_201 + offset));
+            record_on(&handle, *id, EmissionDate::new(20_260_201 + offset));
         }
         queue_raw(&handle, &ids);
         drain(&handle);
@@ -450,7 +450,7 @@ fn the_series_record_day_cuts_the_runs() {
     StorageHandle::enter(&mut storage, |handle| {
         let ids: Vec<SeriesId> = (0..4).map(series).collect();
         for id in &ids {
-            record_on(&handle, *id, WorldwideDay::new(20_260_201));
+            record_on(&handle, *id, EmissionDate::new(20_260_201));
         }
         queue_raw(&handle, &ids);
         drain(&handle);

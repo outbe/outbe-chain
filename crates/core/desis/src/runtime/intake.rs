@@ -1,13 +1,15 @@
 use super::*;
 
-/// - `Open` while `Revealing`/`Clearing`.
-/// - `Closed` past clearing, and `UnknownDay` for an unbriefed day. Both are acknowledged, since
-///   nothing can make them applicable.
+/// - `Open` while `RevealingBids`/`CollectingBids`.
+/// - `Closed` once the day ended, and `UnknownDay` for an unbriefed day. Both are acknowledged,
+///   since nothing can make them applicable.
 /// - `Err` before reveal, so the transport redelivers.
 fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
-        AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
-        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(Intake::Closed),
+        AuctionStage::RevealingBids | AuctionStage::CollectingBids => Ok(Intake::Open),
+        AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed => {
+            Ok(Intake::Closed)
+        }
         AuctionStage::None => Ok(Intake::UnknownDay),
         _ => Err(DesisError::InvalidStageTransition.into()),
     }
@@ -33,24 +35,24 @@ fn ignored_reason(stage: AuctionStage) -> Result<Option<u8>> {
 #[derive(Clone, Copy)]
 pub struct Inbound {
     pub caller: Address,
-    pub worldwide_day: WorldwideDay,
+    pub emission_day: EmissionDate,
     pub src_chain_id: u32,
 }
 
 fn emit_inbound_ignored(
     contract: &mut DesisContract<'_>,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     src_chain_id: u32,
     reason: u8,
 ) -> Result<()> {
     contract.emit(IDesis::InboundIgnored {
-        worldwideDay: worldwide_day.into(),
+        emissionDay: emission_day.into(),
         srcChainId: src_chain_id,
         reason,
     })
 }
 
-/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`.
+/// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `RevealingBids`.
 /// Batches may arrive in any order over the unordered bridge, so a per-chain bitmap of
 /// `batch_index` tracks completeness. The chain finalizes once its BIDS_DONE marker and every batch
 /// have arrived (see `try_finalize_chain`). The first batch fixes the chain's `total_batches` and
@@ -66,19 +68,19 @@ pub fn process_bids_batch(
 ) -> Result<()> {
     let Inbound {
         caller,
-        worldwide_day,
+        emission_day,
         src_chain_id,
     } = inbound;
     require_origin_router(caller)?;
-    require_nonzero_worldwide_day(worldwide_day)?;
+    require_nonzero_emission_day(emission_day)?;
     check_batch_shape(batch_index, total_batches, &bids)?;
     let mut contract = storage.contract::<DesisContract>();
 
-    if let Some(reason) = ignored_reason(contract.read_stage(worldwide_day)?)? {
-        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, reason);
+    if let Some(reason) = ignored_reason(contract.read_stage(emission_day)?)? {
+        return emit_inbound_ignored(&mut contract, emission_day, src_chain_id, reason);
     }
 
-    let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
+    let chain_key = DesisContract::chain_key(emission_day, src_chain_id);
     // All of a chain's batches must agree on total_batches, else a bad peer could set an
     // out-of-range bit and false-complete the set with a real batch missing.
     let stored_total = contract.chain_total_batches.read(&chain_key)?;
@@ -98,11 +100,11 @@ pub fn process_bids_batch(
     }
 
     for bid in &bids {
-        contract.append_bid(worldwide_day, src_chain_id, bid)?;
+        contract.append_bid(emission_day, src_chain_id, bid)?;
     }
     contract.chain_arrived_mask.write(&chain_key, mask | bit)?;
 
-    try_finalize_chain(&mut contract, worldwide_day, src_chain_id)
+    try_finalize_chain(&mut contract, emission_day, src_chain_id)
 }
 
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
@@ -118,21 +120,21 @@ pub fn process_bids_done(
 ) -> Result<()> {
     let Inbound {
         caller,
-        worldwide_day,
+        emission_day,
         src_chain_id,
     } = inbound;
     require_origin_router(caller)?;
-    require_nonzero_worldwide_day(worldwide_day)?;
+    require_nonzero_emission_day(emission_day)?;
     if total_batches == 0 || total_batches > MAX_BID_BATCHES {
         return Err(DesisError::InvalidTotalBatches.into());
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    if let Some(reason) = ignored_reason(contract.read_stage(worldwide_day)?)? {
-        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, reason);
+    if let Some(reason) = ignored_reason(contract.read_stage(emission_day)?)? {
+        return emit_inbound_ignored(&mut contract, emission_day, src_chain_id, reason);
     }
 
-    let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
+    let chain_key = DesisContract::chain_key(emission_day, src_chain_id);
     let recorded_batches = contract.chain_done_batches.read(&chain_key)?;
     if recorded_batches != 0 {
         let same = recorded_batches == u32::from(total_batches)
@@ -140,7 +142,7 @@ pub fn process_bids_done(
         if same {
             return Ok(());
         }
-        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_CONFLICT);
+        return emit_inbound_ignored(&mut contract, emission_day, src_chain_id, IGNORED_CONFLICT);
     }
 
     contract
@@ -148,7 +150,7 @@ pub fn process_bids_done(
         .write(&chain_key, u32::from(total_batches))?;
     contract.chain_done_bids.write(&chain_key, total_bids)?;
 
-    try_finalize_chain(&mut contract, worldwide_day, src_chain_id)
+    try_finalize_chain(&mut contract, emission_day, src_chain_id)
 }
 
 fn check_batch_shape(batch_index: u16, total_batches: u16, bids: &[BidData]) -> Result<()> {
@@ -182,10 +184,10 @@ fn check_batch_shape(batch_index: u16, total_batches: u16, bids: &[BidData]) -> 
 /// skip excludes it.
 fn try_finalize_chain(
     contract: &mut DesisContract<'_>,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     chain_id: u32,
 ) -> Result<()> {
-    let key = DesisContract::chain_key(worldwide_day, chain_id);
+    let key = DesisContract::chain_key(emission_day, chain_id);
     if contract.chain_done.read(&key)? != 0 {
         return Ok(());
     }
@@ -204,7 +206,7 @@ fn try_finalize_chain(
     }
     contract.chain_done.write(&key, 1u8)?;
     contract.emit(IDesis::ChainBidsDone {
-        worldwideDay: worldwide_day.into(),
+        emissionDay: emission_day.into(),
         srcChainId: chain_id,
         bidsCount: bid_count,
     })
@@ -217,9 +219,9 @@ fn require_origin_router(caller: Address) -> Result<()> {
     Ok(())
 }
 
-fn require_nonzero_worldwide_day(worldwide_day: WorldwideDay) -> Result<()> {
-    if worldwide_day.value() == 0 {
-        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
+fn require_nonzero_emission_day(emission_day: EmissionDate) -> Result<()> {
+    if emission_day.value() == 0 {
+        return Err(DesisError::InvalidEmissionDay(emission_day).into());
     }
     Ok(())
 }

@@ -114,10 +114,10 @@ contract TargetRouterProceedsTest is CrossChainTest {
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }
 
-    function _deliverRefund(uint32 worldwideDay) internal {
+    function _deliverRefund(uint32 emissionDay) internal {
         address[] memory winners = new address[](1);
         winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, 0, 1, 600_000, 1e6, winners, 0, 0);
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(emissionDay, 0, 1, 600_000, 1e6, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 

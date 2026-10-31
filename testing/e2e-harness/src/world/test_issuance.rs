@@ -56,7 +56,7 @@ sol! {
         function issueForTest(
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint64 issuedAt,
             uint32 issuedUnits,
             uint128 promisLoadMinor,
@@ -81,7 +81,7 @@ sol! {
     }
 
     struct AuctionStageStartParams {
-        uint32 worldwideDay;
+        uint32 emissionDay;
         uint32 commitEnd;
         uint32 revealEnd;
         uint32 issuanceEnd;
@@ -138,9 +138,9 @@ pub struct SeriesSpec {
 }
 
 /// The 14 ASCII bytes of `20260824-USD-U`.
-fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes<14> {
+fn series_id(emission_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes<14> {
     let mut bytes = [b'-'; 14];
-    let mut day = worldwide_day;
+    let mut day = emission_day;
     for slot in bytes[..8].iter_mut().rev() {
         *slot = b'0' + (day % 10) as u8;
         day /= 10;
@@ -153,8 +153,7 @@ fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes
 pub struct IssueSeries<'a> {
     pub url: &'a str,
     pub sender_key: &'a str,
-    pub worldwide_day: u32,
-    /// The date the series ids lead with.
+    /// The day the series ids lead with and the router addresses the legs by.
     pub emission_day: u32,
     pub issued_at: u64,
     pub reference_currency: u16,
@@ -166,14 +165,13 @@ pub struct IssueSeries<'a> {
     pub specs: &'a [SeriesSpec],
 }
 
-/// Issue every spec into the same worldwide day and reference currency, so the
+/// Issue every spec into the same emission day and reference currency, so the
 /// sweeps see one group rather than a group per series. Each series is created on
 /// every chain named in `chains`.
 pub fn issue_series(request: IssueSeries<'_>) -> Result<Vec<FixedBytes<14>>> {
     let IssueSeries {
         url,
         sender_key,
-        worldwide_day,
         emission_day,
         issued_at,
         reference_currency,
@@ -198,7 +196,7 @@ pub fn issue_series(request: IssueSeries<'_>) -> Result<Vec<FixedBytes<14>>> {
         &IIntexFactoryTestArming::issueForTestCall {
             seriesIds: ids.clone(),
             issuanceCurrencies: specs.iter().map(|spec| spec.issuance_currency).collect(),
-            worldwideDay: worldwide_day,
+            emissionDay: emission_day,
             issuedAt: issued_at,
             issuedUnits: issued_units,
             promisLoadMinor: promis_load_minor,
@@ -358,7 +356,7 @@ pub struct OpenDay<'a> {
     pub url: &'a str,
     pub sender_key: &'a str,
     pub origin_router: Address,
-    pub worldwide_day: u32,
+    pub emission_day: u32,
     pub now: u32,
     pub reference_currency: u16,
     pub entry_price_minor: u64,
@@ -372,7 +370,7 @@ pub fn open_day(request: OpenDay<'_>) -> Result<()> {
         url,
         sender_key,
         origin_router,
-        worldwide_day,
+        emission_day,
         now,
         reference_currency,
         entry_price_minor,
@@ -381,7 +379,7 @@ pub fn open_day(request: OpenDay<'_>) -> Result<()> {
     // Stage ends sit in the past: the scenario issues directly, so no bid ever races
     // them, and a day whose windows are open would only invite one.
     let params = AuctionStageStartParams {
-        worldwideDay: worldwide_day,
+        emissionDay: emission_day,
         commitEnd: now,
         revealEnd: now,
         issuanceEnd: now,

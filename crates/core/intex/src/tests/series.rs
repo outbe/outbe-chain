@@ -7,7 +7,7 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 fn create_then_read_round_trip() {
     with_registry(|s| {
         let mut p = sample_params(7);
-        p.worldwide_day = 20260101.into();
+        p.emission_day = 20260101.into();
         api::create_series(&s, p).unwrap();
 
         let r = api::get_series(&s, sid(7)).unwrap();
@@ -28,7 +28,7 @@ fn create_then_read_round_trip() {
         assert_eq!(api::state(&s, &r).unwrap(), IntexState::Issued);
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(api::call_stamp(&s, &r).unwrap().called_at, 0);
-        assert_eq!(r.worldwide_day, 20260101.into());
+        assert_eq!(r.emission_day, 20260101.into());
         // The ledger stores the call period verbatim. The caller must apply
         // any default.
         assert_eq!(r.call_notice_period_seconds, CALL_NOTICE_PERIOD);

@@ -22,7 +22,7 @@ const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
 
 #[when("two bidders commit their bids on every chain")]
 fn bidders_commit(world: &mut World) {
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     // The same two bidders trade on every chain the day opened on: one keypair
     // funded on each, so clearing has to collect their bids from both.
     let bidders = bidders::derive(&BIDS).expect("derive the bidders");
@@ -52,7 +52,7 @@ fn bidders_commit(world: &mut World) {
             &side.url,
             side.auction,
             side.chain_id,
-            worldwide_day,
+            emission_day,
             &bidders,
         )
         .expect("commit the bids");
@@ -64,14 +64,14 @@ fn bidders_commit(world: &mut World) {
 fn bidders_reveal(world: &mut World) {
     advance_past_window_to_stage(world, 1);
 
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     let bidders = world.state.auction_bidders.clone();
     for side in venue_sides(world) {
         bidders::reveal(
             &side.url,
             side.auction,
             side.chain_id,
-            worldwide_day,
+            emission_day,
             &bidders,
         )
         .expect("reveal the bids");
@@ -92,7 +92,7 @@ fn auction_clears(world: &mut World) {
     let venue = side.auction;
     let router = deployed.origin_router;
     let venue_router = side.target_router;
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     let deadline = Instant::now() + AUCTION_START_TIMEOUT;
     loop {
         let url = world.rpc.url(world.validators.primary_port());
@@ -103,34 +103,35 @@ fn auction_clears(world: &mut World) {
             &url,
             desis,
             &IAuctionStage::getAuctionStageCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
             },
         );
         assert_no_parked_deliveries(world);
         if stage == Some(5) {
             return;
         }
-        flush_parked_bid_relays(world, worldwide_day);
-        assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
+        flush_parked_bid_relays(world, emission_day);
+        assert_ne!(stage, Some(6), "Desis cancelled day {emission_day}");
+        assert_ne!(stage, Some(7), "Desis failed day {emission_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}; {}; {}; {}; {}; {}",
-            venue_probes::desis_stage(&url, worldwide_day),
-            venue_probes::relayed_bids(&url, worldwide_day, side.chain_id as u32),
+            "day {emission_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}; {}; {}; {}; {}; {}",
+            venue_probes::desis_stage(&url, emission_day),
+            venue_probes::relayed_bids(&url, emission_day, side.chain_id as u32),
             eth::read_call(
                 &url,
                 venue,
                 &IAuctionStage::getAuctionStageCall {
-                    worldwideDay: worldwide_day
+                    emissionDay: emission_day
                 },
             ),
-            venue_probes::venue_bid_counts(&venue_url, venue, worldwide_day),
-            venue_probes::parked_work(&url, &venue_url, router, venue_router, worldwide_day),
-            venue_probes::stages_received(&venue_url, venue_router, worldwide_day),
+            venue_probes::venue_bid_counts(&venue_url, venue, emission_day),
+            venue_probes::parked_work(&url, &venue_url, router, venue_router, emission_day),
+            venue_probes::stages_received(&venue_url, venue_router, emission_day),
             venue_probes::ignored_inbound(&url, router, "origin"),
             venue_probes::ignored_inbound(&venue_url, venue_router, "venue"),
-            venue_probes::ignored_by_desis(&url, worldwide_day),
-            venue_probes::bid_relay_traffic(&url, &venue_url, router, venue_router, worldwide_day),
+            venue_probes::ignored_by_desis(&url, emission_day),
+            venue_probes::bid_relay_traffic(&url, &venue_url, router, venue_router, emission_day),
             venue_probes::parked_deliveries(world)
         );
         sleep(Duration::from_secs(2));
@@ -141,17 +142,17 @@ fn auction_clears(world: &mut World) {
 fn cleared_day_issues_intex(world: &mut World) {
     let bidders = world.state.auction_bidders.clone();
     let home = world.rpc.url(world.validators.primary_port());
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     assert_ne!(
-        venue_probes::cleared_empty(&home, worldwide_day),
+        venue_probes::cleared_empty(&home, emission_day),
         Some(true),
-        "day {worldwide_day} cleared empty: the day's Desis Limit bought no whole Intex, so there is \
+        "day {emission_day} cleared empty: the day's Desis Limit bought no whole Intex, so there is \
          nothing to issue and this scenario cannot cover minting"
     );
     // The day issues to every chain it opened on, so every chain has to show the
     // series and the units its own bidders won.
     for side in venue_sides(world) {
-        issuances_landed_on(world, &side, &bidders, worldwide_day);
+        issuances_landed_on(world, &side, &bidders, emission_day);
     }
 }
 
@@ -159,7 +160,7 @@ fn issuances_landed_on(
     world: &World,
     side: &VenueSide,
     bidders: &[bidders::Bidder],
-    worldwide_day: u32,
+    emission_day: u32,
 ) {
     let url = side.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
@@ -169,7 +170,7 @@ fn issuances_landed_on(
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} cleared but {url} never received issuance instructions"
+            "day {emission_day} cleared but {url} never received issuance instructions"
         );
         sleep(Duration::from_secs(2));
     };
@@ -186,7 +187,7 @@ fn issuances_landed_on(
     // A win exists once the refund instructions settled it, and each winner then
     // issues its own units.
     refunds_landed_on(world, side);
-    issue_wins_on(side, bidders, worldwide_day);
+    issue_wins_on(side, bidders, emission_day);
     let token_id = eth::read_call(
         &url,
         side.intex_nft,
@@ -216,13 +217,13 @@ fn issuances_landed_on(
 /// Lock status of a bid the escrow charged.
 const WON: u8 = 2;
 
-fn issue_wins_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+fn issue_wins_on(side: &VenueSide, bidders: &[bidders::Bidder], emission_day: u32) {
     for bidder in bidders {
         let lock = eth::read_call(
             &side.url,
             side.escrow,
             &IWinClaim::getBidLockCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 bidder: bidder.address,
             },
         )
@@ -235,7 +236,7 @@ fn issue_wins_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u
             side.auction,
             &bidder.key,
             &IWinClaim::redeemWinNoteCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 bidder: bidder.address,
             },
             None,
@@ -261,13 +262,13 @@ fn escrow_refunds_the_rest(world: &mut World) {
 }
 
 fn claim_refunds_on(world: &World, side: &VenueSide) {
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     for bidder in &world.state.auction_bidders {
         let claimable = eth::read_call(
             &side.url,
             side.escrow,
             &IRefundClaim::getClaimableRefundCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 bidder: bidder.address,
             },
         )
@@ -280,7 +281,7 @@ fn claim_refunds_on(world: &World, side: &VenueSide) {
             side.auction,
             &bidder.key,
             &IRefundClaim::claimRefundCall {
-                worldwideDay: worldwide_day,
+                emissionDay: emission_day,
                 bidder: bidder.address,
             },
             None,
@@ -291,11 +292,11 @@ fn claim_refunds_on(world: &World, side: &VenueSide) {
 
 fn refunds_landed_on(world: &World, side: &VenueSide) {
     let url = side.url.clone();
-    let worldwide_day = settled_day(world);
+    let emission_day = settled_day(world);
     let topic0 = alloy_primitives::keccak256(
         b"RefundInstructionsReceived(uint32,uint32,uint256)".as_slice(),
     );
-    let day_topic = format!("0x{worldwide_day:064x}");
+    let day_topic = format!("0x{emission_day:064x}");
 
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     loop {
@@ -318,9 +319,9 @@ fn refunds_landed_on(world: &World, side: &VenueSide) {
         assert_no_parked_deliveries(world);
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} cleared but the escrow never received refund instructions \
+            "day {emission_day} cleared but the escrow never received refund instructions \
              (sent by Desis: {}; {} origin sends are parked; {})",
-            venue_probes::refunds_were_sent(world, worldwide_day),
+            venue_probes::refunds_were_sent(world, emission_day),
             venue_probes::parked_origin_sends(world),
             venue_probes::parked_deliveries(world)
         );
@@ -338,6 +339,6 @@ fn refunds_landed_on(world: &World, side: &VenueSide) {
     .expect("read what the escrow still holds");
     assert!(
         held.is_zero(),
-        "escrow still holds {held} of the payment token after settling day {worldwide_day}"
+        "escrow still holds {held} of the payment token after settling day {emission_day}"
     );
 }

@@ -20,7 +20,7 @@ contract EscrowAdapterProceedsTest is Test {
     address bidder1 = address(5);
     address outsider = address(7);
 
-    uint32 worldwideDay1 = 1;
+    uint32 emissionDay1 = 1;
     bytes32 constant GUID = bytes32(uint256(0xDEADBEEF));
 
     function setUp() public {
@@ -42,14 +42,14 @@ contract EscrowAdapterProceedsTest is Test {
         // of it.
         paymentToken.mint(bidder1, 1e18);
         vm.prank(auction);
-        escrow.lockFunds(worldwideDay1, bidder1, 1e6, 1_000_000, 1);
+        escrow.lockFunds(emissionDay1, bidder1, 1e6, 1_000_000, 1);
 
         address[] memory winners = new address[](1);
         winners[0] = bidder1;
 
         vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, GUID, winners, 0, 0, 1_000_000, 1_000_000, true);
+        escrow.finalizeAuction(emissionDay1, GUID, winners, 0, 0, 1_000_000, 1_000_000, true);
     }
 
     function test_SetProceedsRecipient_OnlyAdmin() public {

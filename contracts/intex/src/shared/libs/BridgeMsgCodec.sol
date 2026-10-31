@@ -7,7 +7,7 @@ import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 /// @title BridgeMsgCodec
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
-/// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`. Series
+/// @dev Auction messages (stages, bids, result, refunds) are keyed by `emissionDay`. Series
 ///      messages (issuance, mark) are keyed by `seriesId` and carry their day alongside it.
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
 ///      evolve independently of `msgType`. Decoders reject unknown versions.
@@ -21,7 +21,7 @@ library BridgeMsgCodec {
 
     // Message types: Outbe -> target chain
     uint8 internal constant MSG_AUCTION_STAGE_START = 3;
-    uint8 internal constant MSG_AUCTION_STAGE_CLEARING = 4;
+    uint8 internal constant MSG_AUCTION_STAGE_COLLECTING_BIDS = 4;
     uint8 internal constant MSG_AUCTION_RESULT = 5;
     uint8 internal constant MSG_ISSUANCE_INSTRUCTIONS = 6;
     uint8 internal constant MSG_REFUND_INSTRUCTIONS = 7;
@@ -65,13 +65,13 @@ library BridgeMsgCodec {
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 18;
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). One series is 5 words.
+    // MARK_CALLED: header + abi.encode(emissionDay, calledAt, seriesIds). One series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
-    // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
+    // BIDS_DONE: [ver(1)][type(1)][emissionDay(4)][srcChainId(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 16;
-    // BIDS_REMAINING: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
+    // BIDS_REMAINING: [ver(1)][type(1)][emissionDay(4)][srcChainId(4)][nextBatch(2)][totalBatches(2)]
     uint16 internal constant MIN_LEN_BIDS_REMAINING = 14;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
@@ -176,24 +176,24 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes a BIDS_DONE marker: source chain `_srcChainId` has sent all `_totalBatches` batches
-    ///         of its relay for `_worldwideDay`.
+    ///         of its relay for `_emissionDay`.
     /// @dev Fixed-length encodePacked. `_totalBids` is an integrity check: the receiver requires it to equal the
     ///      sum of the arrived batch sizes before it treats the chain as complete. Redundant with the per-batch
     ///      `totalBatches` field, kept as the explicit completeness marker + a cross-check.
     /// @return The wire-encoded BIDS_DONE message.
-    function encodeBidsDone(uint32 _worldwideDay, uint32 _srcChainId, uint16 _totalBatches, uint32 _totalBids)
+    function encodeBidsDone(uint32 _emissionDay, uint32 _srcChainId, uint16 _totalBatches, uint32 _totalBids)
         internal
         pure
         returns (bytes memory)
     {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_DONE, _worldwideDay, _srcChainId, _totalBatches, _totalBids);
+        return abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_DONE, _emissionDay, _srcChainId, _totalBatches, _totalBids);
     }
 
     /// @notice Encodes BIDS_BATCH message.
     /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches. The
     ///      receiver collects all `_totalBatches` (in any order) before finalizing. Reverts
     ///      `PayloadArrayTooLong` if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
+    /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
     /// @param _batchIndex Index of this batch within the relay (0-based).
     /// @param _totalBatches Total number of batches in the relay (the receiver waits for all of them).
@@ -201,7 +201,7 @@ library BridgeMsgCodec {
     /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint32 _srcChainId,
         uint16 _batchIndex,
         uint16 _totalBatches,
@@ -217,7 +217,7 @@ library BridgeMsgCodec {
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
-            abi.encode(_worldwideDay, _srcChainId, _batchIndex, _totalBatches, _bidderAddresses, _packedBids)
+            abi.encode(_emissionDay, _srcChainId, _batchIndex, _totalBatches, _bidderAddresses, _packedBids)
         );
     }
 
@@ -250,11 +250,11 @@ library BridgeMsgCodec {
 
     /// @notice Encodes AUCTION_STAGE_START message.
     /// @dev encodePacked layout, 70 bytes of head plus 18 per priced currency:
-    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
+    ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
     ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     ///      then [isoCode(2)][entryPrice(8)][callPrice(8)] per currency.
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
+    /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
@@ -267,10 +267,10 @@ library BridgeMsgCodec {
     /// @param _minIntexBidQuantity The minimum acceptable intex bid quantity.
     /// @param _commitBondMinor The commit-entry bond (payment-token minor units). 0 disables the
     ///        bond.
-    /// @param _dayState The final worldwide-day state (1 = Live, 2 = Cancelled).
+    /// @param _dayState The final emission-day state (1 = Live, 2 = Cancelled).
     /// @return The wire-encoded AUCTION_STAGE_START message.
     function encodeAuctionStageStart(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
@@ -289,7 +289,7 @@ library BridgeMsgCodec {
             revert PayloadArrayTooLong(_prices.length, type(uint8).max);
         }
         // A live day must price something to bid against. A cancelled one is a closed record.
-        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Cancelled)) {
+        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.DayState.Cancelled)) {
             revert MissingReferencePrices();
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
@@ -302,7 +302,7 @@ library BridgeMsgCodec {
             abi.encodePacked(
                 BODY_VERSION_V1,
                 MSG_AUCTION_STAGE_START,
-                _worldwideDay,
+                _emissionDay,
                 _commitEnd,
                 _revealEnd,
                 _issuanceEnd,
@@ -319,30 +319,30 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Encodes AUCTION_STAGE_CLEARING message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
-    /// @return The wire-encoded AUCTION_STAGE_CLEARING message.
-    function encodeAuctionStageClearing(uint32 _worldwideDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_CLEARING, _worldwideDay);
+    /// @notice Encodes AUCTION_STAGE_COLLECTING_BIDS message.
+    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)]
+    /// @param _emissionDay The emission day (yyyymmdd).
+    /// @return The wire-encoded AUCTION_STAGE_COLLECTING_BIDS message.
+    function encodeAuctionStageCollectingBids(uint32 _emissionDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_AUCTION_STAGE_COLLECTING_BIDS, _emissionDay);
     }
 
     /// @notice Encodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
+    ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _issuedUnits The number of intex issued by the cleared auction.
     /// @param _auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @param _wonBidsCount The number of winning bids.
     /// @return The wire-encoded AUCTION_RESULT message.
     function encodeAuctionResult(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint32 _issuedUnits,
         uint64 _auctionClearingRate,
         uint32 _wonBidsCount
     ) internal pure returns (bytes memory) {
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_AUCTION_RESULT, _worldwideDay, _issuedUnits, _auctionClearingRate, _wonBidsCount
+            BODY_VERSION_V1, MSG_AUCTION_RESULT, _emissionDay, _issuedUnits, _auctionClearingRate, _wonBidsCount
         );
     }
 
@@ -351,9 +351,9 @@ library BridgeMsgCodec {
     /// @dev `issuedUnits` mirrors the auction-cleared count across all chains.
     struct IssuanceInstructionsPayload {
         bytes14 seriesId;
-        /// @notice Worldwide day the series was derived from. It is carried so the destination
+        /// @notice Emission day the series was derived from. It is carried so the destination
         ///         records real provenance.
-        uint32 worldwideDay;
+        uint32 emissionDay;
         /// @notice When the origin created the series, so every chain dates it from the same moment.
         uint64 issuedAt;
         uint32 issuedUnits;
@@ -372,30 +372,30 @@ library BridgeMsgCodec {
     /// @notice Decode AUCTION_STAGE_START straight into the auction schedule + params structs.
     ///         Kept `external` so the struct construction lives in the linked library, off the
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
-    ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
+    ///         [bodyVersion(1)][msgType(1)][emissionDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
     ///         [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
     ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
-    /// @return dayState The final worldwide-day state (Live or Cancelled).
+    /// @return emissionDay The emission day (yyyymmdd).
+    /// @return dayState The final emission-day state (Live or Cancelled).
     /// @return schedule The decoded commit/reveal/issuance schedule.
     /// @return params The decoded auction params.
     function decodeAuctionParams(bytes calldata _msg)
         external
         pure
         returns (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
+            uint32 emissionDay,
+            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         )
     {
         _assertMinLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
+        emissionDay = uint32(bytes4(_msg[2:6]));
         uint8 rawDayState = uint8(_msg[68]);
-        if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Cancelled)) revert IIntexAuction.InvalidDayState();
-        dayState = IIntexAuction.WorldwideDayState(rawDayState);
+        if (rawDayState > uint8(IIntexAuction.DayState.Cancelled)) revert IIntexAuction.InvalidDayState();
+        dayState = IIntexAuction.DayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(bytes4(_msg[6:10])),
             revealEnd: uint32(bytes4(_msg[10:14])),
@@ -441,26 +441,26 @@ library BridgeMsgCodec {
     /// @notice Encodes one chunk of the ISSUANCE_INSTRUCTIONS a chain receives from one day.
     /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series. The sender splits a larger set into
     ///      `_totalChunks` numbered messages.
-    /// @param _worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
+    /// @param _emissionDay The emission day (yyyymmdd) every series in the message belongs to.
     /// @param _chunkIndex Position of this chunk in the chain-day's run of issuance messages.
     /// @param _totalChunks How many chunks the chain-day's issuance spans.
     /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
     function encodeIssuanceInstructions(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint16 _chunkIndex,
         uint16 _totalChunks,
         IssuanceInstructionsPayload[] memory _series
     ) internal pure returns (bytes memory) {
-        _assertIssuanceLimits(_worldwideDay, _chunkIndex, _totalChunks, _series);
+        _assertIssuanceLimits(_emissionDay, _chunkIndex, _totalChunks, _series);
         return abi.encodePacked(
-            BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_worldwideDay, _chunkIndex, _totalChunks, _series)
+            BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_emissionDay, _chunkIndex, _totalChunks, _series)
         );
     }
 
     /// @dev Chunk header sanity, the series count and each series' day.
     function _assertIssuanceLimits(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint16 _chunkIndex,
         uint16 _totalChunks,
         IssuanceInstructionsPayload[] memory _series
@@ -473,8 +473,8 @@ library BridgeMsgCodec {
             revert IssuanceSeriesBatchTooLarge(_series.length, MAX_SERIES_PER_ISSUANCE);
         }
         for (uint256 i = 0; i < _series.length; i++) {
-            if (_series[i].worldwideDay != _worldwideDay) {
-                revert IssuanceDayMismatch(_series[i].seriesId, _series[i].worldwideDay, _worldwideDay);
+            if (_series[i].emissionDay != _emissionDay) {
+                revert IssuanceDayMismatch(_series[i].seriesId, _series[i].emissionDay, _emissionDay);
             }
         }
     }
@@ -483,7 +483,7 @@ library BridgeMsgCodec {
     ///         terms, from which the target works out what each of them paid.
     /// @dev Reverts `PayloadArrayTooLong` above `MAX_PAYLOAD_ARRAY_LEN`. An empty chunk closes a day with no
     ///      winners on the chain.
-    /// @param _worldwideDay The worldwide day (yyyymmdd).
+    /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _clearingRate The day's clearing rate (`1e6` fixed-point).
     /// @param _basis The day's escrow basis (`promisLoadMinor`).
     /// @param _winners Winners on the chain in this chunk.
@@ -492,7 +492,7 @@ library BridgeMsgCodec {
     /// @param _partialWon Units the partially filled winner received. Zero when the chunk has none.
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
-        uint32 _worldwideDay,
+        uint32 _emissionDay,
         uint16 _chunkIndex,
         uint16 _totalChunks,
         uint64 _clearingRate,
@@ -512,25 +512,25 @@ library BridgeMsgCodec {
             BODY_VERSION_V1,
             MSG_REFUND_INSTRUCTIONS,
             abi.encode(
-                _worldwideDay, _chunkIndex, _totalChunks, _clearingRate, _basis, _winners, _partialIndex, _partialWon
+                _emissionDay, _chunkIndex, _totalChunks, _clearingRate, _basis, _winners, _partialIndex, _partialWon
             )
         );
     }
 
     /// @notice Encodes MARK_CALLED message for one day's batch of series.
-    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds).
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(emissionDay, calledAt, seriesIds).
     ///      The origin's stamp travels so every chain derives the same deadline.
-    /// @param _worldwideDay The worldwide day the series were derived from.
+    /// @param _emissionDay The emission day the series were derived from.
     /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(uint32 _worldwideDay, uint64 _calledAt, bytes14[] memory _seriesIds)
+    function encodeMarkCalled(uint32 _emissionDay, uint64 _calledAt, bytes14[] memory _seriesIds)
         internal
         pure
         returns (bytes memory)
     {
         _assertMarkBatch(_seriesIds);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_worldwideDay, _calledAt, _seriesIds));
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_emissionDay, _calledAt, _seriesIds));
     }
 
     /// @dev A mark batch carries at least one series and at most `MAX_SERIES_PER_MARK`.
@@ -545,34 +545,34 @@ library BridgeMsgCodec {
 
     /// @notice Encodes a BIDS_REMAINING report: the day's relay on `_srcChainId` has sent chunks up to
     ///         `_nextBatch` of `_totalBatches` and needs another round for the rest.
-    /// @param _worldwideDay Worldwide day (yyyymmdd).
+    /// @param _emissionDay Emission day (yyyymmdd).
     /// @param _srcChainId Chain the relay is running on.
     /// @param _nextBatch First chunk still to send.
     /// @param _totalBatches Chunks the day's relay spans.
     /// @return The wire-encoded BIDS_REMAINING message.
-    function encodeBidsRemaining(uint32 _worldwideDay, uint32 _srcChainId, uint16 _nextBatch, uint16 _totalBatches)
+    function encodeBidsRemaining(uint32 _emissionDay, uint32 _srcChainId, uint16 _nextBatch, uint16 _totalBatches)
         internal
         pure
         returns (bytes memory)
     {
         return
-            abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_REMAINING, _worldwideDay, _srcChainId, _nextBatch, _totalBatches);
+            abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_REMAINING, _emissionDay, _srcChainId, _nextBatch, _totalBatches);
     }
 
     /// @notice Decodes a BIDS_REMAINING report.
     /// @param _msg The wire-encoded BIDS_REMAINING message.
-    /// @return worldwideDay Worldwide day (yyyymmdd).
+    /// @return emissionDay Emission day (yyyymmdd).
     /// @return srcChainId Chain the relay is running on.
     /// @return nextBatch First chunk still to send.
     /// @return totalBatches Chunks the day's relay spans.
     function decodeBidsRemaining(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 srcChainId, uint16 nextBatch, uint16 totalBatches)
+        returns (uint32 emissionDay, uint32 srcChainId, uint16 nextBatch, uint16 totalBatches)
     {
         _assertExactLength(_msg, MSG_BIDS_REMAINING, MIN_LEN_BIDS_REMAINING);
         _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
+        emissionDay = uint32(bytes4(_msg[2:6]));
         srcChainId = uint32(bytes4(_msg[6:10]));
         nextBatch = uint16(bytes2(_msg[10:12]));
         totalBatches = uint16(bytes2(_msg[12:14]));
@@ -580,18 +580,18 @@ library BridgeMsgCodec {
 
     /// @notice Decodes a BIDS_DONE marker.
     /// @param _msg The wire-encoded BIDS_DONE message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return emissionDay The emission day (yyyymmdd).
     /// @return srcChainId The source chainId that finished sending its bids.
     /// @return totalBatches Total batches the source chain sent for the day.
     /// @return totalBids Total bids across those batches (integrity cross-check).
     function decodeBidsDone(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids)
+        returns (uint32 emissionDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids)
     {
         _assertExactLength(_msg, MSG_BIDS_DONE, MIN_LEN_BIDS_DONE);
         _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
+        emissionDay = uint32(bytes4(_msg[2:6]));
         srcChainId = uint32(bytes4(_msg[6:10]));
         totalBatches = uint16(bytes2(_msg[10:12]));
         totalBids = uint32(bytes4(_msg[12:16]));
@@ -638,7 +638,7 @@ library BridgeMsgCodec {
     ///      - `BidsArrayLengthMismatch` if the four parallel arrays differ in length.
     ///      - `BidsBatchTooLarge` if the batch exceeds `MAX_BIDS_BATCH`.
     /// @param _msg The wire-encoded BIDS_BATCH message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return emissionDay The emission day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
     /// @return batchIndex Index of this batch within the relay (0-based).
     /// @return totalBatches Total number of batches in the relay (the receiver waits for all of them).
@@ -648,7 +648,7 @@ library BridgeMsgCodec {
         internal
         pure
         returns (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint32 srcChainId,
             uint16 batchIndex,
             uint16 totalBatches,
@@ -661,7 +661,7 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (worldwideDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids) =
+        (emissionDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids) =
             abi.decode(_msg[2:], (uint32, uint32, uint16, uint16, address[], uint256[]));
         // The two arrays are indexed in lockstep downstream. Unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
@@ -673,34 +673,34 @@ library BridgeMsgCodec {
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
     }
 
-    /// @notice Decodes AUCTION_STAGE_CLEARING message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][worldwideDay(4)]
+    /// @notice Decodes AUCTION_STAGE_COLLECTING_BIDS message.
+    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][emissionDay(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
-    /// @param _msg The wire-encoded AUCTION_STAGE_CLEARING message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
-    function decodeAuctionStageClearing(bytes calldata _msg) internal pure returns (uint32 worldwideDay) {
-        _assertExactLength(_msg, MSG_AUCTION_STAGE_CLEARING, MIN_LEN_AUCTION_STAGE_CLEARING);
+    /// @param _msg The wire-encoded AUCTION_STAGE_COLLECTING_BIDS message.
+    /// @return emissionDay The emission day (yyyymmdd).
+    function decodeAuctionStageCollectingBids(bytes calldata _msg) internal pure returns (uint32 emissionDay) {
+        _assertExactLength(_msg, MSG_AUCTION_STAGE_COLLECTING_BIDS, MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS);
         _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
+        emissionDay = uint32(bytes4(_msg[2:6]));
     }
 
     /// @notice Decodes AUCTION_RESULT message.
     /// @dev encodePacked layout (22 bytes):
-    ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
+    ///      [bodyVersion(1)][msgType(1)][emissionDay(4)][issuedUnits(4)][auctionClearingRate(8)][wonBidsCount(4)]
     ///      Reverts `InvalidPayloadLength` unless exactly 22 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded AUCTION_RESULT message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return emissionDay The emission day (yyyymmdd).
     /// @return issuedUnits The number of intex issued by the cleared auction.
     /// @return auctionClearingRate The uniform auction clearing rate (`1e6` fixed-point).
     /// @return wonBidsCount The number of winning bids.
     function decodeAuctionResult(bytes calldata _msg)
         internal
         pure
-        returns (uint32 worldwideDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount)
+        returns (uint32 emissionDay, uint32 issuedUnits, uint64 auctionClearingRate, uint32 wonBidsCount)
     {
         _assertExactLength(_msg, MSG_AUCTION_RESULT, MIN_LEN_AUCTION_RESULT);
         _assertBodyVersion(_msg);
-        worldwideDay = uint32(bytes4(_msg[2:6]));
+        emissionDay = uint32(bytes4(_msg[2:6]));
         issuedUnits = uint32(bytes4(_msg[6:10]));
         auctionClearingRate = uint64(bytes8(_msg[10:18]));
         wonBidsCount = uint32(bytes4(_msg[18:22]));
@@ -712,19 +712,14 @@ library BridgeMsgCodec {
     ///      - `InvalidIssuanceChunk` on a bad chunk header.
     ///      - `IssuanceDayMismatch` if a series names another day.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    /// @return worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
+    /// @return emissionDay The emission day (yyyymmdd) every series in the message belongs to.
     /// @return chunkIndex Position of this chunk in the chain-day's run of issuance messages.
     /// @return totalChunks How many chunks the chain-day's issuance spans.
     /// @return series The decoded per-series issuance payloads.
     function decodeIssuanceInstructions(bytes calldata _msg)
         external
         pure
-        returns (
-            uint32 worldwideDay,
-            uint16 chunkIndex,
-            uint16 totalChunks,
-            IssuanceInstructionsPayload[] memory series
-        )
+        returns (uint32 emissionDay, uint16 chunkIndex, uint16 totalChunks, IssuanceInstructionsPayload[] memory series)
     {
         if (_msg.length < HEADER_LEN) {
             revert InvalidPayloadLength(MSG_ISSUANCE_INSTRUCTIONS, _msg.length, HEADER_LEN);
@@ -732,9 +727,9 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
         // function's stack. This keeps the 13-field payload within bounds under via_ir.
-        (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
+        (emissionDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
-        _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);
+        _assertIssuanceLimits(emissionDay, chunkIndex, totalChunks, series);
     }
 
     /// @dev Isolated frame for the issuance ABI decode (via_ir stack relief).
@@ -749,7 +744,7 @@ library BridgeMsgCodec {
     /// @notice Decodes REFUND_INSTRUCTIONS message.
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
-    /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return emissionDay The emission day (yyyymmdd).
     /// @return chunkIndex Position of this chunk in the chain-day's run of refunds.
     /// @return totalChunks How many chunks the chain-day's refunds span.
     /// @return clearingRate The day's clearing rate (`1e6` fixed-point).
@@ -762,7 +757,7 @@ library BridgeMsgCodec {
         external
         pure
         returns (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint16 chunkIndex,
             uint16 totalChunks,
             uint64 clearingRate,
@@ -776,7 +771,7 @@ library BridgeMsgCodec {
             revert InvalidPayloadLength(MSG_REFUND_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon) =
+        (emissionDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon) =
             abi.decode(_msg[2:], (uint32, uint16, uint16, uint64, uint128, address[], uint16, uint16));
         if (totalChunks == 0 || totalChunks > MAX_CHUNKS || chunkIndex >= totalChunks) {
             revert InvalidRefundChunk(chunkIndex, totalChunks);
@@ -796,19 +791,19 @@ library BridgeMsgCodec {
     /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
     ///      `UnsupportedBodyVersion`, then the batch bounds, re-checked inbound.
     /// @param _msg The wire-encoded MARK_CALLED message.
-    /// @return worldwideDay The worldwide day the series were derived from.
+    /// @return emissionDay The emission day the series were derived from.
     /// @return calledAt Unix time the origin marked the series Called.
     /// @return seriesIds The auction series identifiers.
     function decodeMarkCalled(bytes calldata _msg)
         external
         pure
-        returns (uint32 worldwideDay, uint64 calledAt, bytes14[] memory seriesIds)
+        returns (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds)
     {
         if (_msg.length < MIN_LEN_MARK_CALLED) {
             revert InvalidPayloadLength(MSG_MARK_CALLED, _msg.length, MIN_LEN_MARK_CALLED);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, calledAt, seriesIds) = abi.decode(_msg[2:], (uint32, uint64, bytes14[]));
+        (emissionDay, calledAt, seriesIds) = abi.decode(_msg[2:], (uint32, uint64, bytes14[]));
         _assertMarkBatch(seriesIds);
     }
 
@@ -821,7 +816,7 @@ library BridgeMsgCodec {
     /// @return The minimum encoded length for `_msgType`, or 0 if unknown to the codec.
     function minLengthFor(uint8 _msgType) internal pure returns (uint16) {
         if (_msgType == MSG_AUCTION_STAGE_START) return MIN_LEN_AUCTION_STAGE_START;
-        if (_msgType == MSG_AUCTION_STAGE_CLEARING) return MIN_LEN_AUCTION_STAGE_CLEARING;
+        if (_msgType == MSG_AUCTION_STAGE_COLLECTING_BIDS) return MIN_LEN_AUCTION_STAGE_COLLECTING_BIDS;
         if (_msgType == MSG_AUCTION_RESULT) return MIN_LEN_AUCTION_RESULT;
         if (_msgType == MSG_MARK_CALLED) return MIN_LEN_MARK_CALLED;
         if (_msgType == MSG_BIDS_BATCH) return MIN_LEN_BIDS_BATCH;

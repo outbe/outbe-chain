@@ -25,7 +25,7 @@ contract MarkBatchWireTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant WORLDWIDE_DAY = 20250101;
+    uint32 internal constant EMISSION_DAY = 20250101;
     bytes4 internal constant GAS_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
     bytes14 internal constant USD_SERIES = "20250101-USD-U";
     bytes14 internal constant EUR_SERIES = "20250101-EUR-U";
@@ -63,15 +63,15 @@ contract MarkBatchWireTest is CrossChainTest {
     function _freezeSnapshot() internal {
         IOriginRouter.AuctionStageStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
-        p.worldwideDay = WORLDWIDE_DAY;
+        p.emissionDay = EMISSION_DAY;
         p.dayState = 1;
         vm.prank(address(desis));
         outbeRouter.sendAuctionStageStart(p);
     }
 
     function _createBoth() internal {
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
-        IIntexNFT1155.CreateSeriesParams memory eur = CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0);
+        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        IIntexNFT1155.CreateSeriesParams memory eur = CreateSeriesLib.params(EMISSION_DAY, 10_000, 0);
         eur.seriesId = EUR_SERIES;
         intex.createSeries(eur);
     }
@@ -87,7 +87,7 @@ contract MarkBatchWireTest is CrossChainTest {
         uint256 fee = bridge.fee();
         vm.deal(intexFactory, fee);
         vm.prank(intexFactory);
-        outbeRouter.sendMarkCalled{value: fee}(WORLDWIDE_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendMarkCalled{value: fee}(EMISSION_DAY, uint32(block.timestamp), batch);
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), bridge.lastPayload());
 
@@ -97,14 +97,14 @@ contract MarkBatchWireTest is CrossChainTest {
 
     /// @notice One series missing on the target must not cost the rest of its batch.
     function test_aMissingSeriesParksAloneWhileTheRestApply() public {
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         _deliver(
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
             BridgeMsgCodec.encodeMarkCalled(
-                WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
+                EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
             )
         );
 
@@ -117,10 +117,10 @@ contract MarkBatchWireTest is CrossChainTest {
     ///      message type. A batch relayed on a single series' budget runs out on arrival.
     function test_theSendBuysDestinationGasForTheWholeBatch() public {
         vm.startPrank(intexFactory);
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));
+        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));
         _assertLastGas(IntexGas.markCalled(1));
 
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markCalled(2));
         vm.stopPrank();
     }
@@ -142,7 +142,7 @@ contract MarkBatchWireTest is CrossChainTest {
                 BridgeMsgCodec.MAX_SERIES_PER_MARK
             )
         );
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
     }
 
     function test_onlyTheFactoryMaySendAMarkBatch() public {
@@ -154,6 +154,6 @@ contract MarkBatchWireTest is CrossChainTest {
                 outbeRouter.INTEX_FACTORY_ROLE()
             )
         );
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
     }
 }

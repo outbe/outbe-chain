@@ -10,7 +10,7 @@ use outbe_intex::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::day_pass::PinnedDay;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     call_bins::{self, Visit},
@@ -185,7 +185,7 @@ fn call_currency(
 /// series whose message the router refused. A node-local failure fails the block instead.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
-    worldwide_day: WorldwideDay,
+    emission_day: EmissionDate,
     called_at: u64,
     members: &[SeriesId],
 ) -> Result<Vec<SeriesId>> {
@@ -198,7 +198,7 @@ pub(crate) fn notify_called(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
                 IOriginRouter::sendMarkCalledCall {
-                    worldwideDay: worldwide_day.value(),
+                    emissionDay: emission_day.value(),
                     calledAt: called_at,
                     seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
                 }
@@ -213,7 +213,7 @@ pub(crate) fn notify_called(
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::intexfactory",
-                    worldwide_day = worldwide_day.value(),
+                    emission_day = emission_day.value(),
                     called_at,
                     series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     error = ?error,
