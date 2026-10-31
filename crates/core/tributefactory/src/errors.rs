@@ -53,6 +53,9 @@ pub enum TributeFactoryError {
     #[error("SU hash already used")]
     SuHashAlreadyUsed,
 
+    #[error("su_hash_ring_seq overflow")]
+    SuHashRingSeqOverflow,
+
     #[error("SU hash list is empty")]
     EmptySuHashList,
 
@@ -245,6 +248,7 @@ impl From<TributeFactoryError> for PrecompileError {
                 revert_with(I::InvalidCanonicalIdentity {})
             }
             TributeFactoryError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
+            TributeFactoryError::SuHashRingSeqOverflow => revert_with(I::SuHashRingSeqOverflow {}),
             TributeFactoryError::EmptySuHashList => revert_with(I::EmptySuHashList {}),
             TributeFactoryError::InvalidSuHashHex { hash } => {
                 revert_with(I::InvalidSuHashHex { hash })
