@@ -171,7 +171,7 @@ pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileR
 
 pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     let worldwide_day = outbe_primitives::time::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
-    let start_time = worldwide_day.start_timestamp();
+    let start_time = worldwide_day.start_timestamp().unwrap();
     OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
         worldwide_day,
         start_time,

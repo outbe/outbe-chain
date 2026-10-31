@@ -262,7 +262,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     for _ in 1..threshold_days {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach);
+    let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
 
     // A second past midnight loses the day and falls one breach short.
     for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
@@ -299,7 +299,7 @@ fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     for _ in 1..threshold_days {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach);
+    let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
     with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
         let mut first = sample_params(ALICE);

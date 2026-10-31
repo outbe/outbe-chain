@@ -339,9 +339,10 @@ enum DayLease {
 fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()> {
     match lease {
         DayLease::InitGenesis => storage.require_metadosis_init_genesis(),
-        DayLease::CycleAllocation(day) => {
-            storage.require_metadosis_cycle_allocation(day.to_timestamp_utc())
-        }
+        DayLease::CycleAllocation(day) => storage.require_metadosis_cycle_allocation(
+            day.to_timestamp_utc()
+                .map_err(crate::errors::date_step_error)?,
+        ),
         DayLease::ProcessReady => storage.require_metadosis_process_ready(),
         DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
     }

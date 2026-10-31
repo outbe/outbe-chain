@@ -26,7 +26,7 @@ use crate::{
 
 const MAX_DUE_SCAN_DAYS: u32 = 64;
 
-fn date_step_error(
+pub(crate) fn date_step_error(
     err: outbe_primitives::time::TimeError,
 ) -> outbe_primitives::error::PrecompileError {
     match err.date_step() {
@@ -79,6 +79,7 @@ pub(crate) fn ensure_emission_day_with_limit(
     }
     let next_day = next_date_key(day).map_err(date_step_error)?;
     let metadosis_start = date_key_to_utc_timestamp(next_day)
+        .map_err(date_step_error)?
         .checked_add(1)
         .ok_or(MetadosisCallerError::WaitingWindowOverflow)?;
     let mut record = EmissionDay::new_with_limit(
@@ -135,7 +136,7 @@ fn collect_due_candidate_days(
     let today = timestamp_to_date_key(now);
     let prev_utc_day = previous_date_key(today).map_err(date_step_error)?;
     candidate_days.insert(prev_utc_day);
-    let prev_ts = date_key_to_utc_timestamp(prev_utc_day);
+    let prev_ts = date_key_to_utc_timestamp(prev_utc_day).map_err(date_step_error)?;
     for offset in 1..=MAX_DUE_SCAN_DAYS {
         let scan_ts = prev_ts.saturating_sub(u64::from(offset) * SECONDS_PER_DAY);
         candidate_days.insert(timestamp_to_date_key(scan_ts));

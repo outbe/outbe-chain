@@ -151,7 +151,7 @@ fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
         runtime::credis_issued(&storage, BOB, DAY, U256::from(100)).unwrap();
         storage
             .set_block_timestamp(U256::from(
-                outbe_primitives::time::date_key_to_utc_timestamp(next),
+                outbe_primitives::time::date_key_to_utc_timestamp(next).unwrap(),
             ))
             .unwrap();
         runtime::credis_issued(&storage, ALICE, next, U256::from(100)).unwrap();

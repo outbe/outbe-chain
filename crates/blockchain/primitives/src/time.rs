@@ -138,14 +138,18 @@ pub fn worldwide_day_from_timestamp(timestamp: u64) -> u32 {
 /// Returns the unix timestamp for midnight UTC of a yyyymmdd date key.
 ///
 /// A date key before 1970-01-01 has a negative day count. The function
-/// saturates that count to 0 and returns the epoch, `0`. The multiply
-/// saturates at `u64::MAX`.
-pub fn date_key_to_utc_timestamp(date_key: u32) -> u64 {
+/// rejects that count with [`TimeError::PreGenesis`] (OIP-00247). The
+/// multiply saturates at `u64::MAX`.
+pub fn date_key_to_utc_timestamp(date_key: u32) -> Result<u64, TimeError> {
     let year = i64::from(date_key / 10_000);
     let month = i64::from((date_key / 100) % 100);
     let day = i64::from(date_key % 100);
-    let days = u64::try_from(days_from_civil(year, month, day)).unwrap_or(0);
-    days.saturating_mul(SECONDS_PER_DAY)
+    let days =
+        u64::try_from(days_from_civil(year, month, day)).map_err(|_| TimeError::PreGenesis {
+            utc_day: date_key,
+            genesis_utc_day: 19_700_101,
+        })?;
+    Ok(days.saturating_mul(SECONDS_PER_DAY))
 }
 
 /// Returns the previous calendar day key for a yyyymmdd date key.
@@ -176,7 +180,7 @@ fn step_date_key(date_key: u32, forward: bool) -> Result<u32, TimeError> {
     if date_key < MIN_PROTOCOL_DATE_KEY {
         return Err(TimeError::DateBeforeMinimum { date_key });
     }
-    let ts = date_key_to_utc_timestamp(date_key);
+    let ts = date_key_to_utc_timestamp(date_key)?;
     let stepped = if forward {
         ts.checked_add(SECONDS_PER_DAY)
     } else {
@@ -218,8 +222,8 @@ fn checked_civil_date_from_days(days_since_epoch: i64) -> Option<u32> {
 /// `u32` subtraction of `yyyymmdd` keys is wrong across month/year
 /// boundaries. Do not use it.
 pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, TimeError> {
-    let g_ts = date_key_to_utc_timestamp(genesis_utc_day);
-    let u_ts = date_key_to_utc_timestamp(utc_day);
+    let g_ts = date_key_to_utc_timestamp(genesis_utc_day)?;
+    let u_ts = date_key_to_utc_timestamp(utc_day)?;
     let delta = u_ts.checked_sub(g_ts).ok_or(TimeError::PreGenesis {
         utc_day,
         genesis_utc_day,
@@ -298,8 +302,8 @@ impl WorldwideDay {
     }
 
     /// Returns the forming-start timestamp for this worldwide day.
-    pub fn start_timestamp(self) -> u64 {
-        date_key_to_utc_timestamp(self.0).saturating_sub(UTC_PLUS_14_OFFSET)
+    pub fn start_timestamp(self) -> Result<u64, TimeError> {
+        Ok(date_key_to_utc_timestamp(self.0)?.saturating_sub(UTC_PLUS_14_OFFSET))
     }
 
     /// Returns the previous calendar day.
@@ -308,7 +312,7 @@ impl WorldwideDay {
     }
 
     /// Returns the WWD in UNIX timestamp seconds.
-    pub fn to_timestamp_utc(self) -> u64 {
+    pub fn to_timestamp_utc(self) -> Result<u64, TimeError> {
         date_key_to_utc_timestamp(self.0)
     }
 }
@@ -403,7 +407,7 @@ impl EmissionDate {
     }
 
     /// Returns the unix timestamp of 00:00 UTC of this day.
-    pub fn start_timestamp(self) -> u64 {
+    pub fn start_timestamp(self) -> Result<u64, TimeError> {
         date_key_to_utc_timestamp(self.0)
     }
 
@@ -462,13 +466,23 @@ mod tests {
 
     #[test]
     fn date_arithmetic_is_bounded() {
-        // A pre-epoch date key saturates to the epoch instead of wrapping.
-        assert_eq!(date_key_to_utc_timestamp(19_691_231), 0);
-        assert_eq!(date_key_to_utc_timestamp(10_101), 0);
-        assert_eq!(date_key_to_utc_timestamp(19_700_101), 0);
-        assert_eq!(date_key_to_utc_timestamp(19_700_102), SECONDS_PER_DAY);
+        // A pre-epoch date key is rejected instead of wrapping.
+        for utc_day in [19_691_231u32, 10_101] {
+            assert_eq!(
+                date_key_to_utc_timestamp(utc_day),
+                Err(TimeError::PreGenesis {
+                    utc_day,
+                    genesis_utc_day: 19_700_101,
+                })
+            );
+        }
+        assert_eq!(date_key_to_utc_timestamp(19_700_101), Ok(0));
+        assert_eq!(date_key_to_utc_timestamp(19_700_102), Ok(SECONDS_PER_DAY));
         // The largest date key stays finite and does not wrap.
-        assert!(date_key_to_utc_timestamp(u32::MAX) > date_key_to_utc_timestamp(20_260_101));
+        assert!(
+            date_key_to_utc_timestamp(u32::MAX).unwrap()
+                > date_key_to_utc_timestamp(20_260_101).unwrap()
+        );
         // A maximum timestamp saturates through the worldwide-day offset.
         assert_eq!(
             worldwide_day_from_timestamp(u64::MAX),
@@ -499,7 +513,7 @@ mod tests {
     #[test]
     fn iso8601_renders_utc_with_milliseconds() {
         let at = std::time::Duration::from_millis(
-            (date_key_to_utc_timestamp(20241231) + 23 * 3600 + 59 * 60 + 58) * 1000 + 7,
+            (date_key_to_utc_timestamp(20241231).unwrap() + 23 * 3600 + 59 * 60 + 58) * 1000 + 7,
         );
         assert_eq!(iso8601(at), "2024-12-31T23:59:58.007Z");
         assert_eq!(
@@ -511,13 +525,13 @@ mod tests {
 
     #[test]
     fn a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits() {
-        let midnight = date_key_to_utc_timestamp(20240101);
+        let midnight = date_key_to_utc_timestamp(20240101).unwrap();
         assert_eq!(first_full_day(midnight), Ok(20240101));
         assert_eq!(first_full_day(midnight + 1), Ok(20240102));
         assert_eq!(first_full_day(midnight + SECONDS_PER_DAY - 1), Ok(20240102));
         // Across a year boundary the next key is not the numeric successor.
         assert_eq!(
-            first_full_day(date_key_to_utc_timestamp(20241231) + 1),
+            first_full_day(date_key_to_utc_timestamp(20241231).unwrap() + 1),
             Ok(20250101)
         );
     }
@@ -552,14 +566,32 @@ mod tests {
     #[test]
     fn date_key_to_timestamp_roundtrip_at_midnight() {
         // Midnight UTC of 2024-01-01 = 1_704_067_200.
-        assert_eq!(date_key_to_utc_timestamp(20240101), 1_704_067_200);
-        assert_eq!(date_key_to_utc_timestamp(19700101), 0);
+        assert_eq!(date_key_to_utc_timestamp(20240101), Ok(1_704_067_200));
+        assert_eq!(date_key_to_utc_timestamp(19700101), Ok(0));
+    }
+
+    #[test]
+    fn epoch_day_is_zero_seconds() {
+        assert_eq!(date_key_to_utc_timestamp(19700101), Ok(0));
+    }
+
+    #[test]
+    fn pre_epoch_date_key_is_pre_genesis() {
+        for utc_day in [0u32, 1, 19691231] {
+            assert_eq!(
+                date_key_to_utc_timestamp(utc_day),
+                Err(TimeError::PreGenesis {
+                    utc_day,
+                    genesis_utc_day: 19_700_101,
+                })
+            );
+        }
     }
 
     #[test]
     fn date_key_roundtrip_through_timestamp() {
         for k in [19700101u32, 20240101, 20240229, 20241231, 20251205] {
-            let ts = date_key_to_utc_timestamp(k);
+            let ts = date_key_to_utc_timestamp(k).unwrap();
             assert_eq!(timestamp_to_date_key(ts), k, "roundtrip failed for {k}");
         }
     }
@@ -600,7 +632,7 @@ mod tests {
 
     #[test]
     fn midnight_before_2020_keeps_its_day_and_a_later_second_is_refused() {
-        let midnight = date_key_to_utc_timestamp(20191231);
+        let midnight = date_key_to_utc_timestamp(20191231).unwrap();
         assert_eq!(first_full_day(midnight), Ok(20191231));
         assert_eq!(
             first_full_day(midnight + 1),
@@ -651,7 +683,18 @@ mod tests {
     fn worldwide_day_to_utc_timestamp_roundtrip_known_midnight() {
         let wwd = WorldwideDay::new(20241220);
         // Midnight UTC of 2024-12-20
-        assert_eq!(date_key_to_utc_timestamp(wwd.value()), 1_734_652_800);
+        assert_eq!(date_key_to_utc_timestamp(wwd.value()), Ok(1_734_652_800));
+    }
+
+    #[test]
+    fn default_day_key_does_not_convert() {
+        let expected = Err(TimeError::PreGenesis {
+            utc_day: 0,
+            genesis_utc_day: 19_700_101,
+        });
+        assert_eq!(WorldwideDay::default().to_timestamp_utc(), expected);
+        assert_eq!(WorldwideDay::default().start_timestamp(), expected);
+        assert_eq!(EmissionDate::default().start_timestamp(), expected);
     }
 
     #[test]
@@ -795,7 +838,7 @@ mod tests {
         assert!(!EmissionDate::new(20240230).is_valid());
         assert_eq!(day.start_timestamp(), date_key_to_utc_timestamp(20241231));
         assert_eq!(
-            EmissionDate::from_timestamp(day.start_timestamp() + 86_399),
+            EmissionDate::from_timestamp(day.start_timestamp().unwrap() + 86_399),
             day
         );
         assert_eq!(day.next(), Ok(EmissionDate::new(20250101)));

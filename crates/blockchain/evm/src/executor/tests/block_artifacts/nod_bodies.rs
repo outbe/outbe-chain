@@ -5,7 +5,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 
 /// A non-midnight second on 2020-01-01. `first_full_day` can step that day.
 fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
-    date_key_to_utc_timestamp(20_200_101) + second_of_day
+    date_key_to_utc_timestamp(20_200_101).unwrap() + second_of_day
 }
 
 type NodBlockObservation = (

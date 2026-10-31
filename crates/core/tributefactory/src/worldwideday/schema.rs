@@ -27,14 +27,13 @@ pub struct WorldwideDay {
 }
 
 impl WorldwideDay {
-    #[must_use]
-    pub fn forming_start(&self) -> u64 {
+    pub fn forming_start(&self) -> Result<u64, outbe_primitives::time::TimeError> {
         self.wwd.start_timestamp()
     }
 
-    #[must_use]
-    pub fn forming_end(&self) -> u64 {
-        self.forming_start()
-            .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
+    pub fn forming_end(&self) -> Result<u64, outbe_primitives::time::TimeError> {
+        Ok(self
+            .forming_start()?
+            .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds()))
     }
 }

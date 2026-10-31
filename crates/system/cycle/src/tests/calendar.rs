@@ -74,7 +74,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
         )
         .unwrap();
         let expected_floor = outbe_primitives::time::timestamp_to_date_key(
-            outbe_primitives::time::date_key_to_utc_timestamp(yesterday)
+            outbe_primitives::time::date_key_to_utc_timestamp(yesterday).unwrap()
                 - u64::from(MAX_REWARD_CATCHUP_DAYS - 1) * SECONDS_PER_DAY,
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);

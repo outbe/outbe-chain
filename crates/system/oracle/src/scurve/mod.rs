@@ -336,7 +336,8 @@ mod tests {
     /// WWD `day` days after 2024-01-01.
     fn wwd(day: u64) -> WorldwideDay {
         WorldwideDay::from_timestamp(
-            outbe_primitives::time::date_key_to_utc_timestamp(20_240_101) + day * SECONDS_PER_DAY,
+            outbe_primitives::time::date_key_to_utc_timestamp(20_240_101).unwrap()
+                + day * SECONDS_PER_DAY,
         )
     }
 

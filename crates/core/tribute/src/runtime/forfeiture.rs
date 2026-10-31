@@ -312,7 +312,7 @@ fn check_tribute_forfeited(
         let candidate = if recorded != 0 {
             recorded
         } else {
-            derive_wwd_emission_day(day)
+            derive_wwd_emission_day(day)?
         };
         let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), candidate)?
             .is_some_and(|e| {
@@ -359,11 +359,12 @@ fn league_fraction(contract: &TributeContract<'_>, day: WorldwideDay, league: u1
     ))
 }
 
-fn derive_wwd_emission_day(day: WorldwideDay) -> u32 {
+fn derive_wwd_emission_day(day: WorldwideDay) -> Result<u32> {
     let offering_end = day
         .start_timestamp()
+        .map_err(crate::errors::date_step_error)?
         .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
         .saturating_add(outbe_chain_constants::get_metadosis_lookback_delay_seconds())
         .saturating_add(outbe_chain_constants::get_metadosis_offering_period_seconds());
-    outbe_primitives::time::timestamp_to_date_key(offering_end)
+    Ok(outbe_primitives::time::timestamp_to_date_key(offering_end))
 }

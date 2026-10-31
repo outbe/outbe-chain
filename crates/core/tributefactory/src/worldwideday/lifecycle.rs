@@ -41,7 +41,9 @@ pub fn validate_wwd_timestamp(timestamp: u64) -> Result<()> {
 }
 
 pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> {
-    let forming_start = wwd.start_timestamp();
+    let forming_start = wwd
+        .start_timestamp()
+        .map_err(super::errors::date_step_error)?;
     let forming_end = forming_start
         .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
         .ok_or(WwdCallerError::FormingWindowOverflow)?;
@@ -83,7 +85,9 @@ pub fn init_genesis_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
 pub fn create_lookahead_days(ctx: &BlockRuntimeContext<'_>, timestamp: u64) -> Result<()> {
     validate_wwd_timestamp(timestamp)?;
     let base_wwd = first_wwd_for_genesis(timestamp);
-    let base_ts = date_key_to_utc_timestamp(base_wwd.value());
+    let base_ts = base_wwd
+        .to_timestamp_utc()
+        .map_err(super::errors::date_step_error)?;
     let lookahead = outbe_chain_constants::get_metadosis_lookahead_days();
     create_catchup_days(ctx, timestamp, base_wwd, base_ts, lookahead)?;
 
@@ -102,8 +106,9 @@ fn create_catchup_days(
     base_ts: u64,
     lookahead: u32,
 ) -> Result<()> {
-    let calendar_floor_ts =
-        date_key_to_utc_timestamp(GENESIS_CALENDAR_FLOOR_DATE_KEY) + 12 * SECONDS_PER_HOUR;
+    let calendar_floor_ts = date_key_to_utc_timestamp(GENESIS_CALENDAR_FLOOR_DATE_KEY)
+        .map_err(super::errors::date_step_error)?
+        + 12 * SECONDS_PER_HOUR;
     if ctx.block.genesis_timestamp < calendar_floor_ts || ctx.block.genesis_timestamp > timestamp {
         return Ok(());
     }

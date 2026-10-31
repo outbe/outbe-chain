@@ -61,7 +61,7 @@ fn store_scurve_entry_inner(
         }
     }
     if let Some((start, price)) = curve_at(oracle, pair, wwd)? {
-        if peak_price <= curve_value(start, price, wwd) {
+        if peak_price <= curve_value(start, price, wwd)? {
             return Ok(false);
         }
     }

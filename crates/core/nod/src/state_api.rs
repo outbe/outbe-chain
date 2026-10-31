@@ -394,14 +394,14 @@ mod tests {
                 ),
                 league_id: params.league_id,
                 group_key: crate::identity::group_key(
-                    date_key_to_utc_timestamp(20_200_101),
+                    date_key_to_utc_timestamp(20_200_101).unwrap(),
                     U256::ZERO,
                     params.reference_currency,
                 )
                 .expect("date step"),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
-                issued_at: date_key_to_utc_timestamp(20_200_101),
+                issued_at: date_key_to_utc_timestamp(20_200_101).unwrap(),
                 is_settled: false,
                 encrypted,
             };

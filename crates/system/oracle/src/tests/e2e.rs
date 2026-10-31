@@ -885,7 +885,7 @@ fn export_genesis_omits_a_zero_initial_rate() {
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     with_bare_oracle(|storage, oracle| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
-        let start_time = worldwide_day.start_timestamp();
+        let start_time = worldwide_day.start_timestamp().unwrap();
         let end_time = start_time + 50 * 60 * 60;
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
@@ -909,8 +909,11 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
         let (start_time, end_time, bases, quotes, vwaps, lookbacks) = oracle
             .get_worldwide_day_vwap_snapshot(worldwide_day)
             .unwrap();
-        assert_eq!(start_time, worldwide_day.start_timestamp());
-        assert_eq!(end_time, worldwide_day.start_timestamp() + 50 * 60 * 60);
+        assert_eq!(start_time, worldwide_day.start_timestamp().unwrap());
+        assert_eq!(
+            end_time,
+            worldwide_day.start_timestamp().unwrap() + 50 * 60 * 60
+        );
         assert_eq!(bases, vec![COEN, usd()]);
         assert_eq!(quotes, vec![usd(), ETH]);
         assert_eq!(vwaps, vec![coen_iso(110), fixed18(2_200)]);
@@ -949,10 +952,10 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(decoded.startTime, worldwide_day.start_timestamp());
+        assert_eq!(decoded.startTime, worldwide_day.start_timestamp().unwrap());
         assert_eq!(
             decoded.endTime,
-            worldwide_day.start_timestamp() + 50 * 60 * 60
+            worldwide_day.start_timestamp().unwrap() + 50 * 60 * 60
         );
         assert_eq!(decoded.bases, vec![COEN, usd()]);
         assert_eq!(decoded.quotes, vec![usd(), ETH]);
@@ -964,7 +967,7 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
 fn day_type_pair_vwap_reports_missing_data_without_reverting() {
     with_storage(|storage| {
         let wwd = outbe_primitives::time::WorldwideDay::new(20260302u32);
-        let start_time = wwd.start_timestamp();
+        let start_time = wwd.start_timestamp().unwrap();
         let end_time = start_time + 50 * 60 * 60;
 
         // Pair not registered yet -> typed None, not an error.
@@ -1016,13 +1019,17 @@ fn day_type_pair_vwap_reports_missing_data_without_reverting() {
 fn worldwide_day_vwap_uses_the_exact_half_open_50_hour_window() {
     with_bare_coen840_oracle(|oracle, pair| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
-        let start = worldwide_day.start_timestamp();
+        let start = worldwide_day.start_timestamp().unwrap();
         let end = start + 50 * 60 * 60;
 
         for (timestamp, price, volume) in [
             (start - 1, 900, 1),
             (start, 10, 1),
-            (worldwide_day.to_timestamp_utc() + 12 * 60 * 60, 20, 2),
+            (
+                worldwide_day.to_timestamp_utc().unwrap() + 12 * 60 * 60,
+                20,
+                2,
+            ),
             (end - 1, 30, 3),
             (end, 900, 1),
         ] {
@@ -1116,7 +1123,7 @@ fn range_vwap_rejects_a_window_wider_than_the_lookback_duration() {
 fn worldwide_day_snapshot_rejects_noncanonical_bounds_without_writes() {
     with_bare_coen840_oracle(|oracle, pair| {
         let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260815);
-        let start = worldwide_day.start_timestamp();
+        let start = worldwide_day.start_timestamp().unwrap();
         let end = start + 50 * 60 * 60;
         oracle
             .write_snapshot(start, &[(pair, coen_iso(10), coen_iso(1))])
@@ -1225,7 +1232,7 @@ fn finalize_utc_day_vwap_persists_every_vote_target_pair() {
             .unwrap();
 
         let utc_day = 20260624u32;
-        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
+        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day).unwrap();
 
         let day_end = day_start + SECONDS_PER_DAY;
         note_hours(oracle, day_start, day_end + 3_600);
@@ -1410,7 +1417,7 @@ fn get_utc_day_vwap_precompile_returns_the_finalized_value() {
     with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         let utc_day = 20260624u32;
-        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day);
+        let day_start = outbe_primitives::time::date_key_to_utc_timestamp(utc_day).unwrap();
         let day_end = day_start + SECONDS_PER_DAY;
         note_hours(oracle, day_start, day_end + 3_600);
         for hour in (day_start..day_end).step_by(3_600) {
@@ -1743,7 +1750,7 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
 fn tribute_pricing_reads_both_wwd_legs_and_only_the_reference_curve() {
     let eur: Address = AssetType::IsoCurrency(978).into();
     let day = outbe_primitives::time::WorldwideDay::new(20260302u32);
-    let start_time = day.start_timestamp();
+    let start_time = day.start_timestamp().unwrap();
 
     with_bare_oracle(|storage, oracle| {
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();

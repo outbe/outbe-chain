@@ -94,7 +94,10 @@ impl From<TimeError> for EmissionError {
     fn from(err: TimeError) -> Self {
         match err.date_step() {
             Some((kind, date_key)) => Self::DateStep { kind, date_key },
-            None => Self::InvalidEmissionDay { day: 0 },
+            None => match err {
+                TimeError::PreGenesis { utc_day, .. } => Self::InvalidEmissionDay { day: utc_day },
+                _ => Self::InvalidEmissionDay { day: 0 },
+            },
         }
     }
 }
