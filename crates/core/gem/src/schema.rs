@@ -339,7 +339,8 @@ pub struct GemContract {
     #[attribute(order = 56)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// The number the next new call price of a series gets. 0 = none yet, so it starts at 1.
+    /// The number the next new call price of a series gets. 0 = none yet, so it starts at 1;
+    /// the last one a series gives is 65534.
     #[attribute(order = 57)]
     pub series_next_sub_series: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
     /// `sub_series_key(series, call price)` -> its sub-series number + 1. 0 = not numbered.

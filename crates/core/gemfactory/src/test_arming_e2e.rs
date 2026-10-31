@@ -108,7 +108,7 @@ fn issue_settled(
             reference_currency: call.currency,
             issued_at: storage.now_secs()?,
             call_terms: None,
-            market_price: false,
+            market_price: true,
         },
     )?;
     let (item, group) = gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
