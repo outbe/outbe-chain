@@ -7,6 +7,7 @@ import {DeployAdapters} from "./1_DeployAdapters.s.sol";
 import {DeployBridge} from "./2_DeployBridge.s.sol";
 import {ConfigureBridge} from "./3_ConfigureBridge.s.sol";
 import {HandOver} from "./4_HandOver.s.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Full hub deploy + wiring on one chain, in one shot:
 ///   1. Adapters - each deployed only when its endpoint env is set (`LZ_ENDPOINT` / `HYPERLANE_MAILBOX`)
@@ -18,7 +19,7 @@ import {HandOver} from "./4_HandOver.s.sol";
 /// contracts/shared.
 /// Remote addresses are deterministic, so step 3 is safe even before other chains are deployed.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `OUTBE_CHAIN_ID`, at
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`, `OUTBE_CHAIN_ID`, at
 ///   least one of `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane"),
 ///   `REMOTE_CHAIN_IDS` (csv, step 3 is a no-op if unset), `REMOTE_EIDS` (csv, parallel) for
@@ -30,7 +31,7 @@ import {HandOver} from "./4_HandOver.s.sol";
 contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
     function run() public override(DeployAdapters, DeployBridge, ConfigureBridge, HandOver) {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address deployer = vm.addr(deployerPk);
         bool keepDeployer = vm.envOr("KEEP_DEPLOYER_AS_OWNER", false);
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.

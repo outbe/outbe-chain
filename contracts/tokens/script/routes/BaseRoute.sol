@@ -42,7 +42,7 @@ struct RouteSpec {
 ///      also puts each bridge at the same address on every chain, so the script knows every peer
 ///      before the remote chain is deployed.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
 ///   `REMOTE_CHAIN_IDS`.
 /// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
 ///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.

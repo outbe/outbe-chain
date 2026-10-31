@@ -4,6 +4,7 @@ pragma solidity ^0.8.30;
 import {console2} from "forge-std/console2.sol";
 
 import {DeployRoutes} from "./1_DeployRoutes.s.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Full token-route deploy on one chain, in one command: every route in `script/routes/Routes.sol`.
 /// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared,
@@ -17,12 +18,12 @@ import {DeployRoutes} from "./1_DeployRoutes.s.sol";
 /// on every chain produces the same addresses. Each bridge gets its peers in the constructor, so no
 /// wiring step follows.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
 ///   `REMOTE_CHAIN_IDS`. A chain other than Outbe also reads the bridge owner from Outbe (`OUTBE_RPC`).
 /// Optional env: `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 contract DeployAll is DeployRoutes {
     function run() public override {
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
 
         console2.log("Salt:", salt);
         console2.log(_isOutbe() ? "Role: Outbe" : "Role: external chain");

@@ -8,13 +8,14 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {RouteSpec} from "./routes/BaseRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 import {Routes} from "./routes/Routes.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Sends tokens across one route, in either direction. The script derives the bridge address
 ///      from CREATE3 and reads the token from the bridge. Thus no address can drift out of sync
 ///      with the deployment. The bridge's own mode decides whether an approval is necessary:
 ///      lock/unlock pulls the token, burn/mint does not.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
 ///   `DEST_CHAIN_ID`, `RECIPIENT`, `SEND_AMOUNT_LD` (in the token's own decimals).
 contract Send is Routes {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
@@ -23,7 +24,7 @@ contract Send is Routes {
     function run() external returns (bytes32 sendId, uint256 nativeFee) {
         address signer = _deployer();
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
 
         uint32 destinationDomain = _toDomain(vm.envUint("DEST_CHAIN_ID"));
         address recipient = vm.envAddress("RECIPIENT");

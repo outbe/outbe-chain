@@ -7,18 +7,19 @@ import {console2} from "forge-std/console2.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Deploys the {ERC7786Bridge} facade as a UUPS proxy via CREATE3, with one adapter as the active gateway.
 ///      The script derives the adapter address deterministically (CREATE3), so the bridge does not
 ///      depend on the adapter script's output. The deployer owns the bridge until `4_HandOver` gives
 ///      it to governance.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`.
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`.
 /// Optional: `ACTIVE_GATEWAY` ("lz" | "hyperlane", default "lz").
 contract DeployBridge is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         string memory active = vm.envOr("ACTIVE_GATEWAY", string(""));
         if (bytes(active).length == 0) active = "lz";

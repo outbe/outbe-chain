@@ -9,6 +9,7 @@ import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
+import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Deploys the gateway adapters as UUPS proxies via CREATE3 (same address on every chain).
 ///      `run()` deploys each adapter only if its endpoint env is set:
@@ -18,12 +19,12 @@ import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 ///
 ///      The deployer owns the adapters until `4_HandOver` gives them to governance.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATE3_FACTORY_ADDRESS`, and at least one of
+/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`, and at least one of
 /// `LZ_ENDPOINT` / `HYPERLANE_MAILBOX`.
 contract DeployAdapters is Script {
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        string memory salt = vm.envString("CONTRACT_SALT");
+        string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         address deployer = vm.addr(deployerPk);
 
