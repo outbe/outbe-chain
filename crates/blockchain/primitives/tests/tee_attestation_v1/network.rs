@@ -396,3 +396,72 @@ fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
         CodecError::NonCanonical("node id is not canonical compressed secp256k1")
     );
 }
+
+#[test]
+fn ceremony_id_is_deterministic_and_order_independent() {
+    use alloy_primitives::keccak256;
+    use outbe_primitives::tee_attestation_v1::{
+        dkg_ceremony_id_v1, dkg_participant_set_hash_v1, DKG_CEREMONY_DOMAIN_V1,
+        DKG_PARTICIPANT_SET_DOMAIN_V1, PROTOCOL_VERSION_V1,
+    };
+
+    let binding = NetworkBindingV1 {
+        chain_id: [0x10; 32],
+        genesis_hash: B256::repeat_byte(0x20),
+        attestation_mode: AttestationMode::DcapRequired,
+    };
+    let participants = vec![vec![0x01; 48], vec![0x02; 48], vec![0x03; 48]];
+    let expected_set_hash =
+        b256!("12c4bddf1c90f1177e67809cfd88a7dc5fe5e300cb5e3209964c3be8b3068870");
+    let expected_ceremony_id =
+        b256!("b2e6748fdd7259aafbe7bbc4a7097aec9081299891266006e1a645bacdc85e6a");
+
+    let mut spec_set_preimage = DKG_PARTICIPANT_SET_DOMAIN_V1.to_vec();
+    spec_set_preimage.extend_from_slice(&3u32.to_be_bytes());
+    for byte in [0x01u8, 0x02, 0x03] {
+        spec_set_preimage.extend_from_slice(&48u32.to_be_bytes());
+        spec_set_preimage.extend_from_slice(&[byte; 48]);
+    }
+    assert_eq!(keccak256(&spec_set_preimage), expected_set_hash);
+
+    let mut spec_ceremony_preimage = DKG_CEREMONY_DOMAIN_V1.to_vec();
+    spec_ceremony_preimage.push(PROTOCOL_VERSION_V1);
+    spec_ceremony_preimage.extend_from_slice(&[0x10; 32]);
+    spec_ceremony_preimage.extend_from_slice(&[0x20; 32]);
+    spec_ceremony_preimage.push(AttestationMode::DcapRequired as u8);
+    spec_ceremony_preimage.extend_from_slice(&0u64.to_be_bytes());
+    spec_ceremony_preimage.extend_from_slice(expected_set_hash.as_slice());
+    assert_eq!(keccak256(&spec_ceremony_preimage), expected_ceremony_id);
+
+    let set_hash = dkg_participant_set_hash_v1(&participants).unwrap();
+    assert_eq!(set_hash, expected_set_hash);
+    assert_eq!(
+        dkg_ceremony_id_v1(&binding, 0, set_hash).unwrap(),
+        expected_ceremony_id
+    );
+
+    for order in [
+        vec![
+            participants[2].clone(),
+            participants[0].clone(),
+            participants[1].clone(),
+        ],
+        vec![
+            participants[1].clone(),
+            participants[2].clone(),
+            participants[0].clone(),
+        ],
+        vec![
+            participants[2].clone(),
+            participants[1].clone(),
+            participants[0].clone(),
+        ],
+    ] {
+        let shuffled_set = dkg_participant_set_hash_v1(&order).unwrap();
+        assert_eq!(shuffled_set, expected_set_hash);
+        assert_eq!(
+            dkg_ceremony_id_v1(&binding, 0, shuffled_set).unwrap(),
+            expected_ceremony_id
+        );
+    }
+}

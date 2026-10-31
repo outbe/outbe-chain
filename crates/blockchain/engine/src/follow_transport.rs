@@ -15,10 +15,8 @@
 //!   jsonrpsee HTTP client. Tip discovery calls `outbe_consensusStatus`.
 //!   Finalized-block fetch calls `outbe_getFinalization(height)` and decodes the
 //!   returned `(finalizationHex, blockHex)` into a [`CertifiedFinalizedBlock`].
-//!   The client decodes the certificate with the UNBOUNDED committee codec config.
-//!   This config is a permissive length upper bound, the same one the marshal's
-//!   archive uses. Thus the client does not need the epoch committee size to
-//!   decode. The marshal re-verifies the certificate against the actual committee
+//!   The client decodes the certificate bounded by `MAX_COMMITTEE_MEMBERS`.
+//!   The marshal re-verifies the certificate against the actual committee
 //!   afterwards.
 
 use std::future::Future;
@@ -29,8 +27,6 @@ use std::time::Duration;
 use alloy_primitives::B256;
 use commonware_codec::Read as _;
 use commonware_consensus::types::Height;
-use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_cryptography::certificate::Verifier as _;
 use jsonrpsee::core::client::{ClientT, Error as ClientError};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
 use jsonrpsee::rpc_params;
@@ -38,8 +34,6 @@ use outbe_consensus::block::ConsensusBlock;
 use outbe_consensus::follow::{
     CertifiedFinalizedBlock, FinalizedSource, LocalBlockSource, TipSource,
 };
-use outbe_consensus::hybrid::HybridScheme;
-use outbe_consensus::marshal_types::Finalization;
 use outbe_node::OutbeFullNode;
 use reth_ethereum::storage::{BlockReader, TransactionVariant};
 use tracing::{debug, warn};
@@ -102,7 +96,7 @@ struct UpstreamConsensusStatus {
 /// in `outbe-rpc`): hex of the encoded finalization cert + the encoded block.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpstreamFinalizationProof {
+pub(super) struct UpstreamFinalizationProof {
     finalization_hex: String,
     block_hex: String,
 }
@@ -120,10 +114,9 @@ struct UpstreamAncestorFinalityProof {
 ///
 /// * Tip discovery -> `outbe_consensusStatus.lastFinalizedBlock`.
 /// * Finalized-block fetch -> `outbe_getFinalization(height)`, decoded into a
-///   [`CertifiedFinalizedBlock`]. The client decodes the certificate with the
-///   UNBOUNDED committee codec config (a permissive length bound, the same the
-///   marshal's archive uses). Thus the client needs no committee-size knowledge.
-///   The marshal re-verifies the cert against the actual epoch committee.
+///   [`CertifiedFinalizedBlock`]. The client decodes the certificate bounded by
+///   `MAX_COMMITTEE_MEMBERS`. The marshal re-verifies the cert against the
+///   actual epoch committee.
 #[derive(Clone)]
 pub struct UpstreamRpcClient {
     client: Arc<HttpClient>,
@@ -276,11 +269,12 @@ fn decode_tribute_offer_public_key(bytes: &[u8]) -> eyre::Result<B256> {
 
 /// Decode an `outbe_getFinalization` proof into a `CertifiedFinalizedBlock`.
 ///
-/// This function decodes the certificate with the unbounded committee config (a
-/// permissive upper bound on length). This function does NOT establish trust. The
-/// marshal verifies the cert against the epoch committee. Returns `None` on any
-/// malformed field.
-fn decode_finalization_proof(proof: &UpstreamFinalizationProof) -> Option<CertifiedFinalizedBlock> {
+/// This function decodes the certificate bounded by `MAX_COMMITTEE_MEMBERS`.
+/// This function does NOT establish trust. The marshal verifies the cert
+/// against the epoch committee. Returns `None` on any malformed field.
+pub(super) fn decode_finalization_proof(
+    proof: &UpstreamFinalizationProof,
+) -> Option<CertifiedFinalizedBlock> {
     let fin_bytes = alloy_primitives::hex::decode(proof.finalization_hex.trim_start_matches("0x"))
         .inspect_err(|error| debug!(%error, "malformed finalizationHex from upstream"))
         .ok()?;
@@ -288,29 +282,13 @@ fn decode_finalization_proof(proof: &UpstreamFinalizationProof) -> Option<Certif
         .inspect_err(|error| debug!(%error, "malformed blockHex from upstream"))
         .ok()?;
 
-    let cert_cfg = HybridScheme::<MinSig>::certificate_codec_config_unbounded();
-    let mut fin_reader: &[u8] = &fin_bytes;
-    let finalization = Finalization::read_cfg(&mut fin_reader, &cert_cfg)
-        .inspect_err(|error| debug!(%error, "failed to decode upstream finalization"))
-        .ok()?;
-    if !fin_reader.is_empty() {
-        debug!("trailing bytes after upstream finalization");
-        return None;
-    }
-
-    let mut block_reader: &[u8] = &block_bytes;
-    let block = ConsensusBlock::read_cfg(&mut block_reader, &())
-        .inspect_err(|error| debug!(%error, "failed to decode upstream block"))
-        .ok()?;
-    if !block_reader.is_empty() {
-        debug!("trailing bytes after upstream block");
-        return None;
-    }
-
-    Some(CertifiedFinalizedBlock {
-        finalization,
-        block,
-    })
+    outbe_consensus::follow::decode_public_finalized_block(
+        &fin_bytes,
+        &block_bytes,
+        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
+    )
+    .inspect_err(|error| debug!(%error, "failed to decode upstream finalized block"))
+    .ok()
 }
 
 impl FinalizedSource for UpstreamRpcClient {

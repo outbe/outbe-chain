@@ -219,3 +219,186 @@ async fn responses_above_the_byte_cap_are_refused() {
     let default = client(&url, Duration::from_secs(5));
     assert_eq!(default.finalized_tip().await, Some(Height::new(7)));
 }
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    format!("0x{}", hex::encode(bytes))
+}
+
+fn proof(finalization_hex: &str, block_hex: &str) -> super::UpstreamFinalizationProof {
+    super::UpstreamFinalizationProof {
+        finalization_hex: finalization_hex.to_string(),
+        block_hex: block_hex.to_string(),
+    }
+}
+
+fn sample_block() -> outbe_consensus::block::ConsensusBlock {
+    use outbe_consensus::block::ConsensusBlock;
+    use outbe_primitives::OutbeHeader;
+    use reth_ethereum::primitives::SealedBlock;
+    use reth_ethereum::Block;
+
+    let mut raw = Block::default();
+    raw.header.number = 11;
+    raw.header.extra_data = alloy_primitives::Bytes::from_static(b"w05");
+    ConsensusBlock::from_sealed(SealedBlock::seal_slow(raw.map_header(OutbeHeader::new)))
+}
+
+/// A real committee certificate and the block it finalizes, both inside
+/// `MAX_COMMITTEE_MEMBERS`.
+fn certified_record() -> (
+    Vec<u8>,
+    Vec<u8>,
+    outbe_consensus::marshal_types::Finalization,
+    outbe_consensus::block::ConsensusBlock,
+) {
+    use commonware_codec::Encode as _;
+    use commonware_consensus::simplex::types::{Finalization, Finalize, Proposal};
+    use commonware_consensus::types::{Epoch, Round, View};
+    use commonware_cryptography::bls12381::{self, primitives::variant::MinSig};
+    use commonware_cryptography::Signer as _;
+    use commonware_parallel::Sequential;
+    use commonware_utils::TryCollect as _;
+    use outbe_consensus::hybrid::HybridScheme;
+
+    let keys: Vec<bls12381::PrivateKey> = (1u64..=4).map(bls12381::PrivateKey::from_seed).collect();
+    let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .expect("participant set");
+    let dkg = outbe_consensus::bls::bootstrap_dkg(4).expect("dkg");
+    let signers: Vec<HybridScheme<MinSig>> = keys
+        .iter()
+        .map(|key| {
+            let index = participants
+                .iter()
+                .position(|pk| pk == &key.public_key())
+                .expect("index");
+            HybridScheme::signer(
+                &outbe_consensus::config::outbe_app_namespace(),
+                participants.clone(),
+                key.clone(),
+                dkg.polynomial.clone(),
+                dkg.shares[index].clone(),
+            )
+            .expect("signer")
+        })
+        .collect();
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &outbe_consensus::config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial.clone(),
+    )
+    .expect("verifier");
+    let block = sample_block();
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(1), View::new(2)),
+        View::new(1),
+        block.digest(),
+    );
+    let votes: Vec<_> = signers
+        .iter()
+        .map(|scheme| Finalize::sign(scheme, proposal.clone()).expect("vote"))
+        .collect();
+    let finalization = Finalization::from_finalizes(
+        &verifier,
+        commonware_utils::iter::NonEmpty::try_new(votes.iter()).expect("votes"),
+        &Sequential,
+    )
+    .expect("certificate");
+    (
+        finalization.encode().to_vec(),
+        block.encode().to_vec(),
+        finalization,
+        block,
+    )
+}
+
+/// Finalization bytes whose signer bitmap declares 257 participants.
+///
+/// The bitmap length is rejected before the signature bytes are read, so the
+/// fixture is the proposal plus that bitmap.
+fn oversized_finalization_bytes() -> Vec<u8> {
+    use commonware_codec::Encode as _;
+    use commonware_consensus::simplex::types::Proposal;
+    use commonware_consensus::types::{Epoch, Round, View};
+    use commonware_cryptography::certificate::Signers;
+    use commonware_utils::Participant;
+    use outbe_consensus::digest::Digest;
+
+    let participants =
+        u32::try_from(outbe_consensus::bls::MAX_COMMITTEE_MEMBERS + 1).expect("257 fits in u32");
+    let signers = Signers::new(participants, [Participant::new(0)]).expect("signer bitmap");
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(1), View::new(1)),
+        View::new(0),
+        Digest::ZERO,
+    );
+    let mut bytes = proposal.encode().to_vec();
+    bytes.extend_from_slice(signers.encode().as_ref());
+    bytes
+}
+
+#[test]
+fn decode_finalization_proof_rejects_malformed_hex_and_trailing_bytes() {
+    let (finalization, block, _, _) = certified_record();
+    let finalization_hex = hex_bytes(&finalization);
+    let block_hex = hex_bytes(&block);
+    let rejected = [
+        proof("zz", &block_hex),
+        proof("0xzz", &block_hex),
+        proof("abc", &block_hex),
+        proof("0xabc", &block_hex),
+        proof("", &block_hex),
+        proof(&finalization_hex, "zz"),
+        proof(&finalization_hex, "0xzz"),
+        proof(&finalization_hex, "abc"),
+        proof(&finalization_hex, "0xabc"),
+        proof(&finalization_hex, ""),
+        proof(&format!("{finalization_hex}00"), &block_hex),
+        proof(&finalization_hex, &format!("{block_hex}00")),
+    ];
+    for case in &rejected {
+        assert!(super::decode_finalization_proof(case).is_none());
+    }
+}
+
+#[test]
+fn decode_rejects_oversized_upstream_proof() {
+    let finalization = oversized_finalization_bytes();
+    let block = {
+        use commonware_codec::Encode as _;
+        sample_block().encode().to_vec()
+    };
+    assert_eq!(
+        outbe_consensus::bls::MAX_COMMITTEE_MEMBERS + 1,
+        257,
+        "the codec bound under test is 256 participants"
+    );
+    assert!(matches!(
+        outbe_consensus::follow::decode_public_finalization(
+            &finalization,
+            outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
+        ),
+        Err(outbe_consensus::follow::PublicFinalizedBlockDecodeError::Finalization(_))
+    ));
+    assert!(super::decode_finalization_proof(&proof(
+        &hex_bytes(&finalization),
+        &hex_bytes(&block)
+    ))
+    .is_none());
+}
+
+#[test]
+fn well_formed_proof_still_decodes() {
+    use commonware_codec::Encode as _;
+
+    let (finalization_bytes, block_bytes, finalization, block) = certified_record();
+    let decoded = super::decode_finalization_proof(&proof(
+        &hex_bytes(&finalization_bytes),
+        &hex_bytes(&block_bytes),
+    ))
+    .expect("a certificate inside MAX_COMMITTEE_MEMBERS decodes");
+    assert_eq!(decoded.finalization.encode(), finalization.encode());
+    assert_eq!(decoded.block.encode(), block.encode());
+}
