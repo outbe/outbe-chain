@@ -129,6 +129,7 @@ criterion.workspace = true
 k256.workspace = true
 alloy-trie.workspace = true
 reth-ethereum.workspace = true
+proptest.workspace = true
 
 # Pure in-enclave compute-cost benchmark (decrypt + economics + Poseidon token_id).
 # The CPU ceiling the network can sustain inside the enclave during block

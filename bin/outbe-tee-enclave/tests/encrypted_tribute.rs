@@ -24,7 +24,7 @@ fn fixture() -> Fixture {
     let enclave_public = PublicKey::from(&StaticSecret::from(tribute_state_key)).to_bytes();
     let day = WorldwideDay::new(20250115);
     let owner = Address::repeat_byte(0x33);
-    let view_key = derive_view_key(&tribute_state_key, owner).unwrap();
+    let view_key = *derive_view_key(&tribute_state_key, owner).unwrap();
     let context = TributeContextV2 {
         chain_id: 54322345,
         tribute_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x22)),

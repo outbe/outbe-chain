@@ -4,6 +4,7 @@ use crate::errors::{Result, TeeError};
 use alloy_primitives::{Address, B256, U256};
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 use ring::hmac;
+use zeroize::Zeroizing;
 
 /// Every ledger uses field zero for its primary balance.
 pub const FIELD_BALANCE: u8 = 0;
@@ -152,20 +153,40 @@ impl Domain {
         group_sig: &[u8],
         chain_id: B256,
         epoch: u64,
-    ) -> Result<[u8; 32]> {
+    ) -> Result<Zeroizing<[u8; 32]>> {
         let mut info = self.state_info.to_vec();
         info.extend_from_slice(epoch.to_string().as_bytes());
-        hkdf_sha256(chain_id.as_slice(), group_sig, &info)
+        Ok(Zeroizing::new(hkdf_sha256(
+            chain_id.as_slice(),
+            group_sig,
+            &info,
+        )?))
     }
 }
 
 impl AccountKeyDerivation {
-    pub fn derive_view_key(&self, state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-        hkdf_sha256(state_key, account.as_slice(), self.view_info)
+    pub fn derive_view_key(
+        &self,
+        state_key: &[u8; 32],
+        account: Address,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        Ok(Zeroizing::new(hkdf_sha256(
+            state_key,
+            account.as_slice(),
+            self.view_info,
+        )?))
     }
 
-    pub fn derive_modify_key(&self, state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
-        hkdf_sha256(state_key, account.as_slice(), self.modify_info)
+    pub fn derive_modify_key(
+        &self,
+        state_key: &[u8; 32],
+        account: Address,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        Ok(Zeroizing::new(hkdf_sha256(
+            state_key,
+            account.as_slice(),
+            self.modify_info,
+        )?))
     }
 }
 

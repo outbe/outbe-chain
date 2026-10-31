@@ -289,9 +289,10 @@ fn derive_account_keys(context: RequestContext<'_>, request: AccountKeyRequest) 
         let state_key = domain.derive_state_key(derived.group_sig(), chain_id, 0)?;
         let view_key = domain.account_keys.derive_view_key(&state_key, account)?;
         let modify_key = domain.account_keys.derive_modify_key(&state_key, account)?;
-        let mut plaintext = view_key.to_vec();
-        plaintext.extend_from_slice(&modify_key);
-        crate::crypto::encrypt_share(&requester_ephemeral_pubkey, &plaintext)
+        let mut plaintext = zeroize::Zeroizing::new([0u8; 64]);
+        plaintext[..32].copy_from_slice(view_key.as_slice());
+        plaintext[32..].copy_from_slice(modify_key.as_slice());
+        crate::crypto::encrypt_share(&requester_ephemeral_pubkey, plaintext.as_slice())
     })();
     match sealed {
         Ok(blob) => EnclaveResponse::AccountKeysSealed {

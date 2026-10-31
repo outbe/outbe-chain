@@ -115,7 +115,7 @@ pub mod test_enclave {
         let key =
             outbe_tee_enclave::promis::derive_promis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
                 .expect("derive dev promis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(key));
+        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
     }
 
     /// Remove the in-process enclave for the current thread.

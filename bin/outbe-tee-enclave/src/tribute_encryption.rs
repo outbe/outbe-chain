@@ -17,12 +17,16 @@ const AMOUNTS: SlotCipherDomain = SlotCipherDomain {
 };
 
 /// Derive the resident Tribute state key from the DKG group signature.
-pub fn derive_tribute_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
+pub fn derive_tribute_state_key(
+    group_sig: &[u8],
+    chain_id: B256,
+    epoch: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     TRIBUTE.derive_state_key(group_sig, chain_id, epoch)
 }
 
 /// Derive the per-owner Tribute view key from `tribute_state_key`.
-pub fn derive_view_key(state_key: &[u8; 32], owner: Address) -> Result<[u8; 32]> {
+pub fn derive_view_key(state_key: &[u8; 32], owner: Address) -> Result<Zeroizing<[u8; 32]>> {
     TRIBUTE.account_keys.derive_view_key(state_key, owner)
 }
 
@@ -70,7 +74,7 @@ fn derive_amount_key(
     tribute_state_key: &[u8; 32],
     context: &TributeContextV2,
 ) -> Result<Zeroizing<[u8; 32]>> {
-    let view_key = Zeroizing::new(derive_view_key(tribute_state_key, context.owner)?);
+    let view_key = derive_view_key(tribute_state_key, context.owner)?;
     let info = context.amount_key_info();
     let key = hkdf_sha256(context.digest().as_slice(), &*view_key, &info)?;
     Ok(Zeroizing::new(key))

@@ -45,7 +45,11 @@ const MIN_BUCKET: usize = 8;
 
 /// Derive the resident Fidelity state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
-pub fn derive_fidelity_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
+pub fn derive_fidelity_state_key(
+    group_sig: &[u8],
+    chain_id: B256,
+    epoch: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     FIDELITY.derive_state_key(group_sig, chain_id, epoch)
 }
 
@@ -277,7 +281,7 @@ pub fn apply_cohort_section(
     amount: U256,
     section: &FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
-    let view_key = Zeroizing::new(FIDELITY.account_keys.derive_view_key(state_key, account)?);
+    let view_key = FIDELITY.account_keys.derive_view_key(state_key, account)?;
     let (version, mut state) = read_state(&view_key, account, &section.current_blob)?;
     let utc_day = outbe_primitives::time::utc_day_from_timestamp(section.timestamp);
 
@@ -350,11 +354,9 @@ pub fn snapshot_leagues(
     let eval_day = outbe_primitives::time::utc_day_from_timestamp(req.timestamp);
     let mut leagues = Vec::with_capacity(req.entries.len());
     for entry in &req.entries {
-        let view_key = Zeroizing::new(
-            FIDELITY
-                .account_keys
-                .derive_view_key(state_key, entry.owner)?,
-        );
+        let view_key = FIDELITY
+            .account_keys
+            .derive_view_key(state_key, entry.owner)?;
         let (_, state) = read_state(&view_key, entry.owner, &entry.cohort_blob)?;
         let (rcfi, _, league) = state.evaluate(eval_day, req.first_qualified_start)?;
         leagues.push(FidelityLeagueEntry {
@@ -392,11 +394,9 @@ pub fn query_index(
         _ => return Err(FidelityEnclaveError::OwnerSignatureAccountMismatch.into()),
     }
 
-    let view_key = Zeroizing::new(
-        FIDELITY
-            .account_keys
-            .derive_view_key(state_key, req.account)?,
-    );
+    let view_key = FIDELITY
+        .account_keys
+        .derive_view_key(state_key, req.account)?;
     let (_, state) = read_state(&view_key, req.account, &req.cohort_blob)?;
     let query_day = outbe_primitives::time::utc_day_from_timestamp(req.query_timestamp);
     let (rcfi, efficiency, league) = state.evaluate(query_day, req.first_qualified_start)?;
@@ -418,7 +418,7 @@ mod tests {
     use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 
     fn state_key() -> [u8; 32] {
-        derive_fidelity_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)
+        *derive_fidelity_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0)
             .unwrap()
     }
     fn alice() -> Address {

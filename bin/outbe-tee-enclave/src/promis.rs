@@ -14,22 +14,27 @@ use outbe_tee::protocol::{PromisOp, PromisOpRequest, PromisOpResult, PromisOpSta
 
 use crate::confidential::{FIELD_BALANCE, PROMIS};
 use crate::errors::{PromisRejectReason, Result};
+use zeroize::Zeroizing;
 
 /// Derive the resident Promis state key from the DKG group signature. See
 /// [`crate::confidential::Domain::derive_state_key`].
-pub fn derive_promis_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
+pub fn derive_promis_state_key(
+    group_sig: &[u8],
+    chain_id: B256,
+    epoch: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     PROMIS.derive_state_key(group_sig, chain_id, epoch)
 }
 
 /// Per-account view key: read capability AND the AEAD key for the account's
 /// balance blob. See [`crate::confidential::AccountKeyDerivation::derive_view_key`].
-pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
+pub fn derive_view_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
     PROMIS.account_keys.derive_view_key(state_key, account)
 }
 
 /// Per-account modify key: authorizes writes (via HMAC). It never decrypts state.
 /// See [`crate::confidential::AccountKeyDerivation::derive_modify_key`].
-pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<[u8; 32]> {
+pub fn derive_modify_key(state_key: &[u8; 32], account: Address) -> Result<Zeroizing<[u8; 32]>> {
     PROMIS.account_keys.derive_modify_key(state_key, account)
 }
 
@@ -173,7 +178,7 @@ mod tests {
     const CHAIN: B256 = B256::repeat_byte(0xC2);
 
     fn state_key() -> [u8; 32] {
-        derive_promis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
+        *derive_promis_state_key(b"a-group-threshold-signature-~48-bytes-long!!", CHAIN, 0).unwrap()
     }
     fn alice() -> Address {
         Address::repeat_byte(0x11)

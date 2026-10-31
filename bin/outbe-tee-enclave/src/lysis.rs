@@ -162,12 +162,12 @@ pub(crate) mod tests {
     const FIDELITY_KEY: [u8; 32] = [0x63; 32];
 
     pub(crate) fn tribute_state_key() -> [u8; 32] {
-        crate::tribute_encryption::derive_tribute_state_key(&GROUP_SIG, B256::from(U256::ONE), 0)
+        *crate::tribute_encryption::derive_tribute_state_key(&GROUP_SIG, B256::from(U256::ONE), 0)
             .unwrap()
     }
 
     pub(crate) fn nod_state_key() -> [u8; 32] {
-        crate::nod_encryption::derive_nod_state_key(&GROUP_SIG, B256::from(U256::ONE), 0).unwrap()
+        *crate::nod_encryption::derive_nod_state_key(&GROUP_SIG, B256::from(U256::ONE), 0).unwrap()
     }
 
     pub(crate) fn fixture() -> LysisRequest {

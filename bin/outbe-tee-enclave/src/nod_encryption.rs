@@ -18,12 +18,16 @@ const AMOUNT: SlotCipherDomain = SlotCipherDomain {
 };
 
 /// Derive the resident NOD state key from the DKG group signature.
-pub fn derive_nod_state_key(group_sig: &[u8], chain_id: B256, epoch: u64) -> Result<[u8; 32]> {
+pub fn derive_nod_state_key(
+    group_sig: &[u8],
+    chain_id: B256,
+    epoch: u64,
+) -> Result<Zeroizing<[u8; 32]>> {
     NOD.derive_state_key(group_sig, chain_id, epoch)
 }
 
 /// Derive the per-owner NOD view key from `nod_state_key`.
-pub fn derive_view_key(state_key: &[u8; 32], owner: Address) -> Result<[u8; 32]> {
+pub fn derive_view_key(state_key: &[u8; 32], owner: Address) -> Result<Zeroizing<[u8; 32]>> {
     NOD.account_keys.derive_view_key(state_key, owner)
 }
 
@@ -109,7 +113,7 @@ fn binding(nod_state_key: &[u8; 32], terms: &NodTermsV1, amount: U256) -> B256 {
 }
 
 fn amount_key(nod_state_key: &[u8; 32], nod: &EncryptedNodV1) -> Result<Zeroizing<[u8; 32]>> {
-    let view_key = Zeroizing::new(derive_view_key(nod_state_key, nod.terms.owner)?);
+    let view_key = derive_view_key(nod_state_key, nod.terms.owner)?;
     Ok(Zeroizing::new(hkdf_sha256(
         nod.context_digest().as_slice(),
         &*view_key,
