@@ -40,6 +40,18 @@ struct SystemTxVisibleGasEntry {
     gas_limit: u64,
 }
 
+impl SystemTxVisibleGasEntry {
+    fn execution_gas_limit(&self) -> Result<u64, SystemTxError> {
+        let reserved = self.intrinsic_gas.checked_add(self.protocol_precharge);
+        reserved
+            .and_then(|reserved| self.gas_limit.checked_sub(reserved))
+            .ok_or(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: self.gas_limit,
+                intrinsic_gas: reserved.unwrap_or(u64::MAX),
+            })
+    }
+}
+
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
 /// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
@@ -136,11 +148,16 @@ impl SystemTxVisibleGasPlan {
             .map(|entry| entry.protocol_precharge)
     }
 
-    #[must_use]
-    pub fn execution_gas_limit(&self, ordinal: usize) -> Option<u64> {
+    /// Returns the gas left for execution after the intrinsic gas and the
+    /// protocol precharge, or `None` for an unknown ordinal.
+    ///
+    /// Returns [`SystemTxError::GasLimitBelowIntrinsic`] when the entry's gas
+    /// limit cannot hold its reserved gas. `new` never builds such an entry.
+    pub fn execution_gas_limit(&self, ordinal: usize) -> Result<Option<u64>, SystemTxError> {
         self.entries
             .get(ordinal)
-            .map(|entry| entry.gas_limit - entry.intrinsic_gas - entry.protocol_precharge)
+            .map(SystemTxVisibleGasEntry::execution_gas_limit)
+            .transpose()
     }
 
     #[must_use]
@@ -159,4 +176,53 @@ fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTx
             &crate::tee_attestation_v1::TeeRegistryGasScheduleV1::normative(),
         )
         .map_err(SystemTxError::codec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(entry: SystemTxVisibleGasEntry) -> SystemTxVisibleGasPlan {
+        SystemTxVisibleGasPlan {
+            entries: vec![entry],
+            total_envelope_gas: entry.gas_limit,
+        }
+    }
+
+    #[test]
+    fn gas_plan_subtraction_is_checked() {
+        let consistent = plan(SystemTxVisibleGasEntry {
+            intrinsic_gas: 21_000,
+            protocol_precharge: 4_000,
+            gas_limit: 30_000,
+        });
+        assert_eq!(consistent.execution_gas_limit(0), Ok(Some(5_000)));
+        assert_eq!(consistent.execution_gas_limit(1), Ok(None));
+
+        let below_reserved = plan(SystemTxVisibleGasEntry {
+            intrinsic_gas: 21_000,
+            protocol_precharge: 4_000,
+            gas_limit: 24_999,
+        });
+        assert_eq!(
+            below_reserved.execution_gas_limit(0),
+            Err(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: 24_999,
+                intrinsic_gas: 25_000,
+            })
+        );
+
+        let reserved_overflow = plan(SystemTxVisibleGasEntry {
+            intrinsic_gas: u64::MAX,
+            protocol_precharge: 1,
+            gas_limit: u64::MAX,
+        });
+        assert_eq!(
+            reserved_overflow.execution_gas_limit(0),
+            Err(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: u64::MAX,
+                intrinsic_gas: u64::MAX,
+            })
+        );
+    }
 }

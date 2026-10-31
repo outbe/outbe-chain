@@ -364,9 +364,9 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
     .unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
-    assert_eq!(plan.execution_gas_limit(0), Some(cycle_remainder));
+    assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
     assert_eq!(plan.protocol_precharge(1), Some(protocol_precharge));
-    assert_eq!(plan.execution_gas_limit(1), Some(0));
+    assert_eq!(plan.execution_gas_limit(1), Ok(Some(0)));
     assert_eq!(
         plan.gas_limit(1),
         Some(bootstrap_intrinsic + protocol_precharge)

@@ -258,13 +258,12 @@ impl<'storage> StorageHandle<'storage> {
         })
     }
 
-    pub fn checkpoint(&self) -> JournalCheckpoint {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint()
+    pub fn checkpoint(&self) -> Result<JournalCheckpoint> {
+        self.with_provider(|provider| Ok(provider.checkpoint()))
     }
 
-    pub fn checkpoint_guard(&self) -> CheckpointGuard<'storage> {
-        CheckpointGuard::new(self.clone(), self.checkpoint())
+    pub fn checkpoint_guard(&self) -> Result<CheckpointGuard<'storage>> {
+        Ok(CheckpointGuard::new(self.clone(), self.checkpoint()?))
     }
 
     /// Runs storage mutations under a journal checkpoint.
@@ -273,29 +272,29 @@ impl<'storage> StorageHandle<'storage> {
     /// On `Err` or early return, [`CheckpointGuard`] drops without commit and
     /// reverts all writes made in this scope.
     pub fn with_checkpoint<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        let checkpoint = self.checkpoint_guard();
+        let checkpoint = self.checkpoint_guard()?;
         let result = f()?;
-        checkpoint.commit();
+        checkpoint.commit()?;
         Ok(result)
     }
 
-    pub fn checkpoint_commit(&self) {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint_commit();
+    pub fn checkpoint_commit(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.with_provider(|provider| provider.checkpoint_commit(checkpoint))
     }
 
-    pub fn checkpoint_revert(&self, checkpoint: JournalCheckpoint) {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint_revert(checkpoint);
+    pub fn checkpoint_revert(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.with_provider(|provider| provider.checkpoint_revert(checkpoint))
     }
 
     pub fn deduct_gas(&self, gas: u64) -> Result<()> {
         self.with_provider(|provider| provider.deduct_gas(gas))
     }
 
-    pub fn refund_gas(&self, gas: i64) {
-        let mut provider = self.inner.borrow_mut();
-        provider.refund_gas(gas);
+    pub fn refund_gas(&self, gas: i64) -> Result<()> {
+        self.with_provider(|provider| {
+            provider.refund_gas(gas);
+            Ok(())
+        })
     }
 
     pub fn gas_used(&self) -> Result<u64> {
@@ -424,10 +423,9 @@ impl<'storage> StorageHandle<'storage> {
     /// callback already holds the inner borrow) returns
     /// `SubCallError::ProviderBorrowed` rather than panicking. In practice,
     /// the production sub-call provider (`outbe_evm::storage::CtxStorageProvider`)
-    /// releases the borrow only after `sub_call` returns.
-    /// [`crate::storage::evm::EvmStorageProvider`] does not override `sub_call`
-    /// and returns `SubCallError::NotAvailable`. As a result, a hostile re-entry
-    /// from inside the child frame is observable as a structured error.
+    /// releases the borrow only after `sub_call` returns. As a result, a
+    /// hostile re-entry from inside the child frame is observable as a
+    /// structured error.
     fn do_sub_call(&self, input: SubCallInput) -> std::result::Result<SubCallOutput, SubCallError> {
         let mut guard = self
             .inner
@@ -485,6 +483,38 @@ mod tests {
             matches!(handle.now_secs(), Err(PrecompileError::Revert(message))
             if message == "storage provider is already mutably borrowed")
         );
+    }
+
+    #[test]
+    fn handle_borrow_is_fallible() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        let checkpoint = handle.checkpoint().unwrap();
+        let borrowed = |result: Result<()>| {
+            matches!(result, Err(PrecompileError::Revert(message))
+                if message == "storage provider is already mutably borrowed")
+        };
+        {
+            let _borrow = handle.inner.borrow_mut();
+            assert!(borrowed(handle.checkpoint().map(drop)));
+            assert!(borrowed(handle.checkpoint_guard().map(drop)));
+            assert!(borrowed(handle.checkpoint_commit(checkpoint)));
+            assert!(borrowed(handle.checkpoint_revert(checkpoint)));
+            assert!(borrowed(handle.refund_gas(1)));
+        }
+        handle.refund_gas(1).unwrap();
+        handle.checkpoint_commit(checkpoint).unwrap();
+    }
+
+    #[test]
+    fn checkpoint_guard_drop_logs_instead_of_panicking() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        let guard = handle.checkpoint_guard().unwrap();
+        let borrow = handle.inner.borrow_mut();
+        drop(guard);
+        drop(borrow);
+        assert!(handle.checkpoint().is_ok());
     }
 
     #[test]

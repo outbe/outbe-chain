@@ -66,13 +66,13 @@ impl ValidatorSet<'_> {
         let after = before
             .clone()
             .with_lifecycle(ValidatorLifecycle::Active(active))?;
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.persist_validator_state_delta(&before, &after)?;
         self.pending_set_change.write(true)?;
         crate::metrics::record_validator_status(addr, status::ACTIVE);
         crate::metrics::record_pending_set_change(true);
         self.emit(IValidatorSet::ValidatorActivated { validator: addr })?;
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 

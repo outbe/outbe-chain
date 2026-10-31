@@ -208,6 +208,10 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
         return Ok(Bytes::new());
     }
 
+    // Canonical order: strictly ascending tags. Each tag occurs at most once,
+    // and the decoder rejects any other order.
+    records.sort_unstable_by_key(|(tag, _)| *tag);
+
     if records.len() > u8::MAX as usize {
         return Err(ReshareArtifactError::TooManyRecords.into());
     }
@@ -253,23 +257,15 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         radicle_publication_enabled: extra_data[5] & PUBLICATION_FLAG != 0,
         ..Default::default()
     };
+    // The encoder writes empty bytes for this case, never a 7-byte envelope.
+    if record_count == 0 && !artifacts.radicle_publication_enabled {
+        return Err(ReshareArtifactError::EmptyEnvelopeWithoutPublicationFlag.into());
+    }
 
+    let mut previous_tag: Option<u8> = None;
     for _ in 0..record_count {
-        if offset + 3 > extra_data.len() {
-            return Err(ReshareArtifactError::TruncatedRecordHeader.into());
-        }
-        let tag = extra_data[offset];
-        offset += 1;
-        let payload_len = u16::from_be_bytes([extra_data[offset], extra_data[offset + 1]]) as usize;
-        offset += 2;
-        let end = offset
-            .checked_add(payload_len)
-            .ok_or(ReshareArtifactError::RecordOverflow)?;
-        let Some(payload) = extra_data.get(offset..end) else {
-            return Err(ReshareArtifactError::TruncatedRecordPayload.into());
-        };
-        offset = end;
-
+        let (tag, payload) = read_record(extra_data, &mut offset, previous_tag)?;
+        previous_tag = Some(tag);
         records::decode_into(&mut artifacts, tag, payload)?;
     }
 
@@ -278,6 +274,36 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
     }
 
     Ok(artifacts)
+}
+
+/// Reads one record header and payload at `offset` and advances `offset`.
+///
+/// Rejects a tag that is not strictly greater than `previous_tag`, so the
+/// decoder accepts only the encoder's ascending tag order.
+fn read_record<'a>(
+    extra_data: &'a [u8],
+    offset: &mut usize,
+    previous_tag: Option<u8>,
+) -> Result<(u8, &'a [u8])> {
+    let header_end = offset
+        .checked_add(3)
+        .ok_or(ReshareArtifactError::RecordOverflow)?;
+    let header = extra_data
+        .get(*offset..header_end)
+        .ok_or(ReshareArtifactError::TruncatedRecordHeader)?;
+    let tag = header[0];
+    if let Some(previous) = previous_tag.filter(|previous| tag <= *previous) {
+        return Err(ReshareArtifactError::RecordTagsOutOfOrder { previous, tag }.into());
+    }
+    let payload_len = u16::from_be_bytes([header[1], header[2]]) as usize;
+    let end = header_end
+        .checked_add(payload_len)
+        .ok_or(ReshareArtifactError::RecordOverflow)?;
+    let payload = extra_data
+        .get(header_end..end)
+        .ok_or(ReshareArtifactError::TruncatedRecordPayload)?;
+    *offset = end;
+    Ok((tag, payload))
 }
 
 /// Canonicalizes proposer-supplied artifact fragments before block execution.

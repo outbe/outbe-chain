@@ -4,8 +4,8 @@
 //! as a compact bitmap. No production path writes this format into block
 //! `extra_data`. Participation travels in the Phase 1
 //! [`crate::consensus_metadata::CertifiedParentAccountingMetadata`] system tx,
-//! and `extra_data` carries `OutbeBlockArtifacts`. Tests and the fuzz target
-//! use this codec.
+//! and `extra_data` carries `OutbeBlockArtifacts`. Only tests use this
+//! encoder. The crate has no decoder for this format.
 //!
 //! # Format
 //!
@@ -24,7 +24,7 @@
 
 use alloy_primitives::{Address, Bytes};
 
-use crate::consensus::{ParticipationData, OUTBE_MAX_EXTRA_DATA_SIZE};
+use crate::consensus::OUTBE_MAX_EXTRA_DATA_SIZE;
 #[cfg(test)]
 use crate::error::PrecompileError;
 use crate::error::{ParticipationError, Result};
@@ -137,196 +137,36 @@ pub fn encode_participation_extended_with_limit(
     Ok(Bytes::from(buf))
 }
 
-/// Result of decoding extended participation data from `extra_data`.
-pub struct DecodedParticipation {
-    /// Participation data (voters + absent).
-    pub participation: ParticipationData,
-    /// Validators who missed their proposer slot (view gaps).
-    pub missed_proposers: Vec<Address>,
-    /// Validators caught in byzantine behavior (equivocation).
-    pub byzantine_validators: Vec<Address>,
-}
-
-/// Decode participation data from `extra_data` bytes.
-///
-/// Returns `None` if the data doesn't contain valid participation information
-/// (e.g. genesis blocks, blocks before consensus is active).
-pub fn decode_participation(
-    extra_data: &[u8],
-    validators: &[Address],
-) -> Option<ParticipationData> {
-    decode_participation_extended(extra_data, validators).map(|d| d.participation)
-}
-
-/// Decode extended participation data (participation + missed proposers) from `extra_data`.
-pub fn decode_participation_extended(
-    extra_data: &[u8],
-    validators: &[Address],
-) -> Option<DecodedParticipation> {
-    let (participation, missed_offset) = decode_participation_bitmap(extra_data, validators)?;
-    let (missed_proposers, after_missed) = decode_optional_addresses(extra_data, missed_offset);
-    let (byzantine_validators, _) = decode_optional_addresses(extra_data, after_missed);
-    Some(DecodedParticipation {
-        participation,
-        missed_proposers,
-        byzantine_validators,
-    })
-}
-
-fn decode_participation_bitmap(
-    extra_data: &[u8],
-    validators: &[Address],
-) -> Option<(ParticipationData, usize)> {
-    // Minimum: magic(4) + version(1) + count(2) + at least 1 bitmap byte
-    if extra_data.len() < 8 {
-        return None;
-    }
-
-    // Check magic
-    if &extra_data[..4] != MAGIC {
-        return None;
-    }
-
-    // Check version
-    if extra_data[4] != VERSION {
-        return None;
-    }
-
-    // Read validator count
-    let count = u16::from_be_bytes([extra_data[5], extra_data[6]]) as usize;
-    let bitmap_len = count.div_ceil(8);
-
-    if extra_data.len() < 7 + bitmap_len {
-        return None;
-    }
-
-    if count != validators.len() {
-        return None;
-    }
-
-    let bitmap = &extra_data[7..7 + bitmap_len];
-
-    let mut voters = Vec::new();
-    let mut absent = Vec::new();
-
-    for (i, addr) in validators.iter().enumerate() {
-        let byte_idx = i / 8;
-        let bit_idx = 7 - (i % 8);
-        if bitmap[byte_idx] & (1 << bit_idx) != 0 {
-            voters.push(*addr);
-        } else {
-            absent.push(*addr);
-        }
-    }
-
-    Some((ParticipationData { voters, absent }, 7 + bitmap_len))
-}
-
-/// An absent or truncated optional section is empty and consumes the remainder.
-/// In particular, a malformed missed section cannot become a byzantine section.
-fn decode_optional_addresses(extra_data: &[u8], offset: usize) -> (Vec<Address>, usize) {
-    let Some(&count) = extra_data.get(offset) else {
-        return (Vec::new(), extra_data.len());
-    };
-    let addresses_start = offset + 1;
-    let section_end = addresses_start + usize::from(count) * 20;
-    let Some(addresses) = extra_data.get(addresses_start..section_end) else {
-        return (Vec::new(), extra_data.len());
-    };
-    let addresses = addresses
-        .chunks_exact(20)
-        .map(Address::from_slice)
-        .collect();
-    (addresses, section_end)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn optional_sections_preserve_truncation_and_validator_order() {
-        let validators = [Address::with_last_byte(2), Address::with_last_byte(1)];
-        // An independent wire vector: first validator present, second absent.
-        let header = b"OUTB\x01\x00\x02\x80";
-        let missed = Address::with_last_byte(0xAA);
-        let byzantine = Address::with_last_byte(0xBB);
-        let mut complete = header.to_vec();
-        complete.push(1);
-        complete.extend_from_slice(missed.as_slice());
-        complete.push(1);
-        complete.extend_from_slice(byzantine.as_slice());
-        for end in header.len()..=complete.len() {
-            let decoded = decode_participation_extended(&complete[..end], &validators).unwrap();
-            assert_eq!(decoded.participation.voters, [validators[0]]);
-            assert_eq!(decoded.participation.absent, [validators[1]]);
-            assert_eq!(
-                decoded.missed_proposers,
-                if end >= 29 { vec![missed] } else { vec![] }
-            );
-            assert_eq!(
-                decoded.byzantine_validators,
-                if end == 50 { vec![byzantine] } else { vec![] }
-            );
-        }
-        // A zero missed count allows the following byzantine section.
-        let mut without_missed = header.to_vec();
-        without_missed.extend_from_slice(&[0, 1]);
-        without_missed.extend_from_slice(byzantine.as_slice());
-        without_missed.push(0xFF); // trailing bytes are tolerated
-        let decoded = decode_participation_extended(&without_missed, &validators).unwrap();
-        assert!(decoded.missed_proposers.is_empty());
-        assert_eq!(decoded.byzantine_validators, [byzantine]);
-    }
-
-    #[test]
-    fn empty_committee_keeps_legacy_minimum_header_length() {
-        assert!(decode_participation_extended(b"OUTB\x01\x00\x00", &[]).is_none());
-        let decoded = decode_participation_extended(b"OUTB\x01\x00\x00\x00", &[]).unwrap();
-        assert!(decoded.participation.voters.is_empty());
-        assert!(decoded.participation.absent.is_empty());
-        assert!(decoded.missed_proposers.is_empty());
-        assert!(decoded.byzantine_validators.is_empty());
-    }
-
-    #[test]
-    fn test_roundtrip_all_present() {
-        let validators: Vec<Address> = (0..4).map(Address::with_last_byte).collect();
-        let signers = vec![true, true, true, true];
-
-        let encoded = encode_participation(&validators, &signers).unwrap();
-        let decoded = decode_participation(&encoded, &validators).unwrap();
-
-        assert_eq!(decoded.voters.len(), 4);
-        assert_eq!(decoded.absent.len(), 0);
-    }
-
-    #[test]
-    fn test_roundtrip_partial() {
+    fn partial_participation_matches_wire_vector() {
         let validators: Vec<Address> = (0..4).map(Address::with_last_byte).collect();
         let signers = vec![true, false, true, false];
 
         let encoded = encode_participation(&validators, &signers).unwrap();
-        let decoded = decode_participation(&encoded, &validators).unwrap();
 
-        assert_eq!(decoded.voters, vec![validators[0], validators[2]]);
-        assert_eq!(decoded.absent, vec![validators[1], validators[3]]);
+        assert_eq!(encoded.as_ref(), b"OUTB\x01\x00\x04\xa0\x00\x00");
     }
 
     #[test]
-    fn test_extended_with_missed_proposers() {
-        let validators: Vec<Address> = (0..4).map(Address::with_last_byte).collect();
-        let signers = vec![true, true, false, true];
-        let missed = vec![Address::with_last_byte(0xAA), Address::with_last_byte(0xBB)];
+    fn extended_sections_follow_the_bitmap_in_order() {
+        let validators = [Address::with_last_byte(2), Address::with_last_byte(1)];
+        let missed = Address::with_last_byte(0xAA);
+        let byzantine = Address::with_last_byte(0xBB);
 
-        let encoded = encode_participation_extended(&validators, &signers, &missed, &[]).unwrap();
-        let decoded = decode_participation_extended(&encoded, &validators).unwrap();
+        let encoded =
+            encode_participation_extended(&validators, &[true, false], &[missed], &[byzantine])
+                .unwrap();
 
-        assert_eq!(decoded.participation.voters.len(), 3);
-        assert_eq!(decoded.participation.absent.len(), 1);
-        assert_eq!(decoded.missed_proposers.len(), 2);
-        assert_eq!(decoded.missed_proposers[0], Address::with_last_byte(0xAA));
-        assert_eq!(decoded.missed_proposers[1], Address::with_last_byte(0xBB));
+        let mut expected = b"OUTB\x01\x00\x02\x80".to_vec();
+        expected.push(1);
+        expected.extend_from_slice(missed.as_slice());
+        expected.push(1);
+        expected.extend_from_slice(byzantine.as_slice());
+        assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 
     #[test]
@@ -342,82 +182,17 @@ mod tests {
         let encoded = encode_participation_extended(&validators, &signers, &missed, &[]).unwrap();
         // 4 + 1 + 2 + 16 + 1 + 20 + 1(byzantine count=0) = 45 bytes
         assert_eq!(encoded.len(), 45);
-
-        let decoded = decode_participation_extended(&encoded, &validators).unwrap();
-        assert_eq!(decoded.participation.voters.len(), 125);
-        assert_eq!(decoded.participation.absent.len(), 3);
-        assert_eq!(decoded.missed_proposers.len(), 1);
-        assert_eq!(decoded.missed_proposers[0], Address::with_last_byte(0xFF));
-    }
-
-    /// Regression test: encode with sorted order, decode with independently sorted order.
-    /// Before the fix, encoder used voters++absent order while decoder used on-chain index
-    /// order, causing bitmap bits to map to wrong validators.
-    #[test]
-    fn test_encode_decode_sorted_independently() {
-        let a = Address::with_last_byte(0x11);
-        let b = Address::with_last_byte(0x22);
-        let c = Address::with_last_byte(0x33);
-        let d = Address::with_last_byte(0x44);
-
-        let voters = [b, d];
-        let absent = [a, c];
-
-        // Encoder side: sort voters++absent
-        let mut encode_order: Vec<Address> = voters.iter().chain(absent.iter()).copied().collect();
-        encode_order.sort();
-        let voter_set: std::collections::HashSet<_> = voters.iter().collect();
-        let signers: Vec<bool> = encode_order
+        let bitmap = &encoded[7..23];
+        assert_eq!(bitmap[0], 0b0111_1111);
+        assert_eq!(bitmap[7], 0b1111_1110);
+        assert_eq!(bitmap[15], 0b1111_1110);
+        assert!(bitmap[1..7]
             .iter()
-            .map(|addr| voter_set.contains(addr))
-            .collect();
-        let encoded = encode_participation(&encode_order, &signers).unwrap();
-
-        // Decoder side: sort from a different initial order (simulating get_active_consensus_set)
-        let mut decode_order = vec![c, a, d, b];
-        decode_order.sort();
-        let decoded = decode_participation(&encoded, &decode_order).unwrap();
-
-        assert_eq!(decoded.voters.len(), 2);
-        assert_eq!(decoded.absent.len(), 2);
-        assert!(decoded.voters.contains(&b));
-        assert!(decoded.voters.contains(&d));
-        assert!(decoded.absent.contains(&a));
-        assert!(decoded.absent.contains(&c));
-    }
-
-    /// Demonstrates the bug that existed before sorting was added:
-    /// encoding in voters++absent order and decoding in a different order
-    /// assigns bitmap bits to wrong validators.
-    #[test]
-    fn test_unsorted_order_causes_mismatch() {
-        let a = Address::with_last_byte(0x11);
-        let b = Address::with_last_byte(0x22);
-        let c = Address::with_last_byte(0x33);
-        let d = Address::with_last_byte(0x44);
-
-        // Consensus says: b and d voted, a and c are absent.
-
-        // OLD BUG: encode in voters++absent order (b, d, a, c) - NO sort.
-        let unsorted_encode_order = vec![b, d, a, c];
-        let signers_unsorted = vec![true, true, false, false];
-        let encoded = encode_participation(&unsorted_encode_order, &signers_unsorted).unwrap();
-
-        // Decoder uses canonical sorted order (a, b, c, d).
-        let sorted_decode_order = vec![a, b, c, d];
-        let decoded = decode_participation(&encoded, &sorted_decode_order).unwrap();
-
-        // BUG: bitmap says positions 0,1 are signers -> maps to a,b in sorted order.
-        // But the ACTUAL signers were b,d. So the decoder falsely marks 'a' as
-        // voter and 'd' as absent. This causes wrong slashing!
-        assert!(
-            decoded.voters.contains(&a), // WRONG: a didn't vote
-            "old bug: a falsely marked as voter"
-        );
-        assert!(
-            decoded.absent.contains(&d), // WRONG: d DID vote
-            "old bug: d falsely marked as absent"
-        );
+            .chain(&bitmap[8..15])
+            .all(|&b| b == 0xFF));
+        assert_eq!(encoded[23], 1);
+        assert_eq!(&encoded[24..44], missed[0].as_slice());
+        assert_eq!(encoded[44], 0);
     }
 
     /// Length mismatch returns error instead of panicking.
@@ -434,43 +209,10 @@ mod tests {
     }
 
     #[test]
-    fn test_decode_invalid_magic() {
-        let validators: Vec<Address> = vec![Address::ZERO];
-        assert!(decode_participation(b"XXXX\x01\x00\x01\x80\x00", &validators).is_none());
-    }
-
-    #[test]
-    fn test_decode_empty() {
-        let validators: Vec<Address> = vec![Address::ZERO];
-        assert!(decode_participation(&[], &validators).is_none());
-    }
-
-    #[test]
-    fn test_backward_compat_no_missed_section() {
-        // Simulate old format without missed proposer section
-        let validators: Vec<Address> = (0..4).map(Address::with_last_byte).collect();
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"OUTB");
-        buf.push(0x01);
-        buf.extend_from_slice(&4u16.to_be_bytes());
-        buf.push(0b1111_0000); // all 4 signed
-                               // No missed proposer section
-
-        let decoded = decode_participation_extended(&buf, &validators).unwrap();
-        assert_eq!(decoded.participation.voters.len(), 4);
-        assert_eq!(decoded.missed_proposers.len(), 0);
-    }
-
-    #[test]
     fn test_empty_participation_encodes_minimal_header() {
         let encoded = encode_participation_extended(&[], &[], &[], &[]).unwrap();
 
-        assert_eq!(encoded.len(), 9);
-        assert_eq!(&encoded[..4], b"OUTB");
-
-        let decoded = decode_participation_extended(&encoded, &Vec::<Address>::new()).unwrap();
-        assert!(decoded.participation.voters.is_empty());
-        assert!(decoded.participation.absent.is_empty());
+        assert_eq!(encoded.as_ref(), b"OUTB\x01\x00\x00\x00\x00");
     }
 
     #[test]
@@ -506,43 +248,16 @@ mod proptests {
     }
 
     proptest! {
-        /// Encoding then decoding must produce the original participation data.
+        /// The encoded length follows the format header and section counts.
         #[test]
-        fn roundtrip_participation(
-            (validators, signers) in validators_and_signers(),
-        ) {
-            let encoded = encode_participation(&validators, &signers).unwrap();
-            let decoded = decode_participation(&encoded, &validators)
-                .expect("decode must succeed for valid encoding");
-
-            let expected_voters: Vec<Address> = validators.iter()
-                .zip(signers.iter())
-                .filter(|(_, &s)| s)
-                .map(|(a, _)| *a)
-                .collect();
-            let expected_absent: Vec<Address> = validators.iter()
-                .zip(signers.iter())
-                .filter(|(_, &s)| !s)
-                .map(|(a, _)| *a)
-                .collect();
-
-            prop_assert_eq!(decoded.voters, expected_voters);
-            prop_assert_eq!(decoded.absent, expected_absent);
-        }
-
-        /// Extended encoding roundtrip preserves missed proposers too.
-        #[test]
-        fn roundtrip_extended(
+        fn encoded_length_follows_format(
             (validators, signers) in validators_and_signers(),
             missed in missed_proposers(),
         ) {
             let encoded = encode_participation_extended(&validators, &signers, &missed, &[]).unwrap();
-            let decoded = decode_participation_extended(&encoded, &validators)
-                .expect("decode must succeed for valid encoding");
-
-            // Missed proposers capped at 255 by encoding.
-            let expected_missed: Vec<Address> = missed.into_iter().take(255).collect();
-            prop_assert_eq!(decoded.missed_proposers, expected_missed);
+            let bitmap_len = validators.len().div_ceil(8);
+            prop_assert_eq!(encoded.len(), 4 + 1 + 2 + bitmap_len + 1 + missed.len() * 20 + 1);
+            prop_assert_eq!(usize::from(encoded[7 + bitmap_len]), missed.len());
         }
 
         /// Encoding is deterministic. Same inputs always produce identical bytes.
@@ -554,31 +269,6 @@ mod proptests {
             let a = encode_participation_extended(&validators, &signers, &missed, &[]).unwrap();
             let b = encode_participation_extended(&validators, &signers, &missed, &[]).unwrap();
             prop_assert_eq!(a, b);
-        }
-
-        /// Decoding with wrong validator count returns None.
-        #[test]
-        fn wrong_validator_count_returns_none(
-            (validators, signers) in validators_and_signers(),
-        ) {
-            let encoded = encode_participation(&validators, &signers).unwrap();
-            // Add one extra validator to make the count mismatch.
-            let mut wrong = validators.clone();
-            wrong.push(Address::ZERO);
-            prop_assert!(decode_participation(&encoded, &wrong).is_none());
-        }
-
-        /// Random garbage bytes never panic. They return None.
-        #[test]
-        fn random_bytes_no_panic(
-            data in proptest::collection::vec(any::<u8>(), 0..512),
-            validators in proptest::collection::vec(
-                any::<[u8; 20]>().prop_map(Address::from),
-                1..=128,
-            ),
-        ) {
-            // Should not panic, may return None or Some.
-            let _ = decode_participation_extended(&data, &validators);
         }
     }
 }

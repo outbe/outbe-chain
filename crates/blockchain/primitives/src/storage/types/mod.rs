@@ -92,22 +92,26 @@ pub fn clear_in_word<T: Storable>(word: U256, byte_offset: usize) -> U256 {
 
 /// Trait for types that can be used as mapping keys.
 ///
-/// Keys are left-padded to 32 bytes and hashed with the base slot via keccak256.
+/// Keys narrower than 32 bytes are left-padded to 32 bytes. Wider keys are
+/// used as-is, as Solidity does. The result is hashed with the base slot via
+/// keccak256.
 pub trait StorageKey {
-    /// Returns the key bytes (will be left-padded to 32 bytes).
+    /// Returns the key bytes.
     fn key_bytes(&self) -> Vec<u8>;
 
-    /// Computes the mapping slot: `keccak256(left_pad(key) ++ base_slot)`.
+    /// Computes the mapping slot: `keccak256(pad(key) ++ base_slot)`.
+    ///
+    /// `pad` left-pads a key of up to 32 bytes to one word. It keeps a key
+    /// wider than 32 bytes unpadded.
     fn mapping_slot(&self, base_slot: U256) -> U256 {
         use alloy_primitives::keccak256;
 
         let key = self.key_bytes();
-        let mut buf = [0u8; 64];
-        // Left-pad key to 32 bytes
-        let start = 32 - key.len();
-        buf[start..32].copy_from_slice(&key);
+        let key_width = key.len().max(32);
+        let mut buf = vec![0u8; key_width + 32];
+        buf[key_width - key.len()..key_width].copy_from_slice(&key);
         // Base slot in big-endian
-        buf[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
+        buf[key_width..].copy_from_slice(&base_slot.to_be_bytes::<32>());
         U256::from_be_bytes(keccak256(buf).0)
     }
 }
@@ -317,6 +321,39 @@ impl StorableType for AddressPair {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct DefaultDerivation<K>(K);
+
+    impl<K: StorageKey> StorageKey for DefaultDerivation<K> {
+        fn key_bytes(&self) -> Vec<u8> {
+            self.0.key_bytes()
+        }
+    }
+
+    #[test]
+    fn wide_key_mapping_slot() {
+        use crate::address_pair::AddressPair;
+        use alloy_primitives::{keccak256, Address};
+
+        let base_slot = U256::from(7);
+        let pair =
+            AddressPair::from_addresses(Address::repeat_byte(0x11), Address::repeat_byte(0x22));
+        assert_eq!(pair.key_bytes().len(), 40);
+        assert_eq!(
+            DefaultDerivation(pair).mapping_slot(base_slot),
+            pair.mapping_slot(base_slot)
+        );
+
+        // A narrow key keeps the left-padded derivation.
+        let narrow = Address::repeat_byte(0x33);
+        let mut padded = [0u8; 64];
+        padded[12..32].copy_from_slice(narrow.as_slice());
+        padded[32..].copy_from_slice(&base_slot.to_be_bytes::<32>());
+        assert_eq!(
+            DefaultDerivation(narrow).mapping_slot(base_slot),
+            U256::from_be_bytes(keccak256(padded).0)
+        );
+    }
 
     #[test]
     fn storable_in_range_roundtrip() {

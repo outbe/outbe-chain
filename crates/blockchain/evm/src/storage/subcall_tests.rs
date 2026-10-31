@@ -168,6 +168,44 @@ fn child_memory_obeys_configured_limit() {
 }
 
 #[test]
+fn ctx_provider_out_of_order_commit_is_rejected() {
+    let mut ctx = context(&[0]);
+    let start_depth = ctx.journal_ref().depth();
+    let mut p = provider(&mut ctx, 1_000_000);
+    let outer = p.checkpoint();
+    p.sstore(CALLER, U256::ZERO, U256::from(1)).unwrap();
+    let inner = p.checkpoint();
+    p.sstore(CALLER, U256::ZERO, U256::from(2)).unwrap();
+
+    assert!(matches!(
+        p.checkpoint_commit(outer),
+        Err(PrecompileError::Revert(message))
+            if message.starts_with("checkpoint commit out of order")
+    ));
+    // The rejected commit left both checkpoints live.
+    p.checkpoint_revert(inner).unwrap();
+    assert_eq!(p.sload(CALLER, U256::ZERO).unwrap(), U256::from(1));
+    p.checkpoint_revert(outer).unwrap();
+    assert_eq!(p.sload(CALLER, U256::ZERO).unwrap(), U256::ZERO);
+    assert!(matches!(
+        p.checkpoint_revert(outer),
+        Err(PrecompileError::Revert(message))
+            if message.starts_with("checkpoint revert out of range")
+    ));
+
+    // Reverting an outer checkpoint also discards a live inner one and keeps
+    // revm's journal depth balanced.
+    let outer = p.checkpoint();
+    p.sstore(CALLER, U256::ZERO, U256::from(3)).unwrap();
+    let inner = p.checkpoint();
+    p.checkpoint_revert(outer).unwrap();
+    assert!(p.checkpoint_commit(inner).is_err());
+    assert_eq!(p.sload(CALLER, U256::ZERO).unwrap(), U256::ZERO);
+    drop(p);
+    assert_eq!(ctx.journal_ref().depth(), start_depth);
+}
+
+#[test]
 fn refund_and_storage_survive_success_only() {
     for revert in [false, true] {
         let mut code = vec![0x60, 0, 0x60, 0, 0x55];

@@ -45,17 +45,12 @@ pub(super) fn decode_into(
                 },
             )?;
         }
-        TIMESTAMP_MILLIS_PART_TAG => {
-            if artifacts.timestamp_millis_part != 0 {
-                return Err(ReshareArtifactError::DuplicateTimestampMillisPart.into());
-            }
-            artifacts.timestamp_millis_part = fields::decode_timestamp(payload)?;
-        }
+        TIMESTAMP_MILLIS_PART_TAG => decode_timestamp_record(artifacts, payload)?,
         LATE_FINALIZE_CREDITS_TAG => {
             decode_unique_slot(
                 &mut artifacts.late_finalize_credits,
                 ReshareArtifactError::DuplicateLateFinalizeCredits,
-                || late_finalize::decode_payload(payload),
+                || late_finalize::decode_record(payload),
             )?;
         }
         ENCLAVE_WITNESS_TAG => {
@@ -72,6 +67,19 @@ pub(super) fn decode_into(
         }
         _ => return Err(ReshareArtifactError::UnsupportedTag { tag }.into()),
     }
+    Ok(())
+}
+
+fn decode_timestamp_record(artifacts: &mut OutbeBlockArtifacts, payload: &[u8]) -> Result<()> {
+    if artifacts.timestamp_millis_part != 0 {
+        return Err(ReshareArtifactError::DuplicateTimestampMillisPart.into());
+    }
+    let timestamp_millis_part = fields::decode_timestamp(payload)?;
+    // The encoder omits a zero remainder, so a zero record is not canonical.
+    if timestamp_millis_part == 0 {
+        return Err(ReshareArtifactError::ZeroTimestampMillisPartRecord.into());
+    }
+    artifacts.timestamp_millis_part = timestamp_millis_part;
     Ok(())
 }
 

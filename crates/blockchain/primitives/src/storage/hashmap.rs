@@ -667,11 +667,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
     }
 
-    fn checkpoint_commit(&mut self) {
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        super::require_innermost_checkpoint(self.snapshots.len(), checkpoint)?;
         self.snapshots.pop();
+        Ok(())
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        super::require_live_checkpoint(self.snapshots.len(), checkpoint)?;
         if let Some(snapshot) = self.snapshots.drain(checkpoint.journal_i..).next() {
             self.storage = snapshot.storage;
             self.accounts = snapshot.accounts;
@@ -680,6 +683,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             #[cfg(feature = "bench-utils")]
             self.storage_trace.truncate(snapshot.storage_trace_len);
         }
+        Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
@@ -697,8 +701,24 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             .into());
         }
 
+        // Self-transfer is a no-op, as in `DirectStorageProvider`.
+        if from == to {
+            return Ok(());
+        }
+
+        let to_balance = self
+            .accounts
+            .get(&to)
+            .map_or(U256::ZERO, |info| info.balance);
+        let credited = to_balance.checked_add(amount).ok_or(
+            PrimitivesStorageError::CreditBalanceOverflow {
+                amount,
+                to,
+                balance: to_balance,
+            },
+        )?;
         self.accounts.entry(from).or_default().balance -= amount;
-        self.accounts.entry(to).or_default().balance += amount;
+        self.accounts.entry(to).or_default().balance = credited;
         Ok(())
     }
 
@@ -706,7 +726,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         if amount.is_zero() {
             return Ok(());
         }
-        self.accounts.entry(address).or_default().balance += amount;
+        let info = self.accounts.entry(address).or_default();
+        info.balance = info.balance.checked_add(amount).ok_or(
+            PrimitivesStorageError::IncreaseBalanceOverflow {
+                address,
+                amount,
+                balance: info.balance,
+            },
+        )?;
         Ok(())
     }
 

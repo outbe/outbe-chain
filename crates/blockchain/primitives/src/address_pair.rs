@@ -83,10 +83,9 @@ impl StorageKey for AddressPair {
     }
 
     /// Solidity left-pads a mapping key only when it is narrower than a word.
-    /// Solidity concatenates a wider key with the base slot as-is. The provided
-    /// implementation computes `32 - key.len()`, and a 40-byte key underflows
-    /// it. So this override writes out the concatenation against a fixed-size
-    /// buffer.
+    /// Solidity concatenates a wider key with the base slot as-is. The
+    /// provided implementation does the same. This override writes out the
+    /// concatenation against a fixed-size buffer and avoids the heap buffer.
     fn mapping_slot(&self, base_slot: U256) -> U256 {
         let mut buf = [0u8; 72];
         buf[..40].copy_from_slice(self.to_canonical().as_slice());

@@ -207,6 +207,8 @@ pub enum ConsensusMetadataError {
     InvalidMissedProposerCountSlice,
     #[error("unexpected EOF reading missed-proposer validator")]
     UnexpectedEofMissedProposerValidator,
+    #[error("missed-proposer list declares {count} records but only {remaining} bytes remain")]
+    MissedProposerListExceedsBody { count: usize, remaining: usize },
     #[error("{name} list exceeds u16 count limit: {count}")]
     ListExceedsU16Limit { name: &'static str, count: usize },
     #[error("{name} exceeds u32 length limit: {len}")]
@@ -261,6 +263,14 @@ pub enum ReshareArtifactError {
     TruncatedRecordPayload,
     #[error("trailing bytes in block artifacts")]
     TrailingBytes,
+    #[error("block artifact record tags out of order: {tag} after {previous}")]
+    RecordTagsOutOfOrder { previous: u8, tag: u8 },
+    #[error("block artifact envelope has no records and no publication flag")]
+    EmptyEnvelopeWithoutPublicationFlag,
+    #[error("block artifact timestamp_millis_part record is zero")]
+    ZeroTimestampMillisPartRecord,
+    #[error("block artifact late finalize credits record has no batches")]
+    EmptyLateFinalizeCreditsRecord,
     #[error(
         "pre-final block artifacts exceed reserved extra_data budget: {encoded_len} > {max_len}"
     )]
@@ -393,6 +403,10 @@ pub enum PrimitivesMathError {
     LbMathRealIdShiftWiden,
     #[error("lb_math: id widen")]
     LbMathIdWiden,
+    #[error("bin id {id} exceeds MAX_BIN_ID")]
+    BinIdOutOfRange { id: u32 },
+    #[error("tree_math: empty {level} word on descent")]
+    TreeMathEmptyWordOnDescent { level: &'static str },
 }
 
 impl From<PrimitivesMathError> for PrecompileError {
@@ -483,6 +497,10 @@ pub enum PrimitivesStorageError {
     RecordAlreadyExists { name: String },
     #[error("storage provider is already mutably borrowed")]
     ProviderAlreadyMutablyBorrowed,
+    #[error("checkpoint commit out of order: {journal_i} is not the innermost live checkpoint")]
+    CheckpointCommitOutOfOrder { journal_i: usize },
+    #[error("checkpoint revert out of range: {journal_i} is not a live checkpoint")]
+    CheckpointRevertOutOfRange { journal_i: usize },
     #[error("certified Lysis activation frame returned before terminal completion")]
     CertifiedLysisActivationIncomplete,
     #[error("certified Lysis activation {owner} cursor is out of order")]
@@ -495,13 +513,6 @@ pub enum PrimitivesStorageError {
     CircularBufferNotInitialized,
     #[error("{0}")]
     EvmInternals(String),
-}
-
-impl PrimitivesStorageError {
-    /// Convert an EVM internals error into a [`PrecompileError::Storage`].
-    pub(crate) fn evm_internals(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EvmInternals(error.to_string()).into()
-    }
 }
 
 impl From<PrimitivesStorageError> for PrecompileError {

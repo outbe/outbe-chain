@@ -117,6 +117,7 @@ impl BenchmarkScenario for SystemTxScenario {
             .ok_or("system tx visible gas plan omitted entry 0 gas limit")?;
         let execution_gas_limit = plan
             .execution_gas_limit(0)
+            .map_err(|error| error.to_string())?
             .ok_or("system tx visible gas plan omitted entry 0 execution gas limit")?;
 
         let mut observation = Observation::new(

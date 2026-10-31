@@ -14,14 +14,14 @@ impl ValidatorSet<'_> {
         let current = before.lifecycle().clone();
         let confirmed = matches!(current, ValidatorLifecycle::WaitingForReadiness(_));
         let lifecycle = ready_lifecycle(current, before.bonded_stake(), minimum)?;
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let after = before.clone().with_lifecycle(lifecycle)?;
         self.persist_validator_state_delta(&before, &after)?;
         self.pending_set_change.write(true)?;
         if confirmed {
             self.emit(IValidatorSet::ValidatorReadyConfirmed { validator: caller })?;
         }
-        guard.commit();
+        guard.commit()?;
         crate::metrics::record_pending_set_change(true);
         Ok(())
     }

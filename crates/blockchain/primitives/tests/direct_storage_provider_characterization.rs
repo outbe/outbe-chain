@@ -2,7 +2,9 @@ use alloy_primitives::{Address, Bytes, LogData, U256};
 use outbe_primitives::{
     block::BlockContext,
     error::PrecompileError,
-    storage::{direct::DirectStorageProvider, PrecompileStorageProvider},
+    storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider, PrecompileStorageProvider,
+    },
 };
 use revm::{
     database::{CacheDB, EmptyDB},
@@ -86,7 +88,7 @@ fn nested_checkpoint_revert_restores_code_storage_balance_and_events() {
         )
         .unwrap();
     provider.transfer_balance(FROM, TO, U256::from(30)).unwrap();
-    provider.checkpoint_revert(inner);
+    provider.checkpoint_revert(inner).unwrap();
 
     assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::from(10));
     assert_eq!(provider.account_info(FROM).unwrap().balance, U256::from(80));
@@ -97,7 +99,7 @@ fn nested_checkpoint_revert_restores_code_storage_balance_and_events() {
     assert_eq!(events[0].address, FROM);
     assert_eq!(events[0].data.data, Bytes::from_static(&[0x01]));
 
-    provider.checkpoint_revert(outer);
+    provider.checkpoint_revert(outer).unwrap();
     assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::ZERO);
     assert_eq!(
         provider.account_info(FROM).unwrap().balance,
@@ -175,4 +177,91 @@ fn increase_balance_overflow_reverts_without_partial_mutation() {
     assert_eq!(provider.account_info(FROM).unwrap().balance, U256::MAX);
     provider.flush().unwrap();
     assert!(provider.take_committed_changes().is_empty());
+}
+
+fn revert_message(error: PrecompileError) -> String {
+    match error {
+        PrecompileError::Revert(message) => message,
+        other => panic!("expected a revert, got {other:?}"),
+    }
+}
+
+fn assert_out_of_order_commit_is_rejected(provider: &mut dyn PrecompileStorageProvider) {
+    let outer = provider.checkpoint();
+    provider.sstore(FROM, SLOT, U256::from(1)).unwrap();
+    let inner = provider.checkpoint();
+    provider.sstore(FROM, SLOT, U256::from(2)).unwrap();
+
+    let error = revert_message(provider.checkpoint_commit(outer).unwrap_err());
+    assert_eq!(
+        error,
+        format!(
+            "checkpoint commit out of order: {} is not the innermost live checkpoint",
+            outer.journal_i
+        )
+    );
+
+    // The rejected commit left both checkpoints live. The inner revert still
+    // takes effect, and the outer revert after it restores the original value.
+    provider.checkpoint_revert(inner).unwrap();
+    assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::from(1));
+    provider.checkpoint_revert(outer).unwrap();
+    assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::ZERO);
+
+    let stale = revert_message(provider.checkpoint_revert(outer).unwrap_err());
+    assert_eq!(
+        stale,
+        format!(
+            "checkpoint revert out of range: {} is not a live checkpoint",
+            outer.journal_i
+        )
+    );
+    let mut far = outer;
+    far.journal_i = usize::MAX;
+    assert!(provider.checkpoint_revert(far).is_err());
+    assert!(provider.checkpoint_commit(far).is_err());
+}
+
+#[test]
+fn out_of_order_commit_is_rejected() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    let mut direct = DirectStorageProvider::new(&mut db, block_context());
+    assert_out_of_order_commit_is_rejected(&mut direct);
+
+    let mut hashmap = HashMapStorageProvider::new(1);
+    assert_out_of_order_commit_is_rejected(&mut hashmap);
+}
+
+#[test]
+fn test_provider_overflow_matches_production() {
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(FROM, account(U256::ONE, 0, Bytecode::default()));
+    db.insert_account_info(TO, account(U256::MAX, 0, Bytecode::default()));
+    let mut direct = DirectStorageProvider::new(&mut db, block_context());
+
+    let mut hashmap = HashMapStorageProvider::new(1);
+    hashmap.increase_balance(FROM, U256::ONE).unwrap();
+    hashmap.increase_balance(TO, U256::MAX).unwrap();
+
+    let direct_transfer = direct.transfer_balance(FROM, TO, U256::ONE).unwrap_err();
+    let hashmap_transfer = hashmap.transfer_balance(FROM, TO, U256::ONE).unwrap_err();
+    assert_eq!(
+        revert_message(direct_transfer),
+        revert_message(hashmap_transfer)
+    );
+
+    let direct_increase = direct.increase_balance(TO, U256::ONE).unwrap_err();
+    let hashmap_increase = hashmap.increase_balance(TO, U256::ONE).unwrap_err();
+    assert_eq!(
+        revert_message(direct_increase),
+        revert_message(hashmap_increase)
+    );
+
+    for provider in [
+        &mut direct as &mut dyn PrecompileStorageProvider,
+        &mut hashmap,
+    ] {
+        assert_eq!(provider.account_info(FROM).unwrap().balance, U256::ONE);
+        assert_eq!(provider.account_info(TO).unwrap().balance, U256::MAX);
+    }
 }

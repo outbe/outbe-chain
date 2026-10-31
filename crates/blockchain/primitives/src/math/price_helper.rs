@@ -18,26 +18,38 @@ use crate::math::uint256x256_math::{mul_shift_round_down, shift_div_round_down};
 
 /// Mirrors `PriceHelper.getBase(uint16)` (PriceHelper.sol L46-50).
 /// Returns `1 + binStep / BASIS_POINT_MAX` in 128.128 fixed-point.
+///
+/// The division truncates (rounds down) toward zero, as Solidity `uint256`
+/// division does. Thus the base is never above the exact growth factor, and
+/// it is below it by less than one 128.128 unit.
 pub fn get_base(bin_step: u16) -> U256 {
     let bin_step_u256 = U256::from(bin_step);
     SCALE_1_128_128 + (bin_step_u256 << SCALE_OFFSET as usize) / U256::from(BASIS_POINT_MAX)
 }
 
 /// Mirrors `PriceHelper.getExponent(uint24)` (PriceHelper.sol L54-58).
-/// `exponent = id - REAL_ID_SHIFT`. Caller passes `id` as `u32`. We treat
-/// it as `i32` (top byte must be 0 since `id` is at most `(1 << 24) - 1`).
-pub fn get_exponent(id: u32) -> i32 {
-    (id as i32) - REAL_ID_SHIFT
+/// `exponent = id - REAL_ID_SHIFT`.
+///
+/// Returns [`PrimitivesMathError::BinIdOutOfRange`] for `id > MAX_BIN_ID`.
+/// Solidity enforces this domain with the `uint24` parameter type.
+pub fn get_exponent(id: u32) -> Result<i32> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::BinIdOutOfRange { id }.into());
+    }
+    // `id <= MAX_BIN_ID < i32::MAX`, so the conversion cannot fail.
+    let id = i32::try_from(id).map_err(|_| PrimitivesMathError::BinIdOutOfRange { id })?;
+    Ok(id - REAL_ID_SHIFT)
 }
 
 /// Mirrors `PriceHelper.getPriceFromId(uint24, uint16)`
 /// (PriceHelper.sol L21-26). Returns the 128.128 fixed-point price for
-/// the given bin id. May error at extreme bin ids where LB's pow exponent
-/// exceeds `2^20`. For typical bin ladders, these ids correspond to
-/// astronomical or sub-atomic prices that the caller treats as diagnostic.
+/// the given bin id. Errors for `id > MAX_BIN_ID`. May error at extreme bin
+/// ids where LB's pow exponent exceeds `2^20`. For typical bin ladders,
+/// these ids correspond to astronomical or sub-atomic prices that the caller
+/// treats as diagnostic.
 pub fn get_price_from_id(id: u32, bin_step: u16) -> Result<U256> {
     let base = get_base(bin_step);
-    let exponent = get_exponent(id);
+    let exponent = get_exponent(id)?;
     pow(base, exponent)
 }
 
@@ -96,10 +108,46 @@ mod tests {
     }
 
     #[test]
+    fn get_base_known_answers_round_down() {
+        // 25 bp: (25 << 128) / 10_000 = 850705917302346158658436518579420528.64.
+        assert_eq!(
+            get_base(BIN_STEP_BP),
+            U256::from_str_radix("341133072838240809622033043950347631984", 10).unwrap()
+        );
+        // 1 bp: (1 << 128) / 10_000 = 34028236692093846346337460743176821.1456.
+        assert_eq!(
+            get_base(1),
+            U256::from_str_radix("340316395157630557309720944892511388277", 10).unwrap()
+        );
+        // Both fractions are discarded: the base is the floor of the exact factor.
+        for bin_step in [1u16, BIN_STEP_BP, 100, BASIS_POINT_MAX] {
+            let numerator = U256::from(bin_step) << 128;
+            let exact_scaled = SCALE_1_128_128 * U256::from(BASIS_POINT_MAX) + numerator;
+            let floor_scaled = get_base(bin_step) * U256::from(BASIS_POINT_MAX);
+            assert!(floor_scaled <= exact_scaled);
+            assert!(exact_scaled - floor_scaled < U256::from(BASIS_POINT_MAX));
+        }
+    }
+
+    #[test]
     fn get_exponent_centered_at_real_id_shift() {
-        assert_eq!(get_exponent(REAL_ID_SHIFT as u32), 0);
-        assert_eq!(get_exponent(0), -REAL_ID_SHIFT);
-        assert_eq!(get_exponent(REAL_ID_SHIFT as u32 + 100), 100);
+        assert_eq!(get_exponent(REAL_ID_SHIFT as u32).unwrap(), 0);
+        assert_eq!(get_exponent(0).unwrap(), -REAL_ID_SHIFT);
+        assert_eq!(get_exponent(REAL_ID_SHIFT as u32 + 100).unwrap(), 100);
+        assert_eq!(get_exponent(MAX_BIN_ID).unwrap(), REAL_ID_SHIFT - 1);
+    }
+
+    #[test]
+    fn price_helper_rejects_out_of_domain() {
+        let message = |id: u32| format!("revert: bin id {id} exceeds MAX_BIN_ID");
+        for id in [MAX_BIN_ID + 1, u32::MAX] {
+            assert_eq!(get_exponent(id).unwrap_err().to_string(), message(id));
+            assert_eq!(
+                get_price_from_id(id, BIN_STEP_BP).unwrap_err().to_string(),
+                message(id)
+            );
+        }
+        assert!(get_price_from_id(REAL_ID_SHIFT as u32, BIN_STEP_BP).is_ok());
     }
 
     #[test]
@@ -124,13 +172,26 @@ mod tests {
 
     #[test]
     fn get_id_from_price_does_not_underflow() {
-        // U256::ONE in 128.128 represents 2^-128. log2 is special-cased to -128
-        // (raw, NOT 128.128-encoded, see Uint128x128Math.sol L37). After
-        // dividing by `log2(base)` ~= 1.225e36, the quotient rounds to 0, so
-        // `id == REAL_ID_SHIFT` rather than 0. With BIN_STEP_BP = 25 the
-        // saturate-to-0 branch is unreachable for any non-zero U256.
+        // U256::ONE in 128.128 represents 2^-128. log2 returns -128 in 128.128
+        // (Outbe diverges from the unscaled LB special case). After dividing
+        // by `log2(base)` ~= 1.225e36, the quotient is about -35_533. With
+        // BIN_STEP_BP = 25 the saturate-to-0 branch is unreachable for any
+        // non-zero U256.
         let id = get_id_from_price(U256::ONE, BIN_STEP_BP).unwrap();
-        assert_eq!(id, REAL_ID_SHIFT as u32);
+        assert!(id > 0 && id < REAL_ID_SHIFT as u32, "id = {id}");
+        assert_eq!(REAL_ID_SHIFT as u32 - id, 35_533);
+    }
+
+    #[test]
+    fn get_id_from_price_is_monotonic_across_the_log_special_case() {
+        // x == 1 takes the log2 special case. x == 2 and x == 3 take the
+        // general path. The ids must not decrease across the boundary.
+        let ids: Vec<u32> = [1u64, 2, 3, 4, 1_000]
+            .into_iter()
+            .map(|x| get_id_from_price(U256::from(x), BIN_STEP_BP).unwrap())
+            .collect();
+        assert!(ids.is_sorted(), "ids = {ids:?}");
+        assert!(ids[0] < ids[1], "ids = {ids:?}");
     }
 
     #[test]

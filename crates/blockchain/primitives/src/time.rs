@@ -136,12 +136,16 @@ pub fn worldwide_day_from_timestamp(timestamp: u64) -> u32 {
 }
 
 /// Returns the unix timestamp for midnight UTC of a yyyymmdd date key.
+///
+/// A date key before 1970-01-01 has a negative day count. The function
+/// saturates that count to 0 and returns the epoch, `0`. The multiply
+/// saturates at `u64::MAX`.
 pub fn date_key_to_utc_timestamp(date_key: u32) -> u64 {
-    let year = (date_key / 10_000) as i64;
-    let month = ((date_key / 100) % 100) as i64;
-    let day = (date_key % 100) as i64;
-    let days = days_from_civil(year, month, day);
-    (days as u64) * SECONDS_PER_DAY
+    let year = i64::from(date_key / 10_000);
+    let month = i64::from((date_key / 100) % 100);
+    let day = i64::from(date_key % 100);
+    let days = u64::try_from(days_from_civil(year, month, day)).unwrap_or(0);
+    days.saturating_mul(SECONDS_PER_DAY)
 }
 
 /// Returns the previous calendar day key for a yyyymmdd date key.
@@ -455,6 +459,22 @@ impl StorageKey for EmissionDate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_arithmetic_is_bounded() {
+        // A pre-epoch date key saturates to the epoch instead of wrapping.
+        assert_eq!(date_key_to_utc_timestamp(19_691_231), 0);
+        assert_eq!(date_key_to_utc_timestamp(10_101), 0);
+        assert_eq!(date_key_to_utc_timestamp(19_700_101), 0);
+        assert_eq!(date_key_to_utc_timestamp(19_700_102), SECONDS_PER_DAY);
+        // The largest date key stays finite and does not wrap.
+        assert!(date_key_to_utc_timestamp(u32::MAX) > date_key_to_utc_timestamp(20_260_101));
+        // A maximum timestamp saturates through the worldwide-day offset.
+        assert_eq!(
+            worldwide_day_from_timestamp(u64::MAX),
+            timestamp_to_date_key(u64::MAX)
+        );
+    }
 
     #[test]
     fn execution_timestamp_boundaries() {

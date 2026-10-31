@@ -143,7 +143,7 @@ pub(crate) fn apply_boundary_outcome(
     // The activated epoch, active membership/hash and its consensus
     // snapshot are one state transition. A nominal epoch height is not
     // activation authority. Only this certified BoundaryOutcome is.
-    let activation_guard = storage.checkpoint_guard();
+    let activation_guard = storage.checkpoint_guard()?;
     if advances_epoch {
         outbe_validatorset::hooks::advance_epoch(storage.clone(), timestamp, block_number)?;
     }
@@ -161,7 +161,7 @@ pub(crate) fn apply_boundary_outcome(
     if advances_epoch {
         outbe_validatorset::contract::ValidatorSet::new(storage).cleanup_inactive_validators(16)?;
     }
-    activation_guard.commit();
+    activation_guard.commit()?;
     Ok(())
 }
 

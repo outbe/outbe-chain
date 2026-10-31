@@ -19,15 +19,23 @@ const LOG_SCALE: U256 = U256::from_limbs([0, 1u64 << 63, 0, 0]);
 /// `LOG_SCALE * LOG_SCALE = 1 << 254`. Bit 254 lives at limb 3, position 62.
 const LOG_SCALE_SQUARED: U256 = U256::from_limbs([0, 0, 0, 1u64 << 62]);
 
+/// `log2(2^-128) = -128` in signed 128.128 fixed-point: `-(128 << 128)`.
+/// `128 << 128 = 2^135`. Its two's complement `2^256 - 2^135` sets bits
+/// 135..=255: limb 2 from position 7 up, and all of limb 3.
+const LOG2_OF_ONE_UNIT: I256 = I256::from_raw(U256::from_limbs([0, 0, u64::MAX << 7, u64::MAX]));
+
 /// Mirrors `Uint128x128Math.log2(uint256)` (Uint128x128Math.sol L29-86).
 /// Calculates `log2(x)` for `x` in 128.128 fixed-point. Returns the result
 /// as a signed 128.128 fixed-point. Reverts if `x == 0` (LB
 /// `Uint128x128Math__LogUnderflow`).
+///
+/// Divergence from LB: for `x == 1` (the value 2^-128), LB returns the
+/// unscaled integer `-128`. This port returns `-128 << 128`, the same value at
+/// the declared 128.128 scale. Thus `log2` stays monotonic, and so does
+/// `get_id_from_price`.
 pub fn log2(x: U256) -> Result<I256> {
-    // Special cases match LB.
     if x == U256::ONE {
-        return I256::try_from(-128i32)
-            .map_err(|_| PrimitivesMathError::LbMathLog2I256Conversion.into());
+        return Ok(LOG2_OF_ONE_UNIT);
     }
     if x.is_zero() {
         return Err(PrimitivesMathError::LbMathLog2Underflow.into());
@@ -207,6 +215,17 @@ mod tests {
         };
         // Within a few bits of SCALE.
         assert!(diff <= I256::try_from(U256::ONE << 64).unwrap());
+    }
+
+    #[test]
+    fn log_special_case_is_scaled() {
+        let expected = -(I256::try_from(128i32).unwrap() << 128u32);
+        assert_eq!(log2(U256::ONE).unwrap(), expected);
+        // The general path for 2^-127 gives -127 in 128.128, so the special
+        // case stays strictly below its neighbour.
+        let next = log2(U256::from(2u64)).unwrap();
+        assert_eq!(next, -(I256::try_from(127i32).unwrap() << 128u32));
+        assert!(log2(U256::ONE).unwrap() < next);
     }
 
     #[test]
