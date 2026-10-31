@@ -121,6 +121,9 @@ where
         // on this receiver, so no buffered message is lost).
         const POLL: std::time::Duration = std::time::Duration::from_millis(750);
         let mut idle_ticks = 0u32;
+        // Genesis TEE-DKG intentionally requires all `n` founding validators
+        // online (n-of-n). Each dealer must seal shares to every founding
+        // participant's enclave key, so collection does not finish early.
         while collected.ids.len() < n {
             commonware_macros::select! {
                 recv = self.receiver.recv() => {
@@ -285,4 +288,124 @@ fn parse_identity(body: &[u8]) -> Option<(Vec<u8>, [u8; 32], Vec<u8>)> {
     enc.copy_from_slice(&body[enc_start..enc_end]);
     let sig = body[sig_len_end..sig_end].to_vec();
     Some((bls, enc, sig))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn identity_body(bls: &[u8], enc: &[u8], sig: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(&(bls.len() as u32).to_be_bytes());
+        body.extend_from_slice(bls);
+        body.extend_from_slice(enc);
+        body.extend_from_slice(&(sig.len() as u32).to_be_bytes());
+        body.extend_from_slice(sig);
+        body
+    }
+
+    fn assert_rejected(label: &str, body: &[u8]) {
+        assert_eq!(parse_identity(body), None, "{label}");
+    }
+
+    #[test]
+    fn parse_identity_rejects_malformed_inputs() {
+        let mut bls_past_end = 8u32.to_be_bytes().to_vec();
+        bls_past_end.extend_from_slice(&[0xab, 0xcd]);
+
+        let mut truncated_enc = 1u32.to_be_bytes().to_vec();
+        truncated_enc.push(0xaa);
+        truncated_enc.extend_from_slice(&[0xbb; 31]);
+
+        let mut enc_only = 1u32.to_be_bytes().to_vec();
+        enc_only.push(0xaa);
+        enc_only.extend_from_slice(&[0xbb; 32]);
+
+        let mut sig_max = enc_only.clone();
+        sig_max.extend_from_slice(&u32::MAX.to_be_bytes());
+        sig_max.extend_from_slice(&[0xcc; 4]);
+
+        let mut sig_past_end = enc_only.clone();
+        sig_past_end.extend_from_slice(&10u32.to_be_bytes());
+        sig_past_end.extend_from_slice(&[0xcc; 3]);
+
+        let mut trailing = identity_body(&[0x01, 0x02], &[0x33; 32], &[0x44, 0x55]);
+        trailing.push(0xff);
+
+        let mut cases = vec![
+            ("empty", vec![]),
+            ("truncated bls_len (1)", vec![0x11]),
+            ("truncated bls_len (2)", vec![0x11; 2]),
+            ("truncated bls_len (3)", vec![0x11; 3]),
+            ("bls_len u32::MAX", u32::MAX.to_be_bytes().to_vec()),
+            ("bls_len past end", bls_past_end),
+            ("truncated enc", truncated_enc),
+            ("sig_len u32::MAX", sig_max),
+            ("sig_len past end", sig_past_end),
+            ("trailing bytes", trailing),
+        ];
+        for extra in 0..4 {
+            let mut body = enc_only.clone();
+            body.resize(body.len() + extra, 0);
+            cases.push(("truncated sig_len", body));
+        }
+
+        for (label, body) in &cases {
+            assert_rejected(label, body);
+        }
+    }
+
+    #[test]
+    fn parse_identity_round_trips_unsigned_and_signed() {
+        let bls = vec![0x01, 0x02, 0x03];
+        let enc = [0x44; 32];
+        let unsigned = identity_body(&bls, &enc, &[]);
+        assert_eq!(parse_identity(&unsigned), Some((bls.clone(), enc, vec![])));
+
+        let sig = vec![0x91, 0x92, 0x93, 0x94];
+        let signed = identity_body(&bls, &enc, &sig);
+        assert_eq!(parse_identity(&signed), Some((bls, enc, sig)));
+    }
+
+    #[test]
+    fn identity_sort_is_by_tee_bls() {
+        let ceremony_id = B256::repeat_byte(0x11);
+        let round = 4;
+        let participant_set_hash = B256::repeat_byte(0x22);
+        let exchange = IdentityExchange {
+            local: LocalIdentityAnnouncement {
+                bls: vec![0x02],
+                enc: [0x20; 32],
+                signature: vec![0x20],
+            },
+            binding: CeremonyBinding {
+                ceremony_id,
+                round,
+                participant_set_hash,
+            },
+            participant_count: 3,
+        };
+        let mut ids = IdentitySet::new();
+        ids.insert(vec![0x03, 0xff], ([0x33; 32], vec![0x03]));
+        ids.insert(vec![0x01], ([0x11; 32], vec![0x01, 0x01]));
+        ids.insert(vec![0x10], ([0x10; 32], vec![]));
+        ids.insert(vec![0x02], ([0x22; 32], vec![0x02]));
+
+        let announced = exchange.announcements(ids);
+        let bls_pubs: Vec<_> = announced.iter().map(|item| item.bls_pub.clone()).collect();
+        assert_eq!(
+            bls_pubs,
+            vec![vec![0x01], vec![0x02], vec![0x03, 0xff], vec![0x10],]
+        );
+        assert_eq!(announced[0].enc_pub, [0x11; 32]);
+        assert_eq!(announced[0].enc_sig, vec![0x01, 0x01]);
+        assert_eq!(announced[1].enc_pub, [0x22; 32]);
+        assert_eq!(announced[2].enc_sig, vec![0x03]);
+        assert!(announced[3].enc_sig.is_empty());
+        for item in &announced {
+            assert_eq!(item.ceremony_id, ceremony_id);
+            assert_eq!(item.round, round);
+            assert_eq!(item.participant_set_hash, participant_set_hash);
+        }
+    }
 }

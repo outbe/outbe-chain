@@ -74,11 +74,12 @@ fn finalized_delivery_wire_format_round_trips() {
 /// Full `outbe_getFinalization` server->client interop. The SERVER side
 /// (drainer) encodes the certificate and block separately and hexes them
 /// (`FinalizedBlockBytes` -> `FinalizationProof`). The CLIENT side hex-decodes
-/// and decodes the certificate with the UNBOUNDED committee config (the
-/// engine `UpstreamRpcClient` path, which has no committee size yet). Then the
-/// follower registers the epoch committee from the boundary block and the
-/// marshal-equivalent verification passes. This pins that:
-///   (a) the unbounded cfg decodes a real committee-length certificate, and
+/// and decodes the certificate bounded by `MAX_COMMITTEE_MEMBERS` (the engine
+/// `UpstreamRpcClient` path). Then the follower registers the epoch committee
+/// from the boundary block and the marshal-equivalent verification passes.
+/// This pins that:
+///   (a) the `MAX_COMMITTEE_MEMBERS` bound decodes a real committee-length
+///       certificate, and
 ///   (b) the decoded `(finalization, block)` is exactly what the resolver
 ///       registers + the `CommitteeChain` verifies - i.e. a follower accepts
 ///       what a validator serves, end to end.
@@ -86,7 +87,6 @@ fn finalized_delivery_wire_format_round_trips() {
 fn served_finalization_round_trips_to_verified_certified_block() {
     use crate::block::ConsensusBlock;
     use commonware_codec::Read as _;
-    use commonware_cryptography::certificate::Verifier as _;
 
     let epoch = Epoch::new(4);
     let c = committee(40);
@@ -119,19 +119,12 @@ fn served_finalization_round_trips_to_verified_certified_block() {
     let finalization_hex = format!("0x{}", hex::encode(finalization.encode()));
     let block_hex = format!("0x{}", hex::encode(block.encode()));
 
-    // CLIENT: hex-decode and decode the certificate with the UNBOUNDED
-    // committee config (the engine UpstreamRpcClient path).
+    // CLIENT: hex-decode and decode the certificate bounded by
+    // MAX_COMMITTEE_MEMBERS (the engine UpstreamRpcClient path).
     let fin_bytes = hex::decode(finalization_hex.trim_start_matches("0x")).unwrap();
     let block_bytes = hex::decode(block_hex.trim_start_matches("0x")).unwrap();
-    let unbounded_cfg = HybridScheme::<MinSig>::certificate_codec_config_unbounded();
-    let mut fin_reader: &[u8] = &fin_bytes;
-    let decoded_fin =
-        Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut fin_reader, &unbounded_cfg)
-            .expect("client must decode the served finalization with the unbounded cfg");
-    assert!(
-        fin_reader.is_empty(),
-        "no trailing bytes after finalization"
-    );
+    let decoded_fin = decode_public_finalization(&fin_bytes, crate::bls::MAX_COMMITTEE_MEMBERS)
+        .expect("client must decode the served finalization within MAX_COMMITTEE_MEMBERS");
     let mut block_reader: &[u8] = &block_bytes;
     let decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
         .expect("client must decode the served block");
