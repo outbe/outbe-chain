@@ -3,9 +3,10 @@ mod handshake;
 
 use crate::transport::*;
 
-/// Transport carriers supported by the production enclave server. Remote
-/// sessions use the socket read timeout to close an otherwise idle connection
-/// at its exclusive finalized-lease deadline.
+/// Transport carriers supported by the production enclave server.
+/// `set_session_read_timeout` bounds an unauthenticated pre-handshake read and,
+/// for a remote session, each later command read at its exclusive finalized-lease
+/// deadline.
 pub trait EnclaveTransportStream: Read + Write {
     fn set_session_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()>;
 }
@@ -21,6 +22,11 @@ impl EnclaveTransportStream for TcpStream {
         TcpStream::set_read_timeout(self, timeout)
     }
 }
+
+/// Per-read socket idle timeout (`SO_RCVTIMEO`) applied to unauthenticated
+/// connections while reading the cleartext preamble and the Noise-IK initiator
+/// handshake message (`msg1`).
+pub const HANDSHAKE_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Serve a single client connection end-to-end (no boot config / sealing).
 /// Thin wrapper over [`serve_connection_with`]; kept for tests and callers that
@@ -121,10 +127,21 @@ pub(in crate::transport) struct ConnectionContext<'a> {
     pub(in crate::transport) quote_generator: fn(&[u8; 64]) -> EnclaveResult<Vec<u8>>,
 }
 
-pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
-    mut stream: S,
+fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
+    stream: S,
     context: ConnectionContext<'_>,
 ) -> Result<(), TransportError> {
+    serve_connection_with_resident_chain_and_timeout(stream, context, HANDSHAKE_READ_TIMEOUT)
+}
+
+pub(in crate::transport) fn serve_connection_with_resident_chain_and_timeout<
+    S: EnclaveTransportStream,
+>(
+    mut stream: S,
+    context: ConnectionContext<'_>,
+    handshake_timeout: Duration,
+) -> Result<(), TransportError> {
+    stream.set_session_read_timeout(Some(handshake_timeout))?;
     let Some(preamble) = handshake::read_preamble(&mut stream, context)? else {
         return Ok(());
     };
@@ -134,8 +151,11 @@ pub(in crate::transport) fn serve_connection_with_resident_chain<S: EnclaveTrans
             deadline: session.deadline(),
         }
     });
-    set_remote_read_deadline(&stream, remote)?;
+    set_remote_handshake_read_deadline(&stream, remote, handshake_timeout)?;
     let noise = handshake::negotiate(&mut stream, context, preamble)?;
+    if remote.is_none() {
+        stream.set_session_read_timeout(None)?;
+    }
     serve_requests(stream, context, noise, remote, authority)
 }
 
@@ -236,6 +256,25 @@ fn write_encrypted_response(
         .write_message(&plain, &mut ct)
         .map_err(transport_noise)?;
     write_frame(stream, &ct[..n])?;
+    Ok(())
+}
+
+fn set_remote_handshake_read_deadline(
+    stream: &impl EnclaveTransportStream,
+    remote_session: Option<PendingRemoteSessionV1>,
+    handshake_timeout: Duration,
+) -> Result<(), TransportError> {
+    let Some(session) = remote_session else {
+        return Ok(());
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| crate::errors::RemoteSessionHandshakeError::SystemTimeBeforeUnixEpoch)?;
+    let remaining = Duration::from_secs(session.deadline())
+        .checked_sub(now)
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(crate::errors::RemoteSessionHandshakeError::LeaseExpired)?;
+    stream.set_session_read_timeout(Some(remaining.min(handshake_timeout)))?;
     Ok(())
 }
 
