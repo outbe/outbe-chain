@@ -411,6 +411,62 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
     gem_view(storage, gem_id).item.entry_price_minor
 }
 
+/// Starts the pass the day before `ctx` and finalizes the Oracle through the UTC day before it.
+pub(crate) fn prepare_daily_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    if GemContract::new(ctx.storage.clone())
+        .daily_genesis_day
+        .read()?
+        == 0
+    {
+        crate::called::initialize_daily(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                0,
+                ctx.block.timestamp.saturating_sub(SECONDS_PER_DAY),
+                ctx.block.chain_id,
+            ),
+            ctx.storage.clone(),
+        ))?;
+    }
+    let closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+        .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+    let oracle = OracleContract::new(ctx.storage.clone());
+    if oracle.utc_day_vwap_last_finalized.read()? < closed {
+        oracle.utc_day_vwap_last_finalized.write(closed)?;
+    }
+    Ok(())
+}
+
+/// The daily pass through the UTC day before `ctx`, as the Cycle runs it: one block at `ctx`'s
+/// height or the last one the pass ran at, and one more block for each closed day it still
+/// has to catch up. Returns the context of the last block.
+pub(crate) fn daily_pass<'s>(
+    ctx: &BlockRuntimeContext<'s>,
+) -> outbe_primitives::error::Result<BlockRuntimeContext<'s>> {
+    prepare_daily_pass(ctx)?;
+    let gem = GemContract::new(ctx.storage.clone());
+    let mut height = ctx.block.block_number;
+    loop {
+        for packed in [gem.daily_budget.read()?, gem.cleanup_budget.read()?] {
+            if let Some(previous) = outbe_primitives::pass_budget::BlockAllowance::unpack(packed)? {
+                height = height.max(previous.height);
+            }
+        }
+        let block = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(height, ctx.block.timestamp, ctx.block.chain_id),
+            ctx.storage.clone(),
+        );
+        crate::called::process_call_pass(&block)?;
+        let selected =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(gem.daily_budget.read()?)?
+                .map_or(0, |allowance| allowance.day);
+        let next = gem.call_sweep_day.read()?;
+        if next == 0 || next == selected {
+            return Ok(block);
+        }
+        height += 1;
+    }
+}
+
 mod capacity_conservation;
 mod direct_fx_admission;
 mod eligibility;

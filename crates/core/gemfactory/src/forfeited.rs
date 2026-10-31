@@ -11,16 +11,6 @@ use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
 
-/// Forfeits the called groups whose notice period closed, one credit per group.
-/// Returns the groups forfeited.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = GemContract::new(ctx.storage.clone());
-    let mut expiry = GemForfeit::new(ctx);
-    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
-    Ok(expiry.forfeited)
-}
-
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -39,7 +29,6 @@ pub(crate) fn forfeit_through(
 pub(crate) struct GemForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     gem: GemContract<'s>,
-    forfeited: u32,
 }
 
 impl<'a, 's> GemForfeit<'a, 's> {
@@ -47,7 +36,6 @@ impl<'a, 's> GemForfeit<'a, 's> {
         Self {
             storage: &ctx.storage,
             gem: GemContract::new(ctx.storage.clone()),
-            forfeited: 0,
         }
     }
 }
@@ -93,7 +81,6 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
             gems,
             promisLoadMinor: load,
         })?;
-        self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
 

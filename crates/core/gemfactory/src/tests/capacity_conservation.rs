@@ -38,25 +38,32 @@ fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
 }
 
 #[test]
-fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
+fn daily_position_expiry_preserves_hour_topics() {
+    let day = EXPIRES;
+    let first_hour = day / 3_600;
     let mut p = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut p, |s| {
         let mut factory = GemFactoryContract::new(s.clone());
-        for (id, expires_at) in [(1, 1), (2, 3_601), (3, 86_399), (4, 86_400)] {
+        for (id, expires_at) in [
+            (1, day + 1),
+            (2, day + 3_601),
+            (3, day + 86_399),
+            (4, day + 86_400),
+        ] {
             factory
                 .add_position(&GemPosition {
                     position_id: U256::from(id),
                     merchant: Address::repeat_byte(1),
-                    source_series_id: SeriesId::pack(1, *b"USD", b'U').unwrap(),
+                    source_series_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                     remaining_capacity_minor: U256::from(REMAINDER),
-                    issued_at: 0,
+                    issued_at: day - SECONDS_PER_DAY,
                     expires_at,
                 })
                 .unwrap();
         }
     });
-    assert_eq!(sweep(&mut p, 86_399).unwrap(), 0);
-    assert_eq!(sweep(&mut p, 86_400).unwrap(), 3);
+    assert_eq!(sweep(&mut p, day + 86_399).unwrap(), 0);
+    assert_eq!(sweep(&mut p, day + 86_400).unwrap(), 3);
     StorageHandle::enter(&mut p, |s| {
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
@@ -78,8 +85,8 @@ fn daily_position_expiry_preserves_hour_topics_including_epoch_hour_zero() {
         })
         .collect::<Vec<_>>();
     hours.sort_unstable();
-    assert_eq!(hours, vec![0, 1, 23]);
-    assert_eq!(sweep(&mut p, 2 * SECONDS_PER_DAY).unwrap(), 1);
+    assert_eq!(hours, vec![first_hour, first_hour + 1, first_hour + 23]);
+    assert_eq!(sweep(&mut p, day + 2 * SECONDS_PER_DAY).unwrap(), 1);
 }
 
 #[test]
@@ -161,14 +168,24 @@ fn world() -> HashMapStorageProvider {
     p
 }
 
-/// One block's position expiry, then its cleanup. Returns the hours expired.
+/// One block's daily pass, then its position cleanup. Returns the hours expired.
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
+    let expired_hours = |p: &HashMapStorageProvider| {
+        p.get_events(GEM_FACTORY_ADDRESS)
+            .iter()
+            .filter(|log| {
+                crate::precompile::IGemFactory::GemPositionGroupExpired::decode_log_data(log)
+                    .is_ok()
+            })
+            .count() as u32
+    };
+    let before = expired_hours(p);
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(at, at, 1), s);
-        let expired = positions_expired::sweep_expired_positions(&ctx)?;
-        positions_expired::cleanup_positions(&ctx)?;
-        Ok(expired)
-    })
+        let block = super::daily_pass(&ctx)?;
+        positions_expired::cleanup_positions(&block)
+    })?;
+    Ok(expired_hours(p) - before)
 }
 
 fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
