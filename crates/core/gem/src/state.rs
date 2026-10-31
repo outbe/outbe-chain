@@ -44,9 +44,9 @@ impl GemContract<'_> {
         &mut self,
         series_id: SeriesId,
         call_price_minor: U256,
-        market_price: bool,
+        entry_at_series_vwap: bool,
     ) -> Result<u16> {
-        if market_price {
+        if entry_at_series_vwap {
             return Ok(0);
         }
         let key = Self::sub_series_key(series_id, call_price_minor);

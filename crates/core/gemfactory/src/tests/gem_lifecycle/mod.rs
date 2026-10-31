@@ -47,7 +47,7 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
         reference_currency: USD,
         issued_at: T_NOW,
         call_terms: None,
-        market_price: true,
+        entry_at_series_vwap: true,
     }
 }
 

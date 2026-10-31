@@ -25,7 +25,7 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
     let call_price = params
         .call_terms
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
-    let sub_series_id = sub_series_of(storage, series_id, call_price, params.market_price)?;
+    let sub_series_id = sub_series_of(storage, series_id, call_price, params.entry_at_series_vwap)?;
     let gem_id = GemContract::generate_gem_id(
         series_id,
         sub_series_id,
@@ -58,9 +58,13 @@ pub fn sub_series_of(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     call_price_minor: U256,
-    market_price: bool,
+    entry_at_series_vwap: bool,
 ) -> Result<u16> {
-    GemContract::new(storage.clone()).sub_series_of(series_id, call_price_minor, market_price)
+    GemContract::new(storage.clone()).sub_series_of(
+        series_id,
+        call_price_minor,
+        entry_at_series_vwap,
+    )
 }
 
 /// Records an already built gem, opening its group with `call_terms` if it is the first.

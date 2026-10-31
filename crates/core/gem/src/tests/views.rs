@@ -342,7 +342,7 @@ fn a_numbered_sub_series_reads_in_the_status_and_the_card() {
         let gem_id = add(
             storage,
             GemAddParams {
-                market_price: false,
+                entry_at_series_vwap: false,
                 ..sample_params(ALICE)
             },
         );

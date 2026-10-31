@@ -19,7 +19,7 @@ fn params(owner: Address) -> GemAddParams {
         reference_currency: 840,
         issued_at: ISSUED_AT,
         call_terms: None,
-        market_price: true,
+        entry_at_series_vwap: true,
     }
 }
 

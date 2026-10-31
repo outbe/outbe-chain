@@ -31,8 +31,8 @@ pub struct GemAddParams {
     /// The terms the gem's group seals if this gem opens it. `None` leaves the group
     /// out of the call index.
     pub call_terms: Option<CallTerms>,
-    /// The call price marks up the VWAP of the series date: sub-series 0.
-    pub market_price: bool,
+    /// The entry price is the VWAP of the series date: sub-series 0.
+    pub entry_at_series_vwap: bool,
 }
 
 /// One gem record. The call terms are its group's, read through [`GemView`].

@@ -50,7 +50,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         reference_currency,
         issued_at,
         call_terms: None,
-        market_price: true,
+        entry_at_series_vwap: true,
     };
     let gem_id = add_gem_with_call_anchor(storage, params, call_anchor)?;
 
@@ -293,7 +293,7 @@ pub fn issue_merchant_gem(
             reference_currency,
             issued_at: now,
             call_terms: None,
-            market_price: entry_price == market_price,
+            entry_at_series_vwap: entry_price == market_price,
         },
     )?;
 
