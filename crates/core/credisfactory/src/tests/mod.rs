@@ -359,24 +359,58 @@ pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
-/// One block's forfeit sweep over the lapsed called groups, then its cleanup. Returns
-/// the groups forfeited.
-pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
-        storage.clone(),
-    );
-    let forfeited = crate::forfeited::sweep_expired(&ctx).unwrap();
-    crate::cleanup::cleanup(&ctx).unwrap();
-    forfeited
+/// Called groups still in the forfeit queue up to the deadline day of `timestamp`.
+pub fn queued_for_forfeit(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<u32> {
+    let credis = CredisContract::new(storage.clone());
+    let Some(mut day) =
+        outbe_primitives::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+    else {
+        return Ok(0);
+    };
+    let last = outbe_primitives::deadline_queue::deadline_day(timestamp)?;
+    let mut live = 0;
+    while day <= last {
+        live += credis.forfeit_day_live.read(&day)?;
+        day += 1;
+    }
+    Ok(live)
 }
 
-/// What CycleTick runs every block.
-pub fn tick(storage: &StorageHandle<'_>, timestamp: u64) {
-    let ctx = block_at(storage, timestamp);
-    crate::hooks::sweep_forfeits(&ctx).unwrap();
-    crate::called::process_call_pass(&ctx).unwrap();
-    crate::hooks::cleanup(&ctx).unwrap();
+/// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
+/// forfeits and cleanup, one block for each closed day it still has to catch up.
+pub fn daily_pass(
+    storage: &StorageHandle<'_>,
+    timestamp: u64,
+) -> outbe_primitives::error::Result<()> {
+    let closed = last_closed_day(timestamp);
+    let oracle = OracleContract::new(storage.clone());
+    if oracle.utc_day_vwap_last_finalized.read()? < closed {
+        oracle.utc_day_vwap_last_finalized.write(closed)?;
+    }
+    let credis = CredisContract::new(storage.clone());
+    if credis.daily_genesis_day.read()? == 0 {
+        credis.daily_genesis_day.write(closed)?;
+    }
+    loop {
+        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        let selected =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
+                .map_or(0, |allowance| allowance.day);
+        let next = credis.call_sweep_day.read()?;
+        if next == 0 || next == selected {
+            return Ok(());
+        }
+    }
+}
+
+/// The daily pass at `timestamp`. Returns the called groups it forfeited.
+pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    let before = queued_for_forfeit(storage, timestamp).unwrap();
+    daily_pass(storage, timestamp).unwrap();
+    before - queued_for_forfeit(storage, timestamp).unwrap()
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.

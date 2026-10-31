@@ -989,7 +989,7 @@ fn a_forfeit_waits_for_the_day_its_deadline_falls_in_to_close() {
 }
 
 #[test]
-fn every_cycle_tick_forfeits_without_the_daily_trigger() {
+fn the_daily_pass_forfeits_without_the_daily_trigger() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
@@ -997,7 +997,7 @@ fn every_cycle_tick_forfeits_without_the_daily_trigger() {
 
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
-        tick(&storage, lapsed);
+        daily_pass(&storage, lapsed).unwrap();
         assert!(is_deleted(&storage, ids[0]));
         assert_eq!(state_of(&storage, ids[1]), CredisState::Issued);
     });
@@ -1043,8 +1043,8 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     teardown();
 }
 
-/// A group is forfeited at once, and its cleanup deletes up to the block's write budget,
-/// burning each Credis's Gratis into the reserve, and leaves the rest to the next block.
+/// A group is forfeited at once, and its cleanup deletes what the block's write budget
+/// leaves, burning each Credis's Gratis into the reserve, and leaves the rest to the next block.
 #[test]
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
@@ -1069,6 +1069,8 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
 
+        // The pass is caught up to the day before, so one block works the deadline day.
+        daily_pass(&storage, lapsed - DAY).unwrap();
         // Each deleted Credis burns its Gratis into the reserve as it goes.
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -1076,11 +1078,12 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
                 .unwrap()
         };
         assert_eq!(expire(&storage, lapsed), 1);
-        assert_eq!(reserve(), pledge_cost() * U256::from(budget));
-        assert_eq!(
-            ids.iter().filter(|id| !is_deleted(&storage, **id)).count(),
-            1
+        let deleted = ids.iter().filter(|id| is_deleted(&storage, **id)).count();
+        assert!(
+            deleted > 0 && deleted < ids.len(),
+            "one block deletes what its write budget leaves after the forfeit, got {deleted}"
         );
+        assert_eq!(reserve(), pledge_cost() * U256::from(deleted as u64));
         assert_eq!(expire(&storage, lapsed), 0);
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
         assert_eq!(cleanup_queued_at(&storage, group), 0);
@@ -1090,8 +1093,8 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     teardown();
 }
 
-/// The forfeit needs no enclave. A cleanup that cannot burn on this node fails the block
-/// and keeps the Credis.
+/// A cleanup that cannot burn on this node fails the block: the forfeit rolls back with it,
+/// and the Credis stays queued until a pass with the enclave.
 #[test]
 fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
     let mut storage = env();
@@ -1102,18 +1105,18 @@ fn a_failed_cleanup_fails_the_block_and_keeps_the_credis_queued() {
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
 
-        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, lapsed, CHAIN_ID),
-            storage.clone(),
-        );
-        assert_eq!(crate::forfeited::sweep_expired(&ctx).unwrap(), 1);
         outbe_gratis::enclave_client::test_enclave::uninstall();
         assert!(matches!(
-            crate::cleanup::cleanup(&ctx),
+            daily_pass(&storage, lapsed),
             Err(outbe_primitives::error::PrecompileError::EnclaveUnavailable(_))
         ));
+        outbe_gratis::enclave_client::test_enclave::install();
         assert!(!is_deleted(&storage, ids[0]));
-        assert_ne!(cleanup_queued_at(&storage, group), 0);
+        assert_eq!(queued_for_forfeit(&storage, lapsed).unwrap(), 1);
+        assert_eq!(cleanup_queued_at(&storage, group), 0);
+
+        assert_eq!(expire(&storage, lapsed), 1);
+        assert!(is_deleted(&storage, ids[0]));
     });
     teardown();
 }
@@ -1239,19 +1242,16 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
     teardown();
 }
 
-/// One block's forfeit and cleanup under one checkpoint, as the CycleTick transaction runs them.
+/// The daily pass, with its forfeits and cleanup, under one checkpoint as the native
+/// transaction runs it. Returns the groups forfeited.
 fn forfeit_block(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
-    let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-        outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
-        storage.clone(),
-    );
     storage.with_checkpoint(|| {
-        let forfeited = crate::forfeited::sweep_expired(&ctx)?;
-        crate::cleanup::cleanup(&ctx)?;
-        Ok(forfeited)
+        let before = queued_for_forfeit(storage, timestamp)?;
+        daily_pass(storage, timestamp)?;
+        Ok(before - queued_for_forfeit(storage, timestamp)?)
     })
 }
 
@@ -1279,6 +1279,12 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     });
     let mutations = clean.clear_mutation_failure();
     assert!(mutations > 0);
+    StorageHandle::enter(&mut clean, |storage| {
+        assert_eq!(
+            forfeit_block(&storage, lapsed + CLOSED_DAY_DELAY).unwrap(),
+            0
+        );
+    });
     let count = |provider: &outbe_primitives::storage::hashmap::HashMapStorageProvider| {
         let credis = provider.get_events(CREDIS_ADDRESS);
         let groups = credis

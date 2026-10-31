@@ -17,7 +17,6 @@ pub mod called;
 mod cleanup;
 pub mod errors;
 pub mod forfeited;
-pub mod hooks;
 pub mod precompile;
 pub mod rules;
 pub mod runtime;

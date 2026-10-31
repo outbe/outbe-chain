@@ -1000,11 +1000,11 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 state: b256!("0xd27d66fab41ea7f353d16469f9a481a8d210923a7c7180a1ce57129e57e7306a"),
             },
             Footprint {
-                gas: 354200,
-                reads: 142,
-                writes: 68,
+                gas: 470000,
+                reads: 200,
+                writes: 90,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0xfe019f46baba0f01dc01cb0e9964e90ec16c04a284358bc7ec8db5be8e993bc8"),
+                state: b256!("0x8e5d260e458ff943fe7bb2949f9f5350bad9da1f0f28229c22a5b633635832f0"),
             },
         ]
     );

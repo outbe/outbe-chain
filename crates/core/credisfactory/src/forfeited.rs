@@ -11,15 +11,6 @@ use outbe_primitives::{
     pass_budget::PassBudget,
 };
 
-/// Runs from CycleTick every block. Returns the groups forfeited.
-#[cfg(test)]
-pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = CredisContract::new(ctx.storage.clone());
-    let mut expiry = CredisForfeit::new(ctx);
-    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
-    Ok(expiry.forfeited)
-}
-
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -37,14 +28,12 @@ pub(crate) fn forfeit_through(
 
 struct CredisForfeit<'storage> {
     credis: CredisContract<'storage>,
-    forfeited: u32,
 }
 
 impl<'s> CredisForfeit<'s> {
     fn new(ctx: &BlockRuntimeContext<'s>) -> Self {
         Self {
             credis: CredisContract::new(ctx.storage.clone()),
-            forfeited: 0,
         }
     }
 }
@@ -80,7 +69,6 @@ impl DeadlineHandler<B256> for CredisForfeit<'_> {
             groupKey: group,
             credis,
         })?;
-        self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
 

@@ -10,15 +10,6 @@ use outbe_primitives::{
     pass_budget::PassBudget,
 };
 
-/// Deletes the Credis of the forfeited groups. Returns the Credis deleted.
-#[cfg(test)]
-pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = CredisContract::new(ctx.storage.clone());
-    let mut cleanup = CredisCleanup::new(ctx);
-    deadline_queue::process_block(&CleanupQueue(&queue), ctx, &mut cleanup)?;
-    Ok(cleanup.deleted)
-}
-
 pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -37,7 +28,6 @@ pub(crate) fn cleanup_through(
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
-    deleted: u32,
 }
 
 impl<'a, 's> CredisCleanup<'a, 's> {
@@ -45,7 +35,6 @@ impl<'a, 's> CredisCleanup<'a, 's> {
         Self {
             ctx,
             credis: CredisContract::new(ctx.storage.clone()),
-            deleted: 0,
         }
     }
 }
@@ -75,7 +64,6 @@ impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
 
     fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
         crate::runtime::delete_forfeited_credis(self.ctx.storage.clone(), credis_id)?;
-        self.deleted = self.deleted.saturating_add(1);
         Ok(())
     }
 
