@@ -105,7 +105,7 @@ impl Rpc {
         &self,
         port: u16,
         checkpoint: FinalizedCheckpoint,
-        day: WorldwideDay,
+        day: EmissionDate,
     ) -> Result<U256> {
         self.read_state_at(port, checkpoint, |storage| {
             outbe_desis::schema::DesisContract::new(storage)

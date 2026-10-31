@@ -15,7 +15,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///      settlement honours rather than a later one.
 contract MarkCalledClockTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
-    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    uint32 internal constant EMISSION_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
 
     TargetRouter internal router;
@@ -32,7 +32,7 @@ contract MarkCalledClockTest is CrossChainTest {
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 21 days));
+        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
     }
 
     function _deliverCalled(uint32 calledAt) internal {
@@ -40,7 +40,7 @@ contract MarkCalledClockTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             originPeer,
             address(router),
-            BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
         );
     }
 

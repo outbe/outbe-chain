@@ -44,7 +44,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
     {
         payload.seriesId = seriesId;
-        payload.worldwideDay = DAY;
+        payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
         payload.issuedUnits = 100;
         payload.promisLoadMinor = 1_000;

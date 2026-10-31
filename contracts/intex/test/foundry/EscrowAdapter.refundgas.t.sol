@@ -270,7 +270,8 @@ contract RefundDayGasTest is RefundGasBase {
 
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        router.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        // A real auction: each chunk asks it whether the day failed, and that read is part of the cost.
+        router.wire(address(DeployProxy.intexAuction(admin, address(router))), makeAddr("intex"), address(escrow));
         router.setProceedsRoute(
             address(new LocalWcoenTokenBridge(token, new LocalWcoenGateway())), makeAddr("originRouter")
         );

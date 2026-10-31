@@ -242,7 +242,7 @@ impl IntexContract<'_> {
             .collect()
     }
 
-    /// This function returns the deadline's UTC day since the epoch, not a WorldwideDay.
+    /// This function returns the deadline's UTC day since the epoch, not an EmissionDate.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn deadline_day(deadline: u64) -> u32 {
         deadline_queue::deadline_day(deadline).unwrap()

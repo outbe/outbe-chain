@@ -170,7 +170,7 @@
               "internalType": "bytes14"
             },
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             },
@@ -292,6 +292,25 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "emissionDayOf",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -576,7 +595,7 @@
               "internalType": "enum IIntexNFT1155.IntexState"
             },
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             }
@@ -684,7 +703,7 @@
               "internalType": "enum IIntexNFT1155.IntexState"
             },
             {
-              "name": "worldwideDay",
+              "name": "emissionDay",
               "type": "uint32",
               "internalType": "uint32"
             }
@@ -838,7 +857,7 @@
       "name": "seriesIdOf",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         },
@@ -864,10 +883,10 @@
     },
     {
       "type": "function",
-      "name": "seriesIdsByWorldwideDay",
+      "name": "seriesIdsByEmissionDay",
       "inputs": [
         {
-          "name": "worldwideDay",
+          "name": "emissionDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -996,25 +1015,6 @@
           "name": "",
           "type": "string",
           "internalType": "string"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "worldwideDayOf",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ],
       "stateMutability": "view"

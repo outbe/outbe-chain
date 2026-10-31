@@ -23,7 +23,7 @@ interface IStablecoin {
     event Paused(address indexed actor);
     event Unpaused(address indexed actor);
     event AdminTransferStarted(address indexed currentAdmin, address indexed pendingAdmin);
-    event AdminTransferCancelled(address indexed admin, address indexed cancelledPendingAdmin);
+    event AdminTransferCanceled(address indexed admin, address indexed canceledPendingAdmin);
     event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
 
     error UnexpectedValue(uint256 value);

@@ -5,7 +5,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::call_breach::group_key;
-use outbe_primitives::time::{first_full_day, TimeError, WorldwideDay};
+use outbe_primitives::time::{first_full_day, EmissionDate, TimeError};
 
 use crate::errors::IntexError;
 
@@ -71,7 +71,7 @@ pub use outbe_primitives::series_id::{SeriesId, SERIES_ID_LEN};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateSeriesParams {
     pub series_id: SeriesId,
-    pub worldwide_day: WorldwideDay,
+    pub emission_day: EmissionDate,
     pub issued_units: u32,
     /// PROMIS-units per Intex unit (1e6). Bounded by source `uint128`.
     pub promis_load_minor: u128,
@@ -132,9 +132,9 @@ pub struct SeriesRecord {
     #[attribute(order = 9)]
     pub issued_at: u64,
 
-    /// Worldwide day of the auction that issued this series. The id leads with its emission day.
-    #[attribute(order = 10, default = WorldwideDay::new(0))]
-    pub worldwide_day: WorldwideDay,
+    /// Emission day of the auction that issued this series. The id leads with its emission day.
+    #[attribute(order = 10, default = EmissionDate::new(0))]
+    pub emission_day: EmissionDate,
 
     #[attribute(order = 11)]
     pub transit_margin_seconds: u32,

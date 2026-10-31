@@ -5,7 +5,7 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::DESIS_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use crate::precompile::IDesis;
 use crate::runtime;
@@ -49,7 +49,7 @@ fn run_from(stored_exponent: u32, days: &[Day<'_>]) -> Run {
                         call_price_minor: U256::ZERO,
                     })
                     .collect();
-                runtime::step_promis_load(&mut contract, WorldwideDay::new(key), &rows)
+                runtime::step_promis_load(&mut contract, EmissionDate::new(key), &rows)
                     .unwrap()
                     .ilog10()
             })
@@ -125,7 +125,7 @@ fn a_tenfold_rise_steps_the_load_down_and_less_holds() {
     assert_eq!(r.exponents, [LAUNCH, LAUNCH, LAUNCH - 1]);
     assert_eq!(r.steps.len(), 1);
     let step = &r.steps[0];
-    assert_eq!(step.worldwideDay, FIRST_DAY + 2);
+    assert_eq!(step.emissionDay, FIRST_DAY + 2);
     assert_eq!(step.previousLoadMinor, 10u128.pow(LAUNCH));
     assert_eq!(step.newLoadMinor, 10u128.pow(LAUNCH - 1));
     assert_eq!(step.isoCode, USD);

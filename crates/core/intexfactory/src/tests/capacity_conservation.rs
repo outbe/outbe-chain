@@ -14,7 +14,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    time::WorldwideDay,
+    time::EmissionDate,
 };
 use outbe_promislimit::PromisLimitContract;
 
@@ -22,18 +22,18 @@ const ISSUED: u64 = 1_704_067_200;
 use outbe_primitives::time::SECONDS_PER_DAY as DAY;
 const DEADLINE: u64 = ISSUED + 7 * DAY;
 const LOAD: u128 = 1_000_003;
-const WWD: u32 = 20_240_101;
+const SERIES_DAY: u32 = 20_240_101;
 
 fn world() -> (HashMapStorageProvider, SeriesId) {
     let mut p = HashMapStorageProvider::new(1);
     p.set_timestamp(U256::from(ISSUED));
-    let id = SeriesId::pack(WWD, *b"USD", b'U').unwrap();
+    let id = SeriesId::pack(SERIES_DAY, *b"USD", b'U').unwrap();
     StorageHandle::enter(&mut p, |s| {
         api::create_series(
             &s,
             CreateSeriesParams {
                 series_id: id,
-                worldwide_day: WorldwideDay::new(WWD),
+                emission_day: EmissionDate::new(SERIES_DAY),
                 issued_units: 10,
                 promis_load_minor: LOAD,
                 entry_price_minor: U256::from(1_000_000),

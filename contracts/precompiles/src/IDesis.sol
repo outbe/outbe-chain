@@ -7,15 +7,15 @@ pragma solidity ^0.8.30;
 ///         OriginRouter calls bid ingestion. Clearing runs from the Desis
 ///         begin-block gate.
 interface IDesis {
-    error InvalidWorldwideDay(uint32 worldwideDay);
+    error InvalidEmissionDay(uint32 emissionDay);
     error InvalidStageTransition();
-    error PendingClearingDataMissing(uint32 worldwideDay);
+    error PendingClearingDataMissing(uint32 emissionDay);
     error UnauthorizedOrigin(address value);
     error UnpricedReferenceCurrency(uint16 value);
     error RefundFanOutTooLarge(uint64 value);
     error UnspellableBidCurrency(uint16 issuance, uint16 referenceCurrency);
     error BidBatchTooLarge(uint64 count, uint64 max);
-    error DesisAllocationExceedsLimit(uint32 wwd, uint256 allocation, uint256 limit);
+    error DesisAllocationExceedsLimit(uint32 emissionDay, uint256 allocation, uint256 limit);
     error AuctionBriefLimitExceedsDomain();
     error BatchArrayLengthMismatch();
     error BriefAnchorExceedsU32();
@@ -31,11 +31,12 @@ interface IDesis {
     enum AuctionStage {
         None,
         Briefed,
-        Started,
-        Revealing,
-        Clearing,
-        Cleared,
-        Cancelled
+        CommittingBids,
+        RevealingBids,
+        CollectingBids,
+        Completed,
+        Cancelled,
+        Failed
     }
 
     // --- Bid ingestion (from OriginRouter) ---
@@ -43,7 +44,7 @@ interface IDesis {
     ///         order over the unordered bridge. The receiver collects all `totalBatches` (by
     ///         `batchIndex`) before finalizing.
     function processBidsBatch(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint32 srcChainId,
         uint16 batchIndex,
         uint16 totalBatches,
@@ -54,63 +55,66 @@ interface IDesis {
     /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for
     ///         this day. The gate clears the auction once every snapshot chain has reported (or
     ///         the fan-in deadline passes).
-    function processBidsDone(uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
+    function processBidsDone(uint32 emissionDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
 
     // --- Views ---
-    function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
-    function getBidsCount(uint32 worldwideDay) external view returns (uint256);
-    function getChainBidsCount(uint32 worldwideDay, uint32 srcChainId) external view returns (uint256);
+    function getAuctionStage(uint32 emissionDay) external view returns (AuctionStage);
+    function getBidsCount(uint32 emissionDay) external view returns (uint256);
+    function getChainBidsCount(uint32 emissionDay, uint32 srcChainId) external view returns (uint256);
     /// @notice Whether the chain's bid intake for the day is complete (marker + all batches
     ///         arrived).
-    function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
+    function isChainDone(uint32 emissionDay, uint32 srcChainId) external view returns (bool);
 
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
     // --- Events ---
-    event AuctionCreated(uint32 indexed worldwideDay);
+    event AuctionCreated(uint32 indexed emissionDay);
     /// @notice The chain's bid intake finalized: BIDS_DONE marker and all batches arrived with
     ///         matching totals.
-    event ChainBidsDone(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint32 bidsCount);
+    event ChainBidsDone(uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 bidsCount);
     /// @notice The chain missed the fan-in deadline. The clearing excluded its bids.
-    event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
+    event ChainSkipped(uint32 indexed emissionDay, uint32 indexed srcChainId);
     /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared
     /// InboundReason codes:
-    /// - 2 = obsolete (the day already cleared or was cancelled).
+    /// - 2 = obsolete (the day already ended: completed, cancelled or failed).
     /// - 3 = conflicting BIDS_DONE marker.
     /// - 4 = day not found (never briefed here).
-    event InboundIgnored(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint8 reason);
+    event InboundIgnored(uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason);
     /// @notice The day was cancelled because it was briefed with no Desis limit, so it has
     /// nothing to sell.
-    event AuctionCancelledNoLimit(uint32 indexed worldwideDay);
+    event AuctionCancelledNoLimit(uint32 indexed emissionDay);
     /// @notice The day was cancelled because the oracle could price none of its reference
     /// currencies, so no bid could have been measured against anything.
-    event AuctionCancelledUnpriced(uint32 indexed worldwideDay);
+    event AuctionCancelledUnpriced(uint32 indexed emissionDay);
     /// @notice The day was cancelled because its Desis limit buys less than one Intex at the
     ///         day's load.
-    event AuctionCancelledBelowOneUnit(uint32 indexed worldwideDay, uint256 desisLimitMinor, uint128 promisLoadMinor);
+    event AuctionCancelledBelowOneUnit(uint32 indexed emissionDay, uint256 desisLimitMinor, uint128 promisLoadMinor);
     /// @notice The day was cancelled because its auction would start with less than the minimum
     ///         commit window.
-    event AuctionCancelledLateStart(uint32 indexed worldwideDay);
-    event AuctionOverdue(uint32 indexed worldwideDay);
-    event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
-    event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
+    event AuctionCancelledLateStart(uint32 indexed emissionDay);
+    /// @notice The day started but found no result by its last clearing time. `stage` is the
+    ///         stage it was in, which tells how far it got. Its unused Desis Limit returned to
+    ///         PromisLimit. The other chains read the day as failed from its schedule.
+    event AuctionFailed(uint32 indexed emissionDay, uint8 stage);
+    event AuctionCleared(uint32 indexed emissionDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
+    event AuctionClearedEmpty(uint32 indexed emissionDay, uint64 totalDemand);
     /// @notice The day put `desisAllocationMinor` of its `desisLimitMinor` into issued Intex.
     ///         The value is zero when the day was cancelled.
     /// @dev Briefed days only. A day that fails pre-brief returns its Desis Limit via the
     ///      Metadosis failure receipt.
-    event DesisAllocationRecorded(uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 desisAllocationMinor);
+    event DesisAllocationRecorded(uint32 indexed emissionDay, uint256 desisLimitMinor, uint256 desisAllocationMinor);
     /// @notice The part of the day's Desis Limit left unallocated returned to PromisLimit.
     /// @dev Briefed days only. A day that fails pre-brief returns its Desis Limit via the
     ///      Metadosis failure receipt.
-    event UnusedDesisLimitReported(uint32 indexed worldwideDay, uint256 unusedDesisLimitMinor);
+    event UnusedDesisLimitReported(uint32 indexed emissionDay, uint256 unusedDesisLimitMinor);
     /// @notice The day dropped a reference currency because `takenBy` already claimed
     /// the letter a series id spells it with. No bid may price in it for this day.
     /// @notice The day's PROMIS load stepped because `isoCode` moved tenfold from the
     ///         price it was captured at. Never emitted when the ladder takes its first
     ///         position on a fresh chain.
     event PromisLoadStepped(
-        uint32 indexed worldwideDay,
+        uint32 indexed emissionDay,
         uint128 previousLoadMinor,
         uint128 newLoadMinor,
         uint16 isoCode,
@@ -122,6 +126,6 @@ interface IDesis {
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
     event AuctionBriefRejected(
-        uint32 indexed worldwideDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
+        uint32 indexed emissionDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
     );
 }

@@ -30,7 +30,7 @@ contract IntexAuctionScheduleSnapTest is Test {
         vm.stopPrank();
     }
 
-    function _start(uint32 worldwideDay) internal {
+    function _start(uint32 emissionDay) internal {
         IIntexAuction.AuctionSchedule memory s = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp + COMMIT_OFFSET),
             revealEnd: uint32(block.timestamp + REVEAL_OFFSET),
@@ -45,39 +45,39 @@ contract IntexAuctionScheduleSnapTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, s, p);
+        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, s, p);
     }
 
     function test_ClearingSignal_Early_SnapsRevealEnd() public {
-        uint32 worldwideDay = 20250201;
-        _start(worldwideDay);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
+        uint32 emissionDay = 20250201;
+        _start(emissionDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(emissionDay);
         vm.warp(b.schedule.commitEnd + 1);
 
         uint32 signalTs = b.schedule.commitEnd + 20;
         vm.warp(signalTs);
         vm.prank(bridger);
-        auction.startClearingStage(worldwideDay);
+        auction.startAwaitingResult(emissionDay);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.schedule.revealEnd, signalTs);
         assertLt(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 
     function test_ClearingSignal_Late_LeavesRevealEnd() public {
-        uint32 worldwideDay = 20250202;
-        _start(worldwideDay);
-        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(worldwideDay);
+        uint32 emissionDay = 20250202;
+        _start(emissionDay);
+        IIntexAuction.AuctionData memory b = auction.getAuctionInfo(emissionDay);
 
         vm.warp(b.schedule.revealEnd + 5);
         vm.prank(bridger);
-        auction.startClearingStage(worldwideDay);
+        auction.startAwaitingResult(emissionDay);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.schedule.revealEnd, b.schedule.revealEnd);
         assertEq(a.schedule.issuanceEnd, b.schedule.issuanceEnd);
-        assertEq(uint8(auction.getAuctionStage(worldwideDay)), uint8(IIntexAuction.AuctionStage.Issuance));
+        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 }

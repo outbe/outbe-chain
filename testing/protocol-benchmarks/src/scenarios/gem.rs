@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes, U256};
 use outbe_gemfactory::GemFactoryContract;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
-use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
 use outbe_primitives::{
     addresses::INTEX_NFT1155_ADDRESS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -111,7 +111,7 @@ fn seed_series(storage: &StorageHandle<'_>) -> Result<(), String> {
         storage,
         outbe_intex::CreateSeriesParams {
             series_id: source_series_id(),
-            worldwide_day: WorldwideDay::new(0),
+            emission_day: EmissionDate::new(0),
             issued_units: PARK_UNITS as u32,
             promis_load_minor: SCALE_1E6_U128,
             entry_price_minor: six_decimal_unit(),

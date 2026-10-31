@@ -171,7 +171,7 @@ contract StoredBidStub {
     }
 
     /// @dev Burns what the real flip costs (452k, `GasBudget.t.sol`) so a budget test pays for it.
-    function startClearingStage(uint32) external view {
+    function startAwaitingResult(uint32) external view {
         uint256 floorGas = gasleft() - _flipGas;
         uint256 spin;
         while (gasleft() > floorGas) {
@@ -180,7 +180,7 @@ contract StoredBidStub {
     }
 
     function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
-        return IIntexAuction.AuctionStage.Issuance;
+        return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
     function revealedBidsCount(uint32) external view returns (uint256) {
@@ -214,7 +214,7 @@ contract StoredBidStub {
 abstract contract RelayGasBase is Test {
     /// @dev The canonical IGP prices this domain, which `quoteDispatch` needs.
     uint32 internal constant DST_CHAIN_ID = 56;
-    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    uint32 internal constant EMISSION_DAY = 20260501;
     uint256 internal constant SEEDED_BIDS = 256;
 
     TargetRouter internal router;
@@ -230,7 +230,7 @@ abstract contract RelayGasBase is Test {
         stub.setVisible(bids);
         vm.prank(address(router));
         uint256 before = gasleft();
-        router.relayBidsToOutbe(WORLDWIDE_DAY);
+        router.relayBidsToOutbe(EMISSION_DAY);
         spent = before - gasleft();
     }
 
@@ -295,7 +295,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         _wireRouter(address(gateway));
     }
 
-    /// @notice `AUCTION_STAGE_CLEARING` is the budget that a chain with no history gets, so it has
+    /// @notice `AUCTION_STAGE_COLLECTING_BIDS` is the budget that a chain with no history gets, so it has
     ///         to be worth sending. The round must place at least one chunk and report the rest.
     ///         Otherwise the day stalls waiting for a hand.
     /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
@@ -318,11 +318,11 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
                 uint256(1),
                 _interop(DST_CHAIN_ID, originPeer),
                 recipient,
-                BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY)
+                BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
             )
         );
 
-        uint256 cap = ((IntexGas.AUCTION_STAGE_CLEARING * 63) / 64 * 63) / 64;
+        uint256 cap = ((IntexGas.AUCTION_STAGE_COLLECTING_BIDS * 63) / 64 * 63) / 64;
         vm.recordLogs();
         uint256 before = gasleft();
         (bool delivered,) = address(gateway).call{gas: cap}(
@@ -332,7 +332,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(WORLDWIDE_DAY);
+        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(EMISSION_DAY);
         emit log_named_uint("floor_chunks_placed", nextBatch);
         assertEq(totalBatches, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");

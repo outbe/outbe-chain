@@ -10,15 +10,16 @@ interface IDesis {
     enum AuctionStage {
         None,
         Briefed,
-        Started,
-        Revealing,
-        Clearing,
-        Cleared,
-        Cancelled
+        CommittingBids,
+        RevealingBids,
+        CollectingBids,
+        Completed,
+        Cancelled,
+        Failed
     }
 
     function processBidsBatch(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint32 srcChainId,
         uint16 batchIndex,
         uint16 totalBatches,
@@ -27,8 +28,8 @@ interface IDesis {
     ) external;
 
     /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day.
-    function processBidsDone(uint32 worldwideDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
+    function processBidsDone(uint32 emissionDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
 
-    function getAuctionStage(uint32 worldwideDay) external view returns (AuctionStage);
-    function getBidsCount(uint32 worldwideDay) external view returns (uint256);
+    function getAuctionStage(uint32 emissionDay) external view returns (AuctionStage);
+    function getBidsCount(uint32 emissionDay) external view returns (uint256);
 }

@@ -65,9 +65,11 @@ pub use offer_key::{
     unseal_tribute_offer_and_group_sig_on_boot, DerivedTributeOfferKey, SharedTributeOfferKey,
 };
 
-pub use server::{serve, serve_tcp, ServerContext};
+pub use server::{serve, serve_tcp, ServerContext, MAX_LIVE_CONNECTIONS};
 
-pub use session::{serve_connection, serve_connection_with, EnclaveTransportStream};
+pub use session::{
+    serve_connection, serve_connection_with, EnclaveTransportStream, HANDSHAKE_READ_TIMEOUT,
+};
 
 #[cfg(feature = "mock")]
 pub use session::{serve_connection_for_network_test, serve_connection_with_synthetic_dcap};
@@ -104,7 +106,10 @@ use dispatch::requests::{
 
 use offer_key::persist_then_activate_offer_key;
 
-use session::{serve_connection_with_resident_chain, ConnectionContext};
+use session::{serve_connection_with_resident_chain_and_timeout, ConnectionContext};
+
+#[cfg(test)]
+use server::{serve_tcp_with_limits, serve_with_limits};
 
 #[cfg(feature = "mock")]
 use dispatch::attestation::synthetic_dcap_quote;

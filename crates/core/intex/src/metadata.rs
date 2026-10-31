@@ -21,7 +21,7 @@ pub(crate) fn settled_token_uri(series: &SeriesRecord) -> String {
     ];
     let traits = [
         Trait::text("State", nft_card::SETTLED.label),
-        Trait::integer("Worldwide Day", series.worldwide_day.value()),
+        Trait::integer("Emission Day", series.emission_day.value()),
         Trait::currency("Issuance Currency", series.issuance_currency),
         Trait::currency("Reference Currency", series.reference_currency),
         Trait::amount("Entry Price", series.entry_price_minor, PRICE_PRECISION),

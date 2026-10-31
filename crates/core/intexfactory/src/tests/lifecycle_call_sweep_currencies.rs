@@ -5,7 +5,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use super::super::with_factory;
@@ -32,9 +32,9 @@ fn setup_second_pair(oracle: &OracleContract) -> AddressPair {
 
 /// Seeds one callable group of `iso`, priced so its trigger sits under the window.
 /// Each day's series is issued on its own day, so it opens its own group.
-fn seed_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32) {
-    let issued_at = ISSUED_AT - u64::from((worldwide_day % 1000) * SECONDS_PER_DAY_U32);
-    seed_series(s, worldwide_day, issued_at, TRIGGER, iso);
+fn seed_candidate_for(s: &StorageHandle<'_>, iso: u16, emission_day: u32) {
+    let issued_at = ISSUED_AT - u64::from((emission_day % 1000) * SECONDS_PER_DAY_U32);
+    seed_series(s, emission_day, issued_at, TRIGGER, iso);
 }
 
 /// A budget that is exhausted inside the last currency of the rotation must resume
@@ -213,24 +213,24 @@ fn a_sweep_over_several_currencies_always_ends() {
 }
 
 /// A group of `iso` issued at `issued_at`, its trigger under the window.
-fn seed_young_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32, issued_at: u64) {
-    seed_series(s, worldwide_day, issued_at, TRIGGER, iso)
+fn seed_young_candidate_for(s: &StorageHandle<'_>, iso: u16, emission_day: u32, issued_at: u64) {
+    seed_series(s, emission_day, issued_at, TRIGGER, iso)
 }
 
 pub(super) fn seed_series(
     s: &StorageHandle<'_>,
-    worldwide_day: u32,
+    emission_day: u32,
     issued_at: u64,
     trigger_minor: u64,
     reference_currency: u16,
 ) {
-    let series_id = SeriesId::for_pair(worldwide_day, 840, reference_currency).unwrap();
+    let series_id = SeriesId::for_pair(emission_day, 840, reference_currency).unwrap();
     let trigger = U256::from(trigger_minor);
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day: WorldwideDay::new(worldwide_day),
+            emission_day: EmissionDate::new(emission_day),
             issued_units: 100,
             promis_load_minor: 1_000_000_000_000_000_000,
             entry_price_minor: trigger,

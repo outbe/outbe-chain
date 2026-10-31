@@ -992,6 +992,35 @@ fn token_admin_transfer_is_two_step_and_never_creates_two_admins() {
 }
 
 #[test]
+fn cancel_admin_transfer_emits_admin_transfer_canceled() {
+    let init = initialization("USDX");
+    let candidate = Address::repeat_byte(0xa1);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        StablecoinFactoryApi::new(storage.clone())
+            .initialize(&init)
+            .unwrap();
+        let mut token = StablecoinContract::new(storage, init.token_address);
+        token.begin_admin_transfer(ISSUER, candidate).unwrap();
+        token.cancel_admin_transfer(ISSUER).unwrap();
+    });
+
+    let events = provider.get_events(init.token_address);
+    assert_eq!(
+        events.last().unwrap(),
+        &IStablecoin::AdminTransferCanceled {
+            admin: ISSUER,
+            canceledPendingAdmin: candidate,
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        IStablecoin::AdminTransferCanceled::SIGNATURE,
+        "AdminTransferCanceled(address,address)"
+    );
+}
+
+#[test]
 fn pause_blocks_ledger_paths_but_keeps_recovery_paths_available() {
     let init = initialization("USDX");
     let holder = Address::repeat_byte(0xb1);

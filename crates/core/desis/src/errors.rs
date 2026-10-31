@@ -3,20 +3,20 @@
 use crate::precompile::IDesis;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolError;
-use outbe_primitives::{error::PrecompileError, time::WorldwideDay};
+use outbe_primitives::{error::PrecompileError, time::EmissionDate};
 use thiserror::Error;
 
 /// Errors that the Desis runtime returns.
 #[derive(Debug, Error)]
 pub enum DesisError {
-    #[error("invalid worldwide day: {0}")]
-    InvalidWorldwideDay(WorldwideDay),
+    #[error("invalid emission day: {0}")]
+    InvalidEmissionDay(EmissionDate),
 
     #[error("invalid stage transition")]
     InvalidStageTransition,
 
     #[error("pending clearing data missing for series {0}")]
-    PendingClearingDataMissing(WorldwideDay),
+    PendingClearingDataMissing(EmissionDate),
 
     #[error("unauthorized origin: {0}")]
     UnauthorizedOrigin(Address),
@@ -33,9 +33,9 @@ pub enum DesisError {
     #[error("relayed bid batch carries {0} bids, over the {1} the codec may send")]
     BidBatchTooLarge(usize, usize),
 
-    #[error("Desis Allocation {allocation} exceeds Desis Limit {limit} for worldwide day {wwd}")]
+    #[error("Desis Allocation {allocation} exceeds Desis Limit {limit} for emission day {day}")]
     DesisAllocationExceedsLimit {
-        wwd: WorldwideDay,
+        day: EmissionDate,
         allocation: U256,
         limit: U256,
     },
@@ -90,13 +90,13 @@ impl From<DesisError> for PrecompileError {
     fn from(e: DesisError) -> Self {
         use IDesis as I;
         match e {
-            DesisError::InvalidWorldwideDay(wwd) => revert_with(I::InvalidWorldwideDay {
-                worldwideDay: wwd.value(),
+            DesisError::InvalidEmissionDay(day) => revert_with(I::InvalidEmissionDay {
+                emissionDay: day.value(),
             }),
             DesisError::InvalidStageTransition => revert_with(I::InvalidStageTransition {}),
-            DesisError::PendingClearingDataMissing(wwd) => {
+            DesisError::PendingClearingDataMissing(day) => {
                 revert_with(I::PendingClearingDataMissing {
-                    worldwideDay: wwd.value(),
+                    emissionDay: day.value(),
                 })
             }
             DesisError::UnauthorizedOrigin(value) => revert_with(I::UnauthorizedOrigin { value }),
@@ -117,11 +117,11 @@ impl From<DesisError> for PrecompileError {
                 max: u64::try_from(max).unwrap_or(u64::MAX),
             }),
             DesisError::DesisAllocationExceedsLimit {
-                wwd,
+                day,
                 allocation,
                 limit,
             } => revert_with(I::DesisAllocationExceedsLimit {
-                wwd: wwd.value(),
+                emissionDay: day.value(),
                 allocation,
                 limit,
             }),

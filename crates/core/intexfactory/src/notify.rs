@@ -4,7 +4,7 @@
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::{
     block::BlockRuntimeContext, error::Result, pass_budget::PassBudget, storage::StorageHandle,
 };
@@ -47,13 +47,13 @@ pub fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
 
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries
 /// one day and one call time for the whole batch, so both must match for a series to ride along.
-pub fn joins_run(day: WorldwideDay, called_at: u64, series_day: WorldwideDay, ts: u64) -> bool {
+pub fn joins_run(day: EmissionDate, called_at: u64, series_day: EmissionDate, ts: u64) -> bool {
     ts == called_at && series_day == day
 }
 
-/// The Worldwide Day the series' auction ran on; `None` once the series is deleted.
-fn series_day(storage: &StorageHandle<'_>, id: SeriesId) -> Result<Option<WorldwideDay>> {
-    Ok(outbe_intex::api::find_series(storage, id)?.map(|series| series.worldwide_day))
+/// The Emission Day the series' auction ran on; `None` once the series is deleted.
+fn series_day(storage: &StorageHandle<'_>, id: SeriesId) -> Result<Option<EmissionDate>> {
+    Ok(outbe_intex::api::find_series(storage, id)?.map(|series| series.emission_day))
 }
 
 fn unpack_call_notice(entry: U256) -> (SeriesId, u64) {
@@ -127,7 +127,7 @@ impl NoticeSend<'_, '_> {
         let calls_left = self.budget.writes_left();
         let (first_id, called_at) = unpack_call_notice(first);
         // A series is deleted only when nothing of it is left to call.
-        let Some(worldwide_day) = series_day(self.storage, first_id)? else {
+        let Some(emission_day) = series_day(self.storage, first_id)? else {
             factory.notify_at.clear(&at)?;
             return Ok((1, false));
         };
@@ -143,7 +143,7 @@ impl NoticeSend<'_, '_> {
             let (id, ts) = unpack_call_notice(entry);
             if notice_retry_at(entry) > self.now
                 || !series_day(self.storage, id)?
-                    .is_some_and(|day| joins_run(worldwide_day, called_at, day, ts))
+                    .is_some_and(|day| joins_run(emission_day, called_at, day, ts))
             {
                 break;
             }
@@ -156,7 +156,7 @@ impl NoticeSend<'_, '_> {
             factory.notify_at.clear(&slot)?;
         }
         self.budget.admit_writes(router_calls(run.len()));
-        let refused = crate::called::notify_called(self.storage, worldwide_day, called_at, &run)?;
+        let refused = crate::called::notify_called(self.storage, emission_day, called_at, &run)?;
         let all_refused = refused.len() == run.len();
         // A refused entry goes behind this block's window and waits out its pause.
         for entry in entries {

@@ -192,7 +192,7 @@ fn a_node_local_failure_while_draining_parked_proceeds_fails_the_sweep() {
         IOriginRouter::parkedProceedsCountCall::SELECTOR,
         IOriginRouter::parkedProceedsCall::SELECTOR,
         IOriginRouter::parkedProceedsCall::abi_encode_returns(&IOriginRouter::ParkedProceeds {
-            worldwideDay: 2026_0301,
+            emissionDay: 2026_0301,
             srcChainId: 56,
             amount: 5,
             settled: false,
@@ -251,7 +251,7 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
                 &s,
                 outbe_intex::CreateSeriesParams {
                     series_id: sid(day),
-                    worldwide_day: WorldwideDay::new(day),
+                    emission_day: EmissionDate::new(day),
                     issued_units: 1,
                     promis_load_minor: 1,
                     entry_price_minor: U256::from(1u64),

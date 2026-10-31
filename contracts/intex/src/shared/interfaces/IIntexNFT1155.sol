@@ -79,8 +79,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 totalSupply;
         /// @notice Current series lifecycle state.
         IntexState state;
-        /// @notice Worldwide day whose tributes fed this series.
-        uint32 worldwideDay;
+        /// @notice Emission day whose auction issued this series.
+        uint32 emissionDay;
     }
 
     // --- Events ---
@@ -141,11 +141,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Writes ---
 
     /// @notice Identity inputs for a new series, set once at `createSeries`.
-    /// @dev `worldwideDay` is the day the series was derived from. It is the provenance key
+    /// @dev `emissionDay` is the day the series was derived from. It is the provenance key
     ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
     struct CreateSeriesParams {
         bytes14 seriesId;
-        uint32 worldwideDay;
+        uint32 emissionDay;
         /// @notice When the origin created the series. The call window is dated from it.
         uint64 issuedAt;
         uint16 issuanceCurrency;
@@ -195,22 +195,22 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return The Issued token id.
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
-    /// @notice Worldwide day whose tributes fed the series (0 if the series does not exist).
+    /// @notice Emission day whose auction issued the series (0 if the series does not exist).
     /// @param seriesId Series identifier.
-    /// @return The worldwide day (yyyymmdd).
-    function worldwideDayOf(bytes14 seriesId) external view returns (uint32);
+    /// @return The emission day (yyyymmdd).
+    function emissionDayOf(bytes14 seriesId) external view returns (uint32);
 
-    /// @notice Series ids issued for a worldwide day.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @notice Series ids issued for an emission day.
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @return The series ids of that day.
-    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory);
+    function seriesIdsByEmissionDay(uint32 emissionDay) external view returns (bytes14[] memory);
 
     /// @notice Series a day's currency pair was created under.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param emissionDay Emission day (yyyymmdd).
     /// @param issuanceCurrency Issuance currency (ISO numeric).
     /// @param referenceCurrency Reference currency (ISO numeric).
     /// @return The series id, or zero if the pair has no series that day.
-    function seriesIdOf(uint32 worldwideDay, uint16 issuanceCurrency, uint16 referenceCurrency)
+    function seriesIdOf(uint32 emissionDay, uint16 issuanceCurrency, uint16 referenceCurrency)
         external
         view
         returns (bytes14);
