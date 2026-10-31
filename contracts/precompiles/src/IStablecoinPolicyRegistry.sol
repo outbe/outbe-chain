@@ -20,8 +20,8 @@ interface IStablecoinPolicyRegistry {
     event PolicyAdminTransferStarted(
         uint256 indexed policyId, address indexed currentAdmin, address indexed pendingAdmin
     );
-    event PolicyAdminTransferCancelled(
-        uint256 indexed policyId, address indexed admin, address indexed cancelledPendingAdmin
+    event PolicyAdminTransferCanceled(
+        uint256 indexed policyId, address indexed admin, address indexed canceledPendingAdmin
     );
     event PolicyAdminTransferred(uint256 indexed policyId, address indexed previousAdmin, address indexed newAdmin);
 

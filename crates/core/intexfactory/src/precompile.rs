@@ -111,7 +111,7 @@ pub fn dispatch(
                         runtime::distribute(
                             &storage,
                             sender,
-                            c.worldwideDay.into(),
+                            c.emissionDay.into(),
                             c.srcChainId,
                             val,
                         )

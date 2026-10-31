@@ -4,6 +4,31 @@
 libos.entrypoint = "{{ install_root }}/bin/outbe-tee-enclave"
 
 loader.log_level = "error"
+# The argument vector is host-supplied and is NOT covered by MRENCLAVE or by
+# this signed manifest. Flags read by run.rs, and the out-of-band binding for each:
+#   --probe-attestation
+#       Diagnostic mode (probe_to_stderr); prints non-secret /dev/attestation
+#       status to stderr and exits before listening or unsealing state.
+#   --socket
+#       Host endpoint; Gramine reaches the enclave over TCP and
+#       serve_tcp_endpoint rejects any non-loopback bind. serve_uds_endpoint
+#       applies chmod 0600 best-effort (pathname UDS is process-internal under
+#       Gramine).
+#   --tee-dir
+#       Host directory required in production (build_initialization_state,
+#       resolve_enclave_identity_seed). This manifest mounts and allows only
+#       /var/lib/outbe/tee/. Sealed blobs inside are authenticated with SGX
+#       AES-GCM whose AAD binds the seal header and canonical network binding.
+#   --chain-id
+#       Startup fallback chain_id (run_with_args) and EnclaveBootConfig.chain_id
+#       (build_boot_config). Initialize and sealed-manifest restore reject any
+#       manifest whose chain_id differs from EnclaveBootConfig, and production
+#       DCAP Initialize requires the manifest's network binding to match the
+#       MRENCLAVE-measured /opt/outbe/sgx/network-descriptor-v1.bin.
+#   --dkg-seed
+#       Rejected in production (resolve_enclave_identity_seed).
+#   --dev-network-binding
+#       Rejected in production (resolve_development_network_binding).
 loader.insecure__use_cmdline_argv = true
 loader.env.LD_LIBRARY_PATH = "/qvl:/lib"
 # Avoid repeated 64 MiB glibc thread-arena attempts in the bounded SGX heap.

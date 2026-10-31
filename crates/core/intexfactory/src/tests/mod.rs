@@ -8,7 +8,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
@@ -121,8 +121,8 @@ fn select_prod_profile(storage: &StorageHandle<'_>) {
 }
 
 /// Test ids carry a fixed USD/U pair. Only the day varies.
-fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+fn sid(emission_day: u32) -> SeriesId {
+    SeriesId::pack(emission_day, *b"USD", b'U').unwrap()
 }
 
 /// The series' state as of this block.
@@ -180,10 +180,10 @@ fn prod_trigger() -> outbe_intex::IntexCallTrigger {
     }
 }
 
-fn sample(worldwide_day: u32) -> IssuanceParams {
+fn sample(emission_day: u32) -> IssuanceParams {
     IssuanceParams {
-        series_id: sid(worldwide_day),
-        worldwide_day: worldwide_day.into(),
+        series_id: sid(emission_day),
+        emission_day: emission_day.into(),
         issued_units: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(ENTRY_PRICE),

@@ -12,7 +12,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::pass_budget::SWEEP_WRITES_PER_BLOCK;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
@@ -32,7 +32,7 @@ fn series(index: u32) -> SeriesId {
 
 /// A notice goes out only while its series exists. Its auction ran on the day the id names.
 fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
-    let worldwide_day = WorldwideDay::new(series_id.day());
+    let emission_day = EmissionDate::new(series_id.day());
     if outbe_intex::api::series_exists(handle, series_id).unwrap() {
         return;
     }
@@ -40,7 +40,7 @@ fn record(handle: &StorageHandle<'_>, series_id: SeriesId) {
         handle,
         outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day,
+            emission_day,
             issued_units: 1,
             promis_load_minor: 1,
             entry_price_minor: U256::from(1u64),
@@ -137,7 +137,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
 
 #[test]
 fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
-    let day = WorldwideDay::new(DAY);
+    let day = EmissionDate::new(DAY);
     assert!(
         joins_run(day, CALLED_AT, day, CALLED_AT),
         "same day and stamp ride together"
@@ -152,7 +152,7 @@ fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
     );
 
     assert!(
-        !joins_run(day, CALLED_AT, WorldwideDay::new(DAY + 1), CALLED_AT),
+        !joins_run(day, CALLED_AT, EmissionDate::new(DAY + 1), CALLED_AT),
         "the wire carries one day per message"
     );
 }

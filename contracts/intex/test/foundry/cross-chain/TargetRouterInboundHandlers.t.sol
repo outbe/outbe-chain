@@ -33,7 +33,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd - the auction day (root)
+    uint32 internal constant EMISSION_DAY = 20250101; // yyyymmdd - the auction day (root)
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
     uint32 internal constant ISSUED_UNITS = 100;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
@@ -92,32 +92,32 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         // Push the auction into Issuance stage so executeAuctionClearing is accepted.
         vm.warp(block.timestamp + 1 days);
         vm.prank(address(bnbRouter));
-        auction.startClearingStage(WORLDWIDE_DAY);
+        auction.startAwaitingResult(EMISSION_DAY);
 
         uint64 clearingPrice = 100e6;
-        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_UNITS, clearingPrice, 0);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, ISSUED_UNITS, clearingPrice, 0);
         _deliver(packet);
 
-        IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(WORLDWIDE_DAY).result;
+        IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(EMISSION_DAY).result;
         assertEq(result.issuedUnits, ISSUED_UNITS, "issuedUnits persisted");
         assertEq(result.auctionClearingRate, clearingPrice, "clearingPrice persisted");
     }
 
-    // --- _handleAuctionStageClearing: relays a BIDS_DONE marker, exactly once ---
-    function test_handleAuctionStageClearing_emitsBidsDone() public {
+    // --- _handleAuctionStageCollectingBids: relays a BIDS_DONE marker, exactly once ---
+    function test_handleAuctionStageCollectingBids_emitsBidsDone() public {
         _seedAuction();
         vm.warp(block.timestamp + 1 days);
 
         // No revealed bids: one empty BIDS_BATCH plus a BIDS_DONE(totalBatches=1, totalBids=0).
         vm.expectEmit(false, true, false, true, address(bnbRouter));
-        emit ITargetRouter.BidsDoneSent(bytes32(0), WORLDWIDE_DAY, 1, 0);
-        _deliver(BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
+        emit ITargetRouter.BidsDoneSent(bytes32(0), EMISSION_DAY, 1, 0);
+        _deliver(BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY));
     }
 
-    function test_handleAuctionStageClearing_idempotentOnRedelivery() public {
+    function test_handleAuctionStageCollectingBids_idempotentOnRedelivery() public {
         _seedAuction();
         vm.warp(block.timestamp + 1 days);
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY);
+        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY);
         _deliver(packet); // first CLEARING relays
 
         // A redelivered CLEARING must not relay the day again.
@@ -133,7 +133,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.setRemoteMessenger(otherChain, _interop(otherChain, otherPeer));
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.UnexpectedSourceChain.selector, otherChain));
-        _deliver(otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
+        _deliver(
+            otherChain, otherPeer, address(bnbRouter), BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+        );
     }
 
     // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---
@@ -156,7 +158,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             local,
             localOrigin,
             address(localRouter),
-            BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID))
         );
 
         assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
@@ -174,7 +176,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     function test_handleIssuanceInstructions_createsSeriesOnly() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
             seriesId: SERIES_ID,
-            worldwideDay: WORLDWIDE_DAY,
+            emissionDay: EMISSION_DAY,
             issuedAt: uint32(block.timestamp),
             issuedUnits: ISSUED_UNITS,
             promisLoadMinor: PROMIS_LOAD_MINOR,
@@ -188,7 +190,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             transitMargin: 1 hours
         });
         bytes memory packet =
-            BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
+            BridgeMsgCodec.encodeIssuanceInstructions(EMISSION_DAY, 0, 1, IssuanceBatchLib.one(payload));
         _deliver(packet);
 
         assertTrue(intex.seriesExists(SERIES_ID), "series created");
@@ -197,13 +199,13 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
 
     function _issuancePacket() internal view returns (bytes memory) {
         return BridgeMsgCodec.encodeIssuanceInstructions(
-            WORLDWIDE_DAY,
+            EMISSION_DAY,
             0,
             1,
             IssuanceBatchLib.one(
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_ID,
-                    worldwideDay: WORLDWIDE_DAY,
+                    emissionDay: EMISSION_DAY,
                     issuedAt: uint32(block.timestamp),
                     issuedUnits: ISSUED_UNITS,
                     promisLoadMinor: PROMIS_LOAD_MINOR,
@@ -224,7 +226,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     function test_wire_keepsTheVenueWhileTheEscrowHoldsLocks() public {
         paymentToken.mint(bidder, 1e18);
         vm.prank(admin);
-        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
+        escrow.lockFunds(EMISSION_DAY, bidder, 1e6, 1_000_000, 1);
 
         vm.expectRevert(ITargetRouter.EscrowHasLiveLocks.selector);
         bnbRouter.wire(address(auction), address(intex), makeAddr("escrow2"));
@@ -244,16 +246,16 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         vm.startPrank(admin);
         escrow.grantRole(escrow.AUCTION_ROLE(), admin);
         escrow.setProceedsRecipient(address(bnbRouter));
-        escrow.lockFunds(WORLDWIDE_DAY, bidder, 1e6, 1_000_000, 1);
+        escrow.lockFunds(EMISSION_DAY, bidder, 1e6, 1_000_000, 1);
         vm.stopPrank();
 
         address[] memory winners = new address[](1);
         winners[0] = bidder;
 
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, 500_000, 1e6, winners, 0, 0);
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(EMISSION_DAY, 0, 1, 500_000, 1e6, winners, 0, 0);
         _deliver(packet);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(WORLDWIDE_DAY, bidder);
+        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(EMISSION_DAY, bidder);
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.Won), "lock advanced to Won via handler");
     }
 
@@ -275,11 +277,11 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             commitBondMinor: 0
         });
         vm.prank(address(bnbRouter));
-        auction.auctionStart(WORLDWIDE_DAY, IIntexAuction.WorldwideDayState.Live, schedule, params);
+        auction.auctionStart(EMISSION_DAY, IIntexAuction.DayState.Live, schedule, params);
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, ISSUED_UNITS, 0));
+        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
     }
 
     function _deliver(bytes memory packet) internal {

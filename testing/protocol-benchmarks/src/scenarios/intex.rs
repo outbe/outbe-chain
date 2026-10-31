@@ -5,7 +5,7 @@ use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_intexfactory::{bench_support::IssuanceLeg, IssuanceParams};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, ScenarioMetadata};
@@ -13,7 +13,7 @@ use crate::{BenchmarkScenario, ExecutionClass, GasLedger, Observation, Profile, 
 const CHAIN_ID: u64 = 1;
 const BLOCK_GAS_LIMIT: u64 = 30_000_000;
 const T_NOW: u64 = 1_700_000_000;
-const TARGET_WWD: WorldwideDay = WorldwideDay::new(20_260_730);
+const TARGET_DAY: EmissionDate = EmissionDate::new(20_260_730);
 const SERIES_CODES: [[u8; 3]; 10] = [
     *b"USD", *b"EUR", *b"GBP", *b"JPY", *b"CAD", *b"AUD", *b"CHF", *b"CNY", *b"SEK", *b"NZD",
 ];
@@ -61,14 +61,14 @@ fn item_count(profile: Profile) -> usize {
 }
 
 fn params(index: usize) -> IssuanceParams {
-    let series_id = SeriesId::pack(TARGET_WWD.value(), SERIES_CODES[index], b'U')
+    let series_id = SeriesId::pack(TARGET_DAY.value(), SERIES_CODES[index], b'U')
         .expect("benchmark Intex id is canonical");
     // The PROD call terms, which the auction start fixes while the PROD profile is live.
     let prod = outbe_intex::config::IntexParams::PROD;
     let entry_price_minor = U256::from(1_000_000);
     IssuanceParams {
         series_id,
-        worldwide_day: TARGET_WWD,
+        emission_day: TARGET_DAY,
         issued_units: 100,
         promis_load_minor: 1_000_000,
         entry_price_minor,

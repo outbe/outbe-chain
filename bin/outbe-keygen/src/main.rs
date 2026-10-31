@@ -60,9 +60,13 @@ struct Cli {
     #[arg(long, value_enum, default_value = "plaintext", global = true)]
     key_backend: KeyBackendArg,
 
-    /// Passphrase for encrypted backend (or env BLS_PASSPHRASE).
+    /// Passphrase for encrypted key backend (can also be set via BLS_PASSPHRASE env var)
     #[arg(long, global = true, env = "BLS_PASSPHRASE")]
     passphrase: Option<String>,
+
+    /// Path to file containing the passphrase for encrypted key backend (takes precedence over --passphrase / BLS_PASSPHRASE)
+    #[arg(long, global = true)]
+    passphrase_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -75,6 +79,10 @@ enum Commands {
         /// Directory to save the signing key file. Defaults to current directory.
         #[arg(long, default_value = ".")]
         output_dir: PathBuf,
+
+        /// Overwrite existing key files without prompting
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 
     /// Display the public key and pubkey hash for an existing signing key.
@@ -122,6 +130,10 @@ enum Commands {
         /// Directory to save both key files. Defaults to current directory.
         #[arg(long, default_value = ".")]
         output_dir: PathBuf,
+
+        /// Overwrite existing key files without prompting
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
 
     /// Generate a Heartwood-compatible Radicle Ed25519 identity.
@@ -152,7 +164,7 @@ fn main() -> Result<()> {
     };
 
     match cli.command {
-        Commands::Generate { output_dir } => cmd_generate(output_dir, &backend),
+        Commands::Generate { output_dir, force } => cmd_generate(output_dir, &backend, force),
         Commands::ShowPubkey { key } => cmd_show_pubkey(key, &backend),
         Commands::ShowAddress { private_key } => {
             let address = show_address(private_key)?;
@@ -166,7 +178,7 @@ fn main() -> Result<()> {
             radicle_node_id,
         } => cmd_sign_registration(key, validator_address, chain_id, radicle_node_id, &backend),
         Commands::Verify { key } => cmd_verify(key, &backend),
-        Commands::Hybrid { output_dir } => cmd_hybrid(output_dir, &backend),
+        Commands::Hybrid { output_dir, force } => cmd_hybrid(output_dir, &backend, force),
         Commands::Radicle { output_dir } => cmd_radicle(output_dir),
         Commands::Validator {
             output_dir,
@@ -179,21 +191,120 @@ fn main() -> Result<()> {
 fn resolve_backend(cli: &Cli) -> Result<KeyBackend> {
     match cli.key_backend {
         KeyBackendArg::Plaintext => Ok(KeyBackend::Plaintext),
-        KeyBackendArg::Encrypted => {
-            let passphrase = cli
-                .passphrase
-                .as_deref()
-                .ok_or(KeygenError::MissingPassphrase)?;
-            Ok(KeyBackend::Encrypted(passphrase.to_string()))
-        }
+        KeyBackendArg::Encrypted => resolve_encrypted_backend(cli),
         KeyBackendArg::OsLevel => Ok(KeyBackend::OsLevel),
     }
 }
 
+/// Resolve the encrypted backend.
+///
+/// `--passphrase-file` wins over `--passphrase` and `BLS_PASSPHRASE`.
+/// An empty CLI or env passphrase keeps its previous meaning.
+fn resolve_encrypted_backend(cli: &Cli) -> Result<KeyBackend> {
+    if let Some(path) = cli.passphrase_file.as_deref() {
+        return Ok(KeyBackend::Encrypted(read_passphrase_file(path)?));
+    }
+    if let Some(passphrase) = cli.passphrase.as_deref() {
+        return Ok(KeyBackend::Encrypted(passphrase.to_string()));
+    }
+    Err(KeygenError::MissingPassphrase.into())
+}
+
+/// Read a passphrase file into a `String` the encrypted backend can store.
+///
+/// On Unix the file mode must have no group or world bits. Only trailing
+/// newlines are stripped, so the three passphrase channels accept the same text.
+fn read_passphrase_file(path: &Path) -> Result<String> {
+    #[cfg(unix)]
+    {
+        let mode = std::fs::metadata(path)
+            .wrap_err_with(|| format!("failed to inspect passphrase file: {}", path.display()))?
+            .permissions()
+            .mode()
+            & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(KeygenError::InsecurePassphraseFileMode {
+                path: path.to_path_buf(),
+                mode,
+            }
+            .into());
+        }
+    }
+
+    let raw = Zeroizing::new(
+        std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read passphrase file: {}", path.display()))?,
+    );
+    let trimmed = raw.trim_end_matches(['\r', '\n']);
+    if trimmed.is_empty() {
+        return Err(KeygenError::EmptyPassphraseFile(path.to_path_buf()).into());
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn is_affirmative_answer(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+/// Preflight guard before key generation. `symlink_metadata` treats any
+/// existing path, including a symlink, as occupied. `force` skips the check.
+fn ensure_can_write_paths<F>(paths: &[&Path], force: bool, mut confirm: F) -> Result<()>
+where
+    F: FnMut(&Path) -> Result<bool>,
+{
+    if force {
+        return Ok(());
+    }
+    for &path in paths {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => {
+                if !confirm(path)? {
+                    return Err(KeygenError::KeyFileAlreadyExists(path.to_path_buf()).into());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(e)
+                    .wrap_err_with(|| format!("failed to inspect key path: {}", path.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn prompt_overwrite_if_tty(path: &Path) -> Result<bool> {
+    use std::io::IsTerminal as _;
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Ok(false);
+    }
+    eprint!(
+        "Key file already exists: {}. Overwrite? [y/N]: ",
+        path.display()
+    );
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .wrap_err("failed to read confirmation from stdin")?;
+    Ok(is_affirmative_answer(&answer))
+}
+
+#[cfg(test)]
+fn prompt_overwrite_if_tty(_path: &Path) -> Result<bool> {
+    Ok(false)
+}
+
+fn ensure_can_write(paths: &[&Path], force: bool) -> Result<()> {
+    ensure_can_write_paths(paths, force, prompt_overwrite_if_tty)
+}
+
 /// Generate a new BLS keypair and save the private key.
-fn cmd_generate(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
+fn cmd_generate(output_dir: PathBuf, backend: &KeyBackend, force: bool) -> Result<()> {
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
+
+    let key_path = output_dir.join("signing-key.hex");
+    ensure_can_write(&[&key_path], force)?;
 
     let key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
         rand_commonware::rngs::SysRng,
@@ -202,7 +313,6 @@ fn cmd_generate(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     let pk_bytes = pk.encode();
     let pubkey_hash = keccak256(&pk_bytes);
 
-    let key_path = output_dir.join("signing-key.hex");
     bls::save_individual_key(&key_path, &key, backend)
         .wrap_err_with(|| format!("failed to write key: {}", key_path.display()))?;
 
@@ -531,6 +641,18 @@ fn cmd_validator(output_dir: PathBuf, chain_id: u64, backend: &KeyBackend) -> Re
 
 /// Verify the integrity of a BLS key file.
 fn cmd_verify(key_path: PathBuf, backend: &KeyBackend) -> Result<()> {
+    cmd_verify_with_roundtrip(key_path, backend, |private_key, public_key| {
+        use commonware_cryptography::Verifier as _;
+        let signature = private_key.sign(b"outbe-verify", b"test-message");
+        public_key.verify(b"outbe-verify", b"test-message", &signature)
+    })
+}
+
+fn cmd_verify_with_roundtrip(
+    key_path: PathBuf,
+    backend: &KeyBackend,
+    roundtrip: impl FnOnce(&bls12381::PrivateKey, &bls12381::PublicKey) -> bool,
+) -> Result<()> {
     // 1. Read and parse the key.
     let key = match load_key(&key_path, backend) {
         Ok(k) => {
@@ -544,18 +666,16 @@ fn cmd_verify(key_path: PathBuf, backend: &KeyBackend) -> Result<()> {
     };
 
     // 2. Derive public key.
-    let pk = key.public_key();
-    let pk_bytes = pk.encode();
+    let public_key = key.public_key();
+    let pk_bytes = public_key.encode();
     println!("[OK]  public key derivable: {}", hex::encode(&pk_bytes));
 
     // 3. Test sign + verify roundtrip.
-    use commonware_cryptography::{Signer as _, Verifier as _};
-    let sig = key.sign(b"outbe-verify", b"test-message");
-    if pk.verify(b"outbe-verify", b"test-message", &sig) {
+    if roundtrip(&key, &public_key) {
         println!("[OK]  sign/verify roundtrip passed");
     } else {
         println!("[FAIL] sign/verify roundtrip failed");
-        std::process::exit(1);
+        exit_process(1);
     }
 
     println!("\nkey verification: PASSED");
@@ -563,9 +683,13 @@ fn cmd_verify(key_path: PathBuf, backend: &KeyBackend) -> Result<()> {
 }
 
 /// Generate both an ECDSA (secp256k1) private key and a BLS12-381 keypair.
-fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
+fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend, force: bool) -> Result<()> {
     std::fs::create_dir_all(&output_dir)
         .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
+
+    let bls_key_path = output_dir.join("signing-key.hex");
+    let evm_key_path = output_dir.join("evm-key.hex");
+    ensure_can_write(&[&bls_key_path, &evm_key_path], force)?;
 
     // 1. Generate BLS12-381 keypair.
     let bls_key = bls12381::PrivateKey::random(rand_core_commonware::UnwrapErr(
@@ -575,22 +699,22 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     let bls_pk_bytes = bls_pk.encode();
     let bls_pubkey_hash = keccak256(&bls_pk_bytes);
 
-    let bls_key_path = output_dir.join("signing-key.hex");
     bls::save_individual_key(&bls_key_path, &bls_key, backend)
         .wrap_err_with(|| format!("failed to write BLS key: {}", bls_key_path.display()))?;
 
     // 2. Generate ECDSA secp256k1 private key (32 random bytes).
     // ECDSA key is always plaintext hex (not BLS, not affected by backend).
-    let mut ecdsa_bytes = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut ecdsa_bytes);
+    // `as_slice` borrows the secret. `*ecdsa_bytes` would copy the Copy array
+    // out of `Zeroizing`.
+    let mut ecdsa_bytes = Zeroizing::new([0u8; 32]);
+    rand_core::OsRng.fill_bytes(ecdsa_bytes.as_mut());
     if ecdsa_bytes.iter().all(|&b| b == 0) {
         return Err(KeygenError::ZeroEcdsaKey.into());
     }
 
-    let ecdsa_key_path = output_dir.join("evm-key.hex");
-    let ecdsa_key_hex = hex::encode(ecdsa_bytes);
-    write_secret_hex_file(&ecdsa_key_path, &ecdsa_key_hex)
-        .wrap_err_with(|| format!("failed to write EVM key: {}", ecdsa_key_path.display()))?;
+    let ecdsa_key_hex = Zeroizing::new(hex::encode(ecdsa_bytes.as_slice()));
+    write_secret_hex_file(&evm_key_path, &ecdsa_key_hex)
+        .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
 
     println!("hybrid keypair generated");
     println!();
@@ -600,7 +724,7 @@ fn cmd_hybrid(output_dir: PathBuf, backend: &KeyBackend) -> Result<()> {
     println!("  pubkey hash:  {bls_pubkey_hash}");
     println!();
     println!("EVM artifact signer (secp256k1):");
-    println!("  private key:  {}", ecdsa_key_path.display());
+    println!("  private key:  {}", evm_key_path.display());
     println!("  use this path with --validator.evm-key");
 
     Ok(())
@@ -623,13 +747,21 @@ fn write_secret_hex_file(path: &Path, contents: &str) -> Result<()> {
         }
         let mut file = options.open(&tmp_path)?;
         file.write_all(contents.as_bytes())?;
-        file.flush()?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600))?;
         }
+        file.sync_all()?;
+        drop(file);
         std::fs::rename(&tmp_path, path)?;
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        std::fs::File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .wrap_err_with(|| format!("failed to sync parent directory: {}", parent.display()))?;
         Ok(())
     })();
 
@@ -645,434 +777,4 @@ fn load_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PrivateKey> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    fn make_cli(args: &[&str]) -> Cli {
-        let mut full = vec!["keygen"];
-        full.extend_from_slice(args);
-        Cli::parse_from(full)
-    }
-
-    #[test]
-    fn show_address_requires_private_key() {
-        assert!(
-            Cli::try_parse_from(["keygen", "show-address", "--private-key", "hex-key",]).is_ok()
-        );
-        assert!(Cli::try_parse_from(["keygen", "show-address"]).is_err());
-        assert!(Cli::try_parse_from([
-            "keygen",
-            "show-address",
-            "--key",
-            "evm-key.hex",
-            "--private-key",
-            "hex-key",
-        ])
-        .is_err());
-    }
-
-    #[test]
-    fn show_address_matches_known_evm_address() {
-        // Scalar one is public test material; derive its hex instead of storing a key.
-        let mut scalar = [0u8; 32];
-        scalar[31] = 1;
-        let encoded = hex::encode(scalar);
-        let expected: Address = "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf"
-            .parse()
-            .unwrap();
-        for text in [
-            encoded.clone(),
-            format!("0x{encoded}"),
-            format!("{encoded}\n"),
-        ] {
-            assert_eq!(show_address(text).unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn show_address_rejects_invalid_keys() {
-        for text in [
-            String::new(),
-            "ab".repeat(31),
-            "ab".repeat(33),
-            "zz".repeat(32),
-            "00".repeat(32),
-            "ff".repeat(32),
-        ] {
-            assert!(show_address(text).is_err());
-        }
-    }
-
-    #[test]
-    fn test_resolve_backend_default_is_plaintext() {
-        let cli = make_cli(&["generate", "--output-dir", "/tmp"]);
-        let backend = resolve_backend(&cli).unwrap();
-        assert!(matches!(backend, KeyBackend::Plaintext));
-    }
-
-    #[test]
-    fn radicle_subcommand_parses_without_bls_backend_inputs() {
-        let cli = make_cli(&["radicle", "--output-dir", "/tmp/radicle-home"]);
-        assert!(matches!(cli.command, Commands::Radicle { .. }));
-    }
-
-    #[test]
-    fn test_resolve_backend_plaintext_explicit() {
-        let cli = make_cli(&[
-            "--key-backend",
-            "plaintext",
-            "generate",
-            "--output-dir",
-            "/tmp",
-        ]);
-        let backend = resolve_backend(&cli).unwrap();
-        assert!(matches!(backend, KeyBackend::Plaintext));
-    }
-
-    #[test]
-    fn test_resolve_backend_encrypted_with_passphrase() {
-        let cli = make_cli(&[
-            "--key-backend",
-            "encrypted",
-            "--passphrase",
-            "mypass",
-            "generate",
-            "--output-dir",
-            "/tmp",
-        ]);
-        let backend = resolve_backend(&cli).unwrap();
-        assert!(matches!(backend, KeyBackend::Encrypted(ref p) if p == "mypass"));
-    }
-
-    #[test]
-    fn test_resolve_backend_encrypted_missing_passphrase() {
-        let cli = make_cli(&[
-            "--key-backend",
-            "encrypted",
-            "generate",
-            "--output-dir",
-            "/tmp",
-        ]);
-        assert!(resolve_backend(&cli).is_err());
-    }
-
-    #[test]
-    fn test_resolve_backend_os_level() {
-        let cli = make_cli(&[
-            "--key-backend",
-            "os-level",
-            "generate",
-            "--output-dir",
-            "/tmp",
-        ]);
-        let backend = resolve_backend(&cli).unwrap();
-        assert!(matches!(backend, KeyBackend::OsLevel));
-    }
-
-    #[test]
-    fn test_resolve_backend_invalid_rejected_by_clap() {
-        let result = Cli::try_parse_from([
-            "keygen",
-            "--key-backend",
-            "bogus",
-            "generate",
-            "--output-dir",
-            "/tmp",
-        ]);
-        assert!(result.is_err());
-    }
-
-    // --- TC-006: keygen command e2e tests ---
-
-    #[test]
-    fn test_cmd_generate_creates_key_file() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        assert!(key_path.exists());
-        let contents = std::fs::read_to_string(&key_path).unwrap();
-        assert!(!contents.is_empty());
-    }
-
-    #[test]
-    fn radicle_command_creates_native_heartwood_identity_with_strict_modes() {
-        use radicle_crypto::Signer as _;
-        use std::os::unix::fs::PermissionsExt as _;
-
-        let dir = tempfile::tempdir().unwrap();
-        cmd_radicle(dir.path().to_path_buf()).unwrap();
-
-        let keys = dir.path().join("keys");
-        let secret = keys.join("radicle");
-        let public = keys.join("radicle.pub");
-        assert_eq!(
-            std::fs::metadata(&keys).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-        assert_eq!(
-            std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert!(public.is_file());
-
-        let keystore = radicle_crypto::ssh::Keystore::new(&keys);
-        let secret_key = keystore.secret_key(None).unwrap().unwrap();
-        let public_key = keystore.public_key().unwrap().unwrap();
-        assert_eq!(secret_key.public_key(), &public_key);
-    }
-
-    #[test]
-    fn radicle_command_refuses_to_overwrite_an_existing_identity() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_radicle(dir.path().to_path_buf()).unwrap();
-        let first_secret = std::fs::read(dir.path().join("keys/radicle")).unwrap();
-
-        assert!(cmd_radicle(dir.path().to_path_buf()).is_err());
-        assert_eq!(
-            std::fs::read(dir.path().join("keys/radicle")).unwrap(),
-            first_secret
-        );
-    }
-
-    #[test]
-    fn test_cmd_generate_encrypted_backend() {
-        let dir = tempfile::tempdir().unwrap();
-        let backend = KeyBackend::Encrypted("testpass".to_string());
-        cmd_generate(dir.path().to_path_buf(), &backend).unwrap();
-        assert!(dir.path().join("signing-key.hex").exists());
-    }
-
-    #[test]
-    fn test_cmd_show_pubkey_after_generate() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        cmd_show_pubkey(key_path, &KeyBackend::Plaintext).unwrap();
-    }
-
-    #[test]
-    fn test_cmd_show_pubkey_missing_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = cmd_show_pubkey(dir.path().join("nonexistent.hex"), &KeyBackend::Plaintext);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cmd_sign_registration_valid() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        let addr: Address = "0x1111111111111111111111111111111111111111"
-            .parse()
-            .unwrap();
-        cmd_sign_registration(
-            key_path,
-            addr,
-            1,
-            B256::repeat_byte(0x11),
-            &KeyBackend::Plaintext,
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn test_cmd_sign_registration_missing_key() {
-        let dir = tempfile::tempdir().unwrap();
-        let addr: Address = "0x1111111111111111111111111111111111111111"
-            .parse()
-            .unwrap();
-        let result = cmd_sign_registration(
-            dir.path().join("none.hex"),
-            addr,
-            1,
-            B256::repeat_byte(0x11),
-            &KeyBackend::Plaintext,
-        );
-        assert!(result.is_err());
-    }
-
-    // TC-007: verify signature end-to-end with registration DST
-    #[test]
-    fn sign_registration_verifies_with_dst() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        let key = load_key(&key_path, &KeyBackend::Plaintext).unwrap();
-        let pk = key.public_key();
-        let pk_bytes = pk.encode();
-
-        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-            .parse()
-            .unwrap();
-        let chain_id = 54322345;
-
-        // Sign the same way cmd_sign_registration does
-        let sk_bytes = key.encode();
-        let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes).unwrap();
-        let node_id = B256::repeat_byte(0x12);
-        let message = validator_registration_message(chain_id, addr, node_id);
-        let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
-
-        // Verify
-        let blst_pk = blst::min_pk::PublicKey::from_bytes(&pk_bytes).unwrap();
-        let result = sig.verify(
-            true,
-            &message,
-            VALIDATOR_REGISTRATION_DST,
-            &[],
-            &blst_pk,
-            true,
-        );
-        assert_eq!(result, blst::BLST_ERROR::BLST_SUCCESS);
-
-        let other_chain_message = validator_registration_message(chain_id + 1, addr, node_id);
-        let replay_result = sig.verify(
-            true,
-            &other_chain_message,
-            VALIDATOR_REGISTRATION_DST,
-            &[],
-            &blst_pk,
-            true,
-        );
-        assert_ne!(replay_result, blst::BLST_ERROR::BLST_SUCCESS);
-
-        let other_node_message =
-            validator_registration_message(chain_id, addr, B256::repeat_byte(0x13));
-        let node_replay_result = sig.verify(
-            true,
-            &other_node_message,
-            VALIDATOR_REGISTRATION_DST,
-            &[],
-            &blst_pk,
-            true,
-        );
-        assert_ne!(node_replay_result, blst::BLST_ERROR::BLST_SUCCESS);
-    }
-
-    #[test]
-    fn test_cmd_verify_valid_key() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_generate(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        cmd_verify(key_path, &KeyBackend::Plaintext).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "exit(1)")]
-    fn test_cmd_verify_corrupted_file_exits() {
-        let dir = tempfile::tempdir().unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        std::fs::write(&key_path, "not-a-valid-key-at-all").unwrap();
-        // exit_process(1) in test mode panics with "exit(1)"
-        let _ = cmd_verify(key_path, &KeyBackend::Plaintext);
-    }
-
-    // TC-006: hybrid
-    #[test]
-    fn test_cmd_hybrid_creates_both_keys() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_hybrid(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        assert!(dir.path().join("signing-key.hex").exists());
-        assert!(dir.path().join("evm-key.hex").exists());
-    }
-
-    // TC-028: hybrid ECDSA key validity
-    #[test]
-    fn test_cmd_hybrid_ecdsa_key_is_valid_32_bytes() {
-        let dir = tempfile::tempdir().unwrap();
-        cmd_hybrid(dir.path().to_path_buf(), &KeyBackend::Plaintext).unwrap();
-        let ecdsa_hex = std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap();
-        assert_eq!(ecdsa_hex.len(), 64); // 32 bytes = 64 hex chars
-        let ecdsa_bytes = hex::decode(&ecdsa_hex).unwrap();
-        assert!(!ecdsa_bytes.iter().all(|&b| b == 0)); // non-zero
-    }
-
-    #[test]
-    fn validator_subcommand_parses_native_chain_identity() {
-        let cli = make_cli(&["validator", "--output-dir", "/tmp/v", "--chain-id", "7"]);
-        assert!(matches!(
-            cli.command,
-            Commands::Validator { chain_id: 7, .. }
-        ));
-    }
-
-    #[test]
-    fn validator_bundle_creates_all_keys_and_valid_registration_signature() {
-        let dir = tempfile::tempdir().unwrap();
-        let chain_id = 54321;
-        let bundle =
-            generate_validator_bundle(dir.path(), chain_id, &KeyBackend::Plaintext).unwrap();
-
-        // All on-disk artifacts exist.
-        assert!(dir.path().join("signing-key.hex").is_file());
-        assert!(dir.path().join("evm-key.hex").is_file());
-        assert!(dir.path().join("radicle/keys/radicle").is_file());
-        assert!(dir.path().join("radicle/keys/radicle.pub").is_file());
-
-        // The validator address is derivable from the written EVM key file.
-        let evm_hex = std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap();
-        let evm_key = SigningKey::from_slice(&hex::decode(evm_hex.trim()).unwrap()).unwrap();
-        let point = evm_key.verifying_key().to_encoded_point(false);
-        assert_eq!(
-            bundle.validator_address,
-            Address::from_raw_public_key(&point.as_bytes()[1..])
-        );
-
-        // The BLS public key matches the written signing key file.
-        let bls_key = load_key(&bundle.bls_key_path, &KeyBackend::Plaintext).unwrap();
-        assert_eq!(
-            bls_key.public_key().encode().as_ref(),
-            bundle.bls_public_key
-        );
-
-        // The registration signature verifies for the bundle's own binding.
-        let message = validator_registration_message(
-            chain_id,
-            bundle.validator_address,
-            bundle.radicle.node_id_bytes,
-        );
-        let blst_pk = blst::min_pk::PublicKey::from_bytes(&bundle.bls_public_key).unwrap();
-        let sig = blst::min_pk::Signature::from_bytes(&bundle.registration_signature).unwrap();
-        assert_eq!(
-            sig.verify(
-                true,
-                &message,
-                VALIDATOR_REGISTRATION_DST,
-                &[],
-                &blst_pk,
-                true
-            ),
-            blst::BLST_ERROR::BLST_SUCCESS
-        );
-    }
-
-    #[test]
-    fn validator_command_refuses_existing_artifacts() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("evm-key.hex"), "0011").unwrap();
-        let result = cmd_validator(dir.path().to_path_buf(), 1, &KeyBackend::Plaintext);
-        assert!(result.is_err());
-        // The command wrote nothing else next to the pre-existing artifact.
-        assert!(!dir.path().join("signing-key.hex").exists());
-        assert!(!dir.path().join("radicle").exists());
-        // The pre-existing file is untouched.
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap(),
-            "0011"
-        );
-    }
-
-    // TC-008: encrypted save/load roundtrip
-    #[test]
-    fn test_encrypted_generate_and_show() {
-        let dir = tempfile::tempdir().unwrap();
-        let backend = KeyBackend::Encrypted("secret123".to_string());
-        cmd_generate(dir.path().to_path_buf(), &backend).unwrap();
-        let key_path = dir.path().join("signing-key.hex");
-        cmd_show_pubkey(key_path.clone(), &backend).unwrap();
-        // Wrong passphrase fails
-        let wrong_backend = KeyBackend::Encrypted("wrong".to_string());
-        assert!(cmd_show_pubkey(key_path, &wrong_backend).is_err());
-    }
-}
+mod tests;

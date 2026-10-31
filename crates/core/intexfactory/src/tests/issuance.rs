@@ -216,7 +216,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
         seriesId: sid(series).into(),
-        worldwideDay: day,
+        emissionDay: day,
         issuedAt: ISSUED_AT,
         issuedUnits: 1,
         promisLoadMinor: PROMIS_LOAD_MINOR,

@@ -79,9 +79,9 @@ interface IIntexFactory {
 
     /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit them to the
     ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
-    /// @param worldwideDay Worldwide day (yyyymmdd) the proceeds belong to.
+    /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from.
-    function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
+    function distribute(uint32 emissionDay, uint32 srcChainId) external payable;
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
@@ -137,10 +137,10 @@ interface IIntexFactory {
     ///         and the targets were not told of the call.
     event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
 
-    /// @notice `proceedsMinor` native COEN (18 decimals) of `worldwideDay`'s auction proceeds from
+    /// @notice `proceedsMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned and `creditedPromisMinor` (6 decimals) was added to the Promis
     ///         limit pool.
     event ProceedsBurned(
-        uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 proceedsMinor, uint256 creditedPromisMinor
+        uint32 indexed emissionDay, uint32 indexed srcChainId, uint256 proceedsMinor, uint256 creditedPromisMinor
     );
 }

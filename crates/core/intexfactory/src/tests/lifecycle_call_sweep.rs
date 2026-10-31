@@ -12,7 +12,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::stablecoin::ISO_4217_NUMERIC_CODES;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::precompile::IIntexFactory;
@@ -37,32 +37,22 @@ pub(super) fn fill_window(oracle: &OracleContract, latest: u32, pair: AddressPai
 }
 
 /// Each day's candidate is issued on its own day, so it opens its own call group.
-pub(super) fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
-    let issued_at = ISSUED_AT - u64::from((worldwide_day % 1000) * SECONDS_PER_DAY_U32);
-    seed_candidate_at(s, worldwide_day, issued_at, TRIGGER)
+pub(super) fn seed_called_candidate(s: &StorageHandle<'_>, emission_day: u32) {
+    let issued_at = ISSUED_AT - u64::from((emission_day % 1000) * SECONDS_PER_DAY_U32);
+    seed_candidate_at(s, emission_day, issued_at, TRIGGER)
 }
 
-fn series_of(worldwide_day: u32) -> SeriesId {
-    SeriesId::for_pair(worldwide_day, 840, REFERENCE_ISO).unwrap()
+fn series_of(emission_day: u32) -> SeriesId {
+    SeriesId::for_pair(emission_day, 840, REFERENCE_ISO).unwrap()
 }
 
-fn seed_young_candidate_at(
-    s: &StorageHandle<'_>,
-    worldwide_day: u32,
-    issued_at: u64,
-    trigger: u64,
-) {
-    seed_candidate_at(s, worldwide_day, issued_at, trigger)
+fn seed_young_candidate_at(s: &StorageHandle<'_>, emission_day: u32, issued_at: u64, trigger: u64) {
+    seed_candidate_at(s, emission_day, issued_at, trigger)
 }
 
 /// A series of its own day, carrying `trigger` as its call price.
-fn seed_candidate_at(
-    s: &StorageHandle<'_>,
-    worldwide_day: u32,
-    issued_at: u64,
-    trigger_minor: u64,
-) {
-    currencies::seed_series(s, worldwide_day, issued_at, trigger_minor, REFERENCE_ISO)
+fn seed_candidate_at(s: &StorageHandle<'_>, emission_day: u32, issued_at: u64, trigger_minor: u64) {
+    currencies::seed_series(s, emission_day, issued_at, trigger_minor, REFERENCE_ISO)
 }
 
 pub(super) fn called_count(s: &StorageHandle<'_>, days: std::ops::Range<u32>) -> u32 {
@@ -169,7 +159,7 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
     });
 }
 
-/// Drive `worldwide_day` to Called at `scan_ts` and return the deadline its
+/// Drive `emission_day` to Called at `scan_ts` and return the deadline its
 /// group now carries.
 fn call_and_deadline(s: &StorageHandle<'_>, member: SeriesId, scan_ts: u64) -> u64 {
     let ctx = BlockRuntimeContext::new(
@@ -274,14 +264,14 @@ const LOAD: u128 = 1_000_000_000_000_000_000;
 
 /// A called day group of two series against USD: 100 units issued in USD, 40 in EUR.
 fn called_two_member_group(s: &StorageHandle<'_>, scan_ts: u64) -> (Vec<SeriesId>, u64) {
-    let day = WorldwideDay::new(20260101);
+    let day = EmissionDate::new(20260101);
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
         let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day: day,
+            emission_day: day,
             issued_units: count,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
@@ -314,14 +304,14 @@ fn expiring(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 
 /// One series per issuance code, a unit each, all in one group, then called.
 fn called_wide_group(s: &StorageHandle<'_>, scan_ts: u64, width: u16) -> (Vec<SeriesId>, u64) {
-    let day = WorldwideDay::new(20260101);
+    let day = EmissionDate::new(20260101);
     let trigger = U256::from(TRIGGER);
     let mut members = Vec::new();
     for &issuance in ISO_4217_NUMERIC_CODES.iter().take(width.into()) {
         let series_id = SeriesId::for_pair(day.value(), issuance, REFERENCE_ISO).unwrap();
         let params = outbe_intex::CreateSeriesParams {
             series_id,
-            worldwide_day: day,
+            emission_day: day,
             issued_units: 1,
             promis_load_minor: LOAD,
             entry_price_minor: trigger,
@@ -643,8 +633,8 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
 
 /// A young series: issued inside the window, so its truncated window cannot hold
 /// the threshold however loud the days were.
-fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u64) {
-    currencies::seed_series(s, worldwide_day, issued_at, TRIGGER, REFERENCE_ISO);
+fn seed_young_candidate(s: &StorageHandle<'_>, emission_day: u32, issued_at: u64) {
+    currencies::seed_series(s, emission_day, issued_at, TRIGGER, REFERENCE_ISO);
 }
 
 /// Nothing shrinks a bin whose groups all decide against a move, so the sweep has

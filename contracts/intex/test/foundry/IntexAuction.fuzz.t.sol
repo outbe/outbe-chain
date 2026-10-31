@@ -26,7 +26,7 @@ contract IntexAuctionFuzzTest is Test {
     address internal iba2;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
-        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+        "RevealBid(uint32 emissionDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
     );
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
@@ -60,36 +60,36 @@ contract IntexAuctionFuzzTest is Test {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, uint256(SCALE_1E6) + 1, type(uint32).max));
 
-        uint32 worldwideDay = 20260201;
-        _start(worldwideDay);
-        bytes memory sig = _signFor(iba1Pk, worldwideDay, iba1, quantity, rate);
-        _commit(worldwideDay, iba1, sig);
-        _enterReveal(worldwideDay);
+        uint32 emissionDay = 20260201;
+        _start(emissionDay);
+        bytes memory sig = _signFor(iba1Pk, emissionDay, iba1, quantity, rate);
+        _commit(emissionDay, iba1, sig);
+        _enterReveal(emissionDay);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealBid(emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
     function test_Fuzz_RevealBid_HandsTheEscrowTheDaysBasis(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
         uint32 rate = uint32(bound(rSeed, MIN_RATE, SCALE_1E6));
 
-        uint32 worldwideDay = 20260202;
-        _start(worldwideDay);
-        bytes memory sig = _signFor(iba1Pk, worldwideDay, iba1, quantity, rate);
-        _commit(worldwideDay, iba1, sig);
-        _enterReveal(worldwideDay);
+        uint32 emissionDay = 20260202;
+        _start(emissionDay);
+        bytes memory sig = _signFor(iba1Pk, emissionDay, iba1, quantity, rate);
+        _commit(emissionDay, iba1, sig);
+        _enterReveal(emissionDay);
 
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealBid(emissionDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
-        assertEq(escrow.lockedFunds(worldwideDay, iba1), ESCROW_BASIS, "the escrow sizes the lock from the basis");
+        assertEq(escrow.lockedFunds(emissionDay, iba1), ESCROW_BASIS, "the escrow sizes the lock from the basis");
     }
 
     function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 rateSeed, uint256 wonSeed) public {
-        uint32 worldwideDay = 20260203;
-        uint32 revealed = _setupIssuanceWithTwoReveals(worldwideDay);
+        uint32 emissionDay = 20260203;
+        uint32 revealed = _setupIssuanceWithTwoReveals(emissionDay);
 
         uint64 clearingRate = uint64(bound(rateSeed, 0, type(uint64).max));
         uint32 wonBidsCount = uint32(bound(wonSeed, 0, revealed + 3));
@@ -97,21 +97,21 @@ contract IntexAuctionFuzzTest is Test {
         if (issued > 0 && clearingRate == 0) {
             vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
             vm.prank(bridger);
-            auction.executeAuctionClearing(worldwideDay, issued, clearingRate, wonBidsCount);
+            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
         } else if (wonBidsCount > revealed) {
             vm.expectRevert(
                 abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, wonBidsCount, revealed)
             );
             vm.prank(bridger);
-            auction.executeAuctionClearing(worldwideDay, issued, clearingRate, wonBidsCount);
+            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
         } else if (issued > 0 && clearingRate < MIN_RATE) {
             vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, clearingRate, MIN_RATE));
             vm.prank(bridger);
-            auction.executeAuctionClearing(worldwideDay, issued, clearingRate, wonBidsCount);
+            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
         } else {
             vm.prank(bridger);
-            auction.executeAuctionClearing(worldwideDay, issued, clearingRate, wonBidsCount);
-            IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
+            auction.executeAuctionClearing(emissionDay, issued, clearingRate, wonBidsCount);
+            IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
             assertEq(a.result.issuedUnits, issued, "issuedUnits");
             assertEq(a.result.auctionClearingRate, clearingRate, "clearingRate");
             assertEq(a.result.wonBidsCount, wonBidsCount, "wonBidsCount");
@@ -119,13 +119,13 @@ contract IntexAuctionFuzzTest is Test {
     }
 
     function test_ExecuteClearing_IssuedCountHasNoUpperBound() public {
-        uint32 worldwideDay = 20260204;
-        uint32 revealed = _setupIssuanceWithTwoReveals(worldwideDay);
+        uint32 emissionDay = 20260204;
+        uint32 revealed = _setupIssuanceWithTwoReveals(emissionDay);
 
         vm.prank(bridger);
-        auction.executeAuctionClearing(worldwideDay, type(uint32).max, MIN_RATE, revealed);
+        auction.executeAuctionClearing(emissionDay, type(uint32).max, MIN_RATE, revealed);
 
-        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(worldwideDay);
+        IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
         assertEq(a.result.issuedUnits, type(uint32).max, "issuedUnits accepted unbounded");
     }
 
@@ -143,20 +143,19 @@ contract IntexAuctionFuzzTest is Test {
         );
     }
 
-    function _signFor(uint256 pk, uint32 worldwideDay, address bidder, uint16 qty, uint32 rate)
+    function _signFor(uint256 pk, uint32 emissionDay, address bidder, uint16 qty, uint32 rate)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(
-            abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY)
-        );
+        bytes32 structHash =
+            keccak256(abi.encode(REVEAL_BID_TYPEHASH, emissionDay, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
     }
 
-    function _start(uint32 worldwideDay) internal {
+    function _start(uint32 emissionDay) internal {
         IIntexAuction.AuctionSchedule memory schedule = IIntexAuction.AuctionSchedule({
             commitEnd: uint32(block.timestamp + COMMIT_OFFSET),
             revealEnd: uint32(block.timestamp + REVEAL_OFFSET),
@@ -171,29 +170,29 @@ contract IntexAuctionFuzzTest is Test {
             commitBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(worldwideDay, IIntexAuction.WorldwideDayState.Live, schedule, params);
+        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, schedule, params);
     }
 
-    function _commit(uint32 worldwideDay, address bidder, bytes memory sig) internal {
+    function _commit(uint32 emissionDay, address bidder, bytes memory sig) internal {
         vm.prank(bidder);
-        auction.commitBid(worldwideDay, keccak256(sig));
+        auction.commitBid(emissionDay, keccak256(sig));
     }
 
     function _enterReveal(uint32) internal {
         vm.warp(block.timestamp + COMMIT_OFFSET + 1);
     }
 
-    function _setupIssuanceWithTwoReveals(uint32 worldwideDay) internal returns (uint32 revealed) {
-        _start(worldwideDay);
-        bytes memory s1 = _signFor(iba1Pk, worldwideDay, iba1, 5, 50);
-        bytes memory s2 = _signFor(iba2Pk, worldwideDay, iba2, 5, 50);
-        _commit(worldwideDay, iba1, s1);
-        _commit(worldwideDay, iba2, s2);
-        _enterReveal(worldwideDay);
+    function _setupIssuanceWithTwoReveals(uint32 emissionDay) internal returns (uint32 revealed) {
+        _start(emissionDay);
+        bytes memory s1 = _signFor(iba1Pk, emissionDay, iba1, 5, 50);
+        bytes memory s2 = _signFor(iba2Pk, emissionDay, iba2, 5, 50);
+        _commit(emissionDay, iba1, s1);
+        _commit(emissionDay, iba2, s2);
+        _enterReveal(emissionDay);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s1);
+        auction.revealBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s1);
         vm.prank(iba2);
-        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s2);
+        auction.revealBid(emissionDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s2);
         vm.warp(block.timestamp + 120);
         return 2;
     }

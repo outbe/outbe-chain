@@ -46,8 +46,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
     }
 
-    function test_Golden_AuctionStageClearing() public pure {
-        assertEq(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D), hex"01040a0b0c0d");
+    function test_Golden_AuctionStageCollectingBids() public pure {
+        assertEq(BridgeMsgCodec.encodeAuctionStageCollectingBids(0x0A0B0C0D), hex"01040a0b0c0d");
     }
 
     function test_Golden_AuctionResult() public pure {
@@ -58,7 +58,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_MarkCalled() public pure {
-        // [ver=01][type=08] ++ abi.encode(wwd, calledAt, seriesIds)
+        // [ver=01][type=08] ++ abi.encode(day, calledAt, seriesIds)
         assertEq(
             BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U")),
             abi.encodePacked(hex"0108", abi.encode(uint32(20260212), CALLED_AT, MarkBatchLib.one("20260212-TRY-U")))
@@ -66,16 +66,16 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_BidsDone() public pure {
-        // [ver=01][type=02][wwd=11223344][srcChain=00000061][totalBatches=0003][totalBids=000000c8]
+        // [ver=01][type=02][day=11223344][srcChain=00000061][totalBatches=0003][totalBids=000000c8]
         bytes memory encoded = BridgeMsgCodec.encodeBidsDone(0x11223344, 0x61, 0x0003, 0xC8);
         assertEq(encoded, hex"010211223344000000610003000000c8");
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_BIDS_DONE);
     }
 
     function test_RoundTrip_BidsDone_AllFields() public view {
-        (uint32 wwd, uint32 src, uint16 batches, uint32 bids) =
+        (uint32 day, uint32 src, uint16 batches, uint32 bids) =
             this.exposedDecodeBidsDone(BridgeMsgCodec.encodeBidsDone(0x0A0B0C0D, 0x11121314, 0x3132, 0x41424344));
-        assertEq(wwd, 0x0A0B0C0D, "worldwideDay");
+        assertEq(day, 0x0A0B0C0D, "emissionDay");
         assertEq(src, 0x11121314, "srcChainId");
         assertEq(batches, 0x3132, "totalBatches");
         assertEq(bids, 0x41424344, "totalBids");
@@ -86,8 +86,8 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     function test_RoundTrip_AuctionStageStart_AllFields() public view {
         (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
+            uint32 emissionDay,
+            IIntexAuction.DayState dayState,
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(
@@ -107,8 +107,8 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0x02
             )
         );
-        assertEq(worldwideDay, 0x11223344, "worldwideDay");
-        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Cancelled), "dayState");
+        assertEq(emissionDay, 0x11223344, "emissionDay");
+        assertEq(uint8(dayState), uint8(IIntexAuction.DayState.Cancelled), "dayState");
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
@@ -125,10 +125,10 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_AuctionResult_AllFields() public view {
-        (uint32 worldwideDay, uint32 issuedUnits, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
+        (uint32 emissionDay, uint32 issuedUnits, uint64 clearingPrice, uint32 wonBidsCount) = this.exposedDecodeAuctionResult(
             BridgeMsgCodec.encodeAuctionResult(0x11223344, 0x55667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4)
         );
-        assertEq(worldwideDay, 0x11223344, "worldwideDay");
+        assertEq(emissionDay, 0x11223344, "emissionDay");
         assertEq(issuedUnits, 0x55667788, "issuedUnits");
         assertEq(clearingPrice, 0x99AABBCCDDEEFF00, "clearingPrice");
         assertEq(wonBidsCount, 0xA1B2C3D4, "wonBidsCount");
@@ -149,7 +149,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         timestamps[1] = 0x66666666;
 
         (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint32 srcChainId,
             uint16 batchIndex,
             uint16 totalBatches,
@@ -161,7 +161,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             )
         );
 
-        assertEq(worldwideDay, 0x11223344, "worldwideDay");
+        assertEq(emissionDay, 0x11223344, "emissionDay");
         assertEq(srcChainId, 0x0000ABCD, "srcChainId");
         assertEq(batchIndex, 0x0000, "batchIndex");
         assertEq(totalBatches, 0x0001, "totalBatches");
@@ -193,7 +193,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         winners[1] = address(0xB0B);
 
         (
-            uint32 worldwideDay,
+            uint32 emissionDay,
             uint16 chunkIndex,
             uint16 totalChunks,
             uint64 clearingRate,
@@ -207,7 +207,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             )
         );
 
-        assertEq(worldwideDay, 0x77665544, "worldwideDay");
+        assertEq(emissionDay, 0x77665544, "emissionDay");
         assertEq(chunkIndex, 2, "chunkIndex");
         assertEq(totalChunks, 3, "totalChunks");
         assertEq(clearingRate, 0x0102030405060708, "clearingRate");
@@ -222,7 +222,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function test_RoundTrip_IssuanceInstructions_AllFields() public view {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
         p.seriesId = "20260212-TRY-U";
-        p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
+        p.emissionDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedAt = 0x66778899;
         p.issuedUnits = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
@@ -235,11 +235,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.callPriceMinor = 0xA1B2C3D4E5F60718;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
-            BridgeMsgCodec.encodeIssuanceInstructions(p.worldwideDay, 0, 1, IssuanceBatchLib.one(p))
+            BridgeMsgCodec.encodeIssuanceInstructions(p.emissionDay, 0, 1, IssuanceBatchLib.one(p))
         )[0];
 
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
-        assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
+        assertEq(d.emissionDay, 0x55555555, "emissionDay");
         assertEq(d.issuedAt, 0x66778899, "issuedAt");
         assertEq(d.issuedUnits, 0x55667788, "issuedUnits");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
@@ -254,7 +254,8 @@ contract BridgeMsgCodecGoldenTest is Test {
 
     function test_RoundTrip_SingleField_SeriesId() public view {
         assertEq(
-            this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
+            this.exposedDecodeAuctionStageCollectingBids(BridgeMsgCodec.encodeAuctionStageCollectingBids(0x0A0B0C0D)),
+            0x0A0B0C0D
         );
         assertEq(
             this.exposedDecodeMarkCalled(
@@ -270,8 +271,8 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 
-    function exposedDecodeAuctionStageClearing(bytes calldata p) external pure returns (uint32) {
-        return BridgeMsgCodec.decodeAuctionStageClearing(p);
+    function exposedDecodeAuctionStageCollectingBids(bytes calldata p) external pure returns (uint32) {
+        return BridgeMsgCodec.decodeAuctionStageCollectingBids(p);
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {

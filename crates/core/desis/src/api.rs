@@ -3,13 +3,13 @@
 //! Metadosis passes the day as a one-shot auction brief. From there, the Desis
 //! begin-block schedule drives every stage. Capacity rejection is a typed
 //! business result. Every technical or invariant failure remains an `Err`, with
-//! all partial writes reverted. The auction key is the worldwide day: one
+//! all partial writes reverted. The auction key is the emission day: one
 //! auction per day. Series ids are allocated at issuance.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::time::WorldwideDay;
+use outbe_primitives::time::EmissionDate;
 
 use crate::precompile::IDesis;
 use crate::runtime;
@@ -51,9 +51,7 @@ pub enum AuctionBriefReceipt {
 /// One day's auction brief: its limit in raw PROMIS and whether the day has a limit to sell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AuctionBrief {
-    pub worldwide_day: WorldwideDay,
-    /// The emission day the auction sells, as `YYYYMMDD`. Its series ids carry it.
-    pub emission_day: u32,
+    pub emission_day: EmissionDate,
     pub desis_limit_minor: U256,
     pub has_limit: bool,
 }
@@ -65,24 +63,15 @@ pub struct AuctionBrief {
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     brief: AuctionBrief,
-    now: u64,
     overflow: BriefOverflowPolicy,
 ) -> Result<AuctionBriefReceipt> {
     let AuctionBrief {
-        worldwide_day,
+        emission_day,
         desis_limit_minor,
-        has_limit,
         ..
     } = brief;
     storage.clone().with_checkpoint(|| {
-        if worldwide_day.value() == 0 && !has_limit && desis_limit_minor.is_zero() {
-            let mut contract = storage.contract::<DesisContract>();
-            contract.emit(IDesis::AuctionCancelledNoLimit {
-                worldwideDay: worldwide_day.into(),
-            })?;
-            return Ok(AuctionBriefReceipt::Accepted);
-        }
-        let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
+        let anchor = runtime::preflight_brief(&storage, emission_day)?;
         let Ok(desis_limit_u128) = u128::try_from(desis_limit_minor) else {
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain;
@@ -91,7 +80,7 @@ pub fn dispatch_auction_brief(
             }
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejected {
-                worldwideDay: worldwide_day.into(),
+                emissionDay: emission_day.into(),
                 desisLimitMinor: desis_limit_minor,
                 maxAcceptedMinor: max_accepted,
                 reasonCode: reason.code(),

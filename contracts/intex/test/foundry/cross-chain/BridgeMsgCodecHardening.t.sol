@@ -10,14 +10,14 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 ///      assert the per-encoder revert paths via `vm.expectRevert`.
 contract BridgeMsgCodecHardeningHarness {
     function encodeBidsBatch(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint32 srcChainId,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidders,
         uint256[] calldata packedBids
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(worldwideDay, srcChainId, batchIndex, totalBatches, bidders, packedBids);
+        return BridgeMsgCodec.encodeBidsBatch(emissionDay, srcChainId, batchIndex, totalBatches, bidders, packedBids);
     }
 
     function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series)
@@ -25,20 +25,20 @@ contract BridgeMsgCodecHardeningHarness {
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(series[0].worldwideDay, 0, 1, series);
+        return BridgeMsgCodec.encodeIssuanceInstructions(series[0].emissionDay, 0, 1, series);
     }
 
     function encodeIssuanceInstructions2(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint16 chunkIndex,
         uint16 totalChunks,
         BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, series);
+        return BridgeMsgCodec.encodeIssuanceInstructions(emissionDay, chunkIndex, totalChunks, series);
     }
 
     function encodeRefundInstructions(
-        uint32 worldwideDay,
+        uint32 emissionDay,
         uint16 chunkIndex,
         uint16 totalChunks,
         address[] calldata winners,
@@ -46,7 +46,7 @@ contract BridgeMsgCodecHardeningHarness {
         uint16 partialWon
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeRefundInstructions(
-            worldwideDay, chunkIndex, totalChunks, 600_000, 1e6, winners, partialIndex, partialWon
+            emissionDay, chunkIndex, totalChunks, 600_000, 1e6, winners, partialIndex, partialWon
         );
     }
 
@@ -105,7 +105,7 @@ contract BridgeMsgCodecHardeningTest is Test {
     function test_encodeIssuanceInstructions_dayMismatch_reverts() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        payload.worldwideDay = 20_260_212;
+        payload.emissionDay = 20_260_212;
         payload.issuedAt = uint32(block.timestamp);
         vm.expectRevert(
             abi.encodeWithSelector(

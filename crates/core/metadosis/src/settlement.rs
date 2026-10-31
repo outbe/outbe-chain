@@ -1,7 +1,6 @@
 //! READY EmissionDay classification and local settlement paths.
 
 use alloy_primitives::U256;
-use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -129,7 +128,7 @@ fn settle_empty_day(
     let wwd = emission_day.wwd;
     let day_limit = emission_day.metadosis_limit_minor();
     let mut promis_limit = PromisLimitContract::new(ctx.storage.clone());
-    let to_promis = dispatch_brief(ctx, wwd, emission_day.day, U256::ZERO)?;
+    let to_promis = dispatch_brief(ctx, emission_day.day, U256::ZERO)?;
     let returned = to_promis
         .checked_add(day_limit)
         .ok_or(crate::errors::MetadosisStorageCorruptionError::DayLimitReturnOverflow)?;
@@ -168,7 +167,7 @@ fn settle_zero_allocation(
         U256::ZERO,
     )
     .ok_or(crate::errors::MetadosisStorageCorruptionError::LysisLimitExceedsDayNominal)?;
-    let to_promis = dispatch_brief(ctx, wwd, emission_day.day, desis_limit_minor)?;
+    let to_promis = dispatch_brief(ctx, emission_day.day, desis_limit_minor)?;
     let returned = day_limit
         .checked_sub(calculation.lysis_limit_minor)
         .and_then(|rest| rest.checked_sub(desis_limit_minor))
@@ -203,7 +202,6 @@ fn settle_zero_allocation(
 
 fn dispatch_brief(
     ctx: &BlockRuntimeContext,
-    wwd: WorldwideDay,
     emission_day: u32,
     desis_limit_minor: U256,
 ) -> Result<U256> {
@@ -216,12 +214,10 @@ fn dispatch_brief(
     let receipt = outbe_desis::api::dispatch_auction_brief(
         ctx.storage.clone(),
         outbe_desis::api::AuctionBrief {
-            worldwide_day: wwd,
-            emission_day,
+            emission_day: emission_day.into(),
             desis_limit_minor: briefed_desis_limit_minor,
             has_limit: is_active,
         },
-        ctx.block.timestamp,
         outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
     )?;
     match receipt {

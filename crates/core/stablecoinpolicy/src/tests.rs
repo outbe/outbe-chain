@@ -726,6 +726,22 @@ fn precompile_dispatch_covers_every_selector_and_emits_typed_events() {
             policyId: whitelist,
         },
     );
+    assert_eq!(
+        provider
+            .get_events(STABLECOIN_POLICY_REGISTRY_ADDRESS)
+            .last()
+            .unwrap(),
+        &I::PolicyAdminTransferCanceled {
+            policyId: whitelist,
+            admin: current_admin,
+            canceledPendingAdmin: candidate,
+        }
+        .encode_log_data()
+    );
+    assert_eq!(
+        I::PolicyAdminTransferCanceled::SIGNATURE,
+        "PolicyAdminTransferCanceled(uint256,address,address)"
+    );
     invoke(
         &mut provider,
         current_admin,
@@ -763,7 +779,7 @@ fn precompile_dispatch_covers_every_selector_and_emits_typed_events() {
             I::PolicyCreated::SIGNATURE_HASH,
             I::PolicyMemberAdded::SIGNATURE_HASH,
             I::PolicyAdminTransferStarted::SIGNATURE_HASH,
-            I::PolicyAdminTransferCancelled::SIGNATURE_HASH,
+            I::PolicyAdminTransferCanceled::SIGNATURE_HASH,
             I::PolicyAdminTransferStarted::SIGNATURE_HASH,
             I::PolicyAdminTransferred::SIGNATURE_HASH,
             I::PolicyMemberRemoved::SIGNATURE_HASH,

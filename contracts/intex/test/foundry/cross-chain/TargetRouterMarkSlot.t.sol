@@ -55,7 +55,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function _issuance() internal returns (bytes memory) {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = CreateSeriesLib.seriesId(DAY);
-        payload.worldwideDay = DAY;
+        payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
         payload.issuedUnits = 10;
         payload.promisLoadMinor = 1;
