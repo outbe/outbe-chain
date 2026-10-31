@@ -54,7 +54,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         let ctx = runtime_ctx(storage);
 
         let committee_size = 4u32;
-        let pool = U256::from(4_000u64) * outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let pool = U256::from(4_000u64) * outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
         ctx.storage.increase_balance(REWARDS_ADDRESS, pool).unwrap();
         // Escrow block 10. Only 3 of 4 voters credited at k=0 (one absent).
         outbe_rewards::late_settlement::escrow_block_fee(

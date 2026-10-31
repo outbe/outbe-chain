@@ -1,15 +1,15 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::PROMIS_LIMIT_ADDRESS, error::Result, units::NATIVE_UNITS_PER_PROTOCOL_UNIT,
+    addresses::PROMIS_LIMIT_ADDRESS, error::Result, units::UNITS_PER_PROTOCOL_MINOR,
 };
 
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
 
-/// Identifies the protocol path that burns native `COEN` units into the Promis Limit.
+/// Identifies the protocol path that burns `COEN` units into the Promis Limit.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NativeBurnSource {
+pub enum BurnSource {
     BaseFee = 0,
     BlobFee = 1,
     Slash = 2,
@@ -39,50 +39,50 @@ impl PromisLimitContract<'_> {
         self.promis_limit.read()
     }
 
-    pub fn native_rest(&self) -> Result<U256> {
-        self.native_rest.read()
+    pub fn rest_minor(&self) -> Result<U256> {
+        self.rest_minor.read()
     }
 
     pub(crate) fn set_promis_limit(&mut self, total: U256) -> Result<()> {
         self.promis_limit.write(total)
     }
 
-    /// Burns `burned_unit` native `COEN` base units from `escrow`, credits whole protocol
-    /// units to `promis_limit`, and stores the remainder in `native_rest`.
-    pub fn burn_native_to_promis_limit(
+    /// Burns `amount_minor` `COEN` units from `escrow`, credits whole Promis Limit minors
+    /// to `promis_limit`, and stores the remainder in `rest_minor`.
+    pub fn burn_to_promis_limit(
         &mut self,
         escrow: Address,
-        burned_unit: U256,
-        source: NativeBurnSource,
+        amount_minor: U256,
+        source: BurnSource,
     ) -> Result<U256> {
-        if burned_unit.is_zero() {
+        if amount_minor.is_zero() {
             return Ok(U256::ZERO);
         }
 
         let guard = self.storage.checkpoint_guard();
-        let prev_rest = self.native_rest.read()?;
-        let total_unit = prev_rest
-            .checked_add(burned_unit)
+        let prev_rest = self.rest_minor.read()?;
+        let total_minor = prev_rest
+            .checked_add(amount_minor)
             .ok_or(PromisLimitError::Overflow)?;
-        let credited_units = total_unit / NATIVE_UNITS_PER_PROTOCOL_UNIT;
-        let new_rest = total_unit % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let credited_minor = total_minor / UNITS_PER_PROTOCOL_MINOR;
+        let new_rest = total_minor % UNITS_PER_PROTOCOL_MINOR;
 
-        if !credited_units.is_zero() {
-            self.checked_credit(credited_units)?;
+        if !credited_minor.is_zero() {
+            self.checked_credit(credited_minor)?;
         }
-        self.storage.decrease_balance(escrow, burned_unit)?;
-        self.native_rest.write(new_rest)?;
+        self.storage.decrease_balance(escrow, amount_minor)?;
+        self.rest_minor.write(new_rest)?;
         self.storage.emit_event(
             PROMIS_LIMIT_ADDRESS,
             IPromisLimit::NativeBurnedToPromisLimit {
                 source: source as u8,
-                burnedUnit: burned_unit,
+                burnedUnit: amount_minor,
             }
             .encode_log_data(),
         )?;
         guard.commit();
 
-        Ok(credited_units)
+        Ok(credited_minor)
     }
 
     pub fn checked_credit(&mut self, amount: U256) -> Result<PromisLimitCredit> {

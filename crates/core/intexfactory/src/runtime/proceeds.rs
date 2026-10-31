@@ -1,8 +1,8 @@
 use super::*;
 
-use outbe_promislimit::{NativeBurnSource, PromisLimitContract};
+use outbe_promislimit::{BurnSource, PromisLimitContract};
 
-/// Burns the proceeds into the Promis Limit; wei below one unit carries in its shared rest.
+/// Burns the proceeds into the Promis Limit; COEN below one minor carries in its shared rest.
 pub fn distribute(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -16,10 +16,10 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let credited = PromisLimitContract::new(storage.clone()).burn_native_to_promis_limit(
+    let credited = PromisLimitContract::new(storage.clone()).burn_to_promis_limit(
         INTEX_FACTORY_ADDRESS,
         amount,
-        NativeBurnSource::Proceeds,
+        BurnSource::Proceeds,
     )?;
     emit_event(
         storage,

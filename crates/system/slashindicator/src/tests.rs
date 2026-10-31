@@ -5,7 +5,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::finalized_guard_ring::{test_ring_hash, RingPosition};
 use outbe_primitives::storage::hashmap::{HashMapStorageProvider, MutationPrefixViews};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
@@ -92,9 +92,9 @@ fn register_and_activate_with_pubkey_and_stake(
 
 fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
     let contract = PromisLimitContract::new(storage.clone());
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
     assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
-    assert_eq!(contract.native_rest().unwrap(), slashed % unit);
+    assert_eq!(contract.rest_minor().unwrap(), slashed % unit);
     assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 

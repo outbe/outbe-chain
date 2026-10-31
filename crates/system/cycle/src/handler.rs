@@ -28,7 +28,7 @@ use outbe_primitives::{
         date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
         TimeError,
     },
-    units::{checked_protocol_to_native, native_to_protocol_floor},
+    units::{checked_protocol_to_native, units_to_protocol_minor_floor},
 };
 
 use crate::errors::CycleError;
@@ -181,7 +181,7 @@ fn gas_sample_delta(later: u64, earlier: u64) -> u64 {
 fn validator_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
     let native_budget = checked_protocol_to_native(validator_amount)
         .ok_or(CycleError::NativeValidatorBudgetOverflow)?;
-    Ok(native_to_protocol_floor(
+    Ok(units_to_protocol_minor_floor(
         native_budget.saturating_sub(fees_native),
     ))
 }
@@ -614,24 +614,23 @@ pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> 
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 
     #[test]
     fn validator_fees_stay_native_until_the_remaining_budget_is_floored() {
         let allocation = U256::from(2u64);
-        let one_protocol_unit_native = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let one_protocol_minor = UNITS_PER_PROTOCOL_MINOR;
 
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native - U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor - U256::ONE).unwrap(),
             U256::ONE
         );
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native + U256::ONE).unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor + U256::ONE).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_unit_native * U256::from(2u64))
-                .unwrap(),
+            validator_topup_protocol(allocation, one_protocol_minor * U256::from(2u64)).unwrap(),
             U256::ZERO
         );
     }

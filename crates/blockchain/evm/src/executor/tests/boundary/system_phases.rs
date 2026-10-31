@@ -489,14 +489,14 @@ fn activation_bootstrap(
 #[test]
 fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once() {
     use crate::executor::hooks::enforce_enclave_upgrade_deadline;
-    use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 
     for (configured_percent, expected_percent) in [(0, 8u64), (17, 17)] {
         let validator = Address::repeat_byte(0x73);
         let proposal_id = U256::from(9u64);
-        let stake = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(100u64) + U256::from(100u64);
-        let slashed = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(expected_percent)
-            + U256::from(expected_percent);
+        let stake = UNITS_PER_PROTOCOL_MINOR * U256::from(100u64) + U256::from(100u64);
+        let slashed =
+            UNITS_PER_PROTOCOL_MINOR * U256::from(expected_percent) + U256::from(expected_percent);
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_block_number(100);
         provider.set_balance(STAKING_ADDRESS, stake);
@@ -545,13 +545,13 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
             let limit = outbe_promislimit::PromisLimitContract::new(storage.clone());
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
-            assert_eq!(limit.native_rest().unwrap(), U256::from(expected_percent));
+            assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
 
             enforce_enclave_upgrade_deadline(&ctx).unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
-            assert_eq!(limit.native_rest().unwrap(), U256::from(expected_percent));
+            assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
         });
     }
 }

@@ -404,10 +404,10 @@ impl Staking<'_> {
         // Burn slashed units from STAKING_ADDRESS and credit the Promis Limit.
         if !total_slashed.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
-                .burn_native_to_promis_limit(
+                .burn_to_promis_limit(
                     STAKING_ADDRESS,
                     total_slashed,
-                    outbe_promislimit::NativeBurnSource::Slash,
+                    outbe_promislimit::BurnSource::Slash,
                 )?;
         }
 

@@ -1,12 +1,12 @@
 //! Slashed stake is a native burn from the staking escrow that credits the
-//! Promis Limit and stores any sub-protocol-unit remainder in `native_rest`.
+//! Promis Limit and stores any sub-protocol-minor remainder in `rest_minor`.
 
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::addresses::{
     METADOSIS_ADDRESS, PROMIS_LIMIT_ADDRESS, REWARDS_ADDRESS, STAKING_ADDRESS,
 };
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::contract::Staking;
@@ -48,7 +48,7 @@ fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
         let before = balances(&storage);
         let promis_limit = PromisLimitContract::new(storage.clone());
         let promis_limit_before = promis_limit.promis_limit().unwrap();
-        let rest_before = promis_limit.native_rest().unwrap();
+        let rest_before = promis_limit.rest_minor().unwrap();
 
         let slashed = staking.slash_stake(VALIDATOR, 20).unwrap();
         assert_eq!(slashed, U256::from(2_000u64));
@@ -70,7 +70,7 @@ fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
             "the slashed stake is removed from native supply"
         );
         let promis_limit_after = promis_limit.promis_limit().unwrap();
-        let rest_after = promis_limit.native_rest().unwrap();
+        let rest_after = promis_limit.rest_minor().unwrap();
         assert_eq!(promis_limit_after, promis_limit_before);
         assert_eq!(rest_after, rest_before + slashed);
         assert_eq!(staking.get_stake(VALIDATOR).unwrap(), U256::from(8_000u64));
@@ -79,24 +79,23 @@ fn slashing_burns_escrow_and_credits_sub_unit_remainder_to_promis_limit_rest() {
 }
 
 #[test]
-fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
+fn two_one_point_five_protocol_minor_slashes_credit_one_then_two_minors() {
     with_staking(|storage, staking| {
         register_validator(storage.clone(), VALIDATOR);
-        let initial_stake = NATIVE_UNITS_PER_PROTOCOL_UNIT * U256::from(15u64);
+        let initial_stake = UNITS_PER_PROTOCOL_MINOR * U256::from(15u64);
         storage.set_balance(STAKING_ADDRESS, initial_stake).unwrap();
         staking.topup(VALIDATOR, VALIDATOR, initial_stake).unwrap();
 
         let promis_limit = PromisLimitContract::new(storage.clone());
-        let one_and_half =
-            NATIVE_UNITS_PER_PROTOCOL_UNIT + (NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64));
+        let one_and_half = UNITS_PER_PROTOCOL_MINOR + (UNITS_PER_PROTOCOL_MINOR / U256::from(2u64));
 
         // 10% of 15 protocol units = 1.5 protocol units.
         let first_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
         assert_eq!(first_slash, one_and_half);
         assert_eq!(promis_limit.promis_limit().unwrap(), U256::ONE);
         assert_eq!(
-            promis_limit.native_rest().unwrap(),
-            NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(2u64)
+            promis_limit.rest_minor().unwrap(),
+            UNITS_PER_PROTOCOL_MINOR / U256::from(2u64)
         );
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 
@@ -106,6 +105,6 @@ fn two_one_point_five_protocol_unit_slashes_credit_one_then_two_units() {
         let second_slash = staking.slash_stake(VALIDATOR, 10).unwrap();
         assert_eq!(second_slash, one_and_half);
         assert_eq!(promis_limit.promis_limit().unwrap(), U256::from(3u64));
-        assert_eq!(promis_limit.native_rest().unwrap(), U256::ZERO);
+        assert_eq!(promis_limit.rest_minor().unwrap(), U256::ZERO);
     });
 }
