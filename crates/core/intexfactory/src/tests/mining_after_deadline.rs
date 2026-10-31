@@ -184,7 +184,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID),
             s.clone(),
         );
-        crate::hooks::sweep_forfeits(&ctx).unwrap();
+        super::called::daily_pass(&ctx).unwrap();
         crate::hooks::cleanup(&ctx).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -233,7 +233,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID),
             s.clone(),
         );
-        crate::hooks::sweep_forfeits(&later).unwrap();
+        super::called::daily_pass(&later).unwrap();
         crate::hooks::cleanup(&later).unwrap();
         assert_eq!(reserve(), forfeited);
     });

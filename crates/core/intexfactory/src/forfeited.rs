@@ -16,16 +16,6 @@ use outbe_intex::{ForfeitQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
 
-/// This function forfeits every group after its settlement window closes, earliest day first.
-/// It returns the number of forfeited groups.
-#[cfg(test)]
-pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = IntexContract::new(ctx.storage.clone());
-    let mut expiry = IntexForfeit::new(ctx);
-    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
-    Ok(expiry.expired)
-}
-
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -44,7 +34,6 @@ pub(crate) fn forfeit_through(
 struct IntexForfeit<'a, 'storage> {
     storage: &'a StorageHandle<'storage>,
     intex: IntexContract<'storage>,
-    expired: u32,
 }
 
 impl<'a, 's> IntexForfeit<'a, 's> {
@@ -52,7 +41,6 @@ impl<'a, 's> IntexForfeit<'a, 's> {
         Self {
             storage: &ctx.storage,
             intex: IntexContract::new(ctx.storage.clone()),
-            expired: 0,
         }
     }
 }
@@ -100,7 +88,6 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
             forfeitedUnits: forfeited_units,
             returnedPromisMinor: returned,
         })?;
-        self.expired = self.expired.saturating_add(1);
         Ok(())
     }
 

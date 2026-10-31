@@ -50,6 +50,57 @@ mod called {
         prepare(ctx);
         crate::called::schedule_call_pass(ctx)
     }
+
+    /// Starts the pass and finalizes the Oracle through the UTC day before `ctx`.
+    pub(super) fn prepare_daily_pass(
+        ctx: &BlockRuntimeContext,
+    ) -> outbe_primitives::error::Result<()> {
+        let intex = IntexContract::new(ctx.storage.clone());
+        if intex.daily_genesis_day.read()? == 0 {
+            crate::called::initialize_daily(&BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
+                ctx.storage.clone(),
+            ))?;
+        }
+        let closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
+            .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
+        let oracle = OracleContract::new(ctx.storage.clone());
+        if oracle.utc_day_vwap_last_finalized.read()? < closed {
+            oracle.utc_day_vwap_last_finalized.write(closed)?;
+        }
+        Ok(())
+    }
+
+    /// The daily pass through the UTC day before `ctx`, as the Cycle runs it: one block at the
+    /// next height, and one more block for each closed day it still has to catch up. Returns
+    /// the groups called.
+    pub(super) fn daily_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+        prepare_daily_pass(ctx)?;
+        let intex = IntexContract::new(ctx.storage.clone());
+        let mut called = 0;
+        loop {
+            let mut height = ctx.block.block_number;
+            for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
+                if let Some(previous) =
+                    outbe_primitives::pass_budget::BlockAllowance::unpack(packed)?
+                {
+                    height = height.max(previous.height + 1);
+                }
+            }
+            let block = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
+                ctx.storage.clone(),
+            );
+            called += crate::called::process_call_pass(&block)?;
+            let selected =
+                outbe_primitives::pass_budget::BlockAllowance::unpack(intex.daily_budget.read()?)?
+                    .map_or(0, |allowance| allowance.day);
+            let next = intex.call_sweep_day.read()?;
+            if next == 0 || next == selected {
+                return Ok(called);
+            }
+        }
+    }
 }
 use crate::constants::MAX_SERIES_PER_MESSAGE;
 use crate::precompile::{self, IIntexFactory};
