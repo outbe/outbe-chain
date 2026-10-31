@@ -57,7 +57,7 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
 use outbe_slashindicator::runtime::classify_vrf_failure;
@@ -116,9 +116,9 @@ const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
 
 fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
     let contract = PromisLimitContract::new(storage.clone());
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
     assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
-    assert_eq!(contract.native_rest().unwrap(), slashed % unit);
+    assert_eq!(contract.rest_minor().unwrap(), slashed % unit);
     assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 

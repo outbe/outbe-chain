@@ -30,7 +30,7 @@ use outbe_primitives::{
     addresses::REWARDS_ADDRESS,
     block::BlockRuntimeContext,
     error::Result,
-    units::{native_to_protocol_floor, NATIVE_UNITS_PER_PROTOCOL_UNIT},
+    units::{units_to_protocol_minor_floor, UNITS_PER_PROTOCOL_MINOR},
 };
 
 use crate::constants::{decay_weight, fixed_denominator};
@@ -326,9 +326,9 @@ fn recycle_residue(
     let native = residue
         .checked_add(rewards.late_residue_dust_native.read()?)
         .ok_or(RewardsError::LateResidueDustOverflow)?;
-    let dust = native % NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let dust = native % UNITS_PER_PROTOCOL_MINOR;
     let burned = native - dust;
-    let units = native_to_protocol_floor(native);
+    let units = units_to_protocol_minor_floor(native);
     rewards.late_residue_dust_native.write(dust)?;
     if !units.is_zero() {
         ctx.storage.decrease_balance(REWARDS_ADDRESS, burned)?;
@@ -607,7 +607,7 @@ mod tests {
     fn failed_settlement_checkpoint_restores_payment_state_and_logs() {
         let seed = || {
             run(|ctx| {
-                let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+                let unit = UNITS_PER_PROTOCOL_MINOR;
                 let pending = U256::from(24) * unit / U256::from(10);
                 let dust = U256::from(6) * unit / U256::from(10);
                 fund(ctx, pending + dust);
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn late_residue_credits_whole_units_and_keeps_native_dust() {
         run(|ctx| {
-            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
             let pending = U256::from(4_000) * unit + U256::from(7);
             fund(ctx, pending);
             escrow_block_fee(ctx, &block_at(10, FB), pending, &[V0, V1, V2]).unwrap();
@@ -758,7 +758,7 @@ mod tests {
     #[test]
     fn sub_unit_residue_accumulates_until_a_whole_unit() {
         let storage = run(|ctx| {
-            let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+            let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
             let pending = U256::from(24) * unit / U256::from(10);
             let second = B256::repeat_byte(0xCD);
             let rewards = ctx.storage.contract::<Rewards>();
@@ -796,7 +796,7 @@ mod tests {
             .filter_map(|log| IRewards::LateWindowSettled::decode_log_data(log).ok())
             .collect();
         assert_eq!(summaries.len(), 2);
-        let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let unit = UNITS_PER_PROTOCOL_MINOR;
         let residue = U256::from(6) * unit / U256::from(10);
         assert_eq!(summaries[0].residueNative, residue);
         assert_eq!(summaries[0].burnedNative, U256::ZERO);
@@ -830,7 +830,7 @@ mod tests {
         let timestamp = wwd.start_timestamp();
         storage.set_timestamp(U256::from(timestamp));
         let expected_residue = U256::from(1_000);
-        let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+        let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(

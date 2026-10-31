@@ -1,7 +1,7 @@
 use super::*;
 
 use alloy_sol_types::SolEvent;
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
@@ -43,7 +43,7 @@ fn burned_events(storage: &HashMapStorageProvider) -> Vec<IIntexFactory::Proceed
 #[test]
 fn proceeds_burn_into_the_promis_limit_pool() {
     let mut storage = factory_provider();
-    let amount = U256::from(3u64) * NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let amount = U256::from(3u64) * UNITS_PER_PROTOCOL_MINOR;
 
     StorageHandle::enter(&mut storage, |s| {
         let before = pool(&s);
@@ -67,7 +67,7 @@ fn proceeds_burn_into_the_promis_limit_pool() {
 #[test]
 fn wei_below_one_protocol_unit_carries_into_the_next_delivery() {
     let mut storage = factory_provider();
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
     let rest = U256::from(7u64);
 
     StorageHandle::enter(&mut storage, |s| {
@@ -75,14 +75,14 @@ fn wei_below_one_protocol_unit_carries_into_the_next_delivery() {
         deliver(&s, 10, U256::from(2u64) * unit + rest);
         assert_eq!(pool(&s), before + U256::from(2u64));
         assert_eq!(
-            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
             rest
         );
 
         deliver(&s, 10, unit - rest);
         assert_eq!(pool(&s), before + U256::from(3u64));
         assert_eq!(
-            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
             U256::ZERO
         );
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
@@ -98,10 +98,10 @@ fn wei_below_one_protocol_unit_carries_into_the_next_delivery() {
 #[test]
 fn proceeds_burn_under_the_proceeds_source() {
     use outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS;
-    use outbe_promislimit::{precompile::IPromisLimit, NativeBurnSource};
+    use outbe_promislimit::{precompile::IPromisLimit, BurnSource};
 
     let mut storage = factory_provider();
-    let amount = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let amount = UNITS_PER_PROTOCOL_MINOR;
     StorageHandle::enter(&mut storage, |s| deliver(&s, 10, amount));
 
     let burns: Vec<IPromisLimit::NativeBurnedToPromisLimit> = storage
@@ -112,14 +112,14 @@ fn proceeds_burn_under_the_proceeds_source() {
         })
         .collect();
     assert_eq!(burns.len(), 1);
-    assert_eq!(burns[0].source, NativeBurnSource::Proceeds as u8);
+    assert_eq!(burns[0].source, BurnSource::Proceeds as u8);
     assert_eq!(burns[0].burnedUnit, amount);
 }
 
 #[test]
 fn proceeds_above_the_factory_balance_change_nothing() {
     let mut storage = factory_provider();
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
 
     StorageHandle::enter(&mut storage, |s| {
         s.increase_balance(INTEX_FACTORY_ADDRESS, unit).unwrap();
@@ -129,7 +129,7 @@ fn proceeds_above_the_factory_balance_change_nothing() {
         assert_eq!(pool(&s), before);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), unit);
         assert_eq!(
-            PromisLimitContract::new(s.clone()).native_rest().unwrap(),
+            PromisLimitContract::new(s.clone()).rest_minor().unwrap(),
             U256::ZERO
         );
     });
@@ -139,7 +139,7 @@ fn proceeds_above_the_factory_balance_change_nothing() {
 #[test]
 fn every_delivery_of_a_day_burns_and_credits() {
     let mut storage = factory_provider();
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
 
     StorageHandle::enter(&mut storage, |s| {
         let before = pool(&s);

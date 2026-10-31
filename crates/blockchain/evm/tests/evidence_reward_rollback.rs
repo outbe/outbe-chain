@@ -256,7 +256,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             let limit = outbe_promislimit::PromisLimitContract::new(storage);
             assert_eq!(limit.promis_limit().unwrap(), U256::ZERO);
             assert_eq!(
-                limit.native_rest().unwrap(),
+                limit.rest_minor().unwrap(),
                 U256::from(if nonce == 0 { 0 } else { 80_000 })
             );
         });

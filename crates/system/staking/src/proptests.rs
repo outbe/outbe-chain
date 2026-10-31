@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::ValidatorLifecycle;
@@ -362,7 +362,7 @@ proptest! {
             Address::repeat_byte(0x52),
             Address::repeat_byte(0x53),
         ];
-        let scale = NATIVE_UNITS_PER_PROTOCOL_UNIT / U256::from(10u64);
+        let scale = UNITS_PER_PROTOCOL_MINOR / U256::from(10u64);
 
         with_staking(|storage, s| {
             s.config_max_stake_percent.write(0).unwrap();
@@ -427,10 +427,10 @@ proptest! {
                     sum_stakes + unbonding_total
                 );
 
-                // Invariant 3: PromisLimit * 10^12 + native_rest == cumulative_slashed.
+                // Invariant 3: PromisLimit * 10^12 + rest_minor == cumulative_slashed.
                 let pl = PromisLimitContract::new(storage.clone());
-                let accounted_burn = pl.promis_limit().unwrap() * NATIVE_UNITS_PER_PROTOCOL_UNIT
-                    + pl.native_rest().unwrap();
+                let accounted_burn = pl.promis_limit().unwrap() * UNITS_PER_PROTOCOL_MINOR
+                    + pl.rest_minor().unwrap();
                 prop_assert_eq!(accounted_burn, cumulative_slashed);
 
                 // Invariant 4: Stored unbonding length matches physical linked list and <= 64.

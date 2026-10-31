@@ -9,5 +9,5 @@ interface IPromisLimit {
 
     function promisLimit() external view returns (uint256 promisLimitMinor);
 
-    function nativeRest() external view returns (uint256 nativeRestUnit);
+    function restMinor() external view returns (uint256 restMinor);
 }

@@ -5,10 +5,10 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS,
     storage::StorageHandle,
-    units::NATIVE_UNITS_PER_PROTOCOL_UNIT,
+    units::UNITS_PER_PROTOCOL_MINOR,
 };
 
-use outbe_promislimit::{precompile::IPromisLimit, NativeBurnSource, PromisLimitContract};
+use outbe_promislimit::{precompile::IPromisLimit, BurnSource, PromisLimitContract};
 
 use crate::{
     constants::VOTING_WINDOW_BLOCKS,
@@ -435,7 +435,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
     for (initial_rest, expected_limit, expected_rest) in [
         (U256::ZERO, U256::ZERO, U256::from(123u64)),
         (
-            NATIVE_UNITS_PER_PROTOCOL_UNIT - U256::from(100u64),
+            UNITS_PER_PROTOCOL_MINOR - U256::from(100u64),
             U256::ONE,
             U256::from(23u64),
         ),
@@ -448,7 +448,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
         provider.set_balance(owner, initial_rest);
         provider.enter(|storage| {
             PromisLimitContract::new(storage)
-                .burn_native_to_promis_limit(owner, initial_rest, NativeBurnSource::Slash)
+                .burn_to_promis_limit(owner, initial_rest, BurnSource::Slash)
                 .unwrap();
         });
         {
@@ -475,7 +475,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
             assert_eq!(storage.balance(owner).unwrap(), U256::ZERO);
             let limit = PromisLimitContract::new(storage.clone());
             assert_eq!(limit.promis_limit().unwrap(), expected_limit);
-            assert_eq!(limit.native_rest().unwrap(), expected_rest);
+            assert_eq!(limit.rest_minor().unwrap(), expected_rest);
 
             vote.begin_block_with(deadline + 2, &PUBLIC_BONDED_REGISTRY)
                 .unwrap();
@@ -496,7 +496,7 @@ fn expired_public_bond_burns_once_and_preserves_forced_surplus() {
         let burns = logs
             .iter()
             .filter_map(|log| IPromisLimit::NativeBurnedToPromisLimit::decode_log_data(log).ok())
-            .filter(|event| event.source == NativeBurnSource::ProposalBond as u8)
+            .filter(|event| event.source == BurnSource::ProposalBond as u8)
             .collect::<Vec<_>>();
         assert_eq!(burns.len(), 1);
         assert_eq!(burns[0].burnedUnit, U256::from(123u64));

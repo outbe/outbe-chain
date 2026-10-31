@@ -1,11 +1,11 @@
 [
   {
     "type": "function",
-    "name": "nativeRest",
+    "name": "promisLimit",
     "inputs": [],
     "outputs": [
       {
-        "name": "nativeRestUnit",
+        "name": "promisLimitMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -14,11 +14,11 @@
   },
   {
     "type": "function",
-    "name": "promisLimit",
+    "name": "restMinor",
     "inputs": [],
     "outputs": [
       {
-        "name": "promisLimitMinor",
+        "name": "restMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

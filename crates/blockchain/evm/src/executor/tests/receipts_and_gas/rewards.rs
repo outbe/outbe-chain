@@ -72,7 +72,7 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         voters.push(snapshot.committee[2].address);
     }
     let absent = snapshot.committee[3].address;
-    let unit = outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
     let matured_fee = U256::from(8_000) * unit;
     let parent_fee = U256::from(123);
     let mut validators = vec![(proposer, dummy_pubkey(0xa2))];

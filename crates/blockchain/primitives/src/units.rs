@@ -29,8 +29,8 @@ pub const SCALE_1E6_U256: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 /// Gem loads, and stablecoin-backed COEN/ISO prices.
 pub const PROTOCOL_AMOUNT_DECIMALS: u8 = 6;
 
-/// Native atomic units represented by one minimal six-decimal protocol unit.
-pub const NATIVE_UNITS_PER_PROTOCOL_UNIT: U256 = U256::from_limbs([
+/// `COEN` units in one minor of a six-decimal protocol amount, such as the Promis Limit.
+pub const UNITS_PER_PROTOCOL_MINOR: U256 = U256::from_limbs([
     10u64.pow((NATIVE_TOKEN_DECIMALS - PROTOCOL_AMOUNT_DECIMALS) as u32),
     0,
     0,
@@ -54,7 +54,7 @@ pub const MAX_ASSET_DECIMALS: u8 = 18;
 /// Returns `None` rather than wrapping when the native representation would
 /// exceed `U256`.
 pub fn checked_protocol_to_native(amount: U256) -> Option<U256> {
-    amount.checked_mul(NATIVE_UNITS_PER_PROTOCOL_UNIT)
+    amount.checked_mul(UNITS_PER_PROTOCOL_MINOR)
 }
 
 /// Converts a whole-COEN count into native COEN atomic units.
@@ -65,10 +65,10 @@ pub fn checked_whole_coen_to_native(whole_coen: U256) -> Option<U256> {
     whole_coen.checked_mul(ONE_COEN)
 }
 
-/// Reduces a native COEN amount to the protocol's six-decimal precision.
-/// The function deliberately discards any sub-protocol-unit native remainder.
-pub fn native_to_protocol_floor(amount: U256) -> U256 {
-    amount / NATIVE_UNITS_PER_PROTOCOL_UNIT
+/// Reduces a `COEN` amount in units to whole six-decimal protocol minors.
+/// The function deliberately discards the remainder below one minor.
+pub fn units_to_protocol_minor_floor(amount: U256) -> U256 {
+    amount / UNITS_PER_PROTOCOL_MINOR
 }
 
 #[cfg(test)]
@@ -111,11 +111,11 @@ mod tests {
     #[test]
     fn native_remainder_is_dropped_only_when_returning_to_protocol_precision() {
         assert_eq!(
-            native_to_protocol_floor(NATIVE_UNITS_PER_PROTOCOL_UNIT - U256::ONE),
+            units_to_protocol_minor_floor(UNITS_PER_PROTOCOL_MINOR - U256::ONE),
             U256::ZERO
         );
         assert_eq!(
-            native_to_protocol_floor(NATIVE_UNITS_PER_PROTOCOL_UNIT + U256::from(7u64)),
+            units_to_protocol_minor_floor(UNITS_PER_PROTOCOL_MINOR + U256::from(7u64)),
             U256::ONE
         );
     }

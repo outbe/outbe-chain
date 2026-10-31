@@ -28,7 +28,7 @@ pub fn dispatch(
         use IPromisLimit::IPromisLimitCalls::*;
         match call {
             promisLimit(_) => metadata::<IPromisLimit::promisLimitCall>(|| contract.promis_limit()),
-            nativeRest(_) => metadata::<IPromisLimit::nativeRestCall>(|| contract.native_rest()),
+            restMinor(_) => metadata::<IPromisLimit::restMinorCall>(|| contract.rest_minor()),
         }
     })
 }

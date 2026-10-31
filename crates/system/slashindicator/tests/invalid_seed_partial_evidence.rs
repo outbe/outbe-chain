@@ -15,7 +15,7 @@ use outbe_consensus::dkg_manager::public_polynomial_hash;
 use outbe_consensus::proof::{hybrid_seed_namespace, seed_partial_attest_message};
 use outbe_primitives::addresses::{PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS};
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::NATIVE_UNITS_PER_PROTOCOL_UNIT;
+use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_slashindicator::precompile::ISlashIndicator;
 use outbe_slashindicator::schema::SlashIndicator;
@@ -39,9 +39,9 @@ const N: u32 = 4;
 
 fn assert_slash_credits_promis_limit(storage: StorageHandle<'_>, slashed: U256) {
     let contract = PromisLimitContract::new(storage.clone());
-    let unit = NATIVE_UNITS_PER_PROTOCOL_UNIT;
+    let unit = UNITS_PER_PROTOCOL_MINOR;
     assert_eq!(contract.promis_limit().unwrap(), slashed / unit);
-    assert_eq!(contract.native_rest().unwrap(), slashed % unit);
+    assert_eq!(contract.rest_minor().unwrap(), slashed % unit);
     assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 }
 
