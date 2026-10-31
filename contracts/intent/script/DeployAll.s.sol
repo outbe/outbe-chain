@@ -58,7 +58,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
 
         // 1. Deploy SolverEscrow
         console2.log("[1/4] Deploy SolverEscrow...");
-        address escrowAddress = deployEscrow(compact, collateralBps);
+        address escrowAddress = deployEscrow(compact, collateralBps, vm.addr(deployerPrivateKey));
         console2.log("  SolverEscrow:", escrowAddress);
 
         // 2. Deploy Auction
@@ -69,7 +69,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         // 3. Deploy RouterAllocator + Router via Create3Factory
         console2.log("[3/4] Deploy RouterAllocator + Router...");
         (address routerAddress, address allocatorAddress) =
-            deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress);
+            deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress, vm.addr(deployerPrivateKey));
         console2.log("  Router:", routerAddress);
 
         // 4. Wire all contracts together

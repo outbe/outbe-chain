@@ -18,6 +18,7 @@ import {TypeCasts} from "../src/libs/TypeCasts.sol";
 import {BaseTest} from "./BaseTest.sol";
 import {MockERC7786Bridge} from "./mocks/MockERC7786Bridge.sol";
 import {MockTheCompact} from "./mocks/MockTheCompact.sol";
+import {Proxies} from "./utils/Proxies.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
@@ -30,13 +31,12 @@ contract RouterWithDomain is Router {
 
     constructor(
         address _bridge,
-        address _owner,
         uint32 fixedDomain,
         address _compact,
         bytes12 _lockTag,
         address _escrow,
         address _auction
-    ) Router(_bridge, _owner, _compact, _lockTag, _escrow, _auction) {
+    ) Router(_bridge, _compact, _lockTag, _escrow, _auction) {
         _FIXED_LOCAL_DOMAIN = fixedDomain;
     }
 
@@ -77,7 +77,7 @@ contract RouterE2E is BaseTest {
         mockCompact = new MockTheCompact();
         destCompact = new MockTheCompact();
 
-        auction = new Auction(owner);
+        auction = Proxies.auction(owner);
 
         (destinationRouter, destEscrow) = _deployRouterWithEscrow(destBridge, destination, destCompact, 1000);
         auction.setRouter(address(destinationRouter));
@@ -94,8 +94,10 @@ contract RouterE2E is BaseTest {
             vm.stopPrank();
         }
 
-        originRouter = new RouterWithDomain(
-            address(originBridge), owner, origin, address(mockCompact), bytes12(uint96(1)), address(0), address(auction)
+        originRouter = _router(
+            new RouterWithDomain(
+                address(originBridge), origin, address(mockCompact), bytes12(uint96(1)), address(0), address(auction)
+            )
         );
 
         // Register the matching Router on each side
@@ -144,18 +146,22 @@ contract RouterE2E is BaseTest {
         vm.warp(block.timestamp + auction.revealPeriod());
     }
 
+    function _router(RouterWithDomain implementation) internal returns (RouterWithDomain) {
+        return RouterWithDomain(Proxies.proxy(address(implementation), abi.encodeCall(Router.initialize, (owner))));
+    }
+
     function _deployRouterWithEscrow(MockERC7786Bridge bridge, uint32 fixedDomain, MockTheCompact compact, uint256 bps)
         internal
         returns (RouterWithDomain router, SolverEscrow esc)
     {
-        SolverAllocator alloc = new SolverAllocator(address(compact));
+        SolverAllocator alloc = Proxies.solverAllocator(address(compact), address(this));
         bytes12 tag = alloc.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
 
-        esc = new SolverEscrow(address(compact), tag, bps);
+        esc = Proxies.solverEscrow(address(compact), tag, bps, address(this));
         alloc.setArbiter(address(esc));
 
-        router = new RouterWithDomain(
-            address(bridge), owner, fixedDomain, address(compact), tag, address(esc), address(auction)
+        router = _router(
+            new RouterWithDomain(address(bridge), fixedDomain, address(compact), tag, address(esc), address(auction))
         );
 
         esc.setAuthorizedCaller(address(router));

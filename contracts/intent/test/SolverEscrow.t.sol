@@ -12,6 +12,7 @@ import {ISolverEscrow} from "../src/interfaces/ISolverEscrow.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
 
 import {MockTheCompact} from "./mocks/MockTheCompact.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 contract SolverEscrowTest is Test {
     ERC20 internal token;
@@ -37,9 +38,9 @@ contract SolverEscrowTest is Test {
 
         // Deploy stack: Compact -> Allocator -> Escrow -> wire arbiter
         compact = new MockTheCompact();
-        allocator = new SolverAllocator(address(compact));
+        allocator = Proxies.solverAllocator(address(compact), address(this));
         lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.TenMinutes);
-        escrow = new SolverEscrow(address(compact), lockTag, COLLATERAL_BPS);
+        escrow = Proxies.solverEscrow(address(compact), lockTag, COLLATERAL_BPS, address(this));
         escrow.setAuthorizedCaller(authorizedCaller);
         allocator.setArbiter(address(escrow));
 
@@ -706,11 +707,11 @@ contract SolverEscrowTest is Test {
 
     function test_constructor_zeroCompact_reverts() public {
         vm.expectRevert(ISolverEscrow.ZeroAddress.selector);
-        new SolverEscrow(address(0), lockTag, COLLATERAL_BPS);
+        new SolverEscrow(address(0), lockTag);
     }
 
     function test_setAuthorizedCaller_emits() public {
-        SolverEscrow fresh = new SolverEscrow(address(compact), lockTag, COLLATERAL_BPS);
+        SolverEscrow fresh = Proxies.solverEscrow(address(compact), lockTag, COLLATERAL_BPS, address(this));
         vm.expectEmit(true, false, false, false);
         emit ISolverEscrow.AuthorizedCallerSet(authorizedCaller);
         fresh.setAuthorizedCaller(authorizedCaller);

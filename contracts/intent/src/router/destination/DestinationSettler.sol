@@ -42,7 +42,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
     /// @param _orderId The unique identifier of the order
     /// @param _originData The order data encoded as bytes (OrderData)
     function claimOrder(bytes32 _orderId, bytes calldata _originData) external {
-        if (!_isNotProcessed(destinationOrderStatus[_orderId])) revert InvalidOrderStatus();
+        if (!_isNotProcessed(_statuses().destinationOrderStatus[_orderId])) revert InvalidOrderStatus();
         if (!_auction().isAuctionEnded(_orderId)) revert IAuction.RevealNotEnded();
 
         (address winner, uint256 outputAmount) = _auction().getWinner(_orderId);
@@ -67,7 +67,7 @@ abstract contract DestinationSettler is DestinationSettlerBase {
             return;
         }
 
-        destinationOrderStatus[_orderId] = CLAIMED;
+        _statuses().destinationOrderStatus[_orderId] = CLAIMED;
 
         emit OrderClaimed(_orderId, winner, outputAmount);
     }

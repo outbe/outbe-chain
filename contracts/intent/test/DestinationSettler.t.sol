@@ -13,6 +13,7 @@ import {OrderStatusStorage} from "../src/router/common/OrderStatusStorage.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
+import {Proxies} from "./utils/Proxies.sol";
 
 event Filled(bytes32 orderId, bytes originData, bytes fillerData);
 event Settle(bytes32[] orderIds, bytes[] ordersFillerData);
@@ -99,7 +100,7 @@ contract DestinationSettlerTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
-        auction = new Auction(address(this));
+        auction = Proxies.auction(address(this));
         destinationSettler = new DestinationSettlerForTest(destination, address(auction));
         auction.setRouter(address(destinationSettler));
 

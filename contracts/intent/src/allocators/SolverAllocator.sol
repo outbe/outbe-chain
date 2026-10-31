@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+
 import {IAllocator} from "the-compact/src/interfaces/IAllocator.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
 import {IdLib} from "the-compact/src/lib/IdLib.sol";
@@ -14,11 +17,14 @@ import {Scope} from "the-compact/src/types/Scope.sol";
 ///      - Allocated transfers / claims (authorizeClaim): only arbiter (escrow) is authorized.
 ///
 /// Deploy order:
-///   1. Deploy SolverAllocator(_compact)
+///   1. Deploy SolverAllocator(_compact) behind a proxy, initialize(owner)
 ///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays)
 ///   3. Deploy SolverEscrow(_compact, lockTag)
 ///   4. allocator.setArbiter(address(escrow))
-contract SolverAllocator is IAllocator {
+///
+/// UUPS upgradeable behind an ERC1967 proxy. The proxy registers itself with The Compact in
+/// `initialize`, so the allocator id stays with the proxy address across upgrades.
+contract SolverAllocator is IAllocator, OwnableUpgradeable, UUPSUpgradeable {
     // ============ Constants ============
 
     string public constant VERSION = "1.0.0";
@@ -26,19 +32,22 @@ contract SolverAllocator is IAllocator {
     // ============ Immutables ============
 
     /// @notice The Compact contract
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     ITheCompact public immutable COMPACT;
-
-    /// @notice Allocator ID assigned by The Compact on registration
-    uint96 public immutable ALLOCATOR_ID;
-
-    /// @notice Deployer address - can call setArbiter() once
-    address public immutable OWNER;
 
     // ============ State ============
 
-    /// @notice Authorized arbiter for withdrawals and slashing (SolverEscrow).
-    ///         OWNER sets it once after the escrow is deployed.
-    address public arbiter;
+    /// @custom:storage-location erc7201:outbe.intent.SolverAllocator
+    struct SolverAllocatorStorage {
+        /// @notice Allocator ID assigned by The Compact on registration
+        uint96 allocatorId;
+        /// @notice Authorized arbiter for withdrawals and slashing (SolverEscrow).
+        ///         The owner sets it once after the escrow is deployed.
+        address arbiter;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intent.SolverAllocator")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x6c10a7fd0f39fda798618c7bb9815bcc4909518d7bac8c9f27123a2f6b638600;
 
     // ============ Events ============
 
@@ -62,21 +71,45 @@ contract SolverAllocator is IAllocator {
     // ============ Constructor ============
 
     /// @param _compact The Compact contract address
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address _compact) {
         COMPACT = ITheCompact(_compact);
-        ALLOCATOR_ID = COMPACT.__registerAllocator(address(this), "");
-        OWNER = msg.sender;
+        _disableInitializers();
+    }
+
+    /// @param _owner Can call setArbiter() once and authorizes upgrades
+    function initialize(address _owner) external initializer {
+        __Ownable_init(_owner);
+        _s().allocatorId = COMPACT.__registerAllocator(address(this), "");
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _s() private pure returns (SolverAllocatorStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @notice Allocator ID assigned by The Compact on registration
+    function ALLOCATOR_ID() public view returns (uint96) {
+        return _s().allocatorId;
+    }
+
+    /// @notice Authorized arbiter for withdrawals and slashing (SolverEscrow)
+    function arbiter() public view returns (address) {
+        return _s().arbiter;
     }
 
     // ============ Admin ============
 
-    /// @notice Set the arbiter contract address. Only OWNER can call this, and only once.
+    /// @notice Set the arbiter contract address. Only the owner can call this, and only once.
     /// @param _arbiter SolverEscrow contract address
     function setArbiter(address _arbiter) external {
-        if (msg.sender != OWNER) revert UnauthorizedOwner();
+        if (msg.sender != owner()) revert UnauthorizedOwner();
         if (_arbiter == address(0)) revert ZeroArbiter();
-        if (arbiter != address(0)) revert ArbiterAlreadySet();
-        arbiter = _arbiter;
+        if (_s().arbiter != address(0)) revert ArbiterAlreadySet();
+        _s().arbiter = _arbiter;
         emit ArbiterSet(_arbiter);
     }
 
@@ -84,7 +117,7 @@ contract SolverAllocator is IAllocator {
 
     /// @notice Build a lockTag using this allocator's ID.
     function buildLockTag(Scope scope, ResetPeriod resetPeriod) external view returns (bytes12) {
-        return IdLib.toLockTag(ALLOCATOR_ID, scope, resetPeriod);
+        return IdLib.toLockTag(_s().allocatorId, scope, resetPeriod);
     }
 
     // ============ IAllocator ============
@@ -104,7 +137,7 @@ contract SolverAllocator is IAllocator {
         override
         returns (bytes4)
     {
-        if (operator != arbiter) revert DirectTransferBlocked();
+        if (operator != _s().arbiter) revert DirectTransferBlocked();
         return IAllocator.attest.selector;
     }
 
@@ -137,6 +170,6 @@ contract SolverAllocator is IAllocator {
         bytes calldata /* allocatorData */
     ) public view override returns (bool) {
         // Only the arbiter (escrow) can claim, and not past expiry. Solvers must go through escrow.
-        return claimArbiter == arbiter && block.timestamp <= expires;
+        return claimArbiter == _s().arbiter && block.timestamp <= expires;
     }
 }

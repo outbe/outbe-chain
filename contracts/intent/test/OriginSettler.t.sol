@@ -74,8 +74,8 @@ contract OriginSettlerForTest is OriginSettler {
     }
 
     function setOrderOpened(bytes32 _orderId, OrderData memory orderData) public {
-        openOrders[_orderId] = abi.encode(OrderEncoder.orderDataType(), OrderEncoder.encode(orderData));
-        orderStatus[_orderId] = OPENED;
+        _origin().openOrders[_orderId] = abi.encode(OrderEncoder.orderDataType(), OrderEncoder.encode(orderData));
+        _statuses().orderStatus[_orderId] = OPENED;
     }
 }
 

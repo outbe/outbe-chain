@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {OriginSettler} from "./origin/OriginSettler.sol";
 import {DestinationSettler} from "./destination/DestinationSettler.sol";
 import {IAuction} from "../interfaces/IAuction.sol";
@@ -15,21 +15,25 @@ import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
  *      Messaging-specific logic (_dispatchSettleCrossChain, _dispatchRefundCrossChain, _localDomain)
  *      stays abstract. Concrete implementations supply it.
  */
-abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step {
+abstract contract BaseRouter is OriginSettler, DestinationSettler, OwnableUpgradeable {
     // ============ Immutables ============
 
     /// @notice The Compact contract - canonical token custody (same address on all chains)
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     ITheCompact public immutable COMPACT;
 
     /// @notice Resource lock tag for origin chain deposits.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     bytes12 public immutable LOCK_TAG;
 
     /// @notice The SolverEscrow contract - solver collateral management (address(0) if disabled)
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     ISolverEscrow public immutable SOLVER_ESCROW;
 
     /// @notice The Auction contract - competitive solver selection. It is immutable. Replacing it
     ///         would strand the quotes of in-flight orders in the old contract. Thus it is fixed at
     ///         deploy, and only a router redeploy can swap it.
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     IAuction public immutable AUCTION;
 
     // ============ Errors ============
@@ -55,6 +59,7 @@ abstract contract BaseRouter is OriginSettler, DestinationSettler, Ownable2Step 
      * @param escrow_  SolverEscrow address (address(0) to disable collateral checks).
      * @param auction_ Auction contract address (fixed for the router's lifetime).
      */
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address compact_, bytes12 lockTag_, address escrow_, address auction_) {
         if (compact_ == address(0)) revert InvalidCompact();
         if (lockTag_ == bytes12(0)) revert InvalidLockTag();

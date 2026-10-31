@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
@@ -33,12 +33,15 @@ import {ISolverEscrow} from "./interfaces/ISolverEscrow.sol";
 /// Setup:
 ///   1. Deploy SolverAllocator(_compact)
 ///   2. lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays)
-///   3. Deploy SolverEscrow(_compact, lockTag, collateralBps)
+///   3. Deploy SolverEscrow(_compact, lockTag) behind a proxy, initialize(owner, collateralBps)
 ///   4. allocator.setArbiter(address(escrow))
 ///   5. Deploy Router
 ///   6. escrow.setAuthorizedCaller(address(router))
 ///   7. Each solver: COMPACT.setOperator(address(escrow), true)
-contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
+///
+/// UUPS upgradeable behind an ERC1967 proxy. The Compact and the lock tag are implementation
+/// immutables, so every upgrade must pass the same values.
+contract SolverEscrow is ISolverEscrow, OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardTransient {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
@@ -48,16 +51,12 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
 
     // ============ Immutables ============
 
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     ITheCompact public immutable COMPACT;
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     bytes12 public immutable LOCK_TAG;
 
     // ============ State ============
-
-    /// @notice Authorized caller for lock/unlock/slash (Router). Set once via setAuthorizedCaller().
-    address public AUTHORIZED_CALLER;
-
-    uint256 private _nextNonce;
-    uint256 public collateralBps;
 
     struct Lock {
         address solver;
@@ -65,13 +64,51 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
         uint256 amount; // in units of `token`
     }
 
-    mapping(bytes32 orderId => Lock) public locks;
+    /// @custom:storage-location erc7201:outbe.intent.SolverEscrow
+    struct SolverEscrowStorage {
+        /// @notice Authorized caller for lock/unlock/slash (Router). Set once via setAuthorizedCaller().
+        address authorizedCaller;
+        uint256 nextNonce;
+        uint256 collateralBps;
+        mapping(bytes32 orderId => Lock) locks;
+        /// @notice ERC6909 held by the escrow on a solver's behalf while locked, in units of the id's token.
+        mapping(address solver => mapping(uint256 id => uint256)) totalLocked;
+        /// @notice Per-id pool of slashed collateral, the only source distributeReward pays from.
+        mapping(uint256 id => uint256) slashedPool;
+    }
+
+    // keccak256(abi.encode(uint256(keccak256("outbe.intent.SolverEscrow")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0xfcd14a4d6c2b4f4f93f4697811365a2d5d21a21de0443df4fad65d0c2efb3b00;
+
+    function _s() private pure returns (SolverEscrowStorage storage $) {
+        assembly ("memory-safe") {
+            $.slot := _STORAGE_SLOT
+        }
+    }
+
+    /// @notice Authorized caller for lock/unlock/slash (Router). Set once via setAuthorizedCaller().
+    function AUTHORIZED_CALLER() public view returns (address) {
+        return _s().authorizedCaller;
+    }
+
+    function collateralBps() public view returns (uint256) {
+        return _s().collateralBps;
+    }
+
+    function locks(bytes32 orderId) public view returns (address solver, address token, uint256 amount) {
+        Lock storage lock = _s().locks[orderId];
+        return (lock.solver, lock.token, lock.amount);
+    }
 
     /// @notice ERC6909 held by the escrow on a solver's behalf while locked, in units of the id's token.
-    mapping(address solver => mapping(uint256 id => uint256)) public totalLocked;
+    function totalLocked(address solver, uint256 id) public view returns (uint256) {
+        return _s().totalLocked[solver][id];
+    }
 
     /// @notice Per-id pool of slashed collateral, the only source distributeReward pays from.
-    mapping(uint256 id => uint256) public slashedPool;
+    function slashedPool(uint256 id) public view returns (uint256) {
+        return _s().slashedPool[id];
+    }
 
     // ============ Modifiers ============
 
@@ -81,35 +118,43 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     }
 
     function _onlyAuthorizedCaller() internal view {
-        if (msg.sender != AUTHORIZED_CALLER) revert UnauthorizedCaller();
+        if (msg.sender != _s().authorizedCaller) revert UnauthorizedCaller();
     }
 
     // ============ Constructor ============
 
-    constructor(address _compact, bytes12 _lockTag, uint256 _collateralBps) Ownable(msg.sender) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _compact, bytes12 _lockTag) {
         if (_compact == address(0)) revert ZeroAddress();
-        if (_collateralBps == 0 || _collateralBps > BPS_DENOMINATOR) revert InvalidBps();
         COMPACT = ITheCompact(_compact);
         LOCK_TAG = _lockTag;
-        collateralBps = _collateralBps;
+        _disableInitializers();
     }
+
+    function initialize(address _owner, uint256 _collateralBps) external initializer {
+        if (_collateralBps == 0 || _collateralBps > BPS_DENOMINATOR) revert InvalidBps();
+        __Ownable_init(_owner);
+        _s().collateralBps = _collateralBps;
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 
     // ============ Admin ============
 
     /// @notice Set the authorized caller (Router). Only the owner can call this, and only once.
     /// @param _caller The Router contract address.
     function setAuthorizedCaller(address _caller) external onlyOwner {
-        if (AUTHORIZED_CALLER != address(0)) revert AuthorizedCallerAlreadySet();
+        if (_s().authorizedCaller != address(0)) revert AuthorizedCallerAlreadySet();
         if (_caller == address(0)) revert ZeroAddress();
-        AUTHORIZED_CALLER = _caller;
+        _s().authorizedCaller = _caller;
         emit AuthorizedCallerSet(_caller);
     }
 
     /// @notice Update collateral requirement in basis points (e.g. 1000 = 10%)
     function setCollateralBps(uint256 _collateralBps) external onlyOwner {
         if (_collateralBps == 0 || _collateralBps > BPS_DENOMINATOR) revert InvalidBps();
-        uint256 oldBps = collateralBps;
-        collateralBps = _collateralBps;
+        uint256 oldBps = _s().collateralBps;
+        _s().collateralBps = _collateralBps;
         emit CollateralBpsUpdated(oldBps, _collateralBps);
     }
 
@@ -167,7 +212,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
 
         COMPACT.allocatedTransfer(
             AllocatedTransfer({
-                allocatorData: "", nonce: _nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
+                allocatorData: "", nonce: _s().nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
             })
         );
 
@@ -188,13 +233,13 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     {
         if (amount == 0) revert InvalidAmount();
         if (solver == address(0)) revert ZeroAddress();
-        if (locks[orderId].amount != 0) revert LockAlreadyExists();
+        if (_s().locks[orderId].amount != 0) revert LockAlreadyExists();
 
         uint256 id = _lockId(token);
         if (IERC6909(address(COMPACT)).balanceOf(solver, id) < amount) revert InsufficientAvailableBalance();
 
-        locks[orderId] = Lock({solver: solver, token: token, amount: amount});
-        totalLocked[solver][id] += amount;
+        _s().locks[orderId] = Lock({solver: solver, token: token, amount: amount});
+        _s().totalLocked[solver][id] += amount;
 
         IERC6909(address(COMPACT)).transferFrom(solver, address(this), id, amount);
 
@@ -217,7 +262,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     function slashCollateral(bytes32 orderId) external onlyAuthorizedCaller {
         Lock memory lock = _consumeLock(orderId);
 
-        slashedPool[_lockId(lock.token)] += lock.amount;
+        _s().slashedPool[_lockId(lock.token)] += lock.amount;
 
         emit CollateralSlashed(orderId, lock.solver, lock.token, lock.amount);
     }
@@ -240,12 +285,12 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
         uint256 id = _lockId(token);
 
         // Only slashed collateral is payable. The escrow's balance also holds live locks.
-        uint256 available = slashedPool[id];
+        uint256 available = _s().slashedPool[id];
         if (available < reward) {
             emit RewardSkipped(token, reward, available);
             return 0;
         }
-        slashedPool[id] -= reward;
+        _s().slashedPool[id] -= reward;
 
         // Release underlying tokens to receiver via allocatedTransfer
         Component[] memory recipients = new Component[](1);
@@ -253,7 +298,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
 
         COMPACT.allocatedTransfer(
             AllocatedTransfer({
-                allocatorData: "", nonce: _nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
+                allocatorData: "", nonce: _s().nextNonce++, expires: type(uint256).max, id: id, recipients: recipients
             })
         );
 
@@ -265,7 +310,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     /// @inheritdoc ISolverEscrow
     function getCollateralAmount(uint256 outputAmount) public view returns (uint256) {
         // Rounds down, in favor of the solver.
-        return (outputAmount * collateralBps) / BPS_DENOMINATOR;
+        return (outputAmount * _s().collateralBps) / BPS_DENOMINATOR;
     }
 
     /// @inheritdoc ISolverEscrow
@@ -283,7 +328,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
     {
         uint256 id = _lockId(token);
         available = IERC6909(address(COMPACT)).balanceOf(owner, id);
-        locked = totalLocked[owner][id];
+        locked = _s().totalLocked[owner][id];
         total = available + locked;
     }
 
@@ -293,7 +338,7 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
         for (uint256 i = 0; i < tokens.length; i++) {
             uint256 id = _lockId(tokens[i]);
             uint256 available = IERC6909(address(COMPACT)).balanceOf(owner, id);
-            uint256 locked = totalLocked[owner][id];
+            uint256 locked = _s().totalLocked[owner][id];
             infos[i] = BalanceInfo({token: tokens[i], total: available + locked, locked: locked, available: available});
         }
         return infos;
@@ -308,11 +353,11 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step, ReentrancyGuardTransient {
 
     /// @dev Validates the lock exists, decrements totalLocked, deletes the lock, and returns it.
     function _consumeLock(bytes32 orderId) private returns (Lock memory lock) {
-        lock = locks[orderId];
+        lock = _s().locks[orderId];
         if (lock.amount == 0) revert LockNotFound();
 
-        totalLocked[lock.solver][_lockId(lock.token)] -= lock.amount;
-        delete locks[orderId];
+        _s().totalLocked[lock.solver][_lockId(lock.token)] -= lock.amount;
+        delete _s().locks[orderId];
     }
 
     function _depositNative(address solver) private {
