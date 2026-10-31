@@ -58,6 +58,18 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         IntexContract::new(s.clone())
             .seed_called_group(id, DEADLINE)
             .unwrap();
+        // The pass starts the day before the deadline, and the Oracle is final past its close.
+        super::called::prepare_daily_pass(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, DEADLINE, 1),
+            s.clone(),
+        ))
+        .unwrap();
+        outbe_oracle::schema::OracleContract::new(s.clone())
+            .utc_day_vwap_last_finalized
+            .write(outbe_primitives::time::timestamp_to_date_key(
+                DEADLINE + 2 * DAY,
+            ))
+            .unwrap();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::ZERO
@@ -71,7 +83,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
-        crate::hooks::sweep_forfeits(&ctx)?;
+        super::called::daily_pass(&ctx)?;
         crate::notify::send_call_notices(&ctx)
     })
 }

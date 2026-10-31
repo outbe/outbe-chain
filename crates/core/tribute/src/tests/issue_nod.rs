@@ -461,15 +461,10 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
             .unwrap();
         let forfeit_ts = deadline + outbe_primitives::time::SECONDS_PER_DAY;
         storage.set_block_timestamp(U256::from(forfeit_ts)).unwrap();
-        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(10, forfeit_ts, 1),
-            storage.clone(),
-        );
         let promis_before = outbe_promislimit::PromisLimitContract::new(storage.clone())
             .promis_limit()
             .unwrap();
-        let forfeited = outbe_nodfactory::forfeited::sweep_expired(&ctx).unwrap();
-        assert_eq!(forfeited, 1);
+        run_nod_daily_pass(&storage, 10, forfeit_ts);
 
         // Both unpaid Nod load and unclaimed Tribute load were returned in one credit
         let promis_after = outbe_promislimit::PromisLimitContract::new(storage.clone())
@@ -656,21 +651,16 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             call_ts
         );
 
-        // Advance past call notice period and run automatic `NodForfeit` (`sweep_expired`)
+        // Advance past call notice period and run the Nod daily pass
         let terms = nod_contract.read_call_terms(group_key).unwrap();
         let deadline =
             outbe_nod::api::settlement_deadline_of(call_ts, terms.call_notice_period_seconds);
         let forfeit_ts = deadline + SECONDS_PER_DAY;
         storage.set_block_timestamp(U256::from(forfeit_ts)).unwrap();
-        let forfeit_ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(21, forfeit_ts, 1),
-            storage.clone(),
-        );
         let promis_before = outbe_promislimit::PromisLimitContract::new(storage.clone())
             .promis_limit()
             .unwrap();
-        let forfeited = outbe_nodfactory::forfeited::sweep_expired(&forfeit_ctx).unwrap();
-        assert_eq!(forfeited, 1);
+        run_nod_daily_pass(&storage, 21, forfeit_ts);
         let promis_after = outbe_promislimit::PromisLimitContract::new(storage.clone())
             .promis_limit()
             .unwrap();
@@ -888,4 +878,40 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
             .unwrap()
             .is_none());
     });
+}
+
+/// Runs the Nod daily pass at `timestamp` through the UTC day before it, one day per block
+/// from `height`, as the Cycle does.
+fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u64) {
+    use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
+
+    let closed = previous_date_key(timestamp_to_date_key(timestamp)).unwrap();
+    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+    if oracle.utc_day_vwap_last_finalized.read().unwrap() < closed {
+        oracle.utc_day_vwap_last_finalized.write(closed).unwrap();
+    }
+    let nod = outbe_nod::NodContract::new(storage.clone());
+    if nod.daily_genesis_day.read().unwrap() == 0 {
+        nod.daily_genesis_day.write(closed).unwrap();
+    }
+    loop {
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(height, timestamp, 1),
+            storage.clone(),
+        );
+        outbe_nodfactory::called::process_call_pass(&ctx).unwrap();
+        let selected =
+            outbe_primitives::pass_budget::BlockAllowance::unpack(nod.daily_budget.read().unwrap())
+                .unwrap()
+                .map_or(0, |allowance| allowance.day);
+        let next = nod.call_sweep_day.read().unwrap();
+        if next == 0 || next == selected {
+            assert!(
+                next == 0 || selected == nod.call_latest_day.read().unwrap(),
+                "the pass stopped on day {selected} before the last closed day"
+            );
+            break;
+        }
+        height += 1;
+    }
 }

@@ -93,8 +93,7 @@ fn an_expired_position_returns_its_remainder() {
         let capacity = sent_capacity(six_decimal_u128());
         let expires = T_NOW + POSITION_VALIDITY_SECONDS;
 
-        let ctx = block_ctx(storage, expires);
-        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 0);
+        daily_pass(&block_ctx(storage, expires)).unwrap();
         assert_eq!(unallocated(storage), U256::ZERO);
         storage.set_block_timestamp(U256::from(expires)).unwrap();
         assert_eq!(
@@ -104,10 +103,9 @@ fn an_expired_position_returns_its_remainder() {
             U256::ZERO
         );
 
-        let ctx = block_ctx(storage, day_closed(expires));
-        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
+        let block = daily_pass(&block_ctx(storage, day_closed(expires))).unwrap();
         assert_eq!(unallocated(storage), capacity);
-        assert_eq!(positions_expired::cleanup_positions(&ctx).unwrap(), 1);
+        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.positions.get(id).unwrap().is_none());
@@ -128,8 +126,8 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = block_ctx(&storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
         assert!(matches!(
-            positions_expired::sweep_expired_positions(&ctx).unwrap_err(),
-            outbe_primitives::error::PrecompileError::Storage(_)
+            daily_pass(&ctx),
+            Err(outbe_primitives::error::PrecompileError::Storage(_))
         ));
         let factory = GemFactoryContract::new(storage.clone());
         let record = factory.positions.get(id).unwrap().unwrap();
@@ -161,10 +159,13 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
         )
         .unwrap();
 
-        let ctx = block_ctx(storage, day_closed(T_NOW + POSITION_VALIDITY_SECONDS));
-        assert_eq!(positions_expired::sweep_expired_positions(&ctx).unwrap(), 1);
+        let block = daily_pass(&block_ctx(
+            storage,
+            day_closed(T_NOW + POSITION_VALIDITY_SECONDS),
+        ))
+        .unwrap();
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert_eq!(positions_expired::cleanup_positions(&ctx).unwrap(), 1);
+        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
         assert!(GemFactoryContract::new(storage.clone())
             .positions
             .get(id)

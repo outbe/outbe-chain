@@ -202,10 +202,10 @@ pub(crate) fn block_ctx<'s>(storage: &StorageHandle<'s>) -> BlockRuntimeContext<
     block_ctx_at(storage, storage.now_secs().unwrap())
 }
 
-/// This helper runs one block of the raw expiry and deletion workers, independent of Oracle scheduling.
+/// One block of the daily pass and its cleanup, as the Cycle runs them.
 pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
-    crate::hooks::sweep_forfeits(ctx)?;
-    crate::hooks::cleanup(ctx)?;
+    let block = super::daily_pass(ctx)?;
+    crate::hooks::cleanup(&block)?;
     Ok(())
 }
 

@@ -245,25 +245,6 @@ pub trait DeadlineHandler<E> {
     fn deferred(&mut self, entry: E, retry_at: u64) -> Result<()>;
 }
 
-/// This function runs [`process`] with a separate budget for one block.
-pub fn process_block<'s, Q, H>(
-    queue: &Q,
-    ctx: &crate::block::BlockRuntimeContext<'s>,
-    handler: &mut H,
-) -> Result<Progress>
-where
-    Q: DeadlineQueueStore<'s>,
-    H: DeadlineHandler<Q::Entry>,
-{
-    process(
-        queue,
-        &ctx.storage,
-        ctx.block.timestamp,
-        &mut PassBudget::per_block(),
-        handler,
-    )
-}
-
 /// This function resumes the selected deadline day with the caller's shared allowance for the block.
 pub fn process_day<'s, Q, H>(
     queue: &Q,

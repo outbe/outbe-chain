@@ -179,7 +179,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
                     record(&storage, id).gratis_minor
                 );
                 assert_eq!(expire(&storage, expired_at), 1);
-                assert_eq!(expire(&storage, expired_at), 0);
+                assert_eq!(expire(&storage, expired_at + DAY), 0);
                 assert!(!CredisContract::new(storage.clone())
                     .credis_exists(id)
                     .unwrap());
@@ -704,7 +704,7 @@ fn a_half_paid_call_forfeits_only_the_unpaid_backing_of_another_accounts_source(
         advance_to(&storage, deadline + CLOSED_DAY_DELAY);
         finalize_through(&storage, deadline + CLOSED_DAY_DELAY);
         assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY), 1);
-        assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY), 0);
+        assert_eq!(expire(&storage, deadline + CLOSED_DAY_DELAY + DAY), 0);
         assert!(!CredisContract::new(storage.clone())
             .credis_exists(credis_id)
             .unwrap());
@@ -945,14 +945,26 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
         let deadline = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, deadline);
         finalize_through(&storage, deadline);
+        prepare_daily_pass(&storage, deadline).unwrap();
         (id, deadline)
     });
     let (called_views, called_read) =
         measure(&mut provider, |storage| credis_views(storage, called_id));
-    let (voided, void) = measure(&mut provider, |storage| expire(storage, deadline));
+    let (_, void) = measure(&mut provider, |storage| {
+        crate::called::process_call_pass(&BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(BLOCK_NUMBER, deadline, CHAIN_ID),
+            storage.clone(),
+        ))
+        .unwrap()
+    });
+    let voided = StorageHandle::enter(&mut provider, |storage| {
+        !CredisContract::new(storage.clone())
+            .credis_exists(called_id)
+            .unwrap()
+    });
     teardown();
 
-    assert_eq!(voided, 1);
+    assert!(voided);
     assert_eq!(
         [views, called_views],
         [
@@ -997,14 +1009,14 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 writes: 0,
                 logs: b256!("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"),
                 // Daily scheduling keys and nonzero queue locations change stored state.
-                state: b256!("0xd27d66fab41ea7f353d16469f9a481a8d210923a7c7180a1ce57129e57e7306a"),
+                state: b256!("0xa0ac2e9332b139949e1b33851440e4ae11ef893d7140d33b05adbbfb0361fd3f"),
             },
             Footprint {
-                gas: 354200,
-                reads: 142,
-                writes: 68,
+                gas: 463600,
+                reads: 186,
+                writes: 89,
                 logs: b256!("0x42350e0ceadf5f8160c7fd05f29d7c6fe163d7aa3f377817fb7a04adbf541b5c"),
-                state: b256!("0xfe019f46baba0f01dc01cb0e9964e90ec16c04a284358bc7ec8db5be8e993bc8"),
+                state: b256!("0x8e5d260e458ff943fe7bb2949f9f5350bad9da1f0f28229c22a5b633635832f0"),
             },
         ]
     );

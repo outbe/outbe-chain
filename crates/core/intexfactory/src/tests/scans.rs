@@ -407,7 +407,7 @@ fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 
 fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
     let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
-    crate::forfeited::sweep_expired(&ctx).unwrap();
+    called::daily_pass(&ctx).unwrap();
 }
 
 #[test]
@@ -476,68 +476,111 @@ fn an_uncalled_group_never_enters_the_deadline_queue() {
     });
 }
 
-#[test]
-fn a_node_local_failure_while_expiring_fails_the_sweep() {
-    let mut provider = factory_provider();
-    let now = ISSUED_AT;
-    let due = IntexContract::day_end(IntexContract::deadline_day(now + DAY));
-    let member = StorageHandle::enter(&mut provider, |s| {
-        select_prod_profile(&s);
-        called_series(&s, 20260101, now + DAY)
-    });
-    provider.fail_after_mutation_at(0);
-    let result = StorageHandle::enter(&mut provider, |s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s);
-        crate::forfeited::sweep_expired(&ctx)
-    });
-    provider.clear_mutation_failure();
-    assert!(matches!(
-        result,
-        Err(outbe_primitives::error::PrecompileError::Storage(_))
-    ));
-    StorageHandle::enter(&mut provider, |s| {
-        assert!(queued(&s, member));
-        assert_eq!(
-            IntexContract::new(s).first_expiry_day().unwrap(),
-            Some(IntexContract::deadline_day(now + DAY))
+/// Fails each storage write of the daily pass at `at` in turn: the pass errors, and its
+/// checkpoint leaves the armed state as it was.
+fn every_failed_pass_write_rolls_back(
+    arm: impl Fn(&StorageHandle<'_>) -> SeriesId,
+    at: u64,
+    done: impl Fn(&StorageHandle<'_>, SeriesId),
+    check: impl Fn(&StorageHandle<'_>, SeriesId),
+) {
+    let armed = || {
+        let mut provider = factory_provider();
+        let member = StorageHandle::enter(&mut provider, |s| {
+            select_prod_profile(&s);
+            let member = arm(&s);
+            called::prepare_daily_pass(&BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, at, CHAIN_ID),
+                s,
+            ))
+            .unwrap();
+            member
+        });
+        (provider, member)
+    };
+    let pass = |provider: &mut HashMapStorageProvider| {
+        StorageHandle::enter(provider, |s| {
+            called::daily_pass(&BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, at, CHAIN_ID),
+                s,
+            ))
+            .map(|_| ())
+        })
+    };
+    let (mut probe, member) = armed();
+    probe.fail_after_mutation_at(usize::MAX);
+    pass(&mut probe).unwrap();
+    let writes = probe.clear_mutation_failure();
+    assert!(writes > 0);
+    StorageHandle::enter(&mut probe, |s| done(&s, member));
+    for write in 0..writes {
+        let (mut provider, member) = armed();
+        let before = provider.storage.clone();
+        provider.fail_after_mutation_at(write);
+        let result = pass(&mut provider);
+        provider.clear_mutation_failure();
+        assert!(
+            matches!(
+                result,
+                Err(outbe_primitives::error::PrecompileError::Storage(_))
+            ),
+            "write {write}: {result:?}"
         );
-    });
+        assert_eq!(provider.storage, before, "write {write}");
+        StorageHandle::enter(&mut provider, |s| check(&s, member));
+    }
 }
 
 #[test]
-fn a_node_local_failure_while_deferring_fails_the_sweep() {
-    let mut provider = factory_provider();
+fn a_node_local_failure_while_expiring_fails_the_pass() {
+    let now = ISSUED_AT;
+    let due = IntexContract::day_end(IntexContract::deadline_day(now + DAY));
+    every_failed_pass_write_rolls_back(
+        |s| called_series(s, 20260101, now + DAY),
+        due,
+        |s, member| assert!(!queued(s, member)),
+        |s, member| {
+            assert!(queued(s, member));
+            assert_eq!(
+                IntexContract::new(s.clone()).first_expiry_day().unwrap(),
+                Some(IntexContract::deadline_day(now + DAY))
+            );
+        },
+    );
+}
+
+#[test]
+fn a_node_local_failure_while_deferring_fails_the_pass() {
     let now = ISSUED_AT;
     let day = IntexContract::deadline_day(now + DAY);
-    let member = StorageHandle::enter(&mut provider, |s| {
-        select_prod_profile(&s);
-        let member = called_series(&s, 20260101, now + DAY);
-        // More settled than issued: the group cannot expire, so the sweep defers it.
-        IntexContract::new(s)
-            .settled_units
-            .write(&outbe_intex::intex_id(member), 1_000)
-            .unwrap();
-        member
-    });
-    provider.fail_after_mutation_at(0);
-    let result = StorageHandle::enter(&mut provider, |s| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, IntexContract::day_end(day), CHAIN_ID),
-            s,
-        );
-        crate::forfeited::sweep_expired(&ctx)
-    });
-    provider.clear_mutation_failure();
-    assert!(matches!(
-        result,
-        Err(outbe_primitives::error::PrecompileError::Storage(_))
-    ));
-    StorageHandle::enter(&mut provider, |s| {
-        assert!(queued(&s, member));
-        let f = IntexContract::new(s);
-        assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 1);
-        assert_eq!(f.first_expiry_day().unwrap(), Some(day));
-    });
+    every_failed_pass_write_rolls_back(
+        |s| {
+            let member = called_series(s, 20260101, now + DAY);
+            // More settled than issued: the group cannot expire, so the pass defers it.
+            IntexContract::new(s.clone())
+                .settled_units
+                .write(&outbe_intex::intex_id(member), 1_000)
+                .unwrap();
+            member
+        },
+        IntexContract::day_end(day),
+        |s, member| {
+            assert!(queued(s, member));
+            assert_eq!(
+                IntexContract::new(s.clone())
+                    .forfeit_day_live
+                    .read(&day)
+                    .unwrap(),
+                0
+            );
+        },
+        |s, member| {
+            assert!(queued(s, member));
+            let f = IntexContract::new(s.clone());
+            assert_eq!(f.forfeit_day_live.read(&day).unwrap(), 1);
+            assert_eq!(f.first_expiry_day().unwrap(), Some(day));
+        },
+    );
 }
 
 #[test]
@@ -704,8 +747,8 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
         let ctx =
             BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
-        crate::hooks::sweep_forfeits(&ctx).unwrap();
-        crate::hooks::cleanup(&ctx).unwrap();
+        let block = called::daily_pass(&ctx).unwrap();
+        crate::hooks::cleanup(&block).unwrap();
 
         let f = IntexContract::new(s.clone());
         assert!(!outbe_intex::api::series_exists(&s, spent).unwrap());

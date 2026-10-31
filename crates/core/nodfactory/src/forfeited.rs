@@ -13,15 +13,6 @@ use outbe_primitives::{
 use outbe_nod::state::ForfeitQueue;
 use outbe_nod::{precompile::INod, schema::NodContract};
 
-/// Forfeits the called groups whose notice period lapsed. Returns the groups forfeited.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = NodContract::new(ctx.storage.clone());
-    let mut expiry = NodForfeit::new(ctx);
-    deadline_queue::process_block(&ForfeitQueue(&queue), ctx, &mut expiry)?;
-    Ok(expiry.forfeited)
-}
-
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -40,7 +31,6 @@ pub(crate) fn forfeit_through(
 struct NodForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
-    forfeited: u32,
 }
 
 impl<'a, 's> NodForfeit<'a, 's> {
@@ -48,7 +38,6 @@ impl<'a, 's> NodForfeit<'a, 's> {
         Self {
             storage: &ctx.storage,
             nod: NodContract::new(ctx.storage.clone()),
-            forfeited: 0,
         }
     }
 }
@@ -101,7 +90,6 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
             nods,
             gratisLoadMinor: load,
         })?;
-        self.forfeited = self.forfeited.saturating_add(1);
         Ok(())
     }
 

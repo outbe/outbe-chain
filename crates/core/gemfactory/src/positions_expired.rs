@@ -15,16 +15,6 @@ use crate::schema::GemFactoryContract;
 use crate::state::{PositionCleanupQueue, PositionExpiryQueue};
 use alloy_primitives::U256;
 
-/// Returns the unissued capacity of the hours whose positions expired. Returns the
-/// hours expired.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let queue = GemFactoryContract::new(ctx.storage.clone());
-    let mut expiry = PositionExpiry::new(ctx);
-    deadline_queue::process_block(&PositionExpiryQueue(&queue), ctx, &mut expiry)?;
-    Ok(expiry.expired)
-}
-
 pub(crate) fn expire_through(
     ctx: &BlockRuntimeContext,
     through_day: u32,
@@ -59,7 +49,6 @@ pub fn cleanup_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
 struct PositionExpiry<'a, 's> {
     storage: &'a StorageHandle<'s>,
     factory: GemFactoryContract<'s>,
-    expired: u32,
 }
 
 impl<'a, 's> PositionExpiry<'a, 's> {
@@ -67,7 +56,6 @@ impl<'a, 's> PositionExpiry<'a, 's> {
         Self {
             storage: &ctx.storage,
             factory: GemFactoryContract::new(ctx.storage.clone()),
-            expired: 0,
         }
     }
 }
@@ -111,7 +99,6 @@ impl DeadlineHandler<u64> for PositionExpiry<'_, '_> {
                 returnedCapacityMinor: returned,
             },
         )?;
-        self.expired = self.expired.saturating_add(1);
         Ok(())
     }
 

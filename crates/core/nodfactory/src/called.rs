@@ -4,9 +4,9 @@
 //!
 //! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
-//! trailing `call_window_seconds`. The call queues it on its deadline, and every
-//! CycleTick forfeits the groups whose `call_notice_period_seconds` lapsed
-//! (`forfeited::sweep_expired`).
+//! trailing `call_window_seconds`. The call queues it on its deadline, and the daily pass
+//! forfeits the groups whose `call_notice_period_seconds` lapsed
+//! (`forfeited::forfeit_through`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
