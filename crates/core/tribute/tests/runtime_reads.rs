@@ -133,13 +133,26 @@ fn encrypted_issue_preserves_ciphertext_events_and_public_reads_without_enclave(
         assert_eq!(returned.tributeCount, 1);
         assert!(!returned.tributeNominalTotalMinor.is_empty());
     });
-    let issued = provider
-        .get_events(outbe_primitives::addresses::TRIBUTE_ADDRESS)
+    let events = provider.get_events(outbe_primitives::addresses::TRIBUTE_ADDRESS);
+    let (raw_log, offered) = events
         .iter()
-        .find_map(|event| ITribute::TributeIssued::decode_log_data(event).ok())
+        .find_map(|event| {
+            ITribute::TributeOffered::decode_log_data(event)
+                .ok()
+                .map(|decoded| (event, decoded))
+        })
         .unwrap();
-    assert_eq!(issued.issuanceAmountMinor.as_ref(), body.encrypted_amounts);
-    assert_eq!(issued.nominalAmountMinor.as_ref(), body.encrypted_amounts);
+    assert_eq!(raw_log.topics().len(), 4);
+    assert_eq!(raw_log.data.len(), 64);
+    assert!(!raw_log
+        .data
+        .windows(body.encrypted_amounts.len())
+        .any(|window| window == body.encrypted_amounts.as_slice()));
+    assert_eq!(offered.tributeId, body.context.tribute_id.to_u256());
+    assert_eq!(offered.owner, body.context.owner);
+    assert_eq!(offered.worldwideDay, body.context.worldwide_day.value());
+    assert_eq!(offered.issuanceCurrency, body.context.issuance_currency);
+    assert_eq!(offered.referenceCurrency, body.context.reference_currency);
 }
 
 #[test]

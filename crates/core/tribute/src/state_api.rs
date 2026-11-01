@@ -100,13 +100,12 @@ pub fn issue_encrypted_with_league(
         contract.tribute_leagues.write(&record.tribute_id, league)?;
         contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
         contract.insert_state_record(&StoredTribute::from(body))?;
-        contract.emit(ITribute::TributeIssued {
-            owner: record.owner,
+        contract.emit(ITribute::TributeOffered {
             tributeId: record.tribute_id.to_u256(),
+            owner: record.owner,
             worldwideDay: record.worldwide_day.into(),
-            issuanceAmountMinor: body.encrypted_amounts.clone().into(),
-            settlementCurrency: record.issuance_currency,
-            nominalAmountMinor: body.encrypted_amounts.clone().into(),
+            issuanceCurrency: record.issuance_currency,
+            referenceCurrency: record.reference_currency,
         })
     })
 }
@@ -163,14 +162,13 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
         contract.emit(ITribute::TributeBurned {
             tributeId: record.tribute_id.to_u256(),
             owner: record.owner,
-            worldwideDay: record.worldwide_day.into(),
         })
     })
 }
 
 pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<bool> {
     storage.require_metadosis_process_ready()?;
-    let mut contract = TributeContract::new(storage.clone());
+    let contract = TributeContract::new(storage.clone());
     storage.with_checkpoint(|| {
         if contract.retired_days.read(&day)? {
             return Ok(false);
@@ -187,9 +185,6 @@ pub fn retire_completed_day(storage: &StorageHandle<'_>, day: WorldwideDay) -> R
             return Err(TributeError::WorldwideDayNotCompletedAndEmpty.into());
         }
         contract.retired_days.write(&day, true)?;
-        contract.emit(ITribute::TributePartitionRetired {
-            worldwideDay: day.into(),
-        })?;
         Ok(true)
     })
 }

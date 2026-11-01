@@ -48,13 +48,8 @@ interface ITributeFactory {
     error DurationOverflow(string label);
     error DateStep(uint8 kind, uint32 dateKey);
 
-    event WorldwideDayStarted(
-        uint32 indexed worldwideDay,
-        uint32 indexed day,
-        uint64 formingStart,
-        uint64 formingEnd,
-        uint64 offeringsStart,
-        uint64 offeringEnd
+    event WorldwideDayOpened(
+        uint32 indexed worldwideDay, uint64 formingStart, uint64 formingEnd, uint64 offeringStart, uint64 offeringEnd
     );
 
     function getWorldwideDay(uint32 wwd)

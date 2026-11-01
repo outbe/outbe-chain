@@ -226,82 +226,33 @@
   },
   {
     "type": "event",
-    "name": "CertifiedTributePartitionRetired",
-    "inputs": [
-      {
-        "name": "activationCallId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "sourceGeneration",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "consumedCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "consumedNominalTotalMinor",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      },
-      {
-        "name": "retiredGeneration",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "stateEventDigest",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TributeBurned",
     "inputs": [
       {
         "name": "tributeId",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
         "name": "owner",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TributeIssued",
+    "name": "TributeOffered",
     "inputs": [
+      {
+        "name": "tributeId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "owner",
         "type": "address",
@@ -309,66 +260,35 @@
         "internalType": "address"
       },
       {
-        "name": "tributeId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "worldwideDay",
         "type": "uint32",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "issuanceAmountMinor",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      },
-      {
-        "name": "settlementCurrency",
+        "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
       },
       {
-        "name": "nominalAmountMinor",
-        "type": "bytes",
+        "name": "referenceCurrency",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "TributePartitionRetired",
+    "name": "WorldwideDaySealed",
     "inputs": [
       {
         "name": "worldwideDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TributeWorldwideDaySealed",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "isSealed",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -516,12 +436,12 @@
   },
   {
     "type": "error",
-    "name": "WorldwideDayNotCompletedAndEmpty",
+    "name": "WorldwideDayIsSealed",
     "inputs": []
   },
   {
     "type": "error",
-    "name": "WorldwideDaySealed",
+    "name": "WorldwideDayNotCompletedAndEmpty",
     "inputs": []
   }
 ]

@@ -956,7 +956,7 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
 
 #[test]
 fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_close() {
-    use alloy_sol_types::SolError;
+    use alloy_sol_types::{SolError, SolEvent};
     let wwd = WorldwideDay::new(20261001);
     let err: PrecompileError =
         crate::errors::TributeFactoryError::CurrencyPriceUnavailable { worldwide_day: wwd }.into();
@@ -1031,4 +1031,27 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
             })
             .unwrap();
     });
+    let factory_events = provider.get_events(outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS);
+    assert_eq!(
+        factory_events.len(),
+        crate::worldwideday::constants::MAX_PIPELINE_WWDS + 1
+    );
+    let last_opened = crate::precompile::ITributeFactory::WorldwideDayOpened::decode_log_data(
+        factory_events.last().unwrap(),
+    )
+    .unwrap();
+    let (hist_schedule, _) =
+        crate::worldwideday::compute_wwd_schedule(WorldwideDay::new(20260901)).unwrap();
+    assert_eq!(last_opened.worldwideDay, 20260901);
+    assert_eq!(last_opened.formingStart, hist_schedule.forming_start);
+    assert_eq!(last_opened.formingEnd, hist_schedule.forming_end);
+    assert_eq!(last_opened.offeringStart, hist_schedule.offerings_start);
+    assert_eq!(last_opened.offeringEnd, hist_schedule.offering_end);
+    let tribute_events = provider.get_events(outbe_primitives::addresses::TRIBUTE_ADDRESS);
+    assert_eq!(tribute_events.len(), 1);
+    let sealed = outbe_tribute::precompile::ITribute::WorldwideDaySealed::decode_log_data(
+        &tribute_events[0],
+    )
+    .unwrap();
+    assert_eq!(sealed.worldwideDay, 20260901);
 }

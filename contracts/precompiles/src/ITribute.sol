@@ -6,7 +6,7 @@ interface ITribute {
     error TributeAlreadyExists();
     error InvalidOwner();
     error IssuanceAmountMustBePositive();
-    error WorldwideDaySealed();
+    error WorldwideDayIsSealed();
     error OwnerBalanceOverflow();
     error QueryLimitExceeded();
     error DayResponseScopeMismatch();
@@ -24,32 +24,17 @@ interface ITribute {
     error TributeForfeited();
     error TributeNotForfeited();
 
-    event TributeIssued(
+    event TributeOffered(
+        uint256 indexed tributeId,
         address indexed owner,
-        uint256 tributeId,
-        uint32 worldwideDay,
-        bytes issuanceAmountMinor,
-        uint16 settlementCurrency,
-        bytes nominalAmountMinor
-    );
-
-    event TributeBurned(uint256 tributeId, address owner, uint32 worldwideDay);
-
-    event TributeWorldwideDaySealed(uint32 indexed worldwideDay, bool isSealed);
-
-    /// @notice Canonical projection event for certified Lysis retirement and
-    /// Metadosis terminal authorities.
-    event TributePartitionRetired(uint32 indexed worldwideDay);
-
-    event CertifiedTributePartitionRetired(
-        bytes32 indexed activationCallId,
         uint32 indexed worldwideDay,
-        uint64 sourceGeneration,
-        uint32 consumedCount,
-        bytes consumedNominalTotalMinor,
-        uint64 retiredGeneration,
-        bytes32 stateEventDigest
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency
     );
+
+    event WorldwideDaySealed(uint32 indexed worldwideDay);
+
+    event TributeBurned(uint256 indexed tributeId, address indexed owner);
 
     function name() external view returns (string memory);
     function symbol() external view returns (string memory);

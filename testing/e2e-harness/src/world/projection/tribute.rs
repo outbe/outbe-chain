@@ -41,14 +41,14 @@ pub(super) fn snapshot(
                     .map_err(Into::into)
             })
             .collect::<Result<Vec<_>>>()?;
-        if topics.first() != Some(&ITribute::TributeIssued::SIGNATURE_HASH) {
+        if topics.first() != Some(&ITribute::TributeOffered::SIGNATURE_HASH) {
             continue;
         }
         let data: Bytes = log["data"]
             .as_str()
             .ok_or_else(|| eyre!("Tribute log omitted data"))?
             .parse()?;
-        let event = ITribute::TributeIssued::decode_raw_log(topics, &data)?;
+        let event = ITribute::TributeOffered::decode_raw_log(topics, &data)?;
         if issued.replace(event).is_some() {
             bail!("transaction emitted multiple Tribute identities");
         }
@@ -58,7 +58,11 @@ pub(super) fn snapshot(
     let record = rpc
         .tribute_state_at(port, checkpoint, id)?
         .ok_or_else(|| eyre!("Tribute state is absent"))?;
-    if record.owner != issued.owner || record.worldwide_day.value() != issued.worldwideDay {
+    if record.owner != issued.owner
+        || record.worldwide_day.value() != issued.worldwideDay
+        || record.issuance_currency != issued.issuanceCurrency
+        || record.reference_currency != issued.referenceCurrency
+    {
         bail!("Tribute state differs from issuance event");
     }
     let (mut owner_ids, mut day_ids) =

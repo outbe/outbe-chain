@@ -340,7 +340,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
         .iter()
         .filter(|log| crate::precompile::ITribute::TributeBurned::decode_log_data(log).is_ok())
         .count();
-    assert_eq!(burned, 1);
+    assert_eq!(burned, 0);
 }
 
 #[test]
@@ -710,7 +710,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
     let owner2 = address!("0x2222222222222222222222222222222222222222");
     let stranger = address!("0x9999999999999999999999999999999999999999");
 
-    StorageHandle::enter(&mut provider, |storage| {
+    let normal_tribute_id = StorageHandle::enter(&mut provider, |storage| {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
 
@@ -796,7 +796,18 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         .abi_encode();
         crate::precompile::dispatch(storage.clone(), &clean_retired, stranger, U256::ZERO).unwrap();
         assert!(tc.get_fi_groups(day_retired).unwrap().is_empty());
+        t_normal.tribute_id.to_u256()
     });
+
+    // Only step 2 (issue_nod on t_normal) emits TributeBurned; neither clean_aborted (!retired)
+    // nor clean_retired (retired) emits TributeBurned.
+    let burned: Vec<_> = provider
+        .get_events(TRIBUTE_ADDRESS)
+        .iter()
+        .filter_map(|log| crate::precompile::ITribute::TributeBurned::decode_log_data(log).ok())
+        .map(|ev| (ev.tributeId, ev.owner))
+        .collect();
+    assert_eq!(burned, vec![(normal_tribute_id, owner2)]);
 }
 
 #[test]

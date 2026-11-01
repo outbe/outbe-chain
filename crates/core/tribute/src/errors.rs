@@ -160,7 +160,7 @@ impl From<TributeError> for PrecompileError {
             TributeError::IssuanceAmountMustBePositive => {
                 revert_with(I::IssuanceAmountMustBePositive {})
             }
-            TributeError::WorldwideDaySealed => revert_with(I::WorldwideDaySealed {}),
+            TributeError::WorldwideDaySealed => revert_with(I::WorldwideDayIsSealed {}),
             TributeError::OwnerBalanceOverflow => revert_with(I::OwnerBalanceOverflow {}),
             TributeError::QueryLimitExceeded => revert_with(I::QueryLimitExceeded {}),
             TributeError::DayResponseScopeMismatch => revert_with(I::DayResponseScopeMismatch {}),
