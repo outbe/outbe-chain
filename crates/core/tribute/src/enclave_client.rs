@@ -68,7 +68,10 @@ pub(crate) fn encrypt_nod_for_tribute(
 }
 
 /// Explicit test seam using the real cryptographic engines, without transport.
-/// Release builds contain neither this fixture secret nor this bypass.
+/// Release builds contain neither this fixture secret nor this bypass: the crate
+/// root rejects `all(feature = "test-enclave", feature = "production-enclave")`
+/// at compile time and CI's `no-test-deps` gate rejects `test-enclave` in the
+/// production dependency graph.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use std::cell::Cell;

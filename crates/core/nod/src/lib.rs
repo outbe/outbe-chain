@@ -4,6 +4,14 @@
 //! NodFactory applies every rule and runs the call and forfeit sweeps through [`api`].
 //! The precompile surface is the Nod NFT and its views.
 
+#[cfg(all(feature = "test-enclave", feature = "production-enclave"))]
+compile_error!(
+    "outbe-nod: `test-enclave` selects an in-process stand-in that skips \
+     attestation, and it has been unified into a production build. Some \
+     dependency edge enables it outside [dev-dependencies] — cargo features \
+     are additive, so one such edge anywhere in the graph is enough."
+);
+
 pub mod api;
 pub mod codec;
 pub mod config;

@@ -27,6 +27,9 @@ outbe-tee-enclave.workspace = true
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+# Enabled by the node binary in release builds. Asserts, at compile time, that
+# the attestation-skipping in-process stand-in is not in this build.
+production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Gratis path (mirrors gratispool's old `test-helpers`).
 test-enclave = ["dep:outbe-tee-enclave"]
