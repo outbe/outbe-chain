@@ -524,19 +524,27 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
             CommandClass::KeylessOnboardingArtifact
         }
         EnclaveRequest::ProcessTributeOfferBatch { .. }
+        | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
         | EnclaveRequest::ExecuteLysis { .. }
+        | EnclaveRequest::ExecuteLysisFractionsV1 { .. }
         | EnclaveRequest::MineEncryptedNodV1 { .. }
-        | EnclaveRequest::ReadNodAmountV1 { .. }
         | EnclaveRequest::EncryptNodForTributeV1 { .. }
+        | EnclaveRequest::IssueNodFromTributeV1 { .. }
+        | EnclaveRequest::EncryptNodQuoteV1 { .. }
+        | EnclaveRequest::ApplyTributeDayOpV2 { .. }
+        | EnclaveRequest::ApplyTributeLeagueOpV1 { .. }
+        | EnclaveRequest::ApplyNodGroupLoadOpV1 { .. } => CommandClass::Ready,
+        EnclaveRequest::ReadNodAmountV1 { .. }
+        | EnclaveRequest::ReadTributeAmountsV2 { .. }
+        | EnclaveRequest::ReadTributeDayAmountV2 { .. }
+        | EnclaveRequest::ReadTributeLeagueAmountV1 { .. }
+        | EnclaveRequest::ReadTributeDayFractionsV1 { .. }
+        | EnclaveRequest::ReadNodGroupLoadV1 { .. }
         | EnclaveRequest::NodTransferChunkV1 { .. }
         | EnclaveRequest::ExecuteNodTransferV1 { .. }
         | EnclaveRequest::ReadNodTransferV1 { .. }
-        | EnclaveRequest::DiscardNodTransferV1 { .. }
-        | EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 { .. }
-        | EnclaveRequest::ReadTributeAmountsV2 { .. }
-        | EnclaveRequest::ApplyTributeDayOpV2 { .. }
-        | EnclaveRequest::ReadTributeDayAmountV2 { .. }
-        | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
+        | EnclaveRequest::DiscardNodTransferV1 { .. } => CommandClass::Ready,
+        EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV1 { .. }
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }

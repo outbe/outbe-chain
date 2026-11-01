@@ -13,6 +13,7 @@ struct RelayedNod {
     head: u64,
     body: eth::INod::NodData,
     gratis_load: U256,
+    settlement_cost: U256,
     group_key: B256,
     vault: Address,
     asset: Address,
@@ -131,7 +132,8 @@ fn prepare_relayed_nod(
     );
     assert_eq!(initial.owner, owner);
     assert!(!initial.isSettled);
-    assert!(!initial.settlementCostMinor.is_zero());
+    let initial_cost = crate::internal::nod_keys::settlement_cost_minor(world, &initial);
+    assert!(!initial_cost.is_zero());
     let head = world.rpc.head(port).expect("issued head");
     world
         .rpc
@@ -142,6 +144,8 @@ fn prepare_relayed_nod(
     assert_snapshot_bodies(&issued, &issued_bodies);
     let body = issued.body.as_ref().expect("issued public Nod");
     let gratis_load = crate::internal::nod_keys::decrypt(world, body);
+    let settlement_cost = crate::internal::nod_keys::settlement_cost_minor(world, body);
+    assert_eq!(settlement_cost, initial_cost);
     assert!(!body.isSettled);
     let group_key = issued_bodies.1.group_key;
     let vault = eth::read_call(
@@ -165,8 +169,7 @@ fn prepare_relayed_nod(
             owner_key: PAYER_KEY,
             owner: payer,
             spender: addresses::NOD_FACTORY_ADDR,
-            amount: body
-                .settlementCostMinor
+            amount: settlement_cost
                 .checked_mul(U256::from(2))
                 .expect("two settlement costs"),
         },
@@ -187,6 +190,7 @@ fn prepare_relayed_nod(
         head,
         body,
         gratis_load,
+        settlement_cost,
         group_key,
         vault,
         asset,
@@ -226,7 +230,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
             owner: scenario.owner,
             nodId: scenario.id,
             asset: scenario.asset,
-            paymentMinor: scenario.body.settlementCostMinor,
+            paymentMinor: scenario.settlement_cost,
         },
     );
     for &peer in &scenario.ports {
@@ -253,11 +257,7 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
             ],
             settled_height,
         );
-        assert_payment_delta(
-            balances_before,
-            balances_after,
-            scenario.body.settlementCostMinor,
-        );
+        assert_payment_delta(balances_before, balances_after, scenario.settlement_cost);
         let fee = crate::world::rpc::Rpc::receipt_gas_cost(&settled.receipt).expect("payer gas");
         assert_eq!(
             native_balance_at(&peer_url, scenario.payer, settled_height) + fee,

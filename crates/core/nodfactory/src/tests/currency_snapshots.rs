@@ -13,9 +13,9 @@ fn quote_prices_both_rails() {
 
     let (ref_iso, ref_amount, iss_iso, iss_amount) = world.enter(|storage| {
         let (ref_iso, ref_amount, _) =
-            api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET).unwrap();
+            quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET).unwrap();
         let (iss_iso, iss_amount, _) =
-            api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR).unwrap();
+            quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR).unwrap();
         (ref_iso, ref_amount, iss_iso, iss_amount)
     });
     assert_eq!(ref_iso, 840);
@@ -43,7 +43,7 @@ fn the_issuance_rail_converts_at_the_trailing_window_not_the_closed_day() {
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .record_utc_day_vwap(day, index, U256::from(4 * SCALE_1E6_U64))
             .unwrap();
-        api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR)
+        quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR)
             .unwrap()
             .1
     });
@@ -61,7 +61,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
-            .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR))
+            .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR))
             .unwrap()
     };
     let (_, amount, quoted) = quote(&mut world);
@@ -112,7 +112,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let quote = |world: &mut World| {
         world
-            .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR))
+            .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR))
             .unwrap()
     };
     let (_, _, quoted) = quote(&mut world);
@@ -164,7 +164,7 @@ fn a_snapshot_of_another_policy_is_rejected() {
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let (_, _, quoted) = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR))
+        .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR))
         .unwrap();
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
@@ -217,7 +217,7 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     );
 
     let quoted = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR))
+        .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR))
         .unwrap();
     assert_eq!(quoted.0, 978);
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
@@ -311,7 +311,7 @@ fn issuance_rail_rejects_a_leg_the_window_never_priced() {
 
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
     let live = world.enter(|storage| {
-        api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR)
+        quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR)
             .unwrap()
             .2
     });
@@ -356,6 +356,25 @@ fn quote_settlement_dispatch() {
     world.publish_coen_rate(840, U256::from(2 * SCALE_1E6_U64));
     world.publish_coen_rate(978, U256::from(SCALE_1E6_U64));
 
+    let stranger_err = world
+        .enter(|storage| {
+            crate::precompile::dispatch(
+                storage,
+                &INodFactory::quoteSettlementCall {
+                    nodId: nod_id,
+                    asset: SETTLEMENT_ASSET_EUR,
+                }
+                .abi_encode(),
+                Address::repeat_byte(0x99),
+                U256::ZERO,
+            )
+        })
+        .unwrap_err();
+    assert_eq!(
+        stranger_err.to_string(),
+        PrecompileError::from(NodFactoryError::NotNodOwner).to_string()
+    );
+
     let out = world
         .enter(|storage| {
             crate::precompile::dispatch(
@@ -372,7 +391,25 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    assert_eq!(ret.paymentMinor, U256::from(cost_of(&input) / 2));
+    let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+        &outbe_nod::test_support::NETWORK_SECRET,
+        input.owner,
+    )
+    .unwrap();
+    let decrypted = outbe_tee::nod_decrypt::decrypt_nod_quote_for_owner(
+        &view_key,
+        &outbe_primitives::nod_encryption::NodQuoteContextV1 {
+            chain_id: 1,
+            nod_id,
+            owner: input.owner,
+            asset: SETTLEMENT_ASSET_EUR,
+            settlement_currency: ret.settlementCurrency,
+            snapshot_id: ret.snapshotId,
+        },
+        &ret.encryptedPaymentMinor,
+    )
+    .unwrap();
+    assert_eq!(decrypted, U256::from(cost_of(&input) / 2));
 }
 
 /// The window holds both prices, but the chain's own block record says every
@@ -447,7 +484,7 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
         }
     });
     let quoted = world
-        .enter(|storage| api::quote_settlement(&storage, nod_id, SETTLEMENT_ASSET_EUR))
+        .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET_EUR))
         .unwrap();
     assert_eq!(quoted.1, U256::from(cost_of(&input) / 2));
 }

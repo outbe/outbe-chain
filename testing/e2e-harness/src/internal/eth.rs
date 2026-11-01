@@ -286,6 +286,49 @@ where
     }
 }
 
+/// `eth_call` a view function with an explicit `from` caller and decode its return.
+pub(crate) fn read_call_from_result<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+) -> std::result::Result<C::Return, String>
+where
+    C::Return: Send + 'static,
+{
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let endpoint = url
+            .parse()
+            .map_err(|error| format!("invalid RPC URL: {error}"))?;
+        let provider = ProviderBuilder::new().connect_http(endpoint);
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(to)
+            .input(Bytes::from(data).into());
+        let out = provider
+            .call(tx)
+            .block(BlockId::latest())
+            .await
+            .map_err(|error| format!("eth_call failed: {error}"))?;
+        C::abi_decode_returns(&out).map_err(|error| format!("ABI decode failed: {error}"))
+    })
+}
+
+/// `eth_call` a view function with an explicit `from` caller, or `None` on error.
+pub(crate) fn read_call_from<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+) -> Option<C::Return>
+where
+    C::Return: Send + 'static,
+{
+    read_call_from_result(url, to, from, call).ok()
+}
+
 /// Execute a typed view against the exact canonical state at `height`.
 pub(crate) fn read_call_at_result<C: SolCall>(
     url: &str,

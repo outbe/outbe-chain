@@ -67,9 +67,6 @@ interface INod {
         uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.
         uint256 entryPriceMinor;
-        /// floor(entryPriceMinor * gratisLoadMinor / 1,000,000), in referenceCurrency
-        /// at six-decimal precision. Payment in an asset is quoted separately.
-        uint256 settlementCostMinor;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
         uint64 issuedAt;

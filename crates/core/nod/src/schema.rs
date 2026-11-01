@@ -264,9 +264,10 @@ pub struct NodContract {
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Gratis load of the group's unpaid Nods, returned at once when it is forfeited.
+    /// Encrypted Gratis load of the group's unpaid Nods and unclaimed Tributes, opened only when forfeited.
     #[attribute(order = 89)]
-    pub group_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub group_open_load_ct:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
 
     // The queue orders forfeited groups by deadline day while their unpaid Nods await deletion.
     #[attribute(order = 90)]
@@ -301,10 +302,6 @@ pub struct NodContract {
     /// Unclaimed Tributes of the Lysis series in the group.
     #[attribute(order = 104)]
     pub group_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<B256, u64>,
-
-    /// Exact `gratis_load_minor` sum of those Tributes.
-    #[attribute(order = 105)]
-    pub group_unclaimed_tribute_load: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     /// Set to `true` when the group's call notice deadline lapses and its unpaid/unclaimed load is forfeited.
     #[attribute(order = 106)]

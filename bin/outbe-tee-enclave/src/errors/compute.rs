@@ -205,6 +205,8 @@ impl From<FidelityEnclaveError> for crate::errors::TeeError {
 pub enum TributeDayRejectReason {
     #[error("invalid day predecessor")]
     InvalidDayPredecessor,
+    #[error("invalid league predecessor")]
+    InvalidLeaguePredecessor,
     #[error("Tribute belongs to another day or chain")]
     TributeWrongDayOrChain,
     #[error("Tribute issuance amount must be positive")]
@@ -213,6 +215,16 @@ pub enum TributeDayRejectReason {
     DayRetirementAmountMismatch,
     #[error("day nominal amount overflow or underflow")]
     DayNominalAmountOverflowOrUnderflow,
+    #[error("league nominal amount overflow or underflow")]
+    LeagueNominalAmountOverflowOrUnderflow,
+    #[error("invalid day fractions record")]
+    InvalidDayFractionsRecord,
+    #[error("Lysis fraction computation failed")]
+    LysisFractionComputationFailed,
+    #[error("invalid Nod group load predecessor")]
+    InvalidNodGroupLoadPredecessor,
+    #[error("Nod group load overflow or underflow")]
+    NodGroupLoadOverflowOrUnderflow,
 }
 
 impl From<TributeDayRejectReason> for crate::errors::TeeError {

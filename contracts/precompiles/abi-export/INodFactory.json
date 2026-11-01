@@ -116,9 +116,9 @@
         "internalType": "uint16"
       },
       {
-        "name": "paymentMinor",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "encryptedPaymentMinor",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "snapshotId",
@@ -193,12 +193,6 @@
       },
       {
         "name": "entryPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "settlementCostMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -401,6 +395,11 @@
   {
     "type": "error",
     "name": "NodNotSettled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotNodOwner",
     "inputs": []
   },
   {

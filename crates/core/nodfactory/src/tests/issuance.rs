@@ -353,10 +353,13 @@ fn a_stranger_can_mine_with_the_owners_auth() {
 #[test]
 fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     use outbe_primitives::series_id::SeriesId;
+    let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
     let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
     world.enter(|storage| {
         let seal = |series_id, count, load: u64| {
+            let sealed_load =
+                outbe_nod::api::seal_series_load(&storage, series_id, U256::from(load)).unwrap();
             crate::api::seal_lysis_series(
                 &storage,
                 crate::api::LysisSeriesInput {
@@ -365,7 +368,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
                     reference_currency: 840,
                     entry_price_minor: U256::from(500_000),
                     unclaimed_tribute_count: count,
-                    unclaimed_tribute_load: U256::from(load),
+                    unclaimed_tribute_load: sealed_load,
                 },
             )
         };
@@ -378,10 +381,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         assert_eq!(nod_api::series_group(&storage, eur).unwrap(), Some(group));
         let nod = outbe_nod::NodContract::new(storage.clone());
         assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 3);
-        assert_eq!(
-            nod.group_unclaimed_tribute_load.read(&group).unwrap(),
-            U256::from(40)
-        );
+        assert_eq!(nod.read_group_open_load(group).unwrap(), U256::from(40));
         assert_eq!(
             nod_api::get_group(&storage, group)
                 .unwrap()

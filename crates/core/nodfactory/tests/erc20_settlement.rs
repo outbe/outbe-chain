@@ -59,9 +59,27 @@ impl Rail for Nod {
                 asset: ASSET,
             },
         );
+        let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+            &outbe_nod::test_support::NETWORK_SECRET,
+            OWNER,
+        )
+        .unwrap();
+        let cost = outbe_tee::nod_decrypt::decrypt_nod_quote_for_owner(
+            &view_key,
+            &outbe_primitives::nod_encryption::NodQuoteContextV1 {
+                chain_id: CHAIN_ID,
+                nod_id: world.id,
+                owner: OWNER,
+                asset: ASSET,
+                settlement_currency: quote.settlementCurrency,
+                snapshot_id: quote.snapshotId,
+            },
+            &quote.encryptedPaymentMinor,
+        )
+        .unwrap();
         Quote {
             currency: quote.settlementCurrency,
-            cost: quote.paymentMinor,
+            cost,
             snapshot_id: quote.snapshotId,
         }
     }

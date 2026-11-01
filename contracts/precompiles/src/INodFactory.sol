@@ -6,6 +6,7 @@ interface INodFactory {
     error InvalidEncryptedNod();
     error NodAlreadyExists();
     error NodNotFound();
+    error NotNodOwner();
     error EntryPriceOutOfBounds();
     error GroupNotFound();
     error NodAlreadySettled();
@@ -29,8 +30,7 @@ interface INodFactory {
         uint256 leagueId,
         uint256 callPriceMinor,
         bytes encryptedGratisAmount,
-        uint256 entryPriceMinor,
-        uint256 settlementCostMinor
+        uint256 entryPriceMinor
     );
 
     event NodMined(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
@@ -51,16 +51,17 @@ interface INodFactory {
     function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
-    /// two currencies that asset settles on. Reverts for an asset the Nod
-    /// does not accept.
+    /// two currencies that asset settles on. Only the Nod owner may call this
+    /// quote; reverts for any other caller or for an asset the Nod does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
+    /// @return encryptedPaymentMinor Amount to pay in `asset`'s own minor units,
+    /// sealed to the Nod owner's view key.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on
     /// the reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 nodId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
+        returns (uint16 settlementCurrency, bytes memory encryptedPaymentMinor, uint256 snapshotId);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.

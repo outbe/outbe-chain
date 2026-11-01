@@ -119,10 +119,6 @@ fn to_abi_data(
         encryptionBinding: item.encrypted.encryption_binding,
         chainId: item.encrypted.terms.chain_id,
         entryPriceMinor: item.entry_price_minor(),
-        settlementCostMinor: api::settlement_cost_minor(
-            item.entry_price_minor(),
-            api::calculation_amount(item)?,
-        )?,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,

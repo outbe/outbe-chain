@@ -46,9 +46,19 @@ pub fn dispatch(
                     .day_totals
                     .get(day)?
                     .unwrap_or_else(|| crate::day_schema::StoredDayTotals::with_key(day));
+                let encrypted = if tribute.day_metadosis_completed_at.read(&day)? != 0 {
+                    let frozen = tribute.encrypted_day_nominal(day, true)?;
+                    if frozen.is_empty() {
+                        tribute.encrypted_day_nominal(day, false)?
+                    } else {
+                        frozen
+                    }
+                } else {
+                    tribute.encrypted_day_nominal(day, false)?
+                };
                 Ok((
                     dt.tribute_count,
-                    alloy_primitives::Bytes::from(tribute.encrypted_day_nominal(day, false)?),
+                    alloy_primitives::Bytes::from(encrypted),
                     dt.is_sealed,
                 )
                     .into())
@@ -61,9 +71,6 @@ pub fn dispatch(
                     .collect::<Vec<_>>())
             }),
             getLeague(c) => view(c, |c| tribute.get_league(WwdEntityId::from(c.tributeId))),
-            getDayLeagueFraction(c) => view(c, |c| {
-                tribute.get_day_league_fraction(c.worldwideDay.into(), c.league)
-            }),
             issueNod(c) => mutate(&storage, c, caller, |sender, c| {
                 let nod_id = tribute.issue_nod(sender, WwdEntityId::from(c.tributeId))?;
                 Ok(nod_id)

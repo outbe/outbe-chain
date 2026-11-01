@@ -4,9 +4,14 @@ use serde::{Deserialize, Serialize};
 use crate::protocol::{
     EnclaveResponse, FidelityLeagueEntry, FidelityQueryResult, GratisOpResult, PromisOpResult,
 };
-use crate::{nod_mine::MineEncryptedNodResultV1, tribute_v2::EncryptedTributeOfferResultV2};
+use crate::{
+    nod_mine::{IssueNodFromTributeOutcomeV1, MineEncryptedNodResultV1},
+    tribute_day::LysisFractionsResultV1,
+    tribute_v2::EncryptedTributeOfferResultV2,
+};
 use outbe_primitives::{
-    nod_encryption::EncryptedNodV1, tribute_day_encryption::EncryptedTributeDayAmountV2,
+    nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1},
+    tribute_day_encryption::{EncryptedTributeDayAmountV2, EncryptedTributeLeagueAmountV1},
     tribute_encryption::TributeAmountsV2,
 };
 
@@ -84,6 +89,46 @@ pub enum EnclaveWitnessEntryV1 {
     GramineDirectDevOnboardingArtifactPreparedV2 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
+        attestation_tag: Vec<u8>,
+    },
+    TributeLeagueOpAppliedV1 {
+        record: EncryptedTributeLeagueAmountV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeLeagueAmountReadV1 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    LysisFractionsExecutedV1 {
+        result: Box<LysisFractionsResultV1>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayFractionsReadV1 {
+        fractions: std::collections::BTreeMap<u16, u64>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodIssuedFromTributeV1 {
+        outcome: IssueNodFromTributeOutcomeV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodGroupLoadOpAppliedV1 {
+        record: EncryptedNodGroupLoadV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodGroupLoadReadV1 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodQuoteEncryptedV1 {
+        encrypted_payment: Vec<u8>,
+        inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
 }
@@ -267,6 +312,102 @@ impl EnclaveWitnessEntryV1 {
                     ..
                 },
             ) => a == b && aa == ba,
+            (
+                TributeLeagueOpAppliedV1 {
+                    record: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                TributeLeagueOpAppliedV1 {
+                    record: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                TributeLeagueAmountReadV1 {
+                    amount: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                TributeLeagueAmountReadV1 {
+                    amount: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                LysisFractionsExecutedV1 {
+                    result: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                LysisFractionsExecutedV1 {
+                    result: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                TributeDayFractionsReadV1 {
+                    fractions: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                TributeDayFractionsReadV1 {
+                    fractions: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                NodIssuedFromTributeV1 {
+                    outcome: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                NodIssuedFromTributeV1 {
+                    outcome: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                NodGroupLoadOpAppliedV1 {
+                    record: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                NodGroupLoadOpAppliedV1 {
+                    record: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                NodGroupLoadReadV1 {
+                    amount: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                NodGroupLoadReadV1 {
+                    amount: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
+            (
+                NodQuoteEncryptedV1 {
+                    encrypted_payment: a,
+                    inputs_canonical_hash: ah,
+                    ..
+                },
+                NodQuoteEncryptedV1 {
+                    encrypted_payment: b,
+                    inputs_canonical_hash: bh,
+                    ..
+                },
+            ) => a == b && ah == bh,
             _ => false,
         }
     }
@@ -406,6 +547,78 @@ impl TryFrom<EnclaveResponse> for EnclaveWitnessEntryV1 {
                 onboarding_artifact,
                 attestation_tag,
             },
+            R::TributeLeagueOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeLeagueOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::TributeLeagueAmountReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeLeagueAmountReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::LysisFractionsExecutedV1 {
+                result,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::LysisFractionsExecutedV1 {
+                result,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::TributeDayFractionsReadV1 {
+                fractions,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeDayFractionsReadV1 {
+                fractions,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::NodIssuedFromTributeV1 {
+                outcome,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodIssuedFromTributeV1 {
+                outcome,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::NodGroupLoadOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodGroupLoadOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::NodGroupLoadReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodGroupLoadReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            R::NodQuoteEncryptedV1 {
+                encrypted_payment,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodQuoteEncryptedV1 {
+                encrypted_payment,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
             _ => return Err(UnsupportedEnclaveResponse),
         })
     }
@@ -527,6 +740,78 @@ impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
             } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
+                attestation_tag,
+            },
+            W::TributeLeagueOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeLeagueOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::TributeLeagueAmountReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeLeagueAmountReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::LysisFractionsExecutedV1 {
+                result,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::LysisFractionsExecutedV1 {
+                result,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::TributeDayFractionsReadV1 {
+                fractions,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::TributeDayFractionsReadV1 {
+                fractions,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::NodIssuedFromTributeV1 {
+                outcome,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodIssuedFromTributeV1 {
+                outcome,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::NodGroupLoadOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodGroupLoadOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::NodGroupLoadReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodGroupLoadReadV1 {
+                amount,
+                inputs_canonical_hash,
+                attestation_tag,
+            },
+            W::NodQuoteEncryptedV1 {
+                encrypted_payment,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => Self::NodQuoteEncryptedV1 {
+                encrypted_payment,
+                inputs_canonical_hash,
                 attestation_tag,
             },
         }

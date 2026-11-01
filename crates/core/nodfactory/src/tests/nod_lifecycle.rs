@@ -1366,15 +1366,16 @@ fn failing_members_do_not_hold_the_cleanup() {
     });
 }
 
-/// A forfeit and its cleanup read no encrypted load, so this node's enclave is not needed.
+/// Forfeiture decrypts the group's open load once, while member cleanup reads no encrypted load
+/// and does not need the enclave.
 #[test]
 fn a_forfeit_does_not_need_the_enclave() {
     harness(|storage| {
         let (group_key, _) = arm_lapsed(storage, &[(0x61, 5, false)]);
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
 
-        outbe_nod::test_support::uninstall();
         let forfeited = forfeit_pass(storage, past);
+        outbe_nod::test_support::uninstall();
         let deleted = crate::cleanup::cleanup(&block_at(storage, past));
         outbe_nod::test_support::install();
         assert_eq!(forfeited.unwrap(), 1);

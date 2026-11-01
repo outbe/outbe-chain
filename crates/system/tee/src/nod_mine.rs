@@ -6,7 +6,8 @@ use crate::{
 };
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
+    nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1, NodTermsV1},
+    tribute_day_encryption::EncryptedTributeDayFractionsV1,
     tribute_encryption::EncryptedTributeV2,
 };
 use serde::{Deserialize, Serialize};
@@ -63,28 +64,54 @@ pub fn nod_read_preimage(inputs: B256, amount: U256) -> Vec<u8> {
     bytes.extend_from_slice(&amount.to_be_bytes::<32>());
     bytes
 }
-pub fn read_nod_amount(nod: &EncryptedNodV1) -> Result<U256, TransportError> {
-    let expected = nod_read_hash(nod).map_err(codec)?;
-    let (key, response) =
-        crate::tribute_client::request_local_enclave(EnclaveRequest::ReadNodAmountV1 {
-            nod: nod.clone(),
-        })?;
-    match response {
+fn verify_attested_output<T: Serialize>(
+    key: &[u8; 32],
+    domain: &[u8],
+    expected: B256,
+    (output, inputs_canonical_hash, attestation_tag): (T, B256, Vec<u8>),
+) -> Result<T, TransportError> {
+    if inputs_canonical_hash != expected {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    let preimage = crate::response_auth::attestation(domain, expected, &output).map_err(codec)?;
+    crate::tribute_v2::verify_attestation(key, &preimage, &attestation_tag)?;
+    Ok(output)
+}
+
+fn request_read_u256(
+    expected: Result<B256, serde_json::Error>,
+    request: EnclaveRequest,
+    preimage_fn: fn(B256, U256) -> Vec<u8>,
+) -> Result<U256, TransportError> {
+    let expected = expected.map_err(codec)?;
+    let (key, response) = crate::tribute_client::request_local_enclave(request)?;
+    let (amount, inputs_canonical_hash, attestation_tag) = match response {
         EnclaveResponse::NodAmountReadV1 {
             amount,
             inputs_canonical_hash,
             attestation_tag,
-        } if inputs_canonical_hash == expected => {
-            crate::tribute_v2::verify_attestation(
-                &key,
-                &nod_read_preimage(expected, amount),
-                &attestation_tag,
-            )?;
-            Ok(amount)
         }
-        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
-        _ => Err(TransportError::UnexpectedResponse),
+        | EnclaveResponse::NodGroupLoadReadV1 {
+            amount,
+            inputs_canonical_hash,
+            attestation_tag,
+        } => (amount, inputs_canonical_hash, attestation_tag),
+        EnclaveResponse::Error { message } => return Err(TransportError::EnclaveError(message)),
+        _ => return Err(TransportError::UnexpectedResponse),
+    };
+    if inputs_canonical_hash != expected {
+        return Err(TransportError::UnexpectedResponse);
     }
+    crate::tribute_v2::verify_attestation(&key, &preimage_fn(expected, amount), &attestation_tag)?;
+    Ok(amount)
+}
+
+pub fn read_nod_amount(nod: &EncryptedNodV1) -> Result<U256, TransportError> {
+    request_read_u256(
+        nod_read_hash(nod),
+        EnclaveRequest::ReadNodAmountV1 { nod: nod.clone() },
+        nod_read_preimage,
+    )
 }
 fn verify_created_nod(
     key: &[u8; 32],
@@ -97,12 +124,12 @@ fn verify_created_nod(
             nod,
             inputs_canonical_hash,
             attestation_tag,
-        } if inputs_canonical_hash == expected => {
-            let preimage =
-                crate::response_auth::attestation(domain, expected, &nod).map_err(codec)?;
-            crate::tribute_v2::verify_attestation(key, &preimage, &attestation_tag)?;
-            Ok(nod)
-        }
+        } => verify_attested_output(
+            key,
+            domain,
+            expected,
+            (nod, inputs_canonical_hash, attestation_tag),
+        ),
         EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
         _ => Err(TransportError::UnexpectedResponse),
     }
@@ -129,4 +156,170 @@ pub fn encrypt_nod_for_tribute(
         expected,
         response,
     )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct IssueNodFromTributeRequestV1 {
+    pub tribute: EncryptedTributeV2,
+    pub day_fractions: EncryptedTributeDayFractionsV1,
+    pub terms: NodTermsV1,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum IssueNodFromTributeOutcomeV1 {
+    Issued(EncryptedNodV1),
+    LysisArithmetic(String),
+    ZeroSettlementCost,
+}
+
+pub fn issue_nod_from_tribute(
+    request: IssueNodFromTributeRequestV1,
+) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
+    let expected = crate::response_auth::hash(b"outbe/nod/issue-from-tribute-inputs/v1", &request)
+        .map_err(codec)?;
+    let (key, response) =
+        crate::tribute_client::request_local_enclave(EnclaveRequest::IssueNodFromTributeV1 {
+            request: Box::new(request),
+        })?;
+    match response {
+        EnclaveResponse::NodIssuedFromTributeV1 {
+            outcome,
+            inputs_canonical_hash,
+            attestation_tag,
+        } => verify_attested_output(
+            &key,
+            b"outbe/nod/issue-from-tribute-result/v1",
+            expected,
+            (outcome, inputs_canonical_hash, attestation_tag),
+        ),
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        _ => Err(TransportError::UnexpectedResponse),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum NodGroupLoadOperationV1 {
+    AddSeriesLoad {
+        series_load: Box<EncryptedNodGroupLoadV1>,
+    },
+    AddNod {
+        nod: Box<EncryptedNodV1>,
+    },
+    SubNod {
+        nod: Box<EncryptedNodV1>,
+    },
+    AdjustTransient {
+        load_minor: U256,
+        add: bool,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NodGroupLoadOpRequestV1 {
+    pub chain_id: u64,
+    pub scope: B256,
+    pub previous: Option<EncryptedNodGroupLoadV1>,
+    pub operation: NodGroupLoadOperationV1,
+}
+
+pub fn nod_group_load_inputs_hash(
+    request: &NodGroupLoadOpRequestV1,
+) -> Result<B256, serde_json::Error> {
+    crate::response_auth::hash(b"outbe/nod/group-load-inputs/v1", request)
+}
+
+pub fn nod_group_load_attestation_preimage(
+    inputs_hash: B256,
+    record: &EncryptedNodGroupLoadV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    crate::response_auth::attestation(b"outbe/nod/group-load-result/v1", inputs_hash, record)
+}
+
+pub fn apply_nod_group_load_operation(
+    request: NodGroupLoadOpRequestV1,
+) -> Result<EncryptedNodGroupLoadV1, TransportError> {
+    let expected = nod_group_load_inputs_hash(&request).map_err(codec)?;
+    let chain_id = request.chain_id;
+    let scope = request.scope;
+    let version = request
+        .previous
+        .as_ref()
+        .map_or(Some(1), |previous| previous.version()?.checked_add(1))
+        .ok_or_else(|| TransportError::EnclaveError("invalid Nod group load version".into()))?;
+    let (key, response) =
+        crate::tribute_client::request_local_enclave(EnclaveRequest::ApplyNodGroupLoadOpV1 {
+            request: Box::new(request),
+        })?;
+    match response {
+        EnclaveResponse::NodGroupLoadOpAppliedV1 {
+            record,
+            inputs_canonical_hash,
+            attestation_tag,
+        } if inputs_canonical_hash == expected
+            && record.chain_id == chain_id
+            && record.scope == scope
+            && record.version() == Some(version) =>
+        {
+            let preimage = nod_group_load_attestation_preimage(expected, &record).map_err(codec)?;
+            crate::tribute_v2::verify_attestation(&key, &preimage, &attestation_tag)?;
+            Ok(record)
+        }
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        _ => Err(TransportError::UnexpectedResponse),
+    }
+}
+
+pub fn nod_group_load_read_hash(
+    record: &EncryptedNodGroupLoadV1,
+) -> Result<B256, serde_json::Error> {
+    crate::response_auth::hash(b"outbe/nod/group-load-read-inputs/v1", record)
+}
+
+pub fn nod_group_load_read_preimage(inputs: B256, amount: U256) -> Vec<u8> {
+    let mut bytes = b"outbe/nod/group-load-read-result/v1".to_vec();
+    bytes.extend_from_slice(inputs.as_slice());
+    bytes.extend_from_slice(&amount.to_be_bytes::<32>());
+    bytes
+}
+
+pub fn read_nod_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, TransportError> {
+    request_read_u256(
+        nod_group_load_read_hash(record),
+        EnclaveRequest::ReadNodGroupLoadV1 {
+            record: record.clone(),
+        },
+        nod_group_load_read_preimage,
+    )
+}
+
+pub fn encrypt_nod_quote(
+    nod: &EncryptedNodV1,
+    context: NodQuoteContextV1,
+    payment_minor: U256,
+) -> Result<Vec<u8>, TransportError> {
+    let expected = crate::response_auth::hash(
+        b"outbe/nod/quote-encrypt-inputs/v1",
+        &(nod, &context, payment_minor),
+    )
+    .map_err(codec)?;
+    let (key, response) =
+        crate::tribute_client::request_local_enclave(EnclaveRequest::EncryptNodQuoteV1 {
+            nod: Box::new(nod.clone()),
+            context,
+            payment_minor,
+        })?;
+    match response {
+        EnclaveResponse::NodQuoteEncryptedV1 {
+            encrypted_payment,
+            inputs_canonical_hash,
+            attestation_tag,
+        } => verify_attested_output(
+            &key,
+            b"outbe/nod/quote-encrypt-result/v1",
+            expected,
+            (encrypted_payment, inputs_canonical_hash, attestation_tag),
+        ),
+        EnclaveResponse::Error { message } => Err(TransportError::EnclaveError(message)),
+        _ => Err(TransportError::UnexpectedResponse),
+    }
 }

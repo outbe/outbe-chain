@@ -212,7 +212,7 @@ impl TributeContract<'_> {
         Ok(())
     }
 
-    /// Records the Stage 3 Metadosis league fractions for `day`.
+    /// Records the Stage 3 Metadosis league fractions for `day` as a sealed enclave record.
     pub fn record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
@@ -220,38 +220,21 @@ impl TributeContract<'_> {
         completed_at: u64,
     ) -> Result<()> {
         self.storage_handle().require_metadosis_process_ready()?;
+        let chain_id = self.storage_handle().chain_id()?;
+        let mut context = b"outbe/tribute/record-fractions/v1".to_vec();
+        context.extend_from_slice(&day.value().to_be_bytes());
+        context.extend_from_slice(&completed_at.to_be_bytes());
+        let sealed = crate::enclave_client::seal_day_fractions(
+            chain_id,
+            day,
+            completed_at,
+            alloy_primitives::keccak256(context),
+            fractions,
+        )
+        .map_err(TributeError::DayEnclave)?;
         self.day_metadosis_completed_at.write(&day, completed_at)?;
-        for (&league, &fraction) in fractions {
-            let key = crate::schema::day_league_key(day, league);
-            self.day_fractions.write(&key, fraction)?;
-        }
+        self.store_day_fractions_record(day, &sealed)?;
         Ok(())
-    }
-
-    fn sum_allocated_gratis_from_groups(
-        fi_groups: &std::collections::BTreeMap<u16, (u32, U256)>,
-        u256_fractions: &std::collections::BTreeMap<u16, U256>,
-        lysis_limit_minor: U256,
-    ) -> U256 {
-        let scale = U256::from(1_000_000u64);
-        let mut total_allocated = U256::ZERO;
-        for (&league, &(count, nominal_sum)) in fi_groups {
-            if count == 0 || nominal_sum.is_zero() {
-                continue;
-            }
-            let fraction = u256_fractions.get(&league).copied().unwrap_or(U256::ZERO);
-            if fraction.is_zero() {
-                continue;
-            }
-            let league_raw = outbe_primitives::math::scaled_math::checked_mul_div_floor(
-                nominal_sum,
-                fraction,
-                scale,
-            )
-            .unwrap_or(lysis_limit_minor);
-            total_allocated = total_allocated.saturating_add(league_raw);
-        }
-        total_allocated.min(lysis_limit_minor)
     }
 
     /// Resolves the Oracle UTC day (`emission_day`) that prices `day`.
@@ -259,56 +242,22 @@ impl TributeContract<'_> {
         forfeiture::resolve_price_day(self, day, completed_at)
     }
 
-    /// Computes league fractions from `fi_groups[day]` and `lysis_limit_minor`,
-    /// stores them along with `completed_at`, and returns `(fractions, total_allocated_minor)`.
+    /// Computes league fractions from `fi_group_nominal_ct[day]` and `lysis_limit_minor`
+    /// inside the enclave, stores the sealed fraction map along with `completed_at`,
+    /// seals series unclaimed loads, and returns `(total_nominal_minor, total_allocated_minor)`.
     pub fn compute_and_record_metadosis_fractions(
         &mut self,
         day: WorldwideDay,
         lysis_limit_minor: U256,
         completed_at: u64,
-    ) -> Result<(std::collections::BTreeMap<u16, u64>, U256)> {
+    ) -> Result<(U256, U256)> {
         self.storage_handle().require_metadosis_process_ready()?;
-        let fi_groups = self.get_fi_groups(day)?;
-        let mut tribute_count = 0u32;
-        let mut total_interest = U256::ZERO;
-        for &(count, nom) in fi_groups.values() {
-            tribute_count = tribute_count
-                .checked_add(count)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            total_interest = total_interest
-                .checked_add(nom)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-        }
-        let u256_fractions = if tribute_count == 0 || total_interest.is_zero() {
-            std::collections::BTreeMap::new()
-        } else {
-            outbe_lysis::program_v1::compute_fraction_map_from_groups(
-                &fi_groups,
-                tribute_count,
-                total_interest,
-                lysis_limit_minor,
-            )
-            .map_err(|e| TributeError::LysisArithmetic(e.to_string()))?
-        };
-        let fractions: std::collections::BTreeMap<u16, u64> = u256_fractions
-            .iter()
-            .map(|(&league, &frac)| (league, u64::try_from(frac).unwrap_or(u64::MAX)))
-            .collect();
-        self.record_metadosis_fractions(day, &fractions, completed_at)?;
-        let mut allocated =
-            Self::sum_allocated_gratis_from_groups(&fi_groups, &u256_fractions, lysis_limit_minor);
-        if !outbe_tee::lysis::is_test_transport_installed() && !lysis_limit_minor.is_zero() {
-            if let Some(exact) = forfeiture::seal_series_and_sum_exact_loads(
-                self,
-                day,
-                lysis_limit_minor,
-                completed_at,
-                &u256_fractions,
-            )? {
-                allocated = exact;
-            }
-        }
-        Ok((fractions, allocated))
+        forfeiture::compute_and_record_metadosis_fractions(
+            self,
+            day,
+            lysis_limit_minor,
+            completed_at,
+        )
     }
 
     /// Stage 5: Creates a `Nod` for `tribute_id` after Metadosis completion

@@ -149,10 +149,6 @@ mod tests {
             &keccak256(b"getLeague(uint256)")[..4]
         );
         assert_eq!(
-            eth::ITribute::getDayLeagueFractionCall::SELECTOR,
-            &keccak256(b"getDayLeagueFraction(uint32,uint16)")[..4]
-        );
-        assert_eq!(
             eth::ITribute::issueNodCall::SELECTOR,
             &keccak256(b"issueNod(uint256)")[..4]
         );

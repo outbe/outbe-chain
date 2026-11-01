@@ -4,6 +4,8 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use serde::{Deserialize, Serialize};
 pub const NOD_AMOUNT_KEY_INFO: &[u8] = b"outbe/nod/amount-key/v2";
 pub const NOD_AMOUNT_NONCE_INFO: &[u8] = b"outbe/nod/amount-nonce/v2";
+pub const NOD_QUOTE_KEY_INFO: &[u8] = b"outbe/nod/quote-key/v1";
+pub const NOD_QUOTE_NONCE_INFO: &[u8] = b"outbe/nod/quote-nonce/v1";
 pub const NOD_BLOB_LEN: usize = 8 + 32 + 16;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct NodTermsV1 {
@@ -63,6 +65,65 @@ impl EncryptedNodV1 {
     pub fn has_valid_encoding(&self) -> bool {
         self.encrypted_gratis_amount.len() == NOD_BLOB_LEN
             && self.encrypted_gratis_amount[..8] == 1u64.to_be_bytes()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EncryptedNodGroupLoadV1 {
+    pub chain_id: u64,
+    pub scope: B256,
+    pub operation_hash: B256,
+    pub encrypted_load: Vec<u8>,
+}
+
+impl EncryptedNodGroupLoadV1 {
+    pub fn crypto_slot(&self) -> Address {
+        let mut context = b"outbe/nod/group-load/slot/v1".to_vec();
+        context.extend_from_slice(&self.chain_id.to_be_bytes());
+        context.extend_from_slice(self.scope.as_slice());
+        context.extend_from_slice(self.operation_hash.as_slice());
+        Address::from_slice(&keccak256(context).as_slice()[..20])
+    }
+
+    pub fn version(&self) -> Option<u64> {
+        if self.encrypted_load.len() != NOD_BLOB_LEN {
+            return None;
+        }
+        let version = u64::from_be_bytes(self.encrypted_load[..8].try_into().ok()?);
+        (version != 0).then_some(version)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct NodQuoteContextV1 {
+    pub chain_id: u64,
+    pub nod_id: U256,
+    pub owner: Address,
+    pub asset: Address,
+    pub settlement_currency: u16,
+    pub snapshot_id: U256,
+}
+
+impl NodQuoteContextV1 {
+    pub fn context_digest(&self) -> B256 {
+        let mut bytes = b"outbe/nod/quote-context/v1".to_vec();
+        bytes.extend_from_slice(&self.chain_id.to_be_bytes());
+        bytes.extend_from_slice(&self.nod_id.to_be_bytes::<32>());
+        bytes.extend_from_slice(self.owner.as_slice());
+        bytes.extend_from_slice(self.asset.as_slice());
+        bytes.extend_from_slice(&self.settlement_currency.to_be_bytes());
+        bytes.extend_from_slice(&self.snapshot_id.to_be_bytes::<32>());
+        keccak256(bytes)
+    }
+
+    pub fn crypto_slot(&self) -> Address {
+        Address::from_slice(&self.context_digest().as_slice()[..20])
+    }
+
+    pub fn quote_key_info(&self) -> Vec<u8> {
+        let mut info = NOD_QUOTE_KEY_INFO.to_vec();
+        info.extend_from_slice(self.context_digest().as_slice());
+        info
     }
 }
 

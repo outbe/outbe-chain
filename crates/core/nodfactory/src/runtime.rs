@@ -28,14 +28,14 @@ pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Res
 }
 
 /// A Lysis series sealed at `sealed_at`, with its unclaimed Tributes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LysisSeriesInput {
     pub series_id: SeriesId,
     pub sealed_at: u64,
     pub reference_currency: u16,
     pub entry_price_minor: U256,
     pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: U256,
+    pub unclaimed_tribute_load: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
 }
 
 #[derive(Default)]
@@ -70,25 +70,20 @@ pub fn issue_lysis_nod(
 }
 
 /// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
+/// The enclave has already validated that the Nod's `gratis_load_minor` and `settlement_cost_minor`
+/// are positive, and the group's encrypted open load (`unpaid + unclaimed`) is invariant.
 pub fn issue_tribute_nod_in_series(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
-    gratis_load_minor: U256,
     series_id: SeriesId,
 ) -> Result<U256> {
-    let cost =
-        nod_api::settlement_cost_minor(encrypted.terms.entry_price_minor, gratis_load_minor)?;
-    if cost.is_zero() {
-        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
-    }
     issue_nod_with_cost(
         storage,
         encrypted,
         storage.now_secs()?,
         IssueNodHints {
-            verified_cost: Some(cost),
-            gratis_load_minor: Some(gratis_load_minor),
             sealed_series: Some(series_id),
+            ..IssueNodHints::default()
         },
     )
 }
@@ -196,18 +191,22 @@ fn issue_nod_with_cost(
         reference_currency: terms.reference_currency,
         issued_at,
     };
-    let gratis_load_minor = match gratis_load_minor {
-        Some(load) => load,
-        None => nod_api::calculation_amount(&item)?,
-    };
-    // Existing settlement pricing remains public in this privacy stage.
-    let settlement_cost_minor = match verified_cost {
-        Some(cost) => cost,
-        None => nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?,
-    };
     if let Some(series_id) = sealed_series {
-        nod_api::add_series_nod(storage, &item, call_terms, gratis_load_minor, series_id)?;
+        nod_api::add_series_nod(storage, &item, call_terms, series_id)?;
     } else {
+        let gratis_load_minor = match (gratis_load_minor, verified_cost) {
+            (Some(load), Some(_)) => load,
+            (None, Some(_)) => U256::ZERO,
+            (Some(load), None) => {
+                let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, load)?;
+                load
+            }
+            (None, None) => {
+                let load = nod_api::calculation_amount(&item)?;
+                let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, load)?;
+                load
+            }
+        };
         nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
     }
     emit_event(
@@ -220,7 +219,6 @@ fn issue_nod_with_cost(
             callPriceMinor: call_price_minor,
             encryptedGratisAmount: encrypted.encrypted_gratis_amount.clone().into(),
             entryPriceMinor: terms.entry_price_minor,
-            settlementCostMinor: settlement_cost_minor,
         },
     )?;
     Ok(nod_id)
@@ -388,24 +386,43 @@ fn load_nod(storage: &StorageHandle<'_>, nod_id: U256) -> Result<(LoadedNodItem,
     Ok((item, group))
 }
 
-/// What settling `nod_id` with `asset` costs, in which currency, and the VWAP
-/// snapshot an issuance-currency payment must name (zero on the reference rail).
+/// What settling `nod_id` with `asset` costs (sealed to the Nod owner's view key),
+/// in which currency, and the VWAP snapshot an issuance-currency payment must name
+/// (zero on the reference rail). Reverts with `NotNodOwner` when `caller != owner`.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
+    caller: Address,
     nod_id: U256,
     asset: Address,
-) -> Result<(u16, U256, U256)> {
+) -> Result<(u16, Bytes, U256)> {
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
     let (item, _) = load_nod(storage, nod_id)?;
+    if item.body().owner != caller {
+        return Err(NodFactoryError::NotNodOwner.into());
+    }
     let quote = settlement::quote(
         storage,
         asset,
         currencies(item.body()),
         &settlement_cost(item.body())?,
     )?;
+    let snapshot_id = quote.snapshot_id();
+    let encrypted = nod_api::encrypt_quote_for_owner(
+        &item.body().encrypted,
+        outbe_primitives::nod_encryption::NodQuoteContextV1 {
+            chain_id: storage.chain_id()?,
+            nod_id,
+            owner: item.body().owner,
+            asset,
+            settlement_currency: quote.settlement_currency,
+            snapshot_id,
+        },
+        quote.payment_minor,
+    )?;
     Ok((
         quote.settlement_currency,
-        quote.payment_minor,
-        quote.snapshot_id(),
+        Bytes::from(encrypted),
+        snapshot_id,
     ))
 }
 
