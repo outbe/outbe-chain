@@ -190,11 +190,19 @@ pub fn add(
     storage: &outbe_primitives::storage::StorageHandle<'_>,
     item: &NodItemState,
 ) -> outbe_primitives::error::Result<()> {
+    let mut item = item.clone();
+    let chain_id = storage.chain_id()?;
+    if item.encrypted.terms.chain_id != chain_id {
+        let amount = crate::api::calculation_amount(&item)?;
+        let mut terms = item.encrypted.terms.clone();
+        terms.chain_id = chain_id;
+        item.encrypted = encrypt(terms, amount);
+    }
     crate::api::add_nod(
         storage,
-        item,
-        sealed_terms(storage, item, item.entry_price_minor()),
-        crate::api::calculation_amount(item)?,
+        &item,
+        sealed_terms(storage, &item, item.entry_price_minor()),
+        crate::api::calculation_amount(&item)?,
     )
 }
 
