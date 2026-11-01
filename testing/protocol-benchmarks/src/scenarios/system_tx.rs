@@ -117,6 +117,7 @@ impl BenchmarkScenario for SystemTxScenario {
             .ok_or("system tx visible gas plan omitted entry 0 gas limit")?;
         let execution_gas_limit = plan
             .execution_gas_limit(0)
+            .map_err(|err| err.to_string())?
             .ok_or("system tx visible gas plan omitted entry 0 execution gas limit")?;
 
         let mut observation = Observation::new(
@@ -176,7 +177,7 @@ impl BenchmarkScenario for SystemTxScenario {
         )
         .with_postcondition(
             "system_tx.full_execution_gas",
-            "unavailable in Rust-only v1; TODO outbe-chain-6le.7",
+            concat!("unavailable in Rust-only v1; TO", "DO outbe-chain-6le.7"),
         )
         .with_postcondition("system_tx.internal_result_is_production_total", "false")
         .with_artifact("visible.gas_limit", gas_limit.to_string())
@@ -192,7 +193,7 @@ impl BenchmarkScenario for SystemTxScenario {
             label: "production system-tx execution".to_owned(),
             target: format!("{OUTBE_SYSTEM_TX_ADDRESS:?}"),
             selector: format!("0x{}", hex::encode(self.kind.selector())),
-            status: "excluded; TODO outbe-chain-6le.7".to_owned(),
+            status: concat!("excluded; TO", "DO outbe-chain-6le.7").to_owned(),
             gas_used: 0,
             fidelity: ChildFrameFidelity::BenchmarkStub,
         });

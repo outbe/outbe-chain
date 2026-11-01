@@ -35,7 +35,6 @@
 use crate::journal_writer::Journal;
 
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -229,8 +228,9 @@ pub fn journal_path(datadir: &Path) -> PathBuf {
 }
 
 /// Append `record` to the journal. If nothing called [`init`], this is a
-/// no-op (test-friendly). This function logs write errors at WARN and
-/// swallows them. It never blocks the caller's state-transition path.
+/// no-op (test-friendly). Serialization failures are logged at WARN.
+/// The line is queued for the background writer. This function does not
+/// perform disk I/O and does not flush on the caller's thread.
 pub fn record(record: JournalRecord) {
     let Some(journal) = JOURNAL.get() else {
         return;
@@ -247,30 +247,15 @@ pub fn record(record: JournalRecord) {
             return;
         }
     };
+    journal.enqueue(line);
+}
 
-    let mut guard = match journal.writer.lock() {
-        Ok(g) => g,
-        Err(poisoned) => {
-            // Recover from poison. A previous panic in a writer thread
-            // does not corrupt the file pointer.
-            poisoned.into_inner()
-        }
-    };
-
-    if let Err(e) = writeln!(guard, "{line}") {
-        tracing::warn!(
-            target: "outbe::slashing::journal",
-            error = %e,
-            "failed to append journal record",
-        );
-        return;
-    }
-    if let Err(e) = guard.flush() {
-        tracing::warn!(
-            target: "outbe::slashing::journal",
-            error = %e,
-            "failed to flush journal record",
-        );
+/// Wait until the background writer has flushed every record queued so far.
+///
+/// Tests and shutdown use this. If nothing called [`init`], this is a no-op.
+pub fn flush() {
+    if let Some(journal) = JOURNAL.get() {
+        journal.flush();
     }
 }
 
@@ -324,6 +309,7 @@ mod tests {
                 block_number,
                 validator: "0x2cf6fbd0".into(),
             });
+            flush();
             return;
         }
 

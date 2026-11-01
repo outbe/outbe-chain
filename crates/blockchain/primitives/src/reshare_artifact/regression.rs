@@ -77,19 +77,19 @@ fn mixed_record_wire_vectors_are_pinned() {
         (
             521,
             alloy_primitives::b256!(
-                "4bee5a9d6f662538180758a7a20cbfe482412bd92cf32ee0c1225fa1a810a1a9"
+                "f5195dfa12becfc0d73f13f1d4576d946f2b1a0dba180623dd8706eff3fb316e"
             ),
         ),
         (
             263,
             alloy_primitives::b256!(
-                "e470bdcbd5ac9dc0f083aa806ac64f301d48a4be376cd5f9643d70b21dd07e4e"
+                "844c9f8d27fb7e9f5670d13b3b5158ab75f49d7a6b73dabdf02035b2e15f8842"
             ),
         ),
         (
             276,
             alloy_primitives::b256!(
-                "d01a3287a7ba00a92a7168941534de8ed767910a11489d8ab007a231a754b6e2"
+                "0f8d3b1b06993422ed2cba6db78ae255420b496ece6a129b528f76f16efca22f"
             ),
         ),
     ];
@@ -112,6 +112,12 @@ fn mixed_record_wire_vectors_are_pinned() {
 
 #[test]
 fn duplicate_checks_precede_record_payload_validation() {
+    let credits = mixed_artifacts(ConsensusHeaderArtifact::DealerLog(Bytes::new()))
+        .late_finalize_credits
+        .expect("mixed artifacts carry late-finalize credits");
+    let encoded_credits = encode_late_finalize_credits_artifact(&credits).unwrap();
+    let credit_payload = encoded_credits[10..].to_vec();
+
     for (tag, payload, message) in [
         (1, vec![0; 32], "duplicate execution summary artifact"),
         (
@@ -119,32 +125,121 @@ fn duplicate_checks_precede_record_payload_validation() {
             7_u64.to_be_bytes().to_vec(),
             "duplicate timestamp_millis_part",
         ),
-        (6, vec![0, 0], "duplicate late finalize credits artifact"),
+        (
+            6,
+            credit_payload,
+            "duplicate late finalize credits artifact",
+        ),
         (0x0A, vec![0x01], "duplicate enclave witness artifact"),
     ] {
-        assert_fatal(&envelope(&[(tag, &payload), (tag, &[])]), message);
-    }
-    // All consensus tags share one slot. The decoder never inspects the second payload.
-    for tag in [2, 3, 7] {
         assert_fatal(
-            &envelope(&[(3, b"dealer"), (tag, &[])]),
-            "duplicate consensus header artifact",
+            &envelope(&[(tag, &payload), (tag, &[])]),
+            &format!("non-ascending block artifact record tag: {tag:#04x} after {tag:#04x}"),
         );
+        let mut artifacts = OutbeBlockArtifacts::default();
+        super::records::decode_into(&mut artifacts, tag, &payload).unwrap();
+        match super::records::decode_into(&mut artifacts, tag, &[]).unwrap_err() {
+            PrecompileError::Revert { 0: actual } => assert_eq!(actual, message),
+            other => panic!("expected revert codec error, got {other:?}"),
+        }
     }
+    // All consensus tags share one slot. Ascending consensus tags fail on slot duplication
+    // before inspecting the second payload; equal or descending tags fail on tag ordering first.
+    assert_fatal(
+        &envelope(&[(3, b"dealer"), (2, &[])]),
+        "non-ascending block artifact record tag: 0x02 after 0x03",
+    );
+    assert_fatal(
+        &envelope(&[(3, b"dealer"), (3, &[])]),
+        "non-ascending block artifact record tag: 0x03 after 0x03",
+    );
+    assert_fatal(
+        &envelope(&[(3, b"dealer"), (7, &[])]),
+        "duplicate consensus header artifact",
+    );
 }
 
 #[test]
 fn zero_timestamp_sentinel_and_structural_ranges_are_preserved() {
     let zero = 0_u64.to_be_bytes();
     let out_of_range = u64::MAX.to_be_bytes();
-    let decoded =
-        decode_outbe_block_artifacts(&envelope(&[(5, &zero), (5, &zero), (5, &out_of_range)]))
-            .unwrap();
-    assert_eq!(decoded.timestamp_millis_part, u64::MAX);
+    assert_eq!(
+        decode_outbe_block_artifacts(&envelope(&[(5, &out_of_range)]))
+            .unwrap()
+            .timestamp_millis_part,
+        u64::MAX
+    );
+    assert_fatal(
+        &envelope(&[(5, &zero)]),
+        "zero timestamp_millis_part record",
+    );
+    assert_fatal(
+        &envelope(&[(5, &zero), (5, &out_of_range)]),
+        "zero timestamp_millis_part record",
+    );
     assert_fatal(
         &envelope(&[(5, &out_of_range), (5, &zero)]),
-        "duplicate timestamp_millis_part",
+        "non-ascending block artifact record tag: 0x05 after 0x05",
     );
+}
+
+#[test]
+fn artifact_decode_requires_order() {
+    let timestamp = 1_u64.to_be_bytes();
+    let summary = [0_u8; 32];
+    assert_fatal(
+        &envelope(&[(5, &timestamp), (1, &summary)]),
+        "non-ascending block artifact record tag: 0x01 after 0x05",
+    );
+
+    let credits = mixed_artifacts(ConsensusHeaderArtifact::DealerLog(Bytes::new()))
+        .late_finalize_credits
+        .expect("mixed artifacts carry late-finalize credits");
+    let encoded_credits = encode_late_finalize_credits_artifact(&credits).unwrap();
+    let credit_payload = &encoded_credits[10..];
+    assert_fatal(
+        &envelope(&[(6, credit_payload), (5, &timestamp)]),
+        "non-ascending block artifact record tag: 0x05 after 0x06",
+    );
+
+    // Reject non-canonical wire forms that the encoder never emits.
+    assert_fatal(
+        &envelope(&[(5, &0_u64.to_be_bytes())]),
+        "zero timestamp_millis_part record",
+    );
+    assert_fatal(
+        &envelope(&[(6, &0_u16.to_be_bytes())]),
+        "empty late finalize credits batch list",
+    );
+    assert_fatal(
+        b"OART\x01\x00\x00",
+        "empty block artifact envelope without publication flag",
+    );
+
+    let enabled_empty = &b"OART\x01\x01\x00"[..];
+    let decoded_enabled_empty = decode_outbe_block_artifacts(enabled_empty).unwrap();
+    assert!(decoded_enabled_empty.radicle_publication_enabled);
+    assert_eq!(
+        encode_outbe_block_artifacts(&decoded_enabled_empty)
+            .unwrap()
+            .as_ref(),
+        enabled_empty
+    );
+
+    for consensus in [
+        ConsensusHeaderArtifact::BoundaryOutcome(boundary()),
+        ConsensusHeaderArtifact::DealerLog(Bytes::from_static(b"dealer")),
+        ConsensusHeaderArtifact::CommitteePreAnnounce {
+            epoch: 0x0102030405060708,
+            outcome: Bytes::from_static(b"preannounce"),
+        },
+    ] {
+        let artifacts = mixed_artifacts(consensus);
+        let encoded = encode_outbe_block_artifacts(&artifacts).unwrap();
+        let decoded = decode_outbe_block_artifacts(&encoded).unwrap();
+        let reencoded = encode_outbe_block_artifacts(&decoded).unwrap();
+        assert_eq!(reencoded, encoded);
+    }
 }
 
 #[test]

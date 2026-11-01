@@ -667,12 +667,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         }
     }
 
-    fn checkpoint_commit(&mut self) {
-        self.snapshots.pop();
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        super::pop_snapshot_lifo(&mut self.snapshots, checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        if let Some(snapshot) = self.snapshots.drain(checkpoint.journal_i..).next() {
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        if let Some(snapshot) = super::drain_snapshots_from(&mut self.snapshots, checkpoint)? {
             self.storage = snapshot.storage;
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
@@ -680,6 +680,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             #[cfg(feature = "bench-utils")]
             self.storage_trace.truncate(snapshot.storage_trace_len);
         }
+        Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
@@ -697,8 +698,21 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             .into());
         }
 
-        self.accounts.entry(from).or_default().balance -= amount;
-        self.accounts.entry(to).or_default().balance += amount;
+        if from == to {
+            return Ok(());
+        }
+
+        let to_balance = self.accounts.entry(to).or_default().balance;
+        let credited = to_balance.checked_add(amount).ok_or(
+            PrimitivesStorageError::CreditBalanceOverflow {
+                amount,
+                to,
+                balance: to_balance,
+            },
+        )?;
+
+        self.accounts.entry(from).or_default().balance = from_balance - amount;
+        self.accounts.entry(to).or_default().balance = credited;
         Ok(())
     }
 
@@ -706,7 +720,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         if amount.is_zero() {
             return Ok(());
         }
-        self.accounts.entry(address).or_default().balance += amount;
+        let balance = self.accounts.entry(address).or_default().balance;
+        let credited =
+            balance
+                .checked_add(amount)
+                .ok_or(PrimitivesStorageError::IncreaseBalanceOverflow {
+                    address,
+                    amount,
+                    balance,
+                })?;
+        self.accounts.entry(address).or_default().balance = credited;
         Ok(())
     }
 
@@ -796,5 +819,103 @@ mod metadosis_mutation_frame_tests {
         assert!(provider
             .begin_metadosis_mutation_frame(purpose, binding, 7, 11)
             .is_err());
+    }
+
+    #[test]
+    fn test_provider_overflow_matches_production() {
+        use crate::{
+            block::BlockContext, error::PrimitivesStorageError,
+            storage::direct::DirectStorageProvider,
+        };
+        use alloy_primitives::{Address, U256};
+        use revm::database::{CacheDB, EmptyDB};
+
+        let sender = Address::repeat_byte(0xAA);
+        let recipient = Address::repeat_byte(0xBB);
+
+        let mut test_provider = HashMapStorageProvider::new(1);
+        let mut db = CacheDB::new(EmptyDB::default());
+        let mut prod_provider =
+            DirectStorageProvider::new(&mut db, BlockContext::empty_for_tests(1, 1_700_000_000, 1));
+
+        // Seed both providers to U256::MAX - 5 on recipient and 10 on sender.
+        test_provider
+            .increase_balance(recipient, U256::MAX - U256::from(5u64))
+            .unwrap();
+        prod_provider
+            .increase_balance(recipient, U256::MAX - U256::from(5u64))
+            .unwrap();
+        test_provider
+            .increase_balance(sender, U256::from(10u64))
+            .unwrap();
+        prod_provider
+            .increase_balance(sender, U256::from(10u64))
+            .unwrap();
+
+        // Minting past U256::MAX must return the exact same IncreaseBalanceOverflow error.
+        let test_inc_err = test_provider
+            .increase_balance(recipient, U256::from(6u64))
+            .unwrap_err();
+        let prod_inc_err = prod_provider
+            .increase_balance(recipient, U256::from(6u64))
+            .unwrap_err();
+        assert_eq!(test_inc_err.to_string(), prod_inc_err.to_string());
+        assert_eq!(
+            test_inc_err.to_string(),
+            crate::error::PrecompileError::from(PrimitivesStorageError::IncreaseBalanceOverflow {
+                address: recipient,
+                amount: U256::from(6u64),
+                balance: U256::MAX - U256::from(5u64),
+            })
+            .to_string()
+        );
+
+        // Transferring past U256::MAX must return the exact same CreditBalanceOverflow error
+        // without debiting the sender on either provider.
+        let test_xfer_err = test_provider
+            .transfer_balance(sender, recipient, U256::from(6u64))
+            .unwrap_err();
+        let prod_xfer_err = prod_provider
+            .transfer_balance(sender, recipient, U256::from(6u64))
+            .unwrap_err();
+        assert_eq!(test_xfer_err.to_string(), prod_xfer_err.to_string());
+        assert_eq!(
+            test_xfer_err.to_string(),
+            crate::error::PrecompileError::from(PrimitivesStorageError::CreditBalanceOverflow {
+                amount: U256::from(6u64),
+                to: recipient,
+                balance: U256::MAX - U256::from(5u64),
+            })
+            .to_string()
+        );
+        assert_eq!(
+            test_provider.account_info(sender).unwrap().balance,
+            U256::from(10u64)
+        );
+        assert_eq!(
+            prod_provider.account_info(sender).unwrap().balance,
+            U256::from(10u64)
+        );
+    }
+
+    #[test]
+    fn is_static_returns_constructor_flag() {
+        let mut provider = HashMapStorageProvider::new(1);
+        assert!(
+            !provider.is_static(),
+            "default constructor must report is_static() == false",
+        );
+
+        provider.set_static(true);
+        assert!(
+            provider.is_static(),
+            "after set_static(true), is_static() must return true",
+        );
+
+        provider.set_static(false);
+        assert!(
+            !provider.is_static(),
+            "after set_static(false), is_static() must return false",
+        );
     }
 }

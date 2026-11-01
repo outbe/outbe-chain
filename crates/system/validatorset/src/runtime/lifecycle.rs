@@ -60,7 +60,7 @@ impl ValidatorSet<'_> {
         let active = match before.lifecycle().clone() {
             ValidatorLifecycle::Active(active) => active,
             ValidatorLifecycle::Absent => {
-                return Err(ValidatorSetError::ValidatorNotRegistered.into())
+                return Err(ValidatorSetError::ValidatorNotRegistered.into());
             }
             _ => return Err(ValidatorSetError::CanOnlyDeactivateActiveValidator.into()),
         };
@@ -313,11 +313,11 @@ impl ValidatorSet<'_> {
         after: &ValidatorState,
         emit: impl FnOnce(&mut Self) -> Result<()>,
     ) -> Result<()> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.persist_validator_state_delta(before, after)?;
         self.pending_set_change.write(true)?;
         emit(self)?;
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 }

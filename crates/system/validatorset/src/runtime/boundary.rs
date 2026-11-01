@@ -192,7 +192,7 @@ impl ValidatorSet<'_> {
         // The planner performs every fallible semantic check before this
         // checkpoint. Storage writes, hash, repair flag, and event commit as one
         // bundle even for direct legacy calls.
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         for (before, after) in &plan.transitions {
             self.persist_validator_state_delta(before, after)?;
         }
@@ -201,7 +201,7 @@ impl ValidatorSet<'_> {
         self.emit(IValidatorSet::ConsensusSetUpdated {
             activeCount: active_count,
         })?;
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 

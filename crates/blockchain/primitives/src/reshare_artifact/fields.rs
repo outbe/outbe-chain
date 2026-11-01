@@ -40,7 +40,11 @@ pub(super) fn decode_timestamp(payload: &[u8]) -> Result<u64> {
     }
     let mut buf = [0u8; TIMESTAMP_MILLIS_PART_LEN];
     buf.copy_from_slice(payload);
-    // The consensus header validator owns the range check (`< 1000`).
-    // The codec is structural-only.
-    Ok(u64::from_be_bytes(buf))
+    // The consensus header validator owns the upper range check (`< 1000`).
+    // A zero remainder is omitted by the canonical encoder and rejected here.
+    let value = u64::from_be_bytes(buf);
+    if value == 0 {
+        return Err(ReshareArtifactError::ZeroTimestampMillisPart.into());
+    }
+    Ok(value)
 }

@@ -120,9 +120,9 @@ impl ValidatorSet<'_> {
         let before = self.validator_state(validator_addr)?;
         let lifecycle = state_machine::with_p2p(before.lifecycle().clone(), P2pInfo::V1(decoded))?;
         let after = before.clone().with_lifecycle(lifecycle)?;
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.persist_validator_state_delta(&before, &after)?;
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 
@@ -283,7 +283,7 @@ impl ValidatorSet<'_> {
         let (after, old_pk_hash) = self.reregistered_state(request, &target)?;
         let pk_hash = Self::consensus_pubkey_hash(request.consensus_pubkey);
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.consensus_pubkey_hash_to_address
             .write(&old_pk_hash, Address::ZERO)?;
         self.consensus_pubkey_hash_to_address
@@ -297,7 +297,7 @@ impl ValidatorSet<'_> {
         self.emit(IValidatorSet::ValidatorPending {
             validator: validator_addr,
         })?;
-        guard.commit();
+        guard.commit()?;
 
         publish_registration(
             validator_addr,
@@ -396,7 +396,7 @@ impl ValidatorSet<'_> {
             target.block_number,
         )?;
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         if target.radicle_owner == validator_addr {
             return Err(ValidatorSetError::UnregisteredValidatorRetainsRadicleReservation.into());
         }
@@ -427,7 +427,7 @@ impl ValidatorSet<'_> {
         self.emit(IValidatorSet::ValidatorPending {
             validator: validator_addr,
         })?;
-        guard.commit();
+        guard.commit()?;
 
         publish_registration(
             validator_addr,

@@ -23,11 +23,16 @@ const LOG_SCALE_SQUARED: U256 = U256::from_limbs([0, 0, 0, 1u64 << 62]);
 /// Calculates `log2(x)` for `x` in 128.128 fixed-point. Returns the result
 /// as a signed 128.128 fixed-point. Reverts if `x == 0` (LB
 /// `Uint128x128Math__LogUnderflow`).
+///
+/// `x == 1` returns `-128 << 128`, a 128.128-scaled value. Upstream
+/// PancakeSwap LB (`Uint128x128Math.sol` L37) returned unscaled `-128`, which
+/// made `log2` and `get_id_from_price` non-monotonic between `x = 1` and
+/// `x = 2`. The scaled result is an intentional divergence from that source.
 pub fn log2(x: U256) -> Result<I256> {
-    // Special cases match LB.
     if x == U256::ONE {
-        return I256::try_from(-128i32)
-            .map_err(|_| PrimitivesMathError::LbMathLog2I256Conversion.into());
+        let raw =
+            I256::try_from(-128i32).map_err(|_| PrimitivesMathError::LbMathLog2I256Conversion)?;
+        return Ok(raw << 128usize);
     }
     if x.is_zero() {
         return Err(PrimitivesMathError::LbMathLog2Underflow.into());
@@ -212,5 +217,16 @@ mod tests {
     #[test]
     fn log2_zero_errors() {
         assert!(log2(U256::ZERO).is_err());
+    }
+
+    #[test]
+    fn log_special_case_is_scaled() {
+        let one = log2(U256::ONE).unwrap();
+        assert_eq!(one, I256::try_from(-128i32).unwrap() << 128usize);
+        assert!(one < log2(U256::from(2u64)).unwrap());
+        assert!(
+            crate::math::price_helper::get_id_from_price(U256::ONE, 25).unwrap()
+                <= crate::math::price_helper::get_id_from_price(U256::from(2u64), 25).unwrap()
+        );
     }
 }

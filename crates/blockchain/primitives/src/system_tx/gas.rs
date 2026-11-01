@@ -136,11 +136,26 @@ impl SystemTxVisibleGasPlan {
             .map(|entry| entry.protocol_precharge)
     }
 
-    #[must_use]
-    pub fn execution_gas_limit(&self, ordinal: usize) -> Option<u64> {
-        self.entries
-            .get(ordinal)
-            .map(|entry| entry.gas_limit - entry.intrinsic_gas - entry.protocol_precharge)
+    pub fn execution_gas_limit(&self, ordinal: usize) -> Result<Option<u64>, SystemTxError> {
+        let Some(entry) = self.entries.get(ordinal) else {
+            return Ok(None);
+        };
+        let required_gas = entry
+            .intrinsic_gas
+            .checked_add(entry.protocol_precharge)
+            .ok_or(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: entry.gas_limit,
+                intrinsic_gas: u64::MAX,
+            })?;
+        let execution_gas = entry
+            .gas_limit
+            .checked_sub(entry.intrinsic_gas)
+            .and_then(|remaining| remaining.checked_sub(entry.protocol_precharge))
+            .ok_or(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: entry.gas_limit,
+                intrinsic_gas: required_gas,
+            })?;
+        Ok(Some(execution_gas))
     }
 
     #[must_use]
@@ -159,4 +174,30 @@ fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTx
             &crate::tee_attestation_v1::TeeRegistryGasScheduleV1::normative(),
         )
         .map_err(SystemTxError::codec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SystemTxVisibleGasEntry, SystemTxVisibleGasPlan};
+    use crate::system_tx::SystemTxError;
+
+    #[test]
+    fn gas_plan_subtraction_is_checked() {
+        let plan = SystemTxVisibleGasPlan {
+            entries: vec![SystemTxVisibleGasEntry {
+                intrinsic_gas: 80,
+                protocol_precharge: 30,
+                gas_limit: 100,
+            }],
+            total_envelope_gas: 100,
+        };
+
+        assert_eq!(
+            plan.execution_gas_limit(0),
+            Err(SystemTxError::GasLimitBelowIntrinsic {
+                gas_limit: 100,
+                intrinsic_gas: 110,
+            })
+        );
+    }
 }

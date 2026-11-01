@@ -145,7 +145,7 @@ pub fn date_key_to_utc_timestamp(date_key: u32) -> Result<u64, TimeError> {
         utc_day: date_key,
         genesis_utc_day: 19_700_101,
     })?;
-    Ok(days * SECONDS_PER_DAY)
+    Ok(days.saturating_mul(SECONDS_PER_DAY))
 }
 
 /// Returns the previous calendar day key for a yyyymmdd date key.
@@ -531,6 +531,27 @@ mod tests {
             assert_eq!(typed, WorldwideDay::new(u32::MAX));
             assert!(!typed.is_valid());
         }
+    }
+
+    #[test]
+    fn date_arithmetic_is_bounded() {
+        assert_eq!(
+            date_key_to_utc_timestamp(19691231),
+            Err(TimeError::PreGenesis {
+                utc_day: 19691231,
+                genesis_utc_day: 19_700_101,
+            })
+        );
+        let saturated = u64::MAX.saturating_add(UTC_PLUS_14_OFFSET);
+        assert_eq!(saturated, u64::MAX);
+        assert_eq!(
+            worldwide_day_from_timestamp(u64::MAX),
+            timestamp_to_date_key(saturated)
+        );
+        assert_ne!(
+            worldwide_day_from_timestamp(u64::MAX),
+            timestamp_to_date_key(u64::MAX.wrapping_add(UTC_PLUS_14_OFFSET))
+        );
     }
 
     #[test]

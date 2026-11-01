@@ -86,7 +86,7 @@ fn nested_checkpoint_revert_restores_code_storage_balance_and_events() {
         )
         .unwrap();
     provider.transfer_balance(FROM, TO, U256::from(30)).unwrap();
-    provider.checkpoint_revert(inner);
+    provider.checkpoint_revert(inner).unwrap();
 
     assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::from(10));
     assert_eq!(provider.account_info(FROM).unwrap().balance, U256::from(80));
@@ -97,7 +97,7 @@ fn nested_checkpoint_revert_restores_code_storage_balance_and_events() {
     assert_eq!(events[0].address, FROM);
     assert_eq!(events[0].data.data, Bytes::from_static(&[0x01]));
 
-    provider.checkpoint_revert(outer);
+    provider.checkpoint_revert(outer).unwrap();
     assert_eq!(provider.sload(FROM, SLOT).unwrap(), U256::ZERO);
     assert_eq!(
         provider.account_info(FROM).unwrap().balance,

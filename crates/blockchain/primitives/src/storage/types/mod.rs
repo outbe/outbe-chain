@@ -92,23 +92,30 @@ pub fn clear_in_word<T: Storable>(word: U256, byte_offset: usize) -> U256 {
 
 /// Trait for types that can be used as mapping keys.
 ///
-/// Keys are left-padded to 32 bytes and hashed with the base slot via keccak256.
+/// Keys up to 32 bytes are left-padded to 32 bytes; wider keys are concatenated
+/// directly with the 32-byte big-endian base slot and hashed via `keccak256`.
 pub trait StorageKey {
-    /// Returns the key bytes (will be left-padded to 32 bytes).
+    /// Returns the key bytes (left-padded to 32 bytes when narrower than one word).
     fn key_bytes(&self) -> Vec<u8>;
 
-    /// Computes the mapping slot: `keccak256(left_pad(key) ++ base_slot)`.
+    /// Computes the mapping slot: `keccak256(pad_or_raw(key) ++ base_slot)`.
     fn mapping_slot(&self, base_slot: U256) -> U256 {
         use alloy_primitives::keccak256;
 
         let key = self.key_bytes();
-        let mut buf = [0u8; 64];
-        // Left-pad key to 32 bytes
-        let start = 32 - key.len();
-        buf[start..32].copy_from_slice(&key);
-        // Base slot in big-endian
-        buf[32..64].copy_from_slice(&base_slot.to_be_bytes::<32>());
-        U256::from_be_bytes(keccak256(buf).0)
+        let slot_bytes = base_slot.to_be_bytes::<32>();
+        if key.len() <= 32 {
+            let mut buf = [0u8; 64];
+            let start = 32 - key.len();
+            buf[start..32].copy_from_slice(&key);
+            buf[32..64].copy_from_slice(&slot_bytes);
+            U256::from_be_bytes(keccak256(buf).0)
+        } else {
+            let mut buf = Vec::with_capacity(key.len() + 32);
+            buf.extend_from_slice(&key);
+            buf.extend_from_slice(&slot_bytes);
+            U256::from_be_bytes(keccak256(buf).0)
+        }
     }
 }
 
@@ -349,5 +356,26 @@ mod tests {
         for word in [U256::from(u8::MAX) + U256::ONE, U256::MAX] {
             assert_eq!(u8::from_word(word), u8::MAX);
         }
+    }
+
+    #[test]
+    fn wide_key_mapping_slot() {
+        struct DefaultWideKey(Vec<u8>);
+
+        impl StorageKey for DefaultWideKey {
+            fn key_bytes(&self) -> Vec<u8> {
+                self.0.clone()
+            }
+        }
+
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        let pair = AddressPair::from_addresses(second, first);
+        let wide = DefaultWideKey(pair.key_bytes());
+        let base_slot = U256::from(42u64);
+
+        // A 40-byte key using the default trait method must not underflow or panic,
+        // and must derive the exact same slot as AddressPair's hand-written override.
+        assert_eq!(wide.mapping_slot(base_slot), pair.mapping_slot(base_slot));
     }
 }

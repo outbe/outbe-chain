@@ -416,13 +416,13 @@ impl Vote<'_> {
         };
         let bond = self.proposal_bond(proposal_id)?;
 
-        let finalization_checkpoint = self.storage.checkpoint_guard();
-        let target_checkpoint = self.storage.checkpoint_guard();
+        let finalization_checkpoint = self.storage.checkpoint_guard()?;
+        let target_checkpoint = self.storage.checkpoint_guard()?;
         let target_outcome =
             registry.handle_tally(ctx, proposal_id, &proposal, bond.amount, status)?;
         let (status, outcome) = match target_outcome {
             TargetExecutionOutcome::Applied => {
-                target_checkpoint.commit();
+                target_checkpoint.commit()?;
                 let outcome = match status {
                     ProposalStatus::Approved => ProposalFinalization::Approved,
                     ProposalStatus::Expired => ProposalFinalization::Expired,
@@ -445,7 +445,7 @@ impl Vote<'_> {
         self.refund_or_burn_bond(proposal_id, proposal.proposer, bond, status)?;
 
         self.notify_proposal_finalized(&proposal, &tally, outcome)?;
-        finalization_checkpoint.commit();
+        finalization_checkpoint.commit()?;
         Ok(())
     }
 

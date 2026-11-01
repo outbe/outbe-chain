@@ -274,6 +274,23 @@ fn read_missed_proposers(data: &[u8], offset: &mut usize) -> Result<Vec<MissedPr
             .map_err(|_| ConsensusMetadataError::InvalidMissedProposerCountSlice)?,
     ) as usize;
 
+    // Reject an oversized count before `Vec::with_capacity`. Each entry is
+    // one `u64` view plus one 20-byte address.
+    const MISSED_PROPOSER_WIRE_BYTES: usize = 8 + 20;
+    let byte_len = count
+        .checked_mul(MISSED_PROPOSER_WIRE_BYTES)
+        .ok_or(ConsensusMetadataError::AddressListLengthOverflow)?;
+    if *offset + byte_len > data.len() {
+        // Preserve the exact EOF error that reading the first missing field
+        // would return: fewer than 8 bytes left is `UnexpectedEofU64`.
+        return Err(if *offset + 8 > data.len() {
+            ConsensusMetadataError::UnexpectedEofU64
+        } else {
+            ConsensusMetadataError::UnexpectedEofMissedProposerValidator
+        }
+        .into());
+    }
+
     let mut events = Vec::with_capacity(count);
     for _ in 0..count {
         let view = read_u64(data, offset)?;
@@ -437,5 +454,30 @@ mod reader_tests {
             assert_eq!(read(&short_payload, &mut offset).unwrap(), [0xab, 0xcd]);
             assert_eq!(offset, width + 3);
         }
+    }
+
+    #[test]
+    fn metadata_allocation_is_bounded() {
+        let encoded = CertifiedParentAccountingMetadata::default()
+            .encode()
+            .expect("empty metadata encodes");
+        let mut declared = encoded.to_vec();
+        let count_at = declared.len() - 2;
+        declared[count_at..].copy_from_slice(&u16::MAX.to_be_bytes());
+
+        let eof_u64 = CertifiedParentAccountingMetadata::decode(&declared)
+            .expect_err("u16::MAX missed proposers with no payload must be rejected");
+        assert!(
+            matches!(&eof_u64, PrecompileError::Revert(message) if message == "unexpected EOF reading u64"),
+            "{eof_u64:?}"
+        );
+
+        declared.extend_from_slice(&[0_u8; 10]);
+        let eof_validator = CertifiedParentAccountingMetadata::decode(&declared)
+            .expect_err("a short missed-proposer tail must be rejected");
+        assert!(
+            matches!(&eof_validator, PrecompileError::Revert(message) if message == "unexpected EOF reading missed-proposer validator"),
+            "{eof_validator:?}"
+        );
     }
 }

@@ -59,7 +59,7 @@ impl PromisLimitContract<'_> {
             return Ok(U256::ZERO);
         }
 
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let prev_rest = self.rest_minor.read()?;
         let total_minor = prev_rest
             .checked_add(amount_minor)
@@ -80,7 +80,7 @@ impl PromisLimitContract<'_> {
             }
             .encode_log_data(),
         )?;
-        guard.commit();
+        guard.commit()?;
 
         Ok(credited_minor)
     }
