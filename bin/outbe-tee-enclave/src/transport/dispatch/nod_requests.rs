@@ -34,6 +34,20 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
                 amount,
             },
         ),
+        EnclaveRequest::IssueNodFromTributeV1 { request } => {
+            super::nod::issue_from_tribute(keys, offer_key, chain_id, &request)
+        }
+        EnclaveRequest::ApplyNodGroupLoadOpV1 { request } => {
+            super::nod::apply_group_load_op(keys, offer_key, chain_id, &request)
+        }
+        EnclaveRequest::ReadNodGroupLoadV1 { record } => {
+            super::nod::read_group_load(keys, offer_key, chain_id, &record)
+        }
+        EnclaveRequest::EncryptNodQuoteV1 {
+            nod,
+            context,
+            payment_minor,
+        } => super::nod::encrypt_quote(keys, offer_key, chain_id, (&nod, &context, payment_minor)),
         EnclaveRequest::NodTransferChunkV1 {
             id,
             total,

@@ -531,11 +531,11 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
     use alloy_evm::{block::BlockExecutor, tracing::TxTracer, Evm as _};
-    use alloy_primitives::{Signature, TxKind};
+    use alloy_primitives::TxKind;
     use alloy_sol_types::SolCall;
-    use outbe_nod::precompile::INod;
+    use outbe_nodfactory::precompile::INodFactory;
     use outbe_primitives::{
-        addresses::{NOD_ADDRESS, REWARDS_ADDRESS},
+        addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS},
         time::WorldwideDay,
     };
     use reth_evm::ConfigureEvm;
@@ -567,14 +567,18 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         entry_price_minor,
         840,
     );
-    let nod_id = outbe_nod::test_support::nod_id_of(proposer, worldwide_day.value(), 840, 840);
+    let settlement_asset = Address::repeat_byte(0x71);
+    let user_signer =
+        outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes([2u8; 32]).unwrap();
+    let user_sender = user_signer.address();
+    let nod_id = outbe_nod::test_support::nod_id_of(user_sender, worldwide_day.value(), 840, 840);
     let nod_item = {
         let _enclave = outbe_nod::test_support::scope();
         outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
                 is_settled: false,
                 nod_id,
-                owner: proposer,
+                owner: user_sender,
                 gratis_load_minor: U256::from(1_000_000u64),
                 emission_day: worldwide_day.value(),
                 league_id: 1,
@@ -588,29 +592,53 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     };
     outbe_nod::test_support::uninstall();
 
-    let user_tx: reth_ethereum::TransactionSigned = TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit: 100_000,
-        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(NOD_ADDRESS),
-        value: U256::ZERO,
-        input: INod::getNodCall { nodId: nod_id }.abi_encode().into(),
-        access_list: Default::default(),
-    }
-    .into_signed(Signature::test_signature())
-    .into();
-    let user_tx = user_tx.try_into_recovered().unwrap();
-    let user_sender = Address(*user_tx.signer());
+    let user_tx = user_signer
+        .sign_eip1559(TxEip1559 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: 200_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+            max_priority_fee_per_gas: 0,
+            to: TxKind::Call(NOD_FACTORY_ADDRESS),
+            value: U256::ZERO,
+            input: INodFactory::quoteSettlementCall {
+                nodId: nod_id,
+                asset: settlement_asset,
+            }
+            .abi_encode()
+            .into(),
+            access_list: Default::default(),
+        })
+        .unwrap()
+        .try_into_recovered()
+        .unwrap();
+
+    // Minimal EVM contract returning 6 on `decimals()` (0x313ce567) and 840 on `isoCode()`.
+    let asset_bytecode = revm::state::Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[
+        0x5f, 0x35, 0x60, 0xe0, 0x1c, 0x63, 0x31, 0x3c, 0xe5, 0x67, 0x14, 0x60, 0x17, 0x57, 0x61,
+        0x03, 0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3, 0x5b, 0x60, 0x06, 0x5f, 0x52, 0x60, 0x20,
+        0x5f, 0xf3,
+    ]));
 
     let build_seeded_state = || {
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
                 let _enclave = outbe_nod::test_support::scope();
                 outbe_nod::test_support::add(&storage, &nod_item).unwrap();
+                outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
+                    .asset_vault_set(settlement_asset)
+                    .insert(Address::repeat_byte(0x99))
+                    .unwrap();
             });
         outbe_nod::test_support::uninstall();
+        state.database.insert_account_info(
+            settlement_asset,
+            revm::state::AccountInfo {
+                code_hash: asset_bytecode.hash_slow(),
+                code: Some(asset_bytecode.clone()),
+                ..Default::default()
+            },
+        );
         state.database.insert_account_info(
             user_sender,
             revm::state::AccountInfo {
@@ -629,6 +657,34 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
                     .map_err(outbe_tee::TransportError::codec)?;
                 let resp = sign_nod_read(&sk, hash, U256::from(1_000_000u64));
                 Ok((pk, resp))
+            }
+            outbe_tee::protocol::EnclaveRequest::EncryptNodQuoteV1 {
+                nod,
+                context,
+                payment_minor,
+            } => {
+                let inputs_canonical_hash = outbe_tee::response_auth::hash(
+                    b"outbe/nod/quote-encrypt-inputs/v1",
+                    &(nod.as_ref(), context, *payment_minor),
+                )
+                .map_err(outbe_tee::TransportError::codec)?;
+                let encrypted_payment =
+                    vec![0x42u8; outbe_primitives::nod_encryption::NOD_BLOB_LEN];
+                let preimage = outbe_tee::response_auth::attestation(
+                    b"outbe/nod/quote-encrypt-result/v1",
+                    inputs_canonical_hash,
+                    &encrypted_payment,
+                )
+                .map_err(outbe_tee::TransportError::codec)?;
+                let sig = sk.sign(&preimage);
+                Ok((
+                    pk,
+                    EnclaveResponse::NodQuoteEncryptedV1 {
+                        encrypted_payment,
+                        inputs_canonical_hash,
+                        attestation_tag: sig.to_bytes().to_vec(),
+                    },
+                ))
             }
             _ => Err(outbe_tee::TransportError::UnexpectedResponse),
         })

@@ -1,12 +1,23 @@
 //! Private amount access; public Tribute queries never call this module.
 
-use alloy_primitives::U256;
+use std::collections::BTreeMap;
+
+use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
-    tribute_day_encryption::EncryptedTributeDayAmountV2,
+    time::WorldwideDay,
+    tribute_day_encryption::{
+        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    },
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
 };
-use outbe_tee::{tribute_day::TributeDayOpRequestV2, TransportError};
+use outbe_tee::{
+    nod_mine::{IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1},
+    tribute_day::{
+        LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2,
+        TributeLeagueOpRequestV1,
+    },
+    TransportError,
+};
 
 pub(crate) fn apply_day_operation(
     request: TributeDayOpRequestV2,
@@ -18,6 +29,95 @@ pub(crate) fn apply_day_operation(
         return result.map_err(crate::errors::enclave_transport_error);
     }
     outbe_tee::tribute_day_client::apply_day_operation(request)
+}
+
+pub(crate) fn apply_league_operation(
+    request: TributeLeagueOpRequestV1,
+) -> Result<EncryptedTributeLeagueAmountV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::tribute_day::apply_league_operation(key, key, &request)
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::tribute_day_client::apply_league_operation(request)
+}
+
+pub(crate) fn read_league_amount(
+    record: &EncryptedTributeLeagueAmountV1,
+) -> Result<U256, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::tribute_day::read_league_amount(key, record)
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::tribute_day_client::read_league_amount(record)
+}
+
+pub(crate) fn execute_lysis_fractions(
+    request: LysisFractionsRequestV1,
+) -> Result<LysisFractionsResultV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::tribute_day::execute_lysis_fractions(key, key, key, &request)
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::tribute_day_client::execute_lysis_fractions(request)
+}
+
+#[cfg(test)]
+pub(crate) fn read_day_fractions(
+    record: &EncryptedTributeDayFractionsV1,
+) -> Result<BTreeMap<u16, u64>, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::tribute_day::read_day_fractions(key, record)
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::tribute_day_client::read_day_fractions(record)
+}
+
+pub(crate) fn seal_day_fractions(
+    chain_id: u64,
+    worldwide_day: WorldwideDay,
+    completed_at: u64,
+    inputs_hash: B256,
+    fractions: &BTreeMap<u16, u64>,
+) -> Result<EncryptedTributeDayFractionsV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::tribute_day::seal_day_fractions(
+            key,
+            (chain_id, worldwide_day, completed_at),
+            inputs_hash,
+            fractions,
+        )
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    let _ = (
+        chain_id,
+        worldwide_day,
+        completed_at,
+        inputs_hash,
+        fractions,
+    );
+    Err(TransportError::UnexpectedResponse)
+}
+
+pub(crate) fn issue_nod_from_tribute(
+    request: IssueNodFromTributeRequestV1,
+) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::with_key(|key| {
+        outbe_tee_enclave::nod_encryption::issue_nod_from_tribute(key, key, key, &request)
+    }) {
+        return result.map_err(crate::errors::enclave_transport_error);
+    }
+    outbe_tee::nod_mine::issue_nod_from_tribute(request)
 }
 
 pub(crate) fn read_day_amount(
@@ -47,26 +147,6 @@ pub(crate) fn read_amounts(
         .ok_or(TransportError::UnexpectedResponse)
 }
 
-pub(crate) fn encrypt_nod_for_tribute(
-    tribute: &EncryptedTributeV2,
-    terms: NodTermsV1,
-    amount: U256,
-) -> Result<EncryptedNodV1, TransportError> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_tee_enclave::nod_encryption::encrypt_nod_for_tribute(
-            key,
-            key,
-            tribute,
-            terms.clone(),
-            amount,
-        )
-    }) {
-        return result.map_err(crate::errors::enclave_transport_error);
-    }
-    outbe_tee::nod_mine::encrypt_nod_for_tribute(tribute, terms, amount)
-}
-
 /// Explicit test seam using the real cryptographic engines, without transport.
 /// Release builds contain neither this fixture secret nor this bypass: the crate
 /// root rejects `all(feature = "test-enclave", feature = "production-enclave")`
@@ -79,6 +159,7 @@ pub mod test_enclave {
     pub const NETWORK_SECRET: [u8; 32] = [0x5a; 32];
     pub struct Guard {
         previous: bool,
+        _nod_guard: Option<outbe_nod::test_support::Guard>,
         _thread: std::marker::PhantomData<std::rc::Rc<()>>,
     }
     impl Drop for Guard {
@@ -98,8 +179,15 @@ pub mod test_enclave {
     }
     impl Context {
         pub fn install(self) -> Guard {
+            let nod_guard = if self.installed {
+                Some(outbe_nod::test_support::scope())
+            } else {
+                outbe_nod::test_support::uninstall();
+                None
+            };
             Guard {
                 previous: INSTALLED.replace(self.installed),
+                _nod_guard: nod_guard,
                 _thread: std::marker::PhantomData,
             }
         }
@@ -109,9 +197,11 @@ pub mod test_enclave {
     }
     pub fn install() {
         INSTALLED.set(true);
+        outbe_nod::test_support::install();
     }
     pub fn uninstall() {
         INSTALLED.set(false);
+        outbe_nod::test_support::uninstall();
     }
     /// Seeds encrypted storage for legacy numerical calculation fixtures.
     pub fn seed_day_totals(

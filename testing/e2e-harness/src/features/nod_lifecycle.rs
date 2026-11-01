@@ -214,10 +214,6 @@ impl Lifecycle for NodLifecycle {
                 crate::internal::nod_keys::decrypt(world, &first),
                 "the five Nods must share one load"
             );
-            assert_eq!(
-                data.settlementCostMinor,
-                entry * load / U256::from(1_000_000)
-            );
             let dev = NodParams::DEV;
             assert_eq!(
                 data.callPriceMinor,

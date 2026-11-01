@@ -22,6 +22,9 @@ pub enum NodFactoryError {
     #[error("nod not found")]
     NodNotFound,
 
+    #[error("caller is not nod owner")]
+    NotNodOwner,
+
     #[error("nod entry price is out of bounds")]
     EntryPriceOutOfBounds,
 
@@ -87,6 +90,7 @@ impl From<NodFactoryError> for PrecompileError {
             NodFactoryError::InvalidEncryptedNod => revert_with(I::InvalidEncryptedNod {}),
             NodFactoryError::NodAlreadyExists => revert_with(I::NodAlreadyExists {}),
             NodFactoryError::NodNotFound => revert_with(I::NodNotFound {}),
+            NodFactoryError::NotNodOwner => revert_with(I::NotNodOwner {}),
             NodFactoryError::EntryPriceOutOfBounds => revert_with(I::EntryPriceOutOfBounds {}),
             NodFactoryError::GroupNotFound => revert_with(I::GroupNotFound {}),
             NodFactoryError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),

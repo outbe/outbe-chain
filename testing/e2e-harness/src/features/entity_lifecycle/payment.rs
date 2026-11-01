@@ -65,17 +65,20 @@ pub(crate) fn quote(world: &World, target: &Target, asset: Address) -> Quote {
             }
         }
         Item::Nod(id) => {
-            let quote = eth::read_call_result(
+            let quote = eth::read_call_from_result(
                 &url,
                 addresses::NOD_FACTORY_ADDR,
+                target.owner,
                 &eth::INodFactory::quoteSettlementCall { nodId: *id, asset },
             )
             .unwrap_or_else(|error| {
                 panic!("Nod {id} does not quote a payment in {asset}: {error}")
             });
+            let payable =
+                crate::internal::nod_keys::decrypt_quote(world, target.owner, *id, asset, &quote);
             Quote {
                 currency: quote.settlementCurrency,
-                payable: quote.paymentMinor,
+                payable,
                 snapshot: quote.snapshotId,
             }
         }

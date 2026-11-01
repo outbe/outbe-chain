@@ -335,6 +335,38 @@ fn is_settled(world: &mut World, nod_id: U256) -> bool {
         .is_settled
 }
 
+fn quote_settlement_decrypted(
+    storage: &StorageHandle<'_>,
+    nod_id: U256,
+    asset: Address,
+) -> Result<(u16, U256, U256), PrecompileError> {
+    let _enclave = outbe_nod::test_support::scope();
+    let owner = nod_api::get_item(storage, nod_id)?
+        .ok_or(NodFactoryError::NodNotFound)?
+        .owner;
+    let (settlement_currency, encrypted, snapshot_id) =
+        api::quote_settlement(storage, owner, nod_id, asset)?;
+    let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+        &outbe_nod::test_support::NETWORK_SECRET,
+        owner,
+    )
+    .expect("derive view key");
+    let payment_minor = outbe_tee::nod_decrypt::decrypt_nod_quote_for_owner(
+        &view_key,
+        &outbe_primitives::nod_encryption::NodQuoteContextV1 {
+            chain_id: storage.chain_id()?,
+            nod_id,
+            owner,
+            asset,
+            settlement_currency,
+            snapshot_id,
+        },
+        &encrypted,
+    )
+    .expect("decrypt quote for owner");
+    Ok((settlement_currency, payment_minor, snapshot_id))
+}
+
 /// Pays `asset` by ERC20 against a fixed balance stub: a payment that clears the
 /// snapshot check stops at the balance delta instead.
 fn settle_erc20(

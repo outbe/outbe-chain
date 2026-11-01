@@ -33,30 +33,6 @@
   },
   {
     "type": "function",
-    "name": "getDayLeagueFraction",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "league",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "fraction",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getDayTotals",
     "inputs": [
       {

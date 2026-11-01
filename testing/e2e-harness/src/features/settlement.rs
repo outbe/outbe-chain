@@ -177,25 +177,29 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let (nod_id, body) = wait_for_materialized_nod(world, port, owner);
-    assert!(
-        !body.settlementCostMinor.is_zero(),
-        "settlement E2E requires a Nod with a nonzero cost"
-    );
     let gratis_load = crate::internal::nod_keys::decrypt(world, &body);
     assert!(!gratis_load.is_zero());
+    let settlement_cost = crate::internal::nod_keys::settlement_cost_minor(world, &body);
+    assert!(
+        !settlement_cost.is_zero(),
+        "settlement E2E requires a Nod with a nonzero cost"
+    );
 
     let fixture = deploy_settlement_fixture(world);
     let nod_word = U256::from_be_slice(&nod_id);
-    let quote = eth::read_call(
+    let quote = eth::read_call_from(
         &url,
         addresses::NOD_FACTORY_ADDR,
+        owner,
         &eth::INodFactory::quoteSettlementCall {
             nodId: nod_word,
             asset: fixture.asset,
         },
     )
     .expect("quote settling the materialized Nod");
-    assert_eq!(quote.paymentMinor, body.settlementCostMinor);
+    let payment_minor =
+        crate::internal::nod_keys::decrypt_quote(world, owner, nod_word, fixture.asset, &quote);
+    assert_eq!(payment_minor, settlement_cost);
     fund_and_approve(
         world,
         crate::features::settlement::SettlementFunding {
@@ -203,7 +207,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             owner_key: &key,
             owner,
             spender: addresses::NOD_FACTORY_ADDR,
-            amount: quote.paymentMinor,
+            amount: payment_minor,
         },
     );
 
@@ -228,7 +232,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
                 account: fixture.vault,
             },
         ),
-        Some(body.settlementCostMinor),
+        Some(settlement_cost),
         "reserve vault did not receive exact Nod cost"
     );
 
@@ -322,7 +326,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     );
     eprintln!(
         "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
-        hex::encode(&nod_id), fixture.asset, fixture.vault, body.settlementCostMinor,
+        hex::encode(&nod_id), fixture.asset, fixture.vault, settlement_cost,
         gratis_load, mine_coen.transaction_hash, native_before, native_after
     );
 }

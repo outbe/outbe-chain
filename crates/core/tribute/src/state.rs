@@ -187,11 +187,6 @@ impl TributeContract<'_> {
         Ok(league.max(1))
     }
 
-    pub fn get_day_league_fraction(&self, day: WorldwideDay, league: u16) -> Result<u64> {
-        self.day_fractions
-            .read(&crate::schema::day_league_key(day, league))
-    }
-
     pub fn get_fi_groups(
         &self,
         day: WorldwideDay,
@@ -201,7 +196,7 @@ impl TributeContract<'_> {
             let key = crate::schema::day_league_key(day, league);
             let count = (self.fi_group_counts.read(&key)? & 0xFFFF_FFFF) as u32;
             if count > 0 {
-                let nominal = self.fi_group_nominals.read(&key)?;
+                let nominal = self.league_nominal_amount(day, league)?;
                 groups.insert(league, (count, nominal));
             }
         }
@@ -210,45 +205,48 @@ impl TributeContract<'_> {
 
     pub(crate) fn adjust_fi_group(
         &mut self,
-        day: WorldwideDay,
+        record: &TributeRecord,
         league: u16,
-        nominal: alloy_primitives::U256,
         add: bool,
     ) -> Result<()> {
         const IN_ACTIVE_LIST_BIT: u64 = 1u64 << 32;
+        let day = record.worldwide_day;
         let key = crate::schema::day_league_key(day, league);
         let packed = self.fi_group_counts.read(&key)?;
         let prev_count = (packed & 0xFFFF_FFFF) as u32;
-        if add {
+        let next_count = if add {
             if (packed & IN_ACTIVE_LIST_BIT) == 0 {
                 self.day_active_leagues.list(&day).push(league)?;
             }
-            let next_count = prev_count
+            prev_count
                 .checked_add(1)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            let prev_nom = if prev_count == 0 {
-                alloy_primitives::U256::ZERO
-            } else {
-                self.fi_group_nominals.read(&key)?
-            };
-            let next_nom = prev_nom
-                .checked_add(nominal)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            self.fi_group_counts
-                .write(&key, IN_ACTIVE_LIST_BIT | u64::from(next_count))?;
-            self.fi_group_nominals.write(&key, next_nom)?;
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?
         } else {
-            let next_count = prev_count
+            prev_count
                 .checked_sub(1)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            let prev_nom = self.fi_group_nominals.read(&key)?;
-            let next_nom = prev_nom
-                .checked_sub(nominal)
-                .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
-            self.fi_group_counts
-                .write(&key, (packed & IN_ACTIVE_LIST_BIT) | u64::from(next_count))?;
-            self.fi_group_nominals.write(&key, next_nom)?;
-        }
+                .ok_or(TributeError::DayCountOverflowOrUnderflow)?
+        };
+        let operation = match record.encrypted() {
+            Some(tribute) => outbe_tee::tribute_day::TributeDayOperationV2::Adjust {
+                tribute: Box::new(tribute.clone()),
+                add,
+            },
+            None => outbe_tee::tribute_day::TributeDayOperationV2::AdjustTransient {
+                nominal_amount_minor: calculation_view(record)?.nominal_amount_minor,
+                add,
+            },
+        };
+        let mut context = b"outbe/tribute/league-count/v1".to_vec();
+        context.extend_from_slice(&day.value().to_be_bytes());
+        context.extend_from_slice(&league.to_be_bytes());
+        context.extend_from_slice(&next_count.to_be_bytes());
+        self.apply_league_amount(day, league, operation, keccak256(context))?;
+        let next_packed = if add {
+            IN_ACTIVE_LIST_BIT | u64::from(next_count)
+        } else {
+            (packed & IN_ACTIVE_LIST_BIT) | u64::from(next_count)
+        };
+        self.fi_group_counts.write(&key, next_packed)?;
         Ok(())
     }
 }

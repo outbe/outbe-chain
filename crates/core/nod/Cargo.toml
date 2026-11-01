@@ -12,6 +12,7 @@ outbe-macros.workspace = true
 outbe-primitives.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

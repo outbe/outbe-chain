@@ -8696,6 +8696,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-tee-enclave",
+ "postcard",
  "serde",
  "serde_json",
  "tempfile",

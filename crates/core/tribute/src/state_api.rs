@@ -92,13 +92,9 @@ pub fn issue_encrypted_with_league(
                 )?
             }
         };
-        let nominal_amount_minor = record
-            .calculation_view()
-            .map_err(TributeError::private_amount_read_failed)?
-            .nominal_amount_minor;
         contract.bump_day_bucket_record(&record, true)?;
         contract.tribute_leagues.write(&record.tribute_id, league)?;
-        contract.adjust_fi_group(record.worldwide_day, league, nominal_amount_minor, true)?;
+        contract.adjust_fi_group(&record, league, true)?;
         contract.insert_state_record(&StoredTribute::from(body))?;
         contract.emit(ITribute::TributeOffered {
             tributeId: record.tribute_id.to_u256(),
@@ -151,11 +147,7 @@ pub fn burn_loaded(storage: &StorageHandle<'_>, loaded: LoadedTribute) -> Result
         contract.bump_day_bucket_record(&record, false)?;
         let league = contract.tribute_leagues.read(&record.tribute_id)?;
         if league != 0 {
-            let nominal = record
-                .calculation_view()
-                .map_err(TributeError::private_amount_read_failed)?
-                .nominal_amount_minor;
-            contract.adjust_fi_group(record.worldwide_day, league, nominal, false)?;
+            contract.adjust_fi_group(&record, league, false)?;
             contract.tribute_leagues.clear(&record.tribute_id)?;
         }
         contract.delete_state_record(record.tribute_id)?;

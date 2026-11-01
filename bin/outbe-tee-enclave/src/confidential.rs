@@ -248,6 +248,24 @@ impl SlotCipher<'_> {
         blob.extend_from_slice(&ct);
         Ok(blob)
     }
+
+    pub fn read_u256(&self, version: Option<u64>, blob: &[u8]) -> Result<U256> {
+        if version.is_none() {
+            return Err(TeeError::DecryptFailed);
+        }
+        let (_, bytes) = self.read_blob(blob)?;
+        let bytes = Zeroizing::new(bytes);
+        let amount: &[u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| TeeError::DecryptFailed)?;
+        Ok(U256::from_be_bytes(*amount))
+    }
+
+    pub fn write_u256(&self, prev_version: u64, amount: U256) -> Result<Vec<u8>> {
+        let plaintext = Zeroizing::new(amount.to_be_bytes::<32>());
+        self.write_blob(prev_version, plaintext.as_ref())
+    }
 }
 
 impl ModifyDomain {

@@ -155,9 +155,8 @@ impl NodContract<'_> {
         self.group_call_threshold_seconds.clear(&group_key)?;
         self.group_call_notice_period_seconds.clear(&group_key)?;
         self.group_called_at.clear(&group_key)?;
-        self.group_unpaid_load.clear(&group_key)?;
+        self.group_open_load_ct.bytes(&group_key).clear()?;
         self.group_unclaimed_tribute_count.clear(&group_key)?;
-        self.group_unclaimed_tribute_load.clear(&group_key)?;
         self.group_is_forfeited.clear(&group_key)?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
     }
@@ -187,21 +186,24 @@ impl NodContract<'_> {
         if self.sealed_series_group(series_id)?.is_some() {
             return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
         }
+        let expected_series_scope = B256::right_padding_from(series_id.as_bytes());
+        if unclaimed_tribute_load.scope != expected_series_scope {
+            return Err(NodError::EncryptedTermsMismatch.into());
+        }
         let current_group = self.groups.get(group_key)?;
         let next_count = self
             .group_unclaimed_tribute_count
             .read(&group_key)?
             .checked_add(unclaimed_tribute_count)
             .ok_or(NodError::GroupMemberIndexOverflow { group_key })?;
-        let next_load = self
-            .group_unclaimed_tribute_load
-            .read(&group_key)?
-            .checked_add(unclaimed_tribute_load)
-            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key })?;
+        self.apply_group_open_load(
+            group_key,
+            outbe_tee::nod_mine::NodGroupLoadOperationV1::AddSeriesLoad {
+                series_load: Box::new(unclaimed_tribute_load),
+            },
+        )?;
         self.group_unclaimed_tribute_count
             .write(&group_key, next_count)?;
-        self.group_unclaimed_tribute_load
-            .write(&group_key, next_load)?;
         self.series_group.write(&series_id, group_key)?;
         self.series_entry_price_minor
             .write(&series_id, entry_price_minor)?;
@@ -228,19 +230,14 @@ impl NodContract<'_> {
         Ok((!group_key.is_zero()).then_some(group_key))
     }
 
-    /// Takes one claimed Tribute and its `gratis_load_minor` off its series and group.
+    /// Takes one claimed Tribute off its series and group counts.
+    /// The group's encrypted open load (`unpaid + unclaimed`) is unchanged because the
+    /// claimed Tribute becomes an unpaid Nod in the same call group.
     pub(crate) fn consume_unclaimed_tribute_from_series(
         &mut self,
         series_id: SeriesId,
         group_key: B256,
-        gratis_load_minor: U256,
     ) -> Result<()> {
-        let load = self.group_unclaimed_tribute_load.read(&group_key)?;
-        let next_load = load
-            .checked_sub(gratis_load_minor)
-            .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
-        self.group_unclaimed_tribute_load
-            .write(&group_key, next_load)?;
         self.release_series_tribute(series_id, group_key)
     }
 
@@ -288,24 +285,103 @@ impl NodContract<'_> {
         self.series_group.clear(&series_id)
     }
 
-    // --- Unpaid load ----------------------------------------------------------
+    // --- Encrypted group open load (unpaid + unclaimed) -----------------------
 
-    pub(crate) fn add_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
-        let total = self
-            .group_unpaid_load
-            .read(&group_key)?
-            .checked_add(load)
-            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key })?;
-        self.group_unpaid_load.write(&group_key, total)
+    pub fn encrypted_group_open_load(&self, group_key: B256) -> Result<Vec<u8>> {
+        self.group_open_load_ct.bytes(&group_key).read()
+    }
+
+    pub(crate) fn group_open_load_record(
+        &self,
+        group_key: B256,
+    ) -> Result<Option<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1>> {
+        let bytes = self.encrypted_group_open_load(group_key)?;
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        let record: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1 =
+            postcard::from_bytes(&bytes).map_err(|_| NodError::EncryptedTermsMismatch)?;
+        if record.scope != group_key
+            || record.chain_id != self.storage.chain_id()?
+            || record.version().is_none()
+        {
+            return Err(NodError::EncryptedTermsMismatch.into());
+        }
+        Ok(Some(record))
+    }
+
+    pub fn read_group_open_load(&self, group_key: B256) -> Result<U256> {
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
+        match self.group_open_load_record(group_key)? {
+            None => Ok(U256::ZERO),
+            Some(record) => crate::enclave_client::read_group_load(&record)
+                .map_err(|err| NodError::AmountReadFailed(err).into()),
+        }
+    }
+
+    pub(crate) fn apply_group_open_load(
+        &mut self,
+        group_key: B256,
+        operation: outbe_tee::nod_mine::NodGroupLoadOperationV1,
+    ) -> Result<()> {
+        let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
+        let request = outbe_tee::nod_mine::NodGroupLoadOpRequestV1 {
+            chain_id: self.storage.chain_id()?,
+            scope: group_key,
+            previous: self.group_open_load_record(group_key)?,
+            operation,
+        };
+        let record = crate::enclave_client::apply_group_load_operation(request).map_err(|err| {
+            let text = err.to_string();
+            if text.contains("underflow") {
+                NodError::GroupUnpaidLoadUnderflow { group_key }
+            } else if text.contains("overflow") {
+                NodError::GroupUnpaidLoadOverflow { group_key }
+            } else {
+                NodError::AmountReadFailed(err)
+            }
+        })?;
+        if record.scope != group_key {
+            return Err(NodError::EncryptedTermsMismatch.into());
+        }
+        let bytes = postcard::to_allocvec(&record).map_err(|_| NodError::EncryptedTermsMismatch)?;
+        self.group_open_load_ct.bytes(&group_key).write(&bytes)
+    }
+
+    pub(crate) fn add_nod_to_open_load(
+        &mut self,
+        group_key: B256,
+        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+    ) -> Result<()> {
+        self.apply_group_open_load(
+            group_key,
+            outbe_tee::nod_mine::NodGroupLoadOperationV1::AddNod {
+                nod: Box::new(nod.clone()),
+            },
+        )
+    }
+
+    pub(crate) fn sub_nod_from_open_load(
+        &mut self,
+        group_key: B256,
+        nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+    ) -> Result<()> {
+        self.apply_group_open_load(
+            group_key,
+            outbe_tee::nod_mine::NodGroupLoadOperationV1::SubNod {
+                nod: Box::new(nod.clone()),
+            },
+        )
     }
 
     pub(crate) fn take_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
-        let total = self
-            .group_unpaid_load
-            .read(&group_key)?
-            .checked_sub(load)
-            .ok_or(NodError::GroupUnpaidLoadUnderflow { group_key })?;
-        self.group_unpaid_load.write(&group_key, total)
+        self.apply_group_open_load(
+            group_key,
+            outbe_tee::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
+                load_minor: load,
+                add: false,
+            },
+        )
     }
 
     /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its

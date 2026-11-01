@@ -20,15 +20,16 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
     runtime::mine_gratis(storage, request)
 }
 
-/// What settling `nod_id` with `asset` costs, which of the Nod's two currencies
-/// that asset settles on, and the VWAP snapshot an issuance-currency payment
-/// must name.
+/// What settling `nod_id` with `asset` costs (sealed to the Nod owner's view key),
+/// which of the Nod's two currencies that asset settles on, and the VWAP snapshot
+/// an issuance-currency payment must name.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
+    caller: Address,
     nod_id: U256,
     asset: Address,
-) -> Result<(u16, U256, U256)> {
-    runtime::quote_settlement(storage, nod_id, asset)
+) -> Result<(u16, Bytes, U256)> {
+    runtime::quote_settlement(storage, caller, nod_id, asset)
 }
 
 /// Pays an uncalled or called Nod's cost in ERC20 base units.

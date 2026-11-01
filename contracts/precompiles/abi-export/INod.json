@@ -125,11 +125,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "settlementCostMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"

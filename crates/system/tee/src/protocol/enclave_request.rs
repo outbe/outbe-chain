@@ -6,7 +6,7 @@ use super::{
     PromisOpRequest,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveRequest {
     /// Development-only pre-handshake quote. The production server
     /// rejects this variant and never routes it after initialization.
@@ -390,6 +390,32 @@ pub enum EnclaveRequest {
         #[serde(with = "canonical_onboarding_context")]
         context: GramineDirectDevOnboardingContextV1,
     },
+    ApplyTributeLeagueOpV1 {
+        request: Box<crate::tribute_day::TributeLeagueOpRequestV1>,
+    },
+    ReadTributeLeagueAmountV1 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
+    },
+    ExecuteLysisFractionsV1 {
+        request: Box<crate::tribute_day::LysisFractionsRequestV1>,
+    },
+    ReadTributeDayFractionsV1 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeDayFractionsV1,
+    },
+    IssueNodFromTributeV1 {
+        request: Box<crate::nod_mine::IssueNodFromTributeRequestV1>,
+    },
+    ApplyNodGroupLoadOpV1 {
+        request: Box<crate::nod_mine::NodGroupLoadOpRequestV1>,
+    },
+    ReadNodGroupLoadV1 {
+        record: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
+    },
+    EncryptNodQuoteV1 {
+        nod: Box<outbe_primitives::nod_encryption::EncryptedNodV1>,
+        context: outbe_primitives::nod_encryption::NodQuoteContextV1,
+        payment_minor: U256,
+    },
 }
 
 mod canonical_onboarding_context {
@@ -493,6 +519,14 @@ impl EnclaveRequest {
             Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => {
                 "prepare_gramine_direct_dev_onboarding_artifact_v2"
             }
+            Self::ApplyTributeLeagueOpV1 { .. } => "apply_tribute_league_op_v1",
+            Self::ReadTributeLeagueAmountV1 { .. } => "read_tribute_league_amount_v1",
+            Self::ExecuteLysisFractionsV1 { .. } => "execute_lysis_fractions_v1",
+            Self::ReadTributeDayFractionsV1 { .. } => "read_tribute_day_fractions_v1",
+            Self::IssueNodFromTributeV1 { .. } => "issue_nod_from_tribute_v1",
+            Self::ApplyNodGroupLoadOpV1 { .. } => "apply_nod_group_load_op_v1",
+            Self::ReadNodGroupLoadV1 { .. } => "read_nod_group_load_v1",
+            Self::EncryptNodQuoteV1 { .. } => "encrypt_nod_quote_v1",
         }
     }
 
@@ -533,6 +567,14 @@ impl EnclaveRequest {
             | Self::Health
             | Self::PrepareGramineDirectDevOnboardingArtifactV1 { .. } => true,
             Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => true,
+            Self::ApplyTributeLeagueOpV1 { .. }
+            | Self::ReadTributeLeagueAmountV1 { .. }
+            | Self::ExecuteLysisFractionsV1 { .. }
+            | Self::ReadTributeDayFractionsV1 { .. }
+            | Self::IssueNodFromTributeV1 { .. }
+            | Self::ApplyNodGroupLoadOpV1 { .. }
+            | Self::ReadNodGroupLoadV1 { .. }
+            | Self::EncryptNodQuoteV1 { .. } => true,
             Self::BeginUpgradeKeyTransferV1 { .. }
             | Self::GetInitializationChallenge
             | Self::Initialize { .. }
@@ -571,14 +613,22 @@ impl EnclaveRequest {
             | Self::ApplyPromisOp { .. }
             | Self::SnapshotFidelityLeagues { .. }
             | Self::QueryFidelityIndex { .. }
-            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
-            | Self::MineEncryptedNodV1 { .. }
+            | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => Recorded,
+            Self::MineEncryptedNodV1 { .. }
             | Self::ReadNodAmountV1 { .. }
             | Self::EncryptNodForTributeV1 { .. }
-            | Self::ProcessEncryptedTributeOfferBatchV2 { .. }
+            | Self::IssueNodFromTributeV1 { .. }
+            | Self::ApplyNodGroupLoadOpV1 { .. }
+            | Self::ReadNodGroupLoadV1 { .. }
+            | Self::EncryptNodQuoteV1 { .. } => Recorded,
+            Self::ProcessEncryptedTributeOfferBatchV2 { .. }
             | Self::ReadTributeAmountsV2 { .. }
             | Self::ApplyTributeDayOpV2 { .. }
-            | Self::ReadTributeDayAmountV2 { .. } => Recorded,
+            | Self::ReadTributeDayAmountV2 { .. }
+            | Self::ApplyTributeLeagueOpV1 { .. }
+            | Self::ReadTributeLeagueAmountV1 { .. }
+            | Self::ExecuteLysisFractionsV1 { .. }
+            | Self::ReadTributeDayFractionsV1 { .. } => Recorded,
             Self::BeginDcapVerificationV1 { .. }
             | Self::BeginDcapOnboardingVerificationV1 { .. }
             | Self::DcapVerificationChunkV1 { .. }
@@ -621,6 +671,72 @@ impl EnclaveRequest {
             | Self::ReadNodTransferV1 { .. }
             | Self::DiscardNodTransferV1 { .. }
             | Self::ExecuteLysis { .. } => NonConsensus,
+        }
+    }
+}
+
+impl core::fmt::Debug for EnclaveRequest {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ApplyTributeLeagueOpV1 { request } => f
+                .debug_struct("ApplyTributeLeagueOpV1")
+                .field("chain_id", &request.chain_id)
+                .field("worldwide_day", &request.worldwide_day)
+                .field("league", &request.league)
+                .field("operation", &"<redacted>")
+                .finish(),
+            Self::ReadTributeLeagueAmountV1 { record } => f
+                .debug_struct("ReadTributeLeagueAmountV1")
+                .field("chain_id", &record.chain_id)
+                .field("worldwide_day", &record.worldwide_day)
+                .field("league", &record.league)
+                .field("encrypted_amount", &"<redacted>")
+                .finish(),
+            Self::ExecuteLysisFractionsV1 { request } => f
+                .debug_struct("ExecuteLysisFractionsV1")
+                .field("chain_id", &request.chain_id)
+                .field("worldwide_day", &request.worldwide_day)
+                .field("completed_at", &request.completed_at)
+                .field("leagues", &request.leagues.len())
+                .field("tributes", &request.tributes.len())
+                .finish(),
+            Self::ReadTributeDayFractionsV1 { record } => f
+                .debug_struct("ReadTributeDayFractionsV1")
+                .field("chain_id", &record.chain_id)
+                .field("worldwide_day", &record.worldwide_day)
+                .field("completed_at", &record.completed_at)
+                .field("encrypted_fractions", &"<redacted>")
+                .finish(),
+            Self::IssueNodFromTributeV1 { request } => f
+                .debug_struct("IssueNodFromTributeV1")
+                .field("nod_id", &request.terms.nod_id)
+                .field("owner", &request.terms.owner)
+                .field("tribute", &"<redacted>")
+                .field("day_fractions", &"<redacted>")
+                .finish(),
+            Self::ApplyNodGroupLoadOpV1 { request } => f
+                .debug_struct("ApplyNodGroupLoadOpV1")
+                .field("chain_id", &request.chain_id)
+                .field("scope", &request.scope)
+                .field("operation", &"<redacted>")
+                .finish(),
+            Self::ReadNodGroupLoadV1 { record } => f
+                .debug_struct("ReadNodGroupLoadV1")
+                .field("chain_id", &record.chain_id)
+                .field("scope", &record.scope)
+                .field("encrypted_load", &"<redacted>")
+                .finish(),
+            Self::EncryptNodQuoteV1 { context, .. } => f
+                .debug_struct("EncryptNodQuoteV1")
+                .field("nod_id", &context.nod_id)
+                .field("owner", &context.owner)
+                .field("asset", &context.asset)
+                .field("payment_minor", &"<redacted>")
+                .finish(),
+            other => f
+                .debug_struct("EnclaveRequest")
+                .field("label", &other.label())
+                .finish_non_exhaustive(),
         }
     }
 }

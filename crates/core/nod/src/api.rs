@@ -83,20 +83,20 @@ pub fn add_nod(
     crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
-/// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group,
-/// moving `gratis_load_minor` from the group's unclaimed Tribute load to its unpaid load.
+/// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group.
+/// The group's encrypted open load (`unpaid + unclaimed`) is unchanged because the Tribute's
+/// load stays in the same call group.
 pub fn add_series_nod(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
     call_terms: Option<CallTerms>,
-    gratis_load_minor: U256,
     series_id: SeriesId,
 ) -> Result<()> {
-    crate::state_api::add_series_item(storage, item, call_terms, gratis_load_minor, series_id)
+    crate::state_api::add_series_item(storage, item, call_terms, series_id)
 }
 
 /// A Lysis series `(E, issuance_currency, reference_currency)` and the call group it joins.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct LysisSeriesSeal {
     pub series_id: SeriesId,
     pub group_key: B256,
@@ -105,7 +105,7 @@ pub struct LysisSeriesSeal {
     pub entry_price_minor: U256,
     pub call_terms: Option<CallTerms>,
     pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: U256,
+    pub unclaimed_tribute_load: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
 }
 
 /// Seals a Lysis series into its call group with its unclaimed Tributes and their exact load.
@@ -221,4 +221,36 @@ pub fn record_settled(
 pub fn calculation_amount(item: &NodItemState) -> Result<U256> {
     crate::enclave_client::read_amount(&item.encrypted)
         .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())
+}
+
+/// Seals a settlement quote to the Nod owner's view key via the enclave.
+pub fn encrypt_quote_for_owner(
+    nod: &outbe_primitives::nod_encryption::EncryptedNodV1,
+    context: outbe_primitives::nod_encryption::NodQuoteContextV1,
+    payment_minor: U256,
+) -> Result<Vec<u8>> {
+    crate::enclave_client::encrypt_nod_quote(nod, context, payment_minor)
+        .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())
+}
+
+/// Decrypts an encrypted group open load via the enclave (used on group forfeiture or test inspection).
+pub fn read_group_open_load(storage: &StorageHandle<'_>, group_key: B256) -> Result<U256> {
+    NodContract::new(storage.clone()).read_group_open_load(group_key)
+}
+
+/// Test/fixture helper to seal a series unclaimed load into an `EncryptedNodGroupLoadV1`.
+pub fn seal_series_load(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    load_minor: U256,
+) -> Result<outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1> {
+    let scope = B256::right_padding_from(series_id.as_bytes());
+    crate::enclave_client::seal_group_load(
+        storage.chain_id()?,
+        scope,
+        0,
+        alloy_primitives::keccak256(series_id.as_bytes()),
+        load_minor,
+    )
+    .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())
 }

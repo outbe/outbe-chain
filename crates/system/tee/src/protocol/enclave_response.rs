@@ -172,7 +172,7 @@ pub fn tribute_offer_attestation_preimage(
 }
 
 /// Responses returned from the enclave to the node.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EnclaveResponse {
     /// SGX quote bundle. Carries the enclave public keys in cleartext plus the
     /// `report_data` that binds them. The host recomputes
@@ -485,6 +485,128 @@ pub enum EnclaveResponse {
         reason: String,
         attestation_tag: Vec<u8>,
     },
+    TributeLeagueOpAppliedV1 {
+        record: outbe_primitives::tribute_day_encryption::EncryptedTributeLeagueAmountV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeLeagueAmountReadV1 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    LysisFractionsExecutedV1 {
+        result: Box<crate::tribute_day::LysisFractionsResultV1>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    TributeDayFractionsReadV1 {
+        fractions: std::collections::BTreeMap<u16, u64>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodIssuedFromTributeV1 {
+        outcome: crate::nod_mine::IssueNodFromTributeOutcomeV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodGroupLoadOpAppliedV1 {
+        record: outbe_primitives::nod_encryption::EncryptedNodGroupLoadV1,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodGroupLoadReadV1 {
+        amount: U256,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+    NodQuoteEncryptedV1 {
+        encrypted_payment: Vec<u8>,
+        inputs_canonical_hash: B256,
+        attestation_tag: Vec<u8>,
+    },
+}
+
+impl core::fmt::Debug for EnclaveResponse {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TributeLeagueOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("TributeLeagueOpAppliedV1")
+                .field("worldwide_day", &record.worldwide_day)
+                .field("league", &record.league)
+                .field("encrypted_amount", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::TributeLeagueAmountReadV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("TributeLeagueAmountReadV1")
+                .field("amount", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::LysisFractionsExecutedV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("LysisFractionsExecutedV1")
+                .field("result", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::TributeDayFractionsReadV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("TributeDayFractionsReadV1")
+                .field("fractions", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::NodIssuedFromTributeV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("NodIssuedFromTributeV1")
+                .field("outcome", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::NodGroupLoadOpAppliedV1 {
+                record,
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("NodGroupLoadOpAppliedV1")
+                .field("scope", &record.scope)
+                .field("encrypted_load", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::NodGroupLoadReadV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("NodGroupLoadReadV1")
+                .field("amount", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::NodQuoteEncryptedV1 {
+                inputs_canonical_hash,
+                ..
+            } => f
+                .debug_struct("NodQuoteEncryptedV1")
+                .field("encrypted_payment", &"<redacted>")
+                .field("inputs_canonical_hash", inputs_canonical_hash)
+                .finish(),
+            Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
+            Self::NotReady { message } => f
+                .debug_struct("NotReady")
+                .field("message", message)
+                .finish(),
+            _ => f.debug_struct("EnclaveResponse").finish_non_exhaustive(),
+        }
+    }
 }
 
 /// Deterministic hash over the canonical inputs of a single Gratis op. SHARED by

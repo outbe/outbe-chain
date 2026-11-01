@@ -1,14 +1,17 @@
 use super::tape::*;
-use crate::nod_mine::MineEncryptedNodResultV1;
+use crate::nod_mine::{IssueNodFromTributeOutcomeV1, MineEncryptedNodResultV1};
 use crate::protocol::{
     EnclaveResponse, FidelityOpOutcome, FidelityQueryResult, GratisOpResult, GratisOpStatus,
     PromisOpResult, PromisOpStatus,
 };
+use crate::tribute_day::LysisFractionsResultV1;
 use alloy_primitives::{B256, U256};
 use outbe_primitives::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
+    nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1, NodTermsV1},
     time::WorldwideDay,
-    tribute_day_encryption::EncryptedTributeDayAmountV2,
+    tribute_day_encryption::{
+        EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1, EncryptedTributeLeagueAmountV1,
+    },
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
     wwd_entity_id::WwdEntityId,
 };
@@ -168,6 +171,69 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
         EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
             request_hash: B256::ZERO,
             onboarding_artifact: vec![2],
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
+            record: EncryptedTributeLeagueAmountV1 {
+                chain_id: 1,
+                worldwide_day: WorldwideDay::new(20261028),
+                league: 100,
+                operation_hash: B256::ZERO,
+                encrypted_amount: vec![4],
+            },
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
+            amount: U256::from(5),
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::LysisFractionsExecutedV1 {
+            result: Box::new(LysisFractionsResultV1 {
+                day_fractions: EncryptedTributeDayFractionsV1 {
+                    chain_id: 1,
+                    worldwide_day: WorldwideDay::new(20261028),
+                    completed_at: 10,
+                    operation_hash: B256::ZERO,
+                    encrypted_fractions: vec![6],
+                },
+                total_nominal_minor: U256::from(7),
+                allocated_minor: U256::from(8),
+                zero_load_tribute_ids: vec![],
+                series_loads: vec![],
+            }),
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::TributeDayFractionsReadV1 {
+            fractions: std::collections::BTreeMap::from([(100, 500_000)]),
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::NodIssuedFromTributeV1 {
+            outcome: IssueNodFromTributeOutcomeV1::ZeroSettlementCost,
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::NodGroupLoadOpAppliedV1 {
+            record: EncryptedNodGroupLoadV1 {
+                chain_id: 1,
+                scope: B256::ZERO,
+                operation_hash: B256::ZERO,
+                encrypted_load: vec![9],
+            },
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::NodGroupLoadReadV1 {
+            amount: U256::from(10),
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::NodQuoteEncryptedV1 {
+            encrypted_payment: vec![11],
+            inputs_canonical_hash: B256::ZERO,
             attestation_tag: tag,
         },
     ]
@@ -229,6 +295,30 @@ fn semantic_equality_ignores_only_attestation_tag() {
             | EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
                 attestation_tag,
                 ..
+            }
+            | EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::LysisFractionsExecutedV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::TributeDayFractionsReadV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::NodIssuedFromTributeV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::NodGroupLoadOpAppliedV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::NodGroupLoadReadV1 {
+                attestation_tag, ..
+            }
+            | EnclaveWitnessEntryV1::NodQuoteEncryptedV1 {
+                attestation_tag, ..
             } => attestation_tag.push(1),
             EnclaveWitnessEntryV1::FidelityIndexQueried { result } => {
                 result.attestation_tag.push(1)
@@ -287,6 +377,38 @@ fn mutate_commitment(entry: &mut EnclaveWitnessEntryV1) {
             ..
         }
         | EnclaveWitnessEntryV1::FidelityQueryRejected {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::TributeLeagueOpAppliedV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::TributeLeagueAmountReadV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::LysisFractionsExecutedV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::TributeDayFractionsReadV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::NodIssuedFromTributeV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::NodGroupLoadOpAppliedV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::NodGroupLoadReadV1 {
+            inputs_canonical_hash,
+            ..
+        }
+        | EnclaveWitnessEntryV1::NodQuoteEncryptedV1 {
             inputs_canonical_hash,
             ..
         } => {

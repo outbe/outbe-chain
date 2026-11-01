@@ -320,19 +320,6 @@ fn issue_nods_for_completed_day(
             (1..=4096).contains(&league),
             "expected valid league in 1..=4096, got {league}"
         );
-        let fraction: u64 = eth::read_call(
-            &url,
-            addresses::TRIBUTE_ADDR,
-            &eth::ITribute::getDayLeagueFractionCall {
-                worldwideDay: day,
-                league,
-            },
-        )
-        .expect("day league fraction after Metadosis");
-        assert!(
-            fraction > 0,
-            "expected positive day league fraction for day {day} league {league}"
-        );
         let key = owner_keys
             .get(&owner)
             .unwrap_or_else(|| panic!("missing private key for Tribute owner {owner:#x}"))

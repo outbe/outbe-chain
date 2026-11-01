@@ -49,11 +49,11 @@ pub fn dispatch(
                 Ok(INodFactory::settleNodReturn {})
             }),
             quoteSettlement(c) => view(c, |c| {
-                let (settlement_currency, amount, snapshot_id) =
-                    runtime::quote_settlement(&storage, c.nodId, c.asset)?;
+                let (settlement_currency, encrypted_payment_minor, snapshot_id) =
+                    runtime::quote_settlement(&storage, caller, c.nodId, c.asset)?;
                 Ok(INodFactory::quoteSettlementReturn {
                     settlementCurrency: settlement_currency,
-                    paymentMinor: amount,
+                    encryptedPaymentMinor: encrypted_payment_minor,
                     snapshotId: snapshot_id,
                 })
             }),

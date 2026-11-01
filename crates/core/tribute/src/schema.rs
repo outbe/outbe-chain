@@ -112,9 +112,13 @@ pub struct TributeContract {
     #[attribute(order = 17)]
     pub fi_group_counts: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 18)]
-    pub fi_group_nominals: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub fi_group_nominal_ct:
+        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
     #[attribute(order = 19)]
-    pub day_fractions: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub day_fraction_map_ct:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, outbe_primitives::storage::dsl::Bytes>,
+    #[attribute(order = 20)]
+    pub tribute_lysis_zero_load: outbe_primitives::storage::dsl::Map<WwdEntityId, bool>,
     #[attribute(order = 21)]
     pub day_metadosis_completed_at: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
     #[attribute(order = 22)]
