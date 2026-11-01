@@ -65,7 +65,7 @@ run = [
 
 [tasks.build-release]
 description = "Build the workspace (release, cargo auditable)"
-run = "cargo auditable build --release"
+run = "cargo auditable build --release --features outbe-chain/production-enclave"
 
 # --- Format / Lint ---------------------------------------------------- #
 
@@ -87,7 +87,7 @@ description = "Run clippy on all crates"
 # links the pinned Intel SGX/DCAP toolchain (headers + .so) that only exists on
 # the gramine-sgx build. Lint native-dcap only where that toolchain is present.
 run = """
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 if [ -f /usr/include/sgx_dcap_quoteverify.h ]; then
   cargo clippy -p outbe-tee --all-targets --features native-dcap -- -D warnings
 fi

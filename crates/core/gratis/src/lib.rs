@@ -21,6 +21,14 @@
 //! - `runtime` / `state` - orchestration and ledger CRUD (crate-private).
 //! - `schema` - encrypted storage layout for the [`Gratis`] facade.
 
+#[cfg(all(feature = "test-enclave", feature = "production-enclave"))]
+compile_error!(
+    "outbe-gratis: `test-enclave` selects an in-process stand-in that skips \
+     attestation, and it has been unified into a production build. Some \
+     dependency edge enables it outside [dev-dependencies] — cargo features \
+     are additive, so one such edge anywhere in the graph is enough."
+);
+
 pub mod api;
 pub mod enclave_client;
 pub mod errors;

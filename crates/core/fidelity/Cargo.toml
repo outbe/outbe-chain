@@ -33,6 +33,9 @@ ed25519-dalek.workspace = true
 [features]
 default = []
 test-utils = ["outbe-primitives/test-utils"]
+# Enabled by the node binary in release builds. Asserts, at compile time, that
+# the attestation-skipping in-process stand-in is not in this build.
+production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Fidelity path (mirrors gratis' `test-enclave`).
 test-enclave = ["dep:outbe-tee-enclave"]
