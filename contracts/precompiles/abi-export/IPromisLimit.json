@@ -51,11 +51,6 @@
   },
   {
     "type": "error",
-    "name": "Underflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "UnauthorizedBurnCaller",
     "inputs": [
       {
@@ -69,5 +64,10 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "Underflow",
+    "inputs": []
   }
 ]
