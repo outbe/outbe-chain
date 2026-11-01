@@ -207,11 +207,16 @@ fn verify_readers(world: &mut World) {
         assert!(world.rpc.private_tribute_read(index, &tampered).is_err());
     }
     let receipt = eth::receipt_json(&world.rpc.url(port), tx).expect("issuance receipt");
-    let issued =
-        eth::receipt_event::<eth::ITribute::TributeIssued>(&receipt, addresses::TRIBUTE_ADDR);
-    assert_eq!(issued.owner, creator());
-    assert_eq!(issued.issuanceAmountMinor.as_ref(), body.encrypted_amounts);
-    assert_eq!(issued.nominalAmountMinor.as_ref(), body.encrypted_amounts);
+    let offered =
+        eth::receipt_event::<eth::ITribute::TributeOffered>(&receipt, addresses::TRIBUTE_ADDR);
+    assert_eq!(
+        offered.tributeId,
+        U256::from_be_slice(body.context.tribute_id.as_slice())
+    );
+    assert_eq!(offered.owner, creator());
+    assert_eq!(offered.worldwideDay, body.context.worldwide_day.value());
+    assert_eq!(offered.issuanceCurrency, body.context.issuance_currency);
+    assert_eq!(offered.referenceCurrency, body.context.reference_currency);
     let uri: String = eth::read_call(
         &world.rpc.url(port),
         addresses::TRIBUTE_ADDR,

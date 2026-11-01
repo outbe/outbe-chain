@@ -118,15 +118,14 @@ impl Rpc {
         Some(build_wwd_state(&r, emission.as_ref(), timestamp))
     }
 
-    pub fn finalized_metadosis_wwd_started_on(
+    pub fn finalized_metadosis_wwd_opened_on(
         &self,
         port: u16,
         day: u32,
-    ) -> Option<MetadosisWorldwideDayStartedV1> {
-        const SIGNATURE: &str = "WorldwideDayStarted(uint32,uint32,uint64,uint64,uint64,uint64)";
+    ) -> Option<MetadosisWorldwideDayOpenedV1> {
         let rpc_url = self.url(port);
         let finalized_height = eth::finalized_number(&rpc_url)?;
-        let topic0 = keccak256(SIGNATURE.as_bytes());
+        let topic0 = ITributeFactory::WorldwideDayOpened::SIGNATURE_HASH;
         let indexed_day = format!("0x{day:064x}");
         let logs = eth::raw_json_with_params(
             &rpc_url,
@@ -143,19 +142,21 @@ impl Rpc {
             return None;
         }
         let log = &logs[0];
-        let topics = log.get("topics")?.as_array()?;
-        let emission_day =
-            u32::from_str_radix(topics.get(2)?.as_str()?.trim_start_matches("0x"), 16).ok()?;
         let data = decode_rpc_data_words(log, 4)?;
+        let forming_start = u64::try_from(data[0]).ok()?;
+        let forming_end = u64::try_from(data[1]).ok()?;
+        let offering_start = u64::try_from(data[2]).ok()?;
+        let offering_end = u64::try_from(data[3]).ok()?;
+        let emission_day = outbe_primitives::time::timestamp_to_date_key(offering_end);
         let block_number = rpc_log_block_number(log)?;
         let block_hash = canonical_rpc_log_block_hash(&rpc_url, log, block_number)?;
-        Some(MetadosisWorldwideDayStartedV1 {
+        Some(MetadosisWorldwideDayOpenedV1 {
             worldwide_day: day,
             day: emission_day,
-            forming_start: u64::try_from(data[0]).ok()?,
-            forming_end: u64::try_from(data[1]).ok()?,
-            offerings_start: u64::try_from(data[2]).ok()?,
-            offering_end: u64::try_from(data[3]).ok()?,
+            forming_start,
+            forming_end,
+            offering_start,
+            offering_end,
             block_number,
             block_hash,
         })
@@ -262,12 +263,12 @@ pub struct MetadosisWorldwideDayStateV1 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MetadosisWorldwideDayStartedV1 {
+pub struct MetadosisWorldwideDayOpenedV1 {
     pub worldwide_day: u32,
     pub day: u32,
     pub forming_start: u64,
     pub forming_end: u64,
-    pub offerings_start: u64,
+    pub offering_start: u64,
     pub offering_end: u64,
     pub block_number: u64,
     pub block_hash: B256,

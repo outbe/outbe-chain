@@ -313,7 +313,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     assert!(proposer_result.1.iter().any(|event| {
         event.address == outbe_primitives::addresses::TRIBUTE_ADDRESS
             && event.data.topics()[0]
-                == outbe_tribute::precompile::ITribute::TributeIssued::SIGNATURE_HASH
+                == outbe_tribute::precompile::ITribute::TributeOffered::SIGNATURE_HASH
     }));
     assert!(proposer_result.1.iter().any(|event| {
         event.address == NOD_ADDRESS && event.data.topics()[0] == INod::Transfer::SIGNATURE_HASH

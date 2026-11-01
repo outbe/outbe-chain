@@ -206,9 +206,8 @@ impl TributeContract<'_> {
     pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {
         require_day_seal_lease(&self.storage_handle(), day)?;
         self.set_day_sealed(day, true)?;
-        self.emit(ITribute::TributeWorldwideDaySealed {
+        self.emit(ITribute::WorldwideDaySealed {
             worldwideDay: day.into(),
-            isSealed: true,
         })?;
         Ok(())
     }

@@ -205,6 +205,10 @@ pub(super) fn issue_nod_from_tribute(
         )?;
 
         burn_live_tribute_record(contract, &record, raw_league, nominal)?;
+        contract.emit(ITribute::TributeBurned {
+            tributeId: tribute_id.to_u256(),
+            owner: record.owner,
+        })?;
         Ok(nod_id)
     })
 }
@@ -246,11 +250,6 @@ fn burn_live_tribute_record(
         contract.tribute_leagues.clear(&tribute_id)?;
     }
     contract.delete_loaded_state_record(record)?;
-    contract.emit(ITribute::TributeBurned {
-        tributeId: tribute_id.to_u256(),
-        owner: record.owner,
-        worldwideDay: day.into(),
-    })?;
     Ok(tribute_id)
 }
 
@@ -286,12 +285,7 @@ pub(super) fn clean_forfeited_tribute(
             contract.adjust_fi_group(day, raw_league, nominal, false)?;
             contract.tribute_leagues.clear(&tribute_id)?;
         }
-        contract.delete_loaded_state_record(&record)?;
-        contract.emit(ITribute::TributeBurned {
-            tributeId: tribute_id.to_u256(),
-            owner: record.owner,
-            worldwideDay: day.into(),
-        })
+        contract.delete_loaded_state_record(&record)
     })
 }
 

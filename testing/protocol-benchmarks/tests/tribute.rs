@@ -53,7 +53,7 @@ fn zk_tribute_creation_runs_through_the_unified_interface() {
         emitted(
             &report,
             TRIBUTE_ADDRESS,
-            ITribute::TributeIssued::SIGNATURE_HASH
+            ITribute::TributeOffered::SIGNATURE_HASH
         ),
         1
     );

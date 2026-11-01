@@ -169,16 +169,15 @@ pub fn create_worldwide_day(
         factory.pipeline_wwd.insert(worldwide_day)?;
     }
 
-    factory.emit(ITributeFactory::WorldwideDayStarted {
+    factory.emit(ITributeFactory::WorldwideDayOpened {
         worldwideDay: worldwide_day.into(),
-        day: record.emission_day,
         formingStart: record
             .forming_start()
             .map_err(super::errors::date_step_error)?,
         formingEnd: record
             .forming_end()
             .map_err(super::errors::date_step_error)?,
-        offeringsStart: record.offering_start,
+        offeringStart: record.offering_start,
         offeringEnd: record.offering_end,
     })?;
     Ok(true)

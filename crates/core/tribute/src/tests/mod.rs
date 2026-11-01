@@ -656,12 +656,15 @@ fn test_events_emitted_for_issue_and_burn() {
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
         assert_eq!(events.len(), 1);
-        let issued =
-            crate::precompile::ITribute::TributeIssued::decode_log_data(&events[0]).unwrap();
-        assert_eq!(issued.tributeId, tribute.tribute_id.to_u256());
-        assert_eq!(issued.owner, tribute.owner);
-        assert_eq!(issued.worldwideDay, tribute.worldwide_day.value());
-        assert!(!issued.nominalAmountMinor.is_empty());
+        assert_eq!(events[0].topics().len(), 4);
+        assert_eq!(events[0].data.len(), 64);
+        let offered =
+            crate::precompile::ITribute::TributeOffered::decode_log_data(&events[0]).unwrap();
+        assert_eq!(offered.tributeId, tribute.tribute_id.to_u256());
+        assert_eq!(offered.owner, tribute.owner);
+        assert_eq!(offered.worldwideDay, tribute.worldwide_day.value());
+        assert_eq!(offered.issuanceCurrency, tribute.issuance_currency);
+        assert_eq!(offered.referenceCurrency, tribute.reference_currency);
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             TributeContract::new(storage)
@@ -670,6 +673,8 @@ fn test_events_emitted_for_issue_and_burn() {
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
         assert_eq!(events.len(), 2);
+        assert_eq!(events[1].topics().len(), 3);
+        assert!(events[1].data.is_empty());
         let burned =
             crate::precompile::ITribute::TributeBurned::decode_log_data(&events[1]).unwrap();
         assert_eq!(burned.tributeId, tribute.tribute_id.to_u256());
@@ -766,10 +771,20 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
         assert_eq!(events.len(), 1);
-        assert_eq!(
-            events[0].topics()[0],
-            crate::precompile::ITribute::TributeWorldwideDaySealed::SIGNATURE_HASH
-        );
+        assert_eq!(events[0].topics().len(), 2);
+        assert!(events[0].data.is_empty());
+        let sealed =
+            crate::precompile::ITribute::WorldwideDaySealed::decode_log_data(&events[0]).unwrap();
+        assert_eq!(sealed.worldwideDay, tribute.worldwide_day.value());
+        StorageHandle::enter(&mut *provider, |storage| {
+            let _enclave = crate::enclave_client::test_enclave::scope();
+            let err = TributeContract::new(storage).issue(&tribute).unwrap_err();
+            assert!(matches!(
+                err,
+                PrecompileError::RevertBytes(bytes)
+                    if <crate::precompile::ITribute::WorldwideDayIsSealed as alloy_sol_types::SolError>::abi_decode(&bytes).is_ok()
+            ));
+        });
     });
 }
 
