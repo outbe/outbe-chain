@@ -308,6 +308,8 @@ pub enum ExecutorValidationError {
     TransactionGasLimitBelowFloor { gas_limit: u64, floor: u64 },
     #[error("validator fee accumulator overflow")]
     ValidatorFeeAccumulatorOverflow,
+    #[error("burned fee accumulator overflow")]
+    BurnedFeeAccumulatorOverflow,
     #[error("sponsored quota write failed after inclusion: {0}")]
     SponsoredQuotaWriteValidation(String),
     #[error("free-tx signer account read failed: {0}")]
@@ -634,5 +636,33 @@ impl From<ExecutorValidationError> for BlockValidationError {
 impl From<ExecutorValidationError> for BlockExecutionError {
     fn from(error: ExecutorValidationError) -> Self {
         Self::Validation(BlockValidationError::msg(error.to_string()))
+    }
+}
+
+/// Typed error returned when settling accumulated block burned fees to `PromisLimitContract`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BurnedFeeSettlementError {
+    /// Deterministic validation failure during burned-fee settlement (e.g. `PromisLimitError::Overflow`).
+    #[error("burned fee promis limit validation failed: {0}")]
+    Validation(#[source] PrecompileError),
+    /// Node-local storage or fatal precompile error during burned-fee settlement.
+    #[error("burned fee promis limit internal failure: {0}")]
+    Internal(#[source] PrecompileError),
+    /// Storage flush failure after burned-fee settlement.
+    #[error("burned fee promis limit flush failed: {0}")]
+    Flush(#[source] PrecompileError),
+}
+
+impl From<BurnedFeeSettlementError> for BlockExecutionError {
+    fn from(error: BurnedFeeSettlementError) -> Self {
+        match error {
+            BurnedFeeSettlementError::Validation(_) => {
+                Self::Validation(BlockValidationError::other(error))
+            }
+            BurnedFeeSettlementError::Internal(_) | BurnedFeeSettlementError::Flush(_) => {
+                Self::other(error)
+            }
+        }
     }
 }

@@ -73,7 +73,58 @@ where
             .increment_balances(balance_increments.clone())
             .map_err(|_| BlockValidationError::IncrementBalanceFailed)?;
 
+        self.settle_block_burned_fees()?;
+
         self.ethereum_post_execution_requests = Some(requests);
+        Ok(())
+    }
+
+    /// Settles accumulated block burned fees (`current_block_burned_fees`) to `PromisLimitContract`
+    /// using `SYSTEM_ADDRESS` and `BurnSource::BaseFee`, then flushes storage to the underlying
+    /// `State` so any attached `OnStateHook` receives the transition before parallel root freeze.
+    pub(in crate::executor) fn settle_block_burned_fees(
+        &mut self,
+    ) -> Result<(), BlockExecutionError> {
+        use crate::errors::BurnedFeeSettlementError;
+        use outbe_primitives::addresses::SYSTEM_ADDRESS;
+        use outbe_primitives::error::PrecompileError;
+        use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
+        use outbe_promislimit::{BurnSource, PromisLimitContract};
+
+        if self.burned_fees_settled {
+            return Ok(());
+        }
+
+        let burned_fees = self.current_block_burned_fees;
+        if burned_fees.is_zero() {
+            self.burned_fees_settled = true;
+            return Ok(());
+        }
+
+        let block_ctx = self.fee_route_context()?;
+        let mut provider = DirectStorageProvider::new(self.inner.evm.db_mut(), block_ctx);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut promis = PromisLimitContract::new(storage);
+            promis.burn_to_promis_limit(SYSTEM_ADDRESS, burned_fees, BurnSource::BaseFee)
+        })
+        .map_err(|err| {
+            if err.is_node_local()
+                || matches!(
+                    err,
+                    PrecompileError::Fatal(_) | PrecompileError::FatalWithCause(_)
+                )
+            {
+                BlockExecutionError::from(BurnedFeeSettlementError::Internal(err))
+            } else {
+                BlockExecutionError::from(BurnedFeeSettlementError::Validation(err))
+            }
+        })?;
+        provider
+            .flush()
+            .map_err(|err| BlockExecutionError::from(BurnedFeeSettlementError::Flush(err)))?;
+        // End-of-block event publication is deferred to the separate Events review (OIP-00309 §3.1 / §5.2).
+        let _events = provider.take_events();
+        self.burned_fees_settled = true;
         Ok(())
     }
 }
