@@ -999,9 +999,9 @@
     "name": "Paused",
     "inputs": [
       {
-        "name": "actor",
+        "name": "account",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
       }
     ],
@@ -1168,9 +1168,9 @@
     "name": "Unpaused",
     "inputs": [
       {
-        "name": "actor",
+        "name": "account",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
       }
     ],

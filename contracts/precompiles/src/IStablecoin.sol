@@ -20,8 +20,8 @@ interface IStablecoin {
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed actor);
     event SupplyCapChanged(uint256 previousCap, uint256 newCap, address indexed actor);
     event PolicyChanged(uint256 previousPolicyId, uint256 newPolicyId, address indexed actor);
-    event Paused(address indexed actor);
-    event Unpaused(address indexed actor);
+    event Paused(address account);
+    event Unpaused(address account);
     event AdminTransferStarted(address indexed currentAdmin, address indexed pendingAdmin);
     event AdminTransferCanceled(address indexed admin, address indexed canceledPendingAdmin);
     event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
