@@ -39,6 +39,9 @@ tempfile.workspace = true
 [features]
 default = []
 bench-utils = []
+# Enabled by the node binary in release builds. Asserts, at compile time, that
+# the attestation-skipping in-process stand-in is not in this build.
+production-enclave = []
 test-enclave = ["dep:outbe-tee-enclave"]
 test-utils = ["outbe-primitives/test-utils"]
 

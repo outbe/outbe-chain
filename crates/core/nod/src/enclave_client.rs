@@ -15,6 +15,11 @@ pub(crate) fn read_amount(record: &EncryptedNodV1) -> Result<U256, TransportErro
     outbe_tee::nod_mine::read_nod_amount(record)
 }
 
+/// In-process enclave stand-in for tests (this crate's tests and any downstream
+/// crate that enables the `test-enclave` feature). The crate root rejects
+/// `all(feature = "test-enclave", feature = "production-enclave")` at compile
+/// time and CI's `no-test-deps` gate rejects `test-enclave` in the production
+/// dependency graph, so this stand-in cannot reach a production build.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use std::cell::Cell;

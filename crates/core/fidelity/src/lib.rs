@@ -21,6 +21,14 @@
 //! - [`math`] - re-export of the shared fixed-point RCFI arithmetic (the enclave
 //!   uses the same leaf crate, so the two evaluators cannot drift).
 
+#[cfg(all(feature = "test-enclave", feature = "production-enclave"))]
+compile_error!(
+    "outbe-fidelity: `test-enclave` selects an in-process stand-in that skips \
+     attestation, and it has been unified into a production build. Some \
+     dependency edge enables it outside [dev-dependencies] — cargo features \
+     are additive, so one such edge anywhere in the graph is enough."
+);
+
 pub mod api;
 pub mod enclave_client;
 pub mod errors;

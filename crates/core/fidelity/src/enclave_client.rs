@@ -402,7 +402,10 @@ impl AttestedAnswer for LeagueSnapshot {
 /// crate that enables the `test-enclave` feature). Runs the **real**
 /// `outbe_tee_enclave::fidelity` engine against a fixed dev state key, so tests
 /// exercise the full confidential path without an SGX sidecar. This path does not
-/// check attestation (only the mock-enclave e2e verifies it).
+/// check attestation (only the mock-enclave e2e verifies it). The crate root
+/// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
+/// compile time and CI's `no-test-deps` gate rejects `test-enclave` in the
+/// production dependency graph, so this stand-in cannot reach a production build.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
