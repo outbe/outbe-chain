@@ -115,7 +115,7 @@ impl StablecoinContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.paused.write(true)?;
-            self.emit(IStablecoin::Paused { actor })
+            self.emit(IStablecoin::Paused { account: actor })
         })
     }
 
@@ -127,7 +127,7 @@ impl StablecoinContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.paused.write(false)?;
-            self.emit(IStablecoin::Unpaused { actor })
+            self.emit(IStablecoin::Unpaused { account: actor })
         })
     }
 

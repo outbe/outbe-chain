@@ -1073,6 +1073,17 @@ fn pause_blocks_ledger_paths_but_keeps_recovery_paths_available() {
         assert_revert::<IStablecoin::TokenNotPaused>(token.unpause(ISSUER).unwrap_err());
         token.transfer(holder, spender, U256::from(1)).unwrap();
     });
+
+    let events = provider.get_events(init.token_address);
+    let paused_log = IStablecoin::Paused { account: guardian }.encode_log_data();
+    assert_eq!(paused_log.topics().len(), 1);
+    assert_eq!(paused_log.data.len(), 32);
+    assert!(events.contains(&paused_log));
+
+    let unpaused_log = IStablecoin::Unpaused { account: ISSUER }.encode_log_data();
+    assert_eq!(unpaused_log.topics().len(), 1);
+    assert_eq!(unpaused_log.data.len(), 32);
+    assert!(events.contains(&unpaused_log));
 }
 
 #[test]

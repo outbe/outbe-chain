@@ -44,7 +44,7 @@ fn complete_exported_abis_match_golden_hashes() {
 
     assert_eq!(
         canonical_abi_hash(token),
-        b256!("15fe8d185f25ceff91f3c1e1f3a6eb2db06f7cde09f287f71a9d12234a1a6ef0")
+        b256!("0b520fbe7cb333952c9da443a6dac00228ca7faf92f2ddd9436813fd02dc4587")
     );
     assert_eq!(
         canonical_abi_hash(factory),
@@ -184,6 +184,14 @@ fn alloy_event_and_error_selectors_match_solidity_vectors() {
     assert_eq!(
         IStablecoin::AdminTransferCanceled::SIGNATURE_HASH,
         b256!("012014d40e69ecaa410e0186be24b4f60c813a38bb7df57297748bb2b4727add")
+    );
+    assert_eq!(
+        IStablecoin::Paused::SIGNATURE_HASH,
+        b256!("62e78cea01bee320cd4e420270b5ea74000d11b0c9f74754ebdbfc544b05a258")
+    );
+    assert_eq!(
+        IStablecoin::Unpaused::SIGNATURE_HASH,
+        b256!("5db9ee0a495bf2e6ff9c91a7834c1ba4fdd244a5e8aa4e537bd38aeae4b073aa")
     );
     assert_eq!(
         IStablecoinPolicyRegistry::PolicyAdminTransferCanceled::SIGNATURE_HASH,
