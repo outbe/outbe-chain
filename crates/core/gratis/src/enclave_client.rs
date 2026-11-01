@@ -46,7 +46,10 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
 /// crate that enables the `test-enclave` feature). It runs the **real**
 /// `outbe_tee_enclave::gratis::apply_op` engine against a fixed dev state key. Thus
 /// tests exercise the full confidential path without an SGX sidecar. This path does
-/// not check attestation. Only the mock-enclave e2e verifies it.
+/// not check attestation. Only the mock-enclave e2e verifies it. The crate root
+/// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
+/// compile time and CI's `no-test-deps` gate rejects `test-enclave` in the
+/// production dependency graph, so this stand-in cannot reach a production build.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;

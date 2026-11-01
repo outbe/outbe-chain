@@ -34,7 +34,11 @@ WORKDIR /build
 RUN release/scripts/install-zk-build-tools.sh /usr/local/bin
 
 # Build release binaries
-RUN cargo build --release --bin outbe-chain --bin outbe-keygen --bin outbe-cli
+# hadolint ignore=DL3059
+RUN cargo build --release \
+    -p outbe-chain --features outbe-chain/production-enclave --bin outbe-chain \
+    -p outbe-keygen --bin outbe-keygen \
+    -p outbe-cli --bin outbe-cli
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime

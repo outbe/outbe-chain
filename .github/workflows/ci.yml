@@ -210,6 +210,37 @@ jobs:
           cache-on-failure: true
       - name: Ensure no arbitrary dep in production build
         run: cargo tree --package outbe-chain -e=features,no-dev | grep -Eq "arbitrary" && exit 1 || exit 0
+      - name: Ensure no test-enclave stand-in in production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          chain_tree="$(cargo tree --locked --package outbe-chain -e=features,no-dev)"
+          if grep -Eq 'feature "test-enclave"' <<<"${chain_tree}"; then
+            echo "error: test-enclave feature is enabled in outbe-chain production dependency graph" >&2
+            exit 1
+          fi
+          default_tree="$(cargo tree --locked -e=features,no-dev)"
+          if grep -Eq 'feature "test-enclave"' <<<"${default_tree}"; then
+            echo "error: test-enclave feature is enabled in default workspace production dependency graph" >&2
+            exit 1
+          fi
+          prod_tree="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev)"
+          if grep -Eq 'feature "test-enclave"' <<<"${prod_tree}"; then
+            echo "error: test-enclave feature is enabled when outbe-chain/production-enclave is set" >&2
+            exit 1
+          fi
+          for crate in outbe-fidelity outbe-gratis outbe-promis outbe-tribute outbe-nod; do
+            crate_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i "${crate}" --depth 1)"
+            if ! grep -Eq "${crate} feature \"production-enclave\"" <<<"${crate_features}"; then
+              echo "error: ${crate} is missing feature \"production-enclave\" under outbe-chain/production-enclave" >&2
+              exit 1
+            fi
+            if grep -Eq "${crate} feature \"test-enclave\"" <<<"${crate_features}"; then
+              echo "error: ${crate} has feature \"test-enclave\" enabled under outbe-chain/production-enclave" >&2
+              exit 1
+            fi
+          done
+          echo "enclave stand-in production boundary: OK"
       - name: Ensure consensus does not depend on EVM
         shell: bash
         run: |

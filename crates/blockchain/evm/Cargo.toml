@@ -124,6 +124,15 @@ rand-core-commonware.workspace = true
 
 [features]
 test-utils = []
+# Propagates the compile-time guard asserting that no enclave stand-in
+# (`test-enclave`) is unified into a production node build.
+production-enclave = [
+    "outbe-fidelity/production-enclave",
+    "outbe-gratis/production-enclave",
+    "outbe-promis/production-enclave",
+    "outbe-tribute/production-enclave",
+    "outbe-nod/production-enclave",
+]
 # Point the precompiles at a throwaway contract set an e2e run can deploy itself.
 e2e-test = [
     "outbe-desis/e2e-test",

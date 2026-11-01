@@ -8,6 +8,7 @@ build = "build.rs"
 
 [features]
 default = []
+production-enclave = ["outbe-evm/production-enclave"]
 snapshot-integration = ["outbe-engine/snapshot-integration"]
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
 e2e-test = ["outbe-evm/e2e-test", "outbe-consensus/e2e-byzantine-preannounce"]
