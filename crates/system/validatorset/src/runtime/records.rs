@@ -342,12 +342,12 @@ impl ValidatorSet<'_> {
         after: &ValidatorState,
         signal_set_change: bool,
     ) -> Result<()> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         self.persist_validator_state_delta(before, after)?;
         if signal_set_change {
             self.pending_set_change.write(true)?;
         }
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 

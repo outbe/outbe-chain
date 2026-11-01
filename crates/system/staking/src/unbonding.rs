@@ -96,7 +96,7 @@ impl Staking<'_> {
     /// zeroes out mature entries, rebuilds the list without them,
     /// and transfers the total claimable amount to the caller.
     pub fn claim_unbonded(&mut self, caller: Address) -> Result<()> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let timestamp = self.storage.now_secs()?;
         let mut total_claimable = U256::ZERO;
         let mut paid_entries = Vec::new();
@@ -174,7 +174,7 @@ impl Staking<'_> {
             })?;
         }
 
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 
@@ -215,11 +215,11 @@ impl Staking<'_> {
         state: &ValidatorState,
         timestamp: u64,
     ) -> Result<()> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let stake = self.stake_amount.read(&validator)?;
         if stake.is_zero() {
             self.finalize_inactive_if_complete(val_set, validator)?;
-            guard.commit();
+            guard.commit()?;
             return Ok(());
         }
         let total = self.total_staked.read()?;
@@ -250,7 +250,7 @@ impl Staking<'_> {
                 automatic: true,
             })?;
         }
-        guard.commit();
+        guard.commit()?;
         Ok(())
     }
 

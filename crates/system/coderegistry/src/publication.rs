@@ -142,7 +142,7 @@ impl CodeRegistry<'_> {
         }
 
         // Every signature, freshness condition and conflicting slot passed before writes.
-        let checkpoint = self.storage.checkpoint_guard();
+        let checkpoint = self.storage.checkpoint_guard()?;
         for index in fresh {
             self.publication_pending_generation
                 .write(&index, generation)?;
@@ -169,7 +169,7 @@ impl CodeRegistry<'_> {
         } else {
             None
         };
-        checkpoint.commit();
+        checkpoint.commit()?;
         Ok(PublicationProgress {
             attestations,
             receipt,

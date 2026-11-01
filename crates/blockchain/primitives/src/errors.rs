@@ -80,7 +80,9 @@ impl From<TimestampOverflow> for PrecompileError {
 pub enum TeeGenesisPolicyError {
     #[error("TEE genesis policy requires a non-zero genesis hash")]
     ZeroGenesisHash,
-    #[error("DcapRequired requires devnet, testnet, or mainnet chain ID ({devnet}, {testnet}, or {mainnet})")]
+    #[error(
+        "DcapRequired requires devnet, testnet, or mainnet chain ID ({devnet}, {testnet}, or {mainnet})"
+    )]
     InvalidDcapChainId {
         devnet: u64,
         testnet: u64,
@@ -345,6 +347,14 @@ pub enum ReshareArtifactError {
     EmptyEnclaveWitnessPayload,
     #[error("unsupported block artifact tag: {tag}")]
     UnsupportedTag { tag: u8 },
+    #[error("non-ascending block artifact record tag: {current:#04x} after {previous:#04x}")]
+    NonAscendingRecordTag { previous: u8, current: u8 },
+    #[error("empty block artifact envelope without publication flag")]
+    EmptyEnvelopeWithoutPublicationFlag,
+    #[error("zero timestamp_millis_part record")]
+    ZeroTimestampMillisPart,
+    #[error("empty late finalize credits batch list")]
+    EmptyLateFinalizeBatches,
 }
 
 impl From<ReshareArtifactError> for PrecompileError {
@@ -393,6 +403,10 @@ pub enum PrimitivesMathError {
     LbMathRealIdShiftWiden,
     #[error("lb_math: id widen")]
     LbMathIdWiden,
+    #[error("lb_math: bin id out of range (id = {id})")]
+    LbMathBinIdOutOfRange { id: u32 },
+    #[error("lb_math: tree invariant broken (non-zero level word resolved to empty child word)")]
+    LbMathTreeInvariantBroken,
 }
 
 impl From<PrimitivesMathError> for PrecompileError {
@@ -483,6 +497,13 @@ pub enum PrimitivesStorageError {
     RecordAlreadyExists { name: String },
     #[error("storage provider is already mutably borrowed")]
     ProviderAlreadyMutablyBorrowed,
+    #[error("checkpoint committed out of LIFO order: expected {expected:?}, got {actual}")]
+    CheckpointOutOfOrder {
+        expected: Option<usize>,
+        actual: usize,
+    },
+    #[error("invalid checkpoint revert index {checkpoint} for stack depth {depth}")]
+    InvalidCheckpointRevert { checkpoint: usize, depth: usize },
     #[error("certified Lysis activation frame returned before terminal completion")]
     CertifiedLysisActivationIncomplete,
     #[error("certified Lysis activation {owner} cursor is out of order")]
@@ -493,15 +514,6 @@ pub enum PrimitivesStorageError {
     VecIndexOutOfBounds,
     #[error("circular buffer not initialized")]
     CircularBufferNotInitialized,
-    #[error("{0}")]
-    EvmInternals(String),
-}
-
-impl PrimitivesStorageError {
-    /// Convert an EVM internals error into a [`PrecompileError::Storage`].
-    pub(crate) fn evm_internals(error: impl std::fmt::Display) -> PrecompileError {
-        Self::EvmInternals(error.to_string()).into()
-    }
 }
 
 impl From<PrimitivesStorageError> for PrecompileError {
@@ -517,8 +529,7 @@ impl From<PrimitivesStorageError> for PrecompileError {
             | PrimitivesStorageError::TransferFailed { .. }
             | PrimitivesStorageError::BalanceIncrFailed { .. }
             | PrimitivesStorageError::BurnAccountLoadFailed { .. }
-            | PrimitivesStorageError::BurnSetBalanceFailed { .. }
-            | PrimitivesStorageError::EvmInternals(_) => Self::Storage(err.to_string()),
+            | PrimitivesStorageError::BurnSetBalanceFailed { .. } => Self::Storage(err.to_string()),
             _ => Self::Revert(err.to_string()),
         }
     }
@@ -606,36 +617,6 @@ impl TeeCodecNonCanonicalError {
 impl From<TeeCodecNonCanonicalError> for crate::tee_attestation_v1::CodecError {
     fn from(error: TeeCodecNonCanonicalError) -> Self {
         Self::NonCanonical(error.as_str())
-    }
-}
-
-/// Errors returned by [`crate::participation`] encoding.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum ParticipationError {
-    #[error("validators/signers length mismatch: {validators_len} vs {signers_len}")]
-    ValidatorsSignersLengthMismatch {
-        validators_len: usize,
-        signers_len: usize,
-    },
-    #[error("validator set too large for participation encoding: {len}")]
-    ValidatorSetTooLarge { len: usize },
-    #[error("missed proposer list too large for participation encoding: {len}")]
-    MissedProposerListTooLarge { len: usize },
-    #[error("byzantine validator list too large for participation encoding: {len}")]
-    ByzantineValidatorListTooLarge { len: usize },
-    #[error(
-        "participation metadata exceeds extra_data budget: {total_len} > {max_extra_data_size}"
-    )]
-    ExceedsExtraDataBudget {
-        total_len: usize,
-        max_extra_data_size: usize,
-    },
-}
-
-impl From<ParticipationError> for PrecompileError {
-    fn from(err: ParticipationError) -> Self {
-        Self::Revert(err.to_string())
     }
 }
 

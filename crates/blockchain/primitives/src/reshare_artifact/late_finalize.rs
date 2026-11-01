@@ -81,6 +81,9 @@ pub(super) fn decode_payload(payload: &[u8]) -> Result<LateFinalizeCreditsArtifa
     if offset != payload.len() {
         return Err(ReshareArtifactError::TrailingBytesLateFinalizePayload.into());
     }
+    if batches.is_empty() {
+        return Err(ReshareArtifactError::EmptyLateFinalizeBatches.into());
+    }
 
     Ok(LateFinalizeCreditsArtifact { batches })
 }

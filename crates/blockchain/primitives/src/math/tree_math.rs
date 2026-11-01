@@ -18,7 +18,7 @@
 
 use alloy_primitives::U256;
 
-use crate::error::Result;
+use crate::error::{PrimitivesMathError, Result};
 use crate::math::bit_math::{least_significant_bit, mask_from};
 use crate::math::constants::MAX_BIN_ID;
 
@@ -145,7 +145,11 @@ macro_rules! impl_bin_tree_storage {
 
 /// Mirrors `TreeMath.contains(level2, id)` (TreeMath.sol L11-14).
 /// Returns true iff `id` is set in the leaf bitmap.
+/// `id > MAX_BIN_ID` is [`PrimitivesMathError::LbMathBinIdOutOfRange`].
 pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id }.into());
+    }
     let (top, mid, lo) = split(id);
     let leaf = s.read_leaf(leaf_key(top, mid))?;
     Ok(!(leaf & (U256::ONE << (lo as usize))).is_zero())
@@ -155,7 +159,11 @@ pub fn contains<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// Sets the bit. Cascades to mid and root if the lower-level word transitions
 /// from zero. Returns `true` iff the bit transitioned 0 -> 1 (i.e., this was
 /// a real insertion, not a re-insertion).
+/// `id > MAX_BIN_ID` is [`PrimitivesMathError::LbMathBinIdOutOfRange`].
 pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id }.into());
+    }
     let (top, mid, lo) = split(id);
     let leaf_k = leaf_key(top, mid);
 
@@ -187,7 +195,11 @@ pub fn add<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// (TreeMath.sol L45-65). Clears the bit. Cascades to mid and root if the
 /// lower-level word transitions to zero. Returns `true` iff the bit
 /// transitioned 1 -> 0.
+/// `id > MAX_BIN_ID` is [`PrimitivesMathError::LbMathBinIdOutOfRange`].
 pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id }.into());
+    }
     let (top, mid, lo) = split(id);
     let leaf_k = leaf_key(top, mid);
 
@@ -219,7 +231,9 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 
 /// **Inclusive variant** of `TreeMath.findFirstLeft` (TreeMath.sol L96-127).
 /// Returns the smallest set `id` >= `start_id`, or `None` if no such id
-/// exists.
+/// exists. `start_id > MAX_BIN_ID` is [`PrimitivesMathError::LbMathBinIdOutOfRange`].
+/// A set parent bit whose child word is empty is
+/// [`PrimitivesMathError::LbMathTreeInvariantBroken`].
 ///
 /// Differs from LB exactly at the leaf level. LB clears bits `[0..lo+1)`
 /// (strict-greater). We clear bits `[0..lo)`, which keeps `lo` itself as a
@@ -229,7 +243,7 @@ pub fn remove<S: BinTreeStorage>(s: &S, id: u32) -> Result<bool> {
 /// leaf.
 pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Result<Option<u32>> {
     if start_id > MAX_BIN_ID {
-        return Ok(None);
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id: start_id }.into());
     }
     let (top0, mid0, lo0) = split(start_id);
 
@@ -237,7 +251,8 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     let leaf = s.read_leaf(leaf_key(top0, mid0))?;
     let leaf_masked = mask_from(leaf, lo0);
     if !leaf_masked.is_zero() {
-        let bit = least_significant_bit(leaf_masked) as u8;
+        let bit = least_significant_bit(leaf_masked)
+            .ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
         return Ok(Some(assemble(top0, mid0, bit)));
     }
 
@@ -247,10 +262,12 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     if mid0 != u8::MAX {
         let mid_masked = mask_from(mid_word, mid_threshold);
         if !mid_masked.is_zero() {
-            let mid_bit = least_significant_bit(mid_masked) as u8;
+            let mid_bit = least_significant_bit(mid_masked)
+                .ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
             // Descend: leaf at (top0, mid_bit) is non-empty by invariant.
             let leaf2 = s.read_leaf(leaf_key(top0, mid_bit))?;
-            let lo_bit = least_significant_bit(leaf2) as u8;
+            let lo_bit = least_significant_bit(leaf2)
+                .ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
             return Ok(Some(assemble(top0, mid_bit, lo_bit)));
         }
     }
@@ -265,11 +282,14 @@ pub fn find_first_left_inclusive<S: BinTreeStorage>(s: &S, start_id: u32) -> Res
     if root_masked.is_zero() {
         return Ok(None);
     }
-    let top_bit = least_significant_bit(root_masked) as u8;
+    let top_bit =
+        least_significant_bit(root_masked).ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
     let mid2 = s.read_mid(mid_key(top_bit))?;
-    let mid_bit = least_significant_bit(mid2) as u8;
+    let mid_bit =
+        least_significant_bit(mid2).ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
     let leaf3 = s.read_leaf(leaf_key(top_bit, mid_bit))?;
-    let lo_bit = least_significant_bit(leaf3) as u8;
+    let lo_bit =
+        least_significant_bit(leaf3).ok_or(PrimitivesMathError::LbMathTreeInvariantBroken)?;
     Ok(Some(assemble(top_bit, mid_bit, lo_bit)))
 }
 
@@ -453,10 +473,54 @@ mod tests {
     }
 
     #[test]
-    fn find_first_above_max_returns_none() {
+    fn find_first_above_max_is_out_of_domain() {
         with_store(|s| {
             add(s, MAX_BIN_ID).unwrap();
-            assert_eq!(find_first_left_inclusive(s, MAX_BIN_ID + 1).unwrap(), None);
+            let id = MAX_BIN_ID + 1;
+            let err = find_first_left_inclusive(s, id).unwrap_err();
+            let expected =
+                crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange {
+                    id,
+                })
+                .to_string();
+            assert_eq!(err.to_string(), expected);
+        });
+    }
+
+    #[test]
+    fn trie_rejects_out_of_domain() {
+        let id = MAX_BIN_ID + 1;
+        let out_of_range = || {
+            crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange { id })
+                .to_string()
+        };
+        with_store(|store| {
+            assert_eq!(contains(store, id).unwrap_err().to_string(), out_of_range());
+            assert_eq!(add(store, id).unwrap_err().to_string(), out_of_range());
+            assert_eq!(remove(store, id).unwrap_err().to_string(), out_of_range());
+            assert_eq!(
+                find_first_left_inclusive(store, id)
+                    .unwrap_err()
+                    .to_string(),
+                out_of_range()
+            );
+        });
+        assert_eq!(
+            crate::math::bit_math::least_significant_bit(U256::ZERO),
+            None
+        );
+
+        with_store(|store| {
+            // A search from 0 descends through root bit 1 into this mid.
+            // Bit 0 of the mid is set and its leaf is empty, so the scan
+            // must fail closed instead of assembling bit 255.
+            store.write_root(U256::ONE << 1).unwrap();
+            store.write_mid(mid_key(1), U256::ONE).unwrap();
+            let err = find_first_left_inclusive(store, 0).unwrap_err();
+            let expected =
+                crate::error::PrecompileError::from(PrimitivesMathError::LbMathTreeInvariantBroken)
+                    .to_string();
+            assert_eq!(err.to_string(), expected);
         });
     }
 

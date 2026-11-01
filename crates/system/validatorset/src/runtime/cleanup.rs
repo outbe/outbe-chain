@@ -12,7 +12,7 @@ impl ValidatorSet<'_> {
     /// `max_removals` caps how many entries one call cleans (0 = unlimited).
     /// Returns the number of entries removed.
     pub fn cleanup_inactive_validators(&mut self, max_removals: u32) -> Result<u32> {
-        let guard = self.storage.checkpoint_guard();
+        let guard = self.storage.checkpoint_guard()?;
         let mut count = self.validator_count.read()?;
         let mut removed = 0u32;
         let mut i = 1u64;
@@ -79,7 +79,7 @@ impl ValidatorSet<'_> {
         }
 
         self.validator_count.write(count)?;
-        guard.commit();
+        guard.commit()?;
         Ok(removed)
     }
 

@@ -204,6 +204,8 @@ pub fn encode_outbe_block_artifacts(artifacts: &OutbeBlockArtifacts) -> Result<B
         records.push((ENCLAVE_WITNESS_TAG, witness.to_vec()));
     }
 
+    records.sort_by_key(|(tag, _)| *tag);
+
     if records.is_empty() && !artifacts.radicle_publication_enabled {
         return Ok(Bytes::new());
     }
@@ -253,31 +255,54 @@ pub fn decode_outbe_block_artifacts(extra_data: &[u8]) -> Result<OutbeBlockArtif
         radicle_publication_enabled: extra_data[5] & PUBLICATION_FLAG != 0,
         ..Default::default()
     };
+    let mut last_tag: Option<u8> = None;
 
     for _ in 0..record_count {
-        if offset + 3 > extra_data.len() {
-            return Err(ReshareArtifactError::TruncatedRecordHeader.into());
-        }
-        let tag = extra_data[offset];
-        offset += 1;
-        let payload_len = u16::from_be_bytes([extra_data[offset], extra_data[offset + 1]]) as usize;
-        offset += 2;
-        let end = offset
-            .checked_add(payload_len)
-            .ok_or(ReshareArtifactError::RecordOverflow)?;
-        let Some(payload) = extra_data.get(offset..end) else {
-            return Err(ReshareArtifactError::TruncatedRecordPayload.into());
-        };
-        offset = end;
-
+        let (tag, payload) = read_next_record_frame(extra_data, &mut offset, &mut last_tag)?;
         records::decode_into(&mut artifacts, tag, payload)?;
     }
 
     if offset != extra_data.len() {
         return Err(ReshareArtifactError::TrailingBytes.into());
     }
+    if record_count == 0 && !artifacts.radicle_publication_enabled {
+        return Err(ReshareArtifactError::EmptyEnvelopeWithoutPublicationFlag.into());
+    }
 
     Ok(artifacts)
+}
+
+fn read_next_record_frame<'a>(
+    extra_data: &'a [u8],
+    offset: &mut usize,
+    last_tag: &mut Option<u8>,
+) -> Result<(u8, &'a [u8])> {
+    if *offset + 3 > extra_data.len() {
+        return Err(ReshareArtifactError::TruncatedRecordHeader.into());
+    }
+    let tag = extra_data[*offset];
+    *offset += 1;
+    let payload_len = u16::from_be_bytes([extra_data[*offset], extra_data[*offset + 1]]) as usize;
+    *offset += 2;
+    let end = offset
+        .checked_add(payload_len)
+        .ok_or(ReshareArtifactError::RecordOverflow)?;
+    let payload = extra_data
+        .get(*offset..end)
+        .ok_or(ReshareArtifactError::TruncatedRecordPayload)?;
+    *offset = end;
+
+    if let Some(previous) = *last_tag {
+        if tag <= previous {
+            return Err(ReshareArtifactError::NonAscendingRecordTag {
+                previous,
+                current: tag,
+            }
+            .into());
+        }
+    }
+    *last_tag = Some(tag);
+    Ok((tag, payload))
 }
 
 /// Canonicalizes proposer-supplied artifact fragments before block execution.

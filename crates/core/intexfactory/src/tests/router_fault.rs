@@ -113,12 +113,12 @@ impl PrecompileStorageProvider for RouterFaultProvider {
         self.inner.checkpoint()
     }
 
-    fn checkpoint_commit(&mut self) {
-        self.inner.checkpoint_commit();
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.inner.checkpoint_commit(checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        self.inner.checkpoint_revert(checkpoint);
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.inner.checkpoint_revert(checkpoint)
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {

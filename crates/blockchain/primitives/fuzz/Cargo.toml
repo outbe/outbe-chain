@@ -12,13 +12,6 @@ libfuzzer-sys = "0.4"
 outbe-primitives = { path = ".." }
 alloy-primitives = "1"
 
-[[bin]]
-name = "fuzz_participation_decode"
-path = "fuzz_targets/fuzz_participation_decode.rs"
-test = false
-doc = false
-bench = false
-
 # Keep the cargo-fuzz package independent from the repository workspace. Cargo
 # otherwise treats this nested manifest as an unlisted workspace member and
 # refuses to build any target from it.

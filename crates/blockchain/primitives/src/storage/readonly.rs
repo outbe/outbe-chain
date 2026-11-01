@@ -224,9 +224,13 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
         }
     }
 
-    fn checkpoint_commit(&mut self) {}
+    fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) -> Result<()> {
+        Ok(())
+    }
 
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) {}
+    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) -> Result<()> {
+        Ok(())
+    }
 
     fn transfer_balance(&mut self, _from: Address, _to: Address, _amount: U256) -> Result<()> {
         Err(PrecompileError::WriteProtection)

@@ -16,8 +16,7 @@
 //!
 //! The ctx-dispatch hook that [`crate::precompiles::extend_outbe_precompiles`]
 //! installs builds a `CtxStorageProvider` for every Outbe precompile dispatch,
-//! read-only or not, sub-call or not. This crate does not use the legacy
-//! [`outbe_primitives::storage::evm::EvmStorageProvider`].
+//! read-only or not, sub-call or not.
 
 //! ## Storage gas schedule
 //!
@@ -150,6 +149,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
 
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
+    /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
+    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint)>,
 }
 
 impl CtxStorageProviderConfig {
@@ -252,6 +253,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             dispatch_frames: DispatchFrameAuthority {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
+            checkpoints: Vec::new(),
         }
         .with_genesis_timestamp(config.genesis_timestamp)
     }
@@ -451,15 +453,56 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn checkpoint(&mut self) -> JournalCheckpoint {
-        internals(self.ctx).checkpoint()
+        let raw = internals(self.ctx).checkpoint();
+        let depth = self.checkpoints.len();
+        let token = JournalCheckpoint {
+            selfdestructed_i: depth,
+            ..raw
+        };
+        self.checkpoints.push((token, raw));
+        token
     }
 
-    fn checkpoint_commit(&mut self) {
-        internals(self.ctx).checkpoint_commit()
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        let expected = self
+            .checkpoints
+            .last()
+            .map(|(token, _)| token.selfdestructed_i);
+        if self.checkpoints.last().map(|(token, _)| *token) != Some(checkpoint) {
+            return Err(
+                outbe_primitives::error::PrimitivesStorageError::CheckpointOutOfOrder {
+                    expected,
+                    actual: checkpoint.selfdestructed_i,
+                }
+                .into(),
+            );
+        }
+        self.checkpoints.pop();
+        internals(self.ctx).checkpoint_commit();
+        Ok(())
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        internals(self.ctx).checkpoint_revert(checkpoint)
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        let Some(pos) = self
+            .checkpoints
+            .iter()
+            .rposition(|(token, _)| *token == checkpoint)
+        else {
+            return Err(
+                outbe_primitives::error::PrimitivesStorageError::InvalidCheckpointRevert {
+                    checkpoint: checkpoint.selfdestructed_i,
+                    depth: self.checkpoints.len(),
+                }
+                .into(),
+            );
+        };
+        while let Some((_, raw)) = (self.checkpoints.len() > pos)
+            .then(|| self.checkpoints.pop())
+            .flatten()
+        {
+            internals(self.ctx).checkpoint_revert(raw);
+        }
+        Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {

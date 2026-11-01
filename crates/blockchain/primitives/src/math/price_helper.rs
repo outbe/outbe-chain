@@ -18,16 +18,23 @@ use crate::math::uint256x256_math::{mul_shift_round_down, shift_div_round_down};
 
 /// Mirrors `PriceHelper.getBase(uint16)` (PriceHelper.sol L46-50).
 /// Returns `1 + binStep / BASIS_POINT_MAX` in 128.128 fixed-point.
+///
+/// The integer division `(bin_step_u256 << SCALE_OFFSET as usize) /
+/// U256::from(BASIS_POINT_MAX)` truncates (rounds down toward zero). That
+/// matches `Uint256x256Math.shiftDivRoundDown` and upstream Solidity
+/// `PriceHelper.getBase`.
 pub fn get_base(bin_step: u16) -> U256 {
     let bin_step_u256 = U256::from(bin_step);
     SCALE_1_128_128 + (bin_step_u256 << SCALE_OFFSET as usize) / U256::from(BASIS_POINT_MAX)
 }
 
 /// Mirrors `PriceHelper.getExponent(uint24)` (PriceHelper.sol L54-58).
-/// `exponent = id - REAL_ID_SHIFT`. Caller passes `id` as `u32`. We treat
-/// it as `i32` (top byte must be 0 since `id` is at most `(1 << 24) - 1`).
-pub fn get_exponent(id: u32) -> i32 {
-    (id as i32) - REAL_ID_SHIFT
+/// `exponent = id - REAL_ID_SHIFT`. Rejects `id > MAX_BIN_ID`.
+pub fn get_exponent(id: u32) -> Result<i32> {
+    if id > MAX_BIN_ID {
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id }.into());
+    }
+    Ok((id as i32) - REAL_ID_SHIFT)
 }
 
 /// Mirrors `PriceHelper.getPriceFromId(uint24, uint16)`
@@ -37,7 +44,7 @@ pub fn get_exponent(id: u32) -> i32 {
 /// astronomical or sub-atomic prices that the caller treats as diagnostic.
 pub fn get_price_from_id(id: u32, bin_step: u16) -> Result<U256> {
     let base = get_base(bin_step);
-    let exponent = get_exponent(id);
+    let exponent = get_exponent(id)?;
     pow(base, exponent)
 }
 
@@ -97,9 +104,9 @@ mod tests {
 
     #[test]
     fn get_exponent_centered_at_real_id_shift() {
-        assert_eq!(get_exponent(REAL_ID_SHIFT as u32), 0);
-        assert_eq!(get_exponent(0), -REAL_ID_SHIFT);
-        assert_eq!(get_exponent(REAL_ID_SHIFT as u32 + 100), 100);
+        assert_eq!(get_exponent(REAL_ID_SHIFT as u32).unwrap(), 0);
+        assert_eq!(get_exponent(0).unwrap(), -REAL_ID_SHIFT);
+        assert_eq!(get_exponent(REAL_ID_SHIFT as u32 + 100).unwrap(), 100);
     }
 
     #[test]
@@ -124,13 +131,45 @@ mod tests {
 
     #[test]
     fn get_id_from_price_does_not_underflow() {
-        // U256::ONE in 128.128 represents 2^-128. log2 is special-cased to -128
-        // (raw, NOT 128.128-encoded, see Uint128x128Math.sol L37). After
-        // dividing by `log2(base)` ~= 1.225e36, the quotient rounds to 0, so
-        // `id == REAL_ID_SHIFT` rather than 0. With BIN_STEP_BP = 25 the
-        // saturate-to-0 branch is unreachable for any non-zero U256.
+        // `log2(U256::ONE)` is the 128.128 value `-128 << 128`. Dividing by
+        // `log2(base)` for `BIN_STEP_BP = 25` yields `REAL_ID_SHIFT - 35_533`.
         let id = get_id_from_price(U256::ONE, BIN_STEP_BP).unwrap();
-        assert_eq!(id, REAL_ID_SHIFT as u32);
+        assert_eq!(id, 8_353_075);
+        assert!(id < get_id_from_price(U256::from(2u64), BIN_STEP_BP).unwrap());
+    }
+
+    #[test]
+    fn price_helper_rejects_out_of_domain() {
+        // `(2^24 - 1) - 2^23 = 2^23 - 1`.
+        assert_eq!(get_exponent(MAX_BIN_ID).unwrap(), REAL_ID_SHIFT - 1);
+
+        let displayed = |id: u32| {
+            crate::error::PrecompileError::from(PrimitivesMathError::LbMathBinIdOutOfRange { id })
+                .to_string()
+        };
+        let above = MAX_BIN_ID + 1;
+        assert_eq!(
+            get_exponent(above).unwrap_err().to_string(),
+            displayed(above)
+        );
+        assert_eq!(
+            get_exponent(u32::MAX).unwrap_err().to_string(),
+            displayed(u32::MAX)
+        );
+        assert_eq!(
+            get_price_from_id(above, BIN_STEP_BP)
+                .unwrap_err()
+                .to_string(),
+            displayed(above)
+        );
+
+        // `(3 << 128) / 10_000` is not exact, so round-down stays one below the ceiling.
+        let scaled = U256::from(3u64) << 128;
+        let denom = U256::from(10_000u64);
+        assert_ne!(scaled % denom, U256::ZERO);
+        let floor = scaled / denom;
+        assert_eq!(get_base(3), SCALE_1_128_128 + floor);
+        assert_eq!(SCALE_1_128_128 + floor + U256::ONE - get_base(3), U256::ONE);
     }
 
     #[test]

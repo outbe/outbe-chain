@@ -258,13 +258,12 @@ impl<'storage> StorageHandle<'storage> {
         })
     }
 
-    pub fn checkpoint(&self) -> JournalCheckpoint {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint()
+    pub fn checkpoint(&self) -> Result<JournalCheckpoint> {
+        self.with_provider(|provider| Ok(provider.checkpoint()))
     }
 
-    pub fn checkpoint_guard(&self) -> CheckpointGuard<'storage> {
-        CheckpointGuard::new(self.clone(), self.checkpoint())
+    pub fn checkpoint_guard(&self) -> Result<CheckpointGuard<'storage>> {
+        Ok(CheckpointGuard::new(self.clone(), self.checkpoint()?))
     }
 
     /// Runs storage mutations under a journal checkpoint.
@@ -273,29 +272,29 @@ impl<'storage> StorageHandle<'storage> {
     /// On `Err` or early return, [`CheckpointGuard`] drops without commit and
     /// reverts all writes made in this scope.
     pub fn with_checkpoint<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        let checkpoint = self.checkpoint_guard();
+        let checkpoint = self.checkpoint_guard()?;
         let result = f()?;
-        checkpoint.commit();
+        checkpoint.commit()?;
         Ok(result)
     }
 
-    pub fn checkpoint_commit(&self) {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint_commit();
+    pub fn checkpoint_commit(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.with_provider(|provider| provider.checkpoint_commit(checkpoint))
     }
 
-    pub fn checkpoint_revert(&self, checkpoint: JournalCheckpoint) {
-        let mut provider = self.inner.borrow_mut();
-        provider.checkpoint_revert(checkpoint);
+    pub fn checkpoint_revert(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+        self.with_provider(|provider| provider.checkpoint_revert(checkpoint))
     }
 
     pub fn deduct_gas(&self, gas: u64) -> Result<()> {
         self.with_provider(|provider| provider.deduct_gas(gas))
     }
 
-    pub fn refund_gas(&self, gas: i64) {
-        let mut provider = self.inner.borrow_mut();
-        provider.refund_gas(gas);
+    pub fn refund_gas(&self, gas: i64) -> Result<()> {
+        self.with_provider(|provider| {
+            provider.refund_gas(gas);
+            Ok(())
+        })
     }
 
     pub fn gas_used(&self) -> Result<u64> {
@@ -424,10 +423,8 @@ impl<'storage> StorageHandle<'storage> {
     /// callback already holds the inner borrow) returns
     /// `SubCallError::ProviderBorrowed` rather than panicking. In practice,
     /// the production sub-call provider (`outbe_evm::storage::CtxStorageProvider`)
-    /// releases the borrow only after `sub_call` returns.
-    /// [`crate::storage::evm::EvmStorageProvider`] does not override `sub_call`
-    /// and returns `SubCallError::NotAvailable`. As a result, a hostile re-entry
-    /// from inside the child frame is observable as a structured error.
+    /// releases the borrow only after `sub_call` returns. As a result, a hostile
+    /// re-entry from inside the child frame is observable as a structured error.
     fn do_sub_call(&self, input: SubCallInput) -> std::result::Result<SubCallOutput, SubCallError> {
         let mut guard = self
             .inner
@@ -504,5 +501,78 @@ mod tests {
 
         assert_eq!(handle.chain_id().unwrap(), 1);
         assert_eq!(other.chain_id().unwrap(), 1);
+    }
+
+    #[test]
+    fn handle_borrow_is_fallible() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        let cp = handle.checkpoint().expect("initial checkpoint succeeds");
+
+        let _active_borrow = handle.inner.borrow_mut();
+        for err in [
+            handle.checkpoint().unwrap_err(),
+            handle.checkpoint_guard().map(|_| ()).unwrap_err(),
+            handle.checkpoint_commit(cp).unwrap_err(),
+            handle.checkpoint_revert(cp).unwrap_err(),
+            handle.refund_gas(10).unwrap_err(),
+        ] {
+            assert_eq!(
+                err.to_string(),
+                crate::error::PrecompileError::from(
+                    crate::error::PrimitivesStorageError::ProviderAlreadyMutablyBorrowed
+                )
+                .to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn out_of_order_commit_is_rejected() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let handle = StorageHandle::new(&mut provider);
+        let account = Address::repeat_byte(0x42);
+        let slot = U256::from(7u64);
+
+        let outer = handle.checkpoint_guard().unwrap();
+        handle.sstore(account, slot, U256::from(10u64)).unwrap();
+
+        let inner = handle.checkpoint_guard().unwrap();
+        handle.sstore(account, slot, U256::from(20u64)).unwrap();
+
+        // Committing the outer checkpoint while the inner checkpoint is still active
+        // must fail with a typed LIFO error and leave the inner snapshot intact.
+        let err = outer.commit().unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            crate::error::PrecompileError::from(
+                crate::error::PrimitivesStorageError::CheckpointOutOfOrder {
+                    expected: Some(1),
+                    actual: 0,
+                }
+            )
+            .to_string()
+        );
+
+        // Dropping the inner guard without committing must still revert the inner write.
+        drop(inner);
+        assert_eq!(handle.sload(account, slot).unwrap(), U256::from(10u64));
+
+        // Out-of-bounds revert index must return a typed error rather than panicking.
+        let bad_cp = JournalCheckpoint {
+            log_i: 0,
+            journal_i: 99,
+            selfdestructed_i: 0,
+        };
+        assert_eq!(
+            handle.checkpoint_revert(bad_cp).unwrap_err().to_string(),
+            crate::error::PrecompileError::from(
+                crate::error::PrimitivesStorageError::InvalidCheckpointRevert {
+                    checkpoint: 99,
+                    depth: 1,
+                }
+            )
+            .to_string()
+        );
     }
 }

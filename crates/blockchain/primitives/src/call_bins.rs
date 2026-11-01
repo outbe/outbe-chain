@@ -7,7 +7,7 @@ use alloy_primitives::{keccak256, B256, U256};
 
 use crate::day_pass::currency_position;
 use crate::deadline_queue::QueueEntry;
-use crate::error::{CallBinError, Result};
+use crate::error::{CallBinError, PrimitivesMathError, Result};
 use crate::math::constants::MAX_BIN_ID;
 use crate::math::reference_price;
 use crate::math::tree_math::{self, BinTreeStorage};
@@ -98,6 +98,9 @@ pub fn entry_at<'s, S: CallBinStore<'s>>(store: &S, bin: u32, index: u32) -> Res
 
 /// Appends `entry` to `bin`, lighting the bin in the trie when it was empty.
 pub fn insert<'s, S: CallBinStore<'s>>(store: &S, entry: S::Entry, bin: u32) -> Result<()> {
+    if bin > MAX_BIN_ID {
+        return Err(PrimitivesMathError::LbMathBinIdOutOfRange { id: bin }.into());
+    }
     if store.entry_slot().read(&entry)? != 0 {
         return Err(CallBinError::EntryAlreadyIndexed.into());
     }

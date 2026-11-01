@@ -39,7 +39,7 @@ pub fn arm_next_direct_metadosis_frame_budget(purpose: MetadosisMutationPurposeT
 /// via [`DirectStorageProvider::take_committed_changes`] to notify reth's
 /// parallel state root task.
 ///
-/// This is the block-hook counterpart to [`super::evm::EvmStorageProvider`],
+/// This is the block-hook counterpart to `outbe_evm::CtxStorageProvider`,
 /// which requires `EvmInternals` (only available inside a precompile call).
 /// Block-level hooks such as `apply_pre_execution_changes()` can use any
 /// mutable database that supports reads plus `commit()`.
@@ -449,16 +449,17 @@ where
         }
     }
 
-    fn checkpoint_commit(&mut self) {
-        self.snapshots.pop();
+    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        super::pop_snapshot_lifo(&mut self.snapshots, checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) {
-        if let Some(snapshot) = self.snapshots.drain(checkpoint.journal_i..).next() {
+    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+        if let Some(snapshot) = super::drain_snapshots_from(&mut self.snapshots, checkpoint)? {
             self.pending = snapshot.pending;
             self.pending_accounts = snapshot.pending_accounts;
             self.events = snapshot.events;
         }
+        Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {

@@ -76,11 +76,13 @@ fn test_reshare_activation_after_participation_decode() {
     });
 }
 
-/// Task 01 test: committee size change doesn't corrupt participation.
+/// Committee growth must not rewrite the parent signing set already carried
+/// in certified-parent accounting metadata.
 ///
-/// The old set has 3 validators and the new set has 4. In this case, the
-/// participation bitmap encoded for 3 validators should be decoded against the
-/// 3-validator set, not the 4-validator set.
+/// The old set has 3 validators and the new set has 4. Metadata encoded for
+/// the 3-validator set still decodes to that set after the boundary activates
+/// the 4-validator set. The boundary artifact for the new epoch round-trips
+/// on the same transition.
 #[test]
 fn test_committee_size_change_participation_safety() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -104,17 +106,30 @@ fn test_committee_size_change_participation_safety() {
         let old_set = vs.get_active_consensus_set().unwrap();
         assert_eq!(old_set.len(), 3, "old set must have 3 validators");
 
-        // Encode participation for 3-validator set.
         let mut old_addrs: Vec<Address> = old_set.iter().map(|v| v.validator_address).collect();
         old_addrs.sort();
-        let signers = vec![true, true, false]; // A, B signed; C absent
-        let extra_data = outbe_primitives::participation::encode_participation_extended(
-            &old_addrs,
-            &signers,
-            &[],
-            &[],
-        )
-        .unwrap();
+        let metadata = CertifiedParentAccountingMetadata {
+            finalized_block_number: 7,
+            finalized_block_hash: B256::with_last_byte(0x11),
+            finalized_epoch: 0,
+            finalized_view: 4,
+            parent_view: 3,
+            ordered_committee: old_addrs.clone(),
+            signer_bitmap: vec![1, 1, 0],
+            proof: Bytes::from_static(b"parent-proof"),
+            committee_set_hash: B256::with_last_byte(0x22),
+            vrf_material_version: 1,
+            vrf_group_public_key_hash: B256::with_last_byte(0x33),
+            proof_kind:
+                outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
+            missed_proposers: vec![outbe_primitives::consensus_metadata::MissedProposerEvent {
+                view: 2,
+                validator: old_addrs[2],
+            }],
+        };
+        let encoded = metadata
+            .encode()
+            .expect("certified-parent accounting metadata encodes");
 
         // Now activate new set with 4 validators.
         vs.test_activate_validated_boundary_set(
@@ -125,21 +140,40 @@ fn test_committee_size_change_participation_safety() {
         .unwrap();
         let new_set = vs.get_active_consensus_set().unwrap();
         assert_eq!(new_set.len(), 4, "new set must have 4 validators");
-
-        // Decode participation against OLD set (3 validators) -> should work.
-        let decoded =
-            outbe_primitives::participation::decode_participation_extended(&extra_data, &old_addrs);
-        assert!(decoded.is_some(), "decode against OLD set must succeed");
-
-        // Decode against NEW set (4 validators) -> count mismatch -> returns None.
         let mut new_addrs: Vec<Address> = new_set.iter().map(|v| v.validator_address).collect();
         new_addrs.sort();
-        let decoded_wrong =
-            outbe_primitives::participation::decode_participation_extended(&extra_data, &new_addrs);
-        assert!(
-            decoded_wrong.is_none(),
-            "decode against NEW set with different size must return None (count mismatch)"
+
+        let decoded = CertifiedParentAccountingMetadata::decode(encoded.as_ref())
+            .expect("metadata encoded for the old set still decodes");
+        assert_eq!(decoded, metadata);
+        assert_eq!(decoded.ordered_committee, old_addrs);
+        assert_eq!(decoded.signer_bitmap, vec![1, 1, 0]);
+        assert_ne!(
+            decoded.ordered_committee, new_addrs,
+            "decoded signing set must stay the pre-boundary committee"
         );
+
+        let boundary = boundary_with_epoch(
+            1,
+            true,
+            vec![
+                (val_a, dummy_pubkey(0xA1)),
+                (val_b, dummy_pubkey(0xB2)),
+                (val_c, dummy_pubkey(0xC3)),
+                (val_d, dummy_pubkey(0xD4)),
+            ],
+        );
+        let artifacts = OutbeBlockArtifacts {
+            consensus_header_artifact: Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)),
+            ..OutbeBlockArtifacts::default()
+        };
+        let encoded_boundary =
+            encode_outbe_block_artifacts(&artifacts).expect("boundary artifact encodes");
+        let decoded_boundary = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+            encoded_boundary.as_ref(),
+        )
+        .expect("boundary artifact decodes");
+        assert_eq!(decoded_boundary, artifacts);
     });
 }
 

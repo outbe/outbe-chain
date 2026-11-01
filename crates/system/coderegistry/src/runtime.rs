@@ -102,7 +102,7 @@ impl CodeRegistry<'_> {
         let next_count = count + 1;
         let generation = self.registry_generation.read()? + 1;
 
-        let checkpoint = self.storage.checkpoint_guard();
+        let checkpoint = self.storage.checkpoint_guard()?;
         self.repository_by_index.write(&count, key)?;
         self.repository_index.write(&key, next_count)?;
         self.repository_registrant.write(&key, registrant)?;
@@ -114,7 +114,7 @@ impl CodeRegistry<'_> {
             index: count,
             generation,
         })?;
-        checkpoint.commit();
+        checkpoint.commit()?;
         Ok(RepositoryRegistration {
             index: count,
             generation,

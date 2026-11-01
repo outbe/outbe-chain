@@ -28,8 +28,8 @@ fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
         .expect("system gas plan fits the block");
 
     assert_eq!(plan.gas_limit(0), Some(plan.intrinsic_gas(0).unwrap()));
-    assert_eq!(plan.execution_gas_limit(0), Some(0));
-    assert_eq!(plan.execution_gas_limit(1), Some(50_000));
+    assert_eq!(plan.execution_gas_limit(0), Ok(Some(0)));
+    assert_eq!(plan.execution_gas_limit(1), Ok(Some(50_000)));
     assert_eq!(
         plan.gas_limit(1),
         Some(plan.intrinsic_gas(1).unwrap() + 50_000)

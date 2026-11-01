@@ -176,7 +176,7 @@ pub fn activate_boundary_atomic(
     storage: StorageHandle,
     inputs: &BoundaryActivationInputs,
 ) -> Result<(B256, B256)> {
-    let guard = storage.checkpoint_guard();
+    let guard = storage.checkpoint_guard()?;
 
     let outgoing_key = if let Some((outgoing_epoch, ref outgoing_snapshot)) = inputs.outgoing {
         let (_, key) =
@@ -199,6 +199,6 @@ pub fn activate_boundary_atomic(
     let (_, incoming_key) =
         state::write_committee_snapshot(storage, inputs.incoming_epoch, &inputs.incoming)?;
 
-    guard.commit();
+    guard.commit()?;
     Ok((outgoing_key, incoming_key))
 }
