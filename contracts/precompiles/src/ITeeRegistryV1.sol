@@ -225,10 +225,7 @@ interface ITeeRegistryV1 {
         uint256 slashedAmount
     );
     event EnclaveBindingRevokedV1(
-        bytes32 indexed nodeIdHash,
-        bytes32 indexed bindingId,
-        uint256 indexed proposalId,
-        uint64 blockNumber
+        bytes32 indexed nodeIdHash, bytes32 indexed bindingId, uint256 indexed proposalId, uint64 blockNumber
     );
 
     function isBootstrapped() external view returns (bool);
