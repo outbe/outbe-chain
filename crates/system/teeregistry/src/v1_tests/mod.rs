@@ -69,4 +69,5 @@ mod registration;
 mod rejoin;
 mod replacement;
 mod replica_parity;
+mod revocation;
 mod transitions;

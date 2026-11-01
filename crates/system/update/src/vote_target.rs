@@ -12,7 +12,7 @@ use outbe_vote::handlers::{
 use serde_json::Value;
 
 use crate::errors::UpdateError;
-use crate::payload::{validate_schedule_update_json, ScheduleUpdatePayload};
+use crate::payload::{RevokeEnclaveBindingPayloadV1, ScheduleUpdatePayload, UpdateVotePayload};
 use crate::schema::Update;
 
 /// Vote target handler wired to the Update precompile address.
@@ -25,7 +25,9 @@ impl VoteTarget for UpdateVoteTarget {
 
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
         let payload = decode_proposal_payload(payload)?;
-        validate_schedule_update_json(&payload, context.block_number).map_err(Into::into)
+        UpdateVotePayload::from_value(&payload)?
+            .validate(context.block_number)
+            .map_err(Into::into)
     }
 
     fn handle_approved(
@@ -36,12 +38,48 @@ impl VoteTarget for UpdateVoteTarget {
         _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         let payload = decode_stored_proposal_payload(payload, "Update")?;
-        let decoded = ScheduleUpdatePayload::from_value(&payload)
+        let decoded = UpdateVotePayload::from_value(&payload)
             .map_err(UpdateError::stored_proposal_payload_invalid)?;
-        let outcome =
-            ctx.with_checkpoint(|| stage_approved_update(ctx, proposal_id, &payload, &decoded));
-        UpdateError::into_execution_outcome(outcome)
+        match decoded {
+            UpdateVotePayload::ScheduleUpdate(decoded) => {
+                let outcome = ctx.with_checkpoint(|| {
+                    stage_approved_update(ctx, proposal_id, &payload, &decoded)
+                });
+                UpdateError::into_execution_outcome(outcome)
+            }
+            UpdateVotePayload::RevokeEnclaveBindingV1(decoded) => {
+                execute_approved_revocation(ctx, proposal_id, &decoded)
+            }
+        }
     }
+}
+
+fn execute_approved_revocation(
+    ctx: &BlockRuntimeContext,
+    proposal_id: U256,
+    decoded: &RevokeEnclaveBindingPayloadV1,
+) -> Result<TargetExecutionOutcome> {
+    let mut conflict = None;
+    let outcome = ctx.with_checkpoint(|| {
+        let mut tee_registry = TeeRegistry::new(ctx.storage.clone());
+        match tee_registry.revoke_enclave_binding_classified_v1(
+            decoded.node_id_hash,
+            decoded.binding_id,
+            proposal_id,
+        )? {
+            Ok(_binding) => Ok(()),
+            Err(err) => {
+                conflict = Some(err);
+                Err(err.into_error().into())
+            }
+        }
+    });
+    if let Some(conflict) = conflict {
+        return Ok(TargetExecutionOutcome::Error {
+            reason: alloy_primitives::hex::encode_prefixed(conflict.abi_encode_revert()),
+        });
+    }
+    outcome.map(|()| TargetExecutionOutcome::Applied)
 }
 
 fn stage_approved_update(

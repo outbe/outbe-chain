@@ -153,8 +153,9 @@ impl TeeRegistry<'_> {
         self.active_v1_policy_hash.write(policy_hash)?;
         self.active_v1_policy_proposal_id.write(proposal_id)?;
         if self.storage.enclave_upgrade_id()? == proposal_id {
+            let current = self.last_enclave_retirement_height.read()?;
             self.last_enclave_retirement_height
-                .write(policy.activation_height)?;
+                .write(policy.activation_height.max(current))?;
         }
         self.clear_staged_successor_policy_v1()?;
         self.emit(TeePolicyActivatedV1 {

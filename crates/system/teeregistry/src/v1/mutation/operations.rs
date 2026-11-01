@@ -80,12 +80,18 @@ impl TeeRegistry<'_> {
         } = *mutation;
         let MutationContextV1 { policy_hash, .. } = *context;
         if !self.storage.enclave_upgrade_id()?.is_zero()
-            && current
-                .as_ref()
-                .is_some_and(|binding| binding.policy_hash != policy_hash)
             && !expected_operation.is_measurement_upgrade()
         {
-            return Err(TeeRegistryError::PolicyChangeRequiresMeasurementTransition.into());
+            if let Some(binding) = current
+                .as_ref()
+                .filter(|binding| binding.policy_hash != policy_hash)
+            {
+                let revoked_rejoin = expected_operation == AttestationOperationV1::RegisterEnclave
+                    && self.v1_revoked_enclave.read(&binding.enclave_id)?;
+                if !revoked_rejoin {
+                    return Err(TeeRegistryError::PolicyChangeRequiresMeasurementTransition.into());
+                }
+            }
         }
         Ok(())
     }
@@ -181,6 +187,9 @@ impl TeeRegistry<'_> {
         let current = current
             .as_ref()
             .ok_or(TeeRegistryError::CannotTransitionMissingBinding)?;
+        if self.v1_revoked_enclave.read(&current.enclave_id)? {
+            return Err(TeeRegistryError::EnclaveRevoked.into());
+        }
         let late_recovery = self.is_late_measurement_recovery_v1(policy_hash, current)?;
         if !late_recovery {
             ensure_live_binding(current, now)?;

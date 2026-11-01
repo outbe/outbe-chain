@@ -8,7 +8,7 @@ use outbe_primitives::addresses::TEE_REGISTRY_ADDRESS;
 /// Slots 8..=9 hold the founding DKG group public key.
 /// Slots 10..=17 hold the active V1 policy and binding state.
 /// Slots 18..=43 continue the registry state.
-/// Slots 44..=58 hold strict-upgrade and upgrade-candidate state.
+/// Slots 44..=59 hold strict-upgrade, upgrade-candidate and revocation state.
 /// Fresh genesis uses this packed layout. New fields take the next `order`.
 #[storage_schema]
 #[contract(addr = TEE_REGISTRY_ADDRESS)]
@@ -225,4 +225,8 @@ pub struct TeeRegistry {
     /// A prepared binding can never fall back to the legacy copy-root transition.
     #[attribute(order = 58)]
     pub upgrade_binding_requires_candidate: outbe_primitives::storage::dsl::Map<B256, bool>,
+
+    /// Permanent tombstone for enclave identities revoked by governance.
+    #[attribute(order = 59)]
+    pub v1_revoked_enclave: outbe_primitives::storage::dsl::Map<B256, bool>,
 }

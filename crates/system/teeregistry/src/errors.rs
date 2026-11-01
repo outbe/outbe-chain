@@ -719,6 +719,22 @@ pub enum TeeRegistryError {
     /// Rejoin binding id was already used.
     #[error("expired rejoin binding id has already been used")]
     ExpiredRejoinBindingIdAlreadyUsed,
+
+    /// Node host has no stored V1 enclave binding.
+    #[error("enclave binding does not exist")]
+    EnclaveBindingNotFound,
+
+    /// Active V1 enclave binding id does not match expected binding id.
+    #[error("enclave binding id does not match active binding")]
+    EnclaveBindingIdMismatch,
+
+    /// V1 enclave binding is already expired or revoked.
+    #[error("enclave binding is already expired or revoked")]
+    EnclaveBindingAlreadyExpired,
+
+    /// Enclave identity has been permanently revoked by governance.
+    #[error("enclave identity has been revoked")]
+    EnclaveRevoked,
 }
 
 impl TeeRegistryError {
@@ -1599,6 +1615,18 @@ impl From<TeeRegistryError> for PrecompileError {
             TeeRegistryError::ExpiredRejoinBindingIdAlreadyUsed => PrecompileError::RevertBytes(
                 Bytes::from(ITeeRegistryV1::ExpiredRejoinBindingIdAlreadyUsed {}.abi_encode()),
             ),
+            TeeRegistryError::EnclaveBindingNotFound => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::EnclaveBindingNotFound {}.abi_encode(),
+            )),
+            TeeRegistryError::EnclaveBindingIdMismatch => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::EnclaveBindingIdMismatch {}.abi_encode()),
+            ),
+            TeeRegistryError::EnclaveBindingAlreadyExpired => PrecompileError::RevertBytes(
+                Bytes::from(ITeeRegistryV1::EnclaveBindingAlreadyExpired {}.abi_encode()),
+            ),
+            TeeRegistryError::EnclaveRevoked => PrecompileError::RevertBytes(Bytes::from(
+                ITeeRegistryV1::EnclaveRevoked {}.abi_encode(),
+            )),
         }
     }
 }

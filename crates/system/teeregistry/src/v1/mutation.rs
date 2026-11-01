@@ -28,6 +28,9 @@ impl TeeRegistry<'_> {
         self.validate_mutation_possession_v1(&mutation)?;
         self.validate_mutation_claims_v1(&mutation)?;
         let context = self.mutation_context_v1(&mutation, policy_hash)?;
+        if self.v1_revoked_enclave.read(&mutation.intent.enclave_id)? {
+            return Err(TeeRegistryError::EnclaveRevoked.into());
+        }
         if self.is_exact_mutation_replay_v1(&mutation, &context)? {
             return Ok(V1RegistrationOutcome::Idempotent);
         }

@@ -1,5 +1,34 @@
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevokeEnclaveBindingConflictV1 {
+    NotFound,
+    BindingIdMismatch,
+    AlreadyExpired,
+}
+
+impl RevokeEnclaveBindingConflictV1 {
+    #[must_use]
+    pub const fn into_error(self) -> TeeRegistryError {
+        match self {
+            Self::NotFound => TeeRegistryError::EnclaveBindingNotFound,
+            Self::BindingIdMismatch => TeeRegistryError::EnclaveBindingIdMismatch,
+            Self::AlreadyExpired => TeeRegistryError::EnclaveBindingAlreadyExpired,
+        }
+    }
+
+    #[must_use]
+    pub fn abi_encode_revert(self) -> Vec<u8> {
+        use alloy_sol_types::SolError;
+        use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+        match self {
+            Self::NotFound => ITeeRegistryV1::EnclaveBindingNotFound {}.abi_encode(),
+            Self::BindingIdMismatch => ITeeRegistryV1::EnclaveBindingIdMismatch {}.abi_encode(),
+            Self::AlreadyExpired => ITeeRegistryV1::EnclaveBindingAlreadyExpired {}.abi_encode(),
+        }
+    }
+}
+
 impl TeeRegistry<'_> {
     pub fn validator_enclave_binding_v1(
         &self,
@@ -160,5 +189,70 @@ impl TeeRegistry<'_> {
                 .v1_node_host_authorization_hash
                 .read(&node_id_hash)?,
         }))
+    }
+
+    pub(super) fn clear_upgrade_candidate_v1(&mut self, node: B256) -> Result<()> {
+        self.upgrade_candidate_context.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_expiry.write(&node, 0)?;
+        self.upgrade_candidate_source.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_target.write(&node, B256::ZERO)?;
+        self.upgrade_candidate_evidence.write(&node, B256::ZERO)
+    }
+
+    pub fn revoke_enclave_binding_classified_v1(
+        &mut self,
+        node_id_hash: B256,
+        expected_binding_id: Option<B256>,
+        proposal_id: U256,
+    ) -> Result<std::result::Result<NodeEnclaveBindingV1, RevokeEnclaveBindingConflictV1>> {
+        if self.storage.is_static()? {
+            return Err(PrecompileError::WriteProtection);
+        }
+        let Some(mut binding) = self.node_enclave_binding_v1(node_id_hash)? else {
+            return Ok(Err(RevokeEnclaveBindingConflictV1::NotFound));
+        };
+        if expected_binding_id.is_some_and(|expected| binding.binding_id != expected) {
+            return Ok(Err(RevokeEnclaveBindingConflictV1::BindingIdMismatch));
+        }
+        let now = self.storage.now_secs()?;
+        if binding.valid_until <= now {
+            return Ok(Err(RevokeEnclaveBindingConflictV1::AlreadyExpired));
+        }
+        let storage = self.storage.clone();
+        let revoked = storage.with_checkpoint(|| {
+            self.v1_node_valid_until.write(&node_id_hash, 0)?;
+            self.v1_revoked_enclave.write(&binding.enclave_id, true)?;
+            self.clear_upgrade_candidate_v1(node_id_hash)?;
+            let block_number = self.storage.block_number()?;
+            let current_retirement = self.last_enclave_retirement_height.read()?;
+            if block_number > current_retirement {
+                self.last_enclave_retirement_height.write(block_number)?;
+            }
+            binding.valid_until = 0;
+            self.emit(EnclaveBindingRevokedV1 {
+                nodeIdHash: node_id_hash,
+                bindingId: binding.binding_id,
+                proposalId: proposal_id,
+                blockNumber: block_number,
+            })?;
+            Ok(binding)
+        })?;
+        Ok(Ok(revoked))
+    }
+
+    pub fn revoke_enclave_binding_v1(
+        &mut self,
+        node_id_hash: B256,
+        expected_binding_id: Option<B256>,
+        proposal_id: U256,
+    ) -> Result<NodeEnclaveBindingV1> {
+        match self.revoke_enclave_binding_classified_v1(
+            node_id_hash,
+            expected_binding_id,
+            proposal_id,
+        )? {
+            Ok(binding) => Ok(binding),
+            Err(conflict) => Err(conflict.into_error().into()),
+        }
     }
 }

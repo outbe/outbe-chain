@@ -16,6 +16,7 @@ mod handlers;
 mod lifecycle;
 mod precompile;
 mod records;
+mod revoke_dispatch;
 mod scheduled;
 mod tee_fixture;
 mod unset_version;

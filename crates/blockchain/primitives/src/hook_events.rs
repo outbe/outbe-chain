@@ -29,11 +29,17 @@ pub fn partition_hook_events(events: &[Log]) -> (Vec<Log>, Vec<Log>) {
     let mut receipt_visible = Vec::new();
     let mut tracing_only = Vec::new();
     for event in events {
-        // Only the new opt-in event: exposing all Registry hook logs would
-        // change receipts when replaying historical policy activations.
-        let upgrade_penalty = event.address == crate::addresses::TEE_REGISTRY_ADDRESS
-            && event.data.topics().first() == Some(&crate::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1::SIGNATURE_HASH);
-        if is_hook_event_receipt_address(event.address) || upgrade_penalty {
+        // Only the opt-in registry events. Exposing every registry hook log
+        // would change receipts when replaying historical policy activations.
+        let tee_registry_hook_event = event.address == crate::addresses::TEE_REGISTRY_ADDRESS
+            && matches!(
+                event.data.topics().first().copied(),
+                Some(
+                    crate::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1::SIGNATURE_HASH
+                        | crate::tee_registry_abi_v1::ITeeRegistryV1::EnclaveBindingRevokedV1::SIGNATURE_HASH
+                )
+            );
+        if is_hook_event_receipt_address(event.address) || tee_registry_hook_event {
             receipt_visible.push(event.clone());
         } else {
             tracing_only.push(event.clone());
@@ -70,6 +76,14 @@ mod tests {
             )
             .expect("test log data"),
         };
+        let binding_revoked_log = Log {
+            address: TEE_REGISTRY_ADDRESS,
+            data: LogData::new(
+                vec![ITeeRegistryV1::EnclaveBindingRevokedV1::SIGNATURE_HASH],
+                Bytes::new(),
+            )
+            .expect("test log data"),
+        };
         let (whitelisted, tracing_only) = partition_hook_events(&[
             log_at(REWARDS_ADDRESS),
             log_at(VOTE_ADDRESS),
@@ -79,6 +93,7 @@ mod tests {
             log_at(STABLECOIN_FACTORY_ADDRESS),
             log_at(TEE_REGISTRY_ADDRESS),
             upgrade_missed_log.clone(),
+            binding_revoked_log.clone(),
             log_at(STAKING_ADDRESS),
         ]);
         assert!(
@@ -88,15 +103,16 @@ mod tests {
                 .iter()
                 .any(|log| log.address == STAKING_ADDRESS)
         );
-        assert_eq!(whitelisted.len(), 6);
+        assert_eq!(whitelisted.len(), 7);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
         assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
         assert_eq!(whitelisted[3].address, STABLECOIN_FACTORY_ADDRESS);
         assert_eq!(whitelisted[4], upgrade_missed_log);
-        assert_eq!(whitelisted[5].address, STAKING_ADDRESS);
-        // The rights' sweeps run in CycleTick, so a hook never emits for them;
-        // non-EnclaveUpgradeMissedV1 TEE_REGISTRY_ADDRESS events stay tracing-only.
+        assert_eq!(whitelisted[5], binding_revoked_log);
+        assert_eq!(whitelisted[6].address, STAKING_ADDRESS);
+        // The rights' sweeps run in CycleTick, so a hook never emits for them.
+        // TeeRegistry logs other than the opt-in hook events stay tracing-only.
         assert_eq!(tracing_only.len(), 3);
         assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
         assert_eq!(tracing_only[1].address, NOD_ADDRESS);

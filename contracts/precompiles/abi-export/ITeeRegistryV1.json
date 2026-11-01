@@ -719,6 +719,37 @@
   },
   {
     "type": "event",
+    "name": "EnclaveBindingRevokedV1",
+    "inputs": [
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "bindingId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "EnclaveMeasurementTransitionedV1",
     "inputs": [
       {
@@ -1180,6 +1211,21 @@
   },
   {
     "type": "error",
+    "name": "EnclaveBindingAlreadyExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveBindingIdMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveBindingNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnclaveIdDerivationMismatch",
     "inputs": []
   },
@@ -1196,6 +1242,11 @@
   {
     "type": "error",
     "name": "EnclavePopSignatureLengthInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EnclaveRevoked",
     "inputs": []
   },
   {
