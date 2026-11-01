@@ -164,6 +164,10 @@ interface ITeeRegistryV1 {
     error SuccessorIdsAlreadyUsed();
     error ExpiredRejoinEnclaveNotAvailable();
     error ExpiredRejoinBindingIdAlreadyUsed();
+    error EnclaveBindingNotFound();
+    error EnclaveBindingIdMismatch();
+    error EnclaveBindingAlreadyExpired();
+    error EnclaveRevoked();
 
     /// @notice Fixed-size consensus event. The event deliberately excludes evidence,
     ///         collateral, advisories and signatures, so a registration cannot
@@ -219,6 +223,9 @@ interface ITeeRegistryV1 {
         uint64 activationHeight,
         bytes32 requiredMrenclave,
         uint256 slashedAmount
+    );
+    event EnclaveBindingRevokedV1(
+        bytes32 indexed nodeIdHash, bytes32 indexed bindingId, uint256 indexed proposalId, uint64 blockNumber
     );
 
     function isBootstrapped() external view returns (bool);

@@ -168,7 +168,12 @@ async fn prepare_enclave_upgrade_payload(
         return Ok(payload);
     }
     let value: serde_json::Value = serde_json::from_str(&payload)?;
-    let update = outbe_update::payload::ScheduleUpdatePayload::from_value(&value)?;
+    let update = match outbe_update::payload::UpdateVotePayload::from_value(&value)? {
+        outbe_update::payload::UpdateVotePayload::ScheduleUpdate(update) => update,
+        outbe_update::payload::UpdateVotePayload::RevokeEnclaveBindingV1(_) => {
+            return Ok(payload);
+        }
+    };
     if update.mrenclave.is_none() {
         return Ok(payload);
     }
@@ -321,6 +326,25 @@ mod tests {
             .await
             .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn revoke_enclave_binding_payload_skips_enclave_upgrade_preparation() {
+        let payload = r#"{"action":"revoke_enclave_binding_v1","node_id_hash":"0x1111111111111111111111111111111111111111111111111111111111111111"}"#.to_string();
+        let rpc = MockRpc::default();
+        let prepared = prepare_enclave_upgrade_payload(&rpc, UPDATE_ADDRESS, payload.clone())
+            .await
+            .unwrap();
+        assert_eq!(prepared, payload);
+
+        let invalid = r#"{"action":"revoke_enclave_binding_v1","node_id_hash":"0x0000000000000000000000000000000000000000000000000000000000000000"}"#;
+        let err = prepare_enclave_upgrade_payload(&rpc, UPDATE_ADDRESS, invalid.to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.downcast_ref::<outbe_update::errors::UpdateError>(),
+            Some(&outbe_update::errors::UpdateError::InvalidPayload)
+        );
     }
 
     #[test]

@@ -21,7 +21,8 @@ pub mod vote_target;
 pub use handlers::{UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers};
 pub use payload::{
     decode_schedule_update_json, encode_schedule_update_json, validate_schedule_update_json,
-    ScheduleUpdatePayload,
+    RevokeEnclaveBindingPayloadV1, ScheduleUpdatePayload, UpdateVotePayload,
+    REVOKE_ENCLAVE_BINDING_ACTION_V1,
 };
 pub use schema::Update;
 pub use state::ScheduledUpdateInfo;

@@ -42,9 +42,12 @@ use outbe_tee::dcap_protocol::{
 };
 
 pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::{
-    EnclaveBindingReplacedV1, EnclaveMeasurementTransitionedV1, EnclaveRegisteredV1,
-    EnclaveRenewedV1, OfferKeySealedForRegistryV1, TeePolicyActivatedV1, ValidatorNodeHostBoundV1,
+    EnclaveBindingReplacedV1, EnclaveBindingRevokedV1, EnclaveMeasurementTransitionedV1,
+    EnclaveRegisteredV1, EnclaveRenewedV1, OfferKeySealedForRegistryV1, TeePolicyActivatedV1,
+    ValidatorNodeHostBoundV1,
 };
+
+pub use binding::RevokeEnclaveBindingConflictV1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum V1RegistrationOutcome {
@@ -265,4 +268,36 @@ fn checked_u8(value: u64, field: &'static str) -> Result<u8> {
 
 fn revert_codec(context: &'static str, error: impl std::fmt::Display) -> PrecompileError {
     TeeRegistryError::codec_revert(context, error)
+}
+
+#[cfg(all(test, feature = "tee-attestation-v1"))]
+impl TeeRegistry<'_> {
+    pub(crate) fn prepare_enclave_upgrade_after_verifier_for_test(
+        &mut self,
+        caller: Address,
+        verified: VerifiedIntentV1<'_>,
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = match self.staged_successor_policy_v1()? {
+            Some((_, policy)) => policy,
+            None if !self.storage.enclave_upgrade_id()?.is_zero() => self.active_policy_v1()?,
+            None => return Err(TeeRegistryError::NoSuccessorV1PolicyStaged.into()),
+        };
+        let VerifiedIntentV1 {
+            intent,
+            node_signature,
+            enclave_signature,
+            capability,
+        } = verified;
+        let claims = VerifiedEnclaveClaimsV1::from_dcap(&capability.verdict)?;
+        self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
+            expected_operation: AttestationOperationV1::PrepareEnclaveUpgrade,
+            caller: Some(caller),
+            intent,
+            node_signature,
+            enclave_signature,
+            policy: &policy,
+            claims: &claims,
+            evidence_hash: capability.evidence_hash,
+        })
+    }
 }

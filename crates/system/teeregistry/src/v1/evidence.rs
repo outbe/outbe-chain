@@ -148,14 +148,6 @@ impl TeeRegistry<'_> {
         )
     }
 
-    pub(super) fn clear_upgrade_candidate_v1(&mut self, node: B256) -> Result<()> {
-        self.upgrade_candidate_context.write(&node, B256::ZERO)?;
-        self.upgrade_candidate_expiry.write(&node, 0)?;
-        self.upgrade_candidate_source.write(&node, B256::ZERO)?;
-        self.upgrade_candidate_target.write(&node, B256::ZERO)?;
-        self.upgrade_candidate_evidence.write(&node, B256::ZERO)
-    }
-
     pub(crate) fn transition_enclave_measurement_with_staged_policy_v1(
         &mut self,
         caller: Address,

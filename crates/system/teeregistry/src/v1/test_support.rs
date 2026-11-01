@@ -152,12 +152,18 @@ impl TeeRegistry<'_> {
         caller: Address,
         verified: VerifiedIntentV1<'_>,
     ) -> Result<V1RegistrationOutcome> {
-        let (_, policy) = self
-            .staged_successor_policy_v1()?
-            .ok_or(TeeRegistryError::NoSuccessorV1PolicyStaged)?;
-        if self.storage.block_number()? >= policy.activation_height {
-            return Err(TeeRegistryError::MeasurementRolloutClosed.into());
-        }
+        let policy = match self.staged_successor_policy_v1()? {
+            Some((_, policy)) => {
+                if self.storage.enclave_upgrade_id()?.is_zero()
+                    && self.storage.block_number()? >= policy.activation_height
+                {
+                    return Err(TeeRegistryError::MeasurementRolloutClosed.into());
+                }
+                policy
+            }
+            None if !self.storage.enclave_upgrade_id()?.is_zero() => self.active_policy_v1()?,
+            None => return Err(TeeRegistryError::NoSuccessorV1PolicyStaged.into()),
+        };
         self.apply_verified_mutation_v1(
             AttestationOperationV1::TransitionEnclaveMeasurement,
             Some(caller),

@@ -19,6 +19,9 @@ use crate::version::{
     protocol_version_major, protocol_version_minor, try_parse_protocol_version, ProtocolVersion,
 };
 
+/// Vote action that revokes one node's active enclave binding.
+pub const REVOKE_ENCLAVE_BINDING_ACTION_V1: &str = "revoke_enclave_binding_v1";
+
 /// JSON payload for scheduling a protocol update via vote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -144,6 +147,101 @@ pub fn validate_schedule_update_json(
     current_height: u64,
 ) -> std::result::Result<(), UpdateError> {
     ScheduleUpdatePayload::from_value(payload)?.validate(current_height)
+}
+
+fn parse_canonical_b256(value: &str) -> std::result::Result<B256, &'static str> {
+    let Some(hex_digits) = value.strip_prefix("0x") else {
+        return Err("expected 0x-prefixed 32-byte hex string");
+    };
+    if hex_digits.len() != 64 || !hex_digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("expected canonical 32-byte hex string");
+    }
+    value.parse::<B256>().map_err(|_| "invalid B256 hex string")
+}
+
+fn deserialize_canonical_b256<'de, D>(deserializer: D) -> std::result::Result<B256, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    parse_canonical_b256(&value).map_err(serde::de::Error::custom)
+}
+
+fn deserialize_optional_canonical_b256<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<B256>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(value) if value.is_empty() => Ok(None),
+        Some(value) => parse_canonical_b256(&value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+/// JSON payload for revoking a single node's active enclave binding via vote.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeEnclaveBindingPayloadV1 {
+    pub action: String,
+    #[serde(alias = "nodeIdHash", deserialize_with = "deserialize_canonical_b256")]
+    pub node_id_hash: B256,
+    #[serde(
+        default,
+        alias = "bindingId",
+        deserialize_with = "deserialize_optional_canonical_b256",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub binding_id: Option<B256>,
+}
+
+impl RevokeEnclaveBindingPayloadV1 {
+    pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
+        let decoded: Self =
+            serde_json::from_value(payload.clone()).map_err(|_| UpdateError::InvalidPayload)?;
+        decoded.validate()?;
+        Ok(decoded)
+    }
+
+    pub fn validate(&self) -> std::result::Result<(), UpdateError> {
+        if self.action != REVOKE_ENCLAVE_BINDING_ACTION_V1
+            || self.node_id_hash.is_zero()
+            || self.binding_id.is_some_and(|id| id.is_zero())
+        {
+            return Err(UpdateError::InvalidPayload);
+        }
+        Ok(())
+    }
+}
+
+/// Vote payload accepted by [`crate::vote_target::UpdateVoteTarget`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateVotePayload {
+    ScheduleUpdate(ScheduleUpdatePayload),
+    RevokeEnclaveBindingV1(RevokeEnclaveBindingPayloadV1),
+}
+
+impl UpdateVotePayload {
+    pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
+        if payload
+            .as_object()
+            .is_some_and(|obj| obj.contains_key("action"))
+        {
+            RevokeEnclaveBindingPayloadV1::from_value(payload).map(Self::RevokeEnclaveBindingV1)
+        } else {
+            ScheduleUpdatePayload::from_value(payload).map(Self::ScheduleUpdate)
+        }
+    }
+
+    pub fn validate(&self, current_height: u64) -> std::result::Result<(), UpdateError> {
+        match self {
+            Self::ScheduleUpdate(payload) => payload.validate(current_height),
+            Self::RevokeEnclaveBindingV1(payload) => payload.validate(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,5 +370,103 @@ mod tests {
             validate_schedule_update_json(&value, 0).unwrap_err(),
             UpdateError::InvalidVersion
         );
+    }
+
+    fn canonical_node() -> String {
+        format!("{:#x}", B256::repeat_byte(0x11))
+    }
+
+    #[test]
+    fn revoke_payload_accepts_binding_id_and_its_absence() {
+        let node = canonical_node();
+        let with_binding = serde_json::json!({
+            "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+            "node_id_hash": node,
+            "binding_id": format!("{:#x}", B256::repeat_byte(0x22)),
+        });
+        match UpdateVotePayload::from_value(&with_binding).unwrap() {
+            UpdateVotePayload::RevokeEnclaveBindingV1(payload) => {
+                assert_eq!(payload.node_id_hash, B256::repeat_byte(0x11));
+                assert_eq!(payload.binding_id, Some(B256::repeat_byte(0x22)));
+                payload.validate().unwrap();
+            }
+            UpdateVotePayload::ScheduleUpdate(_) => panic!("expected revocation payload"),
+        }
+
+        for binding in [
+            None,
+            Some(serde_json::json!(null)),
+            Some(serde_json::json!("")),
+        ] {
+            let mut value = serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "nodeIdHash": node,
+            });
+            if let Some(binding) = binding {
+                value["bindingId"] = binding;
+            }
+            let decoded = RevokeEnclaveBindingPayloadV1::from_value(&value).unwrap();
+            assert_eq!(decoded.binding_id, None);
+            assert_eq!(decoded.node_id_hash, B256::repeat_byte(0x11));
+        }
+    }
+
+    #[test]
+    fn revoke_payload_rejects_noncanonical_identity_and_shape() {
+        let node = canonical_node();
+        let bare = node.trim_start_matches("0x");
+        let cases = [
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": bare,
+            }),
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": [1, 2],
+            }),
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": format!("{:#x}", B256::ZERO),
+            }),
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": node,
+                "binding_id": format!("{:#x}", B256::ZERO),
+            }),
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": node,
+                "binding_id": "  ",
+            }),
+            serde_json::json!({
+                "action": "retire_enclave",
+                "node_id_hash": node,
+            }),
+            serde_json::json!({
+                "action": REVOKE_ENCLAVE_BINDING_ACTION_V1,
+                "node_id_hash": node,
+                "extra": true,
+            }),
+        ];
+        for case in cases {
+            assert_eq!(
+                RevokeEnclaveBindingPayloadV1::from_value(&case).unwrap_err(),
+                UpdateError::InvalidPayload,
+                "{case}"
+            );
+            assert_eq!(
+                UpdateVotePayload::from_value(&case).unwrap_err(),
+                UpdateError::InvalidPayload,
+                "{case}"
+            );
+        }
+    }
+
+    #[test]
+    fn update_vote_payload_keeps_schedule_updates_without_action() {
+        let value = serde_json::json!({"version":"1.2","activationHeight":1000,"info":""});
+        let decoded = UpdateVotePayload::from_value(&value).unwrap();
+        assert!(matches!(decoded, UpdateVotePayload::ScheduleUpdate(_)));
+        decoded.validate(0).unwrap();
     }
 }
