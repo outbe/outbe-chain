@@ -633,7 +633,7 @@ jobs:
     name: publish verified ReleaseManifest and evidence
     needs: [build-and-compare, package-and-sign-image, hardware-smoke]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     permissions:
       contents: write
       id-token: write
