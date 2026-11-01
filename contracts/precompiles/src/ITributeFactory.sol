@@ -49,11 +49,7 @@ interface ITributeFactory {
     error DateStep(uint8 kind, uint32 dateKey);
 
     event WorldwideDayOpened(
-        uint32 indexed worldwideDay,
-        uint64 formingStart,
-        uint64 formingEnd,
-        uint64 offeringStart,
-        uint64 offeringEnd
+        uint32 indexed worldwideDay, uint64 formingStart, uint64 formingEnd, uint64 offeringStart, uint64 offeringEnd
     );
 
     function getWorldwideDay(uint32 wwd)
