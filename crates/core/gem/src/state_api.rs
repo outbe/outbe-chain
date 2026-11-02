@@ -181,7 +181,8 @@ impl GemContract<'_> {
             self.remove_group_member(item.group_key, item.gem_id)?
         };
         self.delete_state_record(item.gem_id)?;
-        if remaining == 0 && group.settled_gems == 0 {
+        let waiting = self.called_group_slot.read(&item.group_key)? != 0;
+        if remaining == 0 && group.settled_gems == 0 && !waiting {
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
         } else if item.is_settled() {

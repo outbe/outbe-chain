@@ -1,9 +1,10 @@
-//! Promisfactory precompile at `0x2337`. This file does ABI dispatch only. The promis
-//! mint and burn orchestration lives in [`crate::runtime`].
-//! `outbe_gratisfactory::api::mint` records the Fidelity acquisition cohort.
+//! Promisfactory precompile at `0x2337`. This file does ABI dispatch only. Promis
+//! mint, burn, and `mineGratis` orchestration lives in [`crate::runtime`].
+//! `mineGratis` burns confidential Promis and mints confidential Gratis in one
+//! enclave operation. The Gratis half records the Fidelity acquisition cohort.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::{sol, SolCall, SolInterface};
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
@@ -27,6 +28,13 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
+    outbe_primitives::dispatch::preflight_dynamic_bytes_len(
+        data,
+        IPromisFactory::mineGratisCall::SELECTOR,
+        0,
+        5,
+        outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN,
+    )?;
     dispatch_call(
         data,
         IPromisFactory::IPromisFactoryCalls::abi_decode,
@@ -41,6 +49,14 @@ pub fn dispatch(
                     runtime::mine_coen(storage.clone(), sender, c.promisMinor, auth)
                 }),
                 mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
+                    if c.encryptedPromisMinor.len()
+                        != outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
+                    {
+                        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
+                            "invalid bytes length: expected {}",
+                            outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN
+                        )));
+                    }
                     let promis_auth = ModifyAuth {
                         mac: c.promisMac.0,
                         op_nonce: c.promisOpNonce,

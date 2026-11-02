@@ -13,12 +13,23 @@
 //! It uses no enclave-resident secret material. Thus the crate rule holds:
 //! secret-bearing cryptography lives only in `bin/outbe-tee-enclave`.
 
-use alloy_primitives::U256;
+use alloy_primitives::{Address, B256, U256};
 
 use crate::{errors::LocalCryptoError, OFFER_HKDF_SALT};
 
 /// HKDF info string binding the derived key to the tribute-offer domain.
 pub const OFFER_HKDF_INFO: &[u8] = b"tribute-factory-encryption";
+
+/// HKDF info binding a `mineGratis` amount to the Promis conversion domain.
+pub const PROMIS_MINE_HKDF_INFO: &[u8] = b"outbe/promis/mine-gratis/v1";
+
+/// Builds the HKDF info binding `encryptedPromisMinor` to `(domain, chain_id, account)`.
+pub fn promis_mine_key_info(chain_id: B256, account: Address) -> Vec<u8> {
+    let mut info = PROMIS_MINE_HKDF_INFO.to_vec();
+    info.extend_from_slice(chain_id.as_slice());
+    info.extend_from_slice(account.as_slice());
+    info
+}
 
 /// Fixed wire size of a `U256` amount encrypted to the enclave's X25519 offer key:
 /// `ephemeral_pub(32) || nonce(12) || ciphertext_with_tag(48)`.
@@ -27,32 +38,48 @@ pub const ENCRYPTED_TEE_AMOUNT_LEN: usize = 32 + 12 + 32 + 16;
 /// `(cipher_text, nonce, ephemeral_pub)` produced by [`encrypt_tribute_offer`].
 pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
 
-/// Encrypt a `U256` amount to `offer_pub` with a fresh ephemeral key and nonce.
-/// Returns `ephemeral_pub(32) || nonce(12) || ciphertext(48)` (92 bytes).
-pub fn encrypt_tee_amount(offer_pub: &[u8; 32], amount: U256) -> Result<Vec<u8>, LocalCryptoError> {
-    let (cipher_text, nonce, eph_pub) =
-        encrypt_tribute_offer(offer_pub, &amount.to_be_bytes::<32>())?;
-    let mut out = Vec::with_capacity(ENCRYPTED_TEE_AMOUNT_LEN);
-    out.extend_from_slice(&eph_pub);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&cipher_text);
-    Ok(out)
+/// Encrypt a `U256` `mineGratis` amount to `tee_pub`.
+///
+/// The key is `HKDF-SHA256(salt = OFFER_HKDF_SALT, ikm = ECDHE, info = promis_mine_key_info(chain_id, account))`
+/// and ChaCha20Poly1305 with empty AAD. Returns `ephemeral_pub(32) || nonce(12) || ciphertext(48)`.
+pub fn encrypt_tee_amount(
+    tee_pub: &[u8; 32],
+    chain_id: B256,
+    account: Address,
+    amount: U256,
+) -> Result<[u8; ENCRYPTED_TEE_AMOUNT_LEN], LocalCryptoError> {
+    let (ephemeral_secret, nonce) = random_ephemeral_and_nonce()?;
+    encrypt_tee_amount_with(
+        tee_pub,
+        (chain_id, account),
+        amount,
+        ephemeral_secret,
+        nonce,
+    )
 }
 
 /// Deterministic variant of [`encrypt_tee_amount`] with an explicit ephemeral secret and nonce.
 pub fn encrypt_tee_amount_with(
-    offer_pub: &[u8; 32],
-    eph_sk: [u8; 32],
-    nonce: [u8; 12],
+    tee_pub: &[u8; 32],
+    (chain_id, account): (B256, Address),
     amount: U256,
-) -> Result<Vec<u8>, LocalCryptoError> {
-    let eph_pub = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(eph_sk));
-    let cipher_text =
-        encrypt_tribute_offer_with(offer_pub, eph_sk, nonce, &amount.to_be_bytes::<32>())?;
-    let mut out = Vec::with_capacity(ENCRYPTED_TEE_AMOUNT_LEN);
-    out.extend_from_slice(eph_pub.as_bytes());
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&cipher_text);
+    ephemeral_secret: [u8; 32],
+    nonce: [u8; 12],
+) -> Result<[u8; ENCRYPTED_TEE_AMOUNT_LEN], LocalCryptoError> {
+    let eph_pub =
+        x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(ephemeral_secret));
+    let info = promis_mine_key_info(chain_id, account);
+    let cipher_text = ecdhe_offer_encrypt(
+        tee_pub,
+        ephemeral_secret,
+        nonce,
+        &info,
+        &amount.to_be_bytes::<32>(),
+    )?;
+    let mut out = [0u8; ENCRYPTED_TEE_AMOUNT_LEN];
+    out[..32].copy_from_slice(eph_pub.as_bytes());
+    out[32..44].copy_from_slice(&nonce);
+    out[44..].copy_from_slice(&cipher_text);
     Ok(out)
 }
 
@@ -62,17 +89,7 @@ pub fn encrypt_tribute_offer(
     offer_pub: &[u8; 32],
     plaintext: &[u8],
 ) -> Result<EncryptedOfferParts, LocalCryptoError> {
-    use ring::rand::SecureRandom as _;
-    let rng = ring::rand::SystemRandom::new();
-    // Cryptographic randomness for an offer-encryption ephemeral + nonce. This is
-    // never consensus randomness: the ciphertext is request DATA, and every
-    // validator's enclave decrypts it deterministically.
-    let mut eph_sk = [0u8; 32];
-    rng.fill(&mut eph_sk)
-        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
-    let mut nonce = [0u8; 12];
-    rng.fill(&mut nonce)
-        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
+    let (eph_sk, nonce) = random_ephemeral_and_nonce()?;
     let eph_pub = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(eph_sk));
     let cipher_text = encrypt_tribute_offer_with(offer_pub, eph_sk, nonce, plaintext)?;
     Ok((cipher_text, nonce, eph_pub.to_bytes()))
@@ -86,9 +103,34 @@ pub fn encrypt_tribute_offer_with(
     nonce: [u8; 12],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, LocalCryptoError> {
+    ecdhe_offer_encrypt(offer_pub, eph_sk, nonce, OFFER_HKDF_INFO, plaintext)
+}
+
+fn random_ephemeral_and_nonce() -> Result<([u8; 32], [u8; 12]), LocalCryptoError> {
+    use ring::rand::SecureRandom as _;
+    let rng = ring::rand::SystemRandom::new();
+    // Cryptographic randomness for an offer-encryption ephemeral + nonce. This is
+    // never consensus randomness: the ciphertext is request DATA, and every
+    // validator's enclave decrypts it deterministically.
+    let mut eph_sk = [0u8; 32];
+    rng.fill(&mut eph_sk)
+        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
+    let mut nonce = [0u8; 12];
+    rng.fill(&mut nonce)
+        .map_err(LocalCryptoError::offer_encryption_rng_failure)?;
+    Ok((eph_sk, nonce))
+}
+
+fn ecdhe_offer_encrypt(
+    offer_pub: &[u8; 32],
+    eph_sk: [u8; 32],
+    nonce: [u8; 12],
+    info: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, LocalCryptoError> {
     let eph_secret = x25519_dalek::StaticSecret::from(eph_sk);
     let shared = eph_secret.diffie_hellman(&x25519_dalek::PublicKey::from(*offer_pub));
-    let key = hkdf_sha256(&OFFER_HKDF_SALT, shared.as_bytes(), OFFER_HKDF_INFO)?;
+    let key = hkdf_sha256(&OFFER_HKDF_SALT, shared.as_bytes(), info)?;
     chacha20poly1305_encrypt(&key, &nonce, plaintext)
 }
 
@@ -133,7 +175,7 @@ pub(crate) fn hkdf_sha256(
     Ok(out)
 }
 
-/// ChaCha20Poly1305 AEAD encrypt with empty AAD (matches the enclave).
+/// ChaCha20Poly1305 AEAD encrypt with empty AAD (matches the enclave offer path).
 fn chacha20poly1305_encrypt(
     key: &[u8; 32],
     nonce: &[u8; 12],
@@ -185,5 +227,51 @@ mod tests {
             encrypt_tribute_offer(&offer_pub, plaintext.as_bytes()).expect("encrypt random");
         assert_eq!(ct2.len(), ct.len());
         assert_ne!(eph_pub, [0u8; 32]);
+    }
+
+    #[test]
+    fn promis_mine_key_info_is_domain_chain_and_account() {
+        let chain = B256::repeat_byte(0x11);
+        let account = Address::repeat_byte(0x22);
+        let info = promis_mine_key_info(chain, account);
+        let domain_len = PROMIS_MINE_HKDF_INFO.len();
+        assert_eq!(info.len(), domain_len + 32 + 20);
+        assert_eq!(&info[..domain_len], PROMIS_MINE_HKDF_INFO);
+        assert_eq!(&info[domain_len..domain_len + 32], chain.as_slice());
+        assert_eq!(&info[domain_len + 32..], account.as_slice());
+    }
+
+    #[test]
+    fn promis_mine_ciphertext_is_bound_to_account_and_chain() {
+        let tee_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([7u8; 32])).to_bytes();
+        let chain = B256::repeat_byte(0x11);
+        let alice = Address::repeat_byte(0x22);
+        let eve = Address::repeat_byte(0x33);
+        let amount = U256::from(1000u64);
+        let secret = [9u8; 32];
+        let nonce = [1u8; 12];
+        let alice_ct = encrypt_tee_amount_with(&tee_pub, (chain, alice), amount, secret, nonce)
+            .expect("encrypt");
+        assert_eq!(alice_ct.len(), ENCRYPTED_TEE_AMOUNT_LEN);
+        assert_eq!(
+            alice_ct,
+            encrypt_tee_amount_with(&tee_pub, (chain, alice), amount, secret, nonce).unwrap()
+        );
+        assert_ne!(
+            alice_ct,
+            encrypt_tee_amount_with(&tee_pub, (chain, eve), amount, secret, nonce).unwrap()
+        );
+        assert_ne!(
+            alice_ct,
+            encrypt_tee_amount_with(
+                &tee_pub,
+                (B256::repeat_byte(0x44), alice),
+                amount,
+                secret,
+                nonce
+            )
+            .unwrap()
+        );
     }
 }

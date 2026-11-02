@@ -209,6 +209,37 @@ contract IntexNFT1155Test is Test {
         nft.issueIntex(user, tooLarge, SERIES_ID_1);
     }
 
+    /// @dev Other chains emit `IntexSeriesCalled`. Outbe does not: `0x1008` holds `BURNER_ROLE`
+    ///      and the `IIntex` precompile already emitted the call. Both update state and metadata.
+    function test_MarkCalled_EmitsOnceOnOutbeAndAgainOnOtherChains() public {
+        address outbeIntexFactory = 0x0000000000000000000000000000000000001008;
+        uint64 calledAt = uint64(block.timestamp);
+        _createSeries(SERIES_ID_1_DAY, uint32(14 days));
+
+        vm.recordLogs();
+        vm.prank(bridger);
+        nft.markCalled(SERIES_ID_1, calledAt);
+        Vm.Log[] memory targetLogs = vm.getRecordedLogs();
+        assertEq(_countTopic(targetLogs, IIntexNFT1155.IntexSeriesCalled.selector), 1);
+        assertEq(_countTopic(targetLogs, IIntexNFT1155.MetadataUpdate.selector), 1);
+
+        IntexNFT1155 origin = DeployProxy.intexNFT1155(admin, bridger);
+        vm.prank(bridger);
+        origin.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, uint32(14 days)));
+        _grantBurnerRoleOn(origin, outbeIntexFactory);
+
+        vm.recordLogs();
+        vm.prank(bridger);
+        origin.markCalled(SERIES_ID_1, calledAt);
+        Vm.Log[] memory originLogs = vm.getRecordedLogs();
+        assertEq(_countTopic(originLogs, IIntexNFT1155.IntexSeriesCalled.selector), 0);
+        assertEq(_countTopic(originLogs, IIntexNFT1155.MetadataUpdate.selector), 1);
+
+        IIntexNFT1155.SeriesData memory data = origin.readData(SERIES_ID_1);
+        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(data.calledAt, calledAt);
+    }
+
     function test_MarkCalled() public {
         uint32 customCallPeriod = uint32(14 days);
         uint32 calledAt = uint32(block.timestamp);
@@ -618,9 +649,19 @@ contract IntexNFT1155Test is Test {
 
     /// @dev Helper: grant BURNER_ROLE on the deployed Intex contract to `account`.
     function _grantBurnerRole(address account) internal {
-        bytes32 role = nft.BURNER_ROLE();
+        _grantBurnerRoleOn(nft, account);
+    }
+
+    function _grantBurnerRoleOn(IntexNFT1155 token, address account) internal {
+        bytes32 role = token.BURNER_ROLE();
         vm.prank(admin);
-        nft.grantRole(role, account);
+        token.grantRole(role, account);
+    }
+
+    function _countTopic(Vm.Log[] memory logs, bytes32 topic) internal pure returns (uint256 count) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length > 0 && logs[i].topics[0] == topic) count++;
+        }
     }
 
     function test_BurnIntex_TransferredUnitsBurnFromTheirNewOwner() public {

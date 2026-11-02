@@ -496,6 +496,8 @@ fn settling_one_gem_of_a_called_group_leaves_the_rest_called() {
     });
 }
 
+/// Burning the last gem of a called group does not drop the forfeit entry. `GemForfeit`
+/// still has to emit `GemSeriesClosed` at `(0, 0)`, and that pass frees the slot.
 #[test]
 fn leaving_called_frees_the_expiry_slot() {
     with_storage(|storage| {
@@ -507,6 +509,9 @@ fn leaving_called_frees_the_expiry_slot() {
 
         settle(storage, gem_id);
         burn_settled(storage, gem_id);
+        assert_eq!(gem.forfeit_day_live.read(&day).unwrap(), 1);
+
+        begin_block_at(storage, GemContract::day_end(day));
         assert_eq!(gem.forfeit_day_live.read(&day).unwrap(), 0);
         assert_eq!(gem.first_expiry_day().unwrap(), None);
     });

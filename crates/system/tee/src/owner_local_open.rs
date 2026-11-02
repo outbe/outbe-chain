@@ -92,6 +92,51 @@ pub(crate) fn open_owner_amount_blob(
     })
 }
 
+/// Domain constants and typed errors for a V2 bound envelope (`GRA2`, `PRO2`, `FID2`).
+pub(crate) struct V2EnvelopeSpec<'a> {
+    pub marker: &'a [u8; 4],
+    pub key_info: &'a [u8],
+    pub nonce_info: &'a [u8],
+    pub invalid_envelope_error: LocalCryptoError,
+    pub invalid_key_error: LocalCryptoError,
+    pub decryption_error: LocalCryptoError,
+}
+
+pub(crate) const FIDELITY_V2_SPEC: V2EnvelopeSpec<'static> = V2EnvelopeSpec {
+    marker: b"FID2",
+    key_info: b"outbe/fidelity/cohort-key/v2",
+    nonce_info: b"outbe/fidelity/cohort-nonce/v2",
+    invalid_envelope_error: LocalCryptoError::InvalidFidelityCohortEnvelope,
+    invalid_key_error: LocalCryptoError::InvalidFidelityViewKey,
+    decryption_error: LocalCryptoError::FidelityCohortDecryptionFailed,
+};
+
+/// Open a V2 bound envelope (`version(8) || marker(4) || binding(32) || ciphertext_with_tag`).
+pub(crate) fn open_v2_envelope_blob(
+    view_key: &[u8; 32],
+    account: Address,
+    scope: &[u8],
+    blob: &[u8],
+    spec: V2EnvelopeSpec<'_>,
+) -> Result<OpenedLocalBytes, LocalCryptoError> {
+    if blob.len() < 60 || &blob[8..12] != spec.marker || blob[..8] == [0; 8] {
+        return Err(spec.invalid_envelope_error);
+    }
+    let mut context = account.as_slice().to_vec();
+    context.extend_from_slice(scope);
+    context.extend_from_slice(&blob[..8]);
+    context.extend_from_slice(&blob[12..44]);
+    let key = Zeroizing::new(hkdf_sha256(view_key, &context, spec.key_info)?);
+    open_local_ciphertext(LocalOpen {
+        key: &key,
+        nonce_context: &context,
+        nonce_info: spec.nonce_info,
+        ciphertext: &blob[44..],
+        invalid_key_error: spec.invalid_key_error,
+        decryption_error: spec.decryption_error,
+    })
+}
+
 /// Domain constants and typed errors for a 92-byte V2 balance envelope (`GRA2` / `PRO2`).
 pub(crate) struct V2BalanceSpec<'a> {
     pub marker: &'a [u8; 4],
@@ -133,22 +178,23 @@ pub(crate) fn open_v2_balance_blob(
     if blob.is_empty() {
         return Ok(U256::ZERO);
     }
-    if blob.len() != 92 || &blob[8..12] != spec.marker || blob[..8] == [0; 8] {
+    if blob.len() != 92 {
         return Err(spec.invalid_balance_error);
     }
-    let mut context = account.as_slice().to_vec();
-    context.push(0);
-    context.extend_from_slice(&blob[..8]);
-    context.extend_from_slice(&blob[12..44]);
-    let key = Zeroizing::new(hkdf_sha256(view_key, &context, spec.key_info)?);
-    let opened = open_local_ciphertext(LocalOpen {
-        key: &key,
-        nonce_context: &context,
-        nonce_info: spec.nonce_info,
-        ciphertext: &blob[44..],
-        invalid_key_error: spec.invalid_key_error,
-        decryption_error: spec.decryption_error,
-    })?;
+    let opened = open_v2_envelope_blob(
+        view_key,
+        account,
+        &[0],
+        blob,
+        V2EnvelopeSpec {
+            marker: spec.marker,
+            key_info: spec.key_info,
+            nonce_info: spec.nonce_info,
+            invalid_envelope_error: spec.invalid_balance_error,
+            invalid_key_error: spec.invalid_key_error,
+            decryption_error: spec.decryption_error,
+        },
+    )?;
     let amount: &[u8; 32] = opened
         .as_slice()
         .try_into()

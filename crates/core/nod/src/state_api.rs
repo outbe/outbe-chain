@@ -270,7 +270,8 @@ impl NodContract<'_> {
         };
         self.delete_state_record(item.nod_id)?;
         let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        if remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0 {
+        let empty = remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0;
+        if empty && !self.waiting_for_forfeit(item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;

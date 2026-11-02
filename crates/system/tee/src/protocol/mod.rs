@@ -361,12 +361,11 @@ pub struct GratisOpResult {
     pub new_balance: Vec<u8>,
     pub new_pledged: Vec<u8>,
     pub event_amount: U256,
-    #[serde(default)]
-    pub encrypted_event_amount: Vec<u8>,
     pub next_op_nonce: u64,
     pub fidelity: Option<FidelityOpOutcome>,
     pub inputs_canonical_hash: B256,
     pub attestation_tag: Vec<u8>,
+    pub encrypted_event_amount: Vec<u8>,
 }
 
 /// The confidential ledger that a key-derivation / op request targets. It selects
@@ -436,9 +435,6 @@ pub struct PromisOpResult {
     pub new_balance: Vec<u8>,
     /// Amount for the emitted event (mint/burn magnitude).
     pub event_amount: U256,
-    /// Event amount sealed as a 92-byte `PRO2` envelope under the account's view key.
-    #[serde(default)]
-    pub encrypted_event_amount: Vec<u8>,
     /// The account's next modify-auth nonce (for the host to persist).
     pub next_op_nonce: u64,
     /// Diagnostic hash of the canonical request inputs. The host recomputes it to
@@ -447,6 +443,8 @@ pub struct PromisOpResult {
     /// Local-only attestation tag over `(inputs_canonical_hash || result)`. The host
     /// verifies it against the pinned enclave attestation key, then discards it.
     pub attestation_tag: Vec<u8>,
+    /// Event amount sealed as a 92-byte `PRO2` envelope under the account's view key.
+    pub encrypted_event_amount: Vec<u8>,
 }
 
 /// Paired Promis-burn + Gratis-mint + Fidelity-cohort-in request for

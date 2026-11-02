@@ -290,6 +290,18 @@ impl GemContract<'_> {
         self.group_gem_count.clear(&group)
     }
 
+    /// Closes a called group after `GemSeriesClosed` once no settled gem remains.
+    pub fn close_group_if_empty_after_forfeit(&mut self, group: B256) -> Result<()> {
+        let Some(body) = self.groups.get(group)? else {
+            return Ok(());
+        };
+        if body.settled_gems != 0 || self.group_gem_count.read(&group)? != 0 {
+            return Ok(());
+        }
+        self.close_group(group)?;
+        self.groups.delete(group)
+    }
+
     // --- Unpaid load ----------------------------------------------------------------
 
     pub(crate) fn add_unpaid_load(&mut self, group: B256, load: U256) -> Result<()> {

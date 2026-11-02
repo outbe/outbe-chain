@@ -1,6 +1,6 @@
 //! Cross-module API for the Gratisfactory module.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -8,21 +8,20 @@ use outbe_primitives::storage::StorageHandle;
 /// caller's Gratis write authorization without depending on `outbe_gratis`.
 pub use outbe_gratis::api::ModifyAuth;
 
-/// Mint `amount` gratis to `account` (authorized by the account owner's modify
-/// key) and record the Fidelity acquisition cohort.
-/// See [`crate::runtime::mint`].
-pub fn mint(
-    storage: StorageHandle<'_>,
-    account: Address,
-    amount: U256,
-    auth: ModifyAuth,
-) -> Result<()> {
-    crate::runtime::mint(storage, account, amount, auth)
-}
-
 pub use crate::runtime::{
     burn_from_credis, collateral_of, pledge_of, release_from_credis, send_to_credis,
 };
+
+#[cfg(any(test, feature = "test-utils"))]
+pub fn mint(
+    storage: StorageHandle<'_>,
+    to: Address,
+    amount: alloy_primitives::U256,
+    auth: ModifyAuth,
+) -> Result<()> {
+    storage.with_checkpoint(|| crate::runtime::mint(storage.clone(), to, amount, auth))
+}
+
 /// Mint the exact encrypted NOD entitlement and acquire its Fidelity cohort.
 pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
@@ -76,11 +75,7 @@ pub fn commit_mine_from_promis(
     gratis_op_nonce: u64,
     result: &outbe_gratis::api::MineGratisFromPromisResultV1,
 ) -> Result<()> {
-    outbe_gratis::api::apply_mined_from_promis(storage, account, gratis_op_nonce, result)?;
-    let outcome = result.fidelity.as_ref().ok_or_else(|| {
-        outbe_primitives::error::PrecompileError::Revert(
-            "enclave dropped the fidelity section outcome".into(),
-        )
-    })?;
-    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, outcome)
+    let outcome =
+        outbe_gratis::api::apply_mined_from_promis(storage, account, gratis_op_nonce, result)?;
+    outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), account, &outcome)
 }

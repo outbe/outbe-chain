@@ -1,6 +1,7 @@
 //! Forfeits the called groups whose settlement window lapsed, earliest deadline first,
 //! and hands their Credis to the cleanup.
 
+use alloy_primitives::U256;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
@@ -43,13 +44,11 @@ impl DeadlineHandler<SeriesId> for CredisForfeit<'_> {
     type Member = SeriesId;
 
     fn due(&mut self, series: SeriesId) -> Result<Due> {
-        let called = self.credis.series_called_at.read(&series)? != 0;
-        Ok(
-            match called && self.credis.series_member_count(series)? != 0 {
-                true => Due::Process,
-                false => Due::Drop,
-            },
-        )
+        // A called series closes even after every Credis has already settled.
+        if self.credis.series_called_at.read(&series)? != 0 {
+            return Ok(Due::Process);
+        }
+        Ok(Due::Drop)
     }
 
     fn member_count(&self, _series: SeriesId) -> Result<u32> {
@@ -64,10 +63,16 @@ impl DeadlineHandler<SeriesId> for CredisForfeit<'_> {
     /// Promis reserve together, in the cleanup.
     fn process_member(&mut self, series: SeriesId, _member: SeriesId) -> Result<()> {
         let forfeited_count = self.credis.series_member_count(series)?;
-        let forfeited_amount_minor = self.credis.series_unpaid_gratis_minor.read(&series)?;
         let issuance_currency = self.credis.series_issuance_currency.read(&series)?;
         let reference_currency = self.credis.series_currency.read(&series)?;
-        self.credis.hand_to_cleanup(series)?;
+        let forfeited_amount_minor = if forfeited_count == 0 {
+            self.credis.remove_called(series)?;
+            U256::ZERO
+        } else {
+            let amount = self.credis.series_unpaid_gratis_minor.read(&series)?;
+            self.credis.hand_to_cleanup(series)?;
+            amount
+        };
         self.credis.emit(ICredis::CredisSeriesClosed {
             seriesId: series.into(),
             issuanceCurrency: issuance_currency,

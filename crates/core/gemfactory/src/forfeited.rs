@@ -45,13 +45,10 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
-        let called = self.gem.group_called_at.read(&group)? != 0;
-        Ok(
-            match called && self.gem.group_gem_count.read(&group)? != 0 {
-                true => Due::Process,
-                false => Due::Drop,
-            },
-        )
+        Ok(match self.gem.group_called_at.read(&group)? != 0 {
+            true => Due::Process,
+            false => Due::Drop,
+        })
     }
 
     fn member_count(&self, _group: B256) -> Result<u32> {
@@ -75,7 +72,12 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .checked_credit(load)?;
         }
-        self.gem.hand_to_cleanup(group)?;
+        if self.gem.group_gem_count.read(&group)? == 0 {
+            self.gem.remove_called(group)?;
+            self.gem.close_group_if_empty_after_forfeit(group)?;
+        } else {
+            self.gem.hand_to_cleanup(group)?;
+        }
         for sub in sub_series {
             self.gem.emit(GemSeriesClosed {
                 seriesId: sub.series_id.into(),

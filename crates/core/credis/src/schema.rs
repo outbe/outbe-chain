@@ -4,6 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::CREDIS_ADDRESS;
 use outbe_primitives::series_id::SeriesId;
+#[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::errors::CredisError;
@@ -105,8 +106,8 @@ pub struct Credis {
     #[attribute(order = 9)]
     pub owner: Address,
 
-    /// Issuance timestamp. The interest anchor starts here, and its previous closed
-    /// day keys the Credis's series.
+    /// Issuance timestamp. The interest anchor starts here. The series id is the one
+    /// the reservation fixed, not a day derived from this timestamp.
     #[attribute(order = 10)]
     pub issued_at: u64,
 
@@ -170,7 +171,8 @@ pub struct Credis {
     #[attribute(order = 21, default = 0)]
     pub call_rate: u16,
 
-    /// Series id (`SeriesId::for_pair(last_closed_day(issued_at), issuance_currency, reference_currency)`).
+    /// Series id copied from the reservation
+    /// (`SeriesId::for_pair(reservation day, issuance_currency, reference_currency)`).
     #[attribute(order = 22)]
     pub series_id: SeriesId,
 }
@@ -351,6 +353,9 @@ impl CredisContract<'_> {
 
     /// The series a Credis issued at `issued_at` for `(issuance_currency, reference_currency)`
     /// belongs to: `SeriesId::for_pair(last_closed_day(issued_at), issuance_currency, reference_currency)`.
+    ///
+    /// Test and e2e arming only. Production copies `series_id` from the reservation.
+    #[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
     pub fn series_of(
         issued_at: u64,
         issuance_currency: u16,

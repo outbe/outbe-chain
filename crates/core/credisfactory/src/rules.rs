@@ -63,16 +63,16 @@ pub struct IssueCredisParams {
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money. It pulls
-/// `total_paid` from the payer into the vault. It releases `gratis_released_minor` to
+/// `amount_minor` from the payer into the vault. It releases `gratis_released_minor` to
 /// the pledger, never to the payer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repayment {
     /// Interest collected, in full, before any principal.
-    pub interest: U256,
+    pub interest_settled_minor: U256,
     /// Principal covered by this payment.
-    pub principal_paid: U256,
-    /// `interest + principal_paid` - what the payer owes for this repayment.
-    pub total_paid: U256,
+    pub principal_settled_minor: U256,
+    /// `interest_settled_minor + principal_settled_minor` - what the payer owes for this repayment.
+    pub amount_minor: U256,
     /// Collateral freed and owed back to the pledger.
     pub gratis_released_minor: U256,
     pub asset: Address,
@@ -96,6 +96,7 @@ pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
 
 /// Issues a Credis and returns its derived
 /// `credis_id = keccak256(series_id || owner || block_number)`.
+#[cfg(test)]
 pub fn issue(credis: &mut CredisContract<'_>, mut params: IssueCredisParams) -> Result<U256> {
     if params.series_id == SeriesId::default() {
         params.series_id = CredisContract::series_of(
@@ -201,7 +202,7 @@ pub fn issue_in_series(
 /// - Called Credis accept repayment through deadline equality.
 /// - The function rejects a payment below the accrued interest outright.
 /// - The function consumes only what the Credis needs, so it does not
-///   over-pull an over-payment. The caller charges `Repayment::total_paid`.
+///   over-pull an over-payment. The caller charges `Repayment::amount_minor`.
 /// - Collateral release is principal-proportional, rounded up and capped by
 ///   the locked remainder. Final settlement releases exactly what is left.
 pub fn settle(
@@ -288,9 +289,9 @@ pub fn settle(
     )?;
 
     Ok(Repayment {
-        interest,
-        principal_paid,
-        total_paid,
+        interest_settled_minor: interest,
+        principal_settled_minor: principal_paid,
+        amount_minor: total_paid,
         gratis_released_minor,
         asset: record.asset,
         closed,
@@ -321,21 +322,6 @@ pub(crate) fn validate_forfeit_by_owner(
             Err(CredisFactoryError::CredisClosed.into())
         }
     }
-}
-
-/// The owner gives up an Issued or Called Credis before its deadline, with the same
-/// write-off and burn as a lapsed call.
-pub fn forfeit_by_owner(
-    credis: &mut CredisContract<'_>,
-    credis_id: U256,
-    caller: Address,
-) -> Result<Forfeit> {
-    let storage = credis.storage.clone();
-    storage.with_checkpoint(|| {
-        let record = credis.load_credis(credis_id)?;
-        validate_forfeit_by_owner(credis, &record, caller)?;
-        delete_forfeited(credis, record)
-    })
 }
 
 /// Deletes a forfeited Credis. Only the unpaid share is written off: every settlement

@@ -79,7 +79,16 @@ fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Res
     )?;
     let call_start_day =
         outbe_primitives::time::first_full_day(issued_at).map_err(date_step_error)?;
+    // `create_credis_record` books the original collateral. A backdated Credis keeps
+    // only what is still outstanding in the series sum.
+    let booked = record.gratis_minor;
     credis.create_credis_record(&record, call_start_day)?;
+    let overbooked = booked
+        .checked_sub(record.outstanding_gratis_minor)
+        .ok_or(outbe_credis::errors::CredisError::ArithmeticOverflow)?;
+    if !overbooked.is_zero() {
+        credis.take_series_unpaid_gratis(record.series_id, overbooked)?;
+    }
     Ok(())
 }
 

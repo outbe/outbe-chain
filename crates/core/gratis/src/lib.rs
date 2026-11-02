@@ -1,12 +1,12 @@
 //! Confidential Gratis token precompile (`0x1003`).
 //!
 //! A non-transferable, mineable/burnable balance ledger. Its per-account balances
-//! are **encrypted at rest**. The TEE enclave is the only party that decrypts them
-//! (and the account's view-key holder, client-side). Every write goes through the
-//! enclave:
+//! are **encrypted at rest**. The enclave decrypts them on the write path. The
+//! account's view-key holder decrypts them client-side. Every write goes through
+//! the enclave:
 //!
 //! 1. Read the current ciphertext.
-//! 2. Apply the op inside SGX.
+//! 2. Apply the op inside the enclave.
 //! 3. Store the returned ciphertext verbatim.
 //!
 //! This flow mirrors the determinism + attestation model of the tribute offer path.

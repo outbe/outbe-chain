@@ -43,6 +43,7 @@ mod onboarding_upload;
 pub mod payload;
 pub mod process;
 pub mod promis;
+pub mod promis_cipher;
 pub mod run;
 pub mod seal;
 #[cfg(not(feature = "sgx-sealing-probe"))]

@@ -179,7 +179,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         };
         *out = crate::gratis_cipher::write_amount(
             &view,
-            crate::gratis_cipher::BalanceTransition {
+            crate::confidential::BalanceTransition {
                 account: req.account,
                 field,
                 previous_version: version,
@@ -197,12 +197,12 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
         let input_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
         r.encrypted_event_amount = crate::gratis_cipher::write_amount(
             &view,
-            crate::gratis_cipher::BalanceTransition {
+            crate::confidential::BalanceTransition {
                 account: req.account,
                 field: FIELD_BALANCE,
                 previous_version: 0,
                 amount: req.amount,
-                input_hash: crate::gratis_cipher::event_amount_input_hash(input_hash),
+                input_hash: crate::confidential::event_amount_input_hash(input_hash),
             },
         )?;
     }
@@ -262,7 +262,7 @@ mod tests {
         let vk = derive_view_key(&sk, alice()).unwrap();
         let blob = crate::gratis_cipher::write_amount(
             &vk,
-            crate::gratis_cipher::BalanceTransition {
+            crate::confidential::BalanceTransition {
                 account: alice(),
                 field: FIELD_BALANCE,
                 previous_version: 0,
@@ -338,7 +338,7 @@ mod tests {
     fn test_amount(key: &[u8; 32], field: u8, amount: u64) -> Result<Vec<u8>> {
         crate::gratis_cipher::write_amount(
             key,
-            crate::gratis_cipher::BalanceTransition {
+            crate::confidential::BalanceTransition {
                 account: alice(),
                 field,
                 previous_version: 0,
