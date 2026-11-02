@@ -84,7 +84,7 @@ contract DeployAll is DeployAdapters, DeployBridge, ConfigureBridge, HandOver {
             console2.log("[4/4] Skipped: the deployer keeps every owner role");
         } else {
             console2.log("[4/4] Hand over to governance...");
-            handOver(governance, bridge, lz, hl, lb);
+            handOver(deployer, governance, bridge, lz, hl, lb);
         }
 
         vm.stopBroadcast();

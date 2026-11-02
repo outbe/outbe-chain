@@ -39,7 +39,8 @@ contract HandOverTest is Test {
         ERC7786Bridge bridge = Proxies.bridge(address(script), address(hl));
         LoopbackGatewayAdapter lb = Proxies.loopback(address(bridge), address(script));
 
-        script.handOver(GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
+        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
+        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
 
         assertEq(bridge.owner(), GOVERNANCE, "bridge");
         assertEq(lz.owner(), GOVERNANCE, "LayerZero adapter");
