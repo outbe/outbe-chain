@@ -30,6 +30,7 @@ interface ICredisFactory {
     error CollateralReleaseMismatch();
     error CredisChangedDuringPayment();
     error ForfeitureCollateralMismatch();
+    error CannotForfeitInIssueBlock();
 
     event CredisIssued(
         uint256 indexed credisId,
@@ -57,10 +58,10 @@ interface ICredisFactory {
     /// The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
     function issueCredis(uint256 reservationId) external payable returns (uint256 credisId, uint256 principalMinor);
-    /// Any payer may repay. Freed collateral returns to the source's liquid Gratis.
-    function settleCredis(uint256 credisId, uint256 amountMinor)
+    /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
+    function settleCredis(uint256 credisId, uint256 amountCapMinor)
         external
-        returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
+        returns (uint256 principalSettledMinor, uint256 interestSettledMinor);
     /// What paying the Credis off now takes: its outstanding principal plus the interest
     /// accrued since the last settlement. Zero once it is Settled or Forfeited. Interest
     /// grows by whole days, so a payment landing a day later needs that day more;
@@ -89,9 +90,9 @@ interface ICredisFactory {
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
-    /// Gratis burns, the principal is written off and the Credis is deleted.
+    /// Gratis burns, the principal is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
-        returns (uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor);
+        returns (uint256 forfeitedGratisMinor, uint256 forfeitedPrincipalMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

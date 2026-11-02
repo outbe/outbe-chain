@@ -126,9 +126,9 @@ pub fn send_to_credis(
     )
 }
 
-/// Return collateral released by a repayment of `credis_id` to its source's
+/// Release collateral freed by a repayment of `credis_id` to its source's
 /// liquid balance.
-pub fn return_from_credis(
+pub fn release_from_credis(
     storage: &StorageHandle<'_>,
     credis_id: U256,
     amount: U256,

@@ -30,11 +30,20 @@ pub fn settlement_deadline(record: &Credis) -> u64 {
 /// The state a reader sees at `now`: a Called Credis past its deadline reads Forfeited
 /// until the cleanup deletes it.
 pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
-    let state = record.lifecycle_state()?;
-    if state == CredisState::Called && now > settlement_deadline(record) {
-        return Ok(CredisState::Forfeited);
-    }
-    Ok(state)
+    use outbe_primitives::settlement::RightState;
+    Ok(
+        match outbe_primitives::settlement::effective_state(
+            record.is_settled(),
+            record.called_at,
+            settlement_deadline(record),
+            now,
+        ) {
+            RightState::Issued => CredisState::Issued,
+            RightState::Called => CredisState::Called,
+            RightState::Settled => CredisState::Settled,
+            RightState::Forfeited => CredisState::Forfeited,
+        },
+    )
 }
 
 /// Where a Credis's principal and Gratis went, as a reader sees it at `now`.
@@ -43,38 +52,38 @@ pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcome {
     pub outstanding_principal_minor: U256,
-    pub principal_paid_minor: U256,
-    pub principal_written_off_minor: U256,
+    pub principal_settled_minor: U256,
+    pub forfeited_principal_minor: U256,
     pub outstanding_gratis_minor: U256,
-    pub gratis_returned_minor: U256,
-    pub gratis_burned_minor: U256,
+    pub gratis_released_minor: U256,
+    pub forfeited_gratis_minor: U256,
 }
 
 pub fn outcome(record: &Credis, now: u64) -> Result<Outcome> {
-    let principal_paid_minor = record
+    let principal_settled_minor = record
         .principal_minor
         .checked_sub(record.outstanding_principal_minor)
         .ok_or(CredisError::ArithmeticOverflow)?;
-    let gratis_returned_minor = record
+    let gratis_released_minor = record
         .gratis_minor
         .checked_sub(record.outstanding_gratis_minor)
         .ok_or(CredisError::ArithmeticOverflow)?;
     let forfeited = effective_state(record, now)? == CredisState::Forfeited;
-    let (outstanding_principal, written_off) = match forfeited {
+    let (outstanding_principal, forfeited_principal_minor) = match forfeited {
         true => (U256::ZERO, record.outstanding_principal_minor),
         false => (record.outstanding_principal_minor, U256::ZERO),
     };
-    let (outstanding_gratis, burned) = match forfeited {
+    let (outstanding_gratis, forfeited_gratis_minor) = match forfeited {
         true => (U256::ZERO, record.outstanding_gratis_minor),
         false => (record.outstanding_gratis_minor, U256::ZERO),
     };
     Ok(Outcome {
         outstanding_principal_minor: outstanding_principal,
-        principal_paid_minor,
-        principal_written_off_minor: written_off,
+        principal_settled_minor,
+        forfeited_principal_minor,
         outstanding_gratis_minor: outstanding_gratis,
-        gratis_returned_minor,
-        gratis_burned_minor: burned,
+        gratis_released_minor,
+        forfeited_gratis_minor,
     })
 }
 

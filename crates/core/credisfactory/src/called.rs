@@ -30,7 +30,8 @@ use outbe_primitives::{
     day_pass::{PinnedDay, Progress},
     error::Result,
     pass_budget::PassBudget,
-    storage::{dsl::Value, StorageHandle},
+    series_id::SeriesId,
+    storage::{dsl::Value, Storable, StorageHandle},
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -171,32 +172,32 @@ pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-/// Calls a group whose breach window filled. Returns whether it was called.
+/// Calls a series whose breach window filled. Returns whether it was called.
 fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
-    group: B256,
+    series: SeriesId,
     now: u64,
 ) -> Result<bool> {
-    if !window.breached(&breach_terms(credis, group)?) {
+    if !window.breached(&breach_terms(credis, series)?) {
         return Ok(false);
     }
-    let deadline = credis.record_group_called(group, now)?;
+    let deadline = credis.record_series_called(series, now)?;
     credis.emit(ICredis::CredisGroupCalled {
-        groupKey: group,
+        groupKey: B256::from(series.to_word()),
         calledAt: now,
         settlementDeadline: deadline,
     })?;
     Ok(true)
 }
 
-/// The terms a group is decided on: the ones its first Credis sealed.
-pub(crate) fn breach_terms(credis: &CredisContract<'_>, group: B256) -> Result<BreachTerms> {
+/// The terms a series is decided on: the ones its first Credis sealed.
+pub(crate) fn breach_terms(credis: &CredisContract<'_>, series: SeriesId) -> Result<BreachTerms> {
     Ok(BreachTerms {
-        call_price: credis.group_call_price_minor.read(&group)?,
-        window_seconds: credis.group_call_window_seconds.read(&group)?,
-        threshold_seconds: credis.group_call_threshold_seconds.read(&group)?,
-        start_day: credis.group_full_day.read(&group)?,
+        call_price: credis.series_call_price_minor.read(&series)?,
+        window_seconds: credis.series_call_window_seconds.read(&series)?,
+        threshold_seconds: credis.series_call_threshold_seconds.read(&series)?,
+        start_day: credis.series_full_day.read(&series)?,
     })
 }
 

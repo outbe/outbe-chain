@@ -21,7 +21,7 @@ pub fn mint(
 }
 
 pub use crate::runtime::{
-    burn_from_credis, collateral_of, pledge_of, return_from_credis, send_to_credis,
+    burn_from_credis, collateral_of, pledge_of, release_from_credis, send_to_credis,
 };
 /// Mint the exact encrypted NOD entitlement and acquire its Fidelity cohort.
 pub fn mint_encrypted_nod(

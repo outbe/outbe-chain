@@ -176,15 +176,19 @@ impl GemView {
     /// gem past its deadline reads Forfeited.
     #[must_use]
     pub fn effective_state(&self, now: u64) -> u8 {
-        if self.item.is_settled() {
-            GemState::Settled as u8
-        } else if self.group_called_at != 0 && now > self.settlement_deadline() {
-            GemState::Forfeited as u8
-        } else if self.group_called_at != 0 {
-            GemState::Called as u8
-        } else {
-            GemState::Issued as u8
-        }
+        use outbe_primitives::settlement::RightState;
+        let state = match outbe_primitives::settlement::effective_state(
+            self.item.is_settled(),
+            self.group_called_at,
+            self.settlement_deadline(),
+            now,
+        ) {
+            RightState::Issued => GemState::Issued,
+            RightState::Called => GemState::Called,
+            RightState::Settled => GemState::Settled,
+            RightState::Forfeited => GemState::Forfeited,
+        };
+        state as u8
     }
 }
 

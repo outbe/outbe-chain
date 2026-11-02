@@ -11,12 +11,12 @@
     ],
     "outputs": [
       {
-        "name": "gratisBurnedMinor",
+        "name": "forfeitedGratisMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "principalWrittenOffMinor",
+        "name": "forfeitedPrincipalMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -137,19 +137,19 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountMinor",
+        "name": "amountCapMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "principalPaidMinor",
+        "name": "principalSettledMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "interestPaidMinor",
+        "name": "interestSettledMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -287,6 +287,11 @@
   {
     "type": "error",
     "name": "AssetMetadataChanged",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "CannotForfeitInIssueBlock",
     "inputs": []
   },
   {

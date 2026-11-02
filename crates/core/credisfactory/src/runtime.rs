@@ -72,7 +72,7 @@ pub fn issue_credis(
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
         let mut credis = CredisContract::new(storage.clone());
-        let id = rules::issue(
+        let (id, _) = rules::issue_in_series(
             &mut credis,
             IssueCredisParams {
                 owner: r.credis_owner,
@@ -87,6 +87,12 @@ pub fn issue_credis(
                 call_anchor_price_minor: r.call_anchor_price_minor,
                 gratis_minor: r.gratis_minor,
                 issued_at: now,
+                series_id: r.series_id,
+                call_start_day: r.call_start_day,
+                call_rate: r.call_rate,
+                call_window_seconds: r.call_window_seconds,
+                call_threshold_seconds: r.call_threshold_seconds,
+                call_notice_period_seconds: r.call_notice_period_seconds,
             },
         )?;
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
@@ -152,7 +158,7 @@ pub fn settle_credis(
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != repayment.gratis_returned_minor {
+        if released != repayment.gratis_released_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
         outbe_vaultrouter::settlement::collect(
@@ -166,17 +172,15 @@ pub fn settle_credis(
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
-            pledges::return_from_credis(&storage, credis_id, released)?;
+            pledges::release_from_credis(&storage, credis_id, released)?;
         }
         Ok((repayment.principal_paid, repayment.interest))
     })
 }
 
-/// Deletes a Credis of a forfeited group.
+/// Deletes a Credis of a forfeited series.
 pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
-    burn_forfeited_collateral(storage, credis_id, |credis, record| {
-        rules::delete_forfeited(credis, record)
-    })?;
+    burn_forfeited_collateral(storage, credis_id, |_, _| Ok(()))?;
     Ok(())
 }
 
@@ -186,8 +190,8 @@ pub fn forfeit_by_owner(
     caller: Address,
     credis_id: U256,
 ) -> Result<Forfeit> {
-    burn_forfeited_collateral(storage, credis_id, |credis, _| {
-        rules::forfeit_by_owner(credis, credis_id, caller)
+    burn_forfeited_collateral(storage, credis_id, |credis, record| {
+        rules::validate_forfeit_by_owner(credis, record, caller)
     })
 }
 
@@ -196,20 +200,23 @@ pub fn forfeit_by_owner(
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
-    forfeit: impl FnOnce(&mut CredisContract<'_>, outbe_credis::Credis) -> Result<Forfeit>,
+    validate: impl FnOnce(&CredisContract<'_>, &outbe_credis::Credis) -> Result<()>,
 ) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
-        let pledged = before.outstanding_gratis_minor;
-        let forfeit = forfeit(&mut credis, before)?;
-        if forfeit.gratis_burned_minor != pledged || credis.credis_exists(credis_id)? {
-            return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
+        validate(&credis, &before)?;
+        if before.outstanding_principal_minor.is_zero() {
+            return Err(CredisFactoryError::NothingOutstanding.into());
         }
-        if !forfeit.gratis_burned_minor.is_zero() {
-            pledges::burn_from_credis(&storage, credis_id, forfeit.gratis_burned_minor)?;
-            outbe_promislimit::PromisLimitContract::new(storage.clone())
-                .checked_credit(forfeit.gratis_burned_minor)?;
+        let pledged = before.outstanding_gratis_minor;
+        if !pledged.is_zero() {
+            pledges::burn_from_credis(&storage, credis_id, pledged)?;
+            outbe_promislimit::PromisLimitContract::new(storage.clone()).checked_credit(pledged)?;
+        }
+        let forfeit = rules::delete_forfeited(&mut credis, before)?;
+        if forfeit.forfeited_gratis_minor != pledged || credis.credis_exists(credis_id)? {
+            return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }
         Ok(forfeit)
     })

@@ -195,7 +195,7 @@
             "internalType": "uint8"
           },
           {
-            "name": "interestPaidMinor",
+            "name": "interestSettledMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -247,31 +247,31 @@
             "internalType": "struct ICredis.Outcome",
             "components": [
               {
-                "name": "principalPaidMinor",
+                "name": "principalSettledMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
               {
-                "name": "principalWrittenOffMinor",
+                "name": "forfeitedPrincipalMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
               {
-                "name": "gratisReturnedMinor",
+                "name": "gratisReleasedMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
               {
-                "name": "gratisBurnedMinor",
+                "name": "forfeitedGratisMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               }
             ]
           },
           {
-            "name": "groupKey",
-            "type": "bytes32",
-            "internalType": "bytes32"
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
           }
         ]
       }
@@ -299,7 +299,7 @@
   },
   {
     "type": "function",
-    "name": "interestPaidMinor",
+    "name": "interestSettledMinor",
     "inputs": [
       {
         "name": "credisId",

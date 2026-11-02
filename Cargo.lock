@@ -9487,6 +9487,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-credis",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",

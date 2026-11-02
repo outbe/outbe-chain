@@ -31,9 +31,9 @@ interface ICredis {
     /// The cleanup burns each one's Gratis into the Promis reserve and deletes it.
     event CredisGroupForfeited(bytes32 indexed groupKey, uint32 credis);
 
-    /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
-    ///         deadline. Records the principal written off. Unpaid interest is left out of this
-    ///         event and out of `interestPaidMinor`.
+    /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its series's
+    ///         deadline. Records the principal forfeited. Unpaid interest is left out of this
+    ///         event and out of `interestSettledMinor`.
     event CredisForfeited(
         uint256 indexed credisId, address indexed cca, uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor
     );
@@ -49,7 +49,7 @@ interface ICredis {
     }
 
     /// Call terms in the reference currency. A live Credis is called and forfeited on the
-    /// window, threshold and notice its group's first Credis sealed.
+    /// window, threshold and notice its series's first Credis sealed.
     struct CallTerms {
         /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP, fixed by the reservation.
         uint256 callAnchorPriceMinor;
@@ -66,19 +66,18 @@ interface ICredis {
         uint64 settlementDeadline;
     }
 
-    /// Where the principal and the pledged Gratis went, cumulative. Per-payment
-    /// deltas are in `ICredisFactory.SettlementApplied`.
+    /// Where the principal and the pledged Gratis went, cumulative.
     struct Outcome {
-        uint256 principalPaidMinor;
+        uint256 principalSettledMinor;
         /// Principal left unpaid at forfeiture.
-        uint256 principalWrittenOffMinor;
-        uint256 gratisReturnedMinor;
-        /// Gratis burned at forfeiture.
-        uint256 gratisBurnedMinor;
+        uint256 forfeitedPrincipalMinor;
+        uint256 gratisReleasedMinor;
+        /// Gratis forfeited at forfeiture.
+        uint256 forfeitedGratisMinor;
     }
 
-    /// principalMinor = principalPaidMinor + outstandingPrincipalMinor + principalWrittenOffMinor
-    /// and gratisMinor = gratisReturnedMinor + outstandingGratisMinor + gratisBurnedMinor.
+    /// principalMinor = principalSettledMinor + outstandingPrincipalMinor + forfeitedPrincipalMinor
+    /// and gratisMinor = gratisReleasedMinor + outstandingGratisMinor + forfeitedGratisMinor.
     struct Credis {
         uint256 credisId;
         address owner;
@@ -111,14 +110,13 @@ interface ICredis {
         /// See {State}. Read-time: a Called Credis past its settlement deadline reads
         /// Forfeited, with its outcome, until the cleanup deletes it.
         uint8 state;
-        /// Lifetime interest collected, in asset minor units. The sum of successful
-        /// `ICredisFactory.SettlementApplied.interestPaidMinor` payments. Current-period accrual is
+        /// Sum of interest settled on this Credis, in asset minor units. Current-period accrual is
         /// {interestAccruedMinor}.
-        uint256 interestPaidMinor;
+        uint256 interestSettledMinor;
         CallTerms call;
         Outcome outcome;
-        /// The call group the Credis is called and forfeited with.
-        bytes32 groupKey;
+        /// The Credis series the Credis belongs to.
+        bytes14 seriesId;
     }
 
     function name() external view returns (string memory);
@@ -148,14 +146,13 @@ interface ICredis {
     ///         settlement (simple, ACT/365), evaluated at the current block
     ///         timestamp. While the Credis is settleable, this is the next payment's
     ///         interest delta and the minimum acceptable payment; 0 once it reads
-    ///         Settled or Forfeited. Lifetime interest collected is
-    ///         {interestPaidMinor}.
+    ///         Settled or Forfeited. Sum of interest settled is
+    ///         {interestSettledMinor}.
     function interestAccruedMinor(uint256 credisId) external view returns (uint256);
 
-    /// @notice Lifetime interest collected on this Credis, in asset minor units.
-    ///         Equals the sum of `ICredisFactory.SettlementApplied.interestPaidMinor` over successful
-    ///         settlements. Forfeiture does not add unpaid interest.
-    function interestPaidMinor(uint256 credisId) external view returns (uint256);
+    /// @notice Sum of interest settled on this Credis, in asset minor units.
+    ///         Forfeiture does not add unpaid interest.
+    function interestSettledMinor(uint256 credisId) external view returns (uint256);
 
     /// @notice Sum of `principalMinor` and `outstandingPrincipalMinor` across the account's
     ///         live Credis. A Credis past its settlement deadline counts until the cleanup

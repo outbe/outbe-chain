@@ -293,10 +293,10 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
     });
 }
 
-/// A gem issued exactly at midnight counts that whole day. One issued later the same
-/// day starts the next day, so it never borrows the midnight gem's extra day.
+/// A gem issued exactly at midnight and one issued later the same UTC day both start
+/// counting on the next UTC day, so they share one group.
 #[test]
-fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
+fn a_midnight_gem_and_a_later_one_that_day_share_one_group() {
     with_storage(|storage| {
         let midnight = (T_NOW / SECONDS_PER_DAY + 1) * SECONDS_PER_DAY;
         let mut first = sample_params(ALICE);
@@ -306,7 +306,7 @@ fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
         let first = add(storage, first);
         let later = add(storage, later);
 
-        assert_ne!(group_of(storage, first), group_of(storage, later));
+        assert_eq!(group_of(storage, first), group_of(storage, later));
         let group_day = |gem_id| {
             api::get_group(storage, group_of(storage, gem_id))
                 .unwrap()
@@ -314,14 +314,9 @@ fn a_midnight_gem_and_a_later_one_that_day_are_in_different_groups() {
                 .full_day_after_issue
                 .value()
         };
-        assert_eq!(
-            group_day(first),
-            outbe_primitives::time::timestamp_to_date_key(midnight)
-        );
-        assert_eq!(
-            group_day(later),
-            outbe_primitives::time::first_full_day(midnight + 2).expect("date step")
-        );
+        let expected_day = outbe_primitives::time::first_full_day(midnight).expect("date step");
+        assert_eq!(group_day(first), expected_day);
+        assert_eq!(group_day(later), expected_day);
     });
 }
 

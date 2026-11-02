@@ -9,6 +9,7 @@ use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::{sol, SolError, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
+use outbe_primitives::storage::Storable;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::features::entity_lifecycle::chain::{
@@ -94,7 +95,9 @@ fn called(world: &mut World) {
         0,
         height,
         ICredis::CredisGroupCalled {
-            groupKey: record.groupKey,
+            groupKey: B256::from(
+                outbe_primitives::series_id::SeriesId::from_bytes(record.seriesId.0).to_word(),
+            ),
             calledAt: terms.calledAt,
             settlementDeadline: terms.settlementDeadline,
         },
@@ -133,7 +136,7 @@ fn pay_part(world: &mut World) {
         &f.owner_key,
         &ICredisFactory::settleCredisCall {
             credisId: f.credis_id,
-            amountMinor: amount,
+            amountCapMinor: amount,
         },
         None,
     );
@@ -162,10 +165,10 @@ fn pay_part(world: &mut World) {
     assert_eq!(
         paid.outcome,
         ICredis::Outcome {
-            principalPaidMinor: PART,
-            principalWrittenOffMinor: U256::ZERO,
-            gratisReturnedMinor: returned,
-            gratisBurnedMinor: U256::ZERO,
+            principalSettledMinor: PART,
+            forfeitedPrincipalMinor: U256::ZERO,
+            gratisReleasedMinor: returned,
+            forfeitedGratisMinor: U256::ZERO,
         }
     );
     assert_eq!(after.pledged, before.pledged - returned);
@@ -206,8 +209,8 @@ fn deadline_passes(world: &mut World) {
 /// The Gratis and the principal a forfeit writes off, from a Called or a lapsed read.
 fn written_off(credis: &ICredis::Credis) -> (U256, U256) {
     (
-        credis.outcome.gratisBurnedMinor + credis.outstandingGratisMinor,
-        credis.outcome.principalWrittenOffMinor + credis.outstandingPrincipalMinor,
+        credis.outcome.forfeitedGratisMinor + credis.outstandingGratisMinor,
+        credis.outcome.forfeitedPrincipalMinor + credis.outstandingPrincipalMinor,
     )
 }
 
@@ -230,13 +233,13 @@ fn reads_forfeited(world: &mut World) {
         (U256::ZERO, U256::ZERO)
     );
     let outcome = &lapsed.outcome;
-    assert_eq!(outcome.principalPaidMinor, PART);
-    assert_eq!(outcome.principalWrittenOffMinor, PRINCIPAL - PART);
+    assert_eq!(outcome.principalSettledMinor, PART);
+    assert_eq!(outcome.forfeitedPrincipalMinor, PRINCIPAL - PART);
     assert_eq!(
-        outcome.gratisReturnedMinor + outcome.gratisBurnedMinor,
+        outcome.gratisReleasedMinor + outcome.forfeitedGratisMinor,
         f.gratis_minor
     );
-    assert!(outcome.gratisBurnedMinor > U256::ZERO);
+    assert!(outcome.forfeitedGratisMinor > U256::ZERO);
     // The Credis may already be absent if cleanup deletes the Credis as its deadline day closes.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
@@ -303,7 +306,9 @@ fn burned(world: &mut World) {
         from,
         height,
         ICredis::CredisGroupForfeited {
-            groupKey: lapsed.groupKey,
+            groupKey: B256::from(
+                outbe_primitives::series_id::SeriesId::from_bytes(lapsed.seriesId.0).to_word(),
+            ),
             credis: 1,
         },
     );
@@ -312,7 +317,7 @@ fn burned(world: &mut World) {
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(
         state.liquid,
-        INITIAL_GRATIS - f.gratis_minor + lapsed.outcome.gratisReturnedMinor
+        INITIAL_GRATIS - f.gratis_minor + lapsed.outcome.gratisReleasedMinor
     );
     assert_eq!(
         state.vault_stables,
@@ -394,7 +399,7 @@ fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
 fn settlement_revert(world: &World, f: &CredisFixture) -> (Bytes, u64) {
     let settle = ICredisFactory::settleCredisCall {
         credisId: f.credis_id,
-        amountMinor: PART,
+        amountCapMinor: PART,
     };
     let height = world
         .rpc

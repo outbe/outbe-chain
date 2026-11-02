@@ -579,7 +579,7 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
         assert_eq!(view_pledged(&storage, alice()), reserved * U256::from(2u64));
 
         // The source's pledged total would cover it, but Credis A only holds RESERVED.
-        let err = runtime::return_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
+        let err = runtime::release_from_credis(&storage, a, reserved + U256::ONE).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
@@ -602,7 +602,7 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
         );
 
         let returned = U256::from(40u64);
-        runtime::return_from_credis(&storage, a, returned).unwrap();
+        runtime::release_from_credis(&storage, a, returned).unwrap();
         assert_eq!(
             runtime::collateral_of(&storage, a).unwrap().remaining_minor,
             reserved - returned
@@ -621,7 +621,7 @@ fn collateral_is_drawn_per_credis_and_never_reopens() {
             view_balance(&storage, alice()) + view_pledged(&storage, alice()),
             U256::from(1_000u64) - (reserved - returned)
         );
-        let err = runtime::return_from_credis(&storage, a, U256::ONE).unwrap_err();
+        let err = runtime::release_from_credis(&storage, a, U256::ONE).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(

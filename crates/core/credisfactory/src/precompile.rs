@@ -57,11 +57,15 @@ pub fn dispatch(
                     },
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
-                    let (principal, interest) =
-                        runtime::settle_credis(storage.clone(), sender, c.credisId, c.amountMinor)?;
+                    let (principal, interest) = runtime::settle_credis(
+                        storage.clone(),
+                        sender,
+                        c.credisId,
+                        c.amountCapMinor,
+                    )?;
                     Ok(ICredisFactory::settleCredisReturn {
-                        principalPaidMinor: principal,
-                        interestPaidMinor: interest,
+                        principalSettledMinor: principal,
+                        interestSettledMinor: interest,
                     })
                 }),
                 quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
@@ -71,8 +75,8 @@ pub fn dispatch(
                 forfeitCredis(c) => mutate(&storage, c, caller, |sender, c| {
                     let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;
                     Ok(ICredisFactory::forfeitCredisReturn {
-                        gratisBurnedMinor: forfeit.gratis_burned_minor,
-                        principalWrittenOffMinor: forfeit.principal_written_off,
+                        forfeitedGratisMinor: forfeit.forfeited_gratis_minor,
+                        forfeitedPrincipalMinor: forfeit.forfeited_principal_minor,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

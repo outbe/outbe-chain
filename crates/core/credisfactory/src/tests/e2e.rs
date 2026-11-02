@@ -262,12 +262,12 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             pledge_cost()
         );
         assert_eq!(fidelity_of(&storage, alice()), fidelity);
+        let settled = CredisContract::new(storage.clone())
+            .get_credis(credis_id)
+            .unwrap();
         assert_eq!(
-            CredisContract::new(storage)
-                .get_credis(credis_id)
-                .unwrap()
-                .state,
-            CredisState::Settled as u8
+            outbe_credis::runtime::effective_state(&settled, now_of(&storage)).unwrap(),
+            CredisState::Settled
         );
     });
     teardown();

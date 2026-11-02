@@ -14,14 +14,17 @@ pub fn effective_state(
     deadline: u64,
     now: U256,
 ) -> EffectiveState {
-    if item.is_settled {
-        EffectiveState::Settled
-    } else if called_at != 0 && now > U256::from(deadline) {
-        EffectiveState::Forfeited
-    } else if called_at != 0 {
-        EffectiveState::Called
-    } else {
-        EffectiveState::Issued
+    use outbe_primitives::settlement::RightState;
+    match outbe_primitives::settlement::effective_state(
+        item.is_settled,
+        called_at,
+        deadline,
+        now.saturating_to::<u64>(),
+    ) {
+        RightState::Issued => EffectiveState::Issued,
+        RightState::Called => EffectiveState::Called,
+        RightState::Settled => EffectiveState::Settled,
+        RightState::Forfeited => EffectiveState::Forfeited,
     }
 }
 

@@ -770,8 +770,8 @@ fn a_breach_run_that_predates_the_group_does_not_call_it() {
     });
 }
 
-/// Q027: the issuance UTC day counts only when the Nod was issued at midnight.
-/// A second later drops that day and a threshold-length breach falls short.
+/// Both midnight (`00:00:00`) and a second later (`00:00:01`) start counting on the
+/// next UTC day, while a Nod issued on the previous day counts the full day starting at midnight.
 #[test]
 fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let scan_at = START + 30 * DAY;
@@ -782,7 +782,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
 
-    for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
+    for (issued_at, expected) in [(midnight - 1, 1u32), (midnight, 0u32), (midnight + 1, 0u32)] {
         harness(|storage| {
             let wwd = WorldwideDay::from_timestamp(issued_at).value();
             let item = issue_item(

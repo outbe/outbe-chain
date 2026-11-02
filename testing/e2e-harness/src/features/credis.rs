@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 use outbe_credis::config::CredisParams;
 use outbe_oracle::window::VwapSnapshotId;
@@ -428,12 +428,10 @@ fn issue(world: &mut World) {
         Some(stake),
     );
     let block = credis::receipt_height(&receipt);
-    let mut preimage = Vec::with_capacity(68);
-    preimage.extend_from_slice(f.cca.as_slice());
-    preimage.extend_from_slice(f.owner.as_slice());
-    preimage.extend_from_slice(f.currency.asset.as_slice());
-    preimage.extend_from_slice(&block.to_be_bytes());
-    let id = U256::from_be_bytes(keccak256(preimage).0);
+    let issued_at = receipt_timestamp(&url, &receipt);
+    let series_id =
+        outbe_credis::CredisContract::series_of(issued_at, USD, USD).expect("series id");
+    let id = outbe_credis::CredisContract::generate_credis_id(series_id, f.owner, block);
     assert_receipt_event(
         &receipt,
         CREDIS_FACTORY_ADDRESS,
@@ -589,7 +587,7 @@ fn repay(world: &mut World) {
             &f.owner_key,
             &ICredisFactory::settleCredisCall {
                 credisId: f.credis_id,
-                amountMinor: amount,
+                amountCapMinor: amount,
             },
             None,
         );
@@ -660,7 +658,7 @@ fn repay(world: &mut World) {
         assert_eq!(after.native, before.native - fee(&approval) - fee(&receipt));
         assert_eq!(after.liquid, before.liquid + released);
         assert_eq!(after.pledged, before.pledged - released);
-        assert_eq!(a.interestPaidMinor, f.interest_paid + interest);
+        assert_eq!(a.interestSettledMinor, f.interest_paid + interest);
         world.state.credis.as_mut().expect("fixture").interest_paid += interest;
     }
 }
