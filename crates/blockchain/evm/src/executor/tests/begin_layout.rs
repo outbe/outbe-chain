@@ -254,7 +254,7 @@ fn begin_inputs_match_signed_proposer_body_and_verifier_across_phase_matrix() {
 }
 
 #[test]
-fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() {
+fn verifier_reports_bad_inputs_and_defers_simple_phase_order_to_layout() {
     for height in [1, 2] {
         let mut scenario = Scenario::new(height).with_boundary();
         let canonical = scenario.signed_body();
@@ -281,6 +281,8 @@ fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() 
                 .contains("decode expected begin system tx input:"));
             scenario.body = canonical.clone();
             scenario.body[ordinal] = canonical[(ordinal + 1) % canonical.len()].clone();
+            let body: Vec<_> = scenario.body.iter().map(|tx| tx.tx().clone()).collect();
+            assert!(crate::system_tx::split_system_layout(&body).is_err());
             let input = SystemTx::decode(canonical[ordinal].tx().input()).unwrap();
             let expected = if matches!(input, SystemTx::TeeBootstrap { .. }) {
                 format!("expected mandatory OST3 system tx at ordinal {ordinal}")
@@ -290,10 +292,13 @@ fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() 
             ) {
                 format!("expected {} system tx at ordinal {ordinal}", input.name())
             } else {
-                format!(
-                    "expected {:?} system tx at ordinal {ordinal}",
-                    input.selector()
-                )
+                // Simple phases decode body inputs; structural validation owns their order.
+                let resolved = scenario.resolve().expect("simple input resolves");
+                assert_eq!(
+                    resolved[ordinal].0,
+                    SystemTx::decode(scenario.body[ordinal].tx().input()).unwrap()
+                );
+                continue;
             };
             let error = scenario.resolve().unwrap_err().to_string();
             assert!(error.contains(&expected), "{error}");
