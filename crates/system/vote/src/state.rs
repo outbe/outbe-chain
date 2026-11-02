@@ -470,10 +470,10 @@ impl<'storage> Vote<'storage> {
             block_number,
         };
         if let Some(index) = position.checked_sub(1) {
-            let previous = votes.get(index)?.ok_or(VoteError::CorruptVoteIndex)?;
-            if previous.voter != voter {
-                return Err(VoteError::CorruptVoteIndex.into());
-            }
+            let previous = votes
+                .get(index)?
+                .filter(|record| record.voter == voter)
+                .ok_or(VoteError::CorruptVoteIndex)?;
             if VoteKind::from_u8(previous.vote_kind)? != VoteKind::Yes || kind != VoteKind::No {
                 return Err(VoteError::AlreadyVoted.into());
             }
