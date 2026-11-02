@@ -324,9 +324,6 @@ impl Vote<'_> {
         if block_number > proposal.voting_deadline_height {
             return Err(VoteError::VotingClosed.into());
         }
-        if self.read_vote(proposal_id, voter)?.is_some() {
-            return Err(VoteError::AlreadyVoted.into());
-        }
         if !self
             .eligible_validator_addresses(proposal_id)?
             .contains(&voter)
@@ -334,14 +331,15 @@ impl Vote<'_> {
             return Err(VoteError::NotValidator.into());
         }
 
-        self.write_vote(
-            proposal_id,
-            voter,
-            VoteKind::from_approve(approve),
-            block_number,
-        )?;
-        self.notify_vote_cast(proposal_id, voter, approve)?;
-        Ok(())
+        self.storage.clone().with_checkpoint(|| {
+            self.write_vote(
+                proposal_id,
+                voter,
+                VoteKind::from_approve(approve),
+                block_number,
+            )?;
+            self.notify_vote_cast(proposal_id, voter, approve)
+        })
     }
 
     /// Tallies proposals whose voting windows are closed.

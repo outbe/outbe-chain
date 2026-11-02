@@ -75,7 +75,8 @@ interface IVote {
         uint64 votingDeadlineHeight
     );
 
-    /// @notice Validator voted on a proposal.
+    /// @notice Records a first ballot or a Yes-to-No change.
+    /// @dev Consumers use the latest ballot per (proposalId, validator), not one vote per event.
     event VoteCast(uint256 indexed proposalId, address indexed validator, bool approve);
 
     /// @notice Voting closed without reaching quorum.
@@ -115,8 +116,10 @@ interface IVote {
         payable
         returns (uint256 proposalId);
 
-    /// @notice Casts a vote on a pending proposal.
-    /// @dev Only active validators may vote.
+    /// @notice Casts a first ballot or changes the caller's existing Yes to No.
+    /// @dev Requires current voter eligibility, Pending status and an open inclusive deadline.
+    /// No-to-Yes and identical repeat ballots revert with AlreadyVoted. A change retains
+    /// the voter in the same list position; it does not withdraw a ballot or cancel a proposal.
     function castVote(uint256 proposalId, bool approve) external;
 
     // ===============================================

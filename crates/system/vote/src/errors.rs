@@ -21,6 +21,8 @@ pub enum VoteError {
     VotingDeadlineOverflow,
     #[error("validator has already voted on proposal")]
     AlreadyVoted,
+    #[error("stored vote index is inconsistent")]
+    CorruptVoteIndex,
     #[error("too many pending proposals")]
     TooManyPending,
     #[error("validator has too many pending proposals")]
@@ -72,6 +74,7 @@ pub enum VoteError {
 impl From<VoteError> for PrecompileError {
     fn from(error: VoteError) -> Self {
         match error {
+            VoteError::CorruptVoteIndex => PrecompileError::Fatal(error.to_string()),
             VoteError::InvalidProposalBond { .. }
             | VoteError::CorruptBondState
             | VoteError::InvalidBondAmount
