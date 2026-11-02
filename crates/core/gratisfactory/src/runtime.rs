@@ -225,8 +225,8 @@ fn live_pledge(storage: &StorageHandle<'_>, reservation_id: U256) -> Result<Pled
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
-/// key) and record the Fidelity acquisition cohort. The Gratis token emits the
-/// `GratisMinted` event.
+/// key) and record the Fidelity acquisition cohort.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,

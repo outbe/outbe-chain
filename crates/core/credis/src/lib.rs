@@ -1,5 +1,5 @@
-//! Credis: the terms, profile and records of a Credis and its call group. The call bins,
-//! the expiry queue and the cleanup queue live here, with the read-time state, accrued
+//! Credis: the terms, profile and records of a Credis and its series. The call bins,
+//! the forfeit queue and the cleanup queue live here, with the read-time state, accrued
 //! interest and outcome.
 //!
 //! CredisFactory applies every rule and runs the call and forfeit sweeps. The precompile

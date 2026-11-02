@@ -1098,7 +1098,11 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     settle_principal(&mut storage, alice(), credis_id, outstanding);
     StorageHandle::enter(&mut storage, |storage| {
         assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
-        assert_eq!(queued_at(&storage, group_of(&storage, credis_id)), 0);
+        assert_ne!(
+            queued_at(&storage, group_of(&storage, credis_id)),
+            0,
+            "a called series stays queued until its deadline"
+        );
 
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
         advance_to(&storage, lapsed);
@@ -1413,9 +1417,10 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             3,
         )
     );
-    // R5d: verify exact per-Credis cleanup effect log ordering:
-    // GratisBurnedFromPledge -> GratisPledgeBurned -> CredisForfeited -> Transfer(..., 0x0, id),
-    // followed by CredisSeriesClosed after the last member is cleaned up.
+    // R5d: verify exact per-Credis cleanup effect log ordering.
+    // CredisSeriesClosed is emitted when the forfeit pass closes the series, before
+    // cleanup of each member: GratisBurnedFromPledge -> GratisPledgeBurned ->
+    // CredisForfeited -> Transfer(..., 0x0, id).
     let cleanup_tags: Vec<&'static str> = clean
         .get_ordered_events()
         .iter()

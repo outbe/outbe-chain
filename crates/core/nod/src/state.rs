@@ -165,9 +165,34 @@ impl NodContract<'_> {
             self.group_series_open_load_ct.bytes(&gs_key).clear()?;
             // The series stays bound after its last Tribute so call and close can still name it.
             self.series_group.clear(&series_id)?;
+            self.series_issuance_currency.clear(&series_id)?;
+            self.series_reference_currency.clear(&series_id)?;
         }
         self.group_series.list(&group_key).clear()?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
+    }
+
+    /// Called and not yet through `NodForfeit`. The group stays so the pass can emit
+    /// `NodSeriesClosed`, including `(0, 0, 0)` when every Nod and Tribute is already gone.
+    pub(crate) fn waiting_for_forfeit(&self, group_key: B256) -> Result<bool> {
+        Ok(self.group_called_at.read(&group_key)? != 0
+            && !self.group_is_forfeited.read(&group_key)?)
+    }
+
+    /// Closes a called group after `NodSeriesClosed` once nothing settled remains.
+    pub fn close_group_if_empty_after_forfeit(&mut self, group_key: B256) -> Result<()> {
+        let Some(group) = self.groups.get(group_key)? else {
+            return Ok(());
+        };
+        if group.settled_nods != 0
+            || self.group_nod_count.read(&group_key)? != 0
+            || self.group_unclaimed_tribute_count.read(&group_key)? != 0
+        {
+            return Ok(());
+        }
+        self.group_nod_count.clear(&group_key)?;
+        self.close_group(group_key)?;
+        self.groups.delete(group_key)
     }
 
     pub(crate) fn register_group_series(
@@ -316,6 +341,7 @@ impl NodContract<'_> {
         self.release_series_tribute(series_id, group_key)?;
         if self.group_unclaimed_tribute_count.read(&group_key)? == 0
             && self.group_nod_count.read(&group_key)? == 0
+            && !self.waiting_for_forfeit(group_key)?
         {
             if let Some(group) = self.groups.get(group_key)? {
                 if group.settled_nods == 0 {

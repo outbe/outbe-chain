@@ -195,9 +195,13 @@ fn prepare(world: &mut World) {
         .localnet
         .node_offer_public(1)
         .expect("TEE offer public key");
-    let encrypted_promis_minor =
-        outbe_tee::offer_encrypt::encrypt_tee_amount(&offer_public_key, INITIAL_GRATIS)
-            .expect("encrypt mineGratis amount");
+    let encrypted_promis_minor = outbe_tee::offer_encrypt::encrypt_tee_amount(
+        &offer_public_key,
+        chain,
+        user,
+        INITIAL_GRATIS,
+    )
+    .expect("encrypt mineGratis amount");
     send(
         &url,
         addresses::PROMIS_FACTORY_ADDR,

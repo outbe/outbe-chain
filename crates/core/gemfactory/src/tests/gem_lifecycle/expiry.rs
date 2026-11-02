@@ -91,6 +91,65 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
     });
 }
 
+/// Every gem settled before the deadline still closes its sub-series at `(0, 0)`.
+#[test]
+fn a_fully_settled_group_closes_with_zero_forfeit() {
+    let mut provider = provider_at(T_NOW);
+    let expected = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = mature_gem(&storage);
+        let gem = item(&storage, gem_id).unwrap();
+        let group = gem.group_key;
+        call_gem(&storage, gem_id, T_NOW);
+        settle(&storage, gem_id);
+
+        begin_block_at(&storage, first_due_block(&storage, gem_id));
+        assert_eq!(gem_state(&storage, gem_id), GemState::Settled as u8);
+        assert_eq!(unallocated(&storage), U256::ZERO);
+        let contract = GemContract::new(storage.clone());
+        assert_eq!(contract.called_group_slot.read(&group).unwrap(), 0);
+        assert!(api::get_group(&storage, group).unwrap().is_some());
+
+        burn_settled(&storage, gem_id);
+        assert!(api::get_group(&storage, group).unwrap().is_none());
+        assert!(item(&storage, gem_id).is_none());
+        gem
+    });
+
+    let closed: Vec<_> = provider
+        .get_events(GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        (
+            outbe_intex::SeriesId::from(closed[0].seriesId),
+            closed[0].subSeriesId,
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency,
+            closed[0].forfeitedCount,
+            closed[0].forfeitedAmountMinor
+        ),
+        (
+            expected.series_id,
+            expected.sub_series_id,
+            expected.issuance_currency,
+            expected.reference_currency,
+            0,
+            U256::ZERO
+        )
+    );
+    assert_eq!(
+        outbe_intex::SeriesId::for_pair(
+            expected.series_id.day(),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency
+        )
+        .unwrap(),
+        expected.series_id
+    );
+}
+
 /// Its owner paid the strike, so the load is theirs.
 #[test]
 fn a_settled_gem_is_never_forfeited() {

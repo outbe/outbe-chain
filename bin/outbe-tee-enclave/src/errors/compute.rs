@@ -146,6 +146,8 @@ pub enum PromisRejectReason {
     BalanceOverflow,
     #[error("insufficient balance")]
     InsufficientBalance,
+    #[error("modify nonce exhausted")]
+    ModifyNonceExhausted,
     #[error(transparent)]
     Tee(#[from] crate::errors::TeeError),
 }
