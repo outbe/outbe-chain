@@ -44,8 +44,9 @@ impl<'storage> CredisContract<'storage> {
         Ok(record)
     }
 
-    /// Records a new Credis, lists it, counts it in its owner's sums and puts it in its
-    /// series. Returns `true` when this Credis opens the series for the first time.
+    /// Records a new Credis, lists it, counts it in its owner's sums, puts it in its
+    /// series, and emits the ERC-721 mint `Transfer`. Returns `true` when this Credis
+    /// opens the series for the first time.
     pub fn create_credis_record(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
         add_to(
@@ -58,11 +59,20 @@ impl<'storage> CredisContract<'storage> {
             record.owner,
             record.outstanding_principal_minor,
         )?;
-        self.join_series(record, call_start_day)
+        let newly_opened = self.join_series(record, call_start_day)?;
+        self.emit(ICredis::Transfer {
+            from: Address::ZERO,
+            to: record.owner,
+            tokenId: record.credis_id,
+        })?;
+        Ok(newly_opened)
     }
 
     pub fn update_credis_record(&mut self, record: &Credis) -> Result<()> {
-        self.records.update(record)
+        self.records.update(record)?;
+        self.emit(ICredis::MetadataUpdate {
+            _tokenId: record.credis_id,
+        })
     }
 
     /// Deletes a Credis, unlists it, takes it out of its owner's sums and emits the ERC-721 burn

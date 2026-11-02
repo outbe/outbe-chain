@@ -24,18 +24,37 @@ interface ICredis {
     /// ERC-4906: emitted over the whole id range when groups are called.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Every unsettled Credis of the group is called.
-    event CredisGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
+    /// Every unsettled Credis of the series is called.
+    event CredisSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
 
-    /// The group's settlement deadline passed: its `credis` unsettled Credis are forfeited.
-    /// The cleanup burns each one's Gratis into the Promis reserve and deletes it.
-    event CredisGroupForfeited(bytes32 indexed groupKey, uint32 credis);
+    /// The series's settlement deadline passed: its `forfeitedCount` unsettled Credis and
+    /// their `forfeitedAmountMinor` Gratis are forfeited. The cleanup burns each one's
+    /// Gratis into the Promis reserve and deletes it.
+    event CredisSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
+    );
 
     /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its series's
     ///         deadline. Records the principal forfeited. Unpaid interest is left out of this
     ///         event and out of `interestSettledMinor`.
     event CredisForfeited(
-        uint256 indexed credisId, address indexed cca, uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor
+        uint256 indexed credisId,
+        address indexed owner,
+        address indexed cca,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 forfeitedPrincipalMinor
     );
 
     /// @notice Lifecycle state of a Credis, mirroring the Rust `CredisState`.

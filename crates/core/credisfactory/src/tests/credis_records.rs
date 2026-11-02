@@ -772,15 +772,24 @@ fn lifetime_interest_paid_sums_interest_only_and_principal_deltas() {
         .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
-            crate::precompile::ICredisFactory::SettlementApplied::decode_log_data(log).ok()
+            crate::precompile::ICredisFactory::CredisSettled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(applied.len(), 2);
     assert_eq!(applied[0].credisId, id);
-    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
-    assert!(applied[0].principalPaidMinor.is_zero());
-    assert_eq!(applied[1].interestPaidMinor, U256::from(8_000_000u64));
-    assert_eq!(applied[1].principalPaidMinor, U256::from(100_000_000u64));
+    assert_eq!(applied[0].owner, alice());
+    assert_eq!(applied[0].asset, settlement_asset());
+    assert_eq!(applied[0].issuanceCurrency, 840);
+    assert_eq!(applied[0].referenceCurrency, 978);
+    assert_eq!(applied[0].amountMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[0].interestSettledMinor, U256::from(8_000_000u64));
+    assert!(applied[0].principalSettledMinor.is_zero());
+    assert_eq!(
+        applied[1].amountMinor,
+        U256::from(8_000_000u64 + 100_000_000u64)
+    );
+    assert_eq!(applied[1].interestSettledMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[1].principalSettledMinor, U256::from(100_000_000u64));
 }
 
 #[test]
@@ -832,11 +841,11 @@ fn rejected_settlement_leaves_lifetime_interest_and_emits_nothing() {
         .get_events(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
-            crate::precompile::ICredisFactory::SettlementApplied::decode_log_data(log).ok()
+            crate::precompile::ICredisFactory::CredisSettled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(applied.len(), 1);
-    assert_eq!(applied[0].interestPaidMinor, U256::from(8_000_000u64));
+    assert_eq!(applied[0].interestSettledMinor, U256::from(8_000_000u64));
 }
 
 #[test]
@@ -1221,7 +1230,7 @@ fn a_fully_unpaid_forfeit_burns_all_collateral() {
 
     assert_eq!(
         ICredis::CredisForfeited::SIGNATURE,
-        "CredisForfeited(uint256,address,uint256,uint256)"
+        "CredisForfeited(uint256,address,address,address,uint16,uint16,uint256)"
     );
     let forfeits: Vec<_> = provider
         .get_events(outbe_primitives::addresses::CREDIS_ADDRESS)
@@ -1230,8 +1239,12 @@ fn a_fully_unpaid_forfeit_burns_all_collateral() {
         .collect();
     assert_eq!(forfeits.len(), 1);
     assert_eq!(forfeits[0].credisId, id);
-    assert_eq!(forfeits[0].principalWrittenOffMinor, U256::from(PRINCIPAL));
-    assert_eq!(forfeits[0].gratisBurnedMinor, collateral());
+    assert_eq!(forfeits[0].owner, alice());
+    assert_eq!(forfeits[0].cca, cca());
+    assert_eq!(forfeits[0].asset, settlement_asset());
+    assert_eq!(forfeits[0].issuanceCurrency, 840);
+    assert_eq!(forfeits[0].referenceCurrency, 978);
+    assert_eq!(forfeits[0].forfeitedPrincipalMinor, U256::from(PRINCIPAL));
 }
 
 #[test]

@@ -1,7 +1,6 @@
 //! Forfeits the called groups whose settlement window lapsed, earliest deadline first,
 //! and hands their Credis to the cleanup.
 
-use alloy_primitives::B256;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
 use outbe_primitives::{
@@ -10,7 +9,6 @@ use outbe_primitives::{
     error::Result,
     pass_budget::PassBudget,
     series_id::SeriesId,
-    storage::Storable,
 };
 
 pub(crate) fn forfeit_through(
@@ -65,11 +63,17 @@ impl DeadlineHandler<SeriesId> for CredisForfeit<'_> {
     /// Forfeits the series's Credis at once. Each one's Gratis burns and returns to the
     /// Promis reserve together, in the cleanup.
     fn process_member(&mut self, series: SeriesId, _member: SeriesId) -> Result<()> {
-        let credis = self.credis.series_member_count(series)?;
+        let forfeited_count = self.credis.series_member_count(series)?;
+        let forfeited_amount_minor = self.credis.series_unpaid_gratis_minor.read(&series)?;
+        let issuance_currency = self.credis.series_issuance_currency.read(&series)?;
+        let reference_currency = self.credis.series_currency.read(&series)?;
         self.credis.hand_to_cleanup(series)?;
-        self.credis.emit(ICredis::CredisGroupForfeited {
-            groupKey: B256::from(series.to_word()),
-            credis,
+        self.credis.emit(ICredis::CredisSeriesClosed {
+            seriesId: series.into(),
+            issuanceCurrency: issuance_currency,
+            referenceCurrency: reference_currency,
+            forfeitedCount: forfeited_count,
+            forfeitedAmountMinor: forfeited_amount_minor,
         })?;
         Ok(())
     }

@@ -614,19 +614,37 @@
         "internalType": "uint256"
       },
       {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "cca",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "gratisBurnedMinor",
-        "type": "uint256",
+        "name": "asset",
+        "type": "address",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       },
       {
-        "name": "principalWrittenOffMinor",
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedPrincipalMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -636,13 +654,25 @@
   },
   {
     "type": "event",
-    "name": "CredisGroupCalled",
+    "name": "CredisSeriesCalled",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "calledAt",
@@ -661,19 +691,37 @@
   },
   {
     "type": "event",
-    "name": "CredisGroupForfeited",
+    "name": "CredisSeriesClosed",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
       },
       {
-        "name": "credis",
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
+      },
+      {
+        "name": "forfeitedAmountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

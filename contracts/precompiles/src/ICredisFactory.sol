@@ -32,27 +32,40 @@ interface ICredisFactory {
     error ForfeitureCollateralMismatch();
     error CannotForfeitInIssueBlock();
 
+    event CredisSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod,
+        uint256 policyRate
+    );
     event CredisIssued(
         uint256 indexed credisId,
         address indexed owner,
-        address indexed cca,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address cca,
         address asset,
         uint256 principalMinor,
-        uint256 gratisMinor,
-        uint256 callPriceMinor
+        uint256 gratisMinor
     );
-    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
-    ///         The Credis's `interestPaidMinor` is the sum of these payments
-    ///         across successful settlements. A reverted settlement emits nothing
-    ///         and leaves that total unchanged.
-    event SettlementApplied(
+    /// @notice One successful settlement. `interestSettledMinor` and `principalSettledMinor`
+    ///         are this payment's interest and principal deltas, and `amountMinor` is their
+    ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
+    event CredisSettled(
         uint256 indexed credisId,
-        uint256 interestPaidMinor,
-        uint256 principalPaidMinor,
-        uint256 gratisReturnedMinor,
-        uint256 outstandingPrincipalMinor
+        address indexed owner,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 amountMinor,
+        uint256 interestSettledMinor,
+        uint256 principalSettledMinor
     );
-    event CredisSettled(uint256 indexed credisId);
 
     /// Use the reservation's pledge and every term it fixed, the call terms included.
     /// The caller must be its CCA.

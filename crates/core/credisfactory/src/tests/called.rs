@@ -5,11 +5,11 @@
 //! and later blocks' slices through `slice`, against a seeded finalized daily
 //! series. This series is the only price source the production trigger reads.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
-use outbe_primitives::storage::{Storable, StorageHandle};
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::previous_date_key;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
@@ -1359,9 +1359,17 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         let groups = credis
             .iter()
             .filter_map(|log| {
-                outbe_credis::precompile::ICredis::CredisGroupForfeited::decode_log_data(log).ok()
+                outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(log).ok()
             })
-            .map(|event| (event.groupKey, event.credis))
+            .map(|event| {
+                (
+                    event.seriesId,
+                    event.issuanceCurrency,
+                    event.referenceCurrency,
+                    event.forfeitedCount,
+                    event.forfeitedAmountMinor,
+                )
+            })
             .collect::<Vec<_>>();
         let forfeited = credis
             .iter()
@@ -1383,11 +1391,85 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
                 outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(log).ok()
             })
             .count();
+        let burned_pledges = provider
+            .get_events(outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
+                    log,
+                )
+                .ok()
+            })
+            .count();
+        assert_eq!(burned_pledges, forfeited);
         (groups, forfeited, burned_tokens, burned_gratis)
     };
     assert_eq!(
         count(&clean),
-        (vec![(B256::from(group.to_word()), 3)], 3, 3, 3)
+        (
+            vec![(group.into(), ISSUANCE_ISO, REFERENCE_ISO, 3, expected)],
+            3,
+            3,
+            3,
+        )
+    );
+    // R5d: verify exact per-Credis cleanup effect log ordering:
+    // GratisBurnedFromPledge -> GratisPledgeBurned -> CredisForfeited -> Transfer(..., 0x0, id),
+    // followed by CredisSeriesClosed after the last member is cleaned up.
+    let cleanup_tags: Vec<&'static str> = clean
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| {
+            let addr = log.address;
+            let data = &log.data;
+            if addr == GRATIS_ADDRESS
+                && outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(data)
+                    .is_ok()
+            {
+                Some("GratisBurnedFromPledge")
+            } else if addr == outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS
+                && outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
+                    data,
+                )
+                .is_ok()
+            {
+                Some("GratisPledgeBurned")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::CredisForfeited::decode_log_data(data).is_ok()
+            {
+                Some("CredisForfeited")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::Transfer::decode_log_data(data)
+                    .is_ok_and(|ev| ev.to == Address::ZERO)
+            {
+                Some("BurnTransfer")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(data)
+                    .is_ok()
+            {
+                Some("CredisSeriesClosed")
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        cleanup_tags,
+        vec![
+            "CredisSeriesClosed",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+        ]
     );
     StorageHandle::enter(&mut clean, |storage| {
         assert_eq!(reserve(&storage), expected);
@@ -1452,5 +1534,26 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             "state after retry at {operation}"
         );
     }
+
+    // R5d: also verify retrying cleanup on the next UTC day (`lapsed + DAY`) after a rollback.
+    let (mut next_day_provider, _) = lapsed_group_of_three();
+    next_day_provider.fail_after_mutation_at(mutations - 1);
+    let failed = StorageHandle::enter(&mut next_day_provider, |storage| {
+        forfeit_block(&storage, lapsed)
+    });
+    assert!(failed.is_err());
+    next_day_provider.clear_mutation_failure();
+    let retry_next_day = lapsed + DAY;
+    StorageHandle::enter(&mut next_day_provider, |storage| {
+        assert_eq!(reserve(&storage), U256::ZERO);
+        assert_eq!(forfeit_block(&storage, retry_next_day).unwrap(), 1);
+        assert_eq!(reserve(&storage), expected);
+        assert_eq!(
+            forfeit_block(&storage, retry_next_day + CLOSED_DAY_DELAY).unwrap(),
+            0
+        );
+    });
+    assert_eq!(count(&next_day_provider), count(&clean));
+
     teardown();
 }

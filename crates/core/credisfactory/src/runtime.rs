@@ -72,7 +72,7 @@ pub fn issue_credis(
             return Err(CredisFactoryError::CcaStakeMismatch.into());
         }
         let mut credis = CredisContract::new(storage.clone());
-        let (id, _) = rules::issue_in_series(
+        let (id, newly_opened) = rules::issue_in_series(
             &mut credis,
             IssueCredisParams {
                 owner: r.credis_owner,
@@ -107,16 +107,33 @@ pub fn issue_credis(
         if paid != r.amount_minor || credis.get_credis(id)? != opened {
             return Err(CredisFactoryError::CredisChangedDuringIssuance.into());
         }
+        if newly_opened {
+            storage.emit_event(
+                CREDIS_FACTORY_ADDRESS,
+                alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisSeriesOpened {
+                    seriesId: opened.series_id.into(),
+                    issuanceCurrency: opened.issuance_currency,
+                    referenceCurrency: opened.reference_currency,
+                    callPriceMinor: opened.call_price_minor,
+                    callWindow: u64::from(opened.call_window_seconds),
+                    callThreshold: u64::from(opened.call_threshold_seconds),
+                    callNoticePeriod: u64::from(opened.call_notice_period_seconds),
+                    policyRate: opened.policy_rate,
+                }),
+            )?;
+        }
         storage.emit_event(
             CREDIS_FACTORY_ADDRESS,
             alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
                 credisId: id,
                 owner: r.credis_owner,
+                seriesId: opened.series_id.into(),
+                issuanceCurrency: opened.issuance_currency,
+                referenceCurrency: opened.reference_currency,
                 cca: caller,
                 asset: r.asset,
                 principalMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
-                callPriceMinor: opened.call_price_minor,
             }),
         )?;
         Ok((id, r.amount_minor))

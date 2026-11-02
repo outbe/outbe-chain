@@ -188,11 +188,6 @@ pub fn issue_in_series(
         let newly_opened = credis.create_credis_record(&record, call_start_day)?;
         credis.widen_scan_terms(&record)?;
 
-        credis.emit(outbe_credis::precompile::ICredis::Transfer {
-            from: Address::ZERO,
-            to: params.owner,
-            tokenId: credis_id,
-        })?;
         Ok((credis_id, newly_opened))
     })
 }
@@ -275,34 +270,27 @@ pub fn settle(
         credis.leave_series(series, credis_id)?;
     }
 
+    let total_paid = interest
+        .checked_add(principal_paid)
+        .ok_or(CredisError::ArithmeticOverflow)?;
     emit(
         &credis.storage,
-        &ICredisFactory::SettlementApplied {
+        &ICredisFactory::CredisSettled {
             credisId: credis_id,
-            interestPaidMinor: interest,
-            principalPaidMinor: principal_paid,
-            gratisReturnedMinor: gratis_released_minor,
-            outstandingPrincipalMinor: record.outstanding_principal_minor,
+            owner: record.owner,
+            asset: record.asset,
+            issuanceCurrency: record.issuance_currency,
+            referenceCurrency: record.reference_currency,
+            amountMinor: total_paid,
+            interestSettledMinor: interest,
+            principalSettledMinor: principal_paid,
         },
     )?;
-    if closed {
-        emit(
-            &credis.storage,
-            &ICredisFactory::CredisSettled {
-                credisId: credis_id,
-            },
-        )?;
-    }
-    credis.emit(outbe_credis::precompile::ICredis::MetadataUpdate {
-        _tokenId: credis_id,
-    })?;
 
     Ok(Repayment {
         interest,
         principal_paid,
-        total_paid: interest
-            .checked_add(principal_paid)
-            .ok_or(CredisError::ArithmeticOverflow)?,
+        total_paid,
         gratis_released_minor,
         asset: record.asset,
         closed,
@@ -372,9 +360,12 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
     )?;
     credis.emit(outbe_credis::precompile::ICredis::CredisForfeited {
         credisId: credis_id,
+        owner: record.owner,
         cca: record.cca,
-        gratisBurnedMinor: forfeit.forfeited_gratis_minor,
-        principalWrittenOffMinor: forfeit.forfeited_principal_minor,
+        asset: record.asset,
+        issuanceCurrency: record.issuance_currency,
+        referenceCurrency: record.reference_currency,
+        forfeitedPrincipalMinor: forfeit.forfeited_principal_minor,
     })?;
     credis.leave_series(record.series_id, credis_id)?;
     credis.take_series_unpaid_gratis(record.series_id, forfeit.forfeited_gratis_minor)?;

@@ -9,7 +9,6 @@ use alloy_primitives::{Bytes, B256, U256};
 use alloy_sol_types::{sol, SolError, SolEvent};
 use cucumber::{then, when};
 use outbe_primitives::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
-use outbe_primitives::storage::Storable;
 use outbe_primitives::time::SECONDS_PER_DAY_U32;
 
 use crate::features::entity_lifecycle::chain::{
@@ -94,10 +93,10 @@ fn called(world: &mut World) {
         CREDIS_ADDRESS,
         0,
         height,
-        ICredis::CredisGroupCalled {
-            groupKey: B256::from(
-                outbe_primitives::series_id::SeriesId::from_bytes(record.seriesId.0).to_word(),
-            ),
+        ICredis::CredisSeriesCalled {
+            seriesId: record.seriesId,
+            issuanceCurrency: record.issuanceCurrency,
+            referenceCurrency: record.referenceCurrency,
             calledAt: terms.calledAt,
             settlementDeadline: terms.settlementDeadline,
         },
@@ -146,12 +145,15 @@ fn pay_part(world: &mut World) {
     assert_receipt_event(
         &receipt,
         CREDIS_FACTORY_ADDRESS,
-        &ICredisFactory::SettlementApplied {
+        &ICredisFactory::CredisSettled {
             credisId: f.credis_id,
-            interestPaidMinor: interest,
-            principalPaidMinor: PART,
-            gratisReturnedMinor: returned,
-            outstandingPrincipalMinor: PRINCIPAL - PART,
+            owner: f.owner,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            amountMinor: amount,
+            interestSettledMinor: interest,
+            principalSettledMinor: PART,
         },
     );
     let after = snapshot(world);
@@ -295,9 +297,12 @@ fn burned(world: &mut World) {
         height,
         ICredis::CredisForfeited {
             credisId: f.credis_id,
+            owner: f.owner,
             cca: f.cca,
-            gratisBurnedMinor: burned,
-            principalWrittenOffMinor: principal_written_off,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedPrincipalMinor: principal_written_off,
         },
     );
     assert_single_event(
@@ -305,11 +310,12 @@ fn burned(world: &mut World) {
         CREDIS_ADDRESS,
         from,
         height,
-        ICredis::CredisGroupForfeited {
-            groupKey: B256::from(
-                outbe_primitives::series_id::SeriesId::from_bytes(lapsed.seriesId.0).to_word(),
-            ),
-            credis: 1,
+        ICredis::CredisSeriesClosed {
+            seriesId: lapsed.seriesId,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedCount: 1,
+            forfeitedAmountMinor: burned,
         },
     );
     let state = snapshot(world);
@@ -349,9 +355,12 @@ fn owner_forfeits(world: &mut World) {
         CREDIS_ADDRESS,
         &ICredis::CredisForfeited {
             credisId: f.credis_id,
+            owner: f.owner,
             cca: f.cca,
-            gratisBurnedMinor: f.gratis_minor,
-            principalWrittenOffMinor: PRINCIPAL,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedPrincipalMinor: PRINCIPAL,
         },
     );
 }

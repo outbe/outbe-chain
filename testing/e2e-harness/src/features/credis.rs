@@ -442,14 +442,30 @@ fn issue(world: &mut World) {
     assert_receipt_event(
         &receipt,
         CREDIS_FACTORY_ADDRESS,
+        &ICredisFactory::CredisSeriesOpened {
+            seriesId: series_id.into(),
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            callPriceMinor: dev_call_price(),
+            callWindow: u64::from(CredisParams::DEV.call_window_seconds),
+            callThreshold: u64::from(CredisParams::DEV.call_threshold_seconds),
+            callNoticePeriod: u64::from(CredisParams::DEV.call_notice_period_seconds),
+            policyRate: snapshot(world).policy_rate,
+        },
+    );
+    assert_receipt_event(
+        &receipt,
+        CREDIS_FACTORY_ADDRESS,
         &ICredisFactory::CredisIssued {
             credisId: id,
             owner: f.owner,
+            seriesId: series_id.into(),
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
             cca: f.cca,
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
-            callPriceMinor: dev_call_price(),
         },
     );
     assert_receipt_event(
@@ -614,23 +630,26 @@ fn repay(world: &mut World) {
         assert_receipt_event(
             &receipt,
             CREDIS_FACTORY_ADDRESS,
-            &ICredisFactory::SettlementApplied {
+            &ICredisFactory::CredisSettled {
                 credisId: f.credis_id,
-                interestPaidMinor: interest,
-                principalPaidMinor: principal,
-                gratisReturnedMinor: released,
-                outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
+                owner: f.owner,
+                asset: f.currency.asset,
+                issuanceCurrency: USD,
+                referenceCurrency: USD,
+                amountMinor: amount,
+                interestSettledMinor: interest,
+                principalSettledMinor: principal,
             },
         );
-        if payment_index == 2 {
-            assert_receipt_event(
-                &receipt,
-                CREDIS_FACTORY_ADDRESS,
-                &ICredisFactory::CredisSettled {
-                    credisId: f.credis_id,
-                },
-            );
-        }
+        assert_receipt_event(
+            &receipt,
+            addresses::GRATIS_FACTORY_ADDR,
+            &eth::IGratisFactory::GratisPledgeReleased {
+                credisId: f.credis_id,
+                source: f.user,
+                gratisMinor: released,
+            },
+        );
         let after = snapshot(world);
         let a = after.record.as_ref().expect("Credis after payment");
         assert_eq!(

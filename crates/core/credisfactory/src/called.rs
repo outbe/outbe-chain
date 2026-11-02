@@ -13,7 +13,7 @@
 //! every group anchored to it. Every run recomputes the count from oracle
 //! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 
 use outbe_credis::config::CredisParams;
@@ -31,7 +31,7 @@ use outbe_primitives::{
     error::Result,
     pass_budget::PassBudget,
     series_id::SeriesId,
-    storage::{dsl::Value, Storable, StorageHandle},
+    storage::{dsl::Value, StorageHandle},
 };
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
@@ -183,8 +183,12 @@ fn call_if_breached(
         return Ok(false);
     }
     let deadline = credis.record_series_called(series, now)?;
-    credis.emit(ICredis::CredisGroupCalled {
-        groupKey: B256::from(series.to_word()),
+    let issuance_currency = credis.series_issuance_currency.read(&series)?;
+    let reference_currency = credis.series_currency.read(&series)?;
+    credis.emit(ICredis::CredisSeriesCalled {
+        seriesId: series.into(),
+        issuanceCurrency: issuance_currency,
+        referenceCurrency: reference_currency,
         calledAt: now,
         settlementDeadline: deadline,
     })?;
