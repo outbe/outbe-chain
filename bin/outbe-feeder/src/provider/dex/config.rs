@@ -119,7 +119,7 @@ impl DexProviderConfig {
         check(
             matches!(
                 (self.name.as_str(), self.chain_id),
-                ("uniswap", 1) | ("pancakeswap", 56)
+                ("uniswap", 1 | 11155111) | ("pancakeswap", 56)
             ),
             DexError::UnsupportedChainOrName,
         )?;
