@@ -14,14 +14,17 @@ pub fn effective_state(
     deadline: u64,
     now: U256,
 ) -> EffectiveState {
-    if item.is_settled {
-        EffectiveState::Settled
-    } else if called_at != 0 && now > U256::from(deadline) {
-        EffectiveState::Forfeited
-    } else if called_at != 0 {
-        EffectiveState::Called
-    } else {
-        EffectiveState::Issued
+    use outbe_primitives::settlement::RightState;
+    match outbe_primitives::settlement::effective_state(
+        item.is_settled,
+        called_at,
+        deadline,
+        now.saturating_to::<u64>(),
+    ) {
+        RightState::Issued => EffectiveState::Issued,
+        RightState::Called => EffectiveState::Called,
+        RightState::Settled => EffectiveState::Settled,
+        RightState::Forfeited => EffectiveState::Forfeited,
     }
 }
 
@@ -101,6 +104,7 @@ pub struct LysisSeriesSeal {
     pub series_id: SeriesId,
     pub group_key: B256,
     pub full_day_after_issue: outbe_primitives::time::WorldwideDay,
+    pub issuance_currency: u16,
     pub reference_currency: u16,
     pub entry_price_minor: U256,
     pub call_terms: Option<CallTerms>,
@@ -109,7 +113,8 @@ pub struct LysisSeriesSeal {
 }
 
 /// Seals a Lysis series into its call group with its unclaimed Tributes and their exact load.
-pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> Result<()> {
+/// Returns `true` when the series had positive unclaimed Tributes and was sealed.
+pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> Result<bool> {
     storage.with_checkpoint(|| NodContract::new(storage.clone()).seal_lysis_series_state(seal))
 }
 
@@ -154,6 +159,18 @@ pub fn clean(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
 /// reissue calls this first, then removes the item and adds it to the new group.
 pub fn take_unpaid_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
     NodContract::new(storage.clone()).take_unpaid_load(group_key, load)
+}
+
+/// Removes `load` from both `group_key` and `(group_key, series_id)` open loads.
+pub fn take_series_unpaid_load(
+    storage: &StorageHandle<'_>,
+    group_key: B256,
+    series_id: SeriesId,
+    load: U256,
+) -> Result<()> {
+    let mut nod = NodContract::new(storage.clone());
+    nod.take_unpaid_load(group_key, load)?;
+    nod.take_series_unpaid_load(group_key, series_id, load)
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the group only if empty.

@@ -132,42 +132,46 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A new gem was issued (agent reward or merchant flow). `positionId`
-    ///         is the position a merchant gem drew on, 0 otherwise. `groupKey` names the
-    ///         call group that `IGem.GemGroupCalled` reports.
+    /// @notice A Gem sub-series was opened with a new call price.
+    event GemSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 entryPriceMinor,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod
+    );
+    /// @notice A new gem was issued (agent reward or merchant flow).
     event GemIssued(
         uint256 indexed gemId,
-        address owner,
-        uint256 promisLoadMinor,
-        uint256 entryPriceMinor,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 issuedAt,
-        uint256 callPriceMinor,
-        uint32 callWindow,
-        uint32 callThreshold,
-        uint32 callNoticePeriod,
-        uint256 positionId,
-        bytes32 indexed groupKey
+        bytes payload
     );
-    /// @notice A merchant sent Intex units into a new position. The currencies are the source
-    ///         series', and each gem drawn from it names its own.
-    event GemPositionIssued(
+    /// @notice A merchant sent Intex units into a new position.
+    event GemPositionCreated(
         uint256 indexed positionId,
-        address indexed merchant,
-        uint256 sourceIntexId,
-        uint256 capacityMinor,
+        address indexed owner,
+        bytes14 indexed seriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 issuedAt,
-        uint64 expiresAt
+        bytes payload
     );
-    /// @notice A gem's Cost Amount was settled into the Reserve: `paymentMinor` of `asset`.
+    /// @notice A gem's Cost Amount was settled into the Reserve: `amountMinor` of `asset`.
     event GemSettled(
-        uint256 indexed gemId, address owner, address asset, uint256 paymentMinor, uint16 settlementCurrency
+        uint256 indexed gemId,
+        address indexed owner,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 amountMinor
     );
-    /// @notice A settled gem right was mined: it burned to mine confidential Promis.
-    event GemMined(uint256 indexed gemId, address owner, uint256 promisLoadMinor);
     /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
     ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.
     event GemPositionGroupExpired(uint64 indexed expiryHour, uint32 positions, uint256 returnedCapacityMinor);

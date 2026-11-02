@@ -358,13 +358,13 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
     (group_key, items)
 }
 
-/// Each `NodGroupForfeited` as (Nods forfeited, Gratis load returned).
+/// Each `NodSeriesClosed` as (Nods forfeited, Gratis load returned).
 fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
         .get_events(NOD_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodGroupForfeited::decode_log_data(log).ok())
-        .map(|event| (event.nods, event.gratisLoadMinor))
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
 
@@ -770,8 +770,8 @@ fn a_breach_run_that_predates_the_group_does_not_call_it() {
     });
 }
 
-/// Q027: the issuance UTC day counts only when the Nod was issued at midnight.
-/// A second later drops that day and a threshold-length breach falls short.
+/// Both midnight (`00:00:00`) and a second later (`00:00:01`) start counting on the
+/// next UTC day, while a Nod issued on the previous day counts the full day starting at midnight.
 #[test]
 fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let scan_at = START + 30 * DAY;
@@ -782,7 +782,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
 
-    for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
+    for (issued_at, expected) in [(midnight - 1, 1u32), (midnight, 0u32), (midnight + 1, 0u32)] {
         harness(|storage| {
             let wwd = WorldwideDay::from_timestamp(issued_at).value();
             let item = issue_item(

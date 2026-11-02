@@ -44,15 +44,16 @@ pub(crate) fn call_if_breached(
 
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
+        let member = outbe_intex::api::get_series(storage, series_id)?;
         crate::notify::enqueue_notice(factory, crate::notify::pack_call_notice(series_id, now_ts))?;
+        intex.emit(IIntex::IntexSeriesCalled {
+            seriesId: series_id.into(),
+            issuanceCurrency: member.issuance_currency,
+            referenceCurrency: member.reference_currency,
+            calledAt: now_ts,
+            settlementDeadline: stamp.deadline,
+        })?;
     }
-
-    intex.emit(IIntex::IntexGroupCalled {
-        groupKey: group,
-        seriesIds: members.iter().map(|id| (*id).into()).collect(),
-        calledAt: now_ts,
-        settlementDeadline: stamp.deadline,
-    })?;
     Ok(members.len() as u32)
 }
 

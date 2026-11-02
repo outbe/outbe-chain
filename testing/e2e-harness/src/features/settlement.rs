@@ -656,9 +656,9 @@ mod tests {
     #[test]
     fn redemption_event_requires_exact_emitter_amount_and_one_occurrence() {
         let emitter = addresses::PROMIS_FACTORY_ADDR;
-        let event = eth::IPromisFactory::CoenMined {
+        let event = eth::IPromisFactory::CoenMinedFromPromis {
             account: Address::repeat_byte(1),
-            coenMinor: U256::from(123),
+            amountMinor: U256::from(123),
         };
         let encoded = event.encode_log_data();
         let log = serde_json::json!({

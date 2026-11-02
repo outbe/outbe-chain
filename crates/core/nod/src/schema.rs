@@ -316,4 +316,26 @@ pub struct NodContract {
     /// Unclaimed Tributes of the series; at zero its records are cleared.
     #[attribute(order = 109)]
     pub series_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
+
+    /// Series belonging to a call group, kept until `close_group` so `NodSeriesCalled`
+    /// and `NodSeriesClosed` emit per series.
+    #[attribute(order = 110)]
+    pub group_series:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<SeriesId>>,
+    /// Whether `group_series_key(group_key, series_id)` is listed in `group_series`.
+    #[attribute(order = 111)]
+    pub group_series_present: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// Issuance currency (ISO 4217 numeric) of the series.
+    #[attribute(order = 112)]
+    pub series_issuance_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
+    /// Reference currency (ISO 4217 numeric) of the series.
+    #[attribute(order = 113)]
+    pub series_reference_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
+    /// Unpaid Nod count of `(group_key, series_id)`, keyed by `group_series_key`.
+    #[attribute(order = 114)]
+    pub group_series_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Encrypted open load (`unpaid Nods + unclaimed Tributes`) of `(group_key, series_id)`.
+    #[attribute(order = 115)]
+    pub group_series_open_load_ct:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
 }

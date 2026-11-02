@@ -356,6 +356,26 @@ pub fn verify_promis_op_attestation(
     )
 }
 
+/// Verify a paired `MineGratisFromPromisV1` attestation tag.
+pub fn verify_mine_gratis_from_promis_attestation(
+    attestation_pub: &[u8; 32],
+    inputs_canonical_hash: B256,
+    result: &crate::protocol::MineGratisFromPromisResultV1,
+    tag: &[u8],
+) -> Result<(), TransportError> {
+    verify_attestation_tag(
+        attestation_pub,
+        || {
+            crate::protocol::mine_gratis_from_promis_attestation_preimage(
+                inputs_canonical_hash,
+                result,
+            )
+        },
+        tag,
+        TransportError::PromisOpAttestation,
+    )
+}
+
 /// Verify a standalone Fidelity cohort-op attestation tag. Same
 /// verify-then-discard semantics as [`verify_gratis_op_attestation`].
 pub fn verify_fidelity_cohort_attestation(

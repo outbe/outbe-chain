@@ -5,7 +5,7 @@
 //! and later blocks' slices through `slice`, against a seeded finalized daily
 //! series. This series is the only price source the production trigger reads.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
@@ -23,11 +23,10 @@ const AFTER_WINDOW: u64 = (CALL_LOOKBACK_DAYS as u64 + 2) * DAY;
 const UNPRICED_ISO: u16 = 392; // JPY
 
 fn state_of(storage: &StorageHandle<'_>, credis_id: U256) -> CredisState {
-    CredisContract::new(storage.clone())
+    let record = CredisContract::new(storage.clone())
         .get_credis(credis_id)
-        .unwrap()
-        .lifecycle_state()
-        .unwrap()
+        .unwrap();
+    outbe_credis::runtime::effective_state(&record, now_of(storage)).unwrap()
 }
 
 fn is_deleted(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
@@ -36,12 +35,11 @@ fn is_deleted(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
         .unwrap()
 }
 
-fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> B256 {
+fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> outbe_primitives::series_id::SeriesId {
     CredisContract::new(storage.clone())
         .get_credis(credis_id)
         .unwrap()
-        .group_key()
-        .expect("date step")
+        .series_id
 }
 
 /// The `n`th closed day back from the one closed at `at` (0 = the newest).
@@ -63,7 +61,7 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     credis_id
 }
 
-/// Rewrites the call terms sealed on a Credis's group, the way a switched profile
+/// Rewrites the call terms sealed on a Credis's series, the way a switched profile
 /// would have if the terms were still read live. Widens the currency's
 /// high-water mark alongside, exactly as `issue` does.
 fn reterm(
@@ -78,15 +76,15 @@ fn reterm(
     let window = window_days * SECONDS_PER_DAY_U32;
     let threshold = threshold_days * SECONDS_PER_DAY_U32;
     credis
-        .group_call_window_seconds
+        .series_call_window_seconds
         .write(&group, window)
         .unwrap();
     credis
-        .group_call_threshold_seconds
+        .series_call_threshold_seconds
         .write(&group, threshold)
         .unwrap();
     credis
-        .group_call_notice_period_seconds
+        .series_call_notice_period_seconds
         .write(&group, notice_days * SECONDS_PER_DAY_U32)
         .unwrap();
     outbe_primitives::call_breach::widen_scan_terms(
@@ -485,11 +483,11 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
     teardown();
 }
 
-/// A Credis opened at 00:00 counts its issuance day. One opened at 00:00:01 starts
-/// counting the next day, so the same threshold run falls one day short.
+/// Both a Credis opened at 00:00 and one opened at 00:00:01 start counting on the
+/// next UTC day, so the same threshold run falls one day short until the next day closes.
 #[test]
 fn the_issuance_day_counts_only_for_a_credis_issued_at_midnight() {
-    for (offset, called_at_threshold) in [(0, true), (1, false)] {
+    for (offset, called_at_threshold) in [(0, false), (1, false)] {
         let mut storage = env();
         StorageHandle::enter(&mut storage, |storage| {
             bootstrap(&storage, pledge_cost());
@@ -595,17 +593,17 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         let at = CREATED_AT + AFTER_WINDOW;
         let credis_id = open(&storage, 1);
 
-        // Re-point the Credis's group at an unregistered currency, so it prices off a
+        // Re-point the Credis's series at an unregistered currency, so it prices off a
         // series that does not exist, and index it there.
         {
             use outbe_primitives::call_bins;
             let credis = CredisContract::new(storage.clone());
             let record = credis.get_credis(credis_id).unwrap();
-            let group = record.group_key().expect("date step");
+            let group = record.series_id;
             let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
             call_bins::remove(&CallBins(&credis, REFERENCE_ISO), group).unwrap();
             call_bins::insert(&CallBins(&credis, UNPRICED_ISO), group, bin).unwrap();
-            credis.group_currency.write(&group, UNPRICED_ISO).unwrap();
+            credis.series_currency.write(&group, UNPRICED_ISO).unwrap();
         }
 
         // The seeded reference series is a full breach window, but this Credis is
@@ -697,12 +695,18 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
 }
 
 /// Opens a Credis on the fixture's own call anchor, which every such Credis of the
-/// day shares a group on.
+/// day shares a series on.
 fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u64) -> U256 {
     let reservation_id = seed_reservation(storage, owner, owner, pledge_stables());
     let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(reservation_id).unwrap().unwrap();
     reservation.call_anchor_price_minor = oracle_rate();
+    reservation.series_id = outbe_primitives::series_id::SeriesId::for_pair(
+        last_closed_day(now_of(storage)),
+        ISSUANCE_ISO,
+        REFERENCE_ISO,
+    )
+    .unwrap();
     router.reservations.update(&reservation).unwrap();
     pledge(storage, owner, reservation_id, nonce);
     fund_stake(storage, pledge_stake());
@@ -720,9 +724,9 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     outbe_primitives::call_bins::unpack_cursor(packed).1
 }
 
-fn is_indexed(storage: &StorageHandle<'_>, group: B256) -> bool {
+fn is_indexed(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::SeriesId) -> bool {
     CredisContract::new(storage.clone())
-        .call_group_slot
+        .call_series_slot
         .read(&group)
         .unwrap()
         != 0
@@ -832,8 +836,9 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
 #[test]
 fn an_owner_forfeit_mid_pass_leaves_the_rest_of_the_bin_to_the_scan() {
     let mut storage = env();
+    let ids = StorageHandle::enter(&mut storage, |storage| open_three(&storage));
+    storage.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut storage, |storage| {
-        let ids = open_three(&storage);
         let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
         fill_days(
@@ -987,16 +992,19 @@ fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
     }
 }
 
-fn queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
+fn queued_at(storage: &StorageHandle<'_>, group: outbe_primitives::series_id::SeriesId) -> u64 {
     CredisContract::new(storage.clone())
-        .called_group_slot
+        .called_series_slot
         .read(&group)
         .unwrap()
 }
 
-fn cleanup_queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
+fn cleanup_queued_at(
+    storage: &StorageHandle<'_>,
+    group: outbe_primitives::series_id::SeriesId,
+) -> u64 {
     CredisContract::new(storage.clone())
-        .cleanup_group_slot
+        .cleanup_series_slot
         .read(&group)
         .unwrap()
 }
@@ -1006,7 +1014,7 @@ fn forfeiting_several_credis_in_one_block_skips_none() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
-        let groups: Vec<B256> = ids.iter().map(|id| group_of(&storage, *id)).collect();
+        let groups: Vec<_> = ids.iter().map(|id| group_of(&storage, *id)).collect();
         call_by_hand(&storage, &ids, CREATED_AT);
 
         let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
@@ -1042,7 +1050,8 @@ fn a_forfeit_waits_for_the_day_its_deadline_falls_in_to_close() {
 
         advance_to(&storage, deadline + 1);
         assert_eq!(expire(&storage, deadline + 1), 0);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+        assert!(!is_deleted(&storage, ids[0]));
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Forfeited);
 
         advance_to(&storage, day_end);
         assert_eq!(expire(&storage, day_end), 1);
@@ -1267,7 +1276,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         assert_eq!(credis.call_sweep_day.read().unwrap(), day);
         assert_eq!(
             credis
-                .group_member_count(group_of(&storage, ids[0]))
+                .series_member_count(group_of(&storage, ids[0]))
                 .unwrap(),
             2
         );
@@ -1350,9 +1359,17 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         let groups = credis
             .iter()
             .filter_map(|log| {
-                outbe_credis::precompile::ICredis::CredisGroupForfeited::decode_log_data(log).ok()
+                outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(log).ok()
             })
-            .map(|event| (event.groupKey, event.credis))
+            .map(|event| {
+                (
+                    event.seriesId,
+                    event.issuanceCurrency,
+                    event.referenceCurrency,
+                    event.forfeitedCount,
+                    event.forfeitedAmountMinor,
+                )
+            })
             .collect::<Vec<_>>();
         let forfeited = credis
             .iter()
@@ -1371,18 +1388,95 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             .get_events(GRATIS_ADDRESS)
             .iter()
             .filter_map(|log| {
-                outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(log).ok()
+                outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(log).ok()
             })
             .count();
+        let burned_pledges = provider
+            .get_events(outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
+                    log,
+                )
+                .ok()
+            })
+            .count();
+        assert_eq!(burned_pledges, forfeited);
         (groups, forfeited, burned_tokens, burned_gratis)
     };
-    assert_eq!(count(&clean), (vec![(group, 3)], 3, 3, 3));
+    assert_eq!(
+        count(&clean),
+        (
+            vec![(group.into(), ISSUANCE_ISO, REFERENCE_ISO, 3, expected)],
+            3,
+            3,
+            3,
+        )
+    );
+    // R5d: verify exact per-Credis cleanup effect log ordering:
+    // GratisBurnedFromPledge -> GratisPledgeBurned -> CredisForfeited -> Transfer(..., 0x0, id),
+    // followed by CredisSeriesClosed after the last member is cleaned up.
+    let cleanup_tags: Vec<&'static str> = clean
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| {
+            let addr = log.address;
+            let data = &log.data;
+            if addr == GRATIS_ADDRESS
+                && outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(data)
+                    .is_ok()
+            {
+                Some("GratisBurnedFromPledge")
+            } else if addr == outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS
+                && outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
+                    data,
+                )
+                .is_ok()
+            {
+                Some("GratisPledgeBurned")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::CredisForfeited::decode_log_data(data).is_ok()
+            {
+                Some("CredisForfeited")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::Transfer::decode_log_data(data)
+                    .is_ok_and(|ev| ev.to == Address::ZERO)
+            {
+                Some("BurnTransfer")
+            } else if addr == CREDIS_ADDRESS
+                && outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(data)
+                    .is_ok()
+            {
+                Some("CredisSeriesClosed")
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(
+        cleanup_tags,
+        vec![
+            "CredisSeriesClosed",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+            "GratisBurnedFromPledge",
+            "GratisPledgeBurned",
+            "CredisForfeited",
+            "BurnTransfer",
+        ]
+    );
     StorageHandle::enter(&mut clean, |storage| {
         assert_eq!(reserve(&storage), expected);
         let credis = CredisContract::new(storage.clone());
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
-        assert_eq!(credis.group_member_count(group).unwrap(), 0);
+        assert_eq!(credis.series_member_count(group).unwrap(), 0);
         assert_eq!(queued_at(&storage, group), 0);
         assert_eq!(cleanup_queued_at(&storage, group), 0);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
@@ -1440,5 +1534,26 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             "state after retry at {operation}"
         );
     }
+
+    // R5d: also verify retrying cleanup on the next UTC day (`lapsed + DAY`) after a rollback.
+    let (mut next_day_provider, _) = lapsed_group_of_three();
+    next_day_provider.fail_after_mutation_at(mutations - 1);
+    let failed = StorageHandle::enter(&mut next_day_provider, |storage| {
+        forfeit_block(&storage, lapsed)
+    });
+    assert!(failed.is_err());
+    next_day_provider.clear_mutation_failure();
+    let retry_next_day = lapsed + DAY;
+    StorageHandle::enter(&mut next_day_provider, |storage| {
+        assert_eq!(reserve(&storage), U256::ZERO);
+        assert_eq!(forfeit_block(&storage, retry_next_day).unwrap(), 1);
+        assert_eq!(reserve(&storage), expected);
+        assert_eq!(
+            forfeit_block(&storage, retry_next_day + CLOSED_DAY_DELAY).unwrap(),
+            0
+        );
+    });
+    assert_eq!(count(&next_day_provider), count(&clean));
+
     teardown();
 }

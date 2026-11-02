@@ -450,13 +450,31 @@
   },
   {
     "type": "event",
-    "name": "GemGroupCalled",
+    "name": "GemSeriesCalled",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
+      },
+      {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "calledAt",
@@ -475,22 +493,40 @@
   },
   {
     "type": "event",
-    "name": "GemGroupForfeited",
+    "name": "GemSeriesClosed",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
       },
       {
-        "name": "gems",
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
         "type": "uint32",
         "indexed": false,
         "internalType": "uint32"
       },
       {
-        "name": "promisLoadMinor",
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

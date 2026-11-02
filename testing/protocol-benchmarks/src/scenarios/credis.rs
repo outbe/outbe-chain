@@ -163,6 +163,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         .map_err(|error| error.to_string())?;
 
     let contract = VaultRouterContract::new(storage.clone());
+    let profile = outbe_credis::config::read(&storage).map_err(|error| error.to_string())?;
     let reservation_id = U256::from(1);
     contract
         .reservations
@@ -184,6 +185,17 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate(),
             source: ALICE,
+            series_id: outbe_primitives::series_id::SeriesId::for_pair(
+                closed_day,
+                ISSUANCE_ISO,
+                REFERENCE_ISO,
+            )
+            .expect("series id"),
+            call_start_day: outbe_primitives::time::first_full_day(CREATED_AT).expect("date step"),
+            call_rate: profile.call_rate,
+            call_window_seconds: profile.call_window_seconds,
+            call_threshold_seconds: profile.call_threshold_seconds,
+            call_notice_period_seconds: profile.call_notice_period_seconds,
         })
         .map_err(|error| error.to_string())?;
     outbe_gratisfactory::runtime::pledge_gratis(

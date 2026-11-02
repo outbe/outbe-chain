@@ -84,9 +84,23 @@ interface IGem {
     /// @notice ERC-4906: emitted over the whole id range when a group is called, since
     ///         gem ids carry no order a narrower range could follow.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
-    /// @notice The daily Call scan force-called every gem in the group.
-    event GemGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
-    /// @notice The group's notice period lapsed: its `gems` unpaid gems are forfeited and
-    ///         their `promisLoadMinor` returned at once. The cleanup deletes them after.
-    event GemGroupForfeited(bytes32 indexed groupKey, uint32 gems, uint256 promisLoadMinor);
+    /// @notice The daily Call scan force-called every gem in the sub-series.
+    event GemSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
+    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unpaid gems are forfeited and
+    ///         their `forfeitedAmountMinor` returned at once. The cleanup deletes them after.
+    event GemSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
+    );
 }

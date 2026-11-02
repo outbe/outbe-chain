@@ -90,6 +90,38 @@ pub fn settlement_deadline_of(called_at: u64, notice_period: u32) -> u64 {
     called_at.saturating_add(u64::from(notice_period))
 }
 
+/// Lifecycle state of an Upton or series derived from its settlement and call facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RightState {
+    Issued,
+    Called,
+    Settled,
+    Forfeited,
+}
+
+/// Derives the lifecycle state of every right from its own facts:
+/// - `Settled`: `is_settled` is true (Nod and Gem stored `is_settled`, Intex Settled token, Credis `outstanding_principal == 0`).
+/// - `Forfeited`: not settled, the series or group is called (`called_at != 0`), and `now > deadline`.
+/// - `Called`: not settled, the series or group is called (`called_at != 0`), and `now <= deadline`.
+/// - `Issued`: all other cases.
+#[must_use]
+pub const fn effective_state(
+    is_settled: bool,
+    called_at: u64,
+    deadline: u64,
+    now: u64,
+) -> RightState {
+    if is_settled {
+        RightState::Settled
+    } else if called_at != 0 && now > deadline {
+        RightState::Forfeited
+    } else if called_at != 0 {
+        RightState::Called
+    } else {
+        RightState::Issued
+    }
+}
+
 /// Who pays a settlement, in which asset, and against which VWAP snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SettlementPayment {

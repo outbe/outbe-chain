@@ -123,24 +123,35 @@ interface IIntexFactory {
     function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
 
     /// @notice A new series was created from a cleared auction.
-    event IntexSeriesIssued(
-        bytes14 indexed seriesId, uint32 issuedUnits, uint256 entryPriceMinor, uint256 callPriceMinor
+    event IntexSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 entryPriceMinor,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod,
+        uint32 units,
+        uint256 unitPromisLoadMinor
     );
 
-    /// @notice `units` Issued Intexes of `seriesId` were settled.
-    event IntexSettled(bytes14 indexed seriesId, address indexed owner, uint256 units);
-
-    /// @notice Settled Intexes were burned and `promisMinor` Promis minted.
-    event IntexMined(bytes14 indexed seriesId, address indexed owner, uint256 units, uint256 promisMinor);
+    /// @notice `units` Issued Intexes of `intexId` were settled.
+    event IntexSettled(
+        uint256 indexed intexId,
+        address indexed owner,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 amountMinor,
+        uint32 units
+    );
 
     /// @notice All 8 sends of the series' call notice failed, so the chain sends it no more
     ///         and the targets were not told of the call.
     event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
 
-    /// @notice `proceedsMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
-    ///         `srcChainId` was burned and `creditedPromisMinor` (6 decimals) was added to the Promis
-    ///         limit pool.
-    event ProceedsBurned(
-        uint32 indexed emissionDay, uint32 indexed srcChainId, uint256 proceedsMinor, uint256 creditedPromisMinor
-    );
+    /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
+    ///         `srcChainId` was burned.
+    event IntexAuctionProceedsBurned(uint32 indexed emissionDay, uint32 indexed srcChainId, uint256 amountMinor);
 }

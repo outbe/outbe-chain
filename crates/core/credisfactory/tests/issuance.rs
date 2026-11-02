@@ -149,6 +149,8 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         IVaultRouter::StablesTarget::Credis,
     )?;
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
+    let closed_day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
+    let call_terms = outbe_credis::config::read(&storage)?;
     router.reservations.create(&LiquidityReservation {
         id: U256::ONE,
         asset: ASSET,
@@ -167,6 +169,13 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         reference_currency: 840,
         call_anchor_price_minor: U256::from(2_000_000),
         source: OWNER,
+        series_id: outbe_primitives::series_id::SeriesId::for_pair(closed_day, 840, 840)
+            .expect("series id"),
+        call_start_day: outbe_primitives::time::first_full_day(NOW).expect("date step"),
+        call_rate: call_terms.call_rate,
+        call_window_seconds: call_terms.call_window_seconds,
+        call_threshold_seconds: call_terms.call_threshold_seconds,
+        call_notice_period_seconds: call_terms.call_notice_period_seconds,
     })?;
 
     Ok(())
@@ -454,7 +463,7 @@ fn retry_issuance_and_cancel_expired(
             .journaled_state
             .logs()
             .iter()
-            .filter_map(|log| IGratisFactory::PledgeCancelled::decode_log_data(&log.data).ok())
+            .filter_map(|log| IGratisFactory::GratisPledgeCanceled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(cancelled.len(), 1);
         assert_eq!(
@@ -494,7 +503,7 @@ fn assert_payment_rollback(
         U256::ZERO,
         ICredisFactory::settleCredisCall {
             credisId: observation.credis_id,
-            amountMinor: U256::from(1_000_000)
+            amountCapMinor: U256::from(1_000_000)
         }
     );
     assert!(
@@ -568,7 +577,7 @@ fn settle_successful_issuance(
         U256::ZERO,
         ICredisFactory::settleCredisCall {
             credisId: credis_id,
-            amountMinor: U256::from(1_000_000)
+            amountCapMinor: U256::from(1_000_000)
         }
     );
     assert!(

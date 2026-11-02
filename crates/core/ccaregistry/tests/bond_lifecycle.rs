@@ -601,7 +601,7 @@ fn claim_by_tx(db: &mut CacheDB<EmptyDB>, pool: RewardPool, held: U256, requeste
         .expect("the claim emits GemIssued")
         .data;
     assert_eq!(issued.gemId, gem_id);
-    assert_eq!(issued.promisLoadMinor, load);
+    assert_eq!(issued.payload.as_ref(), &load.to_be_bytes::<32>());
     with_storage(db, |storage| {
         let gem = outbe_gem::api::get_view(&storage, gem_id).unwrap().unwrap();
         assert_eq!(gem.item.owner, CCA);

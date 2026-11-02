@@ -48,7 +48,7 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
             .iter()
             .any(|receipt| receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })),
         "fixture must forfeit a Nod during the block"
     );
@@ -206,7 +206,7 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })
         })
         .expect("CycleTick body mutation receipt");

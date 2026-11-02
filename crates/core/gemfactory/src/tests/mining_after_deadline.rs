@@ -3,9 +3,6 @@
 
 use super::*;
 use outbe_gem::GemParams;
-use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
-
-use crate::precompile::IGemFactory;
 
 /// Alice's and Bob's Gems of `load` share a group called at `T_NOW`;
 /// Alice's is settled after the call, so it keeps that `called_at`.
@@ -93,13 +90,20 @@ fn a_settled_gem_mines_after_the_settlement_deadline_while_its_unpaid_twin_is_re
         assert_eq!(decrypt_balance(&vk, ALICE, &blob).unwrap(), load);
     });
     let mined: Vec<_> = provider
-        .get_events(GEM_FACTORY_ADDRESS)
+        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
         .iter()
-        .filter_map(|log| IGemFactory::GemMined::decode_log_data(log).ok())
+        .filter_map(|log| {
+            outbe_promis::precompile::IPromis::PromisMinedFromGem::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(mined.len(), 1);
     assert_eq!(mined[0].gemId, paid);
-    assert_eq!(mined[0].owner, ALICE);
-    assert_eq!(mined[0].promisLoadMinor, load);
+    assert_eq!(mined[0].account, ALICE);
+    let sk = outbe_promis::enclave_client::test_enclave::state_key();
+    let vk = derive_view_key(&sk, ALICE).unwrap();
+    assert_eq!(
+        decrypt_balance(&vk, ALICE, &mined[0].encryptedAmountMinor).unwrap(),
+        load
+    );
     outbe_promis::enclave_client::test_enclave::uninstall();
 }

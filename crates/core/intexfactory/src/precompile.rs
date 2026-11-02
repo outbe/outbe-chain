@@ -5,7 +5,7 @@
 //! None accept value, except `distribute`, which burns auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolInterface};
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_intex::SeriesId;
@@ -23,10 +23,14 @@ use crate::runtime;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::distributeCall::SELECTOR];
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IIntexFactory.sol"
-);
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IIntexFactory.sol"
+    );
+}
+pub use abi::IIntexFactory;
 
 pub fn dispatch(
     storage: StorageHandle<'_>,

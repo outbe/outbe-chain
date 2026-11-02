@@ -419,9 +419,9 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         );
         assert_eq!(storage.balance(PROMIS_LIMIT_ADDRESS).unwrap(), U256::ZERO);
 
-        // §1.8 Control check: Promis total supply and ValidatorSet active stake are untouched.
+        // §1.8 Control check: Gratis pledged total supply and ValidatorSet active stake are untouched.
         assert_eq!(
-            outbe_promis::api::total_supply(storage.clone()).unwrap(),
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);

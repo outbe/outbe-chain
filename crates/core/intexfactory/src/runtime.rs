@@ -90,11 +90,17 @@ pub fn issue_intex(
 
     emit_event(
         storage,
-        crate::precompile::IIntexFactory::IntexSeriesIssued {
+        crate::precompile::IIntexFactory::IntexSeriesOpened {
             seriesId: params.series_id.into(),
-            issuedUnits: params.issued_units,
+            issuanceCurrency: params.issuance_currency,
+            referenceCurrency: params.reference_currency,
             entryPriceMinor: params.entry_price_minor,
             callPriceMinor: call_price_minor,
+            callWindow: u64::from(trigger.call_window_seconds),
+            callThreshold: u64::from(trigger.call_threshold_seconds),
+            callNoticePeriod: u64::from(trigger.call_notice_period_seconds),
+            units: params.issued_units,
+            unitPromisLoadMinor: U256::from(params.promis_load_minor),
         },
     )?;
 
@@ -285,9 +291,13 @@ pub fn settle_intex(
         emit_event(
             storage,
             crate::precompile::IIntexFactory::IntexSettled {
-                seriesId: series_id.into(),
+                intexId: outbe_intex::intex_id(series_id),
                 owner,
-                units,
+                asset,
+                issuanceCurrency: series.issuance_currency,
+                referenceCurrency: series.reference_currency,
+                amountMinor: quote.payment_minor,
+                units: settled_units,
             },
         )
     })

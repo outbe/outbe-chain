@@ -312,21 +312,25 @@ impl Lifecycle for NodLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
         let height = finalized_checkpoint(world).height;
-        let (captured_height, captured_id, group) = world
+        let (captured_height, captured_id, _group) = world
             .state
             .entity_lifecycle
             .nod_before_forfeit
             .expect("the Nod group captured before the notice lapsed");
         assert_eq!((captured_height, captured_id), (from, id));
+        let surviving = read_nod(world, nod(world, 0));
         assert_single_event(
             &url,
             addresses::NOD_ADDR,
             from,
             height,
-            eth::INod::NodGroupForfeited {
-                groupKey: group,
-                nods: 1,
-                gratisLoadMinor: load,
+            eth::INod::NodSeriesClosed {
+                seriesId: surviving.seriesId,
+                issuanceCurrency: surviving.issuanceCurrency,
+                referenceCurrency: surviving.referenceCurrency,
+                forfeitedCount: 1,
+                forfeitedTributeCount: 0,
+                forfeitedAmountMinor: load,
             },
         );
         assert_eq!(

@@ -543,31 +543,23 @@ impl Lifecycle for IntexLifecycle {
         );
         let height = finalized_checkpoint(world).height;
         // Both series were issued into one call group, which is forfeited as one.
-        let [series, _] = expiring_series(world);
-        let group = eth::read_call_at(
-            &url,
-            addresses::INTEX_ADDR,
-            &eth::IIntex::getIntexSeriesCall {
-                intexId: venue_probes::intex_id(series),
-            },
-            from,
-        )
-        .expect("the expiring series was live before the notice lapsed")
-        .groupKey;
-        assert_single_event(
-            &url,
-            addresses::INTEX_ADDR,
-            from,
-            height,
-            eth::IIntex::IntexGroupForfeited {
-                groupKey: group,
-                forfeitedUnits: forfeited
-                    .iter()
-                    .map(|(_, units, _)| u64::from(*units))
-                    .sum(),
-                returnedPromisMinor: want - before,
-            },
-        );
+        for ((series, units, returned), issuance_currency) in
+            forfeited.iter().zip([GBP_ISO, JPY_ISO])
+        {
+            assert_single_event(
+                &url,
+                addresses::INTEX_ADDR,
+                from,
+                height,
+                eth::IIntex::IntexSeriesClosed {
+                    seriesId: *series,
+                    issuanceCurrency: issuance_currency,
+                    referenceCurrency: USD_ISO,
+                    forfeitedCount: *units,
+                    forfeitedAmountMinor: *returned,
+                },
+            );
+        }
         assert_eq!(
             eth::read_call_at(
                 &url,

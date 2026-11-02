@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 use outbe_credis::config::CredisParams;
 use outbe_oracle::window::VwapSnapshotId;
@@ -191,12 +191,19 @@ fn prepare(world: &mut World) {
         &eth::IGratis::opNonceOfCall { account: user },
     )
     .expect("Gratis mint nonce");
+    let offer_public_key = world
+        .localnet
+        .node_offer_public(1)
+        .expect("TEE offer public key");
+    let encrypted_promis_minor =
+        outbe_tee::offer_encrypt::encrypt_tee_amount(&offer_public_key, INITIAL_GRATIS)
+            .expect("encrypt mineGratis amount");
     send(
         &url,
         addresses::PROMIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IPromisFactory::mineGratisCall {
-            promisMinor: INITIAL_GRATIS,
+            encryptedPromisMinor: encrypted_promis_minor.into(),
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 &outbe_tee_enclave::promis::ModifyOperation {
@@ -401,7 +408,7 @@ fn pledge(world: &mut World) {
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
+        event::<eth::IGratisFactory::GratisPledgeCreated>(&receipt, addresses::GRATIS_FACTORY_ADDR);
     assert_eq!(
         (pledged.reservationId, pledged.source, pledged.gratisMinor),
         (f.reservation, f.user, reservation.gratisMinor)
@@ -428,23 +435,37 @@ fn issue(world: &mut World) {
         Some(stake),
     );
     let block = credis::receipt_height(&receipt);
-    let mut preimage = Vec::with_capacity(68);
-    preimage.extend_from_slice(f.cca.as_slice());
-    preimage.extend_from_slice(f.owner.as_slice());
-    preimage.extend_from_slice(f.currency.asset.as_slice());
-    preimage.extend_from_slice(&block.to_be_bytes());
-    let id = U256::from_be_bytes(keccak256(preimage).0);
+    let issued_at = receipt_timestamp(&url, &receipt);
+    let series_id =
+        outbe_credis::CredisContract::series_of(issued_at, USD, USD).expect("series id");
+    let id = outbe_credis::CredisContract::generate_credis_id(series_id, f.owner, block);
+    assert_receipt_event(
+        &receipt,
+        CREDIS_FACTORY_ADDRESS,
+        &ICredisFactory::CredisSeriesOpened {
+            seriesId: series_id.into(),
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            callPriceMinor: dev_call_price(),
+            callWindow: u64::from(CredisParams::DEV.call_window_seconds),
+            callThreshold: u64::from(CredisParams::DEV.call_threshold_seconds),
+            callNoticePeriod: u64::from(CredisParams::DEV.call_notice_period_seconds),
+            policyRate: snapshot(world).policy_rate,
+        },
+    );
     assert_receipt_event(
         &receipt,
         CREDIS_FACTORY_ADDRESS,
         &ICredisFactory::CredisIssued {
             credisId: id,
             owner: f.owner,
+            seriesId: series_id.into(),
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
             cca: f.cca,
             asset: f.currency.asset,
             principalMinor: PRINCIPAL,
             gratisMinor: f.gratis_minor,
-            callPriceMinor: dev_call_price(),
         },
     );
     assert_receipt_event(
@@ -459,7 +480,7 @@ fn issue(world: &mut World) {
     assert_receipt_event(
         &receipt,
         addresses::GRATIS_FACTORY_ADDR,
-        &eth::IGratisFactory::PledgeSentToCredis {
+        &eth::IGratisFactory::GratisPledgeSentToCredis {
             reservationId: f.reservation,
             credisId: id,
         },
@@ -589,7 +610,7 @@ fn repay(world: &mut World) {
             &f.owner_key,
             &ICredisFactory::settleCredisCall {
                 credisId: f.credis_id,
-                amountMinor: amount,
+                amountCapMinor: amount,
             },
             None,
         );
@@ -609,23 +630,26 @@ fn repay(world: &mut World) {
         assert_receipt_event(
             &receipt,
             CREDIS_FACTORY_ADDRESS,
-            &ICredisFactory::SettlementApplied {
+            &ICredisFactory::CredisSettled {
                 credisId: f.credis_id,
-                interestPaidMinor: interest,
-                principalPaidMinor: principal,
-                gratisReturnedMinor: released,
-                outstandingPrincipalMinor: p.outstandingPrincipalMinor - principal,
+                owner: f.owner,
+                asset: f.currency.asset,
+                issuanceCurrency: USD,
+                referenceCurrency: USD,
+                amountMinor: amount,
+                interestSettledMinor: interest,
+                principalSettledMinor: principal,
             },
         );
-        if payment_index == 2 {
-            assert_receipt_event(
-                &receipt,
-                CREDIS_FACTORY_ADDRESS,
-                &ICredisFactory::CredisSettled {
-                    credisId: f.credis_id,
-                },
-            );
-        }
+        assert_receipt_event(
+            &receipt,
+            addresses::GRATIS_FACTORY_ADDR,
+            &eth::IGratisFactory::GratisPledgeReleased {
+                credisId: f.credis_id,
+                source: f.user,
+                gratisMinor: released,
+            },
+        );
         let after = snapshot(world);
         let a = after.record.as_ref().expect("Credis after payment");
         assert_eq!(
@@ -660,7 +684,7 @@ fn repay(world: &mut World) {
         assert_eq!(after.native, before.native - fee(&approval) - fee(&receipt));
         assert_eq!(after.liquid, before.liquid + released);
         assert_eq!(after.pledged, before.pledged - released);
-        assert_eq!(a.interestPaidMinor, f.interest_paid + interest);
+        assert_eq!(a.interestSettledMinor, f.interest_paid + interest);
         world.state.credis.as_mut().expect("fixture").interest_paid += interest;
     }
 }

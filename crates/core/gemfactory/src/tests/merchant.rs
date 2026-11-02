@@ -755,10 +755,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
         )
         .unwrap();
         let wallet_gem = issue_at_live_rate(&storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
-        let expected = [(merchant_gem, position), (wallet_gem, U256::ZERO)].map(|(gem_id, pos)| {
-            let item = gem_view(&storage, gem_id);
-            (item, pos, gem_item(&storage, gem_id).group_key)
-        });
+        let expected = [merchant_gem, wallet_gem].map(|gem_id| gem_view(&storage, gem_id));
         (position, expected)
     });
 
@@ -769,30 +766,42 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
         .map(|log| log.data)
         .collect();
     assert_eq!(issued.len(), 2);
-    for (event, (item, position_id, group)) in issued.iter().zip(&expected) {
+    for (event, item) in issued.iter().zip(&expected) {
         assert_eq!(event.gemId, item.item.gem_id);
-        assert_eq!(event.callPriceMinor, item.terms.call_price_minor);
-        assert_eq!(event.callWindow, item.terms.call_window_seconds);
-        assert_eq!(event.callThreshold, item.terms.call_threshold_seconds);
+        assert_eq!(event.owner, item.item.owner);
         assert_eq!(
-            event.callNoticePeriod,
-            item.terms.call_notice_period_seconds
+            outbe_intex::SeriesId::from(event.seriesId),
+            item.item.series_id
         );
-        assert_eq!(event.positionId, *position_id);
-        assert_eq!(event.groupKey, *group);
-        assert!(!group.is_zero());
+        assert_eq!(event.subSeriesId, item.item.sub_series_id);
+        assert_eq!(event.issuanceCurrency, item.item.issuance_currency);
+        assert_eq!(event.referenceCurrency, item.item.reference_currency);
+        assert_eq!(
+            event.payload.as_ref(),
+            item.item.promis_load_minor.to_be_bytes::<32>().as_slice()
+        );
     }
 
     let opened: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemPositionIssued::decode_log(log).ok())
+        .filter_map(|log| crate::precompile::IGemFactory::GemPositionCreated::decode_log(log).ok())
         .map(|log| log.data)
         .collect();
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0].positionId, position);
-    assert_eq!(opened[0].merchant, ALICE);
-    assert_eq!(opened[0].capacityMinor, sent_capacity(six_decimal_u128()));
-    assert_eq!(opened[0].expiresAt, T_NOW + POSITION_VALIDITY_SECONDS);
+    assert_eq!(opened[0].owner, ALICE);
+    assert_eq!(
+        outbe_intex::SeriesId::from(opened[0].seriesId),
+        source_series_id()
+    );
+    assert_eq!(opened[0].issuanceCurrency, 840);
+    assert_eq!(opened[0].referenceCurrency, 840);
+    assert_eq!(
+        opened[0].payload.as_ref(),
+        sent_capacity(six_decimal_u128())
+            .to_be_bytes::<32>()
+            .as_slice()
+    );
 }
 
 fn set_source_price(storage: &StorageHandle<'_>, price: U256) {
@@ -825,9 +834,10 @@ fn merchant_gem_to(
 #[test]
 fn a_series_numbers_each_source_call_price_on_first_use() {
     let unit = six_decimal_unit();
-    with_storage(Some(U256::from(2u64) * unit), |storage| {
-        seed_day_vwap(storage, 840, U256::from(2u64) * unit);
-        let id = seed_and_send(storage, U256::from(3u64) * unit, six_decimal_u128());
+    let mut provider = test_storage(Some(U256::from(2u64) * unit));
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_day_vwap(&storage, 840, U256::from(2u64) * unit);
+        let id = seed_and_send(&storage, U256::from(3u64) * unit, six_decimal_u128());
         // (source VWAP, sub-series): above the market numbers it, at or below takes 0.
         for (owner, source, sub_series) in [
             (0x31, 3u64, 1u16),
@@ -837,9 +847,9 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
             (0x35, 2, 0),
             (0x36, 4, 2),
         ] {
-            set_source_price(storage, U256::from(source) * unit);
-            let gem_id = merchant_gem_to(storage, id, Address::repeat_byte(owner)).unwrap();
-            let item = gem_item(storage, gem_id);
+            set_source_price(&storage, U256::from(source) * unit);
+            let gem_id = merchant_gem_to(&storage, id, Address::repeat_byte(owner)).unwrap();
+            let item = gem_item(&storage, gem_id);
             assert_eq!(item.sub_series_id, sub_series, "source {source}");
             assert_eq!(
                 gem_id,
@@ -852,6 +862,20 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
             );
         }
     });
+    let opened: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
+        .map(|log| (log.data.subSeriesId, log.data.entryPriceMinor))
+        .collect();
+    assert_eq!(
+        opened,
+        vec![
+            (1, U256::from(3u64) * unit),
+            (2, U256::from(4u64) * unit),
+            (0, U256::from(2u64) * unit),
+        ]
+    );
 }
 
 #[test]

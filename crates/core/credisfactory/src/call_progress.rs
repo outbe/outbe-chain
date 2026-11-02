@@ -8,7 +8,6 @@ use outbe_primitives::{day_pass::PassDays, error::Result, storage::StorageHandle
 use crate::called::breach_terms;
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory::CallProgress;
-use crate::rules::date_step_error;
 
 pub(crate) fn call_progress(storage: &StorageHandle<'_>, credis_id: U256) -> Result<CallProgress> {
     let credis = CredisContract::new(storage.clone());
@@ -17,7 +16,7 @@ pub(crate) fn call_progress(storage: &StorageHandle<'_>, credis_id: U256) -> Res
     {
         return Err(CredisFactoryError::CredisNotIssued.into());
     }
-    let terms = breach_terms(&credis, record.group_key().map_err(date_step_error)?)?;
+    let terms = breach_terms(&credis, record.series_id)?;
     let pass = PassDays {
         current: credis.call_sweep_day.read()?,
         latest: credis.call_latest_day.read()?,

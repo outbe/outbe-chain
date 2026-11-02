@@ -44,6 +44,8 @@ pub enum CredisFactoryError {
     NothingOutstanding,
     #[error("only the Credis owner can forfeit it")]
     NotCredisOwner,
+    #[error("Credis cannot be forfeited in its issue block")]
+    CannotForfeitInIssueBlock,
     #[error("payoff overflow")]
     PayoffOverflow,
     #[error("asset decimals undecodable")]
@@ -97,6 +99,9 @@ impl From<CredisFactoryError> for PrecompileError {
             }
             CredisFactoryError::NothingOutstanding => revert_with(I::NothingOutstanding {}),
             CredisFactoryError::NotCredisOwner => revert_with(I::NotCredisOwner {}),
+            CredisFactoryError::CannotForfeitInIssueBlock => {
+                revert_with(I::CannotForfeitInIssueBlock {})
+            }
             CredisFactoryError::PayoffOverflow => revert_with(I::PayoffOverflow {}),
             CredisFactoryError::AssetDecimalsUndecodable => {
                 revert_with(I::AssetDecimalsUndecodable {})

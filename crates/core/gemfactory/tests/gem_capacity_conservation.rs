@@ -167,13 +167,13 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
         .get_events(GEM_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
         })
         .collect::<Vec<_>>();
     assert_eq!(
         expired
             .iter()
-            .map(|event| u64::from(event.gems))
+            .map(|event| u64::from(event.forfeitedCount))
             .sum::<u64>()
             + live_count,
         rights.len() as u64
@@ -181,7 +181,7 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
     assert_eq!(
         expired
             .iter()
-            .map(|event| event.promisLoadMinor)
+            .map(|event| event.forfeitedAmountMinor)
             .sum::<U256>(),
         returned
     );
@@ -297,9 +297,9 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         .get_events(GEM_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
         })
-        .map(|event| (event.gems, event.promisLoadMinor))
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect::<Vec<_>>();
     assert_eq!(forfeited, vec![(4, total - paid_load)]);
 
