@@ -1044,6 +1044,14 @@ mod vote_target {
         )
     }
 
+    fn upgrade_on(chain_id: u32, call_data: &str) -> String {
+        format!(
+            r#"{{"operation":"upgradeContract","chainId":{chain_id},"proxy":"{:#x}","implementation":"{:#x}","callData":"{call_data}"}}"#,
+            bridge(),
+            v(0x9a)
+        )
+    }
+
     fn link_arbitrum() -> String {
         format!(
             r#"{{"operation":"linkBridges","remoteChainId":{ARBITRUM},"bridge":"{:#x}","adapter":"{:#x}","remoteBridge":"{:#x}","remoteAdapter":"{:#x}"}}"#,
@@ -1121,6 +1129,8 @@ mod vote_target {
                 hook(9)
             ),
             format!(r#"{{"operation":"removeHyperlaneChain","chainId":{ARBITRUM}}}"#),
+            upgrade_on(LOCAL, "0x"),
+            upgrade_on(ARBITRUM, "0x8129fc1c"),
         ];
         for payload in &valid {
             CrosschainVoteTarget
@@ -1139,6 +1149,10 @@ mod vote_target {
             link_arbitrum().replace(&ARBITRUM.to_string(), &LOCAL.to_string()),
             link_arbitrum().replace('}', r#","transport":"layerZero"}"#),
             format!(r#"{{"operation":"removeHyperlaneChain","chainId":{LOCAL}}}"#),
+            upgrade_on(0, "0x"),
+            upgrade_on(LOCAL, "0x")
+                .replace(&format!("{:#x}", v(0x9a)), &format!("{:#x}", Address::ZERO)),
+            upgrade_on(LOCAL, "0x").replace(r#","callData":"0x""#, ""),
         ];
         for payload in &invalid {
             assert!(
@@ -1228,6 +1242,34 @@ mod vote_target {
         let sent = sub_calls_from(&p, start);
         assert_eq!(sent.len(), 1);
         assert_eq!(remote_calls(&sent[0].1), (SEPOLIA, vec![(bridge(), pause)]));
+    }
+
+    #[test]
+    fn upgrade_contract_upgrades_the_proxy_locally_or_through_the_remote_account() {
+        let upgrade = Bytes::from(
+            crate::actions::common::IUUPSUpgradeable::upgradeToAndCallCall {
+                newImplementation: v(0x9a),
+                data: Bytes::from_static(&[0x81, 0x29, 0xfc, 0x1c]),
+            }
+            .abi_encode(),
+        );
+
+        let mut p = initialized_provider();
+        approve(&mut p, &upgrade_on(LOCAL, "0x8129fc1c"));
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &upgrade_on(LOCAL, "0x8129fc1c")).unwrap();
+        assert_eq!(sub_calls_from(&p, start), [(bridge(), upgrade.clone())]);
+
+        let mut p = initialized_provider();
+        approve(&mut p, &upgrade_on(SEPOLIA, "0x8129fc1c"));
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &upgrade_on(SEPOLIA, "0x8129fc1c")).unwrap();
+        let sent = sub_calls_from(&p, start);
+        assert_eq!(sent.len(), 1);
+        assert_eq!(
+            remote_calls(&sent[0].1),
+            (SEPOLIA, vec![(bridge(), upgrade)])
+        );
     }
 
     #[test]

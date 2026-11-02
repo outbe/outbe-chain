@@ -4,10 +4,11 @@
 //! them through the executor. A chain id is also the Hyperlane domain of that
 //! chain.
 
+pub(crate) mod common;
 pub(crate) mod crosschain;
 pub(crate) mod tokens;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use outbe_hyperlanecontroller::RemoteCall;
 use outbe_primitives::error::Result;
 use outbe_vote::errors::VoteError;
@@ -22,6 +23,17 @@ use serde::Deserialize;
     deny_unknown_fields
 )]
 pub enum Action {
+    /// Upgrades the UUPS proxy `proxy` on `chain_id` to `implementation`, and
+    /// then runs `call_data` on it (`proxy.upgradeToAndCall`). Empty
+    /// `call_data` is a plain upgrade. With the current implementation,
+    /// `call_data` runs an owner function, for example a configuration
+    /// change.
+    UpgradeContract {
+        chain_id: u32,
+        proxy: Address,
+        implementation: Address,
+        call_data: Bytes,
+    },
     /// Pauses or unpauses the bridge on `chain_id`.
     SetBridgePaused {
         chain_id: u32,
@@ -88,6 +100,12 @@ impl Action {
             serde_json::from_slice(payload).map_err(|_| VoteError::InvalidPayload)?;
         let remote = |chain_id: &u32| *chain_id != 0 && u64::from(*chain_id) != outbe;
         let valid = match &action {
+            Self::UpgradeContract {
+                chain_id,
+                proxy,
+                implementation,
+                ..
+            } => *chain_id != 0 && !proxy.is_zero() && !implementation.is_zero(),
             Self::SetBridgePaused {
                 chain_id, bridge, ..
             } => *chain_id != 0 && !bridge.is_zero(),
@@ -131,6 +149,16 @@ impl Action {
     /// The owner calls of the action. `outbe` is the chain id of this chain.
     pub fn calls(&self, outbe: u32) -> Calls {
         match self {
+            Self::UpgradeContract {
+                chain_id,
+                proxy,
+                implementation,
+                call_data,
+            } => Calls::on(
+                *chain_id,
+                outbe,
+                vec![common::upgrade(*proxy, *implementation, call_data.clone())],
+            ),
             Self::SetBridgePaused {
                 chain_id,
                 bridge,
