@@ -1,13 +1,14 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
-use crate::ism::{accept_remote_ism, call, call_local};
+use crate::ism::accept_remote_ism;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{IOwnable, IStorageMultisigIsm};
+use crate::sol_ext::{ICrosschainGov, IOwnable, IStorageMultisigIsm};
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -246,4 +247,38 @@ pub fn validate_validators(
         }
     }
     Ok(())
+}
+
+// Owner calls. The controller owns no contract: it calls the owner
+// (`CROSSCHAIN_GOV_ADDRESS`) like a contract, `callLocal` for a call on Outbe
+// and `callRemote` for a call on another chain. The owner checks that the
+// caller is in its owner-caller list.
+
+/// A zero-value call of `to`.
+pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainGov::Call {
+    ICrosschainGov::Call {
+        to,
+        value: U256::ZERO,
+        data: data.into(),
+    }
+}
+
+/// The owner calls `call.to` on Outbe.
+pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainGov::Call) -> Result<()> {
+    let data = ICrosschainGov::callLocalCall { call }.abi_encode();
+    storage
+        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
+}
+
+/// The owner runs `calls` on `domain` through its Interchain Account.
+pub(crate) fn call_remote(
+    storage: &StorageHandle,
+    domain: u32,
+    calls: Vec<ICrosschainGov::Call>,
+) -> Result<()> {
+    let data = ICrosschainGov::callRemoteCall { domain, calls }.abi_encode();
+    storage
+        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
 }
