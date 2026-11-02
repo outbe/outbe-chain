@@ -90,7 +90,6 @@ tee:
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys    # code files for the `contracts` section
-# canon_dir: bin/outbe-genesis-cli/canon # metacanon.md / canon.md source
 
 # Protocol timings, copied verbatim into config.outbeProtocol.
 # ONLY a `test-protocol-overrides` build accepts this field; a production

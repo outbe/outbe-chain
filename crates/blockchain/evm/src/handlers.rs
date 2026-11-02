@@ -6,7 +6,6 @@
 pub mod vote {
     use alloy_primitives::{Address, U256};
     use outbe_coderegistry::vote_target::CodePatchVoteTarget;
-    use outbe_governance::vote_target::GovernanceVoteTarget;
     use outbe_hyperlanecontroller::CrosschainVoteTarget;
     use outbe_l2registry::L2RegistryVoteTarget;
     use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
@@ -26,7 +25,6 @@ pub mod vote {
     use outbe_vote::schema::ProposalStatus;
 
     static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
-    static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
     static L2_REGISTRY_VOTE_TARGET: L2RegistryVoteTarget = L2RegistryVoteTarget;
     static CODE_PATCH_VOTE_TARGET: CodePatchVoteTarget = CodePatchVoteTarget;
     static VAULT_ROUTER_VOTE_TARGET: VaultRouterVoteTarget = VaultRouterVoteTarget;
@@ -35,7 +33,6 @@ pub mod vote {
         StablecoinFactoryVoteTarget;
     static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[
         &UPDATE_VOTE_TARGET,
-        &GOVERNANCE_VOTE_TARGET,
         &L2_REGISTRY_VOTE_TARGET,
         &CODE_PATCH_VOTE_TARGET,
         &VAULT_ROUTER_VOTE_TARGET,

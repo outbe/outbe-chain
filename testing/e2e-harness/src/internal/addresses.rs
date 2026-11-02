@@ -64,8 +64,6 @@ pub(crate) const AGENT_REWARD_ADDR: Address =
     address!("0x000000000000000000000000000000000000100B");
 /// Protocol log emitter for `OutbeFailure` soft failures.
 pub(crate) const ZEROFEE_LOG_ADDR: Address = address!("0x000000000000000000000000000000000000EE06");
-/// Governance precompile (canon / OIP / GIP).
-pub(crate) const GOVERNANCE_ADDR: Address = address!("0x0000000000000000000000000000000000001018");
 /// Governed L2 network registry view precompile and Vote target.
 pub(crate) const L2_REGISTRY_ADDR: Address = address!("0x000000000000000000000000000000000000EE0E");
 /// Stablecoin Factory discovery and Vote target.

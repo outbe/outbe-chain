@@ -13,8 +13,8 @@ use crate::error::GenesisError;
 use crate::inputs::{SeedInputs, SeedOptions};
 use crate::launch_bundle;
 use crate::network::{
-    base_profile_path, deep_merge, default_canon_dir, default_contracts_dir, profiles_dir,
-    DEFAULT_CHAIN_ID, DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS, DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
+    base_profile_path, deep_merge, default_contracts_dir, profiles_dir, DEFAULT_CHAIN_ID,
+    DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS, DEFAULT_DKG_PREPARE_WINDOW_BLOCKS,
     DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS, MAINNET_CHAIN_ID,
     MAX_GENESIS_AGE_SECONDS, SEED_SECTIONS,
 };
@@ -273,11 +273,6 @@ pub fn run_seed_stage(
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| default_contracts_dir().display().to_string());
-    let canon_dir = config
-        .get("canon_dir")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| default_canon_dir().display().to_string());
     let fresh_metadosis = config
         .get("fresh_metadosis")
         .and_then(Value::as_bool)
@@ -286,7 +281,6 @@ pub fn run_seed_stage(
     let mut seeded = inputs.base_genesis.clone();
     let options = SeedOptions {
         contracts_dir: Some(contracts_dir),
-        canon_dir: Some(canon_dir),
         worldwide_day,
         fresh_metadosis,
     };
@@ -362,9 +356,6 @@ pub fn seed_genesis_from_config(
         None => {
             settings.insert("worldwide_day".to_owned(), Value::Null);
         }
-    }
-    if let Some(canon_dir) = &options.canon_dir {
-        settings.insert("canon_dir".to_owned(), Value::String(canon_dir.clone()));
     }
     if options.fresh_metadosis {
         settings.insert("fresh_metadosis".to_owned(), Value::Bool(true));

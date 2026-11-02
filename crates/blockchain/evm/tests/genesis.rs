@@ -95,7 +95,6 @@ fn run_seed_genesis(
             worldwide_day: None,
             fresh_metadosis: false,
             contracts_dir: None,
-            canon_dir: None,
         },
     )
     .expect("run_seed_cli");

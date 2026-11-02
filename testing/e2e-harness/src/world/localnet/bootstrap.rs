@@ -345,7 +345,6 @@ impl Localnet {
                 worldwide_day: Some(worldwide_day_num),
                 fresh_metadosis: true,
                 contracts_dir: Some(self.cfg.repo.join("contracts/predeploys")),
-                canon_dir: Some(self.cfg.repo.join("bin/outbe-genesis-cli/canon")),
             },
         )?;
 
@@ -979,7 +978,6 @@ mod tests {
                 worldwide_day: None,
                 fresh_metadosis: false,
                 contracts_dir: Some(localnet.cfg.repo.join("contracts/predeploys")),
-                canon_dir: Some(localnet.cfg.repo.join("bin/outbe-genesis-cli/canon")),
             },
         )
         .expect("production genesis seeder failed");

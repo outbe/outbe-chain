@@ -85,26 +85,6 @@ impl Rpc {
         }
     }
 
-    /// OIP record (`IGovernance.getOip`) - `(status, author, text)`.
-    pub fn get_oip(&self, id: u64) -> Option<(u8, Address, String)> {
-        let r = eth::read_call(
-            &self.cfg.rpc0,
-            addresses::GOVERNANCE_ADDR,
-            &IGovernance::getOipCall { id: U256::from(id) },
-        )?;
-        Some((r.status, r.author, r.text))
-    }
-
-    /// GIP record (`IGovernance.getGip`) - `(status, author, text)`.
-    pub fn get_gip(&self, id: u64) -> Option<(u8, Address, String)> {
-        let r = eth::read_call(
-            &self.cfg.rpc0,
-            addresses::GOVERNANCE_ADDR,
-            &IGovernance::getGipCall { id: U256::from(id) },
-        )?;
-        Some((r.status, r.author, r.text))
-    }
-
     /// `IVote.listProposals` on the node at `port` (pagination probe).
     pub fn list_proposals_on(&self, port: u16, index: U256, count: U256) -> Option<Vec<U256>> {
         eth::read_call(

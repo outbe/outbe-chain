@@ -302,13 +302,8 @@ pub const DESIS_ADDRESS: Address = address!("0x000000000000000000000000000000000
 /// ERC-4626 vaults per asset.
 pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
 
-/// Governance precompile address. On-chain registry of the normative texts
-/// (meta-canon, canon) and improvement proposals (OIP, GIP). It supports these operations:
-/// - read/update the texts
-/// - submit/read/update proposals
-/// - drive the proposal status model
-/// - diff a proposal against the canon/meta-canon
-pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
+// 0x0000000000000000000000000000000000001018 is retired; never reassign it.
+// Cutover requires a new genesis or no pending Vote proposals targeting it.
 
 /// IntexNFT1155: the Intex ERC-1155 series balance ledger, not a precompile. CREATE3 proxy under salt
 /// "outbe-intex:IntexNFT1155:v7.0.0", deployer 0x2Af7d3C5…1c05, factory 0xe78edad9…d14b.

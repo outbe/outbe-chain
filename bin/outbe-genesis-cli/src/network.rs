@@ -57,7 +57,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "network",
     "validators",
     "keys_dir",
@@ -77,7 +77,6 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "worldwide_day",
     "fresh_metadosis",
     "contracts_dir",
-    "canon_dir",
     "enclave_image",
     "enclave_dir",
     "enclave_runner",
@@ -112,11 +111,6 @@ pub fn repo_root() -> PathBuf {
 /// Return the `profiles` directory (`<repo>/bin/outbe-genesis-cli/profiles`).
 pub fn profiles_dir() -> PathBuf {
     repo_root().join("bin/outbe-genesis-cli/profiles")
-}
-
-/// Return the default `canon` directory (`<repo>/bin/outbe-genesis-cli/canon`).
-pub fn default_canon_dir() -> PathBuf {
-    repo_root().join("bin/outbe-genesis-cli/canon")
 }
 
 /// Return the default `contracts` predeploy directory (`<repo>/contracts/predeploys`).

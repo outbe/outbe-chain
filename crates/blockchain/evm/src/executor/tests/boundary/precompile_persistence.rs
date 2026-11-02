@@ -9,22 +9,20 @@ fn marker_list_covers_stateful_precompiles() {
     use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
     use crate::precompiles::outbe_precompile_addresses;
     use outbe_primitives::addresses::{
-        CODE_REGISTRY_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
-        STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
-        ZKPROOF_VERIFY_ADDRESS,
+        CODE_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
+        VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS, ZKPROOF_VERIFY_ADDRESS,
     };
 
     // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
     // marker. Each state-owning exemption must have canonical genesis-marker
     // evidence in `tests/genesis.rs`. An unproven exemption permits silent pruning.
-    const MARKER_EXEMPT: [Address; 7] = [
+    const MARKER_EXEMPT: [Address; 6] = [
         // Stateless verifier - no EVM storage to preserve.
         ZKPROOF_VERIFY_ADDRESS,
         // Seeded with genesis marker bytecode by outbe-genesis-cli, so these
         // accounts are never EIP-161-empty.
         ZEROFEE_ADDRESS,
         VAULT_ROUTER_ADDRESS,
-        GOVERNANCE_ADDRESS,
         // Stablecoin Factory and Policy Registry marker code is genesis-active
         // even before Stablecoin V1 runtime activation.
         STABLECOIN_FACTORY_ADDRESS,
