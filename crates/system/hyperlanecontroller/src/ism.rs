@@ -200,7 +200,10 @@ pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainGov::Call 
 
 /// The owner calls `call.to` on Outbe.
 pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainGov::Call) -> Result<()> {
-    owner_call(storage, ICrosschainGov::callLocalCall { call }.abi_encode())
+    let data = ICrosschainGov::callLocalCall { call }.abi_encode();
+    storage
+        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
 }
 
 /// The owner runs `calls` on `domain` through its Interchain Account.
@@ -209,13 +212,7 @@ pub(crate) fn call_remote(
     domain: u32,
     calls: Vec<ICrosschainGov::Call>,
 ) -> Result<()> {
-    owner_call(
-        storage,
-        ICrosschainGov::callRemoteCall { domain, calls }.abi_encode(),
-    )
-}
-
-fn owner_call(storage: &StorageHandle, data: Vec<u8>) -> Result<()> {
+    let data = ICrosschainGov::callRemoteCall { domain, calls }.abi_encode();
     storage
         .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
         .map(|_| ())
