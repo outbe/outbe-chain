@@ -8,7 +8,7 @@
 
 use alloy_primitives::U256;
 
-use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards};
+use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
 use outbe_emission::{
     allocation::{allocate_emission, EmissionSinkId},
     api::DayAllocationAmounts,
@@ -219,10 +219,12 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
     let dist = allocate_day_agent_rewards(
         ctx,
         prev_day.into(),
-        validator_topup,
-        shares.waa,
-        shares.sra,
-        shares.cca,
+        DayAgentPools {
+            validator_topup,
+            waa: shares.waa,
+            sra: shares.sra,
+            cca: shares.cca,
+        },
     )?;
     let pool_excess = dist.total_excess;
 

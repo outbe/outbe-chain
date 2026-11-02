@@ -2,6 +2,7 @@ use crate::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
+use crate::state::{enqueue_cleanup, prepare_job, process_cleanup, release_pending};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -17,14 +18,20 @@ pub struct DayAgentAllocation {
     pub total_excess: U256,
 }
 
+/// Nominal protocol-unit amounts before no-weight excess is returned.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DayAgentPools {
+    pub validator_topup: U256,
+    pub waa: U256,
+    pub sra: U256,
+    pub cca: U256,
+}
+
 /// Captures immutable day inputs and queues exactly four jobs. No recipient is credited here.
 pub fn allocate_day_agent_rewards(
     ctx: &BlockRuntimeContext,
     day: WorldwideDay,
-    topup: U256,
-    waa: U256,
-    sra: U256,
-    cca: U256,
+    pools: DayAgentPools,
 ) -> Result<DayAgentAllocation> {
     ctx.storage.with_checkpoint(|| {
         let contract = ctx.contract::<AgentRewardContract>();
@@ -49,50 +56,37 @@ pub fn allocate_day_agent_rewards(
             U256::from(contract.sra_total_count.read(&day)?),
         );
         let descriptors = [
-            (RewardPool::Validator, topup, validator_inputs),
-            (RewardPool::Waa, waa, waa_inputs),
-            (RewardPool::Sra, sra, sra_inputs),
-            (RewardPool::Cca, cca, cca_inputs),
+            (
+                RewardPool::Validator,
+                pools.validator_topup,
+                validator_inputs,
+            ),
+            (RewardPool::Waa, pools.waa, waa_inputs),
+            (RewardPool::Sra, pools.sra, sra_inputs),
+            (RewardPool::Cca, pools.cca, cca_inputs),
         ];
         let mut jobs = Vec::with_capacity(4);
         let mut excess = U256::ZERO;
         let mut assigned = [U256::ZERO; 4];
         for (offset, (pool, nominal, (count, weight))) in descriptors.into_iter().enumerate() {
-            if count == 0 && !weight.is_zero() {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            let amount = if weight.is_zero() {
-                U256::ZERO
-            } else {
-                nominal
-            };
-            excess = excess
-                .checked_add(nominal - amount)
-                .ok_or(AgentRewardError::DistributionOverflow)?;
-            let pending = contract
-                .pending_total_minor
-                .read(&(pool as u8))?
-                .checked_add(amount)
-                .ok_or(AgentRewardError::DistributionOverflow)?;
             // There are exactly four descriptors, so the offset fits u64.
             let seq = tail + offset as u64;
-            if contract.accrual_jobs.get(seq)?.is_some() {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            assigned[offset] = amount;
-            jobs.push((
-                AccrualJob {
-                    seq,
-                    day: day.value(),
-                    pool: pool as u8,
-                    pool_minor: amount,
-                    next_index: 0,
-                    credited_minor: U256::ZERO,
-                    recipient_count: count,
-                    total_weight: weight,
-                },
-                pending,
-            ));
+            let mut job = AccrualJob {
+                seq,
+                day: day.value(),
+                pool: pool as u8,
+                pool_minor: nominal,
+                next_index: 0,
+                credited_minor: U256::ZERO,
+                recipient_count: count,
+                total_weight: weight,
+            };
+            let (pool_excess, pending) = prepare_job(&contract, &mut job)?;
+            excess = excess
+                .checked_add(pool_excess)
+                .ok_or(AgentRewardError::DistributionOverflow)?;
+            assigned[offset] = job.pool_minor;
+            jobs.push((job, pending));
         }
         // Validate aggregate arithmetic before publishing any descriptor.
         assigned.iter().try_fold(excess, |sum, amount| {
@@ -161,112 +155,15 @@ pub fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
         for _ in 0..4 {
-            let head = contract.accrual_head.read()?;
-            let tail = contract.accrual_tail.read()?;
-            if head > tail || tail % 4 != 0 {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            if head == tail {
+            let Some((mut job, pool, pending)) = next_job(&contract)? else {
                 break;
-            }
-            let mut job = contract
-                .accrual_jobs
-                .get(head)?
-                .ok_or(AgentRewardError::AccrualJobMissing(head))?;
-            let pool = RewardPool::from_abi(job.pool)?;
-            let expected_pool = [
-                RewardPool::Validator,
-                RewardPool::Waa,
-                RewardPool::Sra,
-                RewardPool::Cca,
-            ][(head % 4) as usize];
-            let pending = contract.pending_jobs_by_day.read(&job.day)?;
-            // Exactly four descriptors are published together; only this FIFO removes them.
-            // head % 4 is at most three, so this queue count fits u8.
-            let expected_pending = 4 - (head % 4) as u8;
-            if job.next_index > job.recipient_count
-                || job.credited_minor > job.pool_minor
-                || pool != expected_pool
-                || job.day == 0
-                || job.day > contract.sealed_through_day.read()?
-                || pending != expected_pending
-                || (job.total_weight.is_zero() && !job.pool_minor.is_zero())
-            {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            let before = job.credited_minor;
-            while budget > 0 && job.next_index < job.recipient_count {
-                let (address, weight) = source_entry(ctx, &contract, &job, pool)?;
-                if weight > job.total_weight {
-                    return Err(AgentRewardError::InvalidJob.into());
-                }
-                let share = if job.pool_minor.is_zero() || weight.is_zero() {
-                    U256::ZERO
-                } else {
-                    mul_div(job.pool_minor, weight, job.total_weight)?
-                };
-                job.credited_minor = job
-                    .credited_minor
-                    .checked_add(share)
-                    .filter(|value| *value <= job.pool_minor)
-                    .ok_or(AgentRewardError::InvalidJob)?;
-                if !share.is_zero() {
-                    contract.add_claimable_reward(pool, address, share)?;
-                    contract.emit(IAgentReward::RewardAccrued {
-                        account: address,
-                        pool: job.pool,
-                        utcDay: job.day,
-                        promisLoadMinor: share,
-                    })?;
-                }
-                // next_index is strictly below the snapshotted u32 count.
-                job.next_index += 1;
-                budget -= 1;
-            }
-            release_pending(&contract, pool, job.credited_minor - before)?;
+            };
+            credit_job_entries(ctx, &mut contract, &mut job, pool, &mut budget)?;
             if job.next_index != job.recipient_count {
                 contract.accrual_jobs.update(&job)?;
                 break;
             }
-            let residue = job
-                .pool_minor
-                .checked_sub(job.credited_minor)
-                .ok_or(AgentRewardError::InvalidJob)?;
-            let emission_pool = match pool {
-                RewardPool::Validator => outbe_emission::api::RewardPool::Validator,
-                RewardPool::Waa => outbe_emission::api::RewardPool::Waa,
-                RewardPool::Sra => outbe_emission::api::RewardPool::Sra,
-                RewardPool::Cca => outbe_emission::api::RewardPool::Cca,
-            };
-            let record = outbe_emission::api::record_reward_pool_residue(
-                ctx.storage.clone(),
-                job.day,
-                emission_pool,
-                residue,
-            )?;
-            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
-                .checked_credit(residue)?;
-            release_pending(&contract, pool, residue)?;
-            contract.pending_jobs_by_day.write(&job.day, pending - 1)?;
-            match pool {
-                RewardPool::Validator => outbe_rewards::api::enqueue_day_cleanup(ctx, job.day)?,
-                RewardPool::Cca => outbe_ccaregistry::api::enqueue_day_cleanup(ctx, job.day)?,
-                RewardPool::Waa | RewardPool::Sra => enqueue_cleanup(
-                    &contract,
-                    WorldwideDay::new(job.day),
-                    pool,
-                    job.recipient_count,
-                )?,
-            }
-            contract.accrual_jobs.delete(head)?;
-            contract
-                .accrual_head
-                .write(head.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
-            if pending == 1
-                && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING
-            {
-                outbe_emission::api::complete_emission_day(ctx.storage.clone(), job.day)?;
-            }
+            finish_job(ctx, &contract, &job, pool, pending)?;
         }
         process_cleanup(&contract)?;
         outbe_rewards::api::process_day_cleanup(ctx)?;
@@ -274,6 +171,130 @@ pub fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
         contract.worker_height.write(ctx.block.block_number)?;
         contract.worker_initialized.write(true)
     })
+}
+
+fn next_job(contract: &AgentRewardContract<'_>) -> Result<Option<(AccrualJob, RewardPool, u8)>> {
+    let head = contract.accrual_head.read()?;
+    let tail = contract.accrual_tail.read()?;
+    if head > tail || tail % 4 != 0 {
+        return Err(AgentRewardError::InvalidJob.into());
+    }
+    if head == tail {
+        return Ok(None);
+    }
+    let job = contract
+        .accrual_jobs
+        .get(head)?
+        .ok_or(AgentRewardError::AccrualJobMissing(head))?;
+    let pool = RewardPool::from_abi(job.pool)?;
+    let expected_pool = [
+        RewardPool::Validator,
+        RewardPool::Waa,
+        RewardPool::Sra,
+        RewardPool::Cca,
+    ][(head % 4) as usize];
+    let pending = contract.pending_jobs_by_day.read(&job.day)?;
+    // Four descriptors are published together; head % 4 is at most three and fits u8.
+    let expected_pending = 4 - (head % 4) as u8;
+    if job.next_index > job.recipient_count || job.credited_minor > job.pool_minor {
+        return Err(AgentRewardError::InvalidJob.into());
+    }
+    if pool != expected_pool
+        || job.day == 0
+        || job.day > contract.sealed_through_day.read()?
+        || pending != expected_pending
+    {
+        return Err(AgentRewardError::InvalidJob.into());
+    }
+    if job.total_weight.is_zero() && !job.pool_minor.is_zero() {
+        return Err(AgentRewardError::InvalidJob.into());
+    }
+    Ok(Some((job, pool, pending)))
+}
+
+fn credit_job_entries(
+    ctx: &BlockRuntimeContext,
+    contract: &mut AgentRewardContract<'_>,
+    job: &mut AccrualJob,
+    pool: RewardPool,
+    budget: &mut u32,
+) -> Result<()> {
+    let before = job.credited_minor;
+    while *budget > 0 && job.next_index < job.recipient_count {
+        let (address, weight) = source_entry(ctx, contract, job, pool)?;
+        if weight > job.total_weight {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
+        let share = if job.pool_minor.is_zero() || weight.is_zero() {
+            U256::ZERO
+        } else {
+            mul_div(job.pool_minor, weight, job.total_weight)?
+        };
+        job.credited_minor = job
+            .credited_minor
+            .checked_add(share)
+            .filter(|value| *value <= job.pool_minor)
+            .ok_or(AgentRewardError::InvalidJob)?;
+        if !share.is_zero() {
+            contract.add_claimable_reward(pool, address, share)?;
+            contract.emit(IAgentReward::RewardAccrued {
+                account: address,
+                pool: job.pool,
+                utcDay: job.day,
+                promisLoadMinor: share,
+            })?;
+        }
+        // next_index is strictly below the snapshotted u32 count.
+        job.next_index += 1;
+        *budget -= 1;
+    }
+    release_pending(contract, pool, job.credited_minor - before)
+}
+
+fn finish_job(
+    ctx: &BlockRuntimeContext,
+    contract: &AgentRewardContract<'_>,
+    job: &AccrualJob,
+    pool: RewardPool,
+    pending: u8,
+) -> Result<()> {
+    let residue = job
+        .pool_minor
+        .checked_sub(job.credited_minor)
+        .ok_or(AgentRewardError::InvalidJob)?;
+    let emission_pool = match pool {
+        RewardPool::Validator => outbe_emission::api::RewardPool::Validator,
+        RewardPool::Waa => outbe_emission::api::RewardPool::Waa,
+        RewardPool::Sra => outbe_emission::api::RewardPool::Sra,
+        RewardPool::Cca => outbe_emission::api::RewardPool::Cca,
+    };
+    let record = outbe_emission::api::record_reward_pool_residue(
+        ctx.storage.clone(),
+        job.day,
+        emission_pool,
+        residue,
+    )?;
+    outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(residue)?;
+    release_pending(contract, pool, residue)?;
+    contract.pending_jobs_by_day.write(&job.day, pending - 1)?;
+    match pool {
+        RewardPool::Validator => outbe_rewards::api::enqueue_day_cleanup(ctx, job.day)?,
+        RewardPool::Cca => outbe_ccaregistry::api::enqueue_day_cleanup(ctx, job.day)?,
+        RewardPool::Waa | RewardPool::Sra => enqueue_cleanup(
+            contract,
+            WorldwideDay::new(job.day),
+            pool,
+            job.recipient_count,
+        )?,
+    }
+    contract.accrual_jobs.delete(job.seq)?;
+    contract
+        .accrual_head
+        .write(job.seq.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
+    if pending == 1 && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING {
+        outbe_emission::api::complete_emission_day(ctx.storage.clone(), job.day)?;
+    }
+    Ok(())
 }
 
 fn source_entry(
@@ -309,98 +330,6 @@ fn source_entry(
             Ok((address, U256::from(count)))
         }
     }
-}
-
-fn release_pending(
-    contract: &AgentRewardContract<'_>,
-    pool: RewardPool,
-    amount: U256,
-) -> Result<()> {
-    let pending = contract
-        .pending_total_minor
-        .read(&(pool as u8))?
-        .checked_sub(amount)
-        .ok_or(AgentRewardError::InvalidJob)?;
-    contract.pending_total_minor.write(&(pool as u8), pending)
-}
-
-fn enqueue_cleanup(
-    contract: &AgentRewardContract<'_>,
-    day: WorldwideDay,
-    pool: RewardPool,
-    count: u32,
-) -> Result<()> {
-    let key = AgentRewardContract::address_index_key(day, u32::from(pool as u8));
-    if contract.cleanup_scheduled.read(&key)? {
-        return Ok(());
-    }
-    let seq = contract.cleanup_tail.read()?;
-    let tail = seq.checked_add(1).ok_or(AgentRewardError::InvalidJob)?;
-    contract.cleanup_jobs.create(&AccrualJob {
-        seq,
-        day: day.value(),
-        pool: pool as u8,
-        pool_minor: U256::ZERO,
-        next_index: 0,
-        credited_minor: U256::ZERO,
-        recipient_count: count,
-        total_weight: U256::ZERO,
-    })?;
-    contract.cleanup_tail.write(tail)?;
-    contract.cleanup_scheduled.write(&key, true)
-}
-
-fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
-    let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
-    for _ in 0..4 {
-        let head = contract.cleanup_head.read()?;
-        let tail = contract.cleanup_tail.read()?;
-        if head > tail {
-            return Err(AgentRewardError::InvalidJob.into());
-        }
-        if head == tail {
-            break;
-        }
-        let mut job = contract
-            .cleanup_jobs
-            .get(head)?
-            .ok_or(AgentRewardError::InvalidJob)?;
-        let pool = RewardPool::from_abi(job.pool)?;
-        let day = WorldwideDay::new(job.day);
-        let index = contract.day_index(pool)?;
-        if job.next_index > job.recipient_count {
-            return Err(AgentRewardError::InvalidJob.into());
-        }
-        while budget > 0 && job.next_index < job.recipient_count {
-            let key = AgentRewardContract::address_index_key(day, job.next_index);
-            let address = index.addresses.read(&key)?;
-            let count_key = AgentRewardContract::tribute_count_key(day, address);
-            if index.member_index.read(&count_key)?
-                != job
-                    .next_index
-                    .checked_add(1)
-                    .ok_or(AgentRewardError::InvalidJob)?
-            {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            index.counts.write(&count_key, 0)?;
-            index.member_index.write(&count_key, 0)?;
-            index.addresses.write(&key, Address::ZERO)?;
-            job.next_index += 1;
-            budget -= 1;
-        }
-        if job.next_index != job.recipient_count {
-            contract.cleanup_jobs.update(&job)?;
-            break;
-        }
-        index.total.write(&day, 0)?;
-        index.address_count.write(&day, 0)?;
-        contract.cleanup_jobs.delete(head)?;
-        contract
-            .cleanup_head
-            .write(head.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
-    }
-    Ok(())
 }
 
 fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256> {

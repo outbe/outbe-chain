@@ -54,10 +54,12 @@ fn allocate_fixture(
     let allocation = crate::api::allocate_day_agent_rewards(
         &allocation_ctx,
         day,
-        amounts[3],
-        amounts[0],
-        amounts[1],
-        amounts[2],
+        crate::api::DayAgentPools {
+            validator_topup: amounts[3],
+            waa: amounts[0],
+            sra: amounts[1],
+            cca: amounts[2],
+        },
     )?;
     let total = amounts.into_iter().try_fold(U256::ZERO, |sum, value| {
         sum.checked_add(value)

@@ -246,10 +246,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
             &ctx,
             20231115.into(),
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO,
-            U256::from(1000),
+            outbe_agentreward::api::DayAgentPools {
+                cca: U256::from(1000),
+                ..Default::default()
+            },
         )
         .unwrap();
         assert_eq!(allocation.total_excess, U256::ZERO);

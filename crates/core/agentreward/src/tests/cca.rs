@@ -326,10 +326,7 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
         assert!(crate::api::allocate_day_agent_rewards(
             &context,
             DAY,
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO
+            crate::api::DayAgentPools::default(),
         )
         .is_err());
         assert_eq!(contract.sealed_through_day.read().unwrap(), 0);
@@ -338,10 +335,7 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
         assert!(crate::api::allocate_day_agent_rewards(
             &context,
             DAY,
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO,
-            U256::ZERO
+            crate::api::DayAgentPools::default(),
         )
         .is_err());
         assert!(contract

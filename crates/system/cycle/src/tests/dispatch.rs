@@ -194,7 +194,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
 #[test]
 fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
-    use outbe_agentreward::api::allocate_day_agent_rewards;
+    use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
     use outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
     use outbe_agentreward::schema::RewardPool;
 
@@ -218,7 +218,15 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
         outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
         let amount = U256::from(recipients * 1_000);
-        allocate_day_agent_rewards(&ctx, day, U256::ZERO, amount, U256::ZERO, U256::ZERO).unwrap();
+        allocate_day_agent_rewards(
+            &ctx,
+            day,
+            DayAgentPools {
+                waa: amount,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         outbe_emission::api::record_day_allocation(
             handle.clone(),
             day.value(),

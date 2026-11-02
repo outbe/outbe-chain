@@ -497,7 +497,7 @@ mod reward_activity_tests {
     #[test]
     fn zero_reward_addresses_receive_expiring_balances_through_activity_and_distribution() {
         use outbe_agentreward::{
-            api::{allocate_day_agent_rewards, process_agent_rewards},
+            api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools},
             constants::REWARD_BALANCE_IDLE_SECONDS,
             schema::RewardPool,
         };
@@ -526,10 +526,11 @@ mod reward_activity_tests {
                 allocate_day_agent_rewards(
                     &ctx,
                     day,
-                    U256::ZERO,
-                    U256::from(10),
-                    U256::from(20),
-                    U256::ZERO,
+                    DayAgentPools {
+                        waa: U256::from(10),
+                        sra: U256::from(20),
+                        ..Default::default()
+                    },
                 )
                 .unwrap()
                 .total_excess,

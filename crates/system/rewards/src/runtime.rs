@@ -92,35 +92,9 @@ pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
             if head == tail {
                 break;
             }
-            let day = rewards.cleanup_day_at.read(&head)?;
-            if day == 0 || !rewards.daily_participation_closed.read(&day)? {
-                return Err(RewardsError::CleanupQueueCorrupt.into());
-            }
-            let count = rewards.daily_voter_count.read(&day)?;
-            let mut index = rewards.cleanup_next_index.read(&day)?;
-            if index > count {
-                return Err(RewardsError::CleanupQueueCorrupt.into());
-            }
-            let voters = rewards.daily_voter_at.get_nested(&day);
-            let participation = rewards.daily_participation.get_nested(&day);
-            while index < count && remaining > 0 {
-                let voter = voters.read(&index)?;
-                participation.write(&voter, 0)?;
-                voters.write(&index, Address::ZERO)?;
-                // index < count <= u32::MAX, so increment cannot overflow.
-                index += 1;
-                remaining -= 1;
-            }
-            if index < count {
-                rewards.cleanup_next_index.write(&day, index)?;
+            if !cleanup_day(&rewards, head, &mut remaining)? {
                 break;
             }
-            rewards.daily_voter_count.write(&day, 0)?;
-            rewards.daily_total_participation.write(&day, U256::ZERO)?;
-            rewards.daily_fee_sum_raw.write(&day, U256::ZERO)?;
-            rewards.daily_last_window_close.write(&day, 0)?;
-            rewards.cleanup_next_index.write(&day, 0)?;
-            rewards.cleanup_day_at.write(&head, 0)?;
             // head < tail <= u64::MAX, so increment cannot overflow.
             head += 1;
             rewards.cleanup_head.write(head)?;
@@ -130,6 +104,40 @@ pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
             .write(ctx.block.block_number)?;
         rewards.cleanup_processed_initialized.write(true)
     })
+}
+
+/// Returns whether this queued day is fully cleared within the remaining entry budget.
+fn cleanup_day(rewards: &Rewards<'_>, head: u64, remaining: &mut u32) -> Result<bool> {
+    let day = rewards.cleanup_day_at.read(&head)?;
+    if day == 0 || !rewards.daily_participation_closed.read(&day)? {
+        return Err(RewardsError::CleanupQueueCorrupt.into());
+    }
+    let count = rewards.daily_voter_count.read(&day)?;
+    let mut index = rewards.cleanup_next_index.read(&day)?;
+    if index > count {
+        return Err(RewardsError::CleanupQueueCorrupt.into());
+    }
+    let voters = rewards.daily_voter_at.get_nested(&day);
+    let participation = rewards.daily_participation.get_nested(&day);
+    while index < count && *remaining > 0 {
+        let voter = voters.read(&index)?;
+        participation.write(&voter, 0)?;
+        voters.write(&index, Address::ZERO)?;
+        // index < count <= u32::MAX, so increment cannot overflow.
+        index += 1;
+        *remaining -= 1;
+    }
+    if index < count {
+        rewards.cleanup_next_index.write(&day, index)?;
+        return Ok(false);
+    }
+    rewards.daily_voter_count.write(&day, 0)?;
+    rewards.daily_total_participation.write(&day, U256::ZERO)?;
+    rewards.daily_fee_sum_raw.write(&day, U256::ZERO)?;
+    rewards.daily_last_window_close.write(&day, 0)?;
+    rewards.cleanup_next_index.write(&day, 0)?;
+    rewards.cleanup_day_at.write(&head, 0)?;
+    Ok(true)
 }
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
