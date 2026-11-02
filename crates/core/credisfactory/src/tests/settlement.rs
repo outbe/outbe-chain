@@ -1,12 +1,10 @@
 //! Repayment, forfeiture and stake behaviour of Credis backed by a direct pledge.
 use crate::{precompile::ICredisFactory, runtime, tests::*};
-use alloy_primitives::{b256, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_gratisfactory::runtime::cancel_pledge;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
-use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::GratisOp;
