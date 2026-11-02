@@ -1247,7 +1247,7 @@ mod vote_target {
     #[test]
     fn upgrade_contract_upgrades_the_proxy_locally_or_through_the_remote_account() {
         let upgrade = Bytes::from(
-            crate::vote_target::common::IUUPSUpgradeable::upgradeToAndCallCall {
+            crate::vote_target::upgrade::IUUPSUpgradeable::upgradeToAndCallCall {
                 newImplementation: v(0x9a),
                 data: Bytes::from_static(&[0x81, 0x29, 0xfc, 0x1c]),
             }

@@ -10,9 +10,9 @@
 //! `applyApproved(proposalId, payload)` runs it later, with the owner address
 //! as `msg.sender` on Outbe and its Interchain Account on a remote chain.
 
-pub(crate) mod common;
 pub(crate) mod crosschain;
 pub(crate) mod tokens;
+pub(crate) mod upgrade;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
@@ -224,7 +224,7 @@ impl Action {
             } => Calls::on(
                 *chain_id,
                 outbe,
-                vec![common::upgrade(*proxy, *implementation, call_data.clone())],
+                vec![upgrade::upgrade(*proxy, *implementation, call_data.clone())],
             ),
             Self::SetBridgePaused {
                 chain_id,

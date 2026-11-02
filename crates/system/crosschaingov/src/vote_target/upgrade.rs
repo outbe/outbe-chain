@@ -1,4 +1,4 @@
-//! Owner calls that work the same way on every one of our UUPS contracts.
+//! The upgrade of any of our UUPS contracts.
 
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{sol, SolCall};
