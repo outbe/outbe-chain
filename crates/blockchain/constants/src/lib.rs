@@ -12,14 +12,18 @@ pub const GENESIS_CONFIG_KEY: &str = "outbeProtocol";
 pub const PROTOCOL_CONSTANTS_SCHEMA_VERSION: u16 = 1;
 
 pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
-/// Production lookback. Forming plus this delay is 20 UTC days, so E = D+21.
-pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 430 * 60 * 60;
-/// Smallest lookback that keeps the offering on a full Worldwide Day. E = D+4.
-pub const TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 22 * 60 * 60;
+/// Production lookback. Forming plus this delay is 3 UTC days, so E = D+4.
+pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 22 * 60 * 60;
 pub const MIN_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 22 * 60 * 60;
-/// `ceil((50 + 430 + 50 + 12) hours / 24 hours) + 1`.
-pub const MAX_PIPELINE_WWDS: usize = 24;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
+const DELAY_AFTER_OFFERING_SECONDS: u64 = 12 * 60 * 60;
+/// `ceil((50 + 22 + 50 + 12) hours / 24 hours) + 1`.
+pub const MAX_PIPELINE_WWDS: usize = ((DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
+    + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
+    + DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
+    + DELAY_AFTER_OFFERING_SECONDS)
+    .div_ceil(SECONDS_PER_DAY) as usize)
+    + 1;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 60 * 60;
 pub const DEFAULT_METADOSIS_LOOKAHEAD_DAYS: u32 = 7;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
@@ -61,20 +65,12 @@ const _: () = {
     assert!((DEFAULTS.metadosis_forming_period_seconds
         + DEFAULTS.metadosis_lookback_delay_seconds)
         .is_multiple_of(SECONDS_PER_DAY));
+    assert!(MIN_METADOSIS_LOOKBACK_DELAY_SECONDS == DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS);
     assert!(
-        TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS >= MIN_METADOSIS_LOOKBACK_DELAY_SECONDS
-            && TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS <= DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
-    );
-    assert!(
-        (DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS + TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS)
+        (DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS)
             .is_multiple_of(SECONDS_PER_DAY)
     );
-    const DELAY_AFTER_OFFERING_SECONDS: u64 = 12 * 60 * 60;
-    let pipeline_seconds = DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-        + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
-        + DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
-        + DELAY_AFTER_OFFERING_SECONDS;
-    assert!(MAX_PIPELINE_WWDS == (pipeline_seconds.div_ceil(SECONDS_PER_DAY) as usize) + 1);
+    assert!(MAX_PIPELINE_WWDS == 7);
 };
 
 impl Default for GenesisProtocolParametersV1 {
@@ -545,7 +541,7 @@ mod tests {
         let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
             "schemaVersion": 1,
             "metadosis": {
-                "lookbackDelaySeconds": 46 * 3_600,
+                "lookbackDelaySeconds": 22 * 3_600,
                 "advanceIntervalSeconds": 10
             },
         })))
@@ -555,7 +551,7 @@ mod tests {
             resolved.metadosis_forming_period_seconds,
             DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
         );
-        assert_eq!(resolved.metadosis_lookback_delay_seconds, 46 * 3_600);
+        assert_eq!(resolved.metadosis_lookback_delay_seconds, 22 * 3_600);
         assert_eq!(
             resolved.metadosis_offering_period_seconds,
             DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
@@ -567,8 +563,6 @@ mod tests {
     fn lookback_accepts_the_production_and_testnet_bounds() {
         for lookback in [
             MIN_METADOSIS_LOOKBACK_DELAY_SECONDS,
-            TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS,
-            46 * 3_600,
             DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
         ] {
             let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
@@ -585,6 +579,19 @@ mod tests {
                 DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
             );
         }
+    }
+
+    #[test]
+    fn gap_ed50_lookback_is_22h_on_all_networks() {
+        assert_eq!(DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS, 22 * 60 * 60);
+        assert_eq!(MIN_METADOSIS_LOOKBACK_DELAY_SECONDS, 22 * 60 * 60);
+        assert_eq!(
+            DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
+            3 * SECONDS_PER_DAY
+        );
+        assert_eq!(MAX_PIPELINE_WWDS, 7);
+        let defaults = GenesisProtocolParametersV1::default();
+        assert_eq!(defaults.metadosis_lookback_delay_seconds, 22 * 60 * 60);
     }
 
     #[test]
@@ -630,6 +637,7 @@ mod tests {
         for lookback in [
             0,
             21 * 60 * 60,
+            23 * 60 * 60,
             DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS + 24 * 60 * 60,
         ] {
             assert_eq!(
@@ -643,17 +651,6 @@ mod tests {
                 })
             );
         }
-        let unaligned = 23 * 60 * 60;
-        assert_eq!(
-            GenesisProtocolParametersV1::resolve(Some(&json!({
-                "metadosis": { "lookbackDelaySeconds": unaligned }
-            }))),
-            Err(ProtocolConstantsError::InvalidValue {
-                field: "metadosis.lookbackDelaySeconds",
-                requirement: "make forming plus lookback a whole number of UTC days",
-                actual: unaligned,
-            })
-        );
     }
 
     #[test]
@@ -718,7 +715,7 @@ mod tests {
             unaligned_lookback.validate_offering_window(),
             Err(ProtocolConstantsError::InvalidValue {
                 field: "metadosis.lookbackDelaySeconds",
-                requirement: "make forming plus lookback a whole number of UTC days",
+                requirement: "be at least 22 hours and no greater than the production default",
                 actual: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS - 3_600,
             })
         );

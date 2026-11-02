@@ -158,13 +158,7 @@ pub fn create_worldwide_day(
         }
     } else {
         let pipeline = factory.pipeline_wwd.read_all()?;
-        if pipeline.len() >= MAX_PIPELINE_WWDS {
-            return Err(WwdStorageCorruptionError::ActiveWwdCapReached {
-                max_active_wwds: MAX_PIPELINE_WWDS,
-                wwd: worldwide_day,
-            }
-            .into());
-        }
+        ensure_pipeline_capacity(&pipeline, worldwide_day, schedule.forming_start, now)?;
         factory.worldwide_days.create(&record)?;
         factory.pipeline_wwd.insert(worldwide_day)?;
     }
@@ -181,6 +175,40 @@ pub fn create_worldwide_day(
         offeringEnd: record.offering_end,
     })?;
     Ok(true)
+}
+
+fn ensure_pipeline_capacity(
+    pipeline: &[WorldwideDay],
+    worldwide_day: WorldwideDay,
+    forming_start: u64,
+    now: u64,
+) -> Result<()> {
+    let in_flight = now == 0 || forming_start <= now;
+    let bucket_count = if now == 0 {
+        pipeline.len()
+    } else {
+        pipeline
+            .iter()
+            .filter(|existing| {
+                existing
+                    .start_timestamp()
+                    .is_ok_and(|start| (start <= now) == in_flight)
+            })
+            .count()
+    };
+    let bucket_cap = if in_flight {
+        MAX_PIPELINE_WWDS
+    } else {
+        outbe_chain_constants::get_metadosis_lookahead_days() as usize
+    };
+    if bucket_count >= bucket_cap {
+        return Err(WwdStorageCorruptionError::ActiveWwdCapReached {
+            max_active_wwds: MAX_PIPELINE_WWDS,
+            wwd: worldwide_day,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 pub fn activate_worldwide_day(

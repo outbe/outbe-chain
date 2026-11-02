@@ -998,7 +998,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                     overflow_schedule,
                 )
                 .unwrap_err();
-                assert!(cap_err.to_string().contains("24"));
+                assert!(cap_err.to_string().contains("7"));
                 Ok(())
             })
             .unwrap();

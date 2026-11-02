@@ -38,7 +38,7 @@ const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 =
-    outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS;
+    outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
@@ -887,7 +887,7 @@ mod tests {
     fn metadosis_window_lengths_are_not_localnet_tuning_keys() {
         assert_eq!(
             LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-            outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS
+            outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
         );
         for key in [
             "TESTNET_METADOSIS_FORMING_SECONDS",
