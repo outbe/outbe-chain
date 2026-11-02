@@ -351,6 +351,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn valid_signature_and_damaged_payload_have_independent_outcomes() {
         let root = tempfile::tempdir().unwrap();
         let inputs = archive(root.path(), &manifest(), b"BAD!");
@@ -363,6 +367,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn untrusted_signer_does_not_erase_crypto_validity_or_fail_valid_archive() {
         let root = tempfile::tempdir().unwrap();
         let raw = manifest();
@@ -377,6 +385,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn provenance_only_never_traverses_malformed_payload_header() {
         let root = tempfile::tempdir().unwrap();
         let raw = manifest();
@@ -400,6 +412,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn raw_whitespace_is_authenticated_and_simultaneous_sidecars_must_agree() {
         let root = tempfile::tempdir().unwrap();
         let raw = manifest();
@@ -423,6 +439,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn supplied_signature_cannot_silently_replace_the_archive_signer() {
         let root = tempfile::tempdir().unwrap();
         let raw = manifest();
@@ -437,6 +457,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn signed_malformed_schema_does_not_erase_valid_crypto_evidence() {
         let root = tempfile::tempdir().unwrap();
         let raw = br#"{"version":987}"#;
@@ -449,6 +473,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn metadata_caps_reject_oversize_sidecars_and_archive_headers() {
         let root = tempfile::tempdir().unwrap();
         for (name, cap) in [
@@ -499,6 +527,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn missing_metadata_is_incomplete_and_existing_manifest_is_still_parseable() {
         let root = tempfile::tempdir().unwrap();
         assert_eq!(ValidationInputs::default().checks, "all");
@@ -551,6 +583,10 @@ mod artifact {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "artifact reads require Linux openat2"
+    )]
     fn detached_bad_signature_fails_without_claiming_an_authenticated_signer() {
         let root = tempfile::tempdir().unwrap();
         let inputs = detached(root.path(), &manifest());
@@ -566,6 +602,44 @@ mod artifact {
         assert_eq!(result.provenance.signature_valid, Some(false));
         assert_eq!(result.provenance.signer, None);
         assert_eq!(result.provenance.expected_signer_match, None);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn artifact_reads_fail_closed_without_openat2_guarantees() {
+        let root = tempfile::tempdir().unwrap();
+        let raw = manifest();
+        for inputs in [
+            detached(root.path(), &raw),
+            archive(root.path(), &raw, b"data"),
+        ] {
+            for files in [false, true] {
+                let result = audit(root.path(), &inputs, files);
+                for error in [
+                    result.metadata.unwrap_err(),
+                    result.provenance_result.unwrap_err(),
+                ] {
+                    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                    assert!(
+                        format!("{error:#}").contains("requires Linux openat2"),
+                        "{error:#}"
+                    );
+                }
+                assert_eq!(result.provenance.signature_valid, None);
+                assert_eq!(result.provenance.signer, None);
+                assert_eq!(result.provenance.expected_signer_match, None);
+                if files && inputs.archive.is_some() {
+                    let error = result.archive_result.unwrap().unwrap_err();
+                    assert!(error.downcast_ref::<Incomplete>().is_none(), "{error:#}");
+                    assert!(
+                        format!("{error:#}").contains("requires Linux openat2"),
+                        "{error:#}"
+                    );
+                } else {
+                    assert!(result.archive_result.is_none());
+                }
+            }
+        }
     }
 }
 
@@ -679,6 +753,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn writer_inventory_passes_independent_of_order_labels_and_donor_host_paths() {
         let (root, layout, mut manifest) = fixture();
         run(root.path(), &layout, &manifest).unwrap();
@@ -695,6 +773,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn optional_empty_populations_can_be_omitted_without_waiving_required_domains() {
         let (root, layout, mut manifest) = fixture();
         assert!(manifest
@@ -723,6 +805,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn missing_extra_and_omitted_nonempty_members_or_domains_fail() {
         let (root, layout, original) = fixture();
         for variant in 0..4 {
@@ -763,6 +849,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn digest_size_kind_and_permission_mismatches_are_detected() {
         let (root, layout, original) = fixture();
         for variant in 0..5 {
@@ -798,6 +888,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn foreign_member_names_are_inventory_mismatches_and_donor_paths_are_not_authority() {
         let (root, layout, original) = fixture();
         let outside = tempfile::tempdir().unwrap();
@@ -818,6 +912,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn duplicate_semantic_domains_and_wrong_native_roots_fail() {
         let (root, layout, original) = fixture();
         let mut duplicate = original.clone();
@@ -832,6 +930,10 @@ mod native_files {
     }
 
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn unsafe_native_links_are_rejected_without_touching_external_bytes() {
         let (root, layout, manifest) = fixture();
         let source = layout.chain_root.join("db/mdbx.dat");
@@ -1154,6 +1256,10 @@ mod orchestration {
         }
     }
     #[test]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        ignore = "snapshot creation requires Linux openat2"
+    )]
     fn exact_files_precedes_native_mdbx_readers_for_files_and_evm_selection() {
         use crate::snapshot::inventory::enumerate_native_files;
         use outbe_snapshot::manifest::{DomainInventory, EntryKind, FileEntry, SnapshotManifestV1};
@@ -1308,11 +1414,26 @@ mod orchestration {
             validate_snapshot(&request, vec!["--invalid-node-argument".into()], &scratch).unwrap();
         assert_eq!(fingerprint(artifacts.path()), before);
         assert!(!scratch.exists());
-        assert_eq!(
-            report.check(CheckName::Provenance).status,
+        // Artifact reads also fail closed without Linux path-resolution guarantees.
+        let expected = if cfg!(target_os = "linux") {
             CheckStatus::Passed
-        );
-        assert!(report.success());
+        } else {
+            CheckStatus::Failed
+        };
+        assert_eq!(report.check(CheckName::Provenance).status, expected);
+        assert_eq!(report.success(), cfg!(target_os = "linux"));
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(report
+                .check(CheckName::Provenance)
+                .diagnostic
+                .as_ref()
+                .unwrap()
+                .contains("requires Linux openat2"));
+            assert_eq!(report.provenance.signature_valid, None);
+            assert_eq!(report.provenance.signer, None);
+            assert_eq!(report.provenance.expected_signer_match, None);
+        }
         for check in [CheckName::Files, CheckName::Headers, CheckName::Evm] {
             assert_eq!(report.check(check).status, CheckStatus::NotRequested);
         }
