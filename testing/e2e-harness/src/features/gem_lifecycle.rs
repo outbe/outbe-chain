@@ -648,7 +648,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
     if require_position_expiry {
         assert!(position_expired, "position retained unissued capacity");
     }
-    let group = eth::read_call_at(
+    let gem_before = eth::read_call_at(
         &url,
         addresses::GEM_ADDR,
         &eth::IGem::getGemCall {
@@ -656,17 +656,19 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         },
         from,
     )
-    .expect("the forfeited gem was live before its group was forfeited")
-    .groupKey;
+    .expect("the forfeited gem was live before its group was forfeited");
     assert_single_event(
         &url,
         addresses::GEM_ADDR,
         from,
         height,
-        eth::IGem::GemGroupForfeited {
-            groupKey: group,
-            gems: 1,
-            promisLoadMinor: U256::from(GEM_LOAD_MINOR),
+        eth::IGem::GemSeriesClosed {
+            seriesId: gem_before.seriesId,
+            subSeriesId: gem_before.subSeriesId,
+            issuanceCurrency: gem_before.issuanceCurrency,
+            referenceCurrency: gem_before.referenceCurrency,
+            forfeitedCount: 1,
+            forfeitedAmountMinor: U256::from(GEM_LOAD_MINOR),
         },
     );
     let returned = if position_expired {

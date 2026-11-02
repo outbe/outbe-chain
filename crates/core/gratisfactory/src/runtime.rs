@@ -55,7 +55,7 @@ pub fn pledge_gratis(
         })?;
         storage.emit_event(
             GRATIS_FACTORY_ADDRESS,
-            IGratisFactory::GratisPledged {
+            IGratisFactory::GratisPledgeCreated {
                 reservationId: reservation_id,
                 source: caller,
                 gratisMinor: r.gratis_minor,
@@ -83,7 +83,7 @@ pub fn cancel_pledge(
         gratis::release_pledged(&storage, pledge.source, pledge.gratis_minor)?;
         storage.emit_event(
             GRATIS_FACTORY_ADDRESS,
-            IGratisFactory::PledgeCancelled {
+            IGratisFactory::GratisPledgeCanceled {
                 reservationId: reservation_id,
                 source: pledge.source,
                 gratisMinor: pledge.gratis_minor,
@@ -118,7 +118,7 @@ pub fn send_to_credis(
     })?;
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        IGratisFactory::PledgeSentToCredis {
+        IGratisFactory::GratisPledgeSentToCredis {
             reservationId: reservation_id,
             credisId: credis_id,
         }
@@ -126,24 +126,52 @@ pub fn send_to_credis(
     )
 }
 
-/// Return collateral released by a repayment of `credis_id` to its source's
+fn settle_credis_collateral<F, E>(
+    storage: &StorageHandle<'_>,
+    credis_id: U256,
+    amount: U256,
+    op: F,
+    event: impl FnOnce(Address) -> E,
+) -> Result<()>
+where
+    F: FnOnce(&StorageHandle<'_>, Address, U256) -> Result<()>,
+    E: SolEvent,
+{
+    storage.with_checkpoint(|| {
+        let source = draw_collateral(storage, credis_id, amount)?;
+        op(storage, source, amount)?;
+        storage.emit_event(GRATIS_FACTORY_ADDRESS, event(source).encode_log_data())
+    })
+}
+
+/// Release collateral freed by a repayment of `credis_id` to its source's
 /// liquid balance.
-pub fn return_from_credis(
+pub fn release_from_credis(
     storage: &StorageHandle<'_>,
     credis_id: U256,
     amount: U256,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let source = draw_collateral(storage, credis_id, amount)?;
-        gratis::release_pledged(storage, source, amount)
-    })
+    settle_credis_collateral(
+        storage,
+        credis_id,
+        amount,
+        gratis::release_pledged,
+        |source| IGratisFactory::GratisPledgeReleased {
+            credisId: credis_id,
+            source,
+            gratisMinor: amount,
+        },
+    )
 }
 
 /// Burn the collateral of a defaulted `credis_id` from its source's pledged balance.
 pub fn burn_from_credis(storage: &StorageHandle<'_>, credis_id: U256, amount: U256) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let source = draw_collateral(storage, credis_id, amount)?;
-        gratis::burn_pledged(storage, source, amount)
+    settle_credis_collateral(storage, credis_id, amount, gratis::burn_pledged, |source| {
+        IGratisFactory::GratisPledgeBurned {
+            credisId: credis_id,
+            source,
+            gratisMinor: amount,
+        }
     })
 }
 
@@ -237,9 +265,9 @@ pub fn mine_coen(
 
     storage.emit_event(
         GRATIS_FACTORY_ADDRESS,
-        SolEvent::encode_log_data(&IGratisFactory::CoenMined {
+        SolEvent::encode_log_data(&IGratisFactory::CoenMinedFromGratis {
             account,
-            coenMinor: native_amount,
+            amountMinor: native_amount,
         }),
     )?;
 

@@ -156,25 +156,74 @@
     "name": "NodIssued",
     "inputs": [
       {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
         "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "nodId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
         "name": "seriesId",
         "type": "bytes14",
-        "indexed": false,
+        "indexed": true,
         "internalType": "bytes14"
       },
       {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
         "name": "leagueId",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "payload",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodSeriesOpened",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "entryPriceMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -186,41 +235,22 @@
         "internalType": "uint256"
       },
       {
-        "name": "encryptedGratisAmount",
-        "type": "bytes",
+        "name": "callWindow",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint64"
       },
       {
-        "name": "entryPriceMinor",
-        "type": "uint256",
+        "name": "callThreshold",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodMined",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "internalType": "uint64"
       },
       {
-        "name": "nodId",
-        "type": "uint256",
+        "name": "callNoticePeriod",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "encryptedGratisAmount",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -230,16 +260,16 @@
     "name": "NodSettled",
     "inputs": [
       {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
         "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
-      },
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       },
       {
         "name": "asset",
@@ -248,7 +278,19 @@
         "internalType": "address"
       },
       {
-        "name": "paymentMinor",
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

@@ -23,20 +23,36 @@ interface INodFactory {
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
 
-    event NodIssued(
-        address indexed owner,
-        uint256 nodId,
-        bytes14 seriesId,
-        uint256 leagueId,
+    event NodSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 entryPriceMinor,
         uint256 callPriceMinor,
-        bytes encryptedGratisAmount,
-        uint256 entryPriceMinor
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod
     );
 
-    event NodMined(address indexed owner, uint256 nodId, bytes encryptedGratisAmount);
+    event NodIssued(
+        uint256 indexed nodId,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint16 leagueId,
+        bytes payload
+    );
 
     /// @notice Emitted when a Nod is settled.
-    event NodSettled(address indexed owner, uint256 nodId, address asset, uint256 paymentMinor);
+    event NodSettled(
+        uint256 indexed nodId,
+        address indexed owner,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 amountMinor
+    );
 
     /// @notice Pay an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays

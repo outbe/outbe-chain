@@ -30,37 +30,51 @@ interface ICredisFactory {
     error CollateralReleaseMismatch();
     error CredisChangedDuringPayment();
     error ForfeitureCollateralMismatch();
+    error CannotForfeitInIssueBlock();
 
+    event CredisSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod,
+        uint256 policyRate
+    );
     event CredisIssued(
         uint256 indexed credisId,
         address indexed owner,
-        address indexed cca,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address cca,
         address asset,
         uint256 principalMinor,
-        uint256 gratisMinor,
-        uint256 callPriceMinor
+        uint256 gratisMinor
     );
-    /// @notice One successful settlement. `interestPaidMinor` is this payment's interest.
-    ///         The Credis's `interestPaidMinor` is the sum of these payments
-    ///         across successful settlements. A reverted settlement emits nothing
-    ///         and leaves that total unchanged.
-    event SettlementApplied(
+    /// @notice One successful settlement. `interestSettledMinor` and `principalSettledMinor`
+    ///         are this payment's interest and principal deltas, and `amountMinor` is their
+    ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
+    event CredisSettled(
         uint256 indexed credisId,
-        uint256 interestPaidMinor,
-        uint256 principalPaidMinor,
-        uint256 gratisReturnedMinor,
-        uint256 outstandingPrincipalMinor
+        address indexed owner,
+        address asset,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 amountMinor,
+        uint256 interestSettledMinor,
+        uint256 principalSettledMinor
     );
-    event CredisSettled(uint256 indexed credisId);
 
     /// Use the reservation's pledge and every term it fixed, the call terms included.
     /// The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
     function issueCredis(uint256 reservationId) external payable returns (uint256 credisId, uint256 principalMinor);
-    /// Any payer may repay. Freed collateral returns to the source's liquid Gratis.
-    function settleCredis(uint256 credisId, uint256 amountMinor)
+    /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
+    function settleCredis(uint256 credisId, uint256 amountCapMinor)
         external
-        returns (uint256 principalPaidMinor, uint256 interestPaidMinor);
+        returns (uint256 principalSettledMinor, uint256 interestSettledMinor);
     /// What paying the Credis off now takes: its outstanding principal plus the interest
     /// accrued since the last settlement. Zero once it is Settled or Forfeited. Interest
     /// grows by whole days, so a payment landing a day later needs that day more;
@@ -89,9 +103,9 @@ interface ICredisFactory {
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
-    /// Gratis burns, the principal is written off and the Credis is deleted.
+    /// Gratis burns, the principal is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
-        returns (uint256 gratisBurnedMinor, uint256 principalWrittenOffMinor);
+        returns (uint256 forfeitedGratisMinor, uint256 forfeitedPrincipalMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

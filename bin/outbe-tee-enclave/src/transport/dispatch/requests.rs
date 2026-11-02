@@ -136,6 +136,7 @@ pub(in crate::transport) fn dispatch_with_initialization(
         | EnclaveRequest::SnapshotFidelityLeagues { .. }
         | EnclaveRequest::QueryFidelityIndex { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
+        | EnclaveRequest::MineGratisFromPromisV1 { .. }
         | EnclaveRequest::DeriveAccountKeys { .. }) => super::ledgers::dispatch(req, resident),
         EnclaveRequest::BeginUpgradeKeyTransferV1 { .. }
         | EnclaveRequest::BeginDcapOnboardingArtifactIngestV1 { .. }

@@ -63,34 +63,40 @@ fn date_step_error(
 }
 
 /// Moves issuance and the interest anchor together, so no interest is skipped. The
-/// Credis moves to the group of its new issuance day.
+/// Credis moves to the series of its new issuance day.
 fn backdate(storage: &StorageHandle<'_>, credis_id: U256, issued_at: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
     let mut record = credis.get_credis(credis_id)?;
-    credis.leave_group(record.group_key().expect("date step"), credis_id)?;
+    credis.leave_series(record.series_id, credis_id)?;
+    credis.take_series_unpaid_gratis(record.series_id, record.outstanding_gratis_minor)?;
     credis.delete_credis_record(credis_id)?;
     record.issued_at = issued_at;
     record.last_settled_at = issued_at;
-    credis.create_credis_record(&record)
+    record.series_id = CredisContract::series_of(
+        issued_at,
+        record.issuance_currency,
+        record.reference_currency,
+    )?;
+    let call_start_day =
+        outbe_primitives::time::first_full_day(issued_at).map_err(date_step_error)?;
+    credis.create_credis_record(&record, call_start_day)?;
+    Ok(())
 }
 
-/// Moves the deadline of the Credis's called group.
+/// Moves the deadline of the Credis's called series.
 fn requeue_called(storage: &StorageHandle<'_>, credis_id: U256, deadline: u64) -> Result<()> {
     let mut credis = CredisContract::new(storage.clone());
-    let group = credis
-        .get_credis(credis_id)?
-        .group_key()
-        .expect("date step");
-    if credis.called_deadline.read(&group)? == 0 {
+    let series = credis.get_credis(credis_id)?.series_id;
+    if credis.called_deadline.read(&series)? == 0 {
         return Err(CredisFactoryError::NotCalled.into());
     }
     // Members read the deadline from the call, so the call moves with the queue.
-    let notice = u64::from(credis.group_call_notice_period_seconds.read(&group)?);
+    let notice = u64::from(credis.series_call_notice_period_seconds.read(&series)?);
     credis
-        .group_called_at
-        .write(&group, deadline.saturating_sub(notice).max(1))?;
-    credis.remove_called(group)?;
-    credis.push_called(group, deadline)?;
+        .series_called_at
+        .write(&series, deadline.saturating_sub(notice).max(1))?;
+    credis.remove_called(series)?;
+    credis.push_called(series, deadline)?;
     let day = outbe_primitives::time::timestamp_to_date_key(deadline);
     reopen_day(storage, day)
 }

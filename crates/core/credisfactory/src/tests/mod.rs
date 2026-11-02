@@ -154,7 +154,8 @@ pub fn seed_reservation(
     source: Address,
     amount: U256,
 ) -> U256 {
-    let expires_at = storage.now_secs().unwrap() + 15 * 60;
+    let now = storage.now_secs().unwrap();
+    let expires_at = now + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
     let nonce = contract
         .reservation_nonce
@@ -163,6 +164,15 @@ pub fn seed_reservation(
         .saturating_add(U256::from(1));
     contract.reservation_nonce.write(nonce).unwrap();
     let id = nonce;
+    let mut day = last_closed_day(now);
+    for _ in 1..nonce.to::<u64>() {
+        day = previous_date_key(day).expect("date step");
+    }
+    let series_id =
+        outbe_primitives::series_id::SeriesId::for_pair(day, ISSUANCE_ISO, REFERENCE_ISO)
+            .expect("series id");
+    let call_start_day = outbe_primitives::time::first_full_day(now).expect("date step");
+    let call_terms = outbe_credis::config::read(storage).expect("call terms");
     contract
         .reservations
         .create(&LiquidityReservation {
@@ -183,6 +193,12 @@ pub fn seed_reservation(
             reference_currency: REFERENCE_ISO,
             call_anchor_price_minor: oracle_rate() - (nonce - U256::from(1)),
             source,
+            series_id,
+            call_start_day,
+            call_rate: call_terms.call_rate,
+            call_window_seconds: call_terms.call_window_seconds,
+            call_threshold_seconds: call_terms.call_threshold_seconds,
+            call_notice_period_seconds: call_terms.call_notice_period_seconds,
         })
         .unwrap();
     id
@@ -433,10 +449,10 @@ pub fn forfeited_by(
     if let Some(first) = outbe_primitives::deadline_queue::first_day(&queue)? {
         for day in first..=outbe_primitives::deadline_queue::deadline_day(timestamp)? {
             for slot in 0..credis.forfeit_day_len.read(&day)? {
-                if let Some(group) = outbe_primitives::deadline_queue::entry_at(&queue, day, slot)?
+                if let Some(series) = outbe_primitives::deadline_queue::entry_at(&queue, day, slot)?
                 {
-                    if credis.group_member_count(group)? != 0 {
-                        due.push(group);
+                    if credis.series_member_count(series)? != 0 {
+                        due.push(series);
                     }
                 }
             }
@@ -444,10 +460,10 @@ pub fn forfeited_by(
     }
     pass()?;
     let mut forfeited = 0;
-    for group in due {
-        if credis.called_group_slot.read(&group)? == 0
-            && (credis.cleanup_group_slot.read(&group)? != 0
-                || credis.group_member_count(group)? == 0)
+    for series in due {
+        if credis.called_series_slot.read(&series)? == 0
+            && (credis.cleanup_series_slot.read(&series)? != 0
+                || credis.series_member_count(series)? == 0)
         {
             forfeited += 1;
         }
@@ -460,18 +476,14 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
-/// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
+/// Calls the Credis's series at `now`, as the call scan does. Returns whether it moved.
 pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     let mut credis = CredisContract::new(storage.clone());
-    let group = credis
-        .get_credis(id)
-        .unwrap()
-        .group_key()
-        .expect("date step");
-    if credis.group_called_at.read(&group).unwrap() != 0 {
+    let series = credis.get_credis(id).unwrap().series_id;
+    if credis.series_called_at.read(&series).unwrap() != 0 {
         return false;
     }
-    credis.record_group_called(group, now).unwrap();
+    credis.record_series_called(series, now).unwrap();
     true
 }
 

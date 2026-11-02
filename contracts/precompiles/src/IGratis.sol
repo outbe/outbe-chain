@@ -14,11 +14,10 @@ interface IGratis {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     // Gratis runtime events.
-    /// @notice `gratisMinor` GRATIS (6 decimals) was minted to `account`.
-    event GratisMinted(address indexed account, uint256 gratisMinor);
-    event GratisMinedFromNod(address indexed account, bytes encryptedAmount, bytes encryptedBalance);
-    /// @notice `gratisMinor` GRATIS (6 decimals) was burned from `account`.
-    event GratisBurned(address indexed account, uint256 gratisMinor);
+    event GratisMinedFromNod(uint256 indexed nodId, address indexed account, bytes encryptedAmountMinor);
+    event GratisMinedFromPromis(address indexed account, bytes encryptedAmountMinor);
+    event GratisBurned(address indexed account, bytes encryptedAmountMinor);
+    event GratisBurnedFromPledge(address indexed account, bytes encryptedAmountMinor);
 
     // ERC-20 metadata
     function name() external view returns (string memory);

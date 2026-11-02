@@ -83,7 +83,12 @@ fn backdate_nod(
     reissued.issued_at = issued_at;
     reissued.group_key = group_key;
     storage.clone().with_checkpoint(|| {
-        outbe_nod::api::take_unpaid_load(storage, old_group_key, gratis_load_minor)?;
+        outbe_nod::api::take_series_unpaid_load(
+            storage,
+            old_group_key,
+            reissued.series_id,
+            gratis_load_minor,
+        )?;
         outbe_nod::api::remove_nod(storage, item, group)?;
         outbe_nod::api::add_nod(storage, &reissued, terms, gratis_load_minor)
     })

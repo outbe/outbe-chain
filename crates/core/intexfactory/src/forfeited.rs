@@ -66,28 +66,34 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
 
     /// Returns the group's unrealized load to the pool in one credit.
     fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let mut forfeited_units: u64 = 0;
         let mut returned = U256::ZERO;
+        let mut closed_events = Vec::new();
         for series_id in self.intex.group_members(group)? {
             let series = outbe_intex::api::get_series(self.storage, series_id)?;
             let forfeited = outbe_intex::api::forfeitable_units(self.storage, &series)?;
-            forfeited_units = forfeited_units.saturating_add(u64::from(forfeited.units));
-            returned = forfeited
+            let series_returned = forfeited
                 .promis_load_minor
                 .checked_mul(U256::from(forfeited.units))
-                .and_then(|load| returned.checked_add(load))
                 .ok_or(IntexFactoryError::ForfeitedPromisLoadOverflow)?;
+            returned = returned
+                .checked_add(series_returned)
+                .ok_or(IntexFactoryError::ForfeitedPromisLoadOverflow)?;
+            closed_events.push(IIntex::IntexSeriesClosed {
+                seriesId: series_id.into(),
+                issuanceCurrency: series.issuance_currency,
+                referenceCurrency: series.reference_currency,
+                forfeitedCount: forfeited.units,
+                forfeitedAmountMinor: series_returned,
+            });
         }
         if !returned.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .checked_credit(returned)?;
         }
         self.intex.hand_to_cleanup(group)?;
-        self.intex.emit(IIntex::IntexGroupForfeited {
-            groupKey: group,
-            forfeitedUnits: forfeited_units,
-            returnedPromisMinor: returned,
-        })?;
+        for event in closed_events {
+            self.intex.emit(event)?;
+        }
         Ok(())
     }
 

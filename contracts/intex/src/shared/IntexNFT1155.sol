@@ -182,7 +182,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, units, "");
 
-        emit IntexIssued(msg.sender, tokenId, to, units);
+        bytes memory payload = abi.encode(uint256(data.promisLoadMinor) * units);
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint16 check above
+        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, payload, uint32(units));
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -206,7 +208,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- saturated to the event's uint64
         uint64 derivedDeadline = deadline > type(uint64).max ? type(uint64).max : uint64(deadline);
 
-        emit IntexSeriesCalled(seriesId, calledAt, derivedDeadline);
+        emit IntexSeriesCalled(seriesId, data.issuanceCurrency, data.referenceCurrency, calledAt, derivedDeadline);
         emit MetadataUpdate(tokenId);
     }
 

@@ -548,6 +548,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::PrepareGramineDirectDevOnboardingArtifactV2 { .. }
         | EnclaveRequest::ApplyGratisOp { .. }
         | EnclaveRequest::ApplyPromisOp { .. }
+        | EnclaveRequest::MineGratisFromPromisV1 { .. }
         | EnclaveRequest::ApplyFidelityCohortOp { .. }
         | EnclaveRequest::SnapshotFidelityLeagues { .. }
         | EnclaveRequest::QueryFidelityIndex { .. }

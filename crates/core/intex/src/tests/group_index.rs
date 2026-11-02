@@ -52,11 +52,13 @@ fn another_call_price_or_first_full_day_opens_another_group() {
     with_registry(|s| {
         let day = u64::from(SECONDS_PER_DAY_U32);
         let midnight = ISSUED_AT.div_ceil(day) * day;
-        let first = issue(&s, 1, midnight, CALL_PRICE_MINOR);
-        let later = issue(&s, 2, midnight + 1, CALL_PRICE_MINOR);
-        let pricier = issue(&s, 3, midnight + 1, CALL_PRICE_MINOR * 4);
+        let prior = issue(&s, 1, midnight - 1, CALL_PRICE_MINOR);
+        let at_midnight = issue(&s, 2, midnight, CALL_PRICE_MINOR);
+        let later = issue(&s, 3, midnight + 1, CALL_PRICE_MINOR);
+        let pricier = issue(&s, 4, midnight + 1, CALL_PRICE_MINOR * 4);
 
-        assert_ne!(group_of(&s, first), group_of(&s, later));
+        assert_ne!(group_of(&s, prior), group_of(&s, later));
+        assert_eq!(group_of(&s, at_midnight), group_of(&s, later));
         assert_ne!(group_of(&s, later), group_of(&s, pricier));
     });
 }

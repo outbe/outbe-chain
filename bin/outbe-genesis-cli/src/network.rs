@@ -57,7 +57,7 @@ pub const TEE_KEYS: [&str; 6] = [
     "minimum_tcb_evaluation_data_number",
 ];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 40] = [
     "network",
     "validators",
     "keys_dir",
@@ -97,6 +97,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "price_feed_websocket",
     "feeder_pairs",
     "feeder_seeds",
+    "hyperlane_controller",
 ];
 
 /// Return the repository root directory (`<repo>`).

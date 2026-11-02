@@ -377,20 +377,20 @@
       {
         "name": "owner",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "promisLoadMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
       },
       {
-        "name": "entryPriceMinor",
-        "type": "uint256",
+        "name": "subSeriesId",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -405,56 +405,20 @@
         "internalType": "uint16"
       },
       {
-        "name": "issuedAt",
-        "type": "uint64",
+        "name": "payload",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "callPriceMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "callWindow",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "callThreshold",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "callNoticePeriod",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "groupKey",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "GemMined",
+    "name": "GemPositionCreated",
     "inputs": [
       {
-        "name": "gemId",
+        "name": "positionId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
@@ -462,14 +426,32 @@
       {
         "name": "owner",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "promisLoadMinor",
-        "type": "uint256",
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "payload",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -501,31 +483,19 @@
   },
   {
     "type": "event",
-    "name": "GemPositionIssued",
+    "name": "GemSeriesOpened",
     "inputs": [
       {
-        "name": "positionId",
-        "type": "uint256",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "uint256"
+        "internalType": "bytes14"
       },
       {
-        "name": "merchant",
-        "type": "address",
+        "name": "subSeriesId",
+        "type": "uint16",
         "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "sourceIntexId",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "capacityMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -540,13 +510,31 @@
         "internalType": "uint16"
       },
       {
-        "name": "issuedAt",
+        "name": "entryPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "callPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "callWindow",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
       },
       {
-        "name": "expiresAt",
+        "name": "callThreshold",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "callNoticePeriod",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -567,7 +555,7 @@
       {
         "name": "owner",
         "type": "address",
-        "indexed": false,
+        "indexed": true,
         "internalType": "address"
       },
       {
@@ -577,16 +565,22 @@
         "internalType": "address"
       },
       {
-        "name": "paymentMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "settlementCurrency",
+        "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

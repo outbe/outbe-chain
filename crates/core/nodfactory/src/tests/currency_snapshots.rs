@@ -246,7 +246,7 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
     assert!(is_settled(&mut world, nod_id));
     let paid = paid_event(&world);
     assert_eq!(paid.asset, SETTLEMENT_ASSET_EUR);
-    assert_eq!(paid.paymentMinor, quoted.1);
+    assert_eq!(paid.amountMinor, quoted.1);
 }
 
 #[test]

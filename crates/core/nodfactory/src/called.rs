@@ -305,7 +305,7 @@ pub(crate) fn breach_terms(
 }
 
 /// Stamps the call and opens the settlement window the group sealed.
-fn mark_called(
+pub(crate) fn mark_called(
     nod: &mut NodContract<'_>,
     group_key: B256,
     now: u64,
@@ -313,9 +313,16 @@ fn mark_called(
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
     nod.record_group_called(group_key, now, deadline)?;
-    nod.emit(INod::NodGroupCalled {
-        groupKey: group_key,
-        calledAt: now,
-        settlementDeadline: deadline,
-    })
+    for series_id in nod.group_series.list(&group_key).read_all()? {
+        let issuance_currency = nod.series_issuance_currency.read(&series_id)?;
+        let reference_currency = nod.series_reference_currency.read(&series_id)?;
+        nod.emit(INod::NodSeriesCalled {
+            seriesId: series_id.into(),
+            issuanceCurrency: issuance_currency,
+            referenceCurrency: reference_currency,
+            calledAt: now,
+            settlementDeadline: deadline,
+        })?;
+    }
+    Ok(())
 }

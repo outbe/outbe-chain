@@ -6,13 +6,26 @@ use outbe_primitives::storage::StorageHandle;
 
 pub use outbe_promis::api::ModifyAuth;
 
-/// Mint `amount` promis to `account`, authorized by the account owner's Promis
-/// modify key.
-pub fn mint(
+/// Mint `amount` promis to `account` from a settled Gem position (`gem_id`),
+/// authorized by the account owner's Promis modify key.
+pub fn mint_from_gem(
     storage: StorageHandle<'_>,
+    gem_id: U256,
     account: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    crate::runtime::mint(storage, account, amount, auth)
+    crate::runtime::mint_from_gem(storage, gem_id, account, amount, auth)
+}
+
+/// Mint `amount` promis to `account` from a settled Intex position (`intex_id`),
+/// authorized by the account owner's Promis modify key.
+pub fn mint_from_intex(
+    storage: StorageHandle<'_>,
+    intex_id: U256,
+    account: Address,
+    amount: U256,
+    auth: ModifyAuth,
+) -> Result<()> {
+    crate::runtime::mint_from_intex(storage, intex_id, account, amount, auth)
 }

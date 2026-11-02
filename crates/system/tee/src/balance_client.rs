@@ -5,7 +5,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::errors::BalanceClientError;
 use crate::protocol::{
-    gratis_op_canonical_hash, promis_op_canonical_hash, EnclaveRequest, EnclaveResponse,
+    gratis_op_canonical_hash, mine_gratis_from_promis_canonical_hash, promis_op_canonical_hash,
+    EnclaveRequest, EnclaveResponse,
 };
 use crate::TransportError;
 
@@ -13,6 +14,7 @@ use crate::TransportError;
 enum BalanceOperation {
     Gratis,
     Promis,
+    MineGratisFromPromis,
 }
 
 impl BalanceOperation {
@@ -20,6 +22,7 @@ impl BalanceOperation {
         match self {
             Self::Gratis => "ApplyGratisOp",
             Self::Promis => "ApplyPromisOp",
+            Self::MineGratisFromPromis => "MineGratisFromPromisV1",
         }
     }
 }
@@ -33,6 +36,10 @@ pub fn execute_confidential_balance_op(request: EnclaveRequest) -> Result<Enclav
         EnclaveRequest::ApplyPromisOp { request } => {
             (BalanceOperation::Promis, promis_op_canonical_hash(request))
         }
+        EnclaveRequest::MineGratisFromPromisV1 { request } => (
+            BalanceOperation::MineGratisFromPromis,
+            mine_gratis_from_promis_canonical_hash(request),
+        ),
         _ => return Err(BalanceClientError::NotConfidentialBalanceOperation.into()),
     };
     let (attestation_pub, response) = crate::witness::consensus_call(
@@ -89,6 +96,20 @@ fn validate_response(
             )
             .map_err(BalanceClientError::promis_attestation_invalid)
         }
+        (
+            BalanceOperation::MineGratisFromPromis,
+            EnclaveResponse::GratisMinedFromPromisV1 { result },
+        ) => {
+            let actual_hash = result.inputs_canonical_hash;
+            check_canonical_hash(expected_hash, actual_hash)?;
+            crate::verify_mine_gratis_from_promis_attestation(
+                attestation_pub,
+                actual_hash,
+                result,
+                &result.attestation_tag,
+            )
+            .map_err(BalanceClientError::promis_attestation_invalid)
+        }
         (_, EnclaveResponse::Error { message }) => Err(
             BalanceClientError::enclave_operation_error(operation.name(), message),
         ),
@@ -119,6 +140,7 @@ mod tests {
             new_balance: Vec::new(),
             new_pledged: Vec::new(),
             event_amount: U256::ZERO,
+            encrypted_event_amount: Vec::new(),
             next_op_nonce: 0,
             fidelity: None,
             inputs_canonical_hash: hash,
@@ -131,6 +153,7 @@ mod tests {
             status: PromisOpStatus::Applied,
             new_balance: Vec::new(),
             event_amount: U256::ZERO,
+            encrypted_event_amount: Vec::new(),
             next_op_nonce: 0,
             inputs_canonical_hash: hash,
             attestation_tag: Vec::new(),

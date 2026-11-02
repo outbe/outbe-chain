@@ -17,6 +17,14 @@ pub use crate::state_api::{LoadedGem, LoadedGemGroup};
 /// Records a gem in the group of its first full day, call price and reference currency,
 /// opening that group if it is the first. Returns the gem id. GemFactory decides the issue.
 pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256> {
+    add_gem_opening_sub_series(storage, params).map(|(gem_id, _)| gem_id)
+}
+
+/// Records a gem and reports whether `(series_id, sub_series_id)` opened for the first time.
+pub fn add_gem_opening_sub_series(
+    storage: &StorageHandle<'_>,
+    params: GemAddParams,
+) -> Result<(U256, bool)> {
     let series_id = GemContract::series_of(
         params.issued_at,
         params.issuance_currency,
@@ -48,8 +56,8 @@ pub fn add_gem(storage: &StorageHandle<'_>, params: GemAddParams) -> Result<U256
         series_id,
         sub_series_id,
     };
-    record_issued(storage, &item, params.call_terms)?;
-    Ok(gem_id)
+    let opened = crate::state_api::add_item(storage, &item, params.call_terms)?;
+    Ok((gem_id, opened))
 }
 
 /// The sub-series of `call_price_minor` in `series_id`: 0 for the series-date VWAP, else
@@ -73,7 +81,7 @@ pub fn record_issued(
     item: &GemItemState,
     call_terms: Option<CallTerms>,
 ) -> Result<()> {
-    crate::state_api::add_item(storage, item, call_terms)
+    crate::state_api::add_item(storage, item, call_terms).map(|_| ())
 }
 
 /// Loads a gem while retaining its exact stored state for mutation.

@@ -133,8 +133,8 @@ mod tests {
             keccak256("ProposerFelony(address,uint64,uint64)")
         );
         assert_eq!(
-            INod::NodGroupCalled::SIGNATURE_HASH,
-            keccak256("NodGroupCalled(bytes32,uint64,uint64)")
+            INod::NodSeriesCalled::SIGNATURE_HASH,
+            keccak256("NodSeriesCalled(bytes14,uint16,uint16,uint64,uint64)")
         );
         assert_eq!(
             ICycle::CycleTriggerExecuted::SIGNATURE_HASH,

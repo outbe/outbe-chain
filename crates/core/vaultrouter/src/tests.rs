@@ -2449,4 +2449,112 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
     });
 }
 
+#[test]
+fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_opens_new_series() {
+    let midnight: u64 = (1_700_000_000u64 / 86_400) * 86_400;
+    let next_day_midnight: u64 = midnight + 86_400;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(midnight));
+    storage.stub_sub_call_at(vault(), word(U256::from(1_000u64)));
+    storage.enable_sub_call_stub();
+    storage.stub_sub_call_at_selector(asset(), IERC20::decimalsCall::SELECTOR, word(U256::from(6)));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(U256::from(USD_ISO_CODE)),
+    );
+    StorageHandle::enter(&mut storage, |storage| {
+        storage
+            .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
+            .unwrap();
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+        let pair = AddressPair::new_coen_to(USD_ISO_CODE);
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        let oracle = OracleContract::new(storage.clone());
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(43_000))
+            .unwrap();
+        outbe_oracle::test_support::seed_covered_trailing_window(
+            &storage,
+            pair,
+            U256::from(2_000_000),
+            U256::ONE,
+        )
+        .unwrap();
+        let day_0 = outbe_primitives::time::timestamp_to_date_key(midnight);
+        let prev_day = outbe_primitives::time::previous_date_key(day_0).unwrap();
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
+            .unwrap()
+            .unwrap();
+        oracle
+            .record_utc_day_vwap(prev_day, index, U256::from(2_000_000))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(prev_day).unwrap();
+        bond_cca(&storage);
+        register_vault(&storage, asset(), vault());
+
+        let reserve = |storage: &StorageHandle<'_>| {
+            runtime::reserve_stables(
+                storage.clone(),
+                cca(),
+                IVaultRouter::reserveStablesCall {
+                    credisOwner: receiver(),
+                    source: pledger(),
+                    asset: asset(),
+                    amountMinor: U256::from(10),
+                    referenceCurrency: USD_ISO_CODE,
+                },
+            )
+            .unwrap()
+        };
+
+        // 1) Reservation at exact 00:00:00 UTC
+        let id_midnight = reserve(&storage);
+        let r_midnight = runtime::reservation_of(&storage, id_midnight).unwrap();
+
+        // 2) Reservation at 00:00:01 UTC on the same UTC day
+        storage
+            .set_block_timestamp(U256::from(midnight + 1))
+            .unwrap();
+        let id_plus_1s = reserve(&storage);
+        let r_plus_1s = runtime::reservation_of(&storage, id_plus_1s).unwrap();
+
+        assert_eq!(r_midnight.series_id, r_plus_1s.series_id);
+        assert_eq!(r_midnight.call_start_day, r_plus_1s.call_start_day);
+        assert_eq!(
+            r_midnight.call_start_day,
+            outbe_primitives::time::next_date_key(day_0).unwrap()
+        );
+        assert!(r_midnight.call_window_seconds > 0);
+
+        // 3) Reservation on the next UTC day opens a new seriesId
+        storage
+            .set_block_timestamp(U256::from(next_day_midnight))
+            .unwrap();
+        outbe_oracle::test_support::seed_covered_trailing_window(
+            &storage,
+            pair,
+            U256::from(2_000_000),
+            U256::from(2),
+        )
+        .unwrap();
+        oracle
+            .record_utc_day_vwap(day_0, index, U256::from(2_000_000))
+            .unwrap();
+        oracle.utc_day_vwap_last_finalized.write(day_0).unwrap();
+
+        let id_next_day = reserve(&storage);
+        let r_next_day = runtime::reservation_of(&storage, id_next_day).unwrap();
+        assert_ne!(r_next_day.series_id, r_midnight.series_id);
+        assert_eq!(
+            r_next_day.series_id,
+            outbe_primitives::series_id::SeriesId::for_pair(day_0, USD_ISO_CODE, USD_ISO_CODE)
+                .unwrap()
+        );
+    });
+}
+
 mod registry;
