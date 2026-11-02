@@ -71,25 +71,78 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
     /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
     fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let nods = self.nod.group_nod_count.read(&group)?;
         let load = self.nod.read_group_open_load(group)?;
+        let closed_series = self.collect_closed_series(group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .checked_credit(load)?;
         }
         self.nod.group_open_load_ct.bytes(&group).clear()?;
+        for &(series_id, ..) in &closed_series {
+            let gs_key = outbe_nod::index_keys::group_series_key(group, series_id);
+            self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
+        }
         self.nod.group_is_forfeited.write(&group, true)?;
         self.nod.hand_to_cleanup(group)?;
-        self.nod.emit(INod::NodGroupForfeited {
-            groupKey: group,
-            nods,
-            gratisLoadMinor: load,
-        })?;
+        for (
+            series_id,
+            issuance_currency,
+            reference_currency,
+            forfeited_count,
+            forfeited_tribute_count,
+            forfeited_amount_minor,
+        ) in closed_series
+        {
+            self.nod.emit(INod::NodSeriesClosed {
+                seriesId: series_id.into(),
+                issuanceCurrency: issuance_currency,
+                referenceCurrency: reference_currency,
+                forfeitedCount: forfeited_count,
+                forfeitedTributeCount: forfeited_tribute_count,
+                forfeitedAmountMinor: forfeited_amount_minor,
+            })?;
+        }
         Ok(())
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
         tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
+    }
+}
+
+type ClosedSeriesEntry = (
+    outbe_primitives::series_id::SeriesId,
+    u16,
+    u16,
+    u32,
+    u32,
+    alloy_primitives::U256,
+);
+
+impl NodForfeit<'_, '_> {
+    fn collect_closed_series(&self, group: B256) -> Result<Vec<ClosedSeriesEntry>> {
+        let series_list = self.nod.group_series.list(&group).read_all()?;
+        let mut closed_series = Vec::with_capacity(series_list.len());
+        for series_id in series_list {
+            let gs_key = outbe_nod::index_keys::group_series_key(group, series_id);
+            let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
+            let unclaimed_tributes = self.nod.series_unclaimed_tribute_count.read(&series_id)?;
+            let forfeited_tribute_count = u32::try_from(unclaimed_tributes).map_err(|_| {
+                outbe_nod::errors::NodError::GroupMemberIndexOverflow { group_key: group }
+            })?;
+            let forfeited_amount_minor = self.nod.read_series_open_load(group, series_id)?;
+            let issuance_currency = self.nod.series_issuance_currency.read(&series_id)?;
+            let reference_currency = self.nod.series_reference_currency.read(&series_id)?;
+            closed_series.push((
+                series_id,
+                issuance_currency,
+                reference_currency,
+                forfeited_count,
+                forfeited_tribute_count,
+                forfeited_amount_minor,
+            ));
+        }
+        Ok(closed_series)
     }
 }

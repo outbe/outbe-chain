@@ -358,13 +358,13 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
     (group_key, items)
 }
 
-/// Each `NodGroupForfeited` as (Nods forfeited, Gratis load returned).
+/// Each `NodSeriesClosed` as (Nods forfeited, Gratis load returned).
 fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
         .get_events(NOD_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodGroupForfeited::decode_log_data(log).ok())
-        .map(|event| (event.nods, event.gratisLoadMinor))
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
 

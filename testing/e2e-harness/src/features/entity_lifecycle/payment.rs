@@ -269,7 +269,7 @@ fn assert_paid_event(
                 addresses::NOD_FACTORY_ADDR,
             );
             assert_eq!(
-                (paid.owner, paid.nodId, paid.asset, paid.paymentMinor),
+                (paid.owner, paid.nodId, paid.asset, paid.amountMinor),
                 (target.owner, *id, asset, payable),
                 "NodSettled does not record this payment"
             );
