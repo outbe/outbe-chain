@@ -44,8 +44,8 @@ struct RouteSpec {
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`,
 ///   `REMOTE_CHAIN_IDS`.
-/// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`), the
-///   route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
+/// Optional env: `CREATE3_FACTORY_ADDRESS`, `OUTBE_RPC` (an `rpc_endpoints` alias, default `outbe-testnet`),
+///   `KEEP_DEPLOYER_AS_OWNER`, the route's `canonicalTokenEnv`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 abstract contract BaseRoute is Script {
     error MissingCode(address target);
     error DomainTooLarge(uint256 chainId);
@@ -64,9 +64,10 @@ abstract contract BaseRoute is Script {
         return vm.addr(_pk());
     }
 
-    /// @dev Governance owns every bridge. On Outbe that is the HyperlaneController precompile. On
-    ///      another chain it is the controller's Interchain Account there.
+    /// @dev The deployer can temporarily retain ownership until governance is initialized. Otherwise,
+    ///      the owner is the HyperlaneController on Outbe and its Interchain Account elsewhere.
     function _bridgeOwner() internal returns (address) {
+        if (vm.envOr("KEEP_DEPLOYER_AS_OWNER", false)) return _deployer();
         return _isOutbe() ? HYPERLANE_CONTROLLER : _controllerAccount(_toDomain(block.chainid));
     }
 
