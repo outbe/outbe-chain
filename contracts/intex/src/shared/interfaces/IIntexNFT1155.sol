@@ -85,18 +85,37 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     // --- Events ---
 
-    /// @notice Emitted when a new Intex series is issued.
-    /// @param operator Caller that minted the Issued tokens (`AUCTION_ROLE`).
-    /// @param tokenId Issued token id (= `keccak256(seriesId)`).
-    /// @param to Recipient of the minted Issued tokens.
-    /// @param units Issued units minted to `to`.
-    event IntexIssued(address indexed operator, uint256 indexed tokenId, address indexed to, uint256 units);
+    /// @notice Emitted when Issued Intexes are minted to an owner.
+    /// @param intexId Issued token id (= `keccak256(seriesId)`).
+    /// @param owner Recipient of the minted Issued tokens.
+    /// @param seriesId Series identifier.
+    /// @param issuanceCurrency Issuance currency (ISO numeric).
+    /// @param referenceCurrency Reference currency (ISO numeric).
+    /// @param payload ABI-encoded total Promis load (`abi.encode(uint256(promisLoadMinor) * units)`).
+    /// @param units Issued units minted to `owner`.
+    event IntexIssued(
+        uint256 indexed intexId,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        bytes payload,
+        uint32 units
+    );
 
     /// @notice Emitted when this chain records the call notice of a series.
     /// @param seriesId Series identifier.
+    /// @param issuanceCurrency Issuance currency (ISO numeric).
+    /// @param referenceCurrency Reference currency (ISO numeric).
     /// @param calledAt Unix time the origin marked the series Called.
     /// @param settlementDeadline `calledAt + callNoticePeriod`, capped at `uint64.max`.
-    event IntexSeriesCalled(bytes14 indexed seriesId, uint64 calledAt, uint64 settlementDeadline);
+    event IntexSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
 
     /// @notice Emitted when token metadata is updated (ERC-4906). Per the EIP, `tokenId` is
     ///         non-indexed.

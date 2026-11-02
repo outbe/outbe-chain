@@ -55,10 +55,13 @@ fn a_called_series_reports_its_settlement_deadline() {
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupCalled::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(events.len(), 1);
+    assert_eq!(SeriesId::from(events[0].seriesId), sid(7));
+    assert_eq!(events[0].issuanceCurrency, 840);
+    assert_eq!(events[0].referenceCurrency, 840);
     assert_eq!(events[0].calledAt, scan_ts);
     assert_eq!(events[0].settlementDeadline, scan_ts + u64::from(notice));
 }
@@ -649,7 +652,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()
         })
         .count();
     assert_eq!(forfeited, 1);

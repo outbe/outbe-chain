@@ -59,15 +59,6 @@ pub fn mine_promis(
             auth,
         )?;
 
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::IntexMined {
-                seriesId: series_id.into(),
-                owner,
-                units,
-                promisMinor: promis_minor,
-            },
-        )?;
         Ok(promis_minor)
     })
 }

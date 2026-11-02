@@ -260,28 +260,22 @@
   },
   {
     "type": "event",
-    "name": "IntexMined",
+    "name": "IntexAuctionProceedsBurned",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
+        "name": "emissionDay",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "bytes14"
+        "internalType": "uint32"
       },
       {
-        "name": "owner",
-        "type": "address",
+        "name": "srcChainId",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "address"
+        "internalType": "uint32"
       },
       {
-        "name": "units",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -310,7 +304,7 @@
   },
   {
     "type": "event",
-    "name": "IntexSeriesIssued",
+    "name": "IntexSeriesOpened",
     "inputs": [
       {
         "name": "seriesId",
@@ -319,10 +313,16 @@
         "internalType": "bytes14"
       },
       {
-        "name": "issuedUnits",
-        "type": "uint32",
+        "name": "issuanceCurrency",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "entryPriceMinor",
@@ -335,6 +335,36 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      },
+      {
+        "name": "callWindow",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "callThreshold",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "callNoticePeriod",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "units",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "unitPromisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -344,10 +374,10 @@
     "name": "IntexSettled",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
+        "name": "intexId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes14"
+        "internalType": "uint256"
       },
       {
         "name": "owner",
@@ -356,41 +386,34 @@
         "internalType": "address"
       },
       {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "units",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsBurned",
-    "inputs": [
-      {
-        "name": "emissionDay",
         "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "proceedsMinor",
-        "type": "uint256",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "creditedPromisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

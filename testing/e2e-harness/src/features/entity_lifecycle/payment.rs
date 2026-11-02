@@ -258,8 +258,20 @@ fn assert_paid_event(
                 addresses::INTEX_FACTORY_ADDR,
             );
             assert_eq!(
-                (settled.seriesId, settled.owner, settled.units),
-                (*id, target.owner, U256::from(*units)),
+                (
+                    settled.intexId,
+                    settled.owner,
+                    settled.asset,
+                    settled.amountMinor,
+                    settled.units
+                ),
+                (
+                    crate::world::venue_probes::intex_id(*id),
+                    target.owner,
+                    asset,
+                    payable,
+                    *units
+                ),
                 "IntexSettled does not record this payment"
             );
         }

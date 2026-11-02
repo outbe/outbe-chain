@@ -5,8 +5,9 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 
 /// @dev ERC1155 receiver that, during the `onERC1155Received` callback, snapshots
 ///      `totalSupply(tokenId)` against `balanceOf(self, tokenId)`. After the mint
@@ -230,7 +231,7 @@ contract IntexNFT1155Test is Test {
         uint64 calledAt = uint64(block.timestamp);
 
         vm.expectEmit(true, false, false, true);
-        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, calledAt, calledAt + period);
+        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, 840, 840, calledAt, calledAt + period);
         vm.prank(bridger);
         nft.markCalled(SERIES_ID_1, calledAt);
 
@@ -393,12 +394,35 @@ contract IntexNFT1155Test is Test {
         emit IIntexNFT1155.MetadataUpdate(TOKEN_ID_1);
         nft.createSeries(CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, customCallPeriod));
 
+        bytes memory expectedPayload = abi.encode(uint256(100_000 * 1e6) * quantity);
         vm.expectEmit(true, true, true, true);
-        emit IIntexNFT1155.IntexIssued(bridger, TOKEN_ID_1, user, quantity);
+        emit IIntexNFT1155.IntexIssued(TOKEN_ID_1, user, SERIES_ID_1, 840, 840, expectedPayload, uint32(quantity));
+        vm.recordLogs();
         nft.issueIntex(user, quantity, SERIES_ID_1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 issuedUnits;
+        uint256 transferSingleValue;
+        bool sawIssued;
+        bool sawTransfer;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length == 0) continue;
+            if (logs[i].topics[0] == IIntexNFT1155.IntexIssued.selector) {
+                (,,, uint32 units) = abi.decode(logs[i].data, (uint16, uint16, bytes, uint32));
+                issuedUnits = uint256(units);
+                sawIssued = true;
+            }
+            if (logs[i].topics[0] == IERC1155.TransferSingle.selector) {
+                (, uint256 value) = abi.decode(logs[i].data, (uint256, uint256));
+                transferSingleValue = value;
+                sawTransfer = true;
+            }
+        }
+        assertTrue(sawIssued);
+        assertTrue(sawTransfer);
+        assertEq(issuedUnits, transferSingleValue);
 
         vm.expectEmit(true, false, false, true);
-        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, uint64(block.timestamp), settlementDeadline);
+        emit IIntexNFT1155.IntexSeriesCalled(SERIES_ID_1, 840, 840, uint64(block.timestamp), settlementDeadline);
         nft.markCalled(SERIES_ID_1, uint64(block.timestamp));
         vm.stopPrank();
     }
