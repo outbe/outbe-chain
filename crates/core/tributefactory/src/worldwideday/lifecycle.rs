@@ -122,15 +122,24 @@ fn create_catchup_days(
     let catchup_days = gap_days.min(MAX_WWD_CATCHUP_DAYS);
     let start_ts = base_ts.saturating_sub(u64::from(catchup_days) * SECONDS_PER_DAY);
     let factory = TributeFactoryContract::new(ctx.storage.clone());
-    let max_catchup_pipeline =
-        super::constants::MAX_PIPELINE_WWDS.saturating_sub(lookahead as usize);
+    let _ = lookahead;
     for offset in 0..catchup_days {
         let wwd_ts = start_ts.saturating_add(u64::from(offset) * SECONDS_PER_DAY);
         let wwd = WorldwideDay::new(timestamp_to_date_key(wwd_ts));
         if factory.worldwide_days.get(wwd)?.is_none() {
             let (schedule, _) = compute_wwd_schedule(wwd)?;
+            let active_in_flight = factory
+                .pipeline_wwd
+                .read_all()?
+                .into_iter()
+                .filter(|existing| {
+                    existing
+                        .start_timestamp()
+                        .is_ok_and(|start| start <= timestamp)
+                })
+                .count();
             if schedule.offering_end > timestamp
-                && factory.pipeline_wwd.read_all()?.len() >= max_catchup_pipeline
+                && active_in_flight >= super::constants::MAX_PIPELINE_WWDS
             {
                 continue;
             }

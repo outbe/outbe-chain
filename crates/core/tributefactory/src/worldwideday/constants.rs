@@ -6,7 +6,7 @@ use outbe_chain_constants::{
 /// Compatibility aliases for capacity proofs and canonical-default tests.
 pub const FORMING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS / SECONDS_PER_HOUR;
 
-/// Lookback delay: 430 hours.
+/// Lookback delay: 22 hours.
 pub const LOOKBACK_DELAY_HOURS: u64 = DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS / SECONDS_PER_HOUR;
 
 /// Offering period: 50 hours.
@@ -30,7 +30,7 @@ const NORMAL_PIPELINE_WWDS: usize =
     NORMAL_PIPELINE_HOURS.div_ceil(WWD_CREATION_CADENCE_HOURS) as usize;
 
 /// Maximum pre-admission population implied by the production cadence and
-/// phase durations: `ceil((50 + 430 + 50 + 12) / 24) + 1 = 24`.
+/// phase durations: `ceil((50 + 22 + 50 + 12) / 24) + 1 = 7`.
 pub const MAX_PIPELINE_WWDS: usize = NORMAL_PIPELINE_WWDS + 1;
 
 /// Maximum WWD records kept in the canonical historical retention queue.
