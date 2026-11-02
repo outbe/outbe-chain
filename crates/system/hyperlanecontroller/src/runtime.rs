@@ -1,9 +1,9 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::executor::Executor;
+use crate::calls::{Calls, RemoteCall};
 use crate::ism::accept_remote_ism;
 use crate::precompile::ICrosschainGov;
 use crate::schema::HyperlaneControllerContract;
@@ -116,10 +116,9 @@ impl HyperlaneControllerContract<'_> {
     /// calldata, so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
-        executor: &mut impl Executor,
         caller: Address,
         bootstrap: &ControllerBootstrap<'_>,
-    ) -> Result<()> {
+    ) -> Result<Calls> {
         if self.is_initialized()? {
             return Err(HyperlaneControllerError::AlreadyInitialized.into());
         }
@@ -135,7 +134,7 @@ impl HyperlaneControllerContract<'_> {
         self.require_owned(bootstrap.ica_router)?;
 
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.install(executor, bootstrap, local, local_ism))
+        storage.with_checkpoint(|| self.install(bootstrap, local, local_ism))
     }
 
     /// Requires that `caller` owns the local ISM and that the ISM ownership
@@ -152,22 +151,21 @@ impl HyperlaneControllerContract<'_> {
         Ok(())
     }
 
-    /// Takes ownership of the local ISM, then stores the bootstrap table and
-    /// takes ownership of every remote ISM.
+    /// Stores the bootstrap table. Returns the calls that take the ownership
+    /// of the local ISM and of every remote ISM.
     fn install(
         &mut self,
-        executor: &mut impl Executor,
         bootstrap: &ControllerBootstrap<'_>,
         local: u32,
         local_ism: Address,
-    ) -> Result<()> {
-        executor.call_local(
-            local_ism,
-            U256::ZERO,
-            IStorageMultisigIsm::acceptOwnershipCall {}
-                .abi_encode()
-                .into(),
-        )?;
+    ) -> Result<Calls> {
+        let mut calls = Calls {
+            local: vec![RemoteCall::new(
+                local_ism,
+                IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
+            )],
+            remote: Vec::new(),
+        };
         self.ica_router.write(bootstrap.ica_router)?;
         self.validator_announce
             .write(bootstrap.validator_announce)?;
@@ -179,27 +177,28 @@ impl HyperlaneControllerContract<'_> {
         for ((domain, ism), hook) in table {
             self.write_domain(*domain, *ism, *hook)?;
             if *domain != local {
-                accept_remote_ism(executor, *domain, *ism)?;
+                calls.remote.push(accept_remote_ism(*domain, *ism));
             }
         }
         self.emit(ICrosschainGov::Initialized {
             icaRouter: bootstrap.ica_router,
-        })
+        })?;
+        Ok(calls)
     }
 
     /// Mirrors the active Outbe validator set into every ISM (validators =
     /// the Hyperlane signer of every active validator, threshold =
-    /// [`consensus_threshold`]). Returns `false` when the local ISM already
-    /// matches, so a keeper can call it every epoch.
-    pub fn sync(&mut self, executor: &mut impl Executor) -> Result<bool> {
+    /// [`consensus_threshold`]). Returns the rotation calls, or `None` when
+    /// the local ISM already matches, so a keeper can call it every epoch.
+    pub fn sync(&mut self) -> Result<Option<Calls>> {
         let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;
         let (current, current_threshold) = self.current_validators()?;
         if current_threshold == threshold && same_set(&current, &active) {
-            return Ok(false);
+            return Ok(None);
         }
-        self.set_validators_and_threshold(executor, &active, threshold)?;
-        Ok(true)
+        self.set_validators_and_threshold(&active, threshold)
+            .map(Some)
     }
 }
 

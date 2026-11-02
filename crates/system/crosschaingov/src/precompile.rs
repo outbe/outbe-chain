@@ -40,17 +40,19 @@ pub fn dispatch(
             let mut executor = Executor::new(storage.clone());
             match call {
                 initialize(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    controller.initialize(
-                        &mut executor,
-                        sender,
-                        &ControllerBootstrap {
-                            ica_router: c.icaRouter,
-                            validator_announce: c.validatorAnnounce,
-                            domains: &c.domains,
-                            isms: &c.isms,
-                            hooks: &c.hooks,
-                        },
-                    )
+                    storage.with_checkpoint(|| {
+                        let calls = controller.initialize(
+                            sender,
+                            &ControllerBootstrap {
+                                ica_router: c.icaRouter,
+                                validator_announce: c.validatorAnnounce,
+                                domains: &c.domains,
+                                isms: &c.isms,
+                                hooks: &c.hooks,
+                            },
+                        )?;
+                        executor.run(calls)
+                    })
                 }),
                 fund(c) => mutate_void_payable(
                     &storage,
@@ -62,7 +64,12 @@ pub fn dispatch(
                     },
                     |sender, _, amount| executor.fund(sender, amount),
                 ),
-                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync(&mut executor)),
+                sync(c) => mutate(&storage, c, caller, |_, _| {
+                    storage.with_checkpoint(|| match controller.sync()? {
+                        Some(calls) => executor.run(calls).map(|()| true),
+                        None => Ok(false),
+                    })
+                }),
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
                     gov.apply_approved(c.proposalId, &c.payload)
                 }),

@@ -1,28 +1,75 @@
 //! The owner calls of the owner address: local calls and Interchain Account
-//! dispatch, paid from the address balance. `hyperlanecontroller` makes its
-//! writes through them, and so do the vote actions of this crate.
+//! dispatch, paid from the address balance. The only code that calls another
+//! contract as the owner. It runs the calls of the vote actions and the
+//! [`Calls`] that `hyperlanecontroller` returns.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
-
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
 use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
-use outbe_hyperlanecontroller::{HyperlaneControllerContract, RemoteCall};
+use outbe_hyperlanecontroller::{Calls, HyperlaneControllerContract, RemoteCall};
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
+
+use crate::schema::CrosschainGovContract;
 
 /// Runs the owner calls of the owner address. Use it only in the frame of
 /// that address: every call has the frame address as `msg.sender`.
 pub struct Executor<'a> {
-    controller: HyperlaneControllerContract<'a>,
+    gov: CrosschainGovContract<'a>,
+    /// The Hyperlane registry: the ICA router and the known domains.
+    hyperlane: HyperlaneControllerContract<'a>,
 }
 
 impl<'a> Executor<'a> {
     pub fn new(storage: StorageHandle<'a>) -> Self {
         Self {
-            controller: HyperlaneControllerContract::new(storage),
+            gov: CrosschainGovContract::new(storage.clone()),
+            hyperlane: HyperlaneControllerContract::new(storage),
         }
+    }
+
+    /// Runs `calls`: the local calls first, then one message for each remote
+    /// domain, all under one checkpoint.
+    pub fn run(&mut self, calls: Calls) -> Result<()> {
+        let storage = self.gov.storage.clone();
+        storage.with_checkpoint(|| {
+            for call in calls.local {
+                self.call_local(call.to, call.value, call.data)?;
+            }
+            for (domain, remote) in &calls.remote {
+                self.call_remote(*domain, remote)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Calls `to` on this chain. The owner balance pays `value`.
+    pub fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes> {
+        if to == Address::ZERO {
+            return Err(HyperlaneControllerError::InvalidAddress.into());
+        }
+        self.require_balance(value)?;
+        let storage = self.gov.storage.clone();
+        storage.with_checkpoint(|| {
+            let ret = self.gov.storage.call(to, value, data)?;
+            self.gov
+                .emit(ICrosschainGov::LocalCallExecuted { target: to, value })?;
+            Ok(ret)
+        })
+    }
+
+    /// Runs `calls` on `domain` through the Interchain Account. The owner
+    /// balance pays the dispatch fee.
+    pub fn call_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
+        self.hyperlane.require_initialized()?;
+        if calls.is_empty() {
+            return Err(HyperlaneControllerError::EmptyCalls.into());
+        }
+        self.hyperlane.require_remote_domain(domain)?;
+        let storage = self.gov.storage.clone();
+        storage.with_checkpoint(|| self.dispatch(domain, calls))
     }
 
     /// Records a top-up. The payable route credits the value itself.
@@ -30,20 +77,18 @@ impl<'a> Executor<'a> {
         if amount.is_zero() {
             return Err(HyperlaneControllerError::ZeroFund.into());
         }
-        self.controller
-            .emit(ICrosschainGov::Funded { from, amount })
+        self.gov.emit(ICrosschainGov::Funded { from, amount })
     }
 
     /// Interchain Account of the owner on `domain`, as the ICA router derives it.
     pub fn remote_account(&self, domain: u32) -> Result<Address> {
-        let controller = &self.controller;
-        controller.require_initialized()?;
-        controller.require_remote_domain(domain)?;
-        let ret = controller.storage.staticcall(
-            controller.ica_router.read()?,
+        self.hyperlane.require_initialized()?;
+        self.hyperlane.require_remote_domain(domain)?;
+        let ret = self.gov.storage.staticcall(
+            self.hyperlane.ica_router.read()?,
             IInterchainAccountRouter::getRemoteInterchainAccountCall {
                 _destination: domain,
-                _owner: controller.address,
+                _owner: self.gov.address,
             }
             .abi_encode()
             .into(),
@@ -59,7 +104,7 @@ impl<'a> Executor<'a> {
     }
 
     fn dispatch(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
-        let router = self.controller.ica_router.read()?;
+        let router = self.hyperlane.ica_router.read()?;
         let fee = self.quote(router, domain)?;
         self.require_balance(fee)?;
         let calls = calls
@@ -70,7 +115,7 @@ impl<'a> Executor<'a> {
                 data: call.data.clone(),
             })
             .collect();
-        let ret = self.controller.storage.call(
+        let ret = self.gov.storage.call(
             router,
             fee,
             IInterchainAccountRouter::callRemoteCall {
@@ -84,7 +129,7 @@ impl<'a> Executor<'a> {
             .map_err(|_| {
                 HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter callRemote")
             })?;
-        self.controller.emit(ICrosschainGov::RemoteCallDispatched {
+        self.gov.emit(ICrosschainGov::RemoteCallDispatched {
             domain,
             messageId: message_id,
             fee,
@@ -93,7 +138,7 @@ impl<'a> Executor<'a> {
     }
 
     fn quote(&self, router: Address, domain: u32) -> Result<U256> {
-        let ret = self.controller.storage.staticcall(
+        let ret = self.gov.storage.staticcall(
             router,
             IInterchainAccountRouter::quoteGasPaymentCall {
                 _destination: domain,
@@ -108,7 +153,7 @@ impl<'a> Executor<'a> {
     }
 
     fn require_balance(&self, required: U256) -> Result<()> {
-        let available = self.controller.storage.balance(self.controller.address)?;
+        let available = self.gov.storage.balance(self.gov.address)?;
         if available < required {
             return Err(HyperlaneControllerError::InsufficientBalance {
                 required,
@@ -117,31 +162,5 @@ impl<'a> Executor<'a> {
             .into());
         }
         Ok(())
-    }
-}
-
-impl outbe_hyperlanecontroller::Executor for Executor<'_> {
-    fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes> {
-        if to == Address::ZERO {
-            return Err(HyperlaneControllerError::InvalidAddress.into());
-        }
-        self.require_balance(value)?;
-        let storage = self.controller.storage.clone();
-        storage.with_checkpoint(|| {
-            let ret = self.controller.storage.call(to, value, data)?;
-            self.controller
-                .emit(ICrosschainGov::LocalCallExecuted { target: to, value })?;
-            Ok(ret)
-        })
-    }
-
-    fn call_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
-        self.controller.require_initialized()?;
-        if calls.is_empty() {
-            return Err(HyperlaneControllerError::EmptyCalls.into());
-        }
-        self.controller.require_remote_domain(domain)?;
-        let storage = self.controller.storage.clone();
-        storage.with_checkpoint(|| self.dispatch(domain, calls))
     }
 }

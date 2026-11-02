@@ -11,8 +11,9 @@
 //! - It holds no validator set of its own. The ISMs are the source of truth.
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
-//! - Every write to an ISM or the ICA router goes through [`Executor`],
-//!   which `crosschaingov` implements.
+//! - This crate makes no call to another contract. A write to an ISM or the
+//!   ICA router is returned as [`Calls`], and `crosschaingov` runs it from the
+//!   owner address.
 
 pub mod errors;
 pub mod lifecycle;
@@ -20,12 +21,12 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
-mod executor;
+mod calls;
 mod ism;
 mod liveness;
 mod runtime;
 
-pub use executor::{Executor, RemoteCall};
+pub use calls::{Calls, RemoteCall};
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };

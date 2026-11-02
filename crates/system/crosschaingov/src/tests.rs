@@ -16,9 +16,7 @@ use crate::precompile::dispatch;
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
 use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
-use outbe_hyperlanecontroller::{
-    validate_validators, Executor as _, HyperlaneControllerContract, RemoteCall,
-};
+use outbe_hyperlanecontroller::{validate_validators, HyperlaneControllerContract, RemoteCall};
 use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
@@ -157,6 +155,19 @@ fn stub_router_and_ism(
     );
 }
 
+/// Builds the rotation in the hub and runs it from the owner, as `sync` does.
+fn rotate(
+    storage: StorageHandle,
+    validators: &[Address],
+    threshold: u8,
+) -> Result<(), PrecompileError> {
+    storage.clone().with_checkpoint(|| {
+        let calls = HyperlaneControllerContract::new(storage.clone())
+            .set_validators_and_threshold(validators, threshold)?;
+        Executor::new(storage.clone()).run(calls)
+    })
+}
+
 fn topics(p: &HashMapStorageProvider) -> Vec<B256> {
     p.get_events(CROSSCHAIN_GOV_ADDRESS)
         .iter()
@@ -204,10 +215,7 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
         })
         .collect();
     assert_eq!(accepts, vec![SEPOLIA, BSC]);
-    assert_eq!(
-        *t.last().unwrap(),
-        ICrosschainGov::Initialized::SIGNATURE_HASH
-    );
+    assert!(t.contains(&ICrosschainGov::Initialized::SIGNATURE_HASH));
 }
 
 #[test]
@@ -355,23 +363,20 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
     p.set_balance(CROSSCHAIN_GOV_ADDRESS, fee * U256::from(2));
     p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let mut executor = Executor::new(storage.clone());
-        let mut c = HyperlaneControllerContract::new(storage);
-        c.set_validators_and_threshold(&mut executor, &[v(1), v(2), v(3)], 2)
-            .unwrap();
+        rotate(storage, &[v(1), v(2), v(3)], 2).unwrap();
     });
     let t = topics(&p);
     assert_eq!(
         t,
         vec![
-            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
-            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
-            ICrosschainGov::LocalCallExecuted::SIGNATURE_HASH,
             ICrosschainGov::ValidatorsAndThresholdApplied::SIGNATURE_HASH,
+            ICrosschainGov::LocalCallExecuted::SIGNATURE_HASH,
+            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
+            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
         ]
     );
     let dispatched = ICrosschainGov::RemoteCallDispatched::decode_log_data(
-        &p.get_events(CROSSCHAIN_GOV_ADDRESS)[0],
+        &p.get_events(CROSSCHAIN_GOV_ADDRESS)[2],
     )
     .unwrap();
     assert_eq!(dispatched.domain, SEPOLIA);
@@ -384,11 +389,7 @@ fn rotation_without_fee_balance_changes_nothing() {
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
     p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let mut executor = Executor::new(storage.clone());
-        let mut c = HyperlaneControllerContract::new(storage);
-        let err = c
-            .set_validators_and_threshold(&mut executor, &[v(1), v(2)], 2)
-            .unwrap_err();
+        let err = rotate(storage, &[v(1), v(2)], 2).unwrap_err();
         assert_eq!(
             revert_selector(err),
             ICrosschainGov::InsufficientBalance::SELECTOR
@@ -446,11 +447,10 @@ fn remote_account_is_the_router_derived_account() {
 fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
-        let mut executor = Executor::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
-        c.add_domain(&mut executor, 1, v(5), hook(5)).unwrap();
+        c.add_domain(1, v(5), hook(5)).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC, 1]);
-        c.add_domain(&mut executor, 1, v(6), hook(6)).unwrap();
+        c.add_domain(1, v(6), hook(6)).unwrap();
         assert_eq!(c.ism_by_domain.read(&1).unwrap(), v(6));
         assert_eq!(c.domains.read_all().unwrap().len(), 4);
 
@@ -460,8 +460,8 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
 
         assert!(c.remove_domain(SEPOLIA).is_err());
         assert!(c.remove_domain(LOCAL).is_err());
-        assert!(c.add_domain(&mut executor, LOCAL, v(7), hook(7)).is_err());
-        assert!(c.add_domain(&mut executor, 0, v(7), hook(7)).is_err());
+        assert!(c.add_domain(LOCAL, v(7), hook(7)).is_err());
+        assert!(c.add_domain(0, v(7), hook(7)).is_err());
     });
 }
 
@@ -473,7 +473,7 @@ fn operations_require_initialization() {
         let mut executor = Executor::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         assert!(matches!(
-            c.set_validators_and_threshold(&mut executor, &[v(1)], 1),
+            c.set_validators_and_threshold(&[v(1)], 1),
             Err(outbe_primitives::error::PrecompileError::RevertBytes(_))
         ));
         assert!(executor
@@ -486,7 +486,7 @@ fn operations_require_initialization() {
                 }]
             )
             .is_err());
-        assert!(c.add_domain(&mut executor, SEPOLIA, v(1), hook(1)).is_err());
+        assert!(c.add_domain(SEPOLIA, v(1), hook(1)).is_err());
     });
 }
 
@@ -591,13 +591,13 @@ mod sync {
             let ret = dispatch(storage, &call, stranger(), U256::ZERO).unwrap();
             assert!(ICrosschainGov::syncCall::abi_decode_returns(&ret).unwrap());
         });
-        let t = topics(&p);
-        assert_eq!(
-            *t.last().unwrap(),
-            ICrosschainGov::ValidatorsAndThresholdApplied::SIGNATURE_HASH
-        );
         let applied = ICrosschainGov::ValidatorsAndThresholdApplied::decode_log_data(
-            p.get_events(CROSSCHAIN_GOV_ADDRESS).last().unwrap(),
+            p.get_events(CROSSCHAIN_GOV_ADDRESS)
+                .iter()
+                .find(|log| {
+                    log.topics()[0] == ICrosschainGov::ValidatorsAndThresholdApplied::SIGNATURE_HASH
+                })
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(applied.threshold, 3);
@@ -607,18 +607,16 @@ mod sync {
         stub_router_and_ism(&mut p, U256::ZERO, &[v(9), v(3), v(2), v(1)], 3);
         p.clear_events(CROSSCHAIN_GOV_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
-            let mut executor = Executor::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
-            assert!(!c.sync(&mut executor).unwrap());
+            assert!(c.sync().unwrap().is_none());
         });
         assert!(topics(&p).is_empty());
 
         // The validator address of v4 is not its signer: that set is stale.
         stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
         StorageHandle::enter(&mut p, |storage| {
-            let mut executor = Executor::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
-            assert!(c.sync(&mut executor).unwrap());
+            assert!(c.sync().unwrap().is_some());
         });
     }
 }

@@ -17,7 +17,7 @@ pub(crate) mod upgrade;
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
 use outbe_hyperlanecontroller::precompile::ICrosschainGov;
-use outbe_hyperlanecontroller::{Executor as _, HyperlaneControllerContract, RemoteCall};
+use outbe_hyperlanecontroller::{Calls, HyperlaneControllerContract, RemoteCall};
 use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -97,30 +97,6 @@ enum Action {
     RemoveHyperlaneChain { chain_id: u32 },
 }
 
-/// The owner calls of one action: on Outbe first, then one remote message.
-#[derive(Debug, Default, PartialEq, Eq)]
-struct Calls {
-    local: Vec<RemoteCall>,
-    remote: Option<(u32, Vec<RemoteCall>)>,
-}
-
-impl Calls {
-    /// All `calls` run on `chain_id`.
-    fn on(chain_id: u32, outbe: u32, calls: Vec<RemoteCall>) -> Self {
-        if chain_id == outbe {
-            Self {
-                local: calls,
-                remote: None,
-            }
-        } else {
-            Self {
-                local: Vec::new(),
-                remote: Some((chain_id, calls)),
-            }
-        }
-    }
-}
-
 impl Action {
     /// Decodes and checks `payload`. `outbe` is the chain id of this chain.
     fn decode(payload: &[u8], outbe: u64) -> Result<Self> {
@@ -195,20 +171,12 @@ impl Action {
                 ism,
                 hook,
             } => {
-                controller.enroll_ica_router(executor, *chain_id, *ica_router)?;
-                controller.add_domain(executor, *chain_id, *ism, *hook)
+                let mut calls = controller.enroll_ica_router(*chain_id, *ica_router)?;
+                calls.extend(controller.add_domain(*chain_id, *ism, *hook)?);
+                executor.run(calls)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
-            _ => {
-                let calls = self.calls(controller.local_domain()?);
-                for call in calls.local {
-                    executor.call_local(call.to, call.value, call.data)?;
-                }
-                if let Some((chain_id, remote)) = calls.remote {
-                    executor.call_remote(chain_id, &remote)?;
-                }
-                Ok(())
-            }
+            _ => executor.run(self.calls(controller.local_domain()?)),
         }
     }
 
@@ -261,14 +229,14 @@ impl Action {
                     *remote_chain_id,
                     (*remote_bridge, *remote_adapter),
                 ),
-                remote: Some((
+                remote: vec![(
                     *remote_chain_id,
                     crosschain::link_side(
                         (*remote_bridge, *remote_adapter),
                         outbe,
                         (*bridge, *adapter),
                     ),
-                )),
+                )],
             },
             Self::LinkTokenBridges {
                 remote_chain_id,
@@ -280,10 +248,10 @@ impl Action {
                     *remote_chain_id,
                     *remote_token_bridge,
                 )],
-                remote: Some((
+                remote: vec![(
                     *remote_chain_id,
                     vec![tokens::add_peer(*remote_token_bridge, outbe, *token_bridge)],
-                )),
+                )],
             },
             Self::AddHyperlaneChain { .. } | Self::RemoveHyperlaneChain { .. } => Calls::default(),
         }
@@ -292,11 +260,7 @@ impl Action {
 
 /// A zero-value owner call of `to`.
 fn call(to: Address, data: Vec<u8>) -> RemoteCall {
-    RemoteCall {
-        to,
-        value: alloy_primitives::U256::ZERO,
-        data: data.into(),
-    }
+    RemoteCall::new(to, data)
 }
 
 impl CrosschainGovContract<'_> {
