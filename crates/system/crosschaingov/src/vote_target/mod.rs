@@ -12,7 +12,6 @@
 
 pub(crate) mod common;
 pub(crate) mod crosschain;
-mod hyperlane;
 pub(crate) mod tokens;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
@@ -195,7 +194,10 @@ impl Action {
                 ica_router,
                 ism,
                 hook,
-            } => hyperlane::add_chain(controller, executor, *chain_id, *ica_router, *ism, *hook),
+            } => {
+                controller.enroll_ica_router(executor, *chain_id, *ica_router)?;
+                controller.add_domain(executor, *chain_id, *ism, *hook)
+            }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
             _ => {
                 let calls = self.calls(controller.local_domain()?);
