@@ -1,8 +1,8 @@
 //! The upgrade of any of our UUPS contracts.
 
+use crate::calls::RemoteCall;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{sol, SolCall};
-use outbe_hyperlanecontroller::RemoteCall;
 
 use super::call;
 

@@ -1,12 +1,18 @@
 //! Outbound sub-call ABI surfaces.
 //!
-//! The Hyperlane contract interfaces that the controller calls through
-//! `StorageHandle::call` / `StorageHandle::staticcall`. This is NOT the
-//! precompile's own inbound ABI (`precompile::ICrosschainGov`).
+//! The Hyperlane contract interfaces that the controller reads through
+//! `StorageHandle::staticcall`, and the owner precompile (`ICrosschainGov`)
+//! that runs its owner calls. This is NOT the precompile's own inbound ABI
+//! (`precompile::IHyperlaneController`).
 
 use alloy_sol_types::sol;
 
 sol!("../../../contracts/crosschain/src/interfaces/IHyperlaneCore.sol");
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/ICrosschainGov.sol"
+);
 
 sol! {
     /// Remote-router table of Hyperlane's `Router`, which the InterchainAccountRouter extends.

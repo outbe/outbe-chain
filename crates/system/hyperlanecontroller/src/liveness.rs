@@ -7,7 +7,7 @@ use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
 use crate::errors::HyperlaneControllerError;
-use crate::precompile::ICrosschainGov;
+use crate::precompile::IHyperlaneController;
 use crate::runtime::consensus_threshold;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 
@@ -80,7 +80,7 @@ impl HyperlaneControllerContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.signer_of.write(&validator, signer)?;
-            self.emit(ICrosschainGov::HyperlaneSignerSet { validator, signer })
+            self.emit(IHyperlaneController::HyperlaneSignerSet { validator, signer })
         })
     }
 
@@ -140,7 +140,7 @@ impl HyperlaneControllerContract<'_> {
         storage.with_checkpoint(|| {
             self.submitted_index.write(&key, index)?;
             self.submitted_block.write(&key, block)?;
-            self.emit(ICrosschainGov::CheckpointSubmitted {
+            self.emit(IHyperlaneController::CheckpointSubmitted {
                 validator,
                 domain,
                 index,
@@ -277,14 +277,14 @@ impl HyperlaneControllerContract<'_> {
         validator: Address,
     ) -> Result<bool> {
         let misses = self.miss_count.read(&validator)?.saturating_add(1);
-        self.emit(ICrosschainGov::LivenessMiss { validator, misses })?;
+        self.emit(IHyperlaneController::LivenessMiss { validator, misses })?;
         if misses < MAX_MISSES {
             self.miss_count.write(&validator, misses)?;
             return Ok(false);
         }
         validator_set.jail_validator(validator)?;
         self.miss_count.write(&validator, 0)?;
-        self.emit(ICrosschainGov::LivenessJailed { validator })?;
+        self.emit(IHyperlaneController::LivenessJailed { validator })?;
         Ok(true)
     }
 

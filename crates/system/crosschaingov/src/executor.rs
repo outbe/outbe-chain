@@ -5,20 +5,21 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
-use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
-use outbe_hyperlanecontroller::{Calls, HyperlaneControllerContract, RemoteCall};
+use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::calls::{Calls, RemoteCall};
+use crate::errors::CrosschainGovError;
+use crate::precompile::ICrosschainGov;
 use crate::schema::CrosschainGovContract;
 
 /// Runs the owner calls of the owner address. Use it only in the frame of
 /// that address: every call has the frame address as `msg.sender`.
 pub struct Executor<'a> {
     gov: CrosschainGovContract<'a>,
-    /// The Hyperlane registry: the ICA router and the known domains.
+    /// The Hyperlane registry, read only: the ICA router.
     hyperlane: HyperlaneControllerContract<'a>,
 }
 
@@ -48,7 +49,7 @@ impl<'a> Executor<'a> {
     /// Calls `to` on this chain. The owner balance pays `value`.
     pub fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes> {
         if to == Address::ZERO {
-            return Err(HyperlaneControllerError::InvalidAddress.into());
+            return Err(CrosschainGovError::InvalidAddress.into());
         }
         self.require_balance(value)?;
         let storage = self.gov.storage.clone();
@@ -63,11 +64,10 @@ impl<'a> Executor<'a> {
     /// Runs `calls` on `domain` through the Interchain Account. The owner
     /// balance pays the dispatch fee.
     pub fn call_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
-        self.hyperlane.require_initialized()?;
+        self.require_remote(domain)?;
         if calls.is_empty() {
-            return Err(HyperlaneControllerError::EmptyCalls.into());
+            return Err(CrosschainGovError::EmptyCalls.into());
         }
-        self.hyperlane.require_remote_domain(domain)?;
         let storage = self.gov.storage.clone();
         storage.with_checkpoint(|| self.dispatch(domain, calls))
     }
@@ -75,15 +75,14 @@ impl<'a> Executor<'a> {
     /// Records a top-up. The payable route credits the value itself.
     pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
         if amount.is_zero() {
-            return Err(HyperlaneControllerError::ZeroFund.into());
+            return Err(CrosschainGovError::ZeroFund.into());
         }
         self.gov.emit(ICrosschainGov::Funded { from, amount })
     }
 
     /// Interchain Account of the owner on `domain`, as the ICA router derives it.
     pub fn remote_account(&self, domain: u32) -> Result<Address> {
-        self.hyperlane.require_initialized()?;
-        self.hyperlane.require_remote_domain(domain)?;
+        self.require_remote(domain)?;
         let ret = self.gov.storage.staticcall(
             self.hyperlane.ica_router.read()?,
             IInterchainAccountRouter::getRemoteInterchainAccountCall {
@@ -95,7 +94,7 @@ impl<'a> Executor<'a> {
         )?;
         IInterchainAccountRouter::getRemoteInterchainAccountCall::abi_decode_returns(&ret).map_err(
             |_| {
-                HyperlaneControllerError::UndecodableReturn(
+                CrosschainGovError::UndecodableReturn(
                     "InterchainAccountRouter getRemoteInterchainAccount",
                 )
                 .into()
@@ -127,7 +126,7 @@ impl<'a> Executor<'a> {
         )?;
         let message_id = IInterchainAccountRouter::callRemoteCall::abi_decode_returns(&ret)
             .map_err(|_| {
-                HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter callRemote")
+                CrosschainGovError::UndecodableReturn("InterchainAccountRouter callRemote")
             })?;
         self.gov.emit(ICrosschainGov::RemoteCallDispatched {
             domain,
@@ -147,15 +146,28 @@ impl<'a> Executor<'a> {
             .into(),
         )?;
         IInterchainAccountRouter::quoteGasPaymentCall::abi_decode_returns(&ret).map_err(|_| {
-            HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter quoteGasPayment")
-                .into()
+            CrosschainGovError::UndecodableReturn("InterchainAccountRouter quoteGasPayment").into()
         })
+    }
+
+    /// Requires an initialized Hyperlane registry and a remote `domain`.
+    fn require_remote(&self, domain: u32) -> Result<()> {
+        if !self.hyperlane.is_initialized()? {
+            return Err(CrosschainGovError::NotInitialized.into());
+        }
+        if domain == 0 {
+            return Err(CrosschainGovError::InvalidDomain.into());
+        }
+        if u64::from(domain) == self.gov.storage.chain_id()? {
+            return Err(CrosschainGovError::LocalDomainNotAllowed { domain }.into());
+        }
+        Ok(())
     }
 
     fn require_balance(&self, required: U256) -> Result<()> {
         let available = self.gov.storage.balance(self.gov.address)?;
         if available < required {
-            return Err(HyperlaneControllerError::InsufficientBalance {
+            return Err(CrosschainGovError::InsufficientBalance {
                 required,
                 available,
             }

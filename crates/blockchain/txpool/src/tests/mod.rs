@@ -255,7 +255,7 @@ fn hyperlane_submit_checkpoint_input() -> Bytes {
 
 #[test]
 fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
-    use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
+    use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 
     let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
     let expensive_normal_tx = pooled_tx(Address::ZERO, Bytes::new(), u128::MAX, u128::MAX);
@@ -268,7 +268,7 @@ fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
         ),
         (
             ZeroFeeHookId::HyperlaneSubmitCheckpoint,
-            CROSSCHAIN_GOV_ADDRESS,
+            HYPERLANE_CONTROLLER_ADDRESS,
             hyperlane_submit_checkpoint_input(),
         ),
         (
@@ -286,7 +286,7 @@ fn zero_fee_hooks_order_above_any_fee_paying_transaction() {
 
 #[test]
 fn malformed_zero_fee_marker_gets_no_pool_priority() {
-    use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
+    use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 
     let ordering = OutbeTransactionOrdering::<EthPooledTransaction>::default();
     for (target, selector) in [
@@ -294,7 +294,7 @@ fn malformed_zero_fee_marker_gets_no_pool_priority() {
             ORACLE_ADDRESS,
             outbe_oracle::precompile::IOracle::submitVoteCall::SELECTOR,
         ),
-        (CROSSCHAIN_GOV_ADDRESS, submitCheckpointCall::SELECTOR),
+        (HYPERLANE_CONTROLLER_ADDRESS, submitCheckpointCall::SELECTOR),
     ] {
         let malformed = pooled_tx(
             target,

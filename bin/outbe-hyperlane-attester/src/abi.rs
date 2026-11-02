@@ -2,7 +2,7 @@
 
 use alloy_sol_types::sol;
 
-sol!("../../contracts/precompiles/src/ICrosschainGov.sol");
+sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 
 sol! {
     /// Hyperlane ValidatorAnnounce: where each validator publishes its checkpoint bucket.

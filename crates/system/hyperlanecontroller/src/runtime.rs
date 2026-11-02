@@ -1,11 +1,12 @@
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::calls::{Calls, RemoteCall};
+use crate::gov;
 use crate::ism::accept_remote_ism;
-use crate::precompile::ICrosschainGov;
+use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IOwnable, IStorageMultisigIsm};
 
@@ -77,7 +78,7 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::InvalidAddress.into());
         }
         let owner = self.owner_of(contract)?;
-        if owner != self.address {
+        if owner != CROSSCHAIN_GOV_ADDRESS {
             return Err(HyperlaneControllerError::NotOwnedByController { contract, owner }.into());
         }
         Ok(())
@@ -118,7 +119,7 @@ impl HyperlaneControllerContract<'_> {
         &mut self,
         caller: Address,
         bootstrap: &ControllerBootstrap<'_>,
-    ) -> Result<Calls> {
+    ) -> Result<()> {
         if self.is_initialized()? {
             return Err(HyperlaneControllerError::AlreadyInitialized.into());
         }
@@ -145,27 +146,28 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::NotIsmOwner { caller, owner }.into());
         }
         let pending = self.pending_owner_of(local_ism)?;
-        if pending != self.address {
+        if pending != CROSSCHAIN_GOV_ADDRESS {
             return Err(HyperlaneControllerError::IsmNotPendingToController { pending }.into());
         }
         Ok(())
     }
 
-    /// Stores the bootstrap table. Returns the calls that take the ownership
-    /// of the local ISM and of every remote ISM.
+    /// The owner takes the ownership of the local ISM. Then the controller
+    /// stores the bootstrap table, and the owner takes the ownership of every
+    /// remote ISM.
     fn install(
         &mut self,
         bootstrap: &ControllerBootstrap<'_>,
         local: u32,
         local_ism: Address,
-    ) -> Result<Calls> {
-        let mut calls = Calls {
-            local: vec![RemoteCall::new(
+    ) -> Result<()> {
+        gov::call_local(
+            &self.storage,
+            gov::call(
                 local_ism,
                 IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
-            )],
-            remote: Vec::new(),
-        };
+            ),
+        )?;
         self.ica_router.write(bootstrap.ica_router)?;
         self.validator_announce
             .write(bootstrap.validator_announce)?;
@@ -177,28 +179,27 @@ impl HyperlaneControllerContract<'_> {
         for ((domain, ism), hook) in table {
             self.write_domain(*domain, *ism, *hook)?;
             if *domain != local {
-                calls.remote.push(accept_remote_ism(*domain, *ism));
+                accept_remote_ism(&self.storage, *domain, *ism)?;
             }
         }
-        self.emit(ICrosschainGov::Initialized {
+        self.emit(IHyperlaneController::Initialized {
             icaRouter: bootstrap.ica_router,
-        })?;
-        Ok(calls)
+        })
     }
 
     /// Mirrors the active Outbe validator set into every ISM (validators =
     /// the Hyperlane signer of every active validator, threshold =
-    /// [`consensus_threshold`]). Returns the rotation calls, or `None` when
-    /// the local ISM already matches, so a keeper can call it every epoch.
-    pub fn sync(&mut self) -> Result<Option<Calls>> {
+    /// [`consensus_threshold`]). Returns `false` when the local ISM already
+    /// matches, so a keeper can call it every epoch.
+    pub fn sync(&mut self) -> Result<bool> {
         let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;
         let (current, current_threshold) = self.current_validators()?;
         if current_threshold == threshold && same_set(&current, &active) {
-            return Ok(None);
+            return Ok(false);
         }
-        self.set_validators_and_threshold(&active, threshold)
-            .map(Some)
+        self.set_validators_and_threshold(&active, threshold)?;
+        Ok(true)
     }
 }
 

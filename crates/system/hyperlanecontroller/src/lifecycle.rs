@@ -4,11 +4,11 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
+use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 
 use crate::liveness::LIVENESS_WINDOW_BLOCKS;
-use crate::precompile::ICrosschainGov;
+use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 
 /// Mirrors the active validator set into the Hyperlane ISMs by sub-calling
@@ -16,8 +16,11 @@ use crate::schema::HyperlaneControllerContract;
 /// controller, not the system tx, is the router's `msg.sender`. The
 /// controller's Interchain Account derives from that sender.
 pub fn sync_validators(ctx: &BlockRuntimeContext) {
-    let call = ICrosschainGov::syncCall {}.abi_encode().into();
-    if let Err(error) = ctx.storage.call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, call) {
+    let call = IHyperlaneController::syncCall {}.abi_encode().into();
+    if let Err(error) = ctx
+        .storage
+        .call(HYPERLANE_CONTROLLER_ADDRESS, U256::ZERO, call)
+    {
         tracing::warn!(
             target: "outbe::hyperlane",
             block = ctx.block.block_number,

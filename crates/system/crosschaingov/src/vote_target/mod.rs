@@ -15,9 +15,7 @@ pub(crate) mod tokens;
 pub(crate) mod upgrade;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
-use outbe_hyperlanecontroller::precompile::ICrosschainGov;
-use outbe_hyperlanecontroller::{Calls, HyperlaneControllerContract, RemoteCall};
+use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -28,7 +26,10 @@ use outbe_vote::handlers::{
 };
 use serde::Deserialize;
 
+use crate::calls::{Calls, RemoteCall};
+use crate::errors::CrosschainGovError;
 use crate::executor::Executor;
+use crate::precompile::ICrosschainGov;
 use crate::schema::CrosschainGovContract;
 
 /// One action, as strict JSON with an `operation` field.
@@ -171,9 +172,10 @@ impl Action {
                 ism,
                 hook,
             } => {
-                let mut calls = controller.enroll_ica_router(*chain_id, *ica_router)?;
-                calls.extend(controller.add_domain(*chain_id, *ism, *hook)?);
-                executor.run(calls)
+                // The hub methods make their owner calls back through
+                // `callLocal` and `callRemote` of this precompile.
+                controller.enroll_ica_router(*chain_id, *ica_router)?;
+                controller.add_domain(*chain_id, *ism, *hook)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
             _ => executor.run(self.calls(controller.local_domain()?)),
@@ -268,10 +270,10 @@ impl CrosschainGovContract<'_> {
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_payload.read(&proposal_id)?;
         if approved == B256::ZERO {
-            return Err(HyperlaneControllerError::UnknownApprovedAction { proposal_id }.into());
+            return Err(CrosschainGovError::UnknownApprovedAction { proposal_id }.into());
         }
         if keccak256(payload) != approved {
-            return Err(HyperlaneControllerError::ApprovedPayloadMismatch { proposal_id }.into());
+            return Err(CrosschainGovError::ApprovedPayloadMismatch { proposal_id }.into());
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {

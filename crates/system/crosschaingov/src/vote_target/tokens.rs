@@ -1,8 +1,8 @@
 //! Owner calls on the token bridge (`ERC7786TokenBridge`).
 
+use crate::calls::RemoteCall;
 use alloy_primitives::Address;
 use alloy_sol_types::{sol, SolCall};
-use outbe_hyperlanecontroller::RemoteCall;
 
 use super::call;
 

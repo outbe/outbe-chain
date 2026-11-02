@@ -11,9 +11,10 @@ use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, parse_genesis_timestamp, parse_i128,
     parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, u64_bytes, write_mapping_bytes,
-    StorageBuilder, CROSSCHAIN_GOV_ADDRESS, CROSSCHAIN_GOV_BOOTSTRAP_ADMIN_SLOT,
-    DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD,
-    MIN_STAKE, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
+    DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
+    HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
 };
 use crate::seed_economy::{merge_storage_into_alloc, seed_vault_router};
 use crate::seed_p2p::encode_p2p_address_payload;
@@ -294,10 +295,10 @@ pub fn seed_founders(
         .unwrap_or(default_admin);
     let mut hyperlane_storage = StorageBuilder::new();
     hyperlane_storage.set_slot(
-        CROSSCHAIN_GOV_BOOTSTRAP_ADMIN_SLOT,
+        HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT,
         address_as_u256(hyperlane_admin)?,
     );
-    merge_storage_into_alloc(alloc, CROSSCHAIN_GOV_ADDRESS, &hyperlane_storage)?;
+    merge_storage_into_alloc(alloc, HYPERLANE_CONTROLLER_ADDRESS, &hyperlane_storage)?;
 
     let mut staking_storage = StorageBuilder::new();
     let total_staked = seed_staking(

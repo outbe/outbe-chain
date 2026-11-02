@@ -11,7 +11,7 @@ use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
 
-fn expected_exact_addresses() -> [Address; 38] {
+fn expected_exact_addresses() -> [Address; 39] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -45,6 +45,7 @@ fn expected_exact_addresses() -> [Address; 38] {
         ZKPROOF_VERIFY_ADDRESS,
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
+        HYPERLANE_CONTROLLER_ADDRESS,
         CROSSCHAIN_GOV_ADDRESS,
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,

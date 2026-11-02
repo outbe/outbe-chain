@@ -1,6 +1,6 @@
 //! The ISMs and the domain table: reads of the ISMs, the validator rotation,
-//! and adding or removing a chain. A write to an ISM is returned as
-//! [`Calls`].
+//! and adding or removing a chain. Every write to an ISM is an owner call
+//! through the CrosschainGov precompile.
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
 //! vote actions in `crosschaingov` call `enroll_ica_router`, `add_domain` and
@@ -9,20 +9,21 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
-use crate::calls::{Calls, RemoteCall};
-use crate::precompile::ICrosschainGov;
+use crate::gov;
+use crate::precompile::IHyperlaneController;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IHyperlaneRouter, IStorageMultisigIsm};
 
 impl HyperlaneControllerContract<'_> {
-    /// The call that enrolls the ICA router of `domain` on the Outbe ICA
-    /// router, so that a remote call can reach that chain. The router keeps
-    /// the first enrollment forever, so the same router needs no call and
-    /// another router reverts.
-    pub fn enroll_ica_router(&self, domain: u32, router: Address) -> Result<Calls> {
+    /// Enrolls the ICA router of `domain` on the Outbe ICA router, so that a
+    /// remote call can reach that chain. The router keeps the first
+    /// enrollment forever, so the same router is a no-op and another router
+    /// reverts.
+    pub fn enroll_ica_router(&self, domain: u32, router: Address) -> Result<()> {
         let ica_router = self.ica_router.read()?;
         let ret = self.storage.staticcall(
             ica_router,
@@ -34,7 +35,7 @@ impl HyperlaneControllerContract<'_> {
             HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter routers")
         })?;
         if enrolled == router.into_word() {
-            return Ok(Calls::default());
+            return Ok(());
         }
         if enrolled != B256::ZERO {
             return Err(HyperlaneControllerError::RemoteRouterMismatch { domain, enrolled }.into());
@@ -44,10 +45,7 @@ impl HyperlaneControllerContract<'_> {
             _router: router.into_word(),
         }
         .abi_encode();
-        Ok(Calls {
-            local: vec![RemoteCall::new(ica_router, data)],
-            remote: Vec::new(),
-        })
+        gov::call_local(&self.storage, gov::call(ica_router, data))
     }
 
     /// Current set as stored by the local ISM (the source of truth).
@@ -76,14 +74,14 @@ impl HyperlaneControllerContract<'_> {
         Ok(ism)
     }
 
-    /// Full rotation: the calls of `setValidatorsAndThreshold` on the local ISM
-    /// and on every remote ISM through the Interchain Account. The caller runs
-    /// them under one checkpoint, so any failure leaves every ISM untouched.
+    /// Full rotation: `setValidatorsAndThreshold` on every remote ISM through
+    /// the Interchain Account, then on the local ISM. All calls run under one
+    /// checkpoint. Any failure leaves every ISM untouched.
     pub fn set_validators_and_threshold(
         &mut self,
         validators: &[Address],
         threshold: u8,
-    ) -> Result<Calls> {
+    ) -> Result<()> {
         validate_validators(validators, threshold)?;
         let local = self.local_domain()?;
         let local_ism = self.local_ism()?;
@@ -94,35 +92,31 @@ impl HyperlaneControllerContract<'_> {
         .abi_encode()
         .into();
 
-        let mut calls = Calls {
-            local: vec![RemoteCall::new(local_ism, data.clone())],
-            remote: Vec::new(),
-        };
-        for domain in self.domains.read_all()? {
-            if domain != local {
-                let ism = self.ism_by_domain.read(&domain)?;
-                calls
-                    .remote
-                    .push((domain, vec![RemoteCall::new(ism, data.clone())]));
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            for domain in self.domains.read_all()? {
+                if domain != local {
+                    let ism = self.ism_by_domain.read(&domain)?;
+                    gov::call_remote(&self.storage, domain, vec![gov::call(ism, data.clone())])?;
+                }
             }
-        }
-        self.emit(ICrosschainGov::ValidatorsAndThresholdApplied {
-            threshold,
-            validatorCount: U256::from(validators.len()),
-        })?;
-        Ok(calls)
+            gov::call_local(&self.storage, gov::call(local_ism, data))?;
+            self.emit(IHyperlaneController::ValidatorsAndThresholdApplied {
+                threshold,
+                validatorCount: U256::from(validators.len()),
+            })
+        })
     }
 
-    /// Connects a remote chain (or replaces its ISM), and returns the call
-    /// that takes the ownership of its ISM. The local domain is fixed at
-    /// `initialize`.
-    pub fn add_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<Calls> {
+    /// Connects a remote chain (or replaces its ISM) and takes the ownership
+    /// of its ISM. The local domain is fixed at `initialize`.
+    pub fn add_domain(&mut self, domain: u32, ism: Address, hook: Address) -> Result<()> {
         self.require_initialized()?;
         self.require_remote_domain(domain)?;
-        self.write_domain(domain, ism, hook)?;
-        Ok(Calls {
-            local: Vec::new(),
-            remote: vec![accept_remote_ism(domain, ism)],
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.write_domain(domain, ism, hook)?;
+            accept_remote_ism(&self.storage, domain, ism)
         })
     }
 
@@ -146,7 +140,7 @@ impl HyperlaneControllerContract<'_> {
             for entry in remaining {
                 self.domains.push(entry)?;
             }
-            self.emit(ICrosschainGov::DomainRemoved { domain })
+            self.emit(IHyperlaneController::DomainRemoved { domain })
         })
     }
 
@@ -172,16 +166,17 @@ impl HyperlaneControllerContract<'_> {
         }
         self.ism_by_domain.write(&domain, ism)?;
         self.hook_by_domain.write(&domain, hook)?;
-        self.emit(ICrosschainGov::DomainAdded { domain, ism })
+        self.emit(IHyperlaneController::DomainAdded { domain, ism })
     }
 }
 
-/// The call that accepts the pending ownership of a remote ISM from the
-/// Interchain Account: `callRemote(domain, [ism.acceptOwnership()])`.
-pub(crate) fn accept_remote_ism(domain: u32, ism: Address) -> (u32, Vec<RemoteCall>) {
-    (
+/// Accepts the pending ownership of a remote ISM from the Interchain Account:
+/// `callRemote(domain, [ism.acceptOwnership()])`.
+pub(crate) fn accept_remote_ism(storage: &StorageHandle, domain: u32, ism: Address) -> Result<()> {
+    gov::call_remote(
+        storage,
         domain,
-        vec![RemoteCall::new(
+        vec![gov::call(
             ism,
             IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
         )],

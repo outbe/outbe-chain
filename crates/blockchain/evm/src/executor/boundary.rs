@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 35] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -47,6 +47,7 @@ pub mod marker_addresses {
         OUTBE_SYSTEM_TX_ADDRESS,
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
+        HYPERLANE_CONTROLLER_ADDRESS,
         CROSSCHAIN_GOV_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,

@@ -1,8 +1,8 @@
 //! Owner calls on the ERC-7786 hub (`ERC7786Bridge`) and its Hyperlane adapter.
 
+use crate::calls::RemoteCall;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
-use outbe_hyperlanecontroller::RemoteCall;
 
 use super::call;
 

@@ -1,8 +1,5 @@
-//! Owner calls that the Hyperlane logic needs.
-//!
-//! This crate makes no call to another contract by itself. A function that
-//! needs an owner call (an ISM write, an ICA router enrollment) returns it as
-//! [`Calls`]. `crosschaingov` runs them from the owner address.
+//! The owner calls of one vote action. An action builds them, and the
+//! executor runs them.
 
 use alloy_primitives::{Address, Bytes, U256};
 
@@ -47,11 +44,5 @@ impl Calls {
                 remote: vec![(chain_id, calls)],
             }
         }
-    }
-
-    /// Appends the calls of `other` after the calls of `self`.
-    pub fn extend(&mut self, other: Self) {
-        self.local.extend(other.local);
-        self.remote.extend(other.remote);
     }
 }
