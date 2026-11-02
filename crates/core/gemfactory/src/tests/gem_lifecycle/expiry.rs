@@ -315,6 +315,8 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         let gems = gems_with_loads(storage, &loads);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
+        // Catch up before the deadline closes so the budget assertions refer to one block.
+        begin_block_at(storage, now - 1);
         let live = || {
             gems.iter()
                 .filter(|id| item(storage, **id).is_some())

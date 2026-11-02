@@ -375,7 +375,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         outbe_primitives::time::timestamp_to_date_key(block_ts),
     )
     .expect("date step");
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
             assert_eq!(
@@ -385,16 +384,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 U256::ZERO,
                 "GAS-05 fixture must start with zero carry-over"
             );
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
 
             outbe_oracle::api::set_exchange_rate(
                 storage.clone(),

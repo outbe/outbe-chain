@@ -266,12 +266,6 @@ fn forfeit_pass(
 
 fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
     let nod = NodContract::new(storage.clone());
-    if nod.daily_genesis_day.read().unwrap() == 0 {
-        // This fixture starts its pass on the first observation day under test.
-        nod.daily_genesis_day
-            .write(last_closed_day(timestamp))
-            .unwrap();
-    }
     let height = [
         nod.daily_budget.read().unwrap(),
         nod.cleanup_budget.read().unwrap(),
@@ -282,7 +276,8 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     .max()
     .unwrap_or(BLOCK_NUMBER);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID),
+        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID)
+            .with_genesis_timestamp(START - DAY),
         storage.clone(),
     )
 }
@@ -1159,7 +1154,8 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             CALL_THRESHOLD_DAYS,
         );
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         let mut nod = NodContract::new(storage.clone());
@@ -1311,7 +1307,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         .unwrap()
         .unwrap();
         let same_height = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID),
+            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         assert_eq!(crate::cleanup::cleanup(&same_height).unwrap(), 0);
@@ -1646,10 +1643,10 @@ fn a_running_call_sweep_keeps_its_day() {
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(day).unwrap();
         nod.call_latest_day.write(day).unwrap();
-        nod.daily_genesis_day.write(day).unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx).unwrap();
@@ -1703,14 +1700,14 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             .write(last_closed_day(at))
             .unwrap();
         let nod = NodContract::new(storage.clone());
-        nod.daily_genesis_day.write(last_closed_day(at)).unwrap();
         nod.call_latest_day.write(last_closed_day(at)).unwrap();
         item.group_key
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx)
@@ -1742,7 +1739,6 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(closed[0]).unwrap();
-        nod.daily_genesis_day.write(closed[0]).unwrap();
         nod.call_latest_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 

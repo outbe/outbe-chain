@@ -3,6 +3,53 @@
 use super::*;
 
 #[test]
+fn factory_passes_do_not_wait_for_metadosis_activation() {
+    use outbe_primitives::pass_budget::BlockAllowance;
+    use outbe_primitives::time::WorldwideDay;
+
+    let mut storage = cycle_storage();
+    let delayed_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 60;
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(1, delayed_ts), handle);
+        let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(20_240_103)
+            .unwrap();
+        run_cycle_lifecycle_at_activation(&ctx, 2).unwrap();
+        let nod = outbe_nod::NodContract::new(ctx.storage.clone());
+        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
+        for budget in [
+            nod.daily_budget.read().unwrap(),
+            gem.daily_budget.read().unwrap(),
+        ] {
+            assert_eq!(
+                BlockAllowance::unpack(budget).unwrap().unwrap().day,
+                20_240_101
+            );
+        }
+        assert!(outbe_metadosis::api::worldwide_day(
+            ctx.storage,
+            WorldwideDay::from_timestamp(delayed_ts)
+        )
+        .unwrap()
+        .is_none());
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, delayed_ts + 1), handle);
+        account_parent(&ctx, 2);
+        run_cycle_lifecycle_at_activation(&ctx, 2).unwrap();
+        assert!(outbe_metadosis::api::worldwide_day(
+            ctx.storage,
+            WorldwideDay::from_timestamp(delayed_ts)
+        )
+        .unwrap()
+        .is_some());
+    });
+}
+
+#[test]
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC
     // on day D+1. prev_day = D = genesis_utc_day -> day_number = 0 -> Ok.
@@ -220,8 +267,6 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
                 .unwrap();
         }
         let (oracle, _) = seed_closed_day_prices(&storage, day_start).unwrap();
-        let init = BlockRuntimeContext::new(block_ctx(2, deadline), storage.clone());
-        outbe_nodfactory::called::initialize_daily(&init).unwrap();
         let mut nod = outbe_nod::NodContract::new(storage.clone());
         for (owner, entry, due) in [(0x61, 13, deadline), (0x62, 14, deadline + SECONDS_PER_DAY)] {
             let group = issue_nod(&storage, Address::repeat_byte(owner), entry).unwrap();
@@ -304,10 +349,12 @@ fn seed_closed_day_prices<'s>(
 ) -> outbe_primitives::error::Result<(outbe_oracle::schema::OracleContract<'s>, u32)> {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
-    initialize_daily_passes(&BlockRuntimeContext::new(
-        block_ctx(1, midnight - SECONDS_PER_DAY),
-        storage.clone(),
-    ));
+    // This fixture resumes an established parent whose earlier daily passes completed.
+    let completed =
+        previous_date_key(timestamp_to_date_key(midnight - SECONDS_PER_DAY)).expect("date step");
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)?;
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let index = outbe_oracle::api::register_pair(
         storage.clone(),

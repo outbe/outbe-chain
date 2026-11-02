@@ -39,11 +39,6 @@ pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function initializes the first eligible daily pass from the chain initialization day.
-pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_pass::initialize(ctx, &mut CredisCallPass::new(ctx))
-}
-
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
 /// groups called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
@@ -77,9 +72,6 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
     }
     fn block_budget(&self) -> &Value<'storage, U256> {
         &self.credis.daily_budget
-    }
-    fn genesis_day(&self) -> &Value<'storage, u32> {
-        &self.credis.daily_genesis_day
     }
 
     fn forfeit(

@@ -111,12 +111,7 @@ fn requeue_called(storage: &StorageHandle<'_>, group_key: B256, deadline: u64) -
 }
 
 fn reopen_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    // The fixture may target a closed day before this temporary chain's genesis.
     let nod = NodContract::new(storage.clone());
-    let genesis_day = nod.daily_genesis_day.read()?;
-    if genesis_day == 0 || day < genesis_day {
-        nod.daily_genesis_day.write(day)?;
-    }
     if day > nod.call_latest_day.read()? {
         nod.call_latest_day.write(day)?;
     }

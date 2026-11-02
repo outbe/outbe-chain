@@ -33,7 +33,6 @@ pub trait CallPass<'storage> {
     fn days(&self) -> PinnedDay<'_, 'storage>;
     fn phase(&self) -> &Value<'storage, u8>;
     fn block_budget(&self) -> &Value<'storage, U256>;
-    fn genesis_day(&self) -> &Value<'storage, u32>;
     /// One reference currency's bins.
     fn bins(&self, reference_currency: u16) -> Self::Bins<'_>;
     /// The currency the walk in flight stands at.
@@ -73,24 +72,11 @@ pub trait CallPass<'storage> {
     ) -> Result<Progress>;
 }
 
-/// This function initializes the first eligible day when a new genesis activates, before any halt.
-/// Repeated initialization does not change the original boundary.
-pub fn initialize<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
-    if sweep.genesis_day().read()? == 0 {
-        sweep
-            .genesis_day()
-            .write(timestamp_to_date_key(ctx.block.timestamp))?;
-    }
-    Ok(())
-}
-
 /// Opens the first closed day not yet walked, or queues the one the Oracle has just
 /// finalized behind the day in flight.
+/// A fresh pass starts at the canonical genesis header's UTC day.
 pub fn schedule<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) -> Result<()> {
-    let genesis_day = sweep.genesis_day().read()?;
-    if genesis_day == 0 {
-        return Err(PrecompileError::revert("daily sweep not initialized"));
-    }
+    let genesis_day = timestamp_to_date_key(ctx.block.genesis_timestamp);
     if ctx.block.timestamp < SECONDS_PER_DAY {
         return Ok(());
     }
@@ -179,7 +165,9 @@ fn day_ready<'s, S: CallPass<'s>>(
     if pinned_day == 0 {
         return Ok(false);
     }
-    if pinned_day < sweep.genesis_day().read()? || pinned_day > sweep.days().latest.read()? {
+    if pinned_day < timestamp_to_date_key(ctx.block.genesis_timestamp)
+        || pinned_day > sweep.days().latest.read()?
+    {
         return Err(PrecompileError::revert("invalid daily sweep day range"));
     }
     let today = timestamp_to_date_key(ctx.block.timestamp);
@@ -348,7 +336,6 @@ mod tests {
         latest: Value<'s, u32>,
         phase: Value<'s, u8>,
         allowance: Value<'s, U256>,
-        genesis: Value<'s, u32>,
         currency: Value<'s, u32>,
         remaining: Map<'s, u8, u32>,
         root: Map<'s, u16, U256>,
@@ -375,17 +362,16 @@ mod tests {
                 latest: Value::new(U256::from(2), address, storage.clone()),
                 phase: Value::new(U256::from(3), address, storage.clone()),
                 allowance: Value::new(U256::from(4), address, storage.clone()),
-                genesis: Value::new(U256::from(5), address, storage.clone()),
-                currency: Value::new(U256::from(6), address, storage.clone()),
-                remaining: Map::new(U256::from(7), address, storage.clone()),
-                root: Map::new(U256::from(8), address, storage.clone()),
-                mid: Map::new(U256::from(9), address, storage.clone()),
-                leaf: Map::new(U256::from(10), address, storage.clone()),
-                count: Map::new(U256::from(11), address, storage.clone()),
-                at: Map::new(U256::from(12), address, storage.clone()),
-                slot: Map::new(U256::from(13), address, storage.clone()),
-                cursor: Map::new(U256::from(14), address, storage.clone()),
-                failed: Map::new(U256::from(15), address, storage),
+                currency: Value::new(U256::from(5), address, storage.clone()),
+                remaining: Map::new(U256::from(6), address, storage.clone()),
+                root: Map::new(U256::from(7), address, storage.clone()),
+                mid: Map::new(U256::from(8), address, storage.clone()),
+                leaf: Map::new(U256::from(9), address, storage.clone()),
+                count: Map::new(U256::from(10), address, storage.clone()),
+                at: Map::new(U256::from(11), address, storage.clone()),
+                slot: Map::new(U256::from(12), address, storage.clone()),
+                cursor: Map::new(U256::from(13), address, storage.clone()),
+                failed: Map::new(U256::from(14), address, storage),
                 fail_phase: None,
             }
         }
@@ -424,9 +410,6 @@ mod tests {
         }
         fn block_budget(&self) -> &Value<'s, U256> {
             &self.allowance
-        }
-        fn genesis_day(&self) -> &Value<'s, u32> {
-            &self.genesis
         }
         fn bins(&self, currency: u16) -> Self::Bins<'_> {
             TestBins(self, currency)
@@ -467,11 +450,11 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(0, date_key_to_utc_timestamp(20260101).unwrap(), 1),
+                BlockContext::empty_for_tests(0, date_key_to_utc_timestamp(20260101).unwrap(), 1)
+                    .with_genesis_timestamp(date_key_to_utc_timestamp(20260101).unwrap()),
                 storage.clone(),
             );
             let mut sweep = TestSweep::new(storage, Address::with_last_byte(99));
-            initialize(&ctx, &mut sweep).unwrap();
             test(ctx, &mut sweep);
         });
     }
@@ -483,6 +466,58 @@ mod tests {
             .utc_day_vwap_last_finalized
             .write(20260103)
             .unwrap();
+    }
+
+    #[test]
+    fn fresh_sweep_waits_for_genesis_day_to_close_without_initialization() {
+        fixture(|mut ctx, sweep| {
+            OracleContract::new(ctx.storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(20251231)
+                .unwrap();
+            continue_day(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 0);
+            assert_eq!(sweep.latest.read().unwrap(), 0);
+
+            ctx.block.timestamp = date_key_to_utc_timestamp(20260102).unwrap();
+            ctx.block.block_number = 1;
+            OracleContract::new(ctx.storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(20260101)
+                .unwrap();
+            schedule(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 20260101);
+            continue_day(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 0);
+            assert_eq!(sweep.latest.read().unwrap(), 20260101);
+        });
+    }
+
+    #[test]
+    fn delayed_first_execution_catches_up_across_month_boundary_and_resumes() {
+        fixture(|mut ctx, sweep| {
+            ctx.block.genesis_timestamp =
+                date_key_to_utc_timestamp(20251231).unwrap() + SECONDS_PER_DAY - 1;
+            ready(&mut ctx, 1);
+            schedule(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 20251231);
+            assert_eq!(sweep.latest.read().unwrap(), 20260103);
+            for (height, next) in [(1, 20260101), (2, 20260102), (3, 20260103), (4, 0)] {
+                ctx.block.block_number = height;
+                continue_day(&ctx, sweep).unwrap();
+                assert_eq!(sweep.current.read().unwrap(), next);
+            }
+            ctx.block.block_number = 5;
+            schedule(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 0);
+            ctx.block.timestamp = date_key_to_utc_timestamp(20260105).unwrap();
+            OracleContract::new(ctx.storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(20260104)
+                .unwrap();
+            schedule(&ctx, sweep).unwrap();
+            assert_eq!(sweep.current.read().unwrap(), 20260104);
+        });
     }
 
     #[test]
@@ -530,8 +565,8 @@ mod tests {
             continue_day(&ctx, sweep).unwrap();
             assert_eq!(sweep.current.read().unwrap(), 0);
             ready(&mut ctx, 2);
-            initialize(&ctx, sweep).unwrap();
-            assert_eq!(sweep.genesis.read().unwrap(), 20260101);
+            assert_eq!(sweep.latest.read().unwrap(), 0);
+            assert_eq!(sweep.currency.read().unwrap(), 0);
             continue_day(&ctx, sweep).unwrap();
             assert_eq!(sweep.remaining.read(&1).unwrap(), 0);
             assert_eq!(sweep.current.read().unwrap(), 20260102);
@@ -574,13 +609,21 @@ mod tests {
     }
 
     #[test]
-    fn invalid_phase_and_missing_bootstrap_return_errors_without_progress() {
+    fn invalid_phase_and_day_range_return_errors_without_progress() {
         fixture(|mut ctx, sweep| {
             ready(&mut ctx, 1);
-            sweep.genesis.write(0).unwrap();
-            assert!(continue_day(&ctx, sweep).is_err());
-            sweep.genesis.write(20260101).unwrap();
             schedule(&ctx, sweep).unwrap();
+            sweep.current.write(20251231).unwrap();
+            assert!(continue_day(&ctx, sweep).is_err());
+            assert_eq!(sweep.current.read().unwrap(), 20251231);
+            assert_eq!(sweep.allowance.read().unwrap(), U256::ZERO);
+            sweep.current.write(20260104).unwrap();
+            assert!(continue_day(&ctx, sweep).is_err());
+            sweep.latest.write(20260104).unwrap();
+            assert!(continue_day(&ctx, sweep).is_err());
+            assert_eq!(sweep.allowance.read().unwrap(), U256::ZERO);
+            sweep.latest.write(20260103).unwrap();
+            sweep.current.write(20260101).unwrap();
             sweep.phase.write(3).unwrap();
             assert!(continue_day(&ctx, sweep).is_err());
             assert_eq!(sweep.current.read().unwrap(), 20260101);
@@ -592,7 +635,6 @@ mod tests {
     fn a_stalled_factory_does_not_hold_another_factory_or_share_its_allowance() {
         fixture(|mut ctx, stalled| {
             let mut independent = TestSweep::new(ctx.storage.clone(), Address::with_last_byte(100));
-            initialize(&ctx, &mut independent).unwrap();
             stalled.remaining.write(&0, 70).unwrap();
             independent.remaining.write(&0, 1).unwrap();
             ready(&mut ctx, 1);

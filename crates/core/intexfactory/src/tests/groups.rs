@@ -89,7 +89,8 @@ mod group_scans {
                     2,
                     due,
                     super::super::CHAIN_ID,
-                ),
+                )
+                .with_genesis_timestamp(scan_ts - super::super::DAY),
                 s.clone(),
             );
             super::super::called::daily_pass(&ctx).unwrap();

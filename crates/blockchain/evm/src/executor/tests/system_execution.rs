@@ -1,5 +1,136 @@
 use super::*;
 
+#[test]
+fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
+    use outbe_primitives::pass_budget::BlockAllowance;
+    use outbe_primitives::time::{date_key_to_utc_timestamp, WorldwideDay};
+
+    let genesis_ts = date_key_to_utc_timestamp(20_240_131).unwrap() + 86_390;
+    let block_ts = date_key_to_utc_timestamp(20_240_203).unwrap() + 60;
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let spec = test_chain_spec_with_genesis_timestamp(genesis_ts);
+    let mut seed = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, spec.genesis_hash());
+    StorageHandle::enter(&mut seed, |storage| {
+        seed_registered_active_validator(storage.clone(), proposer, &dummy_pubkey(0xA2));
+        outbe_oracle::schema::OracleContract::new(storage)
+            .utc_day_vwap_last_finalized
+            .write(20_240_202)
+            .unwrap();
+    });
+    let mut db = cache_db_from_storage(seed);
+    let marker = Bytecode::new_legacy([0xef].into());
+    crate::test_support::install_call_scan_markers(&mut db, &marker);
+    for address in [
+        outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
+        ORACLE_ADDRESS,
+        outbe_primitives::addresses::METADOSIS_ADDRESS,
+        CYCLE_ADDRESS,
+        outbe_primitives::addresses::TRIBUTE_ADDRESS,
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: marker.hash_slow(),
+                code: Some(marker.clone()),
+                ..Default::default()
+            },
+        );
+    }
+    let mut state = State::builder()
+        .with_database(db)
+        .with_bundle_update()
+        .build();
+    let config = OutbeEvmConfig::new(spec).with_evm_signer(signer);
+    let mut env = test_evm_env(1, REWARDS_ADDRESS);
+    env.block_env.timestamp = U256::from(block_ts);
+    let bootstrap = sample_tee_bootstrap_payload_at(1, block_ts);
+    let begin = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::explicit(Some(bootstrap.clone())),
+        },
+    );
+    let evm = config.evm_with_env(&mut state, env);
+    let mut execution =
+        execution_ctx_with_tee_bootstrap(Some(begin.len()), Bytes::new(), bootstrap);
+    execution.expected_begin_system_txs = begin.clone();
+    execution.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, execution);
+    executor.apply_pre_execution_changes().unwrap();
+    for tx in begin {
+        let is_cycle = matches!(
+            SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
+            SystemTx::CycleTick
+        );
+        executor.execute_transaction(tx).unwrap();
+        if is_cycle {
+            break;
+        }
+    }
+    drop(executor);
+
+    let block =
+        BlockContext::empty_for_tests(1, block_ts, CHAIN_ID).with_genesis_timestamp(genesis_ts);
+    let mut provider =
+        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, block);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        let gem = outbe_gem::GemContract::new(storage.clone());
+        let intex = outbe_intex::IntexContract::new(storage.clone());
+        let credis = outbe_credis::CredisContract::new(storage.clone());
+        for (budget, current, latest) in [
+            (
+                nod.daily_budget.read().unwrap(),
+                nod.call_sweep_day.read().unwrap(),
+                nod.call_latest_day.read().unwrap(),
+            ),
+            (
+                gem.daily_budget.read().unwrap(),
+                gem.call_sweep_day.read().unwrap(),
+                gem.call_latest_day.read().unwrap(),
+            ),
+            (
+                intex.daily_budget.read().unwrap(),
+                intex.call_sweep_day.read().unwrap(),
+                intex.call_latest_day.read().unwrap(),
+            ),
+            (
+                credis.daily_budget.read().unwrap(),
+                credis.call_sweep_day.read().unwrap(),
+                credis.call_latest_day.read().unwrap(),
+            ),
+        ] {
+            assert_eq!(
+                BlockAllowance::unpack(budget).unwrap().unwrap().day,
+                20_240_131
+            );
+            assert_eq!(
+                current, 20_240_201,
+                "one genesis day completes, without skipping February 1"
+            );
+            assert_eq!(latest, 20_240_202);
+        }
+        assert!(outbe_metadosis::api::worldwide_day(
+            storage.clone(),
+            WorldwideDay::from_timestamp(block_ts)
+        )
+        .unwrap()
+        .is_some());
+        assert!(
+            outbe_metadosis::api::worldwide_day(storage, WorldwideDay::from_timestamp(genesis_ts))
+                .unwrap()
+                .is_some(),
+            "Metadosis retains its existing catch-up and lookahead initialization"
+        );
+    });
+}
+
 fn test_reserved_system_address_tx() -> reth_ethereum::TransactionSigned {
     TxEip1559 {
         chain_id: CHAIN_ID,
@@ -480,17 +611,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             1,
             4,
             |storage| {
-                let genesis_ctx = BlockRuntimeContext::new(
-                    BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                    storage.clone(),
-                );
-                outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-
-                let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-                cycle
-                    .last_executed_at
-                    .write(&emission_trigger, GENESIS_TS + 60)
-                    .unwrap();
+                seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
 
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
                 rewards.daily_voter_count.write(&PREVIOUS_DAY, 1).unwrap();

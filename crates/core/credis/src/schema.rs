@@ -326,8 +326,6 @@ pub struct CredisContract {
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 55)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
-    #[attribute(order = 56)]
-    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 57)]
     pub series_opened: outbe_primitives::storage::dsl::Map<SeriesId, bool>,
     #[attribute(order = 58)]

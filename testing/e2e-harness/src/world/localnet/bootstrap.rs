@@ -53,6 +53,25 @@ mod tribute;
 pub use profile::BootstrapProfile;
 
 impl Localnet {
+    /// Called after Offering/Lysis fixture preparation and before manifest binding.
+    /// Only the header changes: protocol genesisTime and seeded allocations stay intact.
+    pub(crate) fn prepare_lifecycle_history(&self, seed_days: u32) -> Result<u64> {
+        let path = self.cfg.dir.join("genesis.json");
+        let genesis: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+        eyre::ensure!(
+            genesis.pointer("/config/teeAttestationV1").is_none(),
+            "historical lifecycle header must precede TEE manifest binding"
+        );
+        let original = genesis
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("genesis timestamp is not a string"))?;
+        let original = u64::from_str_radix(original.trim_start_matches("0x"), 16)?;
+        let offset = (i64::from(seed_days) + 2) * i64::try_from(SECONDS_PER_DAY)?;
+        self.shift_genesis_timestamp(-offset)?;
+        Ok(original)
+    }
+
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
     /// Without this, the testnet max-drift validator correctly rejects block 1
@@ -690,6 +709,57 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn lifecycle_header_is_the_manifest_input_without_changing_prepared_fixture() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment::default();
+        let mut cfg = crate::internal::config::Config::resolve(&env);
+        cfg.dir = directory.path().to_owned();
+        cfg.tee_mode = TeeMode::Mock;
+        // Capture the real bind_tee_genesis subprocess input without requiring a node binary.
+        cfg.bin_chain = directory.path().join("capture-genesis");
+        fs::write(&cfg.bin_chain, b"#!/bin/sh\nwhile [ $# -gt 0 ]; do\n case \"$1\" in\n --input) input=$2; shift;;\n --output) output=$2; shift;;\n esac\n shift\ndone\ncp \"$input\" \"$output\"\n").unwrap();
+        fs::set_permissions(&cfg.bin_chain, Permissions::from_mode(0o700)).unwrap();
+        let localnet = Localnet::new(cfg);
+        let path = localnet.cfg.dir.join("genesis.json");
+        let fixture = json!({
+            "timestamp": "0x6a000000",
+            "config": {"genesisTime": "2026-01-01T00:00:00Z", "leaderTimeoutMs": 15_000},
+            "alloc": {"1234": {"storage": {"0x1": "0xfeed"}, "balance": "0x99"}},
+        });
+        fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+        // Preserve a separate debug-clock shift rather than replacing its offset.
+        localnet.shift_genesis_timestamp(3_600).unwrap();
+        let seed_days = crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
+        let target = localnet.prepare_lifecycle_history(seed_days).unwrap();
+        assert_eq!(target, 0x6a000000 + 3_600);
+        localnet.bind_tee_genesis().unwrap();
+        let input: serde_json::Value = serde_json::from_slice(
+            &fs::read(localnet.cfg.dir.join("genesis.seeded.json")).unwrap(),
+        )
+        .unwrap();
+        let mut expected = fixture;
+        expected["timestamp"] = json!(format!(
+            "0x{:x}",
+            target - (u64::from(seed_days) + 2) * SECONDS_PER_DAY
+        ));
+        assert_eq!(input, expected);
+        // A bound manifest must never be silently invalidated by a later header edit.
+        let mut bound = input;
+        bound["config"]["teeAttestationV1"] = json!({});
+        fs::write(&path, serde_json::to_vec(&bound).unwrap()).unwrap();
+        assert!(localnet
+            .prepare_lifecycle_history(seed_days)
+            .unwrap_err()
+            .to_string()
+            .contains("must precede TEE manifest"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&fs::read(path).unwrap()).unwrap(),
+            bound
+        );
+    }
 
     #[test]
     fn governance_window_is_written_before_node_start() {
