@@ -154,8 +154,6 @@ pub struct SeedCliArgs {
     pub output: PathBuf,
     /// Optional directory containing external contract files.
     pub contracts_dir: Option<PathBuf>,
-    /// Optional directory containing `metacanon.md` and `canon.md`.
-    pub canon_dir: Option<PathBuf>,
     /// Optional WorldwideDay override (`YYYYMMDD`).
     pub worldwide_day: Option<u32>,
     /// Do not seed an already-OFFERING WorldwideDay.
@@ -207,7 +205,6 @@ pub fn run_seed_cli_with_min_stake(
                 Some(default_contracts_dir().display().to_string())
             }
         });
-    let canon_dir = args.canon_dir.as_ref().map(|p| p.display().to_string());
 
     let genesis = seed_genesis_from_config(
         &SeedInputs {
@@ -217,7 +214,6 @@ pub fn run_seed_cli_with_min_stake(
         },
         &SeedOptions {
             contracts_dir,
-            canon_dir,
             worldwide_day: args.worldwide_day,
             fresh_metadosis: args.fresh_metadosis,
         },

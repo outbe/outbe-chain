@@ -81,12 +81,7 @@ pub fn apply_seed(
         let mut genesis_snapshot = genesis.clone();
         {
             let alloc = ensure_object_field(genesis, "alloc")?;
-            seed_system_state(
-                &mut genesis_snapshot,
-                &seed_owned,
-                alloc,
-                options.canon_dir.as_deref(),
-            )?;
+            seed_system_state(&mut genesis_snapshot, &seed_owned, alloc)?;
         }
         if let Some(cfg) = genesis_snapshot.get("config").cloned() {
             if let Some(obj) = genesis.as_object_mut() {

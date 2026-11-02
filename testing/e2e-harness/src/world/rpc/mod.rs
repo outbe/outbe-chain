@@ -24,9 +24,9 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IAgentReward, ICodeRegistry, IGovernance, IL2Registry, IMetadosis, INod,
-        ISlashIndicator, IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet,
-        IValidatorSetRaw, IVote, IZeroFee,
+        self, IAgentReward, ICodeRegistry, IL2Registry, IMetadosis, INod, ISlashIndicator,
+        IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote,
+        IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,

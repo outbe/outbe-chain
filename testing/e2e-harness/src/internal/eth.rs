@@ -141,7 +141,6 @@ pub use event_abi::{IMetadosis, IStablecoinFactory, ITribute};
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
-sol!("../../contracts/precompiles/src/IGovernance.sol");
 sol!("../../contracts/precompiles/src/IL2Registry.sol");
 
 sol!("../../contracts/precompiles/src/ITributeFactory.sol");

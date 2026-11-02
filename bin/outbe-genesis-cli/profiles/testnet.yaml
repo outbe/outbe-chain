@@ -99,7 +99,6 @@ feeder_seeds: testnet/seeds.yaml
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys
-# canon_dir: bin/outbe-genesis-cli/canon
 
 # Protocol timings, copied verbatim into config.outbeProtocol.
 # ONLY a `test-protocol-overrides` build accepts this field; a production

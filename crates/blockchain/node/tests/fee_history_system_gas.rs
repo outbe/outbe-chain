@@ -103,7 +103,6 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
             worldwide_day: None,
             fresh_metadosis: false,
             contracts_dir: None,
-            canon_dir: None,
         },
     )
     .wrap_err("run outbe-genesis-cli seed")?;

@@ -3,26 +3,29 @@
 use super::*;
 
 #[test]
-fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
-    use outbe_governance::{schema::GovernanceContract, GovernanceVotePayload, ProposalKind};
-    use outbe_primitives::{addresses::GOVERNANCE_ADDRESS, error::PrecompileError};
+fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
+    use outbe_l2registry::L2RegistryContract;
+    use outbe_primitives::{addresses::L2_REGISTRY_ADDRESS, error::PrecompileError};
     use outbe_vote::schema::{BondState, ProposalStatus};
 
     const CREATED: u64 = 7;
+    const NETWORK_CHAIN_ID: u64 = 4242;
+    const PAYLOAD: &str = r#"{"operation":"register","chainId":4242,"l1Address":"0x1111111111111111111111111111111111111111","publicKey":"0x"}"#;
     let validators = [
         (Address::repeat_byte(0xb1), dummy_pubkey(0xb1)),
         (Address::repeat_byte(0xb2), dummy_pubkey(0xb2)),
         (Address::repeat_byte(0xb3), dummy_pubkey(0xb3)),
     ];
     let proposer = validators[0].0;
+    let existing_owner = Address::repeat_byte(0xc1);
     let id = U256::ONE;
     let mut state = state_with_active_validators_seeded_at_block(&validators, CREATED, |storage| {
         let mut vote = Vote::new(storage.clone());
         assert_eq!(
             vote.create_proposal(
                 proposer,
-                GOVERNANCE_ADDRESS,
-                &GovernanceVotePayload::encode(ProposalKind::Oip, "capacity test"),
+                L2_REGISTRY_ADDRESS,
+                PAYLOAD,
                 CREATED,
                 crate::handlers::vote::registry(),
             )
@@ -33,9 +36,9 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
             vote.cast_vote_approve(id, *voter, true, CREATED + 1)
                 .unwrap();
         }
-        GovernanceContract::new(storage)
-            .oip_author_count
-            .write(&proposer, u32::MAX)
+        // The proposal is valid, but its registration conflicts by execution time.
+        L2RegistryContract::new(storage)
+            .register_network(NETWORK_CHAIN_ID, existing_owner, &[])
             .unwrap();
     });
     let number = CREATED + VOTING_WINDOW_BLOCKS + 1;
@@ -47,7 +50,7 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
         validators.iter().map(|(address, _)| *address).collect(),
     );
 
-    let error = super::run_atomic_storage_hooks(&mut state, context.clone(), |ctx| {
+    super::run_atomic_storage_hooks(&mut state, context.clone(), |ctx| {
         super::run_outbe_pre_execution_hooks(ctx, None)?;
         let vote = Vote::new(ctx.storage.clone());
         assert_eq!(
@@ -55,12 +58,9 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
             ProposalStatus::Error
         );
         assert!(vote.list_pending_proposal_ids()?.is_empty());
-        Err(PrecompileError::Fatal(
-            "failure after Governance tally".into(),
-        ))
+        Err(PrecompileError::Fatal("failure after Vote tally".into()))
     })
-    .expect_err("a later hook failure must roll back the terminal capacity error");
-    assert!(error.to_string().contains("failure after Governance tally"));
+    .expect_err("a later hook failure must roll back the terminal target refusal");
 
     let (_, events) = super::run_atomic_storage_hooks(&mut state, context, |ctx| {
         let vote = Vote::new(ctx.storage.clone());
@@ -76,10 +76,20 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
         );
         assert_eq!(vote.proposal_bond(id)?.state, BondState::NoBond);
         assert!(vote.list_pending_proposal_ids()?.is_empty());
-        assert_eq!(GovernanceContract::new(ctx.storage.clone()).oip_count()?, 0);
+        assert_eq!(
+            L2RegistryContract::new(ctx.storage.clone())
+                .load_network(NETWORK_CHAIN_ID)?
+                .l1_address,
+            existing_owner
+        );
+        // Re-running the Vote lifecycle must not emit a second ProposalErrored receipt.
+        outbe_vote::lifecycle::VoteLifecycle::begin_block_with_handlers(
+            ctx,
+            crate::handlers::vote::registry(),
+        )?;
         Ok(())
     })
-    .expect("capacity refusal must allow the hook batch to commit on retry");
+    .expect("target refusal must allow the hook batch to commit on retry");
     let (receipt_logs, _) = partition_hook_events(&events);
     assert_eq!(
         receipt_logs
@@ -89,9 +99,7 @@ fn governance_capacity_error_is_atomic_with_the_outer_hook_batch() {
             .count(),
         1
     );
-    assert!(receipt_logs
-        .iter()
-        .all(|log| log.address != GOVERNANCE_ADDRESS));
+    assert!(events.iter().all(|log| log.address != L2_REGISTRY_ADDRESS));
 }
 
 #[test]
