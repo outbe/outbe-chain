@@ -11,10 +11,11 @@
 //! - [`CrosschainVoteTarget`] stores the hash of an approved action.
 //!   Permissionless `applyApproved` then runs it. Every vote action is in
 //!   `vote_target`: the actions on our contracts and on the Hyperlane chains.
-//! - `callLocal` and `callRemote` let a precompile in [`precompile::OWNER_CALLERS`]
+//! - `callLocal` and `callRemote` let a precompile in [`constants::OWNER_CALLERS`]
 //!   make the owner call a contract. Today this is the HyperlaneController
 //!   (`0x...EE14`), for its ISM rotation and bootstrap.
 
+pub mod constants;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;

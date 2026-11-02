@@ -10,11 +10,21 @@ use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::error::Result;
 
+use crate::constants::OWNER_CALLERS;
 use crate::errors::CrosschainGovError;
 use crate::precompile::ICrosschainGov::{self, Call};
 use crate::schema::CrosschainGovContract;
 
 impl<'a> CrosschainGovContract<'a> {
+    /// Requires that `caller` may make the owner call a contract through
+    /// `callLocal` and `callRemote`.
+    pub fn require_owner_caller(caller: Address) -> Result<()> {
+        if !OWNER_CALLERS.contains(&caller) {
+            return Err(CrosschainGovError::NotOwnerCaller { caller }.into());
+        }
+        Ok(())
+    }
+
     /// The Hyperlane registry, read only: the ICA router.
     fn hyperlane(&self) -> HyperlaneControllerContract<'a> {
         HyperlaneControllerContract::new(self.storage.clone())
