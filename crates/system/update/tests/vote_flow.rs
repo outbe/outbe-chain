@@ -383,7 +383,7 @@ fn full_vote_update_flow_3_of_4_yes_approves_schedules_and_activates() {
 }
 
 #[test]
-fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
+fn yes_to_no_keeps_the_voter_but_prevents_update_scheduling_without_quorum() {
     with_vote_runtime_at(100, |storage, current| {
         let activation = proposal_activation(current);
         let mut vote = Vote::new(storage.clone());
@@ -391,20 +391,12 @@ fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
 
         vote.cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
             .unwrap();
-        let error = vote
-            .cast_vote_approve(proposal_id, VOTER_A, false, current + 2)
-            .unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::RevertBytes(bytes)
-                if bytes.len() >= 4
-                    && bytes[..4]
-                        == alloy_primitives::keccak256(b"AlreadyVoted()")[..4]
-        ));
+        vote.cast_vote_approve(proposal_id, VOTER_A, false, current + 2)
+            .unwrap();
         assert_eq!(
             vote.read_proposal_voters(proposal_id).unwrap(),
             vec![VOTER_A],
-            "duplicate ballot must not append or replace the accepted ballot"
+            "changing a ballot must retain the voter"
         );
 
         vote.cast_vote_approve(proposal_id, VOTER_B, true, current + 3)
@@ -414,11 +406,18 @@ fn duplicate_ballot_is_rejected_without_changing_vote_to_update_outcome() {
         run_vote_begin_block(storage.clone(), tally_block(current));
 
         let record = vote.proposals.get(proposal_id).unwrap().unwrap();
-        assert_eq!(record.proposal_status().unwrap(), ProposalStatus::Approved);
-        let update = Update::new(storage.clone());
-        let scheduled = update.read_scheduled_update(proposal_id).unwrap().unwrap();
-        assert_eq!(scheduled.version, V1_2);
-        assert_eq!(scheduled.activation_height, activation);
+        assert_eq!(record.proposal_status().unwrap(), ProposalStatus::Expired);
+        let info = outbe_vote::api::get_proposal(storage.clone(), proposal_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (info.state.yes, info.state.no, info.voters_count),
+            (2, 1, 3)
+        );
+        assert!(Update::new(storage.clone())
+            .read_scheduled_update(proposal_id)
+            .unwrap()
+            .is_none());
 
         assert_eq!(
             Update::new(storage).get_active_version().unwrap(),

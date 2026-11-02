@@ -442,21 +442,27 @@ fn write_vote_appends_ordered_voters() {
 }
 
 #[test]
-fn duplicate_vote_is_rejected() {
-    with_update_proposal(20, |_storage, governance, proposal_id, current| {
-        governance
-            .cast_vote_approve(proposal_id, VOTER_A, true, current + 1)
+fn only_yes_to_no_recast_is_allowed() {
+    with_update_proposal(20, |storage, vote, id, current| {
+        vote.cast_vote_approve(id, VOTER_A, true, current + 1)
             .unwrap();
-
         assert_reverts_with(
-            governance.cast_vote_approve(proposal_id, VOTER_A, false, current + 2),
+            vote.cast_vote_approve(id, VOTER_A, true, current + 2),
             "already voted",
         );
-
-        assert_eq!(
-            governance.read_proposal_voters(proposal_id).unwrap(),
-            vec![VOTER_A]
-        );
+        vote.cast_vote_approve(id, VOTER_A, false, current + 3)
+            .unwrap();
+        for approve in [false, true] {
+            assert_reverts_with(
+                vote.cast_vote_approve(id, VOTER_A, approve, current + 4),
+                "already voted",
+            );
+        }
+        assert_eq!(vote.read_proposal_voters(id).unwrap(), vec![VOTER_A]);
+        let ballot = vote.read_vote(id, VOTER_A).unwrap().unwrap();
+        assert_eq!(ballot.vote_kind, VoteKind::No);
+        assert_eq!(ballot.block_number, current + 3);
+        assert_proposal_view(storage, id, VoteTally { yes: 0, no: 1 }, 1);
     });
 }
 

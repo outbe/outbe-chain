@@ -131,6 +131,7 @@ impl ProposalRecord {
 pub struct VoteRecord {
     pub voter: Address,
     pub vote_kind: u8, // VoteKind
+    /// Height of the latest accepted ballot, including a Yes-to-No change.
     pub block_number: u64,
 }
 

@@ -1,5 +1,6 @@
 use super::*;
 use alloy_evm::Evm;
+use alloy_sol_types::SolError;
 use outbe_coderegistry::{
     payload::PatchVotePayloadV1, precompile::ICodeRegistry, CodeRegistry, RepoId,
 };
@@ -38,11 +39,21 @@ fn call(
 
 #[test]
 fn radicle_patch_approval_runs_through_evm_calls_and_real_begin_block_hooks() {
-    run_patch_vote_case(false);
-    run_patch_vote_case(true);
+    run_patch_vote_case(true, false);
 }
 
-fn run_patch_vote_case(approve_second: bool) {
+#[test]
+fn changing_yes_to_no_at_deadline_prevents_patch_approval_without_removing_the_voter() {
+    run_patch_vote_case(true, true);
+}
+
+#[test]
+fn no_to_yes_is_rejected_before_deadline_without_changing_patch_outcome() {
+    run_patch_vote_case(false, false);
+}
+
+fn run_patch_vote_case(approve_second: bool, change_to_no: bool) {
+    let approved = approve_second && !change_to_no;
     let validators = [
         (Address::repeat_byte(0xa1), dummy_pubkey(0xa1)),
         (Address::repeat_byte(0xa2), dummy_pubkey(0xa2)),
@@ -137,6 +148,52 @@ fn run_patch_vote_case(approve_second: bool) {
         second_ballot
     )
     .is_success());
+    let mut next_ballot_nonce = 1;
+    if change_to_no {
+        let changed = call(
+            &mut state,
+            9,
+            validators[1].0,
+            next_ballot_nonce,
+            VOTE_ADDRESS,
+            IVote::castVoteCall {
+                proposalId: U256::ONE,
+                approve: false,
+            }
+            .abi_encode(),
+        );
+        assert!(changed.is_success(), "{changed:?}");
+        next_ballot_nonce += 1;
+        assert!(changed.logs().iter().any(|log| {
+            log.address == VOTE_ADDRESS
+                && IVote::VoteCast::decode_log_data(&log.data).is_ok_and(|event| {
+                    event.proposalId == U256::ONE
+                        && event.validator == validators[1].0
+                        && !event.approve
+                })
+        }));
+    }
+    if !approved {
+        let reversal = call(
+            &mut state,
+            9,
+            validators[1].0,
+            next_ballot_nonce,
+            VOTE_ADDRESS,
+            IVote::castVoteCall {
+                proposalId: U256::ONE,
+                approve: true,
+            }
+            .abi_encode(),
+        );
+        next_ballot_nonce += 1;
+        assert!(!reversal.is_success());
+        assert_eq!(
+            reversal.output().unwrap().as_ref(),
+            IVote::AlreadyVoted {}.abi_encode()
+        );
+        assert!(reversal.logs().is_empty());
+    }
     let get = ICodeRegistry::getPatchApprovalCall {
         proposalId: U256::ONE,
     }
@@ -186,16 +243,17 @@ fn run_patch_vote_case(approve_second: bool) {
     let proposal = IVote::getProposalCall::abi_decode_returns(proposal.output().unwrap()).unwrap();
     assert_eq!(
         proposal.status,
-        if approve_second {
+        if approved {
             IVote::ProposalStatus::Approved
         } else {
             IVote::ProposalStatus::Expired
         }
     );
-    assert_eq!(proposal.state.yes, if approve_second { 2 } else { 1 });
-    assert_eq!(proposal.state.no, if approve_second { 0 } else { 1 });
-    assert_eq!(approval.approved, approve_second);
-    if approve_second {
+    assert_eq!(proposal.state.yes, if approved { 2 } else { 1 });
+    assert_eq!(proposal.state.no, if approved { 0 } else { 1 });
+    assert_eq!(proposal.votersCount, U256::from(2));
+    assert_eq!(approval.approved, approved);
+    if approved {
         assert_eq!(approval.payload, payload);
         assert_eq!(approval.approvedHeight, 10);
         assert_eq!(approval.approvedTimestamp, 1_700_000_010);
@@ -203,5 +261,40 @@ fn run_patch_vote_case(approve_second: bool) {
         assert!(approval.payload.is_empty());
         assert_eq!(approval.approvedHeight, 0);
     }
-    println!("EVM patch Vote proposal=1 yes={} electorate=3 deadline=9 terminal_height=10 approved={} subject={payload}", if approve_second { 2 } else { 1 }, approval.approved);
+    let voters = call(
+        &mut state,
+        10,
+        outsider,
+        4,
+        VOTE_ADDRESS,
+        IVote::getProposalVotersCall {
+            proposalId: U256::ONE,
+            index: U256::ZERO,
+            count: U256::from(10),
+        }
+        .abi_encode(),
+    );
+    assert!(voters.is_success(), "{voters:?}");
+    assert_eq!(
+        IVote::getProposalVotersCall::abi_decode_returns(voters.output().unwrap()).unwrap(),
+        vec![validators[0].0, validators[1].0]
+    );
+    let late = call(
+        &mut state,
+        10,
+        validators[1].0,
+        next_ballot_nonce,
+        VOTE_ADDRESS,
+        IVote::castVoteCall {
+            proposalId: U256::ONE,
+            approve: false,
+        }
+        .abi_encode(),
+    );
+    assert!(!late.is_success());
+    assert_eq!(
+        late.output().unwrap().as_ref(),
+        IVote::NotPending {}.abi_encode()
+    );
+    println!("EVM patch Vote proposal=1 yes={} no={} voters=2 electorate=3 deadline=9 terminal_height=10 approved={} subject={payload}", proposal.state.yes, proposal.state.no, approval.approved);
 }
