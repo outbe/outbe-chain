@@ -39,6 +39,44 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
             updated.state,
             outbe_metadosis::emission_day_state::SUCCEEDED
         );
+        assert!(
+            outbe_agentreward::distribution::has_pending_accruals_for_day(
+                &ctx.storage,
+                emission_day.day,
+            )
+            .unwrap()
+        );
+        let allocated =
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            allocated.state,
+            outbe_emission::schema::emission_day_state::PROCESSING
+        );
+        crate::handler::credit_reward_slice(&ctx).unwrap();
+        let completed =
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            completed.state,
+            outbe_emission::schema::emission_day_state::COMPLETED
+        );
+        assert!(
+            !outbe_agentreward::distribution::has_pending_accruals_for_day(
+                &ctx.storage,
+                emission_day.day,
+            )
+            .unwrap()
+        );
+        crate::handler::credit_reward_slice(&ctx).unwrap();
+        assert_eq!(
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), emission_day.day)
+                .unwrap()
+                .unwrap(),
+            completed,
+        );
 
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         assert_eq!(

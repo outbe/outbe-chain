@@ -3,14 +3,11 @@ use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_agentreward::{
-    constants::REWARD_BALANCE_IDLE_SECONDS,
-    distribution::{distribute_daily, PoolKind},
-    schema::RewardPool,
-    AgentRewardContract,
+    constants::REWARD_BALANCE_IDLE_SECONDS, schema::RewardPool, AgentRewardContract,
 };
 use outbe_ccaregistry::{
     api,
-    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
+    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     precompile::ICcaRegistry,
     runtime,
     schema::CcaContract,
@@ -241,11 +238,42 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     }
     with_storage(&mut db, |s| {
         api::credis_issued(&s, CCA, 20231115, U256::from(100)).unwrap();
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, NOW, 1), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, NOW + 2 * SECONDS_PER_DAY, 1),
+            s.clone(),
+        );
+        outbe_rewards::api::close_day_participation(&ctx, 20231115).unwrap();
+        let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
+            &ctx,
+            20231115.into(),
+            outbe_agentreward::api::DayAgentPools {
+                cca: U256::from(1000),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(allocation.total_excess, U256::ZERO);
         assert_eq!(
-            distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::from(1000))]).unwrap(),
+            AgentRewardContract::new(s.clone())
+                .get_pool_claimable_reward(RewardPool::Cca, CCA)
+                .unwrap(),
             U256::ZERO
         );
+        outbe_emission::api::record_day_allocation(
+            s.clone(),
+            20231115,
+            outbe_emission::api::DayAllocationAmounts {
+                emission_limit: U256::from(1000),
+                metadosis_limit: U256::ZERO,
+                validators: U256::ZERO,
+                waa: U256::ZERO,
+                sra: U256::ZERO,
+                cca: allocation.cca_allocated,
+                promis_limit: U256::ZERO,
+            },
+        )
+        .unwrap();
+        outbe_agentreward::api::process_agent_rewards(&ctx).unwrap();
     });
     with_storage(&mut db, |s| {
         assert_eq!(
@@ -439,10 +467,9 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         assert_eq!(record.state as u8, ICcaRegistry::State::Deregistered as u8);
         assert_eq!(record.bondedMinor, U256::ZERO);
         assert_eq!(record.name, "Test CCA");
-        assert_eq!(
-            api::reward_weight(&s, CCA, 20231115).unwrap(),
-            U256::from(100)
-        );
+        // The terminal CCA job permits bounded deletion; its seal remains permanent.
+        assert_eq!(api::reward_weight(&s, CCA, 20231115).unwrap(), U256::ZERO);
+        assert!(api::credis_forfeited(&s, CCA, 20231115, U256::ONE).is_err());
     });
     assert!(!tx(
         &mut db,
@@ -454,7 +481,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
 }
 
 #[test]
-fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
+fn bond_past_128_active_ccas_accepts_value_and_updates_the_set() {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     db.insert_account_info(
@@ -473,17 +500,14 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
         },
     );
     with_storage(&mut db, |storage| {
-        for id in 1..=u64::from(MAX_ACTIVE_CCAS) {
+        for id in 1..=128u64 {
             let cca = Address::from_word(U256::from(id).into());
             storage
                 .increase_balance(CCA_REGISTRY_ADDRESS, BOND_REQUIREMENT)
                 .unwrap();
             runtime::bond(storage.clone(), cca, BOND_REQUIREMENT, "Test CCA".into()).unwrap();
         }
-        assert_eq!(
-            CcaContract::new(storage).active.len().unwrap(),
-            MAX_ACTIVE_CCAS
-        );
+        assert_eq!(CcaContract::new(storage).active.len().unwrap(), 128);
     });
     let registry_before = db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance;
     let caller_before = db.cache.accounts[&CCA].info.balance;
@@ -496,19 +520,19 @@ fn bond_past_the_active_cap_refunds_value_and_leaves_the_set_unchanged() {
         .abi_encode(),
         NOW,
     );
-    assert!(!outcome.is_success());
-    assert!(outcome.logs().is_empty());
-    assert_eq!(db.cache.accounts[&CCA].info.balance, caller_before);
+    assert!(outcome.is_success());
+    assert_eq!(outcome.logs().len(), 1);
+    assert_eq!(
+        db.cache.accounts[&CCA].info.balance,
+        caller_before - BOND_REQUIREMENT
+    );
     assert_eq!(
         db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        registry_before
+        registry_before + BOND_REQUIREMENT
     );
     with_storage(&mut db, |storage| {
-        assert!(api::get_cca(&storage, CCA).is_err());
-        assert_eq!(
-            CcaContract::new(storage).active.len().unwrap(),
-            MAX_ACTIVE_CCAS
-        );
+        assert!(api::is_active(&storage, CCA).unwrap());
+        assert_eq!(CcaContract::new(storage).active.len().unwrap(), 129);
     });
 }
 

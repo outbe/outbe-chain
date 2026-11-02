@@ -30,8 +30,10 @@ pub enum CcaError {
     Arithmetic,
     #[error("CCA address must be nonzero")]
     ZeroAddress,
-    #[error("CCA active set is full")]
-    ActiveSetFull,
+    #[error("CCA reward day is sealed")]
+    RewardDaySealed,
+    #[error("CCA reward day is not sealed")]
+    RewardDayNotSealed,
     #[error("CCA registry balance is below the bonded total")]
     CustodyShortfall,
 }
@@ -54,7 +56,9 @@ impl From<CcaError> for PrecompileError {
             CcaError::InvalidState(value) => revert_with(I::InvalidState { value }),
             CcaError::Arithmetic => revert_with(I::Arithmetic {}),
             CcaError::ZeroAddress => revert_with(I::ZeroAddress {}),
-            CcaError::ActiveSetFull => revert_with(I::ActiveSetFull {}),
+            CcaError::RewardDaySealed | CcaError::RewardDayNotSealed => {
+                PrecompileError::Revert(error.to_string())
+            }
             CcaError::CustodyShortfall => revert_with(I::CustodyShortfall {}),
         }
     }
@@ -63,12 +67,12 @@ impl From<CcaError> for PrecompileError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CcaFatalError {
-    #[error("CCA active index entry missing")]
-    ActiveIndexEntryMissing,
+    #[error("CCA reward day index or cleanup queue is corrupt")]
+    RewardDayIndexCorrupt,
 }
 
 impl From<CcaFatalError> for PrecompileError {
     fn from(error: CcaFatalError) -> Self {
-        Self::Revert(error.to_string())
+        Self::fatal(error.to_string())
     }
 }

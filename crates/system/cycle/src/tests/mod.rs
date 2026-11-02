@@ -132,6 +132,13 @@ pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(
         .daily_voter_count
         .write(&day, voters.len() as u32)
         .unwrap();
+    rewards
+        .daily_total_participation
+        .write(
+            &day,
+            voters.iter().map(|(_, count)| U256::from(*count)).sum(),
+        )
+        .unwrap();
 }
 
 /// Writes the parent height into the accounting slot for tests that fire a

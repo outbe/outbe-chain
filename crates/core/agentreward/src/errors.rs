@@ -9,6 +9,10 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum AgentRewardError {
+    #[error("agentreward day {0} is sealed or out of order")]
+    DaySealed(u32),
+    #[error("agentreward queue or job invariant violated")]
+    InvalidJob,
     #[error("agentreward tribute counter overflow")]
     TributeCounterOverflow,
     #[error("agentreward distribute_daily overflow")]
@@ -60,6 +64,9 @@ impl From<AgentRewardError> for PrecompileError {
     fn from(err: AgentRewardError) -> Self {
         use IAgentReward as I;
         match err {
+            AgentRewardError::DaySealed(_) | AgentRewardError::InvalidJob => {
+                PrecompileError::Fatal(err.to_string())
+            }
             AgentRewardError::TributeCounterOverflow => revert_with(I::TributeCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),

@@ -4,7 +4,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::test_utils::sol_interface::sol_function_canonical;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
 
-use crate::distribution::{advance_accruals, distribute_daily, PoolKind};
+use crate::schema::RewardPool as PoolKind;
 use crate::schema::{AgentRewardContract, DayIndex, RewardPool};
 
 const CHAIN_ID: u64 = 1;
@@ -23,15 +23,80 @@ fn distribute_and_credit(
     pools: &[(PoolKind, U256)],
 ) -> outbe_primitives::error::Result<U256> {
     ctx.storage.with_checkpoint(|| {
-        let mut total = distribute_daily(ctx, day, pools)?;
+        let mut total = allocate_fixture(ctx, day, pools)?;
         loop {
             let contract = AgentRewardContract::new(ctx.storage.clone());
-            if contract.accrual_head.read()? == contract.accrual_tail.read()? {
+            if contract.accrual_head.read()? == contract.accrual_tail.read()?
+                && contract.cleanup_head.read()? == contract.cleanup_tail.read()?
+            {
                 return Ok(total);
             }
-            total += advance_accruals(ctx)?;
+            total += credit_next_block(ctx)?;
         }
     })
+}
+
+/// Existing claim/economic tests use the real four-job API and a conserved production ledger.
+fn allocate_fixture(
+    ctx: &outbe_primitives::block::BlockRuntimeContext,
+    day: WorldwideDay,
+    pools: &[(PoolKind, U256)],
+) -> outbe_primitives::error::Result<U256> {
+    let allocation_ctx = outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(10_000, 2_000_000_000, CHAIN_ID),
+        ctx.storage.clone(),
+    );
+    outbe_rewards::api::close_day_participation(&allocation_ctx, day.value())?;
+    let mut amounts = [U256::ZERO; 4];
+    for &(pool, amount) in pools {
+        amounts[pool as usize] = amount;
+    }
+    let allocation = crate::api::allocate_day_agent_rewards(
+        &allocation_ctx,
+        day,
+        crate::api::DayAgentPools {
+            validator_topup: amounts[3],
+            waa: amounts[0],
+            sra: amounts[1],
+            cca: amounts[2],
+        },
+    )?;
+    let total = amounts.into_iter().try_fold(U256::ZERO, |sum, value| {
+        sum.checked_add(value)
+            .ok_or(crate::errors::AgentRewardError::DistributionOverflow)
+    })?;
+    outbe_emission::api::record_day_allocation(
+        ctx.storage.clone(),
+        day.value(),
+        outbe_emission::api::DayAllocationAmounts {
+            emission_limit: total,
+            metadosis_limit: allocation.total_excess,
+            validators: allocation.validators_allocated,
+            waa: allocation.waa_allocated,
+            sra: allocation.sra_allocated,
+            cca: allocation.cca_allocated,
+            promis_limit: U256::ZERO,
+        },
+    )?;
+    Ok(allocation.total_excess)
+}
+
+fn credit_next_block(
+    ctx: &outbe_primitives::block::BlockRuntimeContext,
+) -> outbe_primitives::error::Result<U256> {
+    let before = outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).promis_limit()?;
+    let contract = AgentRewardContract::new(ctx.storage.clone());
+    let height = if contract.worker_initialized.read()? {
+        contract.worker_height.read()? + 1
+    } else {
+        0
+    };
+    let next = outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(height, 2_000_000_000, CHAIN_ID),
+        ctx.storage.clone(),
+    );
+    crate::api::process_agent_rewards(&next)?;
+    Ok(outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).promis_limit()? - before)
 }
 
 fn numbered_address(n: u64) -> Address {
@@ -160,10 +225,10 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         };
 
         assert_eq!(
-            distribute_daily(&ctx, waa_day, &[(PoolKind::Waa, waa_pool)]).unwrap(),
+            allocate_fixture(&ctx, waa_day, &[(PoolKind::Waa, waa_pool)]).unwrap(),
             U256::ZERO
         );
-        assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
         let credited = U256::from(slice * 1_000);
@@ -176,16 +241,18 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
             contract.pool_pending_total(RewardPool::Waa).unwrap(),
             waa_pool - credited
         );
-        assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
         assert_eq!(claimable(2 * slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(2 * slice), U256::ZERO);
 
         assert_eq!(
-            distribute_daily(&ctx, sra_day, &[(PoolKind::Sra, sra_pool)]).unwrap(),
+            allocate_fixture(&ctx, sra_day, &[(PoolKind::Sra, sra_pool)]).unwrap(),
             U256::ZERO
         );
-        assert_eq!(advance_accruals(&ctx).unwrap(), U256::from(7u64));
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::from(7u64));
         assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
+        // Four headers were consumed finishing the old day and the next validator job.
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
         let contract = AgentRewardContract::new(storage.clone());
         assert_eq!(
             contract
@@ -205,10 +272,11 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
             contract.pool_pending_total(RewardPool::Waa).unwrap(),
             U256::ZERO
         );
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
         assert!(contract.get_all_waa_counts(waa_day).unwrap().is_empty());
         assert_eq!(contract.waa_total_count.read(&waa_day).unwrap(), 0);
         assert!(contract.get_all_sra_counts(sra_day).unwrap().is_empty());
-        assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
+        assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
     });
 }
 
@@ -237,9 +305,9 @@ fn test_address_list_deduplication() {
 fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let bob = address!("0x2222222222222222222222222222222222222222");
-    let wwd = WorldwideDay::new(5);
+    let wwd = WorldwideDay::new(20231113);
 
-    with_contract_mut(|_storage, contract| {
+    with_contract_mut(|storage, contract| {
         contract.increment_waa_tribute(wwd, alice).unwrap();
         contract.increment_waa_tribute(wwd, alice).unwrap();
         contract.increment_waa_tribute(wwd, bob).unwrap();
@@ -247,8 +315,13 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
         assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 3);
         assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 1);
 
-        contract.clear_waa_counts(wwd).unwrap();
-        contract.clear_sra_counts(wwd).unwrap();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            storage,
+        );
+        outbe_rewards::api::close_day_participation(&ctx, wwd.value()).unwrap();
+        crate::api::abandon_day_agent_rewards(&ctx, wwd).unwrap();
+        crate::api::process_agent_rewards(&ctx).unwrap();
         assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 0);
         assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 0);
     });
@@ -1225,8 +1298,8 @@ mod distribute_daily_tests {
             outbe_ccaregistry::api::credis_issued(&ctx.storage, cca, DAY.value(), U256::ONE)
                 .unwrap();
             distribute_and_credit(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
-            outbe_ccaregistry::api::credis_issued(&ctx.storage, cca, 20240102, U256::ONE).unwrap();
-            distribute_and_credit(ctx, 20240102.into(), &[(PoolKind::Cca, U256::from(50u64))])
+            outbe_ccaregistry::api::credis_issued(&ctx.storage, cca, 20240116, U256::ONE).unwrap();
+            distribute_and_credit(ctx, 20240116.into(), &[(PoolKind::Cca, U256::from(50u64))])
                 .unwrap();
             assert_eq!(
                 ctx.storage
@@ -1503,6 +1576,10 @@ fn every_pool_day() -> HashMapStorageProvider {
 
         let rewards = outbe_rewards::schema::Rewards::new(storage);
         rewards.daily_voter_count.write(&day.value(), 2).unwrap();
+        rewards
+            .daily_total_participation
+            .write(&day.value(), U256::from(2))
+            .unwrap();
         for (index, voter) in [Address::repeat_byte(5), Address::repeat_byte(6)]
             .into_iter()
             .enumerate()
