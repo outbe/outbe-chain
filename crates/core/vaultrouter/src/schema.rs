@@ -46,6 +46,18 @@ pub struct LiquidityReservation {
     pub call_anchor_price_minor: U256,
     #[attribute(order = 15)]
     pub source: Address,
+    #[attribute(order = 16)]
+    pub series_id: outbe_primitives::series_id::SeriesId,
+    #[attribute(order = 17)]
+    pub call_start_day: u32,
+    #[attribute(order = 18)]
+    pub call_rate: u16,
+    #[attribute(order = 19)]
+    pub call_window_seconds: u32,
+    #[attribute(order = 20)]
+    pub call_threshold_seconds: u32,
+    #[attribute(order = 21)]
+    pub call_notice_period_seconds: u32,
 }
 
 /// A pending governance action. A zero vault means the record is absent.
@@ -108,20 +120,20 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// roots 13-28: CCA stables reservations keyed by id. Each record field
+    /// roots 13-34: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
 
-    /// slot 29: vault -> underlying asset captured at registration time.
+    /// slot 35: vault -> underlying asset captured at registration time.
     #[attribute(order = 11)]
     pub vault_assets: outbe_primitives::storage::dsl::Map<Address, Address>,
 
-    /// roots 30-32: pending vault actions keyed by proposal ID.
+    /// roots 36-38: pending vault actions keyed by proposal ID.
     #[attribute(order = 12)]
     pub approved_vault_actions: outbe_primitives::storage::dsl::Map<U256, ApprovedVaultAction>,
 
-    /// slot 33: vault -> pending proposal ID; zero means none.
+    /// slot 39: vault -> pending proposal ID; zero means none.
     #[attribute(order = 13)]
     pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
 }

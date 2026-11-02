@@ -264,10 +264,29 @@
         "internalType": "address"
       },
       {
-        "name": "gratisMinor",
-        "type": "uint256",
+        "name": "encryptedAmountMinor",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GratisBurnedFromPledge",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "encryptedAmountMinor",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
@@ -277,19 +296,19 @@
     "name": "GratisMinedFromNod",
     "inputs": [
       {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
         "name": "account",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "encryptedAmount",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      },
-      {
-        "name": "encryptedBalance",
+        "name": "encryptedAmountMinor",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
@@ -299,7 +318,7 @@
   },
   {
     "type": "event",
-    "name": "GratisMinted",
+    "name": "GratisMinedFromPromis",
     "inputs": [
       {
         "name": "account",
@@ -308,10 +327,10 @@
         "internalType": "address"
       },
       {
-        "name": "gratisMinor",
-        "type": "uint256",
+        "name": "encryptedAmountMinor",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

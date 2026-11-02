@@ -107,7 +107,7 @@ impl Rail for Gem {
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);
         assert_eq!(settled[0].asset, ASSET);
-        assert_eq!(settled[0].paymentMinor, world.cost);
+        assert_eq!(settled[0].amountMinor, world.cost);
     }
 
     fn assert_kept_by_owner(self, world: &mut World<Self>) {

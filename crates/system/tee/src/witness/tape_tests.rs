@@ -2,7 +2,7 @@ use super::tape::*;
 use crate::nod_mine::{IssueNodFromTributeOutcomeV1, MineEncryptedNodResultV1};
 use crate::protocol::{
     EnclaveResponse, FidelityOpOutcome, FidelityQueryResult, GratisOpResult, GratisOpStatus,
-    PromisOpResult, PromisOpStatus,
+    MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, PromisOpResult, PromisOpStatus,
 };
 use crate::tribute_day::LysisFractionsResultV1;
 use alloy_primitives::{B256, U256};
@@ -57,6 +57,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
                 new_balance: vec![1],
                 new_pledged: vec![2],
                 event_amount: U256::from(3),
+                encrypted_event_amount: vec![4],
                 next_op_nonce: 4,
                 fidelity: Some(fidelity.clone()),
                 inputs_canonical_hash: B256::ZERO,
@@ -68,6 +69,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
                 status: PromisOpStatus::Rejected { reason: "r".into() },
                 new_balance: vec![2],
                 event_amount: U256::from(3),
+                encrypted_event_amount: vec![4],
                 next_op_nonce: 4,
                 inputs_canonical_hash: B256::ZERO,
                 attestation_tag: tag.clone(),
@@ -76,8 +78,9 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
         EnclaveWitnessEntryV1::EncryptedNodMinedV1 {
             result: Box::new(MineEncryptedNodResultV1 {
                 new_balance: vec![1],
+                encrypted_event_amount: vec![5],
                 next_op_nonce: 2,
-                fidelity,
+                fidelity: fidelity.clone(),
                 inputs_canonical_hash: B256::ZERO,
                 attestation_tag: tag.clone(),
             }),
@@ -234,7 +237,21 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
         EnclaveWitnessEntryV1::NodQuoteEncryptedV1 {
             encrypted_payment: vec![11],
             inputs_canonical_hash: B256::ZERO,
-            attestation_tag: tag,
+            attestation_tag: tag.clone(),
+        },
+        EnclaveWitnessEntryV1::GratisMinedFromPromisV1 {
+            result: Box::new(MineGratisFromPromisResultV1 {
+                status: MineGratisFromPromisStatusV1::Applied,
+                new_promis_balance: vec![12],
+                encrypted_promis_event_amount: vec![13],
+                next_promis_op_nonce: 1,
+                new_gratis_balance: vec![14],
+                encrypted_gratis_event_amount: vec![15],
+                next_gratis_op_nonce: 1,
+                fidelity: Some(fidelity),
+                inputs_canonical_hash: B256::ZERO,
+                attestation_tag: tag,
+            }),
         },
     ]
 }
@@ -259,6 +276,9 @@ fn semantic_equality_ignores_only_attestation_tag() {
             EnclaveWitnessEntryV1::GratisOpApplied { result } => result.attestation_tag.push(1),
             EnclaveWitnessEntryV1::PromisOpApplied { result } => result.attestation_tag.push(1),
             EnclaveWitnessEntryV1::EncryptedNodMinedV1 { result } => result.attestation_tag.push(1),
+            EnclaveWitnessEntryV1::GratisMinedFromPromisV1 { result } => {
+                result.attestation_tag.push(1)
+            }
             EnclaveWitnessEntryV1::EncryptedNodMintRejectedV1 {
                 attestation_tag, ..
             }
@@ -342,6 +362,9 @@ fn mutate_commitment(entry: &mut EnclaveWitnessEntryV1) {
             result.inputs_canonical_hash = changed;
         }
         EnclaveWitnessEntryV1::EncryptedNodMinedV1 { result } => {
+            result.inputs_canonical_hash = changed;
+        }
+        EnclaveWitnessEntryV1::GratisMinedFromPromisV1 { result } => {
             result.inputs_canonical_hash = changed;
         }
         EnclaveWitnessEntryV1::EncryptedNodMintRejectedV1 {

@@ -71,6 +71,7 @@ fn base_result() -> GratisOpResult {
         new_balance: Vec::new(),
         new_pledged: Vec::new(),
         event_amount: U256::ZERO,
+        encrypted_event_amount: Vec::new(),
         next_op_nonce: 0,
         fidelity: None,
         inputs_canonical_hash: B256::ZERO,
@@ -189,6 +190,22 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
     }
     [r.new_balance, r.new_pledged] = written;
     r.event_amount = req.amount;
+    if matches!(
+        req.op,
+        GratisOp::Mint | GratisOp::Burn | GratisOp::BurnPledged
+    ) {
+        let input_hash = outbe_tee::protocol::gratis_op_canonical_hash(req);
+        r.encrypted_event_amount = crate::gratis_cipher::write_amount(
+            &view,
+            crate::gratis_cipher::BalanceTransition {
+                account: req.account,
+                field: FIELD_BALANCE,
+                previous_version: 0,
+                amount: req.amount,
+                input_hash: crate::gratis_cipher::event_amount_input_hash(input_hash),
+            },
+        )?;
+    }
     Ok(r)
 }
 

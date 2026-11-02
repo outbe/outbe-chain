@@ -33,9 +33,9 @@
     "name": "mineGratis",
     "inputs": [
       {
-        "name": "promisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "encryptedPromisMinor",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "promisMac",
@@ -60,9 +60,9 @@
     ],
     "outputs": [
       {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "encryptedGratisMinor",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "stateMutability": "nonpayable"
@@ -88,7 +88,7 @@
   },
   {
     "type": "event",
-    "name": "CoenMined",
+    "name": "CoenMinedFromPromis",
     "inputs": [
       {
         "name": "account",
@@ -97,7 +97,7 @@
         "internalType": "address"
       },
       {
-        "name": "coenMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

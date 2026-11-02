@@ -162,14 +162,9 @@ pub fn next_date_key(date_key: u32) -> Result<u32, TimeError> {
     step_date_key(date_key, true)
 }
 
-/// First UTC day a right issued at `issued_at` gets in full.
+/// First full UTC day after the day a right was issued or reserved at `issued_at`.
 pub fn first_full_day(issued_at: u64) -> Result<u32, TimeError> {
-    let day = timestamp_to_date_key(issued_at);
-    if issued_at.is_multiple_of(SECONDS_PER_DAY) {
-        Ok(day)
-    } else {
-        next_date_key(day)
-    }
+    next_date_key(timestamp_to_date_key(issued_at))
 }
 
 fn step_date_key(date_key: u32, forward: bool) -> Result<u32, TimeError> {
@@ -494,9 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn a_midnight_issuance_keeps_its_own_day_and_a_later_one_waits() {
+    fn a_midnight_issuance_and_a_later_one_both_start_the_next_day() {
         let midnight = date_key_to_utc_timestamp(20240101).unwrap();
-        assert_eq!(first_full_day(midnight), Ok(20240101));
+        assert_eq!(first_full_day(midnight), Ok(20240102));
         assert_eq!(first_full_day(midnight + 1), Ok(20240102));
         assert_eq!(first_full_day(midnight + SECONDS_PER_DAY - 1), Ok(20240102));
         // Across a year boundary the next key is not the numeric successor.
@@ -622,9 +617,12 @@ mod tests {
     }
 
     #[test]
-    fn midnight_before_2020_keeps_its_day_and_a_later_second_is_refused() {
+    fn midnight_and_later_seconds_before_2020_are_refused() {
         let midnight = date_key_to_utc_timestamp(20191231).unwrap();
-        assert_eq!(first_full_day(midnight), Ok(20191231));
+        assert_eq!(
+            first_full_day(midnight),
+            Err(TimeError::DateBeforeMinimum { date_key: 20191231 })
+        );
         assert_eq!(
             first_full_day(midnight + 1),
             Err(TimeError::DateBeforeMinimum { date_key: 20191231 })

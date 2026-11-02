@@ -6,7 +6,7 @@
 //! returned receipt, emitting events) lives in [`crate::runtime`]. The cross-crate
 //! surface is [`crate::api`].
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use outbe_primitives::error::Result;
 
 use crate::schema::Promis;
@@ -24,12 +24,6 @@ impl Promis<'_> {
 
     pub fn decimals(&self) -> u8 {
         6
-    }
-
-    // --- Plaintext aggregate (non-attributable) ---
-
-    pub fn total_supply(&self) -> Result<U256> {
-        self.total_supply.read()
     }
 
     // --- Ciphertext reads (returned verbatim for the view-key holder to decrypt) ---
@@ -54,9 +48,5 @@ impl Promis<'_> {
 
     pub(crate) fn set_op_nonce(&self, account: Address, nonce: u64) -> Result<()> {
         self.op_nonce.write(&account, nonce)
-    }
-
-    pub(crate) fn set_total_supply(&self, value: U256) -> Result<()> {
-        self.total_supply.write(value)
     }
 }

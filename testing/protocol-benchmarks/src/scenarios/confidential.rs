@@ -141,10 +141,14 @@ impl BenchmarkScenario for ConfidentialScenario {
         let event_offset = provider.get_ordered_events().len();
         let started = Instant::now();
         StorageHandle::enter(&mut provider, |storage| match self.path {
-            ConfidentialPath::Promis => {
-                outbe_promisfactory::api::mint(storage, ACCOUNT, U256::from(AMOUNT), promis_auth())
-                    .map_err(|error| error.to_string())
-            }
+            ConfidentialPath::Promis => outbe_promisfactory::api::mint_from_gem(
+                storage,
+                U256::ONE,
+                ACCOUNT,
+                U256::from(AMOUNT),
+                promis_auth(),
+            )
+            .map_err(|error| error.to_string()),
             ConfidentialPath::Gratis => {
                 outbe_gratis::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())
                     .map_err(|error| error.to_string())

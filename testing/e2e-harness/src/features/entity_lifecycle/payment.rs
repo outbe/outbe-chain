@@ -159,7 +159,7 @@ pub(crate) fn pay(world: &World, target: &Target, payer: Payer, iso: u16, terms:
         requoted = true;
     };
     assert_mined_success(&outcome, "lifecycle payment");
-    assert_paid_event(target, vault.asset, iso, quoted.payable, &outcome.receipt);
+    assert_paid_event(target, vault.asset, quoted.payable, &outcome.receipt);
     Payment {
         target: target.clone(),
         vault,
@@ -226,13 +226,7 @@ fn send<C: SolCall>(url: &str, key: &str, to: Address, call: &C) -> eth::MinedCa
 }
 
 /// The factory's own record of the payment names the holding, what it cost and how.
-fn assert_paid_event(
-    target: &Target,
-    asset: Address,
-    currency: u16,
-    payable: U256,
-    receipt: &serde_json::Value,
-) {
+fn assert_paid_event(target: &Target, asset: Address, payable: U256, receipt: &serde_json::Value) {
     match &target.item {
         Item::Gem(id) => {
             let settled = eth::receipt_event::<eth::IGemFactory::GemSettled>(
@@ -244,10 +238,9 @@ fn assert_paid_event(
                     settled.gemId,
                     settled.owner,
                     settled.asset,
-                    settled.paymentMinor,
-                    settled.settlementCurrency
+                    settled.amountMinor,
                 ),
-                (*id, target.owner, asset, payable, currency),
+                (*id, target.owner, asset, payable),
                 "GemSettled does not record this payment"
             );
         }
@@ -258,8 +251,20 @@ fn assert_paid_event(
                 addresses::INTEX_FACTORY_ADDR,
             );
             assert_eq!(
-                (settled.seriesId, settled.owner, settled.units),
-                (*id, target.owner, U256::from(*units)),
+                (
+                    settled.intexId,
+                    settled.owner,
+                    settled.asset,
+                    settled.amountMinor,
+                    settled.units
+                ),
+                (
+                    crate::world::venue_probes::intex_id(*id),
+                    target.owner,
+                    asset,
+                    payable,
+                    *units
+                ),
                 "IntexSettled does not record this payment"
             );
         }
@@ -269,7 +274,7 @@ fn assert_paid_event(
                 addresses::NOD_FACTORY_ADDR,
             );
             assert_eq!(
-                (paid.owner, paid.nodId, paid.asset, paid.paymentMinor),
+                (paid.owner, paid.nodId, paid.asset, paid.amountMinor),
                 (target.owner, *id, asset, payable),
                 "NodSettled does not record this payment"
             );

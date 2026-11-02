@@ -438,16 +438,25 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
         .unwrap();
         api::burn_pledged(&storage, alice(), U256::from(40u64)).unwrap();
     });
+    let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
     test_enclave::uninstall();
-    let burned: Vec<_> = provider
+    let liquid_burned: Vec<_> = provider
         .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
         .iter()
         .filter_map(|log| IGratis::GratisBurned::decode_log_data(log).ok())
         .collect();
+    assert!(liquid_burned.is_empty());
+
+    let burned: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratis::GratisBurnedFromPledge::decode_log_data(log).ok())
+        .collect();
     assert_eq!(burned.len(), 1);
+    assert_eq!(burned[0].account, alice());
     assert_eq!(
-        (burned[0].account, burned[0].gratisMinor),
-        (alice(), U256::from(40u64))
+        decrypt_balance(&vk, alice(), &burned[0].encryptedAmountMinor).unwrap(),
+        U256::from(40u64)
     );
 }
 
@@ -460,6 +469,7 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
         new_balance: vec![1],
         new_pledged: Vec::new(),
         event_amount: U256::from(event_amount),
+        encrypted_event_amount: vec![1],
         next_op_nonce,
         fidelity: None,
         inputs_canonical_hash: B256::ZERO,
@@ -482,11 +492,126 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
         err.to_string().contains("owner movement result mismatch"),
         "{err}"
     );
+    let mut no_event_amount = result(5, 4);
+    no_event_amount.encrypted_event_amount.clear();
+    let err = ensure_owner_result(amount, 3, &no_event_amount).unwrap_err();
+    assert!(
+        err.to_string().contains("owner movement result mismatch"),
+        "{err}"
+    );
     let mut pledged = result(5, 4);
     pledged.new_pledged = vec![1];
     let err = ensure_owner_result(amount, 3, &pledged).unwrap_err();
     assert!(
         err.to_string().contains("owner movement result mismatch"),
         "{err}"
+    );
+}
+
+fn encrypted_nod(
+    amount: U256,
+    nod_id_byte: u8,
+) -> outbe_primitives::nod_encryption::EncryptedNodV1 {
+    use outbe_primitives::{nod_encryption::NodTermsV1, time::WorldwideDay};
+    outbe_tee_enclave::nod_encryption::encrypt_nod(
+        &[0x5a; 32],
+        NodTermsV1 {
+            chain_id: CHAIN_ID,
+            nod_id: U256::from_be_bytes([nod_id_byte; 32]),
+            owner: alice(),
+            emission_day: WorldwideDay::new(20250115).value(),
+            league_id: 0,
+            entry_price_minor: U256::ONE,
+            issuance_currency: 840,
+            reference_currency: 978,
+        },
+        amount,
+    )
+    .unwrap()
+}
+
+fn acquisition(
+    timestamp: u64,
+    first_qualified_start: u64,
+    current_blob: Vec<u8>,
+) -> FidelityOpSection {
+    FidelityOpSection {
+        op: FidelityCohortOp::In,
+        timestamp,
+        first_qualified_start,
+        current_blob,
+    }
+}
+
+/// The first NOD mint seals the event amount apart from the stored balance.
+/// A later mint's event opens to the operation delta, not the cumulative balance.
+#[test]
+fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
+    test_enclave::install();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let first_amount = U256::from(1_000u64);
+    let second_amount = U256::from(250u64);
+    let (first_balance, second_balance) = StorageHandle::enter(&mut provider, |storage| {
+        let outcome = api::mint_encrypted_nod(
+            storage.clone(),
+            &encrypted_nod(first_amount, 7),
+            auth(GratisOp::Mint, alice(), first_amount, 0),
+            acquisition(1_700_000_000, 0, Vec::new()),
+        )
+        .unwrap();
+        let first_balance = api::balance_ct(storage.clone(), alice()).unwrap();
+        api::mint_encrypted_nod(
+            storage.clone(),
+            &encrypted_nod(second_amount, 8),
+            auth(GratisOp::Mint, alice(), second_amount, 1),
+            acquisition(
+                1_700_086_400,
+                outcome.qualified_start_initialized.unwrap_or(0),
+                outcome.new_blob,
+            ),
+        )
+        .unwrap();
+        let second_balance = api::balance_ct(storage, alice()).unwrap();
+        (first_balance, second_balance)
+    });
+    let mined: Vec<_> = provider
+        .get_events(outbe_primitives::addresses::GRATIS_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratis::GratisMinedFromNod::decode_log_data(log).ok())
+        .collect();
+    let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
+    test_enclave::uninstall();
+
+    assert_eq!(mined.len(), 2);
+    assert_eq!(mined[0].account, alice());
+    assert_ne!(
+        mined[0].encryptedAmountMinor.as_ref(),
+        first_balance.as_slice()
+    );
+    assert_eq!(
+        outbe_tee::gratis_decrypt::decrypt_gratis_balance(
+            &vk,
+            alice(),
+            &mined[0].encryptedAmountMinor
+        )
+        .unwrap(),
+        first_amount
+    );
+    assert_eq!(
+        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &first_balance).unwrap(),
+        first_amount
+    );
+
+    let delta = outbe_tee::gratis_decrypt::decrypt_gratis_balance(
+        &vk,
+        alice(),
+        &mined[1].encryptedAmountMinor,
+    )
+    .unwrap();
+    assert_eq!(delta, second_amount);
+    assert_ne!(delta, first_amount + second_amount);
+    assert_eq!(
+        outbe_tee::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &second_balance).unwrap(),
+        first_amount + second_amount
     );
 }

@@ -8,7 +8,7 @@ use outbe_primitives::erc::{
 use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_NAME, TOKEN_SYMBOL};
-use crate::errors::{date_step_error, CredisError};
+use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -66,8 +66,8 @@ pub fn dispatch(
                 let timestamp = contract.storage.now_secs()?;
                 CredisContract::accrued_interest(&record, timestamp)
             }),
-            interestPaidMinor(c) => view(c, |c| {
-                Ok(contract.get_credis(c.credisId)?.interest_paid_minor)
+            interestSettledMinor(c) => view(c, |c| {
+                Ok(contract.get_credis(c.credisId)?.interest_settled_minor)
             }),
             credisPrincipalAndOutstandingOf(c) => view(c, |c| {
                 let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
@@ -102,7 +102,7 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         state: crate::runtime::effective_state(p, now)? as u8,
-        interestPaidMinor: p.interest_paid_minor,
+        interestSettledMinor: p.interest_settled_minor,
         call: ICredis::CallTerms {
             callAnchorPriceMinor: p.call_anchor_price_minor,
             callPriceMinor: p.call_price_minor,
@@ -117,11 +117,11 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
             },
         },
         outcome: ICredis::Outcome {
-            principalPaidMinor: outcome.principal_paid_minor,
-            principalWrittenOffMinor: outcome.principal_written_off_minor,
-            gratisReturnedMinor: outcome.gratis_returned_minor,
-            gratisBurnedMinor: outcome.gratis_burned_minor,
+            principalSettledMinor: outcome.principal_settled_minor,
+            forfeitedPrincipalMinor: outcome.forfeited_principal_minor,
+            gratisReleasedMinor: outcome.gratis_released_minor,
+            forfeitedGratisMinor: outcome.forfeited_gratis_minor,
         },
-        groupKey: p.group_key().map_err(date_step_error)?,
+        seriesId: p.series_id.into(),
     })
 }

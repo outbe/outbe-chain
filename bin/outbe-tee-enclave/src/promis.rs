@@ -10,7 +10,11 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_tee::protocol::{PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
+use outbe_tee::protocol::{
+    GratisOp, GratisOpRequest, GratisOpStatus, MineGratisFromPromisRequestV1,
+    MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, PromisOp, PromisOpRequest,
+    PromisOpResult, PromisOpStatus,
+};
 
 use crate::confidential::{FIELD_BALANCE, PROMIS};
 use crate::errors::{PromisRejectReason, Result};
@@ -67,6 +71,7 @@ fn base_result() -> PromisOpResult {
         status: PromisOpStatus::Applied,
         new_balance: Vec::new(),
         event_amount: U256::ZERO,
+        encrypted_event_amount: Vec::new(),
         next_op_nonce: 0,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
@@ -167,7 +172,126 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
             )?;
         }
     }
+    r.encrypted_event_amount = crate::gratis_cipher::write_promis_amount(
+        &view_key,
+        crate::gratis_cipher::BalanceTransition {
+            account: req.account,
+            field: FIELD_BALANCE,
+            previous_version: 0,
+            amount: req.amount,
+            input_hash: crate::gratis_cipher::event_amount_input_hash(input_hash),
+        },
+    )?;
     Ok(r)
+}
+
+/// Resident enclave keys needed for [`apply_mine_gratis`].
+#[derive(Clone, Copy)]
+pub struct MineGratisKeys<'a> {
+    pub offer_secret: &'a [u8; 32],
+    pub promis_state_key: &'a [u8; 32],
+    pub gratis_state_key: &'a [u8; 32],
+    pub fidelity_state_key: &'a [u8; 32],
+}
+
+fn rejected_mine_gratis(
+    status: MineGratisFromPromisStatusV1,
+    inputs_canonical_hash: B256,
+) -> MineGratisFromPromisResultV1 {
+    MineGratisFromPromisResultV1 {
+        status,
+        new_promis_balance: Vec::new(),
+        encrypted_promis_event_amount: Vec::new(),
+        next_promis_op_nonce: 0,
+        new_gratis_balance: Vec::new(),
+        encrypted_gratis_event_amount: Vec::new(),
+        next_gratis_op_nonce: 0,
+        fidelity: None,
+        inputs_canonical_hash,
+        attestation_tag: Vec::new(),
+    }
+}
+
+/// Execute `IPromisFactory.mineGratis` atomically inside the enclave:
+/// decrypt `encrypted_promis_amount` with the resident offer key, apply the
+/// Promis burn, apply the Gratis mint, and apply the Fidelity `In` cohort section.
+pub fn apply_mine_gratis(
+    keys: MineGratisKeys<'_>,
+    req: &MineGratisFromPromisRequestV1,
+) -> MineGratisFromPromisResultV1 {
+    let inputs_canonical_hash = outbe_tee::protocol::mine_gratis_from_promis_canonical_hash(req);
+    let amount =
+        match crate::crypto::decrypt_tee_amount(keys.offer_secret, &req.encrypted_promis_amount) {
+            Ok(amount) => amount,
+            Err(err) => {
+                return rejected_mine_gratis(
+                    MineGratisFromPromisStatusV1::PromisRejected {
+                        reason: PromisRejectReason::from(err).to_string(),
+                    },
+                    inputs_canonical_hash,
+                );
+            }
+        };
+    let promis_req = PromisOpRequest {
+        op: PromisOp::Burn,
+        chain_id: req.chain_id,
+        account: req.account,
+        amount,
+        current_balance: req.current_promis_balance.clone(),
+        modify_auth: req.promis_modify_auth.clone(),
+    };
+    let promis_res = apply_op(keys.promis_state_key, &promis_req);
+    if let PromisOpStatus::Rejected { reason } = promis_res.status {
+        return rejected_mine_gratis(
+            MineGratisFromPromisStatusV1::PromisRejected { reason },
+            inputs_canonical_hash,
+        );
+    }
+    let gratis_req = GratisOpRequest {
+        op: GratisOp::Mint,
+        chain_id: req.chain_id,
+        account: req.account,
+        amount,
+        current_balance: req.current_gratis_balance.clone(),
+        current_pledged: Vec::new(),
+        modify_auth: req.gratis_modify_auth.clone(),
+        fidelity: Some(req.fidelity.clone()),
+    };
+    let gratis_res = crate::gratis::apply_op(keys.gratis_state_key, &gratis_req);
+    if let GratisOpStatus::Rejected { reason } = gratis_res.status {
+        return rejected_mine_gratis(
+            MineGratisFromPromisStatusV1::GratisRejected { reason },
+            inputs_canonical_hash,
+        );
+    }
+    let fidelity = match crate::fidelity::apply_cohort_section(
+        keys.fidelity_state_key,
+        req.account,
+        amount,
+        &req.fidelity,
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            return rejected_mine_gratis(
+                MineGratisFromPromisStatusV1::GratisRejected {
+                    reason: format!("fidelity section failed: {err}"),
+                },
+                inputs_canonical_hash,
+            );
+        }
+    };
+    MineGratisFromPromisResultV1 {
+        status: MineGratisFromPromisStatusV1::Applied,
+        new_promis_balance: promis_res.new_balance,
+        encrypted_promis_event_amount: promis_res.encrypted_event_amount,
+        next_promis_op_nonce: promis_res.next_op_nonce,
+        new_gratis_balance: gratis_res.new_balance,
+        encrypted_gratis_event_amount: gratis_res.encrypted_event_amount,
+        next_gratis_op_nonce: gratis_res.next_op_nonce,
+        fidelity: Some(fidelity),
+        inputs_canonical_hash,
+        attestation_tag: Vec::new(),
+    }
 }
 
 #[cfg(test)]

@@ -31,12 +31,16 @@ fn pool(s: &StorageHandle<'_>) -> U256 {
     PromisLimitContract::new(s.clone()).promis_limit().unwrap()
 }
 
-fn burned_events(storage: &HashMapStorageProvider) -> Vec<IIntexFactory::ProceedsBurned> {
+fn burned_events(
+    storage: &HashMapStorageProvider,
+) -> Vec<IIntexFactory::IntexAuctionProceedsBurned> {
     storage
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter(|log| log.topics().first() == Some(&IIntexFactory::ProceedsBurned::SIGNATURE_HASH))
-        .map(|log| IIntexFactory::ProceedsBurned::decode_log_data(log).unwrap())
+        .filter(|log| {
+            log.topics().first() == Some(&IIntexFactory::IntexAuctionProceedsBurned::SIGNATURE_HASH)
+        })
+        .map(|log| IIntexFactory::IntexAuctionProceedsBurned::decode_log_data(log).unwrap())
         .collect()
 }
 
@@ -55,11 +59,10 @@ fn proceeds_burn_into_the_promis_limit_pool() {
 
     assert_eq!(
         burned_events(&storage),
-        vec![IIntexFactory::ProceedsBurned {
+        vec![IIntexFactory::IntexAuctionProceedsBurned {
             emissionDay: 7,
             srcChainId: 10,
-            proceedsMinor: amount,
-            creditedPromisMinor: U256::from(3u64),
+            amountMinor: amount,
         }]
     );
 }
@@ -88,11 +91,11 @@ fn coen_below_one_protocol_minor_carries_into_the_next_delivery() {
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 
-    let credited: Vec<U256> = burned_events(&storage)
+    let amounts: Vec<U256> = burned_events(&storage)
         .iter()
-        .map(|e| e.creditedPromisMinor)
+        .map(|e| e.amountMinor)
         .collect();
-    assert_eq!(credited, vec![U256::from(2u64), U256::from(1u64)]);
+    assert_eq!(amounts, vec![U256::from(2u64) * unit + rest, unit - rest]);
 }
 
 #[test]

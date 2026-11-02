@@ -106,8 +106,13 @@ impl Rail for Intex {
             .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
+        assert_eq!(
+            settled[0].intexId,
+            outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES)))
+        );
         assert_eq!(settled[0].owner, OWNER);
-        assert_eq!(settled[0].units, U256::from(UNITS));
+        assert_eq!(settled[0].asset, ASSET);
+        assert_eq!(settled[0].units, UNITS as u32);
     }
 
     fn assert_kept_by_owner(self, world: &mut World<Self>) {

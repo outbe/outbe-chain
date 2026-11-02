@@ -21,6 +21,8 @@ pub struct MineEncryptedNodRequestV1 {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MineEncryptedNodResultV1 {
     pub new_balance: Vec<u8>,
+    #[serde(default)]
+    pub encrypted_event_amount: Vec<u8>,
     pub next_op_nonce: u64,
     pub fidelity: FidelityOpOutcome,
     pub inputs_canonical_hash: B256,

@@ -68,9 +68,12 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
     assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
     let forfeited = events
         .iter()
-        .find_map(|log| IGem::GemGroupForfeited::decode_log_data(log).ok())
+        .find_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
         .unwrap();
-    assert_eq!((forfeited.gems, forfeited.promisLoadMinor), (1, load));
+    assert_eq!(
+        (forfeited.forfeitedCount, forfeited.forfeitedAmountMinor),
+        (1, load)
+    );
 }
 
 #[test]

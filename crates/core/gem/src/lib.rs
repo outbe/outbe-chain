@@ -21,6 +21,7 @@ pub use config::GemParams;
 pub use errors::{GemError, GemFatalError};
 pub use schema::{
     CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
+    GroupSubSeriesSummary,
 };
 pub use state::{CallBins, CleanupQueue, ForfeitQueue};
 

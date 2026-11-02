@@ -114,11 +114,21 @@ interface IIntex {
     /// @notice Emitted when a settlement mints Settled units and when mining burns them.
     event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
 
-    /// @notice The call group was force-called. Each of its series settles until
-    ///         `settlementDeadline`, inclusive.
-    event IntexGroupCalled(bytes32 indexed groupKey, bytes14[] seriesIds, uint64 calledAt, uint64 settlementDeadline);
+    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
+    event IntexSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
 
-    /// @notice The group is forfeited: its settlement window closed. Both are zero when
-    ///         every unit was realized in time.
-    event IntexGroupForfeited(bytes32 indexed groupKey, uint64 forfeitedUnits, uint256 returnedPromisMinor);
+    /// @notice The series settlement window closed. Both are zero when every unit was realized in time.
+    event IntexSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
+    );
 }

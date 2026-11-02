@@ -428,6 +428,7 @@ fn gratis_promis_and_fidelity_tags_keep_domains_and_error_order() {
         new_balance: vec![1],
         new_pledged: vec![2],
         event_amount: U256::from(3),
+        encrypted_event_amount: vec![4],
         next_op_nonce: 4,
         fidelity: None,
         inputs_canonical_hash: hash,
@@ -437,6 +438,7 @@ fn gratis_promis_and_fidelity_tags_keep_domains_and_error_order() {
         status: PromisOpStatus::Applied,
         new_balance: vec![1],
         event_amount: U256::from(3),
+        encrypted_event_amount: vec![4],
         next_op_nonce: 4,
         inputs_canonical_hash: hash,
         attestation_tag: vec![],
@@ -644,4 +646,55 @@ fn a_not_ready_enclave_is_unavailable_and_a_refusal_stays_an_enclave_error() {
         enclave_answer(EnclaveResponse::Ack),
         Ok(EnclaveResponse::Ack)
     ));
+}
+
+/// One flipped byte in the sealed event amount must fail attestation.
+#[test]
+fn mutated_event_amount_fails_gratis_and_promis_attestation() {
+    use crate::protocol::{GratisOpResult, GratisOpStatus, PromisOpResult, PromisOpStatus};
+    use alloy_primitives::U256;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    let sk = SigningKey::from_bytes(&[7u8; 32]);
+    let pk = sk.verifying_key().to_bytes();
+    let hash = B256::repeat_byte(0xAB);
+    let mut gratis = GratisOpResult {
+        status: GratisOpStatus::Applied,
+        new_balance: vec![1, 2, 3],
+        new_pledged: Vec::new(),
+        event_amount: U256::from(3),
+        encrypted_event_amount: vec![4, 5, 6, 7],
+        next_op_nonce: 4,
+        fidelity: None,
+        inputs_canonical_hash: hash,
+        attestation_tag: vec![],
+    };
+    let mut promis = PromisOpResult {
+        status: PromisOpStatus::Applied,
+        new_balance: vec![1, 2, 3],
+        event_amount: U256::from(3),
+        encrypted_event_amount: vec![4, 5, 6, 7],
+        next_op_nonce: 4,
+        inputs_canonical_hash: hash,
+        attestation_tag: vec![],
+    };
+    let gratis_tag = sk
+        .sign(
+            &crate::protocol::gratis_op_attestation_preimage(hash, &gratis)
+                .expect("gratis preimage"),
+        )
+        .to_bytes();
+    let promis_tag = sk
+        .sign(
+            &crate::protocol::promis_op_attestation_preimage(hash, &promis)
+                .expect("promis preimage"),
+        )
+        .to_bytes();
+    verify_gratis_op_attestation(&pk, hash, &gratis, &gratis_tag).expect("gratis tag");
+    verify_promis_op_attestation(&pk, hash, &promis, &promis_tag).expect("promis tag");
+
+    gratis.encrypted_event_amount[0] ^= 0xff;
+    promis.encrypted_event_amount[0] ^= 0xff;
+    assert!(verify_gratis_op_attestation(&pk, hash, &gratis, &gratis_tag).is_err());
+    assert!(verify_promis_op_attestation(&pk, hash, &promis, &promis_tag).is_err());
 }

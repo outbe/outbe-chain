@@ -887,9 +887,11 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
 
         tc.issue_nod(owner2, t_normal.tribute_id).unwrap();
         assert_eq!(nod.group_unclaimed_tribute_count.read(&group).unwrap(), 0);
-        assert!(outbe_nod::api::series_group(&storage, series)
-            .unwrap()
-            .is_none());
+        assert_eq!(nod.series_unclaimed_tribute_count.read(&series).unwrap(), 0);
+        assert_eq!(
+            outbe_nod::api::series_group(&storage, series).unwrap(),
+            Some(group)
+        );
     });
 }
 

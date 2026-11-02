@@ -2,7 +2,8 @@ use alloy_primitives::{B256, U256};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::{
-    EnclaveResponse, FidelityLeagueEntry, FidelityQueryResult, GratisOpResult, PromisOpResult,
+    EnclaveResponse, FidelityLeagueEntry, FidelityQueryResult, GratisOpResult,
+    MineGratisFromPromisResultV1, PromisOpResult,
 };
 use crate::{
     nod_mine::{IssueNodFromTributeOutcomeV1, MineEncryptedNodResultV1},
@@ -130,6 +131,9 @@ pub enum EnclaveWitnessEntryV1 {
         encrypted_payment: Vec<u8>,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
+    },
+    GratisMinedFromPromisV1 {
+        result: Box<MineGratisFromPromisResultV1>,
     },
 }
 
@@ -408,6 +412,13 @@ impl EnclaveWitnessEntryV1 {
                     ..
                 },
             ) => a == b && ah == bh,
+            (GratisMinedFromPromisV1 { result: a }, GratisMinedFromPromisV1 { result: b }) => {
+                let mut a = (**a).clone();
+                let mut b = (**b).clone();
+                a.attestation_tag.clear();
+                b.attestation_tag.clear();
+                a == b
+            }
             _ => false,
         }
     }
@@ -619,6 +630,7 @@ impl TryFrom<EnclaveResponse> for EnclaveWitnessEntryV1 {
                 inputs_canonical_hash,
                 attestation_tag,
             },
+            R::GratisMinedFromPromisV1 { result } => Self::GratisMinedFromPromisV1 { result },
             _ => return Err(UnsupportedEnclaveResponse),
         })
     }
@@ -814,6 +826,7 @@ impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
                 inputs_canonical_hash,
                 attestation_tag,
             },
+            W::GratisMinedFromPromisV1 { result } => Self::GratisMinedFromPromisV1 { result },
         }
     }
 }

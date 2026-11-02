@@ -55,8 +55,9 @@ pub(crate) use verification::{
 use verification::{validate_generated_dcap_quote, verify_quote};
 pub use verification::{
     verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
-    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
-    verify_promis_op_attestation, verify_tribute_offer_attestation, AttestedPeerKeys,
+    verify_fidelity_snapshot_attestation, verify_gratis_op_attestation,
+    verify_mine_gratis_from_promis_attestation, verify_peer_quote, verify_promis_op_attestation,
+    verify_tribute_offer_attestation, AttestedPeerKeys,
 };
 
 /// The enclave identity fields captured from the quote response at connect time.

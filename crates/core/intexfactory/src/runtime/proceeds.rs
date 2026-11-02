@@ -16,18 +16,17 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    let credited = PromisLimitContract::new(storage.clone()).burn_to_promis_limit(
+    let _credited = PromisLimitContract::new(storage.clone()).burn_to_promis_limit(
         INTEX_FACTORY_ADDRESS,
         amount,
         BurnSource::Proceeds,
     )?;
     emit_event(
         storage,
-        crate::precompile::IIntexFactory::ProceedsBurned {
+        crate::precompile::IIntexFactory::IntexAuctionProceedsBurned {
             emissionDay: emission_day.value(),
             srcChainId: src_chain_id,
-            proceedsMinor: amount,
-            creditedPromisMinor: credited,
+            amountMinor: amount,
         },
     )
 }

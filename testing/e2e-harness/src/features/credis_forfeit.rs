@@ -93,8 +93,10 @@ fn called(world: &mut World) {
         CREDIS_ADDRESS,
         0,
         height,
-        ICredis::CredisGroupCalled {
-            groupKey: record.groupKey,
+        ICredis::CredisSeriesCalled {
+            seriesId: record.seriesId,
+            issuanceCurrency: record.issuanceCurrency,
+            referenceCurrency: record.referenceCurrency,
             calledAt: terms.calledAt,
             settlementDeadline: terms.settlementDeadline,
         },
@@ -133,7 +135,7 @@ fn pay_part(world: &mut World) {
         &f.owner_key,
         &ICredisFactory::settleCredisCall {
             credisId: f.credis_id,
-            amountMinor: amount,
+            amountCapMinor: amount,
         },
         None,
     );
@@ -143,12 +145,15 @@ fn pay_part(world: &mut World) {
     assert_receipt_event(
         &receipt,
         CREDIS_FACTORY_ADDRESS,
-        &ICredisFactory::SettlementApplied {
+        &ICredisFactory::CredisSettled {
             credisId: f.credis_id,
-            interestPaidMinor: interest,
-            principalPaidMinor: PART,
-            gratisReturnedMinor: returned,
-            outstandingPrincipalMinor: PRINCIPAL - PART,
+            owner: f.owner,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            amountMinor: amount,
+            interestSettledMinor: interest,
+            principalSettledMinor: PART,
         },
     );
     let after = snapshot(world);
@@ -162,10 +167,10 @@ fn pay_part(world: &mut World) {
     assert_eq!(
         paid.outcome,
         ICredis::Outcome {
-            principalPaidMinor: PART,
-            principalWrittenOffMinor: U256::ZERO,
-            gratisReturnedMinor: returned,
-            gratisBurnedMinor: U256::ZERO,
+            principalSettledMinor: PART,
+            forfeitedPrincipalMinor: U256::ZERO,
+            gratisReleasedMinor: returned,
+            forfeitedGratisMinor: U256::ZERO,
         }
     );
     assert_eq!(after.pledged, before.pledged - returned);
@@ -206,8 +211,8 @@ fn deadline_passes(world: &mut World) {
 /// The Gratis and the principal a forfeit writes off, from a Called or a lapsed read.
 fn written_off(credis: &ICredis::Credis) -> (U256, U256) {
     (
-        credis.outcome.gratisBurnedMinor + credis.outstandingGratisMinor,
-        credis.outcome.principalWrittenOffMinor + credis.outstandingPrincipalMinor,
+        credis.outcome.forfeitedGratisMinor + credis.outstandingGratisMinor,
+        credis.outcome.forfeitedPrincipalMinor + credis.outstandingPrincipalMinor,
     )
 }
 
@@ -230,13 +235,13 @@ fn reads_forfeited(world: &mut World) {
         (U256::ZERO, U256::ZERO)
     );
     let outcome = &lapsed.outcome;
-    assert_eq!(outcome.principalPaidMinor, PART);
-    assert_eq!(outcome.principalWrittenOffMinor, PRINCIPAL - PART);
+    assert_eq!(outcome.principalSettledMinor, PART);
+    assert_eq!(outcome.forfeitedPrincipalMinor, PRINCIPAL - PART);
     assert_eq!(
-        outcome.gratisReturnedMinor + outcome.gratisBurnedMinor,
+        outcome.gratisReleasedMinor + outcome.forfeitedGratisMinor,
         f.gratis_minor
     );
-    assert!(outcome.gratisBurnedMinor > U256::ZERO);
+    assert!(outcome.forfeitedGratisMinor > U256::ZERO);
     // The Credis may already be absent if cleanup deletes the Credis as its deadline day closes.
     let (reason, height) = settlement_revert(world, f);
     let swept = forfeit_block(&url(world), f.credis_id).is_some_and(|block| block <= height);
@@ -292,9 +297,12 @@ fn burned(world: &mut World) {
         height,
         ICredis::CredisForfeited {
             credisId: f.credis_id,
+            owner: f.owner,
             cca: f.cca,
-            gratisBurnedMinor: burned,
-            principalWrittenOffMinor: principal_written_off,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedPrincipalMinor: principal_written_off,
         },
     );
     assert_single_event(
@@ -302,9 +310,12 @@ fn burned(world: &mut World) {
         CREDIS_ADDRESS,
         from,
         height,
-        ICredis::CredisGroupForfeited {
-            groupKey: lapsed.groupKey,
-            credis: 1,
+        ICredis::CredisSeriesClosed {
+            seriesId: lapsed.seriesId,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedCount: 1,
+            forfeitedAmountMinor: burned,
         },
     );
     let state = snapshot(world);
@@ -312,7 +323,7 @@ fn burned(world: &mut World) {
     assert_eq!(state.pledged, U256::ZERO);
     assert_eq!(
         state.liquid,
-        INITIAL_GRATIS - f.gratis_minor + lapsed.outcome.gratisReturnedMinor
+        INITIAL_GRATIS - f.gratis_minor + lapsed.outcome.gratisReleasedMinor
     );
     assert_eq!(
         state.vault_stables,
@@ -344,9 +355,12 @@ fn owner_forfeits(world: &mut World) {
         CREDIS_ADDRESS,
         &ICredis::CredisForfeited {
             credisId: f.credis_id,
+            owner: f.owner,
             cca: f.cca,
-            gratisBurnedMinor: f.gratis_minor,
-            principalWrittenOffMinor: PRINCIPAL,
+            asset: f.currency.asset,
+            issuanceCurrency: USD,
+            referenceCurrency: USD,
+            forfeitedPrincipalMinor: PRINCIPAL,
         },
     );
 }
@@ -394,7 +408,7 @@ fn assert_pool_credited(url: &str, forfeited_at: u64, burned: U256) {
 fn settlement_revert(world: &World, f: &CredisFixture) -> (Bytes, u64) {
     let settle = ICredisFactory::settleCredisCall {
         credisId: f.credis_id,
-        amountMinor: PART,
+        amountCapMinor: PART,
     };
     let height = world
         .rpc
