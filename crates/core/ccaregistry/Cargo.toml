@@ -15,6 +15,8 @@ alloy-sol-types.workspace = true
 [dev-dependencies]
 outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-agentreward.workspace = true
+outbe-rewards.workspace = true
+outbe-emission.workspace = true
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true
 outbe-oracle = { workspace = true, features = ["test-utils"] }

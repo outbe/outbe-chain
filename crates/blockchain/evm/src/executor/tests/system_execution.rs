@@ -477,6 +477,10 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
                 rewards.daily_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
                 rewards
+                    .daily_total_participation
+                    .write(&PREVIOUS_DAY, U256::from(1))
+                    .unwrap();
+                rewards
                     .daily_voter_at
                     .get_nested(&PREVIOUS_DAY)
                     .write(&0, voter)

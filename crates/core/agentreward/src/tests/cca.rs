@@ -1,460 +1,607 @@
-//! CCA reward distribution and claims owned by AgentReward.
+//! Historical CCA eligibility and bounded four-pool settlement regressions.
 use super::*;
-use crate::distribution::calculate_proportional_distribution;
-use outbe_ccaregistry::{
-    api,
-    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
-    precompile::ICcaRegistry,
-    runtime,
-};
-use outbe_primitives::{
-    addresses::{AGENT_REWARD_ADDRESS, CCA_REGISTRY_ADDRESS},
-    block::{BlockContext, BlockRuntimeContext},
-};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-const ALICE: Address = Address::repeat_byte(1);
-const BOB: Address = Address::repeat_byte(2);
-const NOW: u64 = T_NOW;
-const DAY: u32 = 20231115;
-fn run(f: impl FnOnce(StorageHandle<'_>)) {
-    with_contract_mut(|storage, _| {
-        seed_oracle(&storage, ONE_COEN);
-        f(storage);
-    });
+const DAY: WorldwideDay = WorldwideDay::new(20231113);
+
+fn ctx<'a>(storage: StorageHandle<'a>, height: u64) -> BlockRuntimeContext<'a> {
+    BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(height, 2_000_000_000, CHAIN_ID),
+        storage,
+    )
 }
-fn bond(storage: &StorageHandle<'_>, who: Address, amount: U256) {
+
+fn originate(storage: &StorageHandle<'_>, address: Address, day: WorldwideDay, weight: U256) {
+    let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
     storage
-        .increase_balance(CCA_REGISTRY_ADDRESS, amount)
+        .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
         .unwrap();
-    runtime::bond(storage.clone(), who, amount, "Test CCA".into()).unwrap();
+    outbe_ccaregistry::runtime::bond(storage.clone(), address, bond, "CCA".into()).unwrap();
+    outbe_ccaregistry::api::credis_issued(storage, address, day.value(), weight).unwrap();
 }
-fn reward(storage: &StorageHandle<'_>, amount: U256) -> U256 {
-    let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, 1), storage.clone());
-    distribute_daily(&ctx, DAY.into(), &[(PoolKind::Cca, amount)]).unwrap()
-}
-fn claimable(storage: &StorageHandle<'_>, who: Address) -> U256 {
-    AgentRewardContract::new(storage.clone())
-        .get_pool_claimable_reward(RewardPool::Cca, who)
-        .unwrap()
-}
-#[test]
-fn inactive_weights_are_excluded_and_residue_stays_excess() {
-    run(|storage| {
-        assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        bond(&storage, BOB, BOND_REQUIREMENT);
-        assert_eq!(reward(&storage, U256::from(11)), U256::from(11));
-        runtime::credis_issued(&storage, ALICE, DAY, U256::from(1)).unwrap();
-        runtime::credis_issued(&storage, BOB, DAY, U256::from(3)).unwrap();
-        assert_eq!(reward(&storage, U256::from(11)), U256::ONE);
-        assert_eq!(claimable(&storage, ALICE), U256::from(2));
-        assert_eq!(claimable(&storage, BOB), U256::from(8));
-        runtime::unbond(storage.clone(), BOB).unwrap();
-        assert_eq!(reward(&storage, U256::from(11)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), U256::from(13));
-        AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, BOB, U256::ZERO, (USD, USD))
+
+fn voters(storage: &StorageHandle<'_>, day: WorldwideDay, count: u32) {
+    let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+    rewards
+        .daily_voter_count
+        .write(&day.value(), count)
+        .unwrap();
+    rewards
+        .daily_total_participation
+        .write(&day.value(), U256::from(count))
+        .unwrap();
+    for n in 0..count {
+        let address = numbered_address(100_000 + u64::from(n));
+        rewards
+            .daily_voter_at
+            .get_nested(&day.value())
+            .write(&n, address)
             .unwrap();
-        assert_eq!(storage.balance(BOB).unwrap(), U256::ZERO);
+        rewards
+            .daily_participation
+            .get_nested(&day.value())
+            .write(&address, 1)
+            .unwrap();
+    }
+}
+
+#[test]
+fn gap_ed27_cca_that_left_gets_its_share() {
+    with_contract_mut(|storage, contract| {
+        seed_oracle(&storage, ONE_COEN);
+        let alice = numbered_address(1);
+        let bob = numbered_address(2);
+        originate(&storage, alice, DAY, U256::from(80));
+        originate(&storage, bob, DAY, U256::from(20));
+        outbe_ccaregistry::runtime::unbond(storage.clone(), alice).unwrap();
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(&context, DAY, &[(PoolKind::Cca, U256::from(100))]).unwrap();
+        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT * U256::from(2)
+            contract
+                .get_pool_claimable_reward(RewardPool::Cca, alice)
+                .unwrap(),
+            U256::from(80)
         );
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-    });
-}
-
-#[test]
-fn wide_reward_products_do_not_overflow_and_a_failed_credit_rolls_back() {
-    run(|storage| {
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        assert!(distribute_daily(&ctx, 20231115.into(), &[(PoolKind::Cca, U256::MAX)]).is_err());
-        assert_eq!(claimable(&storage, ALICE), U256::from(100));
-        assert!(runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).is_err());
-        assert_eq!(api::reward_weight(&storage, ALICE, DAY).unwrap(), U256::MAX);
-    });
-}
-
-#[test]
-fn reward_map_overflow_rolls_back_earlier_credits() {
-    run(|storage| {
-        for cca in [ALICE, BOB] {
-            bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::credis_issued(&storage, cca, DAY, U256::ONE).unwrap();
-        }
-        let contract = AgentRewardContract::new(storage.clone());
-        let active = [ALICE, BOB];
-        // Fail on the second recipient, after the first credit.
-        contract
-            .cca_claimable_minor
-            .write(&active[1], U256::MAX)
-            .unwrap();
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        assert!(distribute_daily(&ctx, DAY.into(), &[(PoolKind::Cca, U256::from(10))]).is_err());
         assert_eq!(
-            contract.cca_claimable_minor.read(&active[0]).unwrap(),
+            contract
+                .get_pool_claimable_reward(RewardPool::Cca, bob)
+                .unwrap(),
+            U256::from(20)
+        );
+        contract
+            .claim_reward(RewardPool::Cca, alice, U256::ZERO, (USD, USD))
+            .unwrap();
+        assert_eq!(
+            gem_of(&storage, alice).item.promis_load_minor,
+            U256::from(80)
+        );
+        assert_eq!(
+            storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
             U256::ZERO
         );
+    });
+}
+
+#[test]
+fn gap_ed26_reward_jobs_pay_256_receivers_per_block() {
+    with_contract_mut(|storage, contract| {
+        voters(&storage, DAY, 100);
+        for n in 0..100 {
+            contract
+                .increment_waa_tribute(DAY, numbered_address(1_000 + n))
+                .unwrap();
+            contract
+                .increment_sra_tribute(DAY, numbered_address(2_000 + n))
+                .unwrap();
+            originate(&storage, numbered_address(3_000 + n), DAY, U256::ONE);
+        }
+        let context = ctx(storage.clone(), 0);
+        let pool = U256::from(100);
+        allocate_fixture(
+            &context,
+            DAY,
+            &[
+                (PoolKind::Validator, pool),
+                (PoolKind::Waa, pool),
+                (PoolKind::Sra, pool),
+                (PoolKind::Cca, pool),
+            ],
+        )
+        .unwrap();
+        assert_eq!(contract.accrual_tail.read().unwrap(), 4);
         assert_eq!(
-            contract.cca_claimable_minor.read(&active[1]).unwrap(),
-            U256::MAX
+            contract
+                .get_claimable_reward(numbered_address(1_000))
+                .unwrap(),
+            U256::ZERO
+        );
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(
+            contract
+                .pool_claimable_total(RewardPool::Validator)
+                .unwrap(),
+            pool
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            pool
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            U256::from(56)
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            U256::ZERO
+        );
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            U256::from(56)
+        );
+        assert!(crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            pool
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            pool
+        );
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+    });
+}
+
+#[test]
+fn a_thousand_positive_ccas_finish_in_four_blocks_and_survive_exit_during_processing() {
+    with_contract_mut(|storage, contract| {
+        for n in 1..=1_000 {
+            originate(&storage, numbered_address(n), DAY, U256::ONE);
+        }
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(&context, DAY, &[(PoolKind::Cca, U256::from(1_000))]).unwrap();
+        for height in 0..4 {
+            crate::api::process_agent_rewards(&ctx(storage.clone(), height)).unwrap();
+            assert_eq!(
+                contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+                U256::from(((height + 1) * 256).min(1_000))
+            );
+            if height == 0 {
+                outbe_ccaregistry::runtime::unbond(storage.clone(), numbered_address(900)).unwrap();
+                storage
+                    .set_block_timestamp(U256::from(
+                        T_NOW + outbe_ccaregistry::constants::UNBOND_COOLDOWN_SECONDS,
+                    ))
+                    .unwrap();
+                outbe_ccaregistry::runtime::claim_unbonded(storage.clone(), numbered_address(900))
+                    .unwrap();
+                let bond = outbe_ccaregistry::constants::BOND_REQUIREMENT;
+                storage
+                    .increase_balance(outbe_primitives::addresses::CCA_REGISTRY_ADDRESS, bond)
+                    .unwrap();
+                outbe_ccaregistry::runtime::bond(
+                    storage.clone(),
+                    numbered_address(900),
+                    bond,
+                    "Returning CCA".into(),
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Cca, numbered_address(900))
+                .unwrap(),
+            U256::ONE
+        );
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+    });
+}
+
+#[test]
+fn gap_ed29_job_rounding_rest_goes_to_promis_limit_once() {
+    with_contract_mut(|storage, contract| {
+        voters(&storage, DAY, 3);
+        for n in 1..=3 {
+            contract
+                .increment_waa_tribute(DAY, numbered_address(n))
+                .unwrap();
+            contract
+                .increment_sra_tribute(DAY, numbered_address(n))
+                .unwrap();
+            originate(&storage, numbered_address(n), DAY, U256::ONE);
+        }
+        let context = ctx(storage.clone(), 0);
+        let amount = U256::from(10);
+        allocate_fixture(
+            &context,
+            DAY,
+            &[
+                (PoolKind::Validator, amount),
+                (PoolKind::Waa, amount),
+                (PoolKind::Sra, amount),
+                (PoolKind::Cca, amount),
+            ],
+        )
+        .unwrap();
+        crate::api::process_agent_rewards(&context).unwrap();
+        let ledger = outbe_emission::api::emission_day(storage.clone(), DAY.value())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                ledger.validators,
+                ledger.waa,
+                ledger.sra,
+                ledger.cca,
+                ledger.promis_limit
+            ),
+            (9, 9, 9, 9, 4)
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::from(4)
+        );
+        crate::api::process_agent_rewards(&context).unwrap();
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::from(4)
         );
     });
 }
 
 #[test]
-fn daily_distribution_at_the_active_cap_matches_the_proportional_reference() {
-    // Engineering reserve inside the 30_000_000 steady block gas limit.
-    const CCA_DISTRIBUTION_GAS_BUDGET: u64 = 5_000_000;
-    let population = u64::from(MAX_ACTIVE_CCAS);
-    let mut weights = Vec::new();
-    let mut provider = HashMapStorageProvider::new(1);
-    StorageHandle::enter(&mut provider, |storage| {
-        for id in 1..=population {
-            let cca = Address::from_word(U256::from(id).into());
-            bond(&storage, cca, BOND_REQUIREMENT);
-            runtime::credis_issued(&storage, cca, DAY, U256::ONE).unwrap();
-            weights.push((cca, U256::ONE));
+fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
+    with_contract_mut(|storage, contract| {
+        for n in 1..=600 {
+            contract
+                .increment_waa_tribute(DAY, numbered_address(n))
+                .unwrap();
         }
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(&context, DAY, &[(PoolKind::Waa, U256::ZERO)]).unwrap();
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(
+            contract
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    DAY,
+                    numbered_address(1)
+                ))
+                .unwrap(),
+            1
+        );
+        assert!(contract
+            .increment_waa_tribute(DAY, numbered_address(999))
+            .is_err());
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 2)).unwrap();
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+        assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 600);
+        assert_eq!(
+            contract
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    DAY,
+                    numbered_address(256)
+                ))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            contract
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    DAY,
+                    numbered_address(257)
+                ))
+                .unwrap(),
+            1
+        );
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 3)).unwrap();
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 4)).unwrap();
+        assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
+        assert!(contract
+            .increment_waa_tribute(DAY, numbered_address(1))
+            .is_err());
+    });
+}
+
+#[test]
+fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
+    with_contract_mut(|storage, contract| {
+        let context = ctx(storage.clone(), 0);
+        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        contract.accrual_tail.write(u64::MAX - 3).unwrap();
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            DAY,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO
+        )
+        .is_err());
+        assert_eq!(contract.sealed_through_day.read().unwrap(), 0);
+        contract.accrual_tail.write(0).unwrap();
+        allocate_fixture(&context, DAY, &[]).unwrap();
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            DAY,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO,
+            U256::ZERO
+        )
+        .is_err());
+        assert!(contract
+            .increment_sra_tribute(DAY, numbered_address(1))
+            .is_err());
+        assert!(crate::api::abandon_day_agent_rewards(&context, DAY).is_err());
+    });
+}
+
+#[test]
+fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
+    with_contract_mut(|storage, contract| {
+        contract
+            .increment_waa_tribute(DAY, numbered_address(1))
+            .unwrap();
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(&context, DAY, &[(PoolKind::Waa, U256::from(10))]).unwrap();
+        let emission = outbe_emission::schema::EmissionContract::new(storage.clone());
+        let ledger = emission.emission_days.get(DAY.value()).unwrap().unwrap();
+        emission.emission_days.delete(DAY.value()).unwrap();
+        assert!(crate::api::process_agent_rewards(&context).is_err());
+        assert_eq!(
+            contract.get_claimable_reward(numbered_address(1)).unwrap(),
+            U256::ZERO
+        );
+        assert!(!contract.worker_initialized.read().unwrap());
+        assert_eq!(contract.accrual_head.read().unwrap(), 0);
+        emission.emission_days.create(&ledger).unwrap();
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(
+            contract.get_claimable_reward(numbered_address(1)).unwrap(),
+            U256::from(10)
+        );
+    });
+}
+
+#[test]
+fn failed_day_abandonment_queues_once_and_permanently_seals_all_owners() {
+    with_contract_mut(|storage, contract| {
+        for n in 1..=300 {
+            contract
+                .increment_sra_tribute(DAY, numbered_address(n))
+                .unwrap();
+        }
+        let context = ctx(storage.clone(), 0);
+        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
+        crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
+        assert_eq!(contract.cleanup_tail.read().unwrap(), 2);
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 300);
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
+        assert!(contract
+            .increment_sra_tribute(DAY, numbered_address(1))
+            .is_err());
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+    });
+}
+
+#[test]
+fn metered_accrual_and_three_owner_cleanup_fit_the_existing_block_envelope() {
+    let next_day = WorldwideDay::new(20231114);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(T_NOW));
+    StorageHandle::enter(&mut provider, |storage| {
+        voters(&storage, DAY, 256);
+        let mut contract = AgentRewardContract::new(storage.clone());
+        for n in 1..=257 {
+            let address = numbered_address(n);
+            originate(&storage, address, DAY, U256::ONE);
+            outbe_ccaregistry::api::credis_issued(&storage, address, next_day.value(), U256::ONE)
+                .unwrap();
+            if n <= 256 {
+                contract.increment_waa_tribute(DAY, address).unwrap();
+            }
+        }
+        let context = ctx(storage.clone(), 0);
+        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
+        allocate_fixture(&context, next_day, &[(PoolKind::Cca, U256::from(257))]).unwrap();
     });
     provider.set_gas_limit(30_000_000);
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
-        let pool = U256::from(population);
-        let excess = reward(&storage, pool);
-        let (expected, expected_excess) =
-            calculate_proportional_distribution(pool, &weights).unwrap();
-        assert_eq!(excess, expected_excess);
-        assert_eq!(excess, U256::ZERO);
-        for share in expected {
-            assert_eq!(claimable(&storage, share.address), share.reward_amount);
-        }
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 0)).unwrap();
+        let contract = AgentRewardContract::new(storage.clone());
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Cca).unwrap(),
+            U256::from(256)
+        );
+        assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
+        assert_eq!(
+            outbe_rewards::schema::Rewards::new(storage.clone())
+                .daily_voter_count
+                .read(&DAY.value())
+                .unwrap(),
+            0
+        );
         let gas = storage.gas_used().unwrap();
-        assert!(
-            gas <= CCA_DISTRIBUTION_GAS_BUDGET,
-            "CCA distribution used {gas} gas, budget is {CCA_DISTRIBUTION_GAS_BUDGET}"
-        );
+        eprintln!("256 accrual + 256 entries per cleanup owner: {gas} storage gas");
+        assert!(gas < 30_000_000);
     });
 }
 
 #[test]
-fn daily_buckets_isolate_delayed_settlement_and_cross_day_voids() {
-    run(|storage| {
-        let next = 20231116;
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::credis_issued(&storage, ALICE, DAY, U256::from(60)).unwrap();
-        runtime::credis_issued(&storage, ALICE, DAY, U256::from(40)).unwrap();
-        runtime::credis_issued(&storage, BOB, DAY, U256::from(100)).unwrap();
-        storage
-            .set_block_timestamp(U256::from(
-                outbe_primitives::time::date_key_to_utc_timestamp(next).unwrap(),
-            ))
+fn empty_headers_are_bounded_and_corrupt_pending_counts_fail_before_credit() {
+    with_contract_mut(|storage, contract| {
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(&context, DAY, &[]).unwrap();
+        allocate_fixture(&context, WorldwideDay::new(20231114), &[]).unwrap();
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(contract.accrual_head.read().unwrap(), 4);
+        assert_eq!(contract.pending_jobs_by_day.read(&20231114).unwrap(), 4);
+        contract.pending_jobs_by_day.write(&20231114, 0).unwrap();
+        assert!(crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).is_err());
+        assert_eq!(contract.accrual_head.read().unwrap(), 4);
+        assert_eq!(contract.worker_height.read().unwrap(), 0);
+        contract.pending_jobs_by_day.write(&20231114, 4).unwrap();
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
+        assert_eq!(contract.accrual_head.read().unwrap(), 8);
+    });
+}
+
+#[test]
+fn each_worker_mutation_failure_preserves_committed_obligations_and_retries_once() {
+    let prepare = || {
+        let mut provider = every_pool_day();
+        StorageHandle::enter(&mut provider, |storage| {
+            let context = ctx(storage, 0);
+            let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
+            let amount = U256::from(10);
+            allocate_fixture(
+                &context,
+                day,
+                &[
+                    (PoolKind::Validator, amount),
+                    (PoolKind::Waa, amount),
+                    (PoolKind::Sra, amount),
+                    (PoolKind::Cca, amount),
+                ],
+            )
             .unwrap();
-        runtime::credis_issued(&storage, ALICE, next, U256::from(100)).unwrap();
-        runtime::credis_issued(&storage, BOB, next, U256::from(150)).unwrap();
-        runtime::credis_forfeited(&storage, ALICE, next, U256::from(50)).unwrap();
+        });
+        provider.clear_mutation_failure();
+        provider
+    };
+    let run = |provider: &mut HashMapStorageProvider| {
+        StorageHandle::enter(provider, |storage| {
+            crate::api::process_agent_rewards(&ctx(storage, 0))
+        })
+    };
+    let mut successful = prepare();
+    run(&mut successful).unwrap();
+    let writes = successful.clear_mutation_failure();
+    let final_state = successful.storage.clone();
+    for failure in 0..writes {
+        let mut provider = prepare();
+        let committed = provider.storage.clone();
+        let events = provider
+            .get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+            .clone();
+        provider.fail_after_mutation_at(failure);
+        assert!(run(&mut provider).is_err(), "mutation {failure}");
+        assert_eq!(provider.storage, committed, "mutation {failure}");
         assert_eq!(
-            api::reward_weight(&storage, ALICE, DAY).unwrap(),
-            U256::from(100)
+            provider.get_events(outbe_primitives::addresses::AGENT_REWARD_ADDRESS),
+            &events
         );
-        assert_eq!(
-            api::reward_weight(&storage, ALICE, next).unwrap(),
-            U256::from(50)
-        );
-        let ctx = BlockRuntimeContext::new(BlockContext::default(), storage.clone());
-        assert_eq!(
-            distribute_daily(&ctx, DAY.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(claimable(&storage, ALICE), U256::from(60));
-        assert_eq!(claimable(&storage, BOB), U256::from(60));
-        assert_eq!(
-            distribute_daily(&ctx, next.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(claimable(&storage, ALICE), U256::from(90));
-        assert_eq!(claimable(&storage, BOB), U256::from(150));
-        // Historical GRATIS does not carry into an empty day.
-        assert_eq!(
-            distribute_daily(&ctx, 20231117.into(), &[(PoolKind::Cca, U256::from(120))]).unwrap(),
-            U256::from(120)
-        );
-        // A later void cannot claw back already accrued rewards.
-        runtime::credis_forfeited(&storage, ALICE, next, U256::from(50)).unwrap();
-        assert_eq!(claimable(&storage, ALICE), U256::from(90));
-    });
+        provider.clear_mutation_failure();
+        run(&mut provider).unwrap();
+        assert_eq!(provider.storage, final_state, "mutation {failure}");
+        let once = provider.storage.clone();
+        run(&mut provider).unwrap();
+        assert_eq!(provider.storage, once);
+    }
 }
 
 #[test]
-fn cca_pool_queries_and_claims_are_isolated() {
-    use crate::precompile::{dispatch, IAgentReward};
-    use alloy_sol_types::SolCall;
-    run(|storage| {
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        bond(&storage, BOB, BOND_REQUIREMENT);
-        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
-        assert_eq!(reward(&storage, U256::from(1000)), U256::ZERO);
-        let mut contract = AgentRewardContract::new(storage.clone());
-        for (pool, amount) in [(RewardPool::Waa, 100), (RewardPool::Sra, 200)] {
+fn missing_tribute_index_or_positive_count_never_becomes_residue() {
+    for pool in [RewardPool::Waa, RewardPool::Sra] {
+        for clear_address in [false, true] {
+            with_contract_mut(|storage, contract| {
+                let address = numbered_address(1);
+                increment_tribute_counter(contract, pool, DAY, address).unwrap();
+                if clear_address {
+                    // A valid zero-address recipient must not mask another missing index.
+                    increment_tribute_counter(contract, pool, DAY, Address::ZERO).unwrap();
+                }
+                let context = ctx(storage.clone(), 0);
+                allocate_fixture(&context, DAY, &[(pool, U256::from(10))]).unwrap();
+                let index = contract.day_index(pool).unwrap();
+                let address_key = AgentRewardContract::address_index_key(DAY, 0);
+                let count_key = AgentRewardContract::tribute_count_key(DAY, address);
+                if clear_address {
+                    index.addresses.write(&address_key, Address::ZERO).unwrap();
+                } else {
+                    index.counts.write(&count_key, 0).unwrap();
+                }
+                assert!(crate::api::process_agent_rewards(&context).is_err());
+                assert_eq!(contract.accrual_head.read().unwrap(), 0);
+                assert_eq!(contract.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
+                assert_eq!(contract.get_claimable_reward(address).unwrap(), U256::ZERO);
+                assert_eq!(
+                    outbe_promislimit::PromisLimitContract::new(storage.clone())
+                        .promis_limit()
+                        .unwrap(),
+                    U256::ZERO
+                );
+                assert!(!contract.worker_initialized.read().unwrap());
+                index.addresses.write(&address_key, address).unwrap();
+                index.counts.write(&count_key, 1).unwrap();
+                crate::api::process_agent_rewards(&context).unwrap();
+                assert_eq!(
+                    contract.get_pool_claimable_reward(pool, address).unwrap(),
+                    U256::from(if clear_address { 5 } else { 10 })
+                );
+            });
+        }
+    }
+}
+
+#[test]
+fn exact_256_entry_boundary_does_not_credit_the_next_pool_in_the_same_block() {
+    with_contract_mut(|storage, contract| {
+        for n in 1..=256 {
             contract
-                .add_claimable_reward(pool, ALICE, U256::from(amount))
+                .increment_waa_tribute(DAY, numbered_address(n))
                 .unwrap();
         }
-        let query = IAgentReward::getClaimableBalanceCall { account: ALICE };
-        let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
-        assert_eq!(
-            IAgentReward::getClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
-            U256::from(1300)
-        );
-        for (pool, amount) in [(0, 100), (1, 200), (2, 1000)] {
-            let query = IAgentReward::getPoolClaimableBalanceCall {
-                account: ALICE,
-                pool,
-            };
-            let output = dispatch(storage.clone(), &query.abi_encode(), BOB, U256::ZERO).unwrap();
-            assert_eq!(
-                IAgentReward::getPoolClaimableBalanceCall::abi_decode_returns(&output).unwrap(),
-                U256::from(amount)
-            );
-        }
-        assert_eq!(contract.get_claimable_reward(BOB).unwrap(), U256::ZERO);
-        let claim = IAgentReward::claimRewardCall {
-            pool: 2,
-            promisLoadMinor: U256::ZERO,
-            issuanceCurrency: USD,
-            referenceCurrency: USD,
-        }
-        .abi_encode();
-        // A registered caller cannot spend another account's rewards. Unregistered calls also fail.
-        for caller in [BOB, Address::repeat_byte(3)] {
-            assert!(dispatch(storage.clone(), &claim, caller, U256::ZERO).is_err());
-        }
-        assert!(dispatch(storage.clone(), &claim, ALICE, U256::ONE).is_err());
-        assert_eq!(claimable(&storage, ALICE), U256::from(1000));
-        for pool in [4, 255] {
-            assert!(dispatch(
-                storage.clone(),
-                &IAgentReward::claimRewardCall {
-                    pool,
-                    promisLoadMinor: U256::ZERO,
-                    issuanceCurrency: USD,
-                    referenceCurrency: USD,
-                }
-                .abi_encode(),
-                ALICE,
-                U256::ZERO
-            )
-            .is_err());
-            assert!(dispatch(
-                storage.clone(),
-                &IAgentReward::getPoolClaimableBalanceCall {
-                    account: ALICE,
-                    pool
-                }
-                .abi_encode(),
-                ALICE,
-                U256::ZERO
-            )
-            .is_err());
-        }
-        for pool in [0, 1] {
-            let output = dispatch(
-                storage.clone(),
-                // An empty pool is a no-op whatever currencies the call names.
-                &IAgentReward::claimRewardCall {
-                    pool,
-                    promisLoadMinor: U256::ZERO,
-                    issuanceCurrency: 0,
-                    referenceCurrency: 0,
-                }
-                .abi_encode(),
-                BOB,
-                U256::ZERO,
-            )
+        contract
+            .increment_sra_tribute(DAY, numbered_address(999))
             .unwrap();
-            assert_eq!(
-                IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap(),
-                U256::ZERO
-            );
-        }
-        let output = dispatch(storage.clone(), &claim, ALICE, U256::ZERO).unwrap();
-        let id = IAgentReward::claimRewardCall::abi_decode_returns(&output).unwrap();
-        assert!(outbe_gem::api::get_item(&storage, id).unwrap().is_some());
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(
+            &context,
+            DAY,
+            &[(PoolKind::Waa, U256::from(256)), (PoolKind::Sra, U256::ONE)],
+        )
+        .unwrap();
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(contract.accrual_head.read().unwrap(), 2);
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Cca, ALICE)
-                .unwrap(),
+            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            U256::from(256)
+        );
+        assert_eq!(
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
             U256::ZERO
         );
+        crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Waa, ALICE)
-                .unwrap(),
-            U256::from(100)
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            U256::ZERO
         );
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Sra, ALICE)
-                .unwrap(),
-            U256::from(200)
+            contract.pool_claimable_total(RewardPool::Sra).unwrap(),
+            U256::ONE
         );
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        contract
-            .add_claimable_reward(RewardPool::Cca, ALICE, U256::MAX)
-            .unwrap();
-        assert!(contract.get_claimable_reward(ALICE).is_err());
-    });
-}
-
-#[test]
-fn deregistered_cca_claims_from_agentreward_after_withdrawing_bond() {
-    run(|storage| {
-        bond(&storage, ALICE, BOND_REQUIREMENT);
-        runtime::credis_issued(&storage, ALICE, DAY, U256::ONE).unwrap();
-        reward(&storage, U256::from(1000));
-        runtime::unbond(storage.clone(), ALICE).unwrap();
-        let now = NOW + UNBOND_COOLDOWN_SECONDS;
-        storage.set_block_timestamp(U256::from(now)).unwrap();
-        runtime::claim_unbonded(storage.clone(), ALICE).unwrap();
-        assert_eq!(
-            api::cca_state(&storage, ALICE).unwrap(),
-            ICcaRegistry::State::Deregistered
-        );
-        assert_eq!(storage.balance(CCA_REGISTRY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
-            .unwrap()
-            .unwrap();
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(now)).expect("date step"),
-                index,
-                ONE_COEN,
-            )
-            .unwrap();
-        AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, (USD, USD))
-            .unwrap();
-        assert_eq!(claimable(&storage, ALICE), U256::ZERO);
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(ALICE).unwrap(), BOND_REQUIREMENT);
-        assert_eq!(
-            gem_of(&storage, ALICE).item.promis_load_minor,
-            U256::from(1000)
-        );
-    });
-}
-
-const CAROL: Address = Address::repeat_byte(3);
-
-fn originate(storage: &StorageHandle<'_>, who: Address, weight: u64) {
-    bond(storage, who, BOND_REQUIREMENT);
-    runtime::credis_issued(storage, who, DAY, U256::from(weight)).unwrap();
-}
-
-#[test]
-fn one_eligible_cca_receives_the_whole_pool() {
-    run(|storage| {
-        originate(&storage, ALICE, 1);
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), U256::from(100));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT
-        );
-    });
-}
-
-#[test]
-fn weights_eighty_and_twenty_split_a_hundred_with_no_excess() {
-    run(|storage| {
-        originate(&storage, ALICE, 80);
-        originate(&storage, BOB, 20);
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), U256::from(80));
-        assert_eq!(claimable(&storage, BOB), U256::from(20));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT * U256::from(2)
-        );
-    });
-}
-
-#[test]
-fn concentrated_weights_are_not_capped() {
-    run(|storage| {
-        originate(&storage, ALICE, 90);
-        originate(&storage, BOB, 10);
-        assert_eq!(reward(&storage, U256::from(1000)), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), U256::from(900));
-        assert_eq!(claimable(&storage, BOB), U256::from(100));
-    });
-}
-
-#[test]
-fn equal_weights_leave_indivisible_residue_as_excess() {
-    run(|storage| {
-        originate(&storage, ALICE, 1);
-        originate(&storage, BOB, 1);
-        originate(&storage, CAROL, 1);
-        assert_eq!(reward(&storage, U256::from(10)), U256::ONE);
-        assert_eq!(claimable(&storage, ALICE), U256::from(3));
-        assert_eq!(claimable(&storage, BOB), U256::from(3));
-        assert_eq!(claimable(&storage, CAROL), U256::from(3));
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-    });
-}
-
-#[test]
-fn zero_cca_pool_credits_nothing() {
-    run(|storage| {
-        originate(&storage, ALICE, 80);
-        assert_eq!(reward(&storage, U256::ZERO), U256::ZERO);
-        assert_eq!(claimable(&storage, ALICE), U256::ZERO);
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT
-        );
-    });
-}
-
-#[test]
-fn a_second_claim_does_not_mint_or_move_the_bond() {
-    run(|storage| {
-        originate(&storage, ALICE, 1);
-        assert_eq!(reward(&storage, U256::from(100)), U256::ZERO);
-        let gem_id = AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, (USD, USD))
-            .unwrap();
-        assert!(AgentRewardContract::new(storage.clone())
-            .claim_reward(RewardPool::Cca, ALICE, U256::ZERO, (USD, USD))
-            .is_err());
-        assert_eq!(claimable(&storage, ALICE), U256::ZERO);
-        assert_eq!(storage.balance(AGENT_REWARD_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(storage.balance(ALICE).unwrap(), U256::ZERO);
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            BOND_REQUIREMENT
-        );
-        assert_eq!(
-            outbe_gem::api::list_by_owner(&storage, ALICE)
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            outbe_gem::api::get_item(&storage, gem_id)
-                .unwrap()
-                .unwrap()
-                .promis_load_minor,
-            U256::from(100)
-        );
+        assert_eq!(contract.accrual_head.read().unwrap(), 4);
     });
 }

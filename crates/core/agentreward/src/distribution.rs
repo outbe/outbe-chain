@@ -3,213 +3,170 @@ use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, U256, U512};
-use outbe_primitives::error::Result as PrecompileResult;
+use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::WorldwideDay;
 
-// ------------------------------------------------------------------------
-// New daily orchestrator surface
-// ------------------------------------------------------------------------
-
-/// One of the reward pools that AgentReward owns end-to-end.
-///
-/// The EmissionLimit daily handler splits the emission between pool kinds.
-/// This enum is the protocol contract between that orchestrator and
-/// AgentReward.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PoolKind {
-    /// WAA (wallet) proportional distribution pool. Uses tribute counts kept
-    /// in `waa_*` storage fields.
-    Waa,
-    /// SRA (signer-of-record-attestation) proportional distribution pool. Uses
-    /// tribute counts kept in `sra_*` storage fields.
-    Sra,
-    /// CCA rewards weighted by net origination recorded in the CCA registry.
-    Cca,
-    /// Validator top-up weighted by the day's finalized-block participation
-    /// recorded in Rewards.
-    Validator,
-}
-
-/// Detailed per-pool allocation and undistributed excess returned by [`distribute_daily_detailed`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DailyPoolDistribution {
-    pub validators_distributed: U256,
+pub struct DayAgentAllocation {
+    pub validators_allocated: U256,
     pub waa_allocated: U256,
     pub sra_allocated: U256,
-    pub cca_distributed: U256,
+    pub cca_allocated: U256,
     pub total_excess: U256,
 }
 
-/// Daily orchestrator entrypoint called by the EmissionLimit Cycle
-/// handler. Dispatches each `(PoolKind, amount)` pair into
-/// the correct sub-routine and returns the sum of pool excesses that
-/// should be added to the Metadosis terminal credit.
-///
-/// Excess is rounding residue, or the whole pool when no positive eligible
-/// weight exists. WAA and SRA pools with tributes go to [`advance_accruals`].
-/// Shares are not capped per address.
-///
-/// Claimable balances and the returned excess are protocol units.
-pub fn distribute_daily(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-    prev_day: WorldwideDay,
-    pools: &[(PoolKind, U256)],
-) -> PrecompileResult<U256> {
-    Ok(distribute_daily_detailed(ctx, prev_day, pools)?.total_excess)
-}
-
-/// Dispatches each `(PoolKind, amount)` pair and returns the exact per-pool
-/// distributed/allocated amounts alongside the undistributed excess.
-pub fn distribute_daily_detailed(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-    prev_day: WorldwideDay,
-    pools: &[(PoolKind, U256)],
-) -> PrecompileResult<DailyPoolDistribution> {
+/// Captures immutable day inputs and queues exactly four jobs. No recipient is credited here.
+pub fn allocate_day_agent_rewards(
+    ctx: &BlockRuntimeContext,
+    day: WorldwideDay,
+    topup: U256,
+    waa: U256,
+    sra: U256,
+    cca: U256,
+) -> Result<DayAgentAllocation> {
     ctx.storage.with_checkpoint(|| {
-        let mut out = DailyPoolDistribution::default();
-        for &(kind, amount) in pools {
-            let excess = distribute_pool(ctx, prev_day, kind, amount)?;
-            let allocated = amount
-                .checked_sub(excess)
-                .ok_or(AgentRewardError::DistributeDailyOverflow)?;
-            match kind {
-                PoolKind::Validator => {
-                    out.validators_distributed = out
-                        .validators_distributed
-                        .checked_add(allocated)
-                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
-                }
-                PoolKind::Waa => {
-                    out.waa_allocated = out
-                        .waa_allocated
-                        .checked_add(allocated)
-                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
-                }
-                PoolKind::Sra => {
-                    out.sra_allocated = out
-                        .sra_allocated
-                        .checked_add(allocated)
-                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
-                }
-                PoolKind::Cca => {
-                    out.cca_distributed = out
-                        .cca_distributed
-                        .checked_add(allocated)
-                        .ok_or(AgentRewardError::DistributeDailyOverflow)?;
-                }
-            }
-            out.total_excess = out
-                .total_excess
-                .checked_add(excess)
-                .ok_or(AgentRewardError::DistributeDailyOverflow)?;
+        let contract = ctx.contract::<AgentRewardContract>();
+        if day.value() <= contract.sealed_through_day.read()? {
+            return Err(AgentRewardError::DaySealed(day.value()).into());
         }
-        Ok(out)
+        let head = contract.accrual_head.read()?;
+        let tail = contract.accrual_tail.read()?;
+        let next_tail = tail.checked_add(4).ok_or(AgentRewardError::InvalidJob)?;
+        if head > tail || tail % 4 != 0 || contract.pending_jobs_by_day.read(&day.value())? != 0 {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
+        outbe_ccaregistry::api::seal_reward_day(&ctx.storage, day.value())?;
+        let validator_inputs = outbe_rewards::api::sealed_day_inputs(ctx, day.value())?;
+        let cca_inputs = outbe_ccaregistry::api::reward_day_inputs(&ctx.storage, day.value())?;
+        let waa_inputs = (
+            contract.waa_address_count.read(&day)?,
+            U256::from(contract.waa_total_count.read(&day)?),
+        );
+        let sra_inputs = (
+            contract.sra_address_count.read(&day)?,
+            U256::from(contract.sra_total_count.read(&day)?),
+        );
+        let descriptors = [
+            (RewardPool::Validator, topup, validator_inputs),
+            (RewardPool::Waa, waa, waa_inputs),
+            (RewardPool::Sra, sra, sra_inputs),
+            (RewardPool::Cca, cca, cca_inputs),
+        ];
+        let mut jobs = Vec::with_capacity(4);
+        let mut excess = U256::ZERO;
+        let mut assigned = [U256::ZERO; 4];
+        for (offset, (pool, nominal, (count, weight))) in descriptors.into_iter().enumerate() {
+            if count == 0 && !weight.is_zero() {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            let amount = if weight.is_zero() {
+                U256::ZERO
+            } else {
+                nominal
+            };
+            excess = excess
+                .checked_add(nominal - amount)
+                .ok_or(AgentRewardError::DistributionOverflow)?;
+            let pending = contract
+                .pending_total_minor
+                .read(&(pool as u8))?
+                .checked_add(amount)
+                .ok_or(AgentRewardError::DistributionOverflow)?;
+            // There are exactly four descriptors, so the offset fits u64.
+            let seq = tail + offset as u64;
+            if contract.accrual_jobs.get(seq)?.is_some() {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            assigned[offset] = amount;
+            jobs.push((
+                AccrualJob {
+                    seq,
+                    day: day.value(),
+                    pool: pool as u8,
+                    pool_minor: amount,
+                    next_index: 0,
+                    credited_minor: U256::ZERO,
+                    recipient_count: count,
+                    total_weight: weight,
+                },
+                pending,
+            ));
+        }
+        // Validate aggregate arithmetic before publishing any descriptor.
+        assigned.iter().try_fold(excess, |sum, amount| {
+            sum.checked_add(*amount)
+                .ok_or(AgentRewardError::DistributionOverflow)
+        })?;
+        for (job, pending) in jobs {
+            contract.accrual_jobs.create(&job)?;
+            contract.pending_total_minor.write(&job.pool, pending)?;
+        }
+        contract.accrual_tail.write(next_tail)?;
+        contract.pending_jobs_by_day.write(&day.value(), 4)?;
+        contract.sealed_through_day.write(day.value())?;
+        Ok(DayAgentAllocation {
+            validators_allocated: assigned[0],
+            waa_allocated: assigned[1],
+            sra_allocated: assigned[2],
+            cca_allocated: assigned[3],
+            total_excess: excess,
+        })
     })
 }
 
-/// Returns `true` if any queued WAA or SRA [`AccrualJob`] for `day` is still pending.
-pub fn has_pending_accruals_for_day(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    day: u32,
-) -> PrecompileResult<bool> {
-    let contract = AgentRewardContract::new(storage.clone());
-    let head = contract.accrual_head.read()?;
-    let tail = contract.accrual_tail.read()?;
-    for seq in head..tail {
-        if let Some(job) = contract.accrual_jobs.get(seq)? {
-            if job.day == day {
-                return Ok(true);
-            }
+/// Constant-time monetary-pending lookup, including zero-value jobs awaiting finalization.
+pub fn has_pending_accruals_for_day(storage: &StorageHandle<'_>, day: u32) -> Result<bool> {
+    let count = AgentRewardContract::new(storage.clone())
+        .pending_jobs_by_day
+        .read(&day)?;
+    if count > 4 {
+        return Err(AgentRewardError::InvalidJob.into());
+    }
+    Ok(count != 0)
+}
+
+/// Seals failed allocation inputs without creating monetary obligations. Scheduling is idempotent.
+pub fn abandon_day_agent_rewards(ctx: &BlockRuntimeContext, day: WorldwideDay) -> Result<()> {
+    ctx.storage.with_checkpoint(|| {
+        let contract = ctx.contract::<AgentRewardContract>();
+        if has_pending_accruals_for_day(&ctx.storage, day.value())? {
+            return Err(AgentRewardError::InvalidJob.into());
         }
-    }
-    Ok(false)
-}
-
-/// Allocates one agent pool proportionally to its weights.
-/// The function returns the undistributed protocol units.
-fn distribute_pool(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-    prev_day: WorldwideDay,
-    kind: PoolKind,
-    amount: U256,
-) -> PrecompileResult<U256> {
-    if amount.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    let mut contract = ctx.contract::<AgentRewardContract>();
-    let (reward_pool, weights) = match kind {
-        PoolKind::Waa => return enqueue_day_pool(&mut contract, prev_day, RewardPool::Waa, amount),
-        PoolKind::Sra => return enqueue_day_pool(&mut contract, prev_day, RewardPool::Sra, amount),
-        PoolKind::Cca => (
-            RewardPool::Cca,
-            outbe_ccaregistry::api::active_reward_weights(&ctx.storage, prev_day.value())?,
-        ),
-        PoolKind::Validator => (
-            RewardPool::Validator,
-            outbe_rewards::api::read_voters_for_day(ctx, prev_day.value())?
-                .into_iter()
-                .map(|(address, count)| (address, U256::from(count)))
-                .collect(),
-        ),
-    };
-    let (rewards, excess) = calculate_proportional_distribution(amount, &weights)?;
-    for reward in rewards {
-        if reward.reward_amount.is_zero() {
-            continue;
+        contract
+            .sealed_through_day
+            .write(contract.sealed_through_day.read()?.max(day.value()))?;
+        outbe_rewards::api::enqueue_day_cleanup(ctx, day.value())?;
+        outbe_ccaregistry::api::seal_reward_day(&ctx.storage, day.value())?;
+        outbe_ccaregistry::api::enqueue_day_cleanup(ctx, day.value())?;
+        for pool in [RewardPool::Waa, RewardPool::Sra] {
+            let count = contract.day_index(pool)?.address_count.read(&day)?;
+            enqueue_cleanup(&contract, day, pool, count)?;
         }
-        contract.add_claimable_reward(reward_pool, reward.address, reward.reward_amount)?;
-        contract.emit(IAgentReward::RewardAccrued {
-            account: reward.address,
-            pool: reward_pool as u8,
-            utcDay: prev_day.value(),
-            promisLoadMinor: reward.reward_amount,
-        })?;
-    }
-    Ok(excess)
+        Ok(())
+    })
 }
 
-/// Queues a WAA or SRA day pool for [`advance_accruals`]. A day without tributes
-/// returns the whole pool as excess.
-fn enqueue_day_pool(
-    contract: &mut AgentRewardContract<'_>,
-    day: WorldwideDay,
-    pool: RewardPool,
-    amount: U256,
-) -> PrecompileResult<U256> {
-    if contract.day_index(pool)?.total.read(&day)? == 0 {
-        return Ok(amount);
-    }
-    let seq = contract.accrual_tail.read()?;
-    contract.accrual_jobs.create(&AccrualJob {
-        seq,
-        day: day.value(),
-        pool: pool as u8,
-        pool_minor: amount,
-        next_index: 0,
-        credited_minor: U256::ZERO,
-    })?;
-    contract.accrual_tail.write(seq + 1)?;
-    let pending = contract
-        .pending_total_minor
-        .read(&(pool as u8))?
-        .checked_add(amount)
-        .ok_or(AgentRewardError::DistributionOverflow)?;
-    contract.pending_total_minor.write(&(pool as u8), pending)?;
-    Ok(U256::ZERO)
-}
-
-/// Credits up to [`ACCRUAL_RECIPIENTS_PER_BLOCK`] queued addresses, oldest job first,
-/// and returns the rounding residue of the jobs that finish.
-pub fn advance_accruals(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-) -> PrecompileResult<U256> {
+/// Performs at most 256 accrual visits and four job headers, then independent cleanup
+/// passes of at most 256 entries and four headers per owner. All writes, including the
+/// successful-height guard, roll back together on failure; block zero is supported.
+pub fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.with_checkpoint(|| {
         let mut contract = ctx.contract::<AgentRewardContract>();
+        if contract.worker_initialized.read()?
+            && contract.worker_height.read()? == ctx.block.block_number
+        {
+            return Ok(());
+        }
         let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
-        let mut residue = U256::ZERO;
-        while budget > 0 {
+        for _ in 0..4 {
             let head = contract.accrual_head.read()?;
-            if head == contract.accrual_tail.read()? {
+            let tail = contract.accrual_tail.read()?;
+            if head > tail || tail % 4 != 0 {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            if head == tail {
                 break;
             }
             let mut job = contract
@@ -217,435 +174,272 @@ pub fn advance_accruals(
                 .get(head)?
                 .ok_or(AgentRewardError::AccrualJobMissing(head))?;
             let pool = RewardPool::from_abi(job.pool)?;
-            let day = WorldwideDay::new(job.day);
-            let index = contract.day_index(pool)?;
-            let count = index.address_count.read(&day)?;
-            let total_weight = U256::from(index.total.read(&day)?);
-            let credited_before = job.credited_minor;
-            while job.next_index < count && budget > 0 {
-                let credited = credit_day_entry(&mut contract, &job, pool, day, total_weight)?;
+            let expected_pool = [
+                RewardPool::Validator,
+                RewardPool::Waa,
+                RewardPool::Sra,
+                RewardPool::Cca,
+            ][(head % 4) as usize];
+            let pending = contract.pending_jobs_by_day.read(&job.day)?;
+            // Exactly four descriptors are published together; only this FIFO removes them.
+            // head % 4 is at most three, so this queue count fits u8.
+            let expected_pending = 4 - (head % 4) as u8;
+            if job.next_index > job.recipient_count
+                || job.credited_minor > job.pool_minor
+                || pool != expected_pool
+                || job.day == 0
+                || job.day > contract.sealed_through_day.read()?
+                || pending != expected_pending
+                || (job.total_weight.is_zero() && !job.pool_minor.is_zero())
+            {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            let before = job.credited_minor;
+            while budget > 0 && job.next_index < job.recipient_count {
+                let (address, weight) = source_entry(ctx, &contract, &job, pool)?;
+                if weight > job.total_weight {
+                    return Err(AgentRewardError::InvalidJob.into());
+                }
+                let share = if job.pool_minor.is_zero() || weight.is_zero() {
+                    U256::ZERO
+                } else {
+                    mul_div(job.pool_minor, weight, job.total_weight)?
+                };
                 job.credited_minor = job
                     .credited_minor
-                    .checked_add(credited)
-                    .ok_or(AgentRewardError::DistributionOverflow)?;
+                    .checked_add(share)
+                    .filter(|value| *value <= job.pool_minor)
+                    .ok_or(AgentRewardError::InvalidJob)?;
+                if !share.is_zero() {
+                    contract.add_claimable_reward(pool, address, share)?;
+                    contract.emit(IAgentReward::RewardAccrued {
+                        account: address,
+                        pool: job.pool,
+                        utcDay: job.day,
+                        promisLoadMinor: share,
+                    })?;
+                }
+                // next_index is strictly below the snapshotted u32 count.
                 job.next_index += 1;
                 budget -= 1;
             }
-            let mut released = job.credited_minor - credited_before;
-            if job.next_index < count {
-                release_pending(&mut contract, pool, released)?;
+            release_pending(&contract, pool, job.credited_minor - before)?;
+            if job.next_index != job.recipient_count {
                 contract.accrual_jobs.update(&job)?;
                 break;
             }
-            let index = contract.day_index(pool)?;
-            index.address_count.write(&day, 0)?;
-            index.total.write(&day, 0)?;
-            let job_residue = job
+            let residue = job
                 .pool_minor
                 .checked_sub(job.credited_minor)
-                .ok_or(AgentRewardError::DistributionOverflow)?;
-            residue = residue
-                .checked_add(job_residue)
-                .ok_or(AgentRewardError::DistributionOverflow)?;
-            released += job_residue;
-            release_pending(&mut contract, pool, released)?;
+                .ok_or(AgentRewardError::InvalidJob)?;
+            let emission_pool = match pool {
+                RewardPool::Validator => outbe_emission::api::RewardPool::Validator,
+                RewardPool::Waa => outbe_emission::api::RewardPool::Waa,
+                RewardPool::Sra => outbe_emission::api::RewardPool::Sra,
+                RewardPool::Cca => outbe_emission::api::RewardPool::Cca,
+            };
+            let record = outbe_emission::api::record_reward_pool_residue(
+                ctx.storage.clone(),
+                job.day,
+                emission_pool,
+                residue,
+            )?;
+            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
+                .checked_credit(residue)?;
+            release_pending(&contract, pool, residue)?;
+            contract.pending_jobs_by_day.write(&job.day, pending - 1)?;
+            match pool {
+                RewardPool::Validator => outbe_rewards::api::enqueue_day_cleanup(ctx, job.day)?,
+                RewardPool::Cca => outbe_ccaregistry::api::enqueue_day_cleanup(ctx, job.day)?,
+                RewardPool::Waa | RewardPool::Sra => enqueue_cleanup(
+                    &contract,
+                    WorldwideDay::new(job.day),
+                    pool,
+                    job.recipient_count,
+                )?,
+            }
             contract.accrual_jobs.delete(head)?;
-            contract.accrual_head.write(head + 1)?;
-            record_finished_accrual_on_emission_day(&ctx.storage, job.day, pool, job_residue)?;
+            contract
+                .accrual_head
+                .write(head.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
+            if pending == 1
+                && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING
+            {
+                outbe_emission::api::complete_emission_day(ctx.storage.clone(), job.day)?;
+            }
         }
-        Ok(residue)
+        process_cleanup(&contract)?;
+        outbe_rewards::api::process_day_cleanup(ctx)?;
+        outbe_ccaregistry::api::process_day_cleanup(ctx)?;
+        contract.worker_height.write(ctx.block.block_number)?;
+        contract.worker_initialized.write(true)
     })
 }
 
-fn record_finished_accrual_on_emission_day(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    day: u32,
+fn source_entry(
+    ctx: &BlockRuntimeContext,
+    contract: &AgentRewardContract<'_>,
+    job: &AccrualJob,
     pool: RewardPool,
-    job_residue: U256,
-) -> PrecompileResult<()> {
-    let is_waa = match pool {
-        RewardPool::Waa => true,
-        RewardPool::Sra => false,
-        RewardPool::Cca | RewardPool::Validator => return Ok(()),
-    };
-    let Some(record) =
-        outbe_emission::api::record_reward_pool_residue(storage.clone(), day, is_waa, job_residue)?
-    else {
-        return Ok(());
-    };
-    if record.state == outbe_emission::schema::emission_day_state::PROCESSING
-        && record.metadosis_state != outbe_emission::schema::metadosis_state::PENDING
-        && !has_pending_accruals_for_day(storage, day)?
-    {
-        outbe_emission::api::complete_emission_day(storage.clone(), day)?;
+) -> Result<(Address, U256)> {
+    match pool {
+        RewardPool::Validator => outbe_rewards::api::reward_voter_at(ctx, job.day, job.next_index),
+        RewardPool::Cca => {
+            outbe_ccaregistry::api::reward_day_entry(&ctx.storage, job.day, job.next_index)
+        }
+        RewardPool::Waa | RewardPool::Sra => {
+            let day = WorldwideDay::new(job.day);
+            let index = contract.day_index(pool)?;
+            let address = index
+                .addresses
+                .read(&AgentRewardContract::address_index_key(day, job.next_index))?;
+            let count_key = AgentRewardContract::tribute_count_key(day, address);
+            let count = index.counts.read(&count_key)?;
+            // WAA/SRA append only on a positive first contribution and remain immutable.
+            // Address zero itself is valid; a missing positive count is not.
+            if count == 0
+                || index.member_index.read(&count_key)?
+                    != job
+                        .next_index
+                        .checked_add(1)
+                        .ok_or(AgentRewardError::InvalidJob)?
+            {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            Ok((address, U256::from(count)))
+        }
     }
-    Ok(())
 }
 
 fn release_pending(
-    contract: &mut AgentRewardContract<'_>,
+    contract: &AgentRewardContract<'_>,
     pool: RewardPool,
     amount: U256,
-) -> PrecompileResult<()> {
+) -> Result<()> {
     let pending = contract
         .pending_total_minor
         .read(&(pool as u8))?
         .checked_sub(amount)
-        .ok_or(AgentRewardError::DistributionOverflow)?;
+        .ok_or(AgentRewardError::InvalidJob)?;
     contract.pending_total_minor.write(&(pool as u8), pending)
 }
 
-/// Credits the address at `job.next_index` and clears its day entry.
-fn credit_day_entry(
-    contract: &mut AgentRewardContract<'_>,
-    job: &AccrualJob,
-    pool: RewardPool,
+fn enqueue_cleanup(
+    contract: &AgentRewardContract<'_>,
     day: WorldwideDay,
-    total_weight: U256,
-) -> PrecompileResult<U256> {
-    let index_key = AgentRewardContract::address_index_key(day, job.next_index);
-    let (address, count_key, weight) = {
-        let index = contract.day_index(pool)?;
-        let address = index.addresses.read(&index_key)?;
-        let count_key = AgentRewardContract::tribute_count_key(day, address);
-        (address, count_key, index.counts.read(&count_key)?)
-    };
-    let share = mul_div(job.pool_minor, U256::from(weight), total_weight)?;
-    if !share.is_zero() {
-        contract.add_claimable_reward(pool, address, share)?;
-        contract.emit(IAgentReward::RewardAccrued {
-            account: address,
-            pool: pool as u8,
-            utcDay: day.value(),
-            promisLoadMinor: share,
-        })?;
+    pool: RewardPool,
+    count: u32,
+) -> Result<()> {
+    let key = AgentRewardContract::address_index_key(day, u32::from(pool as u8));
+    if contract.cleanup_scheduled.read(&key)? {
+        return Ok(());
     }
-    let index = contract.day_index(pool)?;
-    index.counts.write(&count_key, 0)?;
-    index.addresses.write(&index_key, Address::ZERO)?;
-    Ok(share)
+    let seq = contract.cleanup_tail.read()?;
+    let tail = seq.checked_add(1).ok_or(AgentRewardError::InvalidJob)?;
+    contract.cleanup_jobs.create(&AccrualJob {
+        seq,
+        day: day.value(),
+        pool: pool as u8,
+        pool_minor: U256::ZERO,
+        next_index: 0,
+        credited_minor: U256::ZERO,
+        recipient_count: count,
+        total_weight: U256::ZERO,
+    })?;
+    contract.cleanup_tail.write(tail)?;
+    contract.cleanup_scheduled.write(&key, true)
 }
 
-fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256, AgentRewardError> {
+fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
+    let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
+    for _ in 0..4 {
+        let head = contract.cleanup_head.read()?;
+        let tail = contract.cleanup_tail.read()?;
+        if head > tail {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
+        if head == tail {
+            break;
+        }
+        let mut job = contract
+            .cleanup_jobs
+            .get(head)?
+            .ok_or(AgentRewardError::InvalidJob)?;
+        let pool = RewardPool::from_abi(job.pool)?;
+        let day = WorldwideDay::new(job.day);
+        let index = contract.day_index(pool)?;
+        if job.next_index > job.recipient_count {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
+        while budget > 0 && job.next_index < job.recipient_count {
+            let key = AgentRewardContract::address_index_key(day, job.next_index);
+            let address = index.addresses.read(&key)?;
+            let count_key = AgentRewardContract::tribute_count_key(day, address);
+            if index.member_index.read(&count_key)?
+                != job
+                    .next_index
+                    .checked_add(1)
+                    .ok_or(AgentRewardError::InvalidJob)?
+            {
+                return Err(AgentRewardError::InvalidJob.into());
+            }
+            index.counts.write(&count_key, 0)?;
+            index.member_index.write(&count_key, 0)?;
+            index.addresses.write(&key, Address::ZERO)?;
+            job.next_index += 1;
+            budget -= 1;
+        }
+        if job.next_index != job.recipient_count {
+            contract.cleanup_jobs.update(&job)?;
+            break;
+        }
+        index.total.write(&day, 0)?;
+        index.address_count.write(&day, 0)?;
+        contract.cleanup_jobs.delete(head)?;
+        contract
+            .cleanup_head
+            .write(head.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
+    }
+    Ok(())
+}
+
+fn mul_div(a: U256, b: U256, denominator: U256) -> Result<U256> {
     // A product of two U256 values fits U512 without truncation.
     let value = (U512::from(a) * U512::from(b))
         .checked_div(U512::from(denominator))
         .ok_or(AgentRewardError::DistributionOverflow)?;
     if value > U512::from(U256::MAX) {
-        return Err(AgentRewardError::DistributionOverflow);
+        return Err(AgentRewardError::DistributionOverflow.into());
     }
-    // The range check above proves the narrowing conversion is lossless.
+    // The range check proves the narrowing conversion is lossless.
     Ok(value.wrapping_to::<U256>())
-}
-
-/// Reward allocated to a single address.
-pub struct AddressReward {
-    pub address: Address,
-    pub weight: U256,
-    pub reward_amount: U256,
-}
-
-/// Distributes a pool in proportion to weights, with no per-address cap.
-///
-/// Each positive weight receives `floor(pool * weight / total_weight)`.
-/// The undistributed remainder is excess, including an empty or all-zero
-/// weight set. Callers supply one weight per distinct address. The function
-/// orders the results by address.
-pub(crate) fn calculate_proportional_distribution(
-    total_pool: U256,
-    counts: &[(Address, U256)],
-) -> Result<(Vec<AddressReward>, U256), AgentRewardError> {
-    if counts.is_empty() || total_pool.is_zero() {
-        return Ok((vec![], total_pool));
-    }
-
-    let mut positive: Vec<_> = counts
-        .iter()
-        .copied()
-        .filter(|(_, weight)| !weight.is_zero())
-        .collect();
-    if positive.is_empty() {
-        return Ok((vec![], total_pool));
-    }
-    positive.sort_by_key(|(addr, _)| *addr);
-
-    let total_weight = positive.iter().try_fold(U256::ZERO, |sum, (_, weight)| {
-        sum.checked_add(*weight)
-            .ok_or(AgentRewardError::DistributionOverflow)
-    })?;
-
-    let mut rewards = Vec::with_capacity(positive.len());
-    let mut distributed = U256::ZERO;
-    for (addr, weight) in positive {
-        let share = mul_div(total_pool, weight, total_weight)?;
-        distributed = distributed
-            .checked_add(share)
-            .ok_or(AgentRewardError::DistributionOverflow)?;
-        rewards.push(AddressReward {
-            address: addr,
-            weight,
-            reward_amount: share,
-        });
-    }
-    let excess = total_pool
-        .checked_sub(distributed)
-        .ok_or(AgentRewardError::DistributionOverflow)?;
-    Ok((rewards, excess))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use proptest::test_runner::TestCaseResult;
-
-    fn pool_strategy() -> impl Strategy<Value = U256> {
-        prop_oneof![
-            Just(U256::ZERO),
-            Just(U256::MAX),
-            any::<[u64; 4]>().prop_map(U256::from_limbs),
-        ]
-    }
-
-    fn recipients_strategy(
-        weight: impl Strategy<Value = U256>,
-    ) -> impl Strategy<Value = Vec<(Address, U256, u64)>> {
-        // Nonzero byte keys give distinct nonzero addresses without filtering.
-        proptest::collection::btree_map(1u8..=u8::MAX, (weight, any::<u64>()), 0..17).prop_map(
-            |entries| {
-                entries
-                    .into_iter()
-                    .map(|(key, (weight, order))| (Address::repeat_byte(key), weight, order))
-                    .collect()
-            },
-        )
-    }
-
-    fn check_distribution(pool: U256, entries: Vec<(Address, U256, u64)>) -> TestCaseResult {
-        let counts: Vec<_> = entries
-            .iter()
-            .map(|&(address, weight, _)| (address, weight))
-            .collect();
-        let mut permuted = entries;
-        permuted.sort_by_key(|&(address, _, order)| (order, address));
-        let permuted: Vec<_> = permuted
-            .into_iter()
-            .map(|(address, weight, _)| (address, weight))
-            .collect();
-        let total_weight = counts
-            .iter()
-            .fold(U512::ZERO, |sum, (_, weight)| sum + U512::from(*weight));
-        let original_result = calculate_proportional_distribution(pool, &counts);
-        let permuted_result = calculate_proportional_distribution(pool, &permuted);
-
-        if !pool.is_zero() && total_weight > U512::from(U256::MAX) {
-            prop_assert!(matches!(
-                original_result,
-                Err(AgentRewardError::DistributionOverflow)
-            ));
-            prop_assert!(matches!(
-                permuted_result,
-                Err(AgentRewardError::DistributionOverflow)
-            ));
-            return Ok(());
-        }
-
-        let (rewards, excess) =
-            original_result.map_err(|error| TestCaseError::fail(error.to_string()))?;
-        let (permuted_rewards, permuted_excess) =
-            permuted_result.map_err(|error| TestCaseError::fail(error.to_string()))?;
-        let tuples = |rewards: &[AddressReward]| {
-            rewards
-                .iter()
-                .map(|r| (r.address, r.weight, r.reward_amount))
-                .collect::<Vec<_>>()
-        };
-        prop_assert_eq!(tuples(&rewards), tuples(&permuted_rewards));
-        prop_assert_eq!(excess, permuted_excess);
-        if pool.is_zero() || total_weight.is_zero() {
-            prop_assert!(rewards.is_empty());
-            prop_assert_eq!(excess, pool);
-            return Ok(());
-        }
-
-        prop_assert!(rewards
-            .windows(2)
-            .all(|pair| pair[0].address < pair[1].address));
-        let mut positive: Vec<_> = counts
-            .into_iter()
-            .filter(|(_, weight)| !weight.is_zero())
-            .collect();
-        positive.sort_by_key(|&(address, _)| address);
-        prop_assert_eq!(rewards.len(), positive.len());
-        let mut distributed = U512::ZERO;
-        for (reward, (address, weight)) in rewards.iter().zip(positive) {
-            prop_assert_eq!((reward.address, reward.weight), (address, weight));
-            let amount = U512::from(reward.reward_amount);
-            let product = U512::from(pool) * U512::from(weight);
-            prop_assert!(amount * total_weight <= product);
-            // Widen before adding one so a U256::MAX reward remains testable.
-            prop_assert!(product < (amount + U512::ONE) * total_weight);
-            distributed += amount;
-        }
-        prop_assert_eq!(distributed + U512::from(excess), U512::from(pool));
-        Ok(())
-    }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(64))]
-
         #[test]
-        fn bounded_weights_obey_proportional_contract(
-            pool in pool_strategy(),
-            entries in recipients_strategy(prop_oneof![Just(U256::ZERO), any::<u64>().prop_map(U256::from)]),
+        fn full_width_pool_products_floor_without_intermediate_overflow(
+            pool in any::<[u64; 4]>().prop_map(U256::from_limbs),
+            weight in any::<[u64; 4]>().prop_map(U256::from_limbs),
+            other in any::<[u64; 4]>().prop_map(U256::from_limbs),
         ) {
-            check_distribution(pool, entries)?;
-        }
-
-        #[test]
-        fn full_width_weights_obey_proportional_contract(
-            pool in pool_strategy(),
-            entries in recipients_strategy(prop_oneof![
-                Just(U256::ZERO),
-                Just(U256::MAX),
-                any::<[u64; 4]>().prop_map(U256::from_limbs),
-            ]),
-        ) {
-            check_distribution(pool, entries)?;
-        }
-
-        #[test]
-        fn degenerate_inputs_return_the_whole_pool(
-            pool in pool_strategy(),
-            entries in recipients_strategy(any::<[u64; 4]>().prop_map(U256::from_limbs)),
-        ) {
-            check_distribution(pool, Vec::new())?;
-            let zero_weights = entries.iter().map(|&(address, _, order)| (address, U256::ZERO, order)).collect();
-            check_distribution(pool, zero_weights)?;
-            check_distribution(U256::ZERO, entries)?;
-            // This total always overflows U256, but zero pools return before summing.
-            let overflowing = vec![
-                (Address::repeat_byte(1), U256::MAX, 1),
-                (Address::repeat_byte(2), U256::ONE, 0),
-            ];
-            check_distribution(U256::ZERO, overflowing.clone())?;
-            check_distribution(U256::ONE, overflowing)?;
+            let total = weight.max(other).max(U256::ONE);
+            let share = mul_div(pool, weight, total).unwrap();
+            let product = U512::from(pool) * U512::from(weight);
+            prop_assert!(U512::from(share) * U512::from(total) <= product);
+            prop_assert!(product < (U512::from(share) + U512::ONE) * U512::from(total));
+            prop_assert!(share <= pool);
         }
     }
 
     #[test]
-    fn zero_pool_has_no_rewards_or_excess() {
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::ZERO,
-            &[(Address::repeat_byte(1), U256::ONE)],
-        )
-        .unwrap();
-        assert!(rewards.is_empty());
-        assert_eq!(excess, U256::ZERO);
-    }
-
-    #[test]
-    fn wide_products_and_checked_overflow() {
-        let a = Address::repeat_byte(1);
-        let b = Address::repeat_byte(2);
-        let (rewards, excess) =
-            calculate_proportional_distribution(U256::MAX, &[(a, U256::MAX)]).unwrap();
-        assert_eq!(rewards[0].reward_amount, U256::MAX);
-        assert_eq!(rewards[0].weight, U256::MAX);
-        assert_eq!(excess, U256::ZERO);
-        assert!(
-            calculate_proportional_distribution(U256::ONE, &[(a, U256::MAX), (b, U256::ONE)])
-                .is_err()
-        );
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::from(1000),
-            &[(a, U256::from(u64::MAX)), (b, U256::from(u64::MAX))],
-        )
-        .unwrap();
-        assert_eq!(excess, U256::ZERO);
-        assert!(rewards.iter().all(|r| r.reward_amount == U256::from(500)));
+    fn wide_product_narrowing_and_zero_denominator_are_checked() {
+        assert_eq!(mul_div(U256::MAX, U256::MAX, U256::MAX).unwrap(), U256::MAX);
         assert!(mul_div(U256::MAX, U256::MAX, U256::ONE).is_err());
         assert!(mul_div(U256::ONE, U256::ONE, U256::ZERO).is_err());
-        let (rewards, excess) =
-            calculate_proportional_distribution(U256::ONE, &[(a, U256::ZERO)]).unwrap();
-        assert!(rewards.is_empty());
-        assert_eq!(excess, U256::ONE);
-    }
-
-    #[test]
-    fn proportional_distribution_has_no_address_cap() {
-        let alice = Address::repeat_byte(1);
-        let bob = Address::repeat_byte(2);
-        let carol = Address::repeat_byte(3);
-
-        let (rewards, excess) =
-            calculate_proportional_distribution(U256::from(100), &[(alice, U256::from(7))])
-                .unwrap();
-        assert_eq!(excess, U256::ZERO);
-        assert_eq!(rewards[0].reward_amount, U256::from(100));
-
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::from(100),
-            &[(bob, U256::from(20)), (alice, U256::from(80))],
-        )
-        .unwrap();
-        assert_eq!(excess, U256::ZERO);
-        assert_eq!(
-            rewards
-                .iter()
-                .map(|reward| (reward.address, reward.reward_amount))
-                .collect::<Vec<_>>(),
-            vec![(alice, U256::from(80)), (bob, U256::from(20))]
-        );
-
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::from(10),
-            &[(carol, U256::ONE), (alice, U256::ONE), (bob, U256::ONE)],
-        )
-        .unwrap();
-        assert_eq!(excess, U256::ONE);
-        assert!(rewards
-            .iter()
-            .all(|reward| reward.reward_amount == U256::from(3)));
-        let credited = rewards
-            .iter()
-            .fold(U256::ZERO, |sum, reward| sum + reward.reward_amount);
-        assert_eq!(credited + excess, U256::from(10));
-
-        let (rewards, excess) = calculate_proportional_distribution(U256::from(1000), &[]).unwrap();
-        assert!(rewards.is_empty());
-        assert_eq!(excess, U256::from(1000));
-
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::from(1000),
-            &[(alice, U256::ZERO), (bob, U256::ZERO)],
-        )
-        .unwrap();
-        assert!(rewards.is_empty());
-        assert_eq!(excess, U256::from(1000));
-
-        let (rewards, excess) = calculate_proportional_distribution(
-            U256::from(100),
-            &[
-                (carol, U256::ZERO),
-                (Address::repeat_byte(4), U256::from(20)),
-                (alice, U256::from(80)),
-            ],
-        )
-        .unwrap();
-        assert_eq!(
-            rewards
-                .iter()
-                .map(|reward| reward.address)
-                .collect::<Vec<_>>(),
-            vec![alice, Address::repeat_byte(4)]
-        );
-        assert_eq!(excess, U256::ZERO);
-
-        assert!(calculate_proportional_distribution(
-            U256::ONE,
-            &[(alice, U256::MAX), (bob, U256::ONE)]
-        )
-        .is_err());
     }
 }

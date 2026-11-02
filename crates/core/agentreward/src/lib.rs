@@ -7,5 +7,6 @@ pub mod schema;
 
 pub use schema::AgentRewardContract;
 
+pub mod api;
 #[cfg(test)]
 mod tests;

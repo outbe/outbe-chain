@@ -1,19 +1,9 @@
 //! Public cross-module API surface for the Rewards module.
 //!
-//! Exposes the read-only and write entrypoints that other modules
-//! (EmissionLimit, AgentReward) call as part of the daily Cycle dispatch
-//! chain (`Cycle -> EmissionLimit -> AgentReward -> Rewards`). Before this
-//! refactor, `RewardsLifecycle` owned the day-boundary settle, and
-//! `on_finalized_metadata` triggered it. With Phase 3, that responsibility
-//! moves out of Rewards. Rewards becomes a pure storage + accounting layer.
-//! It exposes the data that the new orchestrator needs:
-//!
-//! * [`read_daily_fee_sum_raw`] - locked-in raw fee total per UTC day.
-//!   AgentReward uses it to choose between two actions: forward the validator
-//!   pool to Metadosis, or emit a topup.
-//! * [`read_voters_for_day`] - ordered (Address, participation count)
-//!   pairs for a UTC day. The first-seen-on-day order is deterministic.
-//!   AgentReward weights the validator pool by it.
+//! Cycle closes completed days and calls [`allocate_day_validator_rewards`] to
+//! split the validator budget against native fees. AgentReward creates the job,
+//! reads its immutable count/weight through [`sealed_day_inputs`] and recipients
+//! through [`reward_voter_at`], then schedules bounded cleanup after settlement.
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
@@ -27,7 +17,7 @@ mod tests;
 /// the value `on_finalized_metadata` writes per finalized block via
 /// `daily_fee_sum_raw[day] += validator_fee_sum`. Returns `U256::ZERO`
 /// if no finalized metadata has been processed yet for `day`.
-/// Full historical details are retained through D+7; expired details can be pruned.
+/// Details remain available until the validator job ends and bounded cleanup runs.
 pub fn read_daily_fee_sum_raw(ctx: &BlockRuntimeContext, day: u32) -> Result<U256> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_fee_sum_raw.read(&day)
@@ -43,8 +33,8 @@ pub fn read_daily_fee_sum_raw(ctx: &BlockRuntimeContext, day: u32) -> Result<U25
 /// is the number of finalized blocks from `day` in which the voter
 /// participated. Returns an empty vector if the module recorded no voters
 /// for `day`.
-/// Full details are guaranteed only through D+7. After expiration, bounded cleanup
-/// can expose only the remaining first-seen prefix, then an empty list.
+/// Details remain available until the validator job ends. During bounded cleanup,
+/// cleared indices read as zero; use the indexed APIs for monetary jobs.
 pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(Address, u64)>> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let count = rewards.daily_voter_count.read(&day)?;
@@ -77,4 +67,58 @@ pub fn day_participation_complete(ctx: &BlockRuntimeContext, utc_day: u32) -> Re
 pub fn close_day_participation(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     rewards.daily_participation_closed.write(&day, true)
+}
+
+/// Validator budget split, in protocol units. This does not credit recipients.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidatorRewardAllocation {
+    pub topup: U256,
+    pub fee_covered: U256,
+}
+
+/// Computes the native-fee-adjusted top-up for a completed, closed day.
+pub fn allocate_day_validator_rewards(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    validator_share: U256,
+) -> Result<ValidatorRewardAllocation> {
+    crate::runtime::allocate_day_validator_rewards(ctx, day, validator_share)
+}
+
+/// Immutable recipient count and total weight for a completed, closed day.
+/// The caller must finish its monetary job before scheduling cleanup.
+pub fn sealed_day_inputs(ctx: &BlockRuntimeContext, day: u32) -> Result<(u32, U256)> {
+    crate::runtime::require_sealed_day(ctx, day)?;
+    let rewards = ctx.storage.contract::<Rewards>();
+    Ok((
+        rewards.daily_voter_count.read(&day)?,
+        rewards.daily_total_participation.read(&day)?,
+    ))
+}
+
+/// Reads one sealed recipient without constructing the day population.
+pub fn reward_voter_at(ctx: &BlockRuntimeContext, day: u32, index: u32) -> Result<(Address, U256)> {
+    let (count, total) = sealed_day_inputs(ctx, day)?;
+    if index >= count {
+        return Err(crate::errors::RewardsError::VoterIndexOutOfBounds.into());
+    }
+    let rewards = ctx.storage.contract::<Rewards>();
+    let voter = rewards.daily_voter_at.get_nested(&day).read(&index)?;
+    // Every participation count is bounded by the checked u64 per-voter counter.
+    let weight = U256::from(rewards.daily_participation.get_nested(&day).read(&voter)?);
+    if voter.is_zero() || (!total.is_zero() && weight.is_zero()) {
+        return Err(crate::errors::RewardsError::InvalidVoterEntry.into());
+    }
+    Ok((voter, weight))
+}
+
+/// Queues a day once, only after its validator job has finished or was abandoned.
+pub fn enqueue_day_cleanup(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    crate::runtime::enqueue_day_cleanup(ctx, day)
+}
+
+/// Deletes at most 256 voter entries and four headers per block, independently
+/// of the monetary worker's 256-recipient budget. Failure rolls back this pass.
+pub fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
+    crate::runtime::process_day_cleanup(ctx)
 }

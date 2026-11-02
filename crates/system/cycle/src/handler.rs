@@ -8,18 +8,14 @@
 
 use alloy_primitives::U256;
 
-use outbe_agentreward::distribution::{
-    advance_accruals, distribute_daily_detailed, DailyPoolDistribution, PoolKind,
-};
+use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards};
 use outbe_emission::{
     allocation::{allocate_emission, EmissionSinkId},
     api::DayAllocationAmounts,
     day_emission::day_emission_limit,
     schema::emission_day_state,
 };
-use outbe_metadosis::commands::{
-    dispatch_late_settlement_residue_at, dispatch_terminal_remainder_at,
-};
+use outbe_metadosis::commands::dispatch_terminal_remainder_at;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -28,7 +24,6 @@ use outbe_primitives::{
         date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
         TimeError,
     },
-    units::{checked_protocol_to_native, units_to_protocol_minor_floor},
 };
 
 use crate::errors::CycleError;
@@ -176,16 +171,6 @@ fn gas_sample_delta(later: u64, earlier: u64) -> u64 {
     later.saturating_sub(earlier)
 }
 
-/// Applies raw 18-decimal gas fees to a six-decimal validator emission budget,
-/// then floors only the remaining native amount back to protocol precision.
-fn validator_topup_protocol(validator_amount: U256, fees_native: U256) -> Result<U256> {
-    let native_budget = checked_protocol_to_native(validator_amount)
-        .ok_or(CycleError::NativeValidatorBudgetOverflow)?;
-    Ok(units_to_protocol_minor_floor(
-        native_budget.saturating_sub(fees_native),
-    ))
-}
-
 fn wrap(step: &str, r: Result<()>) -> Result<()> {
     r.map_err(|e| {
         tracing::error!(target: "outbe::cycle", step, error = ?e, "emission_limit_daily step failed");
@@ -219,20 +204,26 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
     let g1 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g1, g0), cumulative = g1, "after allocate_emission");
 
-    let validator_topup = validator_topup(ctx, prev_day, shares.validator)?;
     wrap(
         "close_day_participation",
         outbe_rewards::api::close_day_participation(ctx, prev_day),
     )?;
-    let fee_covered = shares
-        .validator
-        .checked_sub(validator_topup)
-        .ok_or(CycleError::ValidatorTopupExceedsAllocation)?;
+    let validator =
+        outbe_rewards::api::allocate_day_validator_rewards(ctx, prev_day, shares.validator)?;
+    let validator_topup = validator.topup;
+    let fee_covered = validator.fee_covered;
 
     let g2 = gas(ctx);
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g2, g1), cumulative = g2, "after validator top-up");
 
-    let dist = distribute_reward_pools(ctx, prev_day, &shares, validator_topup)?;
+    let dist = allocate_day_agent_rewards(
+        ctx,
+        prev_day.into(),
+        validator_topup,
+        shares.waa,
+        shares.sra,
+        shares.cca,
+    )?;
     let pool_excess = dist.total_excess;
 
     let g3 = gas(ctx);
@@ -247,10 +238,10 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
             DayAllocationAmounts {
                 emission_limit: cap,
                 metadosis_limit: metadosis_total,
-                validators: dist.validators_distributed,
+                validators: dist.validators_allocated,
                 waa: dist.waa_allocated,
                 sra: dist.sra_allocated,
-                cca: dist.cca_distributed,
+                cca: dist.cca_allocated,
                 promis_limit: U256::ZERO,
             },
         )
@@ -383,47 +374,6 @@ impl EmissionShares {
     }
 }
 
-/// The validator top-up of `prev_day`: the validator share minus the day's raw
-/// fees, in protocol units. AgentReward credits it to the validator pool.
-fn validator_topup(
-    ctx: &BlockRuntimeContext,
-    prev_day: u32,
-    validator_amount: U256,
-) -> Result<U256> {
-    if validator_amount.is_zero() {
-        return Ok(U256::ZERO);
-    }
-    let fees = outbe_rewards::api::read_daily_fee_sum_raw(ctx, prev_day).map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "read_daily_fee_sum_raw", error = ?e, "emission_limit_daily step failed");
-        e
-    })?;
-    validator_topup_protocol(validator_amount, fees)
-}
-
-/// Distributes the WAA, SRA, CCA and validator pools of `prev_day`. Returns the
-/// per-pool allocations and undistributed excess.
-fn distribute_reward_pools(
-    ctx: &BlockRuntimeContext,
-    prev_day: u32,
-    shares: &EmissionShares,
-    validator_topup: U256,
-) -> Result<DailyPoolDistribution> {
-    distribute_daily_detailed(
-        ctx,
-        prev_day.into(),
-        &[
-            (PoolKind::Waa, shares.waa),
-            (PoolKind::Sra, shares.sra),
-            (PoolKind::Cca, shares.cca),
-            (PoolKind::Validator, validator_topup),
-        ],
-    )
-    .map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "distribute_daily", error = ?e, "emission_limit_daily step failed");
-        e
-    })
-}
-
 /// Sends the terminal Metadosis remainder of `prev_day`. Then checks that
 /// Metadosis formed the day limit for `prev_day` with the same base limit.
 fn dispatch_terminal_remainder(
@@ -445,17 +395,12 @@ fn dispatch_terminal_remainder(
     }
 }
 
-/// Credits this block's slice of the queued WAA and SRA day pools and sends the
-/// rounding residue of the finished ones to the Promis Limit.
+/// Processes the shared four-pool accrual budget and bounded owner cleanup.
 pub(crate) fn credit_reward_slice(ctx: &BlockRuntimeContext) -> Result<()> {
-    let residue = advance_accruals(ctx).map_err(|e| {
-        tracing::error!(target: "outbe::cycle", step = "advance_accruals", error = ?e, "protocol cycle step failed");
+    process_agent_rewards(ctx).map_err(|e| {
+        tracing::error!(target: "outbe::cycle", step = "process_agent_rewards", error = ?e, "protocol cycle step failed");
         e
-    })?;
-    wrap(
-        "dispatch_late_settlement_residue_at",
-        dispatch_late_settlement_residue_at(ctx, residue, ctx.block.timestamp),
-    )
+    })
 }
 
 fn is_recoverable_step_error(err: &PrecompileError) -> bool {
@@ -507,7 +452,8 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
     ctx.storage.with_checkpoint(|| {
         let day_num = day_number(ctx, day)?;
         let cap = day_emission_limit(day_num);
-        let _ = outbe_rewards::api::close_day_participation(ctx, day);
+        outbe_rewards::api::close_day_participation(ctx, day)?;
+        outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;
         }
@@ -614,27 +560,6 @@ pub(crate) fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> Result<()> 
 #[cfg(test)]
 mod unit_tests {
     use super::*;
-    use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
-
-    #[test]
-    fn validator_fees_stay_native_until_the_remaining_budget_is_floored() {
-        let allocation = U256::from(2u64);
-        let one_protocol_minor = UNITS_PER_PROTOCOL_MINOR;
-
-        assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_minor - U256::ONE).unwrap(),
-            U256::ONE
-        );
-        assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_minor + U256::ONE).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            validator_topup_protocol(allocation, one_protocol_minor * U256::from(2u64)).unwrap(),
-            U256::ZERO
-        );
-    }
-
     #[test]
     fn a_decreasing_gas_sample_reports_zero_and_an_increase_keeps_the_difference() {
         assert_eq!(gas_sample_delta(3, 10), 0);

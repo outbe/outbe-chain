@@ -19,6 +19,119 @@ use outbe_primitives::{
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
+pub(crate) fn require_sealed_day(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let rewards = ctx.storage.contract::<Rewards>();
+    if day == 0
+        || day >= timestamp_to_date_key(ctx.block.timestamp)
+        || !rewards.daily_participation_closed.read(&day)?
+        || !crate::api::day_participation_complete(ctx, day)?
+    {
+        return Err(RewardsError::DayNotSealed.into());
+    }
+    Ok(())
+}
+
+pub(crate) fn allocate_day_validator_rewards(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    validator_share: U256,
+) -> Result<crate::api::ValidatorRewardAllocation> {
+    use outbe_primitives::units::{checked_protocol_to_native, units_to_protocol_minor_floor};
+    require_sealed_day(ctx, day)?;
+    let topup = if validator_share.is_zero() {
+        U256::ZERO
+    } else {
+        let native_budget = checked_protocol_to_native(validator_share)
+            .ok_or(RewardsError::NativeValidatorBudgetOverflow)?;
+        let fees = ctx
+            .storage
+            .contract::<Rewards>()
+            .daily_fee_sum_raw
+            .read(&day)?;
+        units_to_protocol_minor_floor(native_budget.saturating_sub(fees))
+    };
+    Ok(crate::api::ValidatorRewardAllocation {
+        topup,
+        // Native subtraction followed by flooring cannot exceed the original share.
+        fee_covered: validator_share - topup,
+    })
+}
+
+pub(crate) fn enqueue_day_cleanup(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let rewards = ctx.storage.contract::<Rewards>();
+    if rewards.cleanup_scheduled.read(&day)? {
+        return Ok(());
+    }
+    require_sealed_day(ctx, day)?;
+    ctx.storage.with_checkpoint(|| {
+        let tail = rewards.cleanup_tail.read()?;
+        let next = tail
+            .checked_add(1)
+            .ok_or(RewardsError::CleanupQueueOverflow)?;
+        rewards.cleanup_day_at.write(&tail, day)?;
+        rewards.cleanup_tail.write(next)?;
+        rewards.cleanup_scheduled.write(&day, true)
+    })
+}
+
+pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.with_checkpoint(|| {
+        let rewards = ctx.storage.contract::<Rewards>();
+        if rewards.cleanup_processed_initialized.read()?
+            && rewards.cleanup_processed_height.read()? == ctx.block.block_number
+        {
+            return Ok(());
+        }
+        let mut head = rewards.cleanup_head.read()?;
+        let tail = rewards.cleanup_tail.read()?;
+        if head > tail {
+            return Err(RewardsError::CleanupQueueCorrupt.into());
+        }
+        let mut remaining = 256u32;
+        for _ in 0..4 {
+            if head == tail {
+                break;
+            }
+            let day = rewards.cleanup_day_at.read(&head)?;
+            if day == 0 || !rewards.daily_participation_closed.read(&day)? {
+                return Err(RewardsError::CleanupQueueCorrupt.into());
+            }
+            let count = rewards.daily_voter_count.read(&day)?;
+            let mut index = rewards.cleanup_next_index.read(&day)?;
+            if index > count {
+                return Err(RewardsError::CleanupQueueCorrupt.into());
+            }
+            let voters = rewards.daily_voter_at.get_nested(&day);
+            let participation = rewards.daily_participation.get_nested(&day);
+            while index < count && remaining > 0 {
+                let voter = voters.read(&index)?;
+                participation.write(&voter, 0)?;
+                voters.write(&index, Address::ZERO)?;
+                // index < count <= u32::MAX, so increment cannot overflow.
+                index += 1;
+                remaining -= 1;
+            }
+            if index < count {
+                rewards.cleanup_next_index.write(&day, index)?;
+                break;
+            }
+            rewards.daily_voter_count.write(&day, 0)?;
+            rewards.daily_total_participation.write(&day, U256::ZERO)?;
+            rewards.daily_fee_sum_raw.write(&day, U256::ZERO)?;
+            rewards.daily_last_window_close.write(&day, 0)?;
+            rewards.cleanup_next_index.write(&day, 0)?;
+            rewards.cleanup_day_at.write(&head, 0)?;
+            // head < tail <= u64::MAX, so increment cannot overflow.
+            head += 1;
+            rewards.cleanup_head.write(head)?;
+        }
+        rewards
+            .cleanup_processed_height
+            .write(ctx.block.block_number)?;
+        rewards.cleanup_processed_initialized.write(true)
+    })
+}
+
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
 /// branch on this and skip all per-block module work when
 /// `IdenticalReplay` is returned.
