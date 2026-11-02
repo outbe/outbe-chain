@@ -51,7 +51,13 @@ pub fn mine_promis(
 
         // Promis is confidential: the mint runs inside the enclave, authorized by the
         // owner's Promis modify key (the `mac`/`opNonce` must bind `promis_minor`).
-        outbe_promisfactory::api::mint(storage.clone(), owner, promis_minor, auth)?;
+        outbe_promisfactory::api::mint_from_intex(
+            storage.clone(),
+            outbe_intex::intex_id(series_id),
+            owner,
+            promis_minor,
+            auth,
+        )?;
 
         emit_event(
             storage,

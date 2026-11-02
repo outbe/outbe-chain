@@ -52,7 +52,7 @@ pub fn dispatch(
                     runtime::mine_gratis(
                         storage.clone(),
                         sender,
-                        c.promisMinor,
+                        c.encryptedPromisMinor.to_vec(),
                         promis_auth,
                         gratis_auth,
                     )

@@ -467,7 +467,13 @@ pub fn mine_promis(
         // The Promis is confidential: the mint runs inside the enclave, authorized by
         // the gem owner's Promis modify key. The client's `mac`/`opNonce` must bind the
         // minted amount (`item.promis_load_minor`), so the client precomputes it.
-        outbe_promisfactory::api::mint(storage.clone(), item.owner, item.promis_load_minor, auth)?;
+        outbe_promisfactory::api::mint_from_gem(
+            storage.clone(),
+            gem_id,
+            item.owner,
+            item.promis_load_minor,
+            auth,
+        )?;
 
         emit_event(
             storage,

@@ -1380,7 +1380,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             .get_events(GRATIS_ADDRESS)
             .iter()
             .filter_map(|log| {
-                outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(log).ok()
+                outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(log).ok()
             })
             .count();
         (groups, forfeited, burned_tokens, burned_gratis)

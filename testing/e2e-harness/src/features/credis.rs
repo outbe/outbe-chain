@@ -191,12 +191,19 @@ fn prepare(world: &mut World) {
         &eth::IGratis::opNonceOfCall { account: user },
     )
     .expect("Gratis mint nonce");
+    let offer_public_key = world
+        .localnet
+        .node_offer_public(1)
+        .expect("TEE offer public key");
+    let encrypted_promis_minor =
+        outbe_tee::offer_encrypt::encrypt_tee_amount(&offer_public_key, INITIAL_GRATIS)
+            .expect("encrypt mineGratis amount");
     send(
         &url,
         addresses::PROMIS_FACTORY_ADDR,
         DEPLOYER_KEY,
         &eth::IPromisFactory::mineGratisCall {
-            promisMinor: INITIAL_GRATIS,
+            encryptedPromisMinor: encrypted_promis_minor.into(),
             promisMac: outbe_tee_enclave::promis::modify_mac(
                 &promis_keys.modify,
                 &outbe_tee_enclave::promis::ModifyOperation {
@@ -401,7 +408,7 @@ fn pledge(world: &mut World) {
         None,
     );
     let pledged =
-        event::<eth::IGratisFactory::GratisPledged>(&receipt, addresses::GRATIS_FACTORY_ADDR);
+        event::<eth::IGratisFactory::GratisPledgeCreated>(&receipt, addresses::GRATIS_FACTORY_ADDR);
     assert_eq!(
         (pledged.reservationId, pledged.source, pledged.gratisMinor),
         (f.reservation, f.user, reservation.gratisMinor)
@@ -457,7 +464,7 @@ fn issue(world: &mut World) {
     assert_receipt_event(
         &receipt,
         addresses::GRATIS_FACTORY_ADDR,
-        &eth::IGratisFactory::PledgeSentToCredis {
+        &eth::IGratisFactory::GratisPledgeSentToCredis {
             reservationId: f.reservation,
             credisId: id,
         },

@@ -18,10 +18,12 @@ interface IGratisFactory {
         bytes32 mac;
         uint64 opNonce;
     }
-    event GratisPledged(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
-    event PledgeSentToCredis(uint256 indexed reservationId, uint256 indexed credisId);
-    event PledgeCancelled(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
-    event CoenMined(address indexed account, uint256 coenMinor);
+    event GratisPledgeCreated(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
+    event GratisPledgeSentToCredis(uint256 indexed reservationId, uint256 indexed credisId);
+    event GratisPledgeCanceled(uint256 indexed reservationId, address indexed source, uint256 gratisMinor);
+    event GratisPledgeReleased(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
+    event GratisPledgeBurned(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
+    event CoenMinedFromGratis(address indexed account, uint256 amountMinor);
     /// Pledge the reservation's Gratis from the caller's liquid balance. The caller
     /// must be the reservation source. `auth` binds `Pledge` and the reserved amount.
     function pledgeGratis(uint256 reservationId, ModifyAuth calldata auth) external;

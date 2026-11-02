@@ -4,9 +4,10 @@
 //! `ModifyAuth` bound to the account's op-nonce.
 
 use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
-use alloy_sol_types::{SolCall, SolInterface};
+use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_primitives::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -746,6 +747,56 @@ fn mine_coen_reverts_when_the_timestamp_exceeds_u64() {
         assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
         assert_eq!(view_balance(&storage, alice()), amount);
     });
+}
+
+/// Gratis burn and native COEN mint are one sale: both logs are present together.
+#[test]
+fn mine_coen_emits_gratis_burned_and_coen_mined() {
+    let mut provider = test_storage();
+    let amount = U256::from(1_000u64);
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                gratisMinor: amount,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
+        dispatch(storage, &call, alice(), U256::ZERO).unwrap();
+    });
+    let burned: Vec<_> = provider
+        .get_events(GRATIS_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(log).ok()
+        })
+        .collect();
+    let mined: Vec<_> = provider
+        .get_events(GRATIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratisFactory::CoenMinedFromGratis::decode_log_data(log).ok())
+        .collect();
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+
+    assert_eq!(burned.len(), 1);
+    assert_eq!(burned[0].account, alice());
+    assert_eq!(burned[0].encryptedAmountMinor.len(), 92);
+    assert_eq!(&burned[0].encryptedAmountMinor[8..12], b"GRA2");
+    assert_eq!(mined.len(), 1);
+    assert_eq!(mined[0].account, alice());
+    assert_eq!(
+        mined[0].amountMinor,
+        checked_protocol_to_native(amount).unwrap()
+    );
 }
 
 #[test]

@@ -6,7 +6,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_tee::protocol::{
     FidelityOpOutcome, FidelityOpSection, GratisOp, GratisOpRequest, GratisOpResult,
-    GratisOpStatus, ModifyAuth,
+    GratisOpStatus, MineGratisFromPromisResultV1, ModifyAuth,
 };
 
 use crate::enclave_client::apply_gratis_op;
@@ -95,6 +95,7 @@ pub(crate) fn ensure_owner_result(
     if result.event_amount != amount
         || result.new_balance.is_empty()
         || !result.new_pledged.is_empty()
+        || result.encrypted_event_amount.is_empty()
     {
         return Err(GratisFatalError::OwnerResultMismatch.into());
     }
@@ -127,13 +128,13 @@ fn apply_owner_movement(
     write_account_blobs(&gratis, account, &result)?;
     crate::state::account(&gratis, account).set_op_nonce(result.next_op_nonce)?;
     let event = match operation {
-        GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinted {
+        GratisOp::Mint => SolEvent::encode_log_data(&IGratis::GratisMinedFromPromis {
             account,
-            gratisMinor: result.event_amount,
+            encryptedAmountMinor: result.encrypted_event_amount.into(),
         }),
         GratisOp::Burn => SolEvent::encode_log_data(&IGratis::GratisBurned {
             account,
-            gratisMinor: result.event_amount,
+            encryptedAmountMinor: result.encrypted_event_amount.into(),
         }),
         _ => return Err(GratisFatalError::InvalidOwnerMovement.into()),
     };
@@ -308,7 +309,10 @@ pub(crate) fn burn_pledged(
             account,
             amount,
         );
-        apply_collateral_op(storage, req)?;
+        let result = apply_collateral_op(storage, req)?;
+        if result.encrypted_event_amount.is_empty() {
+            return Err(GratisFatalError::CollateralResultMismatch.into());
+        }
         let gratis = Gratis::new(storage.clone());
         crate::state::set_pledged_total_supply(
             &gratis,
@@ -318,9 +322,9 @@ pub(crate) fn burn_pledged(
         )?;
         storage.emit_event(
             GRATIS_ADDRESS,
-            SolEvent::encode_log_data(&IGratis::GratisBurned {
+            SolEvent::encode_log_data(&IGratis::GratisBurnedFromPledge {
                 account,
-                gratisMinor: amount,
+                encryptedAmountMinor: result.encrypted_event_amount.into(),
             }),
         )
     })
@@ -347,7 +351,7 @@ pub(crate) fn mint_encrypted_nod(
     let _context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = crate::enclave_client::mine_encrypted_nod(request)?;
     ensure_next_nonce(op_nonce, result.next_op_nonce)?;
-    if result.new_balance.is_empty() {
+    if result.new_balance.is_empty() || result.encrypted_event_amount.is_empty() {
         return Err(GratisFatalError::OwnerResultMismatch.into());
     }
     crate::state::account(&gratis, nod.terms.owner).write_balance_ct(&result.new_balance)?;
@@ -355,10 +359,41 @@ pub(crate) fn mint_encrypted_nod(
     storage.emit_event(
         GRATIS_ADDRESS,
         SolEvent::encode_log_data(&IGratis::GratisMinedFromNod {
+            nodId: nod.terms.nod_id,
             account: nod.terms.owner,
-            encryptedAmount: nod.encrypted_gratis_amount.clone().into(),
-            encryptedBalance: result.new_balance.into(),
+            encryptedAmountMinor: result.encrypted_event_amount.into(),
         }),
     )?;
     Ok(result.fidelity)
+}
+
+pub(crate) fn check_account_op_nonce(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    provided: u64,
+) -> Result<()> {
+    let gratis = Gratis::new(storage.clone());
+    check_op_nonce(&gratis, account, provided)
+}
+
+pub(crate) fn apply_mined_from_promis(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    op_nonce: u64,
+    result: &MineGratisFromPromisResultV1,
+) -> Result<()> {
+    if result.new_gratis_balance.is_empty() || result.encrypted_gratis_event_amount.is_empty() {
+        return Err(GratisFatalError::OwnerResultMismatch.into());
+    }
+    ensure_next_nonce(op_nonce, result.next_gratis_op_nonce)?;
+    let gratis = Gratis::new(storage.clone());
+    crate::state::account(&gratis, account).write_balance_ct(&result.new_gratis_balance)?;
+    crate::state::account(&gratis, account).set_op_nonce(result.next_gratis_op_nonce)?;
+    storage.emit_event(
+        GRATIS_ADDRESS,
+        SolEvent::encode_log_data(&IGratis::GratisMinedFromPromis {
+            account,
+            encryptedAmountMinor: result.encrypted_gratis_event_amount.clone().into(),
+        }),
+    )
 }

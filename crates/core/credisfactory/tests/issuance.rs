@@ -463,7 +463,7 @@ fn retry_issuance_and_cancel_expired(
             .journaled_state
             .logs()
             .iter()
-            .filter_map(|log| IGratisFactory::PledgeCancelled::decode_log_data(&log.data).ok())
+            .filter_map(|log| IGratisFactory::GratisPledgeCanceled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(cancelled.len(), 1);
         assert_eq!(

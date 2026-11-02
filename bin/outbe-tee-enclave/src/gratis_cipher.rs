@@ -82,6 +82,15 @@ pub struct BalanceTransition {
     pub input_hash: B256,
 }
 
+/// Domain-separated `input_hash` for sealing event-only `GRA2`/`PRO2` amount
+/// envelopes (`previous_version: 0`), ensuring the event envelope never shares
+/// a binding, key, or nonce with the version-1 balance transition on first mint.
+pub fn event_amount_input_hash(canonical_hash: B256) -> B256 {
+    let mut preimage = b"outbe/tee/event-amount/v1".to_vec();
+    preimage.extend_from_slice(canonical_hash.as_slice());
+    alloy_primitives::keccak256(preimage)
+}
+
 pub fn write_amount(key: &[u8; 32], transition: BalanceTransition) -> Result<Vec<u8>> {
     write_amount_with_spec(&GRATIS_SPEC, key, transition)
 }

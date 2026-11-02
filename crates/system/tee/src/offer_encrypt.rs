@@ -13,13 +13,48 @@
 //! It uses no enclave-resident secret material. Thus the crate rule holds:
 //! secret-bearing cryptography lives only in `bin/outbe-tee-enclave`.
 
+use alloy_primitives::U256;
+
 use crate::{errors::LocalCryptoError, OFFER_HKDF_SALT};
 
 /// HKDF info string binding the derived key to the tribute-offer domain.
 pub const OFFER_HKDF_INFO: &[u8] = b"tribute-factory-encryption";
 
+/// Fixed wire size of a `U256` amount encrypted to the enclave's X25519 offer key:
+/// `ephemeral_pub(32) || nonce(12) || ciphertext_with_tag(48)`.
+pub const ENCRYPTED_TEE_AMOUNT_LEN: usize = 32 + 12 + 32 + 16;
+
 /// `(cipher_text, nonce, ephemeral_pub)` produced by [`encrypt_tribute_offer`].
 pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
+
+/// Encrypt a `U256` amount to `offer_pub` with a fresh ephemeral key and nonce.
+/// Returns `ephemeral_pub(32) || nonce(12) || ciphertext(48)` (92 bytes).
+pub fn encrypt_tee_amount(offer_pub: &[u8; 32], amount: U256) -> Result<Vec<u8>, LocalCryptoError> {
+    let (cipher_text, nonce, eph_pub) =
+        encrypt_tribute_offer(offer_pub, &amount.to_be_bytes::<32>())?;
+    let mut out = Vec::with_capacity(ENCRYPTED_TEE_AMOUNT_LEN);
+    out.extend_from_slice(&eph_pub);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&cipher_text);
+    Ok(out)
+}
+
+/// Deterministic variant of [`encrypt_tee_amount`] with an explicit ephemeral secret and nonce.
+pub fn encrypt_tee_amount_with(
+    offer_pub: &[u8; 32],
+    eph_sk: [u8; 32],
+    nonce: [u8; 12],
+    amount: U256,
+) -> Result<Vec<u8>, LocalCryptoError> {
+    let eph_pub = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(eph_sk));
+    let cipher_text =
+        encrypt_tribute_offer_with(offer_pub, eph_sk, nonce, &amount.to_be_bytes::<32>())?;
+    let mut out = Vec::with_capacity(ENCRYPTED_TEE_AMOUNT_LEN);
+    out.extend_from_slice(eph_pub.as_bytes());
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&cipher_text);
+    Ok(out)
+}
 
 /// Encrypt `plaintext` to `offer_pub` with a fresh ephemeral key and nonce.
 /// Returns `(cipher_text, nonce, ephemeral_pub)`.
@@ -58,8 +93,8 @@ pub fn encrypt_tribute_offer_with(
 }
 
 /// The known-plaintext canary/bench offer payload: 1 SU hash and ISO 4217 code
-/// 999 ("XXX", no currency). One shared recipe so the canary asserts exactly
-/// what the bench measures.
+/// 999 (the standard no-currency code). One shared recipe so the canary asserts
+/// exactly what the bench measures.
 pub fn canary_offer_json(worldwide_day: u32) -> String {
     format!(
         r#"{{

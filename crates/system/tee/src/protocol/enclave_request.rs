@@ -2,8 +2,8 @@ use alloy_primitives::{Address, B256, U256};
 
 use super::{
     EncryptedTributeOffer, FidelityCohortRequest, FidelityQueryRequest, FidelitySnapshotRequest,
-    GramineDirectDevOnboardingContextV1, GratisOpRequest, Ledger, ParticipantAnnounce,
-    PromisOpRequest,
+    GramineDirectDevOnboardingContextV1, GratisOpRequest, Ledger, MineGratisFromPromisRequestV1,
+    ParticipantAnnounce, PromisOpRequest,
 };
 
 #[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -416,6 +416,9 @@ pub enum EnclaveRequest {
         context: outbe_primitives::nod_encryption::NodQuoteContextV1,
         payment_minor: U256,
     },
+    MineGratisFromPromisV1 {
+        request: Box<MineGratisFromPromisRequestV1>,
+    },
 }
 
 mod canonical_onboarding_context {
@@ -527,6 +530,7 @@ impl EnclaveRequest {
             Self::ApplyNodGroupLoadOpV1 { .. } => "apply_nod_group_load_op_v1",
             Self::ReadNodGroupLoadV1 { .. } => "read_nod_group_load_v1",
             Self::EncryptNodQuoteV1 { .. } => "encrypt_nod_quote_v1",
+            Self::MineGratisFromPromisV1 { .. } => "mine_gratis_from_promis_v1",
         }
     }
 
@@ -574,7 +578,8 @@ impl EnclaveRequest {
             | Self::IssueNodFromTributeV1 { .. }
             | Self::ApplyNodGroupLoadOpV1 { .. }
             | Self::ReadNodGroupLoadV1 { .. }
-            | Self::EncryptNodQuoteV1 { .. } => true,
+            | Self::EncryptNodQuoteV1 { .. }
+            | Self::MineGratisFromPromisV1 { .. } => true,
             Self::BeginUpgradeKeyTransferV1 { .. }
             | Self::GetInitializationChallenge
             | Self::Initialize { .. }
@@ -611,6 +616,7 @@ impl EnclaveRequest {
         match self {
             Self::ApplyGratisOp { .. }
             | Self::ApplyPromisOp { .. }
+            | Self::MineGratisFromPromisV1 { .. }
             | Self::SnapshotFidelityLeagues { .. }
             | Self::QueryFidelityIndex { .. }
             | Self::PrepareGramineDirectDevOnboardingArtifactV2 { .. } => Recorded,
@@ -732,6 +738,12 @@ impl core::fmt::Debug for EnclaveRequest {
                 .field("owner", &context.owner)
                 .field("asset", &context.asset)
                 .field("payment_minor", &"<redacted>")
+                .finish(),
+            Self::MineGratisFromPromisV1 { request } => f
+                .debug_struct("MineGratisFromPromisV1")
+                .field("chain_id", &request.chain_id)
+                .field("account", &request.account)
+                .field("encrypted_promis_amount", &"<redacted>")
                 .finish(),
             other => f
                 .debug_struct("EnclaveRequest")

@@ -251,9 +251,9 @@ impl PaidGem {
         assert_receipt_event(
             &burn.receipt,
             addresses::PROMIS_FACTORY_ADDR,
-            &eth::IPromisFactory::CoenMined {
+            &eth::IPromisFactory::CoenMinedFromPromis {
                 account: owner,
-                coenMinor: native_mint,
+                amountMinor: native_mint,
             },
         );
         let fee =

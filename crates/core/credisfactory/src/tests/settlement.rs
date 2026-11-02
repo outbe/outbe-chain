@@ -1016,14 +1016,14 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 gas: 244800,
                 reads: 98,
                 writes: 47,
-                logs: b256!("0x7b1d92e829a0a55b076ce9446ef4d50a90f66630964b8f3916b8649bb65d01c0"),
+                logs: b256!("0xe3e37d6598427f3d72e13c8607b9369590fb6fa67a37e9da6488724c29db0098"),
                 state: b256!("0x3c5c2e171e435f08d8aeb4fa861ac01e582ec1c0b0d7f7e53c514df2e060293f"),
             },
             Footprint {
                 gas: 146400,
                 reads: 114,
                 writes: 27,
-                logs: b256!("0x97fbf5182d86e3a45fd0d3ab40bac069b637e666541b47edccede56b76614aa9"),
+                logs: b256!("0x137479d5c706d0999ec18576cd3da83e07d62a5c91d03fbf5a167f8ff979b12b"),
                 state: b256!("0xf2854d859fee9691d09b128723658baf9aa538236d4c49bd18c00faa3daa91d7"),
             },
             Footprint {
@@ -1037,7 +1037,7 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 gas: 212400,
                 reads: 124,
                 writes: 40,
-                logs: b256!("0xbafd2cd31b9e76ad07837a35a19933e93cee2f5ac8bf6a3eaea2a32c01d8f22c"),
+                logs: b256!("0x74956e5cad6072eba27681227b1371e2bb857150d5ff7dd917a05abf4899a7d1"),
                 state: b256!("0xc12283a9fb4bffd14520d131994f5be43430d0f45b7ffd5e845524840e99a109"),
             },
             Footprint {
@@ -1052,7 +1052,7 @@ fn lifecycle_steps_keep_their_gas_storage_and_log_footprint() {
                 gas: 439000,
                 reads: 190,
                 writes: 84,
-                logs: b256!("0x71d5fea621e720c2c2db0a18fbc6425aa9cf31e852eaeb69b932ef7f9d1c6f1e"),
+                logs: b256!("0x37e6e3675281b7e4ca425caa540cad710793f3c14f4f956a8ace26dade8f641c"),
                 state: b256!("0x0a829722ca6751531bf9145cf3e2a6b0b7a45830a50470fecf69c0b910e9da6b"),
             },
         ]

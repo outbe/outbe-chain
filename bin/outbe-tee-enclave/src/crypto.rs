@@ -146,6 +146,31 @@ pub fn ecdhe_tribute_offer_decrypt(
     chacha20poly1305_decrypt(&encryption_key, &nonce_arr, ciphertext)
 }
 
+/// Decrypt a 92-byte `ephemeral_pub(32) || nonce(12) || ciphertext(48)` amount
+/// envelope sealed via [`outbe_tee::offer_encrypt::encrypt_tee_amount`].
+pub fn decrypt_tee_amount(
+    tribute_offer_private_key: &[u8; 32],
+    encrypted_amount: &[u8],
+) -> Result<alloy_primitives::U256> {
+    if encrypted_amount.len() != outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
+        return Err(TeeError::DecryptFailed);
+    }
+    let mut eph_pub = [0u8; 32];
+    eph_pub.copy_from_slice(&encrypted_amount[..32]);
+    let plaintext = Zeroizing::new(ecdhe_tribute_offer_decrypt(
+        tribute_offer_private_key,
+        &outbe_tee::OFFER_HKDF_SALT,
+        &eph_pub,
+        &encrypted_amount[32..44],
+        &encrypted_amount[44..],
+    )?);
+    let bytes: [u8; 32] = plaintext
+        .as_slice()
+        .try_into()
+        .map_err(|_| TeeError::DecryptFailed)?;
+    Ok(alloy_primitives::U256::from_be_bytes(bytes))
+}
+
 /// Derive the tribute-offer X25519 keypair from a 32-byte seed.
 ///
 /// Returns `(secret_bytes, public_bytes)` with the secret already held in

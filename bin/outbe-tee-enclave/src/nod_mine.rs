@@ -39,6 +39,7 @@ pub fn apply(
     .map_err(NodMineRejectReason::FidelitySectionFailed)?;
     Ok(MineEncryptedNodResultV1 {
         new_balance: result.new_balance,
+        encrypted_event_amount: result.encrypted_event_amount,
         next_op_nonce: result.next_op_nonce,
         fidelity,
         inputs_canonical_hash: inputs,
