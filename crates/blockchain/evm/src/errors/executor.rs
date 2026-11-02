@@ -380,11 +380,6 @@ pub enum ExecutorValidationError {
         body_index: usize,
         expected: Vec<[u8; 4]>,
     },
-    #[error("expected {expected_kind:?} system tx at ordinal {ordinal}")]
-    ExpectedSystemTxAtOrdinal {
-        expected_kind: [u8; 4],
-        ordinal: usize,
-    },
     #[error("missing parent consensus metadata for CertifiedParentAccounting")]
     MissingParentConsensusMetadata,
     #[error("expected CertifiedParentAccounting system tx at ordinal 0")]

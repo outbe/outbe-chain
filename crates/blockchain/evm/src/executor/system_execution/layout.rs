@@ -125,22 +125,12 @@ where
         system_txs: &mut Vec<BeginSystemTransaction>,
         expected_input: SystemTx,
     ) -> Result<(), BlockExecutionError> {
-        let ordinal = system_txs.len();
-        let expected_selector = expected_input.selector();
         let input = if self.expected_begin_system_txs.is_empty() {
             expected_input
         } else {
+            let ordinal = system_txs.len();
             self.expected_begin_input(ordinal)?
         };
-        if input.selector() != expected_selector {
-            return Err(
-                crate::errors::ExecutorValidationError::ExpectedSystemTxAtOrdinal {
-                    expected_kind: expected_selector,
-                    ordinal,
-                }
-                .into(),
-            );
-        }
         system_txs.push((input, None));
         Ok(())
     }
