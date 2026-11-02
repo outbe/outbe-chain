@@ -3,9 +3,10 @@
 //! [`Executor`].
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
-//! crosschain vote target calls `add_domain` and `remove_domain`.
+//! vote actions in `crosschaingov` call `enroll_ica_router`, `add_domain` and
+//! `remove_domain`.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
@@ -14,9 +15,45 @@ use crate::executor::{Executor, RemoteCall};
 use crate::precompile::ICrosschainGov;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::IStorageMultisigIsm;
+use crate::sol_ext::{IHyperlaneRouter, IStorageMultisigIsm};
 
 impl HyperlaneControllerContract<'_> {
+    /// Enrolls the ICA router of `domain` on the Outbe ICA router, so that
+    /// `call_remote` can reach that chain. The router keeps the first
+    /// enrollment forever, so the same router is a no-op and another router
+    /// reverts.
+    pub fn enroll_ica_router(
+        &mut self,
+        executor: &mut impl Executor,
+        domain: u32,
+        router: Address,
+    ) -> Result<()> {
+        let ica_router = self.ica_router.read()?;
+        let ret = self.storage.staticcall(
+            ica_router,
+            IHyperlaneRouter::routersCall { _domain: domain }
+                .abi_encode()
+                .into(),
+        )?;
+        let enrolled = IHyperlaneRouter::routersCall::abi_decode_returns(&ret).map_err(|_| {
+            HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter routers")
+        })?;
+        if enrolled == router.into_word() {
+            return Ok(());
+        }
+        if enrolled != B256::ZERO {
+            return Err(HyperlaneControllerError::RemoteRouterMismatch { domain, enrolled }.into());
+        }
+        let data = IHyperlaneRouter::enrollRemoteRouterCall {
+            _domain: domain,
+            _router: router.into_word(),
+        }
+        .abi_encode();
+        executor
+            .call_local(ica_router, U256::ZERO, data.into())
+            .map(|_| ())
+    }
+
     /// Current set as stored by the local ISM (the source of truth).
     pub(crate) fn current_validators(&self) -> Result<(Vec<Address>, u8)> {
         let local_ism = self.local_ism()?;

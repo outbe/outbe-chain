@@ -11,11 +11,9 @@
 //! - It holds no validator set of its own. The ISMs are the source of truth.
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
-//! - `actions` holds the vote actions on the Hyperlane chains.
 //! - Every write to an ISM or the ICA router goes through [`Executor`],
 //!   which `crosschaingov` implements.
 
-pub mod actions;
 pub mod errors;
 pub mod lifecycle;
 pub mod precompile;

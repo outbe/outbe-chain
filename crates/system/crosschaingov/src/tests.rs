@@ -1016,7 +1016,7 @@ mod liveness {
 
 mod vote_target {
     use super::*;
-    use crate::actions::crosschain::{IERC7786Bridge, IHyperlaneGatewayAdapter};
+    use crate::vote_target::crosschain::{IERC7786Bridge, IHyperlaneGatewayAdapter};
     use crate::CrosschainVoteTarget;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
@@ -1247,7 +1247,7 @@ mod vote_target {
     #[test]
     fn upgrade_contract_upgrades_the_proxy_locally_or_through_the_remote_account() {
         let upgrade = Bytes::from(
-            crate::actions::common::IUUPSUpgradeable::upgradeToAndCallCall {
+            crate::vote_target::common::IUUPSUpgradeable::upgradeToAndCallCall {
                 newImplementation: v(0x9a),
                 data: Bytes::from_static(&[0x81, 0x29, 0xfc, 0x1c]),
             }

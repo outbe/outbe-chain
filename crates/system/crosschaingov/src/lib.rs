@@ -9,13 +9,11 @@
 //!   and pays remote dispatch fees from the address balance. `fund` adds value
 //!   to that balance.
 //! - [`CrosschainVoteTarget`] stores the hash of an approved action.
-//!   Permissionless `applyApproved` then runs it. Actions on our contracts are
-//!   in [`actions`]. Actions on the Hyperlane chains are in
-//!   `hyperlanecontroller::actions`.
+//!   Permissionless `applyApproved` then runs it. Every vote action is in
+//!   `vote_target`: the actions on our contracts and on the Hyperlane chains.
 //! - The Hyperlane selectors (`initialize`, `sync`, `setHyperlaneSigner`,
 //!   `submitCheckpoint`, views) go to `hyperlanecontroller`.
 
-pub mod actions;
 pub mod executor;
 pub mod precompile;
 pub mod schema;
