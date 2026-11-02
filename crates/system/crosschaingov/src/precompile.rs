@@ -11,7 +11,6 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::calls::RemoteCall;
 use crate::errors::CrosschainGovError;
 use crate::executor::Executor;
 use crate::schema::CrosschainGovContract;
@@ -66,16 +65,7 @@ pub fn dispatch(
                 }),
                 callRemote(c) => mutate(&storage, c, caller, |sender, c| {
                     require_owner_caller(sender)?;
-                    let calls: Vec<RemoteCall> = c
-                        .calls
-                        .into_iter()
-                        .map(|call| RemoteCall {
-                            to: call.to,
-                            value: call.value,
-                            data: call.data,
-                        })
-                        .collect();
-                    executor.call_remote(c.domain, &calls)
+                    executor.call_remote(c.domain, &c.calls)
                 }),
                 remoteAccount(c) => view(c, |c| executor.remote_account(c.domain)),
             }

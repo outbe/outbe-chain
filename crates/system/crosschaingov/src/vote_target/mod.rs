@@ -26,10 +26,9 @@ use outbe_vote::handlers::{
 };
 use serde::Deserialize;
 
-use crate::calls::{Calls, RemoteCall};
 use crate::errors::CrosschainGovError;
 use crate::executor::Executor;
-use crate::precompile::ICrosschainGov;
+use crate::precompile::ICrosschainGov::{self, Call};
 use crate::schema::CrosschainGovContract;
 
 /// One action, as strict JSON with an `operation` field.
@@ -96,6 +95,31 @@ enum Action {
     },
     /// Stops the validator sync to `chain_id`.
     RemoveHyperlaneChain { chain_id: u32 },
+}
+
+/// The owner calls of one operation: on Outbe first, then one message for
+/// each remote domain.
+#[derive(Default)]
+struct Calls {
+    local: Vec<Call>,
+    remote: Vec<(u32, Vec<Call>)>,
+}
+
+impl Calls {
+    /// All `calls` run on `chain_id`. `outbe` is the chain id of this chain.
+    fn on(chain_id: u32, outbe: u32, calls: Vec<Call>) -> Self {
+        if chain_id == outbe {
+            Self {
+                local: calls,
+                remote: Vec::new(),
+            }
+        } else {
+            Self {
+                local: Vec::new(),
+                remote: vec![(chain_id, calls)],
+            }
+        }
+    }
 }
 
 impl Action {
@@ -178,7 +202,16 @@ impl Action {
                 controller.add_domain(*chain_id, *ism, *hook)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
-            _ => executor.run(self.calls(controller.local_domain()?)),
+            _ => {
+                let calls = self.calls(controller.local_domain()?);
+                for call in calls.local {
+                    executor.call_local(call.to, call.value, call.data)?;
+                }
+                for (domain, remote) in &calls.remote {
+                    executor.call_remote(*domain, remote)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -261,8 +294,12 @@ impl Action {
 }
 
 /// A zero-value owner call of `to`.
-fn call(to: Address, data: Vec<u8>) -> RemoteCall {
-    RemoteCall::new(to, data)
+fn call(to: Address, data: Vec<u8>) -> Call {
+    Call {
+        to,
+        value: U256::ZERO,
+        data: data.into(),
+    }
 }
 
 impl CrosschainGovContract<'_> {

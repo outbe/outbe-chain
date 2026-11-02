@@ -1,6 +1,6 @@
 //! Owner calls on the token bridge (`ERC7786TokenBridge`).
 
-use crate::calls::RemoteCall;
+use crate::precompile::ICrosschainGov::Call;
 use alloy_primitives::Address;
 use alloy_sol_types::{sol, SolCall};
 
@@ -14,7 +14,7 @@ sol! {
 }
 
 /// `token_bridge.addPeer(chain_id, peer)`.
-pub(super) fn add_peer(token_bridge: Address, chain_id: u32, peer: Address) -> RemoteCall {
+pub(super) fn add_peer(token_bridge: Address, chain_id: u32, peer: Address) -> Call {
     call(
         token_bridge,
         ITokenBridge::addPeerCall {

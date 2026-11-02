@@ -15,7 +15,6 @@
 //!   make the owner call a contract. Today this is the HyperlaneController
 //!   (`0x...EE14`), for its ISM rotation and bootstrap.
 
-pub mod calls;
 pub mod errors;
 pub mod executor;
 pub mod precompile;

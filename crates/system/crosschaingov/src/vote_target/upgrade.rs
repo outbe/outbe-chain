@@ -1,6 +1,6 @@
 //! The upgrade of any of our UUPS contracts.
 
-use crate::calls::RemoteCall;
+use crate::precompile::ICrosschainGov::Call;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{sol, SolCall};
 
@@ -16,7 +16,7 @@ sol! {
 /// `proxy.upgradeToAndCall(implementation, data)`. `upgradeToAndCall` keeps
 /// `msg.sender`, so `data` can also call an `onlyOwner` function of the
 /// current implementation.
-pub(super) fn upgrade(proxy: Address, implementation: Address, data: Bytes) -> RemoteCall {
+pub(super) fn upgrade(proxy: Address, implementation: Address, data: Bytes) -> Call {
     call(
         proxy,
         IUUPSUpgradeable::upgradeToAndCallCall {

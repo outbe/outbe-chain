@@ -1,7 +1,7 @@
 //! The owner calls of the owner address: local calls and Interchain Account
 //! dispatch, paid from the address balance. The only code that calls another
 //! contract as the owner. It runs the calls of the vote actions and the
-//! [`Calls`] that `hyperlanecontroller` returns.
+//! `callLocal` and `callRemote` calls of the owner-caller list.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
@@ -10,9 +10,8 @@ use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::calls::{Calls, RemoteCall};
 use crate::errors::CrosschainGovError;
-use crate::precompile::ICrosschainGov;
+use crate::precompile::ICrosschainGov::{self, Call};
 use crate::schema::CrosschainGovContract;
 
 /// Runs the owner calls of the owner address. Use it only in the frame of
@@ -29,21 +28,6 @@ impl<'a> Executor<'a> {
             gov: CrosschainGovContract::new(storage.clone()),
             hyperlane: HyperlaneControllerContract::new(storage),
         }
-    }
-
-    /// Runs `calls`: the local calls first, then one message for each remote
-    /// domain, all under one checkpoint.
-    pub fn run(&mut self, calls: Calls) -> Result<()> {
-        let storage = self.gov.storage.clone();
-        storage.with_checkpoint(|| {
-            for call in calls.local {
-                self.call_local(call.to, call.value, call.data)?;
-            }
-            for (domain, remote) in &calls.remote {
-                self.call_remote(*domain, remote)?;
-            }
-            Ok(())
-        })
     }
 
     /// Calls `to` on this chain. The owner balance pays `value`.
@@ -63,7 +47,7 @@ impl<'a> Executor<'a> {
 
     /// Runs `calls` on `domain` through the Interchain Account. The owner
     /// balance pays the dispatch fee.
-    pub fn call_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
+    pub fn call_remote(&mut self, domain: u32, calls: &[Call]) -> Result<B256> {
         self.require_remote(domain)?;
         if calls.is_empty() {
             return Err(CrosschainGovError::EmptyCalls.into());
@@ -102,7 +86,7 @@ impl<'a> Executor<'a> {
         )
     }
 
-    fn dispatch(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
+    fn dispatch(&mut self, domain: u32, calls: &[Call]) -> Result<B256> {
         let router = self.hyperlane.ica_router.read()?;
         let fee = self.quote(router, domain)?;
         self.require_balance(fee)?;

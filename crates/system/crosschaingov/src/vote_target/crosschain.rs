@@ -1,6 +1,6 @@
 //! Owner calls on the ERC-7786 hub (`ERC7786Bridge`) and its Hyperlane adapter.
 
-use crate::calls::RemoteCall;
+use crate::precompile::ICrosschainGov::Call;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
 
@@ -22,7 +22,7 @@ sol! {
 }
 
 /// `bridge.pause()` or `bridge.unpause()`.
-pub(super) fn set_paused(bridge: Address, paused: bool) -> RemoteCall {
+pub(super) fn set_paused(bridge: Address, paused: bool) -> Call {
     let data = if paused {
         IERC7786Bridge::pauseCall {}.abi_encode()
     } else {
@@ -32,7 +32,7 @@ pub(super) fn set_paused(bridge: Address, paused: bool) -> RemoteCall {
 }
 
 /// `bridge.setGateway(chain_id, gateway)`.
-pub(super) fn set_gateway(bridge: Address, chain_id: u32, gateway: Address) -> RemoteCall {
+pub(super) fn set_gateway(bridge: Address, chain_id: u32, gateway: Address) -> Call {
     call(
         bridge,
         IERC7786Bridge::setGatewayCall {
@@ -48,7 +48,7 @@ pub(super) fn link_side(
     (bridge, adapter): (Address, Address),
     other_chain_id: u32,
     (other_bridge, other_adapter): (Address, Address),
-) -> Vec<RemoteCall> {
+) -> Vec<Call> {
     let trust = IHyperlaneGatewayAdapter::setRouterWithChainCall {
         domain: other_chain_id,
         router: other_adapter.into_word(),

@@ -12,7 +12,7 @@ use outbe_hyperlanecontroller::precompile::{dispatch as hub_dispatch, IHyperlane
 use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 
-use crate::calls::RemoteCall;
+use crate::precompile::ICrosschainGov::Call;
 use outbe_primitives::addresses::{CROSSCHAIN_GOV_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -197,7 +197,14 @@ fn a_remote_call_without_fee_balance_changes_nothing() {
     p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
         let err = Executor::new(storage)
-            .call_remote(SEPOLIA, &[RemoteCall::new(sepolia_ism(), Bytes::new())])
+            .call_remote(
+                SEPOLIA,
+                &[Call {
+                    to: sepolia_ism(),
+                    value: U256::ZERO,
+                    data: Bytes::new(),
+                }],
+            )
             .unwrap_err();
         assert_eq!(
             revert_selector(err),
@@ -213,7 +220,7 @@ fn remote_and_local_generic_calls() {
     stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     StorageHandle::enter(&mut p, |storage| {
         let mut executor = Executor::new(storage);
-        let calls = [RemoteCall {
+        let calls = [Call {
             to: sepolia_ism(),
             value: U256::ZERO,
             data: IStorageMultisigIsm::acceptOwnershipCall {}
