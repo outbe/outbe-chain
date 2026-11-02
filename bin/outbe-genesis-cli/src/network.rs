@@ -29,7 +29,7 @@ pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000
 pub const FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
-pub const SEED_SECTIONS: [&str; 15] = [
+pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -45,6 +45,7 @@ pub const SEED_SECTIONS: [&str; 15] = [
     "credis_profile",
     "contracts",
     "tee_policy",
+    "hyperlane_controller",
 ];
 
 pub const TEE_KEYS: [&str; 6] = [
