@@ -285,7 +285,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::IsmNotPendingToController::SELECTOR
+            IHyperlaneController::IsmNotPendingToOwner::SELECTOR
         );
     });
 
@@ -301,7 +301,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::NotOwnedByController::SELECTOR
+            IHyperlaneController::NotOwnedByOwner::SELECTOR
         );
     });
 

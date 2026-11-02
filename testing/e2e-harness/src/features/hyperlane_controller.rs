@@ -8,7 +8,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::sol;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::{CROSSCHAIN_GOV_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 
 use crate::internal::eth;
 use crate::world::forge::{self, DEPLOYER_KEY};
@@ -133,7 +133,7 @@ fn live_controller_fixture(world: &mut World) {
             "create",
             "src/MockHyperlaneController.sol:MockHyperlaneIcaRouter",
         ],
-        &[&format!("{HYPERLANE_CONTROLLER_ADDRESS:#x}")],
+        &[&format!("{CROSSCHAIN_GOV_ADDRESS:#x}")],
         &[],
         &url,
     )
@@ -144,7 +144,7 @@ fn live_controller_fixture(world: &mut World) {
         ism,
         DEPLOYER_KEY,
         &IFixtureIsm::transferOwnershipCall {
-            next: HYPERLANE_CONTROLLER_ADDRESS,
+            next: CROSSCHAIN_GOV_ADDRESS,
         },
     );
     let chain_id = world
@@ -212,7 +212,7 @@ fn initial_ism(world: &mut World) {
     assert_ism(world, fixture.ism, &fixture.validators, 3, 4);
     assert_eq!(
         eth::read_call(&url(world), fixture.ism, &IFixtureIsm::ownerCall {}).expect("ISM owner"),
-        HYPERLANE_CONTROLLER_ADDRESS
+        CROSSCHAIN_GOV_ADDRESS
     );
 }
 

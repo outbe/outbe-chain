@@ -51,11 +51,11 @@ contract HandOver is Script {
         vm.stopBroadcast();
     }
 
-    /// @dev Governance on this chain: the controller on Outbe, its Interchain Account elsewhere.
+    /// @dev Governance on this chain: CrosschainGov on Outbe, its Interchain Account elsewhere.
     function governanceOwner() public returns (address) {
         if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return CROSSCHAIN_GOV;
         if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
-        return _controllerAccount(uint32(block.chainid));
+        return _governanceAccount(uint32(block.chainid));
     }
 
     /// @dev Requires an active broadcast. Each contract must still belong to the deployer or already
@@ -91,11 +91,11 @@ contract HandOver is Script {
         console2.log("handed over to governance:", governance);
     }
 
-    /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
+    /// @dev Asks CrosschainGov on Outbe for its Interchain Account on `domain`. A fork cannot run
     ///      the precompile, so this is a raw `eth_call` to the Outbe node, as in
     ///      `contracts/tokens/script/routes/BaseRoute.sol`. `virtual` so a test harness can supply
     ///      the account.
-    function _controllerAccount(uint32 domain) internal virtual returns (address) {
+    function _governanceAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
             vm.toString(CROSSCHAIN_GOV),

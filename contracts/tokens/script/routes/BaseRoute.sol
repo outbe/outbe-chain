@@ -65,16 +65,16 @@ abstract contract BaseRoute is Script {
     }
 
     /// @dev The deployer can temporarily retain ownership until governance is initialized. Otherwise,
-    ///      the owner is the HyperlaneController on Outbe and its Interchain Account elsewhere.
+    ///      the owner is CrosschainGov on Outbe and its Interchain Account elsewhere.
     function _bridgeOwner() internal returns (address) {
         if (vm.envOr("KEEP_DEPLOYER_AS_OWNER", false)) return _deployer();
-        return _isOutbe() ? CROSSCHAIN_GOV : _controllerAccount(_toDomain(block.chainid));
+        return _isOutbe() ? CROSSCHAIN_GOV : _governanceAccount(_toDomain(block.chainid));
     }
 
-    /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
+    /// @dev Asks CrosschainGov on Outbe for its Interchain Account on `domain`. A fork cannot run
     ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
     ///      harness, which has no Outbe node, can supply the account.
-    function _controllerAccount(uint32 domain) internal virtual returns (address) {
+    function _governanceAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
             vm.toString(CROSSCHAIN_GOV),

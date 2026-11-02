@@ -40,7 +40,7 @@ contract DeployHarness is DeployAll {
     }
 
     /// @dev There is no Outbe node in tests.
-    function _controllerAccount(uint32) internal pure override returns (address) {
+    function _governanceAccount(uint32) internal pure override returns (address) {
         return address(uint160(0x1CA));
     }
 }
@@ -62,7 +62,7 @@ contract DeployGuardsTest is Test {
     /// @dev Stands in for a canonical token that already exists on chain - see the adoption test.
     address internal constant ADOPTED_USDT = address(uint160(0xADD7ED));
     string internal constant SALT = "TEST_V1";
-    address internal constant CONTROLLER_ICA = address(uint160(0x1CA));
+    address internal constant GOVERNANCE_ICA = address(uint160(0x1CA));
 
     DeployHarness internal deploy;
     Create3Factory internal factory;
@@ -224,7 +224,7 @@ contract DeployGuardsTest is Test {
 
         vm.chainId(EXTERNAL_CHAIN);
         (, address extBridge) = deploy.deployRoute(address(factory), "TEST_V2", deploy.routeByLabel("USDT"));
-        assertEq(ERC7786TokenBridge(extBridge).owner(), CONTROLLER_ICA);
+        assertEq(ERC7786TokenBridge(extBridge).owner(), GOVERNANCE_ICA);
     }
 
     /// @dev Create3Factory reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.

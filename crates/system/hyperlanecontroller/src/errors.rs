@@ -27,10 +27,10 @@ pub enum HyperlaneControllerError {
     NotIsmOwner { caller: Address, owner: Address },
 
     #[error("local ISM pending owner is {pending}, expected the owner")]
-    IsmNotPendingToController { pending: Address },
+    IsmNotPendingToOwner { pending: Address },
 
     #[error("contract {contract} is owned by {owner}, expected the owner")]
-    NotOwnedByController { contract: Address, owner: Address },
+    NotOwnedByOwner { contract: Address, owner: Address },
 
     #[error("address must be non-zero")]
     InvalidAddress,
@@ -114,14 +114,14 @@ impl From<HyperlaneControllerError> for PrecompileError {
                     IHyperlaneController::NotIsmOwner { caller, owner }.abi_encode(),
                 ))
             }
-            HyperlaneControllerError::IsmNotPendingToController { pending } => {
+            HyperlaneControllerError::IsmNotPendingToOwner { pending } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::IsmNotPendingToController { pending }.abi_encode(),
+                    IHyperlaneController::IsmNotPendingToOwner { pending }.abi_encode(),
                 ))
             }
-            HyperlaneControllerError::NotOwnedByController { contract, owner } => {
+            HyperlaneControllerError::NotOwnedByOwner { contract, owner } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::NotOwnedByController {
+                    IHyperlaneController::NotOwnedByOwner {
                         target: contract,
                         owner,
                     }
@@ -249,9 +249,9 @@ mod tests {
 
         let contract = Address::repeat_byte(0x33);
         let owner = Address::repeat_byte(0x44);
-        let bytes = encoded(HyperlaneControllerError::NotOwnedByController { contract, owner });
+        let bytes = encoded(HyperlaneControllerError::NotOwnedByOwner { contract, owner });
         let decoded =
-            IHyperlaneController::NotOwnedByController::abi_decode(&bytes).expect("owner payload");
+            IHyperlaneController::NotOwnedByOwner::abi_decode(&bytes).expect("owner payload");
         assert_eq!(decoded.target, contract);
         assert_eq!(decoded.owner, owner);
 

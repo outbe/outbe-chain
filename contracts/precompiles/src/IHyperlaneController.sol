@@ -20,8 +20,8 @@ interface IHyperlaneController {
     error LocalDomainMissing(uint32 domain);
     error NotBootstrapAdmin(address caller, address admin);
     error NotIsmOwner(address caller, address owner);
-    error IsmNotPendingToController(address pending);
-    error NotOwnedByController(address target, address owner);
+    error IsmNotPendingToOwner(address pending);
+    error NotOwnedByOwner(address target, address owner);
     error InvalidAddress();
     error InvalidDomain();
     error IsmLengthMismatch();

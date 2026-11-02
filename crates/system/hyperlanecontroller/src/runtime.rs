@@ -79,7 +79,7 @@ impl HyperlaneControllerContract<'_> {
         }
         let owner = self.owner_of(contract)?;
         if owner != CROSSCHAIN_GOV_ADDRESS {
-            return Err(HyperlaneControllerError::NotOwnedByController { contract, owner }.into());
+            return Err(HyperlaneControllerError::NotOwnedByOwner { contract, owner }.into());
         }
         Ok(())
     }
@@ -148,7 +148,7 @@ impl HyperlaneControllerContract<'_> {
         }
         let pending = self.pending_owner_of(local_ism)?;
         if pending != CROSSCHAIN_GOV_ADDRESS {
-            return Err(HyperlaneControllerError::IsmNotPendingToController { pending }.into());
+            return Err(HyperlaneControllerError::IsmNotPendingToOwner { pending }.into());
         }
         Ok(())
     }
