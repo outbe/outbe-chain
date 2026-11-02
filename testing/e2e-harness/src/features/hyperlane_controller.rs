@@ -8,14 +8,14 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::sol;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 
 use crate::internal::eth;
 use crate::world::forge::{self, DEPLOYER_KEY};
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::World;
 
-sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
+sol!("../../contracts/precompiles/src/ICrosschainGov.sol");
 
 sol! {
     interface IFixtureIsm {
@@ -133,7 +133,7 @@ fn live_controller_fixture(world: &mut World) {
             "create",
             "src/MockHyperlaneController.sol:MockHyperlaneIcaRouter",
         ],
-        &[&format!("{HYPERLANE_CONTROLLER_ADDRESS:#x}")],
+        &[&format!("{CROSSCHAIN_GOV_ADDRESS:#x}")],
         &[],
         &url,
     )
@@ -144,7 +144,7 @@ fn live_controller_fixture(world: &mut World) {
         ism,
         DEPLOYER_KEY,
         &IFixtureIsm::transferOwnershipCall {
-            next: HYPERLANE_CONTROLLER_ADDRESS,
+            next: CROSSCHAIN_GOV_ADDRESS,
         },
     );
     let chain_id = world
@@ -155,9 +155,9 @@ fn live_controller_fixture(world: &mut World) {
     let hook = eth::address_of(DEPLOYER_KEY).expect("fixture hook identity");
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::initializeCall {
+        &ICrosschainGov::initializeCall {
             icaRouter: router,
             validatorAnnounce: hook,
             domains: vec![domain],
@@ -167,9 +167,9 @@ fn live_controller_fixture(world: &mut World) {
     );
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::syncCall {},
+        &ICrosschainGov::syncCall {},
     );
     let keys = (0..world.validators.size())
         .map(|i| {
@@ -212,7 +212,7 @@ fn initial_ism(world: &mut World) {
     assert_ism(world, fixture.ism, &fixture.validators, 3, 4);
     assert_eq!(
         eth::read_call(&url(world), fixture.ism, &IFixtureIsm::ownerCall {}).expect("ISM owner"),
-        HYPERLANE_CONTROLLER_ADDRESS
+        CROSSCHAIN_GOV_ADDRESS
     );
 }
 
@@ -234,7 +234,7 @@ fn signed_checkpoint(
     fixture: &HyperlaneFixture,
     signer_key: &str,
     index: u32,
-) -> IHyperlaneController::submitCheckpointCall {
+) -> ICrosschainGov::submitCheckpointCall {
     let root = keccak256(format!("outbe-e2e-hyperlane-root-{index}"));
     let message_id = keccak256(format!("outbe-e2e-hyperlane-message-{index}"));
     let signer: PrivateKeySigner = signer_key.parse().expect("Hyperlane signer key");
@@ -247,7 +247,7 @@ fn signed_checkpoint(
             message_id,
         ))
         .expect("sign Hyperlane checkpoint");
-    IHyperlaneController::submitCheckpointCall {
+    ICrosschainGov::submitCheckpointCall {
         domain: fixture.domain,
         root,
         index,
@@ -264,23 +264,23 @@ fn rotated_checkpoints(world: &mut World) {
     fixture.rotated = signer.address();
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         &fixture.keys[0],
-        &IHyperlaneController::setHyperlaneSignerCall {
+        &ICrosschainGov::setHyperlaneSignerCall {
             signer: fixture.rotated,
         },
     );
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::syncCall {},
+        &ICrosschainGov::syncCall {},
     );
     let invalid = signed_checkpoint(fixture, &fixture.keys[0], 1);
     assert!(
         eth::send_call(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[0],
             &invalid,
             None::<U256>
@@ -296,7 +296,7 @@ fn rotated_checkpoints(world: &mut World) {
         };
         send(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[index],
             &signed_checkpoint(fixture, signing_key, 1),
         );
@@ -305,7 +305,7 @@ fn rotated_checkpoints(world: &mut World) {
     assert!(
         eth::send_call(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[0],
             &stale,
             None::<U256>
@@ -325,8 +325,8 @@ fn rotated_ism(world: &mut World) {
         assert_eq!(
             eth::read_call(
                 &url(world),
-                HYPERLANE_CONTROLLER_ADDRESS,
-                &IHyperlaneController::submittedIndexCall {
+                CROSSCHAIN_GOV_ADDRESS,
+                &ICrosschainGov::submittedIndexCall {
                     validator: *validator,
                     domain: fixture.domain,
                 }
@@ -349,7 +349,7 @@ fn bridge_agent_outage(world: &mut World) {
         };
         send(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[index],
             &signed_checkpoint(fixture, signing_key, 2),
         );
@@ -423,8 +423,8 @@ fn jailed_and_resynced(world: &mut World) {
         }
         let observed = eth::read_call(
             &url(world),
-            HYPERLANE_CONTROLLER_ADDRESS,
-            &IHyperlaneController::missCountCall {
+            CROSSCHAIN_GOV_ADDRESS,
+            &ICrosschainGov::missCountCall {
                 validator: validators[3],
             },
         )
@@ -438,8 +438,8 @@ fn jailed_and_resynced(world: &mut World) {
             assert_eq!(
                 eth::read_call(
                     &url(world),
-                    HYPERLANE_CONTROLLER_ADDRESS,
-                    &IHyperlaneController::missCountCall {
+                    CROSSCHAIN_GOV_ADDRESS,
+                    &ICrosschainGov::missCountCall {
                         validator: *validator,
                     },
                 )

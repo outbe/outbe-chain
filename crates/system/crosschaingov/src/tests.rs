@@ -1,4 +1,4 @@
-//! Unit tests for the Hyperlane controller precompile.
+//! Unit tests for the CrosschainGov precompile.
 //!
 //! Cross-contract interaction goes through `HashMapStorageProvider`'s
 //! sub-call stubs. `stub_sub_call_at_selector` pins a target's reply per
@@ -7,14 +7,14 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::executor::Executor;
 use crate::precompile::dispatch;
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 use outbe_hyperlanecontroller::{
     validate_validators, Executor as _, HyperlaneControllerContract, RemoteCall,
@@ -89,12 +89,12 @@ fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
     p.stub_sub_call_at_selector(
         local_ism(),
         IStorageMultisigIsm::pendingOwnerCall::SELECTOR,
-        word_addr(HYPERLANE_CONTROLLER_ADDRESS),
+        word_addr(CROSSCHAIN_GOV_ADDRESS),
     );
     p.stub_sub_call_at_selector(
         ica_router(),
         IOwnable::ownerCall::SELECTOR,
-        word_addr(HYPERLANE_CONTROLLER_ADDRESS),
+        word_addr(CROSSCHAIN_GOV_ADDRESS),
     );
     p.enable_sub_call_stub();
 }
@@ -107,7 +107,7 @@ fn hook(n: u8) -> Address {
 }
 
 fn initialize_call() -> Bytes {
-    IHyperlaneController::initializeCall {
+    ICrosschainGov::initializeCall {
         icaRouter: ica_router(),
         validatorAnnounce: validator_announce(),
         domains: vec![LOCAL, SEPOLIA, BSC],
@@ -158,7 +158,7 @@ fn stub_router_and_ism(
 }
 
 fn topics(p: &HashMapStorageProvider) -> Vec<B256> {
-    p.get_events(HYPERLANE_CONTROLLER_ADDRESS)
+    p.get_events(CROSSCHAIN_GOV_ADDRESS)
         .iter()
         .map(|log| log.topics()[0])
         .collect()
@@ -188,17 +188,17 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
     let t = topics(&p);
     assert_eq!(
         t.iter()
-            .filter(|h| **h == IHyperlaneController::DomainAdded::SIGNATURE_HASH)
+            .filter(|h| **h == ICrosschainGov::DomainAdded::SIGNATURE_HASH)
             .count(),
         3
     );
     // acceptOwnership() dispatched to the two remote ISMs, not the local one.
     let accepts: Vec<_> = p
-        .get_events(HYPERLANE_CONTROLLER_ADDRESS)
+        .get_events(CROSSCHAIN_GOV_ADDRESS)
         .iter()
-        .filter(|log| log.topics()[0] == IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH)
+        .filter(|log| log.topics()[0] == ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH)
         .map(|log| {
-            IHyperlaneController::RemoteCallDispatched::decode_log_data(log)
+            ICrosschainGov::RemoteCallDispatched::decode_log_data(log)
                 .unwrap()
                 .domain
         })
@@ -206,7 +206,7 @@ fn initialize_accepts_ism_ownership_and_stores_table() {
     assert_eq!(accepts, vec![SEPOLIA, BSC]);
     assert_eq!(
         *t.last().unwrap(),
-        IHyperlaneController::Initialized::SIGNATURE_HASH
+        ICrosschainGov::Initialized::SIGNATURE_HASH
     );
 }
 
@@ -224,7 +224,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), stranger(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::NotBootstrapAdmin::SELECTOR
+            ICrosschainGov::NotBootstrapAdmin::SELECTOR
         );
     });
 
@@ -239,7 +239,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), Address::ZERO, U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::NotBootstrapAdmin::SELECTOR
+            ICrosschainGov::NotBootstrapAdmin::SELECTOR
         );
     });
 
@@ -253,10 +253,7 @@ fn initialize_is_gated_and_one_shot() {
     );
     StorageHandle::enter(&mut p, |storage| {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
-        assert_eq!(
-            revert_selector(err),
-            IHyperlaneController::NotIsmOwner::SELECTOR
-        );
+        assert_eq!(revert_selector(err), ICrosschainGov::NotIsmOwner::SELECTOR);
     });
 
     // Pending owner is not the controller.
@@ -271,7 +268,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::IsmNotPendingToController::SELECTOR
+            ICrosschainGov::IsmNotPendingToController::SELECTOR
         );
     });
 
@@ -287,7 +284,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::NotOwnedByController::SELECTOR
+            ICrosschainGov::NotOwnedByController::SELECTOR
         );
     });
 
@@ -295,7 +292,7 @@ fn initialize_is_gated_and_one_shot() {
     let mut p = provider();
     stub_pre_initialize(&mut p);
     StorageHandle::enter(&mut p, |storage| {
-        let call: Bytes = IHyperlaneController::initializeCall {
+        let call: Bytes = ICrosschainGov::initializeCall {
             icaRouter: ica_router(),
             validatorAnnounce: validator_announce(),
             domains: vec![SEPOLIA],
@@ -307,7 +304,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &call, deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::LocalDomainMissing::SELECTOR
+            ICrosschainGov::LocalDomainMissing::SELECTOR
         );
     });
 
@@ -317,7 +314,7 @@ fn initialize_is_gated_and_one_shot() {
         let err = dispatch(storage, &initialize_call(), deployer(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::AlreadyInitialized::SELECTOR
+            ICrosschainGov::AlreadyInitialized::SELECTOR
         );
     });
 }
@@ -338,15 +335,15 @@ fn the_storage_of_the_two_crates_does_not_overlap() {
 fn fund_is_the_only_payable_selector() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
-        let fund: Bytes = IHyperlaneController::fundCall {}.abi_encode().into();
+        let fund: Bytes = ICrosschainGov::fundCall {}.abi_encode().into();
         dispatch(storage.clone(), &fund, stranger(), U256::from(5)).unwrap();
         assert!(dispatch(storage.clone(), &fund, stranger(), U256::ZERO).is_err());
-        let view: Bytes = IHyperlaneController::icaRouterCall {}.abi_encode().into();
+        let view: Bytes = ICrosschainGov::icaRouterCall {}.abi_encode().into();
         assert!(dispatch(storage, &view, stranger(), U256::from(1)).is_err());
     });
     assert_eq!(
         *topics(&p).last().unwrap(),
-        IHyperlaneController::Funded::SIGNATURE_HASH
+        ICrosschainGov::Funded::SIGNATURE_HASH
     );
 }
 
@@ -355,8 +352,8 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
     let mut p = initialized_provider();
     let fee = U256::from(7);
     stub_router_and_ism(&mut p, fee, &[v(1), v(2)], 1);
-    p.set_balance(HYPERLANE_CONTROLLER_ADDRESS, fee * U256::from(2));
-    p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+    p.set_balance(CROSSCHAIN_GOV_ADDRESS, fee * U256::from(2));
+    p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
         let mut executor = Executor::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
@@ -367,14 +364,14 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
     assert_eq!(
         t,
         vec![
-            IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH,
-            IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH,
-            IHyperlaneController::LocalCallExecuted::SIGNATURE_HASH,
-            IHyperlaneController::ValidatorsAndThresholdApplied::SIGNATURE_HASH,
+            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
+            ICrosschainGov::RemoteCallDispatched::SIGNATURE_HASH,
+            ICrosschainGov::LocalCallExecuted::SIGNATURE_HASH,
+            ICrosschainGov::ValidatorsAndThresholdApplied::SIGNATURE_HASH,
         ]
     );
-    let dispatched = IHyperlaneController::RemoteCallDispatched::decode_log_data(
-        &p.get_events(HYPERLANE_CONTROLLER_ADDRESS)[0],
+    let dispatched = ICrosschainGov::RemoteCallDispatched::decode_log_data(
+        &p.get_events(CROSSCHAIN_GOV_ADDRESS)[0],
     )
     .unwrap();
     assert_eq!(dispatched.domain, SEPOLIA);
@@ -385,7 +382,7 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
 fn rotation_without_fee_balance_changes_nothing() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
-    p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+    p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
         let mut executor = Executor::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
@@ -394,7 +391,7 @@ fn rotation_without_fee_balance_changes_nothing() {
             .unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::InsufficientBalance::SELECTOR
+            ICrosschainGov::InsufficientBalance::SELECTOR
         );
     });
     assert!(topics(&p).is_empty());
@@ -438,9 +435,9 @@ fn remote_account_is_the_router_derived_account() {
         word_addr(v(0x1c)),
     );
     StorageHandle::enter(&mut p, |storage| {
-        let call = IHyperlaneController::remoteAccountCall { domain: SEPOLIA };
+        let call = ICrosschainGov::remoteAccountCall { domain: SEPOLIA };
         let ret = dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO).unwrap();
-        let account = IHyperlaneController::remoteAccountCall::abi_decode_returns(&ret).unwrap();
+        let account = ICrosschainGov::remoteAccountCall::abi_decode_returns(&ret).unwrap();
         assert_eq!(account, v(0x1c));
     });
 }
@@ -588,19 +585,19 @@ mod sync {
             let mut c = HyperlaneControllerContract::new(storage);
             c.set_hyperlane_signer(v(4), v(9)).unwrap();
         });
-        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        p.clear_events(CROSSCHAIN_GOV_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
-            let call: Bytes = IHyperlaneController::syncCall {}.abi_encode().into();
+            let call: Bytes = ICrosschainGov::syncCall {}.abi_encode().into();
             let ret = dispatch(storage, &call, stranger(), U256::ZERO).unwrap();
-            assert!(IHyperlaneController::syncCall::abi_decode_returns(&ret).unwrap());
+            assert!(ICrosschainGov::syncCall::abi_decode_returns(&ret).unwrap());
         });
         let t = topics(&p);
         assert_eq!(
             *t.last().unwrap(),
-            IHyperlaneController::ValidatorsAndThresholdApplied::SIGNATURE_HASH
+            ICrosschainGov::ValidatorsAndThresholdApplied::SIGNATURE_HASH
         );
-        let applied = IHyperlaneController::ValidatorsAndThresholdApplied::decode_log_data(
-            p.get_events(HYPERLANE_CONTROLLER_ADDRESS).last().unwrap(),
+        let applied = ICrosschainGov::ValidatorsAndThresholdApplied::decode_log_data(
+            p.get_events(CROSSCHAIN_GOV_ADDRESS).last().unwrap(),
         )
         .unwrap();
         assert_eq!(applied.threshold, 3);
@@ -608,7 +605,7 @@ mod sync {
 
         // ISM now reports the mirrored set (any order): nothing to do.
         stub_router_and_ism(&mut p, U256::ZERO, &[v(9), v(3), v(2), v(1)], 3);
-        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        p.clear_events(CROSSCHAIN_GOV_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
             let mut executor = Executor::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
@@ -667,7 +664,7 @@ mod liveness {
     }
 
     fn submit_call(domain: u32, checkpoint: &Checkpoint, index: u32) -> Bytes {
-        IHyperlaneController::submitCheckpointCall {
+        ICrosschainGov::submitCheckpointCall {
             domain,
             root: checkpoint.root,
             index,
@@ -684,7 +681,7 @@ mod liveness {
         let mut p = provider();
         stub_pre_initialize(&mut p);
         StorageHandle::enter(&mut p, |storage| {
-            let call: Bytes = IHyperlaneController::initializeCall {
+            let call: Bytes = ICrosschainGov::initializeCall {
                 icaRouter: ica_router(),
                 validatorAnnounce: validator_announce(),
                 domains: vec![LOCAL, SEPOLIA],
@@ -732,7 +729,7 @@ mod liveness {
     fn submit_accepts_own_signature_and_rejects_the_rest() {
         let mut p = liveness_provider();
         p.set_block_number(100);
-        p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
+        p.clear_events(CROSSCHAIN_GOV_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
             let two = checkpoint_2();
             dispatch(
@@ -742,7 +739,7 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap();
-            let view: Bytes = IHyperlaneController::submittedIndexCall {
+            let view: Bytes = ICrosschainGov::submittedIndexCall {
                 validator: FIXTURE_VALIDATOR,
                 domain: LOCAL,
             }
@@ -750,7 +747,7 @@ mod liveness {
             .into();
             let ret = dispatch(storage.clone(), &view, stranger(), U256::ZERO).unwrap();
             assert_eq!(
-                IHyperlaneController::submittedIndexCall::abi_decode_returns(&ret).unwrap(),
+                ICrosschainGov::submittedIndexCall::abi_decode_returns(&ret).unwrap(),
                 2
             );
 
@@ -763,7 +760,7 @@ mod liveness {
             .unwrap_err();
             assert_eq!(
                 revert_selector(not_validator),
-                IHyperlaneController::NotActiveValidator::SELECTOR
+                ICrosschainGov::NotActiveValidator::SELECTOR
             );
 
             let no_hook = dispatch(
@@ -775,7 +772,7 @@ mod liveness {
             .unwrap_err();
             assert_eq!(
                 revert_selector(no_hook),
-                IHyperlaneController::UnknownHook::SELECTOR
+                ICrosschainGov::UnknownHook::SELECTOR
             );
 
             let tampered = dispatch(
@@ -787,7 +784,7 @@ mod liveness {
             .unwrap_err();
             assert_eq!(
                 revert_selector(tampered),
-                IHyperlaneController::SignerMismatch::SELECTOR
+                ICrosschainGov::SignerMismatch::SELECTOR
             );
 
             let older = dispatch(
@@ -797,10 +794,7 @@ mod liveness {
                 U256::ZERO,
             )
             .unwrap_err();
-            assert_eq!(
-                revert_selector(older),
-                IHyperlaneController::StaleIndex::SELECTOR
-            );
+            assert_eq!(revert_selector(older), ICrosschainGov::StaleIndex::SELECTOR);
 
             let repeat = dispatch(
                 storage,
@@ -811,12 +805,12 @@ mod liveness {
             .unwrap_err();
             assert_eq!(
                 revert_selector(repeat),
-                IHyperlaneController::StaleIndex::SELECTOR
+                ICrosschainGov::StaleIndex::SELECTOR
             );
         });
         let submitted = topics(&p)
             .iter()
-            .filter(|h| **h == IHyperlaneController::CheckpointSubmitted::SIGNATURE_HASH)
+            .filter(|h| **h == ICrosschainGov::CheckpointSubmitted::SIGNATURE_HASH)
             .count();
         assert_eq!(submitted, 1);
     }
@@ -829,15 +823,9 @@ mod liveness {
             let mut c = HyperlaneControllerContract::new(storage);
             c.set_hyperlane_signer(v(2), v(9)).unwrap();
             let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap_err();
-            assert_eq!(
-                revert_selector(err),
-                IHyperlaneController::SignerTaken::SELECTOR
-            );
+            assert_eq!(revert_selector(err), ICrosschainGov::SignerTaken::SELECTOR);
             let err = c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(2)).unwrap_err();
-            assert_eq!(
-                revert_selector(err),
-                IHyperlaneController::SignerTaken::SELECTOR
-            );
+            assert_eq!(revert_selector(err), ICrosschainGov::SignerTaken::SELECTOR);
             c.set_hyperlane_signer(v(2), Address::ZERO).unwrap();
             c.set_hyperlane_signer(FIXTURE_VALIDATOR, v(9)).unwrap();
         });
@@ -848,7 +836,7 @@ mod liveness {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
             // A stranger key cannot register a signer, the validator can.
-            let set: Bytes = IHyperlaneController::setHyperlaneSignerCall { signer: v(9) }
+            let set: Bytes = ICrosschainGov::setHyperlaneSignerCall { signer: v(9) }
                 .abi_encode()
                 .into();
             assert!(dispatch(storage.clone(), &set, stranger(), U256::ZERO).is_err());
@@ -863,10 +851,10 @@ mod liveness {
             .unwrap_err();
             assert_eq!(
                 revert_selector(err),
-                IHyperlaneController::SignerMismatch::SELECTOR
+                ICrosschainGov::SignerMismatch::SELECTOR
             );
             // Reset to the validator address.
-            let reset: Bytes = IHyperlaneController::setHyperlaneSignerCall {
+            let reset: Bytes = ICrosschainGov::setHyperlaneSignerCall {
                 signer: Address::ZERO,
             }
             .abi_encode()
@@ -1007,7 +995,7 @@ mod liveness {
         assert_eq!(jailed, vec![v(3)]);
         assert_eq!(
             *topics(&p).last().unwrap(),
-            IHyperlaneController::LivenessJailed::SIGNATURE_HASH
+            ICrosschainGov::LivenessJailed::SIGNATURE_HASH
         );
         StorageHandle::enter(&mut p, |storage| {
             let vs = ValidatorSet::new(storage.clone());
@@ -1083,7 +1071,7 @@ mod vote_target {
     }
 
     fn apply(p: &mut HashMapStorageProvider, payload: &str) -> Result<Bytes, PrecompileError> {
-        let call = IHyperlaneController::applyApprovedCall {
+        let call = ICrosschainGov::applyApprovedCall {
             proposalId: U256::ONE,
             payload: payload.as_bytes().to_vec().into(),
         };
@@ -1220,7 +1208,7 @@ mod vote_target {
         let err = apply(&mut p, &payload).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::UnknownApprovedAction::SELECTOR
+            ICrosschainGov::UnknownApprovedAction::SELECTOR
         );
     }
 
@@ -1294,7 +1282,7 @@ mod vote_target {
         let err = apply(&mut p, &add).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::RemoteRouterMismatch::SELECTOR
+            ICrosschainGov::RemoteRouterMismatch::SELECTOR
         );
     }
 
@@ -1307,7 +1295,7 @@ mod vote_target {
         let err = apply(&mut p, &pause_on(SEPOLIA)).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            IHyperlaneController::ApprovedPayloadMismatch::SELECTOR
+            ICrosschainGov::ApprovedPayloadMismatch::SELECTOR
         );
 
         p.set_block_number(

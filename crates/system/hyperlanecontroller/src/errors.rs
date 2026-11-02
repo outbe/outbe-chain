@@ -1,6 +1,6 @@
 //! Typed error definitions for the HyperlaneController system precompile.
 
-use crate::precompile::IHyperlaneController;
+use crate::precompile::ICrosschainGov;
 use alloy_primitives::Bytes;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
@@ -112,34 +112,34 @@ impl From<HyperlaneControllerError> for PrecompileError {
     fn from(error: HyperlaneControllerError) -> Self {
         match error {
             HyperlaneControllerError::AlreadyInitialized => PrecompileError::RevertBytes(
-                Bytes::from(IHyperlaneController::AlreadyInitialized {}.abi_encode()),
+                Bytes::from(ICrosschainGov::AlreadyInitialized {}.abi_encode()),
             ),
             HyperlaneControllerError::NotInitialized => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::NotInitialized {}.abi_encode(),
+                ICrosschainGov::NotInitialized {}.abi_encode(),
             )),
             HyperlaneControllerError::LocalDomainMissing { domain } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::LocalDomainMissing { domain }.abi_encode(),
+                    ICrosschainGov::LocalDomainMissing { domain }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::NotBootstrapAdmin { caller, admin } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::NotBootstrapAdmin { caller, admin }.abi_encode(),
+                    ICrosschainGov::NotBootstrapAdmin { caller, admin }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::NotIsmOwner { caller, owner } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::NotIsmOwner { caller, owner }.abi_encode(),
+                    ICrosschainGov::NotIsmOwner { caller, owner }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::IsmNotPendingToController { pending } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::IsmNotPendingToController { pending }.abi_encode(),
+                    ICrosschainGov::IsmNotPendingToController { pending }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::NotOwnedByController { contract, owner } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::NotOwnedByController {
+                    ICrosschainGov::NotOwnedByController {
                         target: contract,
                         owner,
                     }
@@ -147,23 +147,23 @@ impl From<HyperlaneControllerError> for PrecompileError {
                 ))
             }
             HyperlaneControllerError::InvalidAddress => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::InvalidAddress {}.abi_encode(),
+                ICrosschainGov::InvalidAddress {}.abi_encode(),
             )),
             HyperlaneControllerError::InvalidDomain => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::InvalidDomain {}.abi_encode(),
+                ICrosschainGov::InvalidDomain {}.abi_encode(),
             )),
             HyperlaneControllerError::IsmLengthMismatch => PrecompileError::RevertBytes(
-                Bytes::from(IHyperlaneController::IsmLengthMismatch {}.abi_encode()),
+                Bytes::from(ICrosschainGov::IsmLengthMismatch {}.abi_encode()),
             ),
             HyperlaneControllerError::HookLengthMismatch => PrecompileError::RevertBytes(
-                Bytes::from(IHyperlaneController::HookLengthMismatch {}.abi_encode()),
+                Bytes::from(ICrosschainGov::HookLengthMismatch {}.abi_encode()),
             ),
             HyperlaneControllerError::UnknownHook { domain } => PrecompileError::RevertBytes(
-                Bytes::from(IHyperlaneController::UnknownHook { domain }.abi_encode()),
+                Bytes::from(ICrosschainGov::UnknownHook { domain }.abi_encode()),
             ),
             HyperlaneControllerError::NotActiveValidator { caller } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::NotActiveValidator { caller }.abi_encode(),
+                    ICrosschainGov::NotActiveValidator { caller }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::SignerMismatch {
@@ -171,7 +171,7 @@ impl From<HyperlaneControllerError> for PrecompileError {
                 expected,
                 recovered,
             } => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::SignerMismatch {
+                ICrosschainGov::SignerMismatch {
                     validator,
                     expected,
                     recovered,
@@ -180,33 +180,33 @@ impl From<HyperlaneControllerError> for PrecompileError {
             )),
             HyperlaneControllerError::SignerTaken { signer, validator } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::SignerTaken { signer, validator }.abi_encode(),
+                    ICrosschainGov::SignerTaken { signer, validator }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::StaleIndex { index, submitted } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::StaleIndex { index, submitted }.abi_encode(),
+                    ICrosschainGov::StaleIndex { index, submitted }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::InvalidSignatureLength { length } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::InvalidSignatureLength {
+                    ICrosschainGov::InvalidSignatureLength {
                         length: length as u64,
                     }
                     .abi_encode(),
                 ))
             }
             HyperlaneControllerError::UnknownDomain { domain } => PrecompileError::RevertBytes(
-                Bytes::from(IHyperlaneController::UnknownDomain { domain }.abi_encode()),
+                Bytes::from(ICrosschainGov::UnknownDomain { domain }.abi_encode()),
             ),
             HyperlaneControllerError::LocalDomainNotAllowed { domain } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::LocalDomainNotAllowed { domain }.abi_encode(),
+                    ICrosschainGov::LocalDomainNotAllowed { domain }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::InvalidValidatorCount { count } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::InvalidValidatorCount {
+                    ICrosschainGov::InvalidValidatorCount {
                         count: count as u64,
                     }
                     .abi_encode(),
@@ -216,7 +216,7 @@ impl From<HyperlaneControllerError> for PrecompileError {
                 threshold,
                 validators,
             } => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::InvalidThreshold {
+                ICrosschainGov::InvalidThreshold {
                     threshold,
                     validators: validators as u64,
                 }
@@ -224,20 +224,20 @@ impl From<HyperlaneControllerError> for PrecompileError {
             )),
             HyperlaneControllerError::InvalidValidator { validator } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::InvalidValidator { validator }.abi_encode(),
+                    ICrosschainGov::InvalidValidator { validator }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::EmptyCalls => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::EmptyCalls {}.abi_encode(),
+                ICrosschainGov::EmptyCalls {}.abi_encode(),
             )),
-            HyperlaneControllerError::ZeroFund => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::ZeroFund {}.abi_encode(),
-            )),
+            HyperlaneControllerError::ZeroFund => {
+                PrecompileError::RevertBytes(Bytes::from(ICrosschainGov::ZeroFund {}.abi_encode()))
+            }
             HyperlaneControllerError::InsufficientBalance {
                 required,
                 available,
             } => PrecompileError::RevertBytes(Bytes::from(
-                IHyperlaneController::InsufficientBalance {
+                ICrosschainGov::InsufficientBalance {
                     required,
                     available,
                 }
@@ -245,7 +245,7 @@ impl From<HyperlaneControllerError> for PrecompileError {
             )),
             HyperlaneControllerError::UndecodableReturn(value) => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::UndecodableReturn {
+                    ICrosschainGov::UndecodableReturn {
                         value: value.to_string(),
                     }
                     .abi_encode(),
@@ -253,7 +253,7 @@ impl From<HyperlaneControllerError> for PrecompileError {
             }
             HyperlaneControllerError::InvalidProposalPayload(value) => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::InvalidProposalPayload {
+                    ICrosschainGov::InvalidProposalPayload {
                         value: value.to_string(),
                     }
                     .abi_encode(),
@@ -261,7 +261,7 @@ impl From<HyperlaneControllerError> for PrecompileError {
             }
             HyperlaneControllerError::UnknownApprovedAction { proposal_id } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::UnknownApprovedAction {
+                    ICrosschainGov::UnknownApprovedAction {
                         proposalId: proposal_id,
                     }
                     .abi_encode(),
@@ -269,12 +269,12 @@ impl From<HyperlaneControllerError> for PrecompileError {
             }
             HyperlaneControllerError::RemoteRouterMismatch { domain, enrolled } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::RemoteRouterMismatch { domain, enrolled }.abi_encode(),
+                    ICrosschainGov::RemoteRouterMismatch { domain, enrolled }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::ApprovedPayloadMismatch { proposal_id } => {
                 PrecompileError::RevertBytes(Bytes::from(
-                    IHyperlaneController::ApprovedPayloadMismatch {
+                    ICrosschainGov::ApprovedPayloadMismatch {
                         proposalId: proposal_id,
                     }
                     .abi_encode(),
@@ -300,8 +300,7 @@ mod tests {
         let caller = Address::repeat_byte(0x11);
         let admin = Address::repeat_byte(0x22);
         let bytes = encoded(HyperlaneControllerError::NotBootstrapAdmin { caller, admin });
-        let decoded =
-            IHyperlaneController::NotBootstrapAdmin::abi_decode(&bytes).expect("admin payload");
+        let decoded = ICrosschainGov::NotBootstrapAdmin::abi_decode(&bytes).expect("admin payload");
         assert_eq!(decoded.caller, caller);
         assert_eq!(decoded.admin, admin);
 
@@ -309,18 +308,18 @@ mod tests {
         let owner = Address::repeat_byte(0x44);
         let bytes = encoded(HyperlaneControllerError::NotOwnedByController { contract, owner });
         let decoded =
-            IHyperlaneController::NotOwnedByController::abi_decode(&bytes).expect("owner payload");
+            ICrosschainGov::NotOwnedByController::abi_decode(&bytes).expect("owner payload");
         assert_eq!(decoded.target, contract);
         assert_eq!(decoded.owner, owner);
 
         let bytes = encoded(HyperlaneControllerError::InvalidSignatureLength { length: 65 });
-        let decoded = IHyperlaneController::InvalidSignatureLength::abi_decode(&bytes)
-            .expect("length payload");
+        let decoded =
+            ICrosschainGov::InvalidSignatureLength::abi_decode(&bytes).expect("length payload");
         assert_eq!(decoded.length, 65);
 
         let bytes = encoded(HyperlaneControllerError::UndecodableReturn("short return"));
         let decoded =
-            IHyperlaneController::UndecodableReturn::abi_decode(&bytes).expect("string payload");
+            ICrosschainGov::UndecodableReturn::abi_decode(&bytes).expect("string payload");
         assert_eq!(decoded.value, "short return");
     }
 }

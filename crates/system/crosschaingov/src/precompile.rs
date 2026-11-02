@@ -7,7 +7,7 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::schema::validator_domain_key;
 use outbe_hyperlanecontroller::{
     ControllerBootstrap, HyperlaneControllerContract, SignedCheckpoint,
@@ -19,7 +19,7 @@ use crate::schema::CrosschainGovContract;
 /// Selectors that accept native value: only `fund`, the top-up of the balance
 /// that pays Interchain Account dispatch fees. The route table binds this list
 /// to the address's `ValuePolicy` at compile time.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IHyperlaneController::fundCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICrosschainGov::fundCall::SELECTOR];
 
 /// Dispatch for the precompile at the owner address. The Hyperlane selectors
 /// go to `hyperlanecontroller` with this crate as the owner.
@@ -32,9 +32,9 @@ pub fn dispatch(
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(
         data,
-        IHyperlaneController::IHyperlaneControllerCalls::abi_decode,
+        ICrosschainGov::ICrosschainGovCalls::abi_decode,
         |call| {
-            use IHyperlaneController::IHyperlaneControllerCalls::*;
+            use ICrosschainGov::ICrosschainGovCalls::*;
             let mut controller = HyperlaneControllerContract::new(storage.clone());
             let mut gov = CrosschainGovContract::new(storage.clone());
             let mut executor = Executor::new(storage.clone());

@@ -8,7 +8,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
 use outbe_hyperlanecontroller::{HyperlaneControllerContract, RemoteCall};
 
@@ -31,7 +31,7 @@ impl<'a> Executor<'a> {
             return Err(HyperlaneControllerError::ZeroFund.into());
         }
         self.controller
-            .emit(IHyperlaneController::Funded { from, amount })
+            .emit(ICrosschainGov::Funded { from, amount })
     }
 
     /// Interchain Account of the owner on `domain`, as the ICA router derives it.
@@ -84,12 +84,11 @@ impl<'a> Executor<'a> {
             .map_err(|_| {
                 HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter callRemote")
             })?;
-        self.controller
-            .emit(IHyperlaneController::RemoteCallDispatched {
-                domain,
-                messageId: message_id,
-                fee,
-            })?;
+        self.controller.emit(ICrosschainGov::RemoteCallDispatched {
+            domain,
+            messageId: message_id,
+            fee,
+        })?;
         Ok(message_id)
     }
 
@@ -131,7 +130,7 @@ impl outbe_hyperlanecontroller::Executor for Executor<'_> {
         storage.with_checkpoint(|| {
             let ret = self.controller.storage.call(to, value, data)?;
             self.controller
-                .emit(IHyperlaneController::LocalCallExecuted { target: to, value })?;
+                .emit(ICrosschainGov::LocalCallExecuted { target: to, value })?;
             Ok(ret)
         })
     }

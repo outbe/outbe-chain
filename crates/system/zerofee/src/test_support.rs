@@ -2,7 +2,7 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 use outbe_validatorset::{
     contract::ValidatorSet, delegation::ValidatorDelegateRole, StakeProjection,
@@ -13,7 +13,7 @@ const VALIDATOR_SET_OWNER: Address = address!("0xfffffffffffffffffffffffffffffff
 
 /// Valid `HyperlaneController.submitCheckpoint` calldata.
 pub(crate) fn checkpoint_calldata() -> Bytes {
-    IHyperlaneController::submitCheckpointCall {
+    ICrosschainGov::submitCheckpointCall {
         domain: 54_322_345,
         root: B256::repeat_byte(1),
         index: 7,

@@ -2,7 +2,7 @@
 //!
 //! The Hyperlane contract interfaces that the controller calls through
 //! `StorageHandle::call` / `StorageHandle::staticcall`. This is NOT the
-//! precompile's own inbound ABI (`precompile::IHyperlaneController`).
+//! precompile's own inbound ABI (`precompile::ICrosschainGov`).
 
 use alloy_sol_types::sol;
 

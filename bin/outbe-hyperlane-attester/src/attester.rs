@@ -1,5 +1,5 @@
 //! Hyperlane liveness: submits this validator's latest signed checkpoints
-//! from its own checkpoint bucket to the HyperlaneController precompile.
+//! from its own checkpoint bucket to the CrosschainGov precompile.
 //!
 //! The bucket is the location that the validator announced on Outbe's
 //! ValidatorAnnounce (`s3+http://host:port/<validator>/<folder>`). Inside the
@@ -19,14 +19,14 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use tracing::{debug, info, warn};
 
-use crate::abi::{IHyperlaneController, IValidatorAnnounce};
+use crate::abi::{ICrosschainGov, IValidatorAnnounce};
 use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
 use crate::errors::AttesterError;
 use crate::health::AttesterHealth;
 
-/// HyperlaneController precompile address (0xEE14).
-pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
+/// CrosschainGov precompile address (0xEE14).
+pub const CROSSCHAIN_GOV_ADDRESS: Address =
     alloy_primitives::address!("0x000000000000000000000000000000000000EE14");
 
 #[derive(Debug, Deserialize)]
@@ -95,13 +95,13 @@ impl Attester {
         let provider = ProviderBuilder::new().connect_http(self.rpc_endpoint.parse()?);
         let output = client::eth_call(
             &provider,
-            HYPERLANE_CONTROLLER_ADDRESS,
-            IHyperlaneController::domainsCall {}.abi_encode(),
+            CROSSCHAIN_GOV_ADDRESS,
+            ICrosschainGov::domainsCall {}.abi_encode(),
             BlockId::latest(),
         )
         .await
         .with_context(|| "hyperlane domains() failed")?;
-        let domains = IHyperlaneController::domainsCall::abi_decode_returns(&output)
+        let domains = ICrosschainGov::domainsCall::abi_decode_returns(&output)
             .with_context(|| "hyperlane domains() decode failed")?;
         if domains.is_empty() {
             debug!("hyperlane controller not initialized yet, nothing to submit");
@@ -109,8 +109,8 @@ impl Attester {
         }
         let output = client::eth_call(
             &provider,
-            HYPERLANE_CONTROLLER_ADDRESS,
-            IHyperlaneController::missCountCall {
+            CROSSCHAIN_GOV_ADDRESS,
+            ICrosschainGov::missCountCall {
                 validator: self.validator,
             }
             .abi_encode(),
@@ -118,7 +118,7 @@ impl Attester {
         )
         .await
         .with_context(|| "hyperlane missCount() failed")?;
-        let misses = IHyperlaneController::missCountCall::abi_decode_returns(&output)
+        let misses = ICrosschainGov::missCountCall::abi_decode_returns(&output)
             .with_context(|| "hyperlane missCount() decode failed")?;
         self.health.set_miss_count(u64::from(misses));
         if misses > 0 {
@@ -143,8 +143,8 @@ impl Attester {
             };
             let output = client::eth_call(
                 &provider,
-                HYPERLANE_CONTROLLER_ADDRESS,
-                IHyperlaneController::submittedIndexCall {
+                CROSSCHAIN_GOV_ADDRESS,
+                ICrosschainGov::submittedIndexCall {
                     validator: self.validator,
                     domain,
                 }
@@ -153,7 +153,7 @@ impl Attester {
             )
             .await
             .with_context(|| "hyperlane submittedIndex() failed")?;
-            let submitted = IHyperlaneController::submittedIndexCall::abi_decode_returns(&output)
+            let submitted = ICrosschainGov::submittedIndexCall::abi_decode_returns(&output)
                 .with_context(|| "hyperlane submittedIndex() decode failed")?;
             if latest.value.checkpoint.index <= submitted {
                 continue;
@@ -173,8 +173,8 @@ impl Attester {
     ) -> Result<Option<String>> {
         let output = client::eth_call(
             provider,
-            HYPERLANE_CONTROLLER_ADDRESS,
-            IHyperlaneController::hyperlaneSignerCall {
+            CROSSCHAIN_GOV_ADDRESS,
+            ICrosschainGov::hyperlaneSignerCall {
                 validator: self.validator,
             }
             .abi_encode(),
@@ -182,20 +182,20 @@ impl Attester {
         )
         .await
         .with_context(|| "hyperlane hyperlaneSigner() failed")?;
-        let mut signer = IHyperlaneController::hyperlaneSignerCall::abi_decode_returns(&output)
+        let mut signer = ICrosschainGov::hyperlaneSignerCall::abi_decode_returns(&output)
             .with_context(|| "hyperlane hyperlaneSigner() decode failed")?;
         if signer == Address::ZERO {
             signer = self.validator;
         }
         let output = client::eth_call(
             provider,
-            HYPERLANE_CONTROLLER_ADDRESS,
-            IHyperlaneController::validatorAnnounceCall {}.abi_encode(),
+            CROSSCHAIN_GOV_ADDRESS,
+            ICrosschainGov::validatorAnnounceCall {}.abi_encode(),
             BlockId::latest(),
         )
         .await
         .with_context(|| "hyperlane validatorAnnounce() failed")?;
-        let announce = IHyperlaneController::validatorAnnounceCall::abi_decode_returns(&output)
+        let announce = ICrosschainGov::validatorAnnounceCall::abi_decode_returns(&output)
             .with_context(|| "hyperlane validatorAnnounce() decode failed")?;
         let output = client::eth_call(
             provider,
@@ -249,7 +249,7 @@ impl Attester {
 
     async fn submit(&self, domain: u32, checkpoint: &CheckpointFile) {
         let index = checkpoint.value.checkpoint.index;
-        let calldata = IHyperlaneController::submitCheckpointCall {
+        let calldata = ICrosschainGov::submitCheckpointCall {
             domain,
             root: checkpoint.value.checkpoint.root,
             index,
@@ -263,7 +263,7 @@ impl Attester {
             chain_id: self.chain_id,
             gasless: self.config.gasless,
         };
-        match client::send_tx(&sender, HYPERLANE_CONTROLLER_ADDRESS, &calldata).await {
+        match client::send_tx(&sender, CROSSCHAIN_GOV_ADDRESS, &calldata).await {
             Ok(tx_hash) => {
                 self.health.record_success();
                 info!(domain, index, %tx_hash, "hyperlane checkpoint submitted");

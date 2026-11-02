@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 use crate::errors::HyperlaneControllerError;
 use crate::executor::Executor;
 use crate::ism_sync::accept_remote_ism;
-use crate::precompile::IHyperlaneController;
+use crate::precompile::ICrosschainGov;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
 
@@ -147,7 +147,7 @@ impl HyperlaneControllerContract<'_> {
                 accept_remote_ism(executor, *domain, *ism)?;
             }
         }
-        self.emit(IHyperlaneController::Initialized {
+        self.emit(ICrosschainGov::Initialized {
             icaRouter: bootstrap.ica_router,
         })
     }

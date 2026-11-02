@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::storage::keys::address_u32_key;
 
 /// EVM storage layout for the Hyperlane controller.
@@ -27,7 +27,7 @@ use outbe_primitives::storage::keys::address_u32_key;
 ///
 /// Slots from 32 belong to `crosschaingov` at the same address.
 #[storage_schema]
-#[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
+#[contract(addr = CROSSCHAIN_GOV_ADDRESS)]
 pub struct HyperlaneControllerContract {
     #[attribute(order = 0)]
     pub ica_router: outbe_primitives::storage::dsl::Value<Address>,

@@ -1,18 +1,20 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @dev The HyperlaneController precompile. Matches `HYPERLANE_CONTROLLER_ADDRESS` in
+/// @dev The CrosschainGov precompile. Matches `CROSSCHAIN_GOV_ADDRESS` in
 ///      crates/blockchain/primitives/src/addresses.rs.
-address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
+address constant CROSSCHAIN_GOV = 0x000000000000000000000000000000000000EE14;
 
-/// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
+/// CrosschainGov precompile at `CROSSCHAIN_GOV` (OIP-00369).
 ///
-/// Governance-owned controller of the Hyperlane bridge. Holds only the local
-/// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`
-/// table (the Outbe chain included under its own domain). Validator sets live
-/// in the ISMs themselves. The crosschain vote target approves owner actions,
-/// and `applyApproved` runs them (see the crate README for the JSON payloads).
-interface IHyperlaneController {
+/// The owner of every multi-chain contract: on Outbe directly, on another chain
+/// through its Interchain Account. It also serves the Hyperlane infrastructure:
+/// the local InterchainAccountRouter address and a
+/// `domain -> StorageMessageIdMultisigIsm` table (the Outbe chain included under
+/// its own domain). Validator sets live in the ISMs themselves. The crosschain
+/// vote target approves owner actions, and `applyApproved` runs them (see
+/// `crates/system/crosschaingov` for the JSON payloads).
+interface ICrosschainGov {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
     error NotInitialized();

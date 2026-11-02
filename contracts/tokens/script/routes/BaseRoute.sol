@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Proxy} from "@shared/Create3Proxy.sol";
-import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
+import {CROSSCHAIN_GOV, ICrosschainGov} from "@precompiles/ICrosschainGov.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 enum SyntheticSource {
@@ -68,7 +68,7 @@ abstract contract BaseRoute is Script {
     ///      the owner is the HyperlaneController on Outbe and its Interchain Account elsewhere.
     function _bridgeOwner() internal returns (address) {
         if (vm.envOr("KEEP_DEPLOYER_AS_OWNER", false)) return _deployer();
-        return _isOutbe() ? HYPERLANE_CONTROLLER : _controllerAccount(_toDomain(block.chainid));
+        return _isOutbe() ? CROSSCHAIN_GOV : _controllerAccount(_toDomain(block.chainid));
     }
 
     /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
@@ -77,9 +77,9 @@ abstract contract BaseRoute is Script {
     function _controllerAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
-            vm.toString(HYPERLANE_CONTROLLER),
+            vm.toString(CROSSCHAIN_GOV),
             '","data":"',
-            vm.toString(abi.encodeCall(IHyperlaneController.remoteAccount, (domain))),
+            vm.toString(abi.encodeCall(ICrosschainGov.remoteAccount, (domain))),
             '"},"latest"]'
         );
         string memory outbe = vm.envOr("OUTBE_RPC", string("outbe-testnet"));

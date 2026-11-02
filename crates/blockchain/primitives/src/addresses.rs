@@ -223,17 +223,16 @@ pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
 /// public Heartwood repository ids and approved code-change receipts.
 pub const CODE_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE11");
 
-/// HyperlaneController precompile address (stateful).
+/// CrosschainGov precompile address (stateful).
 ///
-/// Governance-owned controller of the Hyperlane bridge. It owns the Outbe
-/// Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter and the
-/// storage multisig ISM. Through its Interchain Account, it also owns the same
-/// contracts on remote chains. It stores only the local ISM / router addresses
-/// and the `domain -> remote ISM` table. Validator sets live in the ISMs.
-/// `fund` is the only payable selector (float that pays ICA fees). The
-/// validator vote target applies every mutation. See `outbe-hyperlanecontroller`.
-pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
-    address!("0x000000000000000000000000000000000000EE14");
+/// The owner of every multi-chain contract (OIP-00369): the ERC-7786 hub, its
+/// gateway adapters, the token bridges and the Hyperlane core contracts
+/// (Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter, storage
+/// multisig ISM). Through its Interchain Account, it also owns the same
+/// contracts on remote chains. `fund` is the only payable selector (float that
+/// pays ICA fees). The validator vote target applies every owner action. See
+/// `outbe-crosschaingov` and, for the Hyperlane logic, `outbe-hyperlanecontroller`.
+pub const CROSSCHAIN_GOV_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE14");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];

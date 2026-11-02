@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// Test-only owner surface used to exercise the live HyperlaneController precompile.
+/// Test-only owner surface used to exercise the live CrosschainGov precompile.
 contract MockHyperlaneIsm {
     address public owner;
     address public pendingOwner;

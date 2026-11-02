@@ -8,7 +8,7 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 import {HandOver} from "script/4_HandOver.s.sol";
-import {HYPERLANE_CONTROLLER} from "@precompiles/IHyperlaneController.sol";
+import {CROSSCHAIN_GOV} from "@precompiles/ICrosschainGov.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {MockHyperlaneMailbox} from "./mocks/MockHyperlaneMailbox.sol";
 import {Proxies} from "./utils/Proxies.sol";
@@ -51,7 +51,7 @@ contract HandOverTest is Test {
 
     function test_GovernanceOwner_IsTheControllerOnOutbeAndItsAccountElsewhere() public {
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
-        assertEq(script.governanceOwner(), HYPERLANE_CONTROLLER, "Outbe");
+        assertEq(script.governanceOwner(), CROSSCHAIN_GOV, "Outbe");
 
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");

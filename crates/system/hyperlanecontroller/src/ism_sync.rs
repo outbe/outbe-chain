@@ -10,7 +10,7 @@ use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
 use crate::executor::{Executor, RemoteCall};
-use crate::precompile::IHyperlaneController;
+use crate::precompile::ICrosschainGov;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
@@ -52,7 +52,7 @@ impl HyperlaneControllerContract<'_> {
                 )?;
             }
             executor.call_local(local_ism, U256::ZERO, data)?;
-            self.emit(IHyperlaneController::ValidatorsAndThresholdApplied {
+            self.emit(ICrosschainGov::ValidatorsAndThresholdApplied {
                 threshold,
                 validatorCount: U256::from(validators.len()),
             })
@@ -97,7 +97,7 @@ impl HyperlaneControllerContract<'_> {
             for entry in remaining {
                 self.domains.push(entry)?;
             }
-            self.emit(IHyperlaneController::DomainRemoved { domain })
+            self.emit(ICrosschainGov::DomainRemoved { domain })
         })
     }
 
@@ -123,7 +123,7 @@ impl HyperlaneControllerContract<'_> {
         }
         self.ism_by_domain.write(&domain, ism)?;
         self.hook_by_domain.write(&domain, hook)?;
-        self.emit(IHyperlaneController::DomainAdded { domain, ism })
+        self.emit(ICrosschainGov::DomainAdded { domain, ism })
     }
 }
 

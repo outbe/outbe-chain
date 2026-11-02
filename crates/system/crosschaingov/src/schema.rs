@@ -1,6 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 
 /// EVM storage layout of `crosschaingov` at the owner address.
 ///
@@ -11,7 +11,7 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///      action payload). Zero = none or already applied
 ///  33: approved_at - mapping(proposal id => block of the approval)
 #[storage_schema]
-#[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
+#[contract(addr = CROSSCHAIN_GOV_ADDRESS)]
 pub struct CrosschainGovContract {
     #[slot(32)]
     pub approved_payload: outbe_primitives::storage::dsl::Map<U256, B256>,

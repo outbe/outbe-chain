@@ -8,9 +8,9 @@
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::precompile::ICrosschainGov;
 use outbe_hyperlanecontroller::{actions as hyperlane, Executor as _, HyperlaneControllerContract};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_vote::errors::VoteError;
@@ -59,7 +59,7 @@ impl CrosschainGovContract<'_> {
                 .read(&proposal_id)?
                 .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
             if self.storage.block_number()? > deadline {
-                return self.emit(IHyperlaneController::ApprovedActionExpired {
+                return self.emit(ICrosschainGov::ApprovedActionExpired {
                     proposalId: proposal_id,
                 });
             }
@@ -79,7 +79,7 @@ impl CrosschainGovContract<'_> {
                     }
                 }
             }
-            self.emit(IHyperlaneController::ApprovedActionApplied {
+            self.emit(ICrosschainGov::ApprovedActionApplied {
                 proposalId: proposal_id,
             })
         })
@@ -92,7 +92,7 @@ pub struct CrosschainVoteTarget;
 
 impl VoteTarget for CrosschainVoteTarget {
     fn target_module(&self) -> Address {
-        HYPERLANE_CONTROLLER_ADDRESS
+        CROSSCHAIN_GOV_ADDRESS
     }
 
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
