@@ -22,10 +22,10 @@ use outbe_vote::handlers::{
 use serde::Deserialize;
 
 use crate::errors::HyperlaneControllerError;
+use crate::owner::{Owner, RemoteCall};
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IERC7786Bridge, IHyperlaneGatewayAdapter, IHyperlaneRouter, ITokenBridge};
-use crate::RemoteCall;
 
 #[derive(Debug, Deserialize)]
 #[serde(
@@ -223,7 +223,11 @@ impl Action {
         }
     }
 
-    fn apply(&self, controller: &mut HyperlaneControllerContract<'_>) -> Result<()> {
+    fn apply(
+        &self,
+        controller: &mut HyperlaneControllerContract<'_>,
+        owner: &mut impl Owner,
+    ) -> Result<()> {
         match self {
             Self::AddHyperlaneChain {
                 chain_id,
@@ -231,17 +235,17 @@ impl Action {
                 ism,
                 hook,
             } => {
-                controller.enroll_ica_router(*chain_id, *ica_router)?;
-                controller.add_domain(*chain_id, *ism, *hook)
+                controller.enroll_ica_router(owner, *chain_id, *ica_router)?;
+                controller.add_domain(owner, *chain_id, *ism, *hook)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
             _ => {
                 let calls = self.calls(controller.local_domain()?);
                 for call in calls.local {
-                    controller.call_local(call.to, call.value, call.data)?;
+                    owner.call_local(call.to, call.value, call.data)?;
                 }
                 if let Some((chain_id, remote)) = calls.remote {
-                    controller.call_remote(chain_id, &remote)?;
+                    owner.call_remote(chain_id, &remote)?;
                 }
                 Ok(())
             }
@@ -316,7 +320,12 @@ impl HyperlaneControllerContract<'_> {
     /// `call_remote` can reach that chain. The router keeps the first
     /// enrollment forever, so the same router is a no-op and another router
     /// reverts.
-    fn enroll_ica_router(&mut self, domain: u32, router: Address) -> Result<()> {
+    fn enroll_ica_router(
+        &mut self,
+        owner: &mut impl Owner,
+        domain: u32,
+        router: Address,
+    ) -> Result<()> {
         let ica_router = self.ica_router.read()?;
         let ret = self.storage.staticcall(
             ica_router,
@@ -338,12 +347,18 @@ impl HyperlaneControllerContract<'_> {
             _router: router.into_word(),
         }
         .abi_encode();
-        self.call_local(ica_router, U256::ZERO, data.into())
+        owner
+            .call_local(ica_router, U256::ZERO, data.into())
             .map(|_| ())
     }
 
     /// Runs an approved action once, inside one checkpoint.
-    pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
+    pub fn apply_approved(
+        &mut self,
+        owner: &mut impl Owner,
+        proposal_id: U256,
+        payload: &[u8],
+    ) -> Result<()> {
         let approved = self.approved_payload.read(&proposal_id)?;
         if approved == B256::ZERO {
             return Err(HyperlaneControllerError::UnknownApprovedAction { proposal_id }.into());
@@ -366,7 +381,7 @@ impl HyperlaneControllerContract<'_> {
             }
             let action = Action::decode(payload, self.storage.chain_id()?)
                 .map_err(|_| VoteError::stored_payload_invalid("HyperlaneController"))?;
-            action.apply(self)?;
+            action.apply(self, owner)?;
             self.emit(IHyperlaneController::ApprovedActionApplied {
                 proposalId: proposal_id,
             })

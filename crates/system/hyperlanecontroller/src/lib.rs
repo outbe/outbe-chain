@@ -24,6 +24,8 @@ pub mod schema;
 
 mod ism_sync;
 mod liveness;
+mod owner;
+mod owner_impl;
 mod remote;
 mod runtime;
 mod sol_ext;
@@ -32,7 +34,8 @@ mod vote_target;
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
-pub use remote::RemoteCall;
+pub use owner::{Owner, RemoteCall};
+pub use owner_impl::ControllerOwner;
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
 pub use vote_target::CrosschainVoteTarget;

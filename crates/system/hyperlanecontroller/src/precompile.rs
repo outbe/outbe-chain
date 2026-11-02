@@ -7,6 +7,7 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::owner_impl::ControllerOwner;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 use crate::{ControllerBootstrap, SignedCheckpoint};
 
@@ -34,9 +35,11 @@ pub fn dispatch(
         |call| {
             use IHyperlaneController::IHyperlaneControllerCalls::*;
             let mut controller = HyperlaneControllerContract::new(storage.clone());
+            let mut owner = ControllerOwner::new(storage.clone());
             match call {
                 initialize(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.initialize(
+                        &mut owner,
                         sender,
                         &ControllerBootstrap {
                             ica_router: c.icaRouter,
@@ -57,9 +60,9 @@ pub fn dispatch(
                     },
                     |sender, _, amount| controller.fund(sender, amount),
                 ),
-                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),
+                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync(&mut owner)),
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
-                    controller.apply_approved(c.proposalId, &c.payload)
+                    controller.apply_approved(&mut owner, c.proposalId, &c.payload)
                 }),
                 setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
@@ -77,7 +80,7 @@ pub fn dispatch(
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),
-                remoteAccount(c) => view(c, |c| controller.remote_account(c.domain)),
+                remoteAccount(c) => view(c, |c| owner.remote_account(c.domain)),
                 validatorAnnounce(c) => view(c, |_| controller.validator_announce.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),

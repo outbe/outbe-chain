@@ -3,6 +3,8 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
+use crate::ism_sync::accept_remote_ism;
+use crate::owner::Owner;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
@@ -79,6 +81,7 @@ impl HyperlaneControllerContract<'_> {
     /// calldata, so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
+        owner: &mut impl Owner,
         caller: Address,
         bootstrap: &ControllerBootstrap<'_>,
     ) -> Result<()> {
@@ -97,7 +100,7 @@ impl HyperlaneControllerContract<'_> {
         self.require_owned(bootstrap.ica_router)?;
 
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.install(bootstrap, local, local_ism))
+        storage.with_checkpoint(|| self.install(owner, bootstrap, local, local_ism))
     }
 
     /// Requires that `caller` owns the local ISM and that the ISM ownership
@@ -118,11 +121,12 @@ impl HyperlaneControllerContract<'_> {
     /// takes ownership of every remote ISM.
     fn install(
         &mut self,
+        owner: &mut impl Owner,
         bootstrap: &ControllerBootstrap<'_>,
         local: u32,
         local_ism: Address,
     ) -> Result<()> {
-        self.storage.call(
+        owner.call_local(
             local_ism,
             U256::ZERO,
             IStorageMultisigIsm::acceptOwnershipCall {}
@@ -140,7 +144,7 @@ impl HyperlaneControllerContract<'_> {
         for ((domain, ism), hook) in table {
             self.write_domain(*domain, *ism, *hook)?;
             if *domain != local {
-                self.accept_remote_ism(*domain, *ism)?;
+                accept_remote_ism(owner, *domain, *ism)?;
             }
         }
         self.emit(IHyperlaneController::Initialized {
@@ -160,14 +164,14 @@ impl HyperlaneControllerContract<'_> {
     /// the Hyperlane signer of every active validator, threshold =
     /// [`consensus_threshold`]). Returns `false` when the local ISM already
     /// matches, so a keeper can call it every epoch.
-    pub fn sync(&mut self) -> Result<bool> {
+    pub fn sync(&mut self, owner: &mut impl Owner) -> Result<bool> {
         let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;
         let (current, current_threshold) = self.current_validators()?;
         if current_threshold == threshold && same_set(&current, &active) {
             return Ok(false);
         }
-        self.set_validators_and_threshold(&active, threshold)?;
+        self.set_validators_and_threshold(owner, &active, threshold)?;
         Ok(true)
     }
 }

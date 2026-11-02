@@ -12,11 +12,12 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
+use crate::owner::{Owner, RemoteCall};
+use crate::owner_impl::ControllerOwner;
 use crate::precompile::{dispatch, IHyperlaneController};
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
-use crate::RemoteCall;
 use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
@@ -344,8 +345,9 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
     p.set_balance(HYPERLANE_CONTROLLER_ADDRESS, fee * U256::from(2));
     p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
+        let mut owner = ControllerOwner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
-        c.set_validators_and_threshold(&[v(1), v(2), v(3)], 2)
+        c.set_validators_and_threshold(&mut owner, &[v(1), v(2), v(3)], 2)
             .unwrap();
     });
     let t = topics(&p);
@@ -354,6 +356,7 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
         vec![
             IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH,
             IHyperlaneController::RemoteCallDispatched::SIGNATURE_HASH,
+            IHyperlaneController::LocalCallExecuted::SIGNATURE_HASH,
             IHyperlaneController::ValidatorsAndThresholdApplied::SIGNATURE_HASH,
         ]
     );
@@ -371,9 +374,10 @@ fn rotation_without_fee_balance_changes_nothing() {
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
     p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
+        let mut owner = ControllerOwner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         let err = c
-            .set_validators_and_threshold(&[v(1), v(2)], 2)
+            .set_validators_and_threshold(&mut owner, &[v(1), v(2)], 2)
             .unwrap_err();
         assert_eq!(
             revert_selector(err),
@@ -388,7 +392,7 @@ fn remote_and_local_generic_calls() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     StorageHandle::enter(&mut p, |storage| {
-        let mut c = HyperlaneControllerContract::new(storage);
+        let mut owner = ControllerOwner::new(storage);
         let calls = [RemoteCall {
             to: sepolia_ism(),
             value: U256::ZERO,
@@ -397,15 +401,16 @@ fn remote_and_local_generic_calls() {
                 .into(),
         }];
         assert_eq!(
-            c.call_remote(SEPOLIA, &calls).unwrap(),
+            owner.call_remote(SEPOLIA, &calls).unwrap(),
             B256::repeat_byte(0xaa)
         );
-        assert!(c.call_remote(LOCAL, &calls).is_err());
-        assert!(c.call_remote(SEPOLIA, &[]).is_err());
+        assert!(owner.call_remote(LOCAL, &calls).is_err());
+        assert!(owner.call_remote(SEPOLIA, &[]).is_err());
 
-        c.call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))
+        owner
+            .call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))
             .unwrap();
-        assert!(c
+        assert!(owner
             .call_local(local_ism(), U256::from(1), Bytes::new())
             .is_err());
     });
@@ -431,10 +436,11 @@ fn remote_account_is_the_router_derived_account() {
 fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
+        let mut owner = ControllerOwner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
-        c.add_domain(1, v(5), hook(5)).unwrap();
+        c.add_domain(&mut owner, 1, v(5), hook(5)).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC, 1]);
-        c.add_domain(1, v(6), hook(6)).unwrap();
+        c.add_domain(&mut owner, 1, v(6), hook(6)).unwrap();
         assert_eq!(c.ism_by_domain.read(&1).unwrap(), v(6));
         assert_eq!(c.domains.read_all().unwrap().len(), 4);
 
@@ -444,8 +450,8 @@ fn domains_can_be_added_and_removed_except_the_local_one() {
 
         assert!(c.remove_domain(SEPOLIA).is_err());
         assert!(c.remove_domain(LOCAL).is_err());
-        assert!(c.add_domain(LOCAL, v(7), hook(7)).is_err());
-        assert!(c.add_domain(0, v(7), hook(7)).is_err());
+        assert!(c.add_domain(&mut owner, LOCAL, v(7), hook(7)).is_err());
+        assert!(c.add_domain(&mut owner, 0, v(7), hook(7)).is_err());
     });
 }
 
@@ -454,12 +460,13 @@ fn operations_require_initialization() {
     let mut p = provider();
     p.enable_sub_call_stub();
     StorageHandle::enter(&mut p, |storage| {
+        let mut owner = ControllerOwner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         assert!(matches!(
-            c.set_validators_and_threshold(&[v(1)], 1),
+            c.set_validators_and_threshold(&mut owner, &[v(1)], 1),
             Err(outbe_primitives::error::PrecompileError::RevertBytes(_))
         ));
-        assert!(c
+        assert!(owner
             .call_remote(
                 SEPOLIA,
                 &[RemoteCall {
@@ -469,7 +476,7 @@ fn operations_require_initialization() {
                 }]
             )
             .is_err());
-        assert!(c.add_domain(SEPOLIA, v(1), hook(1)).is_err());
+        assert!(c.add_domain(&mut owner, SEPOLIA, v(1), hook(1)).is_err());
     });
 }
 
@@ -575,16 +582,18 @@ mod sync {
         stub_router_and_ism(&mut p, U256::ZERO, &[v(9), v(3), v(2), v(1)], 3);
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
+            let mut owner = ControllerOwner::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
-            assert!(!c.sync().unwrap());
+            assert!(!c.sync(&mut owner).unwrap());
         });
         assert!(topics(&p).is_empty());
 
         // The validator address of v4 is not its signer: that set is stale.
         stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
         StorageHandle::enter(&mut p, |storage| {
+            let mut owner = ControllerOwner::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
-            assert!(c.sync().unwrap());
+            assert!(c.sync(&mut owner).unwrap());
         });
     }
 }

@@ -1,81 +1,14 @@
-//! Sub-calls from the controller to Hyperlane contracts, and the guards that
-//! protect them.
+//! Reads of Hyperlane contracts, and the guards that protect the owner calls.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
-
-/// One call executed by the controller's Interchain Account on a remote chain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RemoteCall {
-    pub to: Address,
-    pub value: U256,
-    pub data: Bytes,
-}
+use crate::sol_ext::{IOwnable, IStorageMultisigIsm};
 
 impl HyperlaneControllerContract<'_> {
-    pub(crate) fn dispatch_remote(&mut self, domain: u32, calls: &[RemoteCall]) -> Result<B256> {
-        let router = self.ica_router.read()?;
-        let fee = self.quote(router, domain)?;
-        self.require_balance(fee)?;
-        let calls = calls
-            .iter()
-            .map(|call| IInterchainAccountRouter::Call {
-                to: call.to.into_word(),
-                value: call.value,
-                data: call.data.clone(),
-            })
-            .collect();
-        let ret = self.storage.call(
-            router,
-            fee,
-            IInterchainAccountRouter::callRemoteCall {
-                _destination: domain,
-                _calls: calls,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-        let message_id = IInterchainAccountRouter::callRemoteCall::abi_decode_returns(&ret)
-            .map_err(|_| {
-                HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter callRemote")
-            })?;
-        self.emit(IHyperlaneController::RemoteCallDispatched {
-            domain,
-            messageId: message_id,
-            fee,
-        })?;
-        Ok(message_id)
-    }
-
-    /// Interchain Account of the controller on `domain`, as the ICA router derives it.
-    pub fn remote_account(&self, domain: u32) -> Result<Address> {
-        self.require_initialized()?;
-        self.require_remote_domain(domain)?;
-        let ret = self.storage.staticcall(
-            self.ica_router.read()?,
-            IInterchainAccountRouter::getRemoteInterchainAccountCall {
-                _destination: domain,
-                _owner: self.address,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-        IInterchainAccountRouter::getRemoteInterchainAccountCall::abi_decode_returns(&ret).map_err(
-            |_| {
-                HyperlaneControllerError::UndecodableReturn(
-                    "InterchainAccountRouter getRemoteInterchainAccount",
-                )
-                .into()
-            },
-        )
-    }
-
     /// Current set as stored by the local ISM (the source of truth).
     pub(crate) fn current_validators(&self) -> Result<(Vec<Address>, u8)> {
         let local_ism = self.local_ism()?;
@@ -100,21 +33,6 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::LocalDomainMissing { domain: local }.into());
         }
         Ok(ism)
-    }
-
-    pub(crate) fn quote(&self, router: Address, domain: u32) -> Result<U256> {
-        let ret = self.storage.staticcall(
-            router,
-            IInterchainAccountRouter::quoteGasPaymentCall {
-                _destination: domain,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-        IInterchainAccountRouter::quoteGasPaymentCall::abi_decode_returns(&ret).map_err(|_| {
-            HyperlaneControllerError::UndecodableReturn("InterchainAccountRouter quoteGasPayment")
-                .into()
-        })
     }
 
     pub(crate) fn owner_of(&self, target: Address) -> Result<Address> {
@@ -148,18 +66,6 @@ impl HyperlaneControllerContract<'_> {
     pub(crate) fn require_initialized(&self) -> Result<()> {
         if !self.is_initialized()? {
             return Err(HyperlaneControllerError::NotInitialized.into());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn require_balance(&self, required: U256) -> Result<()> {
-        let available = self.storage.balance(self.address)?;
-        if available < required {
-            return Err(HyperlaneControllerError::InsufficientBalance {
-                required,
-                available,
-            }
-            .into());
         }
         Ok(())
     }
