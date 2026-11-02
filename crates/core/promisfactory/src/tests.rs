@@ -225,8 +225,15 @@ fn gratis_view_balance(storage: &StorageHandle<'_>, account: Address) -> U256 {
     outbe_tee_enclave::gratis::decrypt_balance(&vk, account, &blob).unwrap()
 }
 
-fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> Bytes {
-    let encrypted = test_enclave::encrypt_mine_gratis_amount(amount);
+fn eve() -> Address {
+    address!("0x2222222222222222222222222222222222222222")
+}
+
+fn mine_gratis_with_ciphertext(
+    encrypted: Vec<u8>,
+    promis: &ModifyAuth,
+    gratis: &ModifyAuth,
+) -> Bytes {
     Bytes::from(
         IPromisFactory::IPromisFactoryCalls::mineGratis(IPromisFactory::mineGratisCall {
             encryptedPromisMinor: encrypted.into(),
@@ -237,6 +244,11 @@ fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> B
         })
         .abi_encode(),
     )
+}
+
+fn mine_gratis_call(amount: U256, promis: &ModifyAuth, gratis: &ModifyAuth) -> Bytes {
+    let encrypted = test_enclave::encrypt_mine_gratis_amount(alice(), amount);
+    mine_gratis_with_ciphertext(encrypted, promis, gratis)
 }
 
 #[test]
@@ -423,4 +435,92 @@ fn mine_coen_emits_promis_burned_and_coen_mined() {
     assert_eq!(mined.len(), 1);
     assert_eq!(mined[0].account, alice());
     assert_eq!(mined[0].amountMinor, ONE_COEN);
+}
+
+/// Eve's own valid MAC over Alice's ciphertext must fail AEAD, not the balance check.
+#[test]
+fn mine_gratis_rejects_a_replayed_ciphertext_for_another_account() {
+    with_gratis_env(|storage| {
+        let amount = U256::from(1_000u64);
+        promis_api::mint_from_gem(
+            storage.clone(),
+            U256::ONE,
+            alice(),
+            amount,
+            auth(PromisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let encrypted = test_enclave::encrypt_mine_gratis_amount(alice(), amount);
+        let call = mine_gratis_with_ciphertext(
+            encrypted,
+            &auth(PromisOp::Burn, eve(), amount, 0),
+            &gratis_auth(GratisOp::Mint, eve(), amount, 0),
+        );
+        let err = dispatch(storage.clone(), &call, eve(), U256::ZERO).unwrap_err();
+        assert!(!matches!(
+            err,
+            outbe_primitives::error::PrecompileError::EnclaveUnavailable(_)
+        ));
+        let outbe_primitives::error::PrecompileError::RevertBytes(data) = err else {
+            panic!("expected a typed Promis rejection, got {err:?}");
+        };
+        let rejection = outbe_promis::precompile::IPromis::Rejected::abi_decode(&data).unwrap();
+        assert_eq!(
+            rejection.value,
+            "AEAD decryption failed (bad key, nonce, or tampered ciphertext)"
+        );
+        assert_eq!(view_balance(storage.clone(), alice()), amount);
+        assert!(outbe_gratis::api::balance_ct(storage, eve())
+            .unwrap()
+            .is_empty());
+    });
+}
+
+#[test]
+fn mine_gratis_rejects_wrong_ciphertext_lengths_without_the_enclave() {
+    with_gratis_env(|storage| {
+        let placeholder = ModifyAuth {
+            mac: [0u8; 32],
+            op_nonce: 0,
+        };
+        for len in [0usize, 91, 93, 70_000] {
+            let call = mine_gratis_with_ciphertext(vec![0x11; len], &placeholder, &placeholder);
+            let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
+            assert!(
+                matches!(err, outbe_primitives::error::PrecompileError::Revert(_)),
+                "{err}"
+            );
+            assert!(
+                err.to_string()
+                    .contains("invalid bytes length: expected 92"),
+                "{err}"
+            );
+        }
+    });
+}
+
+#[test]
+fn mine_gratis_runtime_rejects_a_short_ciphertext_before_decrypt() {
+    with_gratis_env(|storage| {
+        let amount = U256::from(1u64);
+        let err = runtime::mine_gratis(
+            storage,
+            alice(),
+            vec![0u8; 91],
+            auth(PromisOp::Burn, alice(), amount, 0),
+            gratis_auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap_err();
+        assert!(!matches!(
+            err,
+            outbe_primitives::error::PrecompileError::EnclaveUnavailable(_)
+        ));
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_promis::errors::PromisError::Rejected("decrypt failed".into())
+            )
+            .to_string()
+        );
+    });
 }

@@ -183,7 +183,7 @@ pub fn settle_credis(
             CREDIS_FACTORY_ADDRESS,
             caller,
             repayment.asset,
-            repayment.total_paid,
+            repayment.amount_minor,
         )?;
         if credis.get_credis(credis_id)? != after {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
@@ -191,7 +191,10 @@ pub fn settle_credis(
         if !released.is_zero() {
             pledges::release_from_credis(&storage, credis_id, released)?;
         }
-        Ok((repayment.principal_paid, repayment.interest))
+        Ok((
+            repayment.principal_settled_minor,
+            repayment.interest_settled_minor,
+        ))
     })
 }
 

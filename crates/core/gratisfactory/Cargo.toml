@@ -22,5 +22,9 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 outbe-tee.workspace = true
 outbe-tee-enclave.workspace = true
 
+[features]
+default = []
+test-utils = ["outbe-gratis/test-utils"]
+
 [lints]
 workspace = true

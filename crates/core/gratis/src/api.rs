@@ -38,6 +38,7 @@ pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
 // --- Owner-authorized mutations ---
 
 /// Mint `amount` gratis to `caller`.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -120,12 +121,12 @@ pub fn check_op_nonce(storage: &StorageHandle<'_>, account: Address, provided: u
 }
 
 /// Persist the Gratis state transition and emit `GratisMinedFromPromis` from a combined
-/// Promis->Gratis enclave operation.
+/// Promis->Gratis enclave operation. Returns the fidelity outcome for the caller to persist.
 pub fn apply_mined_from_promis(
     storage: &StorageHandle<'_>,
     account: Address,
     op_nonce: u64,
     result: &MineGratisFromPromisResultV1,
-) -> Result<()> {
+) -> Result<FidelityOpOutcome> {
     runtime::apply_mined_from_promis(storage, account, op_nonce, result)
 }

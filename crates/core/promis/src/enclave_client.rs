@@ -171,12 +171,19 @@ pub mod test_enclave {
     }
 
     /// Encrypt a `mineGratis` amount to the test-enclave's dev TEE public key.
-    pub fn encrypt_mine_gratis_amount(amount: alloy_primitives::U256) -> Vec<u8> {
+    /// The test chain id is `1`, matching [`crate::runtime`]'s dev storage.
+    pub fn encrypt_mine_gratis_amount(
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+    ) -> Vec<u8> {
         outbe_tee::offer_encrypt::encrypt_tee_amount(
             &outbe_tee_enclave::dev::offer_public_key(),
+            B256::from(alloy_primitives::U256::from(1u64)),
+            account,
             amount,
         )
         .expect("encrypt mine_gratis amount")
+        .to_vec()
     }
 
     /// The dev state key, so tests can derive view/modify keys to build auth and

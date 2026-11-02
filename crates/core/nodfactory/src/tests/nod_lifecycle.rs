@@ -1596,6 +1596,90 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
     });
 }
 
+/// Every Nod settled before the deadline still closes the series at `(0, 0, 0)`.
+#[test]
+fn a_group_settled_in_full_closes_with_zero_forfeit() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (series_id, issuance, reference) = StorageHandle::enter(&mut provider, |storage| {
+        seed_production_nod_genesis(&storage);
+        register(&storage, ISO);
+        let at = START + 30 * DAY;
+        let item = call_group(&storage, Address::repeat_byte(0x41), at);
+        let id = item.group_key;
+        api::record_settled(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(&storage, id).unwrap().unwrap(),
+        )
+        .unwrap();
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
+        finalize_through(&storage, past);
+        assert_eq!(scan(&storage, past), 1);
+        assert_eq!(reserve(&storage), U256::ZERO);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.called_group_slot.read(&id).unwrap(), 0);
+        assert!(
+            api::get_item(&storage, item.nod_id)
+                .unwrap()
+                .unwrap()
+                .is_settled
+        );
+        assert!(api::get_group(&storage, id).unwrap().is_some());
+        assert_ne!(
+            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            0
+        );
+
+        api::remove_nod(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(&storage, id).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(api::get_group(&storage, id).unwrap().is_none());
+        assert_eq!(
+            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            0
+        );
+        assert_eq!(
+            nod.series_reference_currency.read(&item.series_id).unwrap(),
+            0
+        );
+        (
+            item.series_id,
+            item.issuance_currency,
+            item.reference_currency,
+        )
+    });
+
+    let closed: Vec<_> = provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        (
+            outbe_primitives::series_id::SeriesId::from(closed[0].seriesId),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency,
+            closed[0].forfeitedCount,
+            closed[0].forfeitedTributeCount,
+            closed[0].forfeitedAmountMinor
+        ),
+        (series_id, issuance, reference, 0, 0, U256::ZERO)
+    );
+    assert_eq!(
+        outbe_primitives::series_id::SeriesId::for_pair(
+            series_id.day(),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency
+        )
+        .unwrap(),
+        series_id
+    );
+}
+
 /// A group paid in full leaves its bin once no Nod can join it, so later walks do not
 /// visit it again. Its paid Nod stays with the group until mined.
 #[test]

@@ -2,10 +2,10 @@
 //! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
 //! walks a slice of it.
 //!
-//! A group of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
+//! A series of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
 //! currency sat strictly above its call price on `call_threshold_seconds` of the
-//! trailing `call_window_seconds`, counted from the group's first full day. Both terms
-//! are sealed onto the group by its first member. The issuance currency a Credis is
+//! trailing `call_window_seconds`, counted from the series's first full day. Both terms
+//! are sealed onto the series by its first member. The issuance currency a Credis is
 //! denominated in never enters the threshold.
 //!
 //! The breach rule needs no per-group streak state. The daily series is
@@ -40,13 +40,13 @@ pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// groups called.
+/// series called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
-/// The return value counts called groups, not forfeited groups or deleted members.
+/// This function runs calls, series forfeits, and cleanup that moves value in pinned-day order.
+/// The return value counts called series, not forfeited series or deleted members.
 pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
@@ -149,7 +149,7 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
                 )
             },
         )?;
-        // A group holds Credis of any id, so a call refreshes the whole range.
+        // A series holds Credis of any id, so a call refreshes the whole range.
         if called != 0 {
             self.credis.emit(ICredis::BatchMetadataUpdate {
                 _fromTokenId: U256::ZERO,

@@ -48,9 +48,7 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
-        let has_live = self.nod.group_nod_count.read(&group)? != 0
-            || self.nod.group_unclaimed_tribute_count.read(&group)? != 0;
-        Ok(match called && has_live {
+        Ok(match called && !self.nod.group_is_forfeited.read(&group)? {
             true => Due::Process,
             false => Due::Drop,
         })
@@ -82,8 +80,28 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
             let gs_key = outbe_nod::index_keys::group_series_key(group, series_id);
             self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
         }
-        self.nod.group_is_forfeited.write(&group, true)?;
-        self.nod.hand_to_cleanup(group)?;
+        let unpaid = self.nod.group_nod_count.read(&group)?;
+        let unclaimed = self.nod.group_unclaimed_tribute_count.read(&group)?;
+        if unpaid == 0 && unclaimed == 0 {
+            // Nothing left to burn. The close event still fires, then the group leaves
+            // the forfeit queue without a cleanup entry.
+            self.nod.remove_called(group)?;
+            let settled = self
+                .nod
+                .groups
+                .get(group)?
+                .map(|body| body.settled_nods)
+                .unwrap_or(0);
+            if settled == 0 {
+                self.nod.close_group_if_empty_after_forfeit(group)?;
+            } else {
+                // Forfeit has run. Later removal of the settled Nods may close the group.
+                self.nod.group_is_forfeited.write(&group, true)?;
+            }
+        } else {
+            self.nod.group_is_forfeited.write(&group, true)?;
+            self.nod.hand_to_cleanup(group)?;
+        }
         for (
             series_id,
             issuance_currency,

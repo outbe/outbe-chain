@@ -114,6 +114,32 @@ fn a_forfeited_series_is_spent_once_its_group_returned_its_units() {
     });
 }
 
+/// Every unit realized while the series is called still waits for `IntexSeriesClosed`.
+#[test]
+fn a_fully_mined_called_series_stays_until_its_group_is_returned() {
+    with_registry(|s| {
+        api::create_series(&s, sample_params(11)).unwrap();
+        api::call_group_of(&s, sid(11), 1).unwrap();
+        api::record_settled_units(&s, sid(11), owner(), 100).unwrap();
+        api::record_mined_units(&s, sid(11), owner(), 100).unwrap();
+        assert!(
+            !api::release_if_spent(&s, sid(11)).unwrap(),
+            "the called series stays until forfeit hands the group on"
+        );
+        assert!(api::series_exists(&s, sid(11)).unwrap());
+
+        let group = api::get_series(&s, sid(11))
+            .unwrap()
+            .group_key()
+            .expect("date step");
+        IntexContract::new(s.clone())
+            .hand_to_cleanup(group)
+            .unwrap();
+        assert!(api::release_if_spent(&s, sid(11)).unwrap());
+        assert!(!api::series_exists(&s, sid(11)).unwrap());
+    });
+}
+
 #[test]
 fn dense_enumeration_tracks_created_series() {
     with_registry(|s| {

@@ -158,6 +158,7 @@ fn mint_impl(
 }
 
 /// Mint `amount` gratis to `caller` (owner-authorized).
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -381,7 +382,7 @@ pub(crate) fn apply_mined_from_promis(
     account: Address,
     op_nonce: u64,
     result: &MineGratisFromPromisResultV1,
-) -> Result<()> {
+) -> Result<FidelityOpOutcome> {
     if result.new_gratis_balance.is_empty() || result.encrypted_gratis_event_amount.is_empty() {
         return Err(GratisFatalError::OwnerResultMismatch.into());
     }
@@ -395,5 +396,6 @@ pub(crate) fn apply_mined_from_promis(
             account,
             encryptedAmountMinor: result.encrypted_gratis_event_amount.clone().into(),
         }),
-    )
+    )?;
+    require_fidelity_outcome(result.fidelity.clone())
 }

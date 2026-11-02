@@ -130,4 +130,60 @@ mod group_scans {
                 .collect::<Vec<_>>()
         );
     }
+
+    /// Every unit settled and mined before the deadline still closes at `(0, 0)`.
+    #[test]
+    fn a_fully_settled_series_closes_with_zero_forfeit() {
+        use alloy_sol_types::SolEvent;
+        use outbe_intex::precompile::IIntex;
+        use outbe_primitives::addresses::INTEX_ADDRESS;
+        use outbe_primitives::pass_budget::PassBudget;
+
+        let mut storage = super::super::factory_provider();
+        let id = super::super::sid(7);
+        StorageHandle::enter(&mut storage, |s| {
+            super::super::select_prod_profile(&s);
+            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
+            outbe_intex::api::record_settled_units(&s, id, super::super::owner(), 100).unwrap();
+            outbe_intex::api::record_mined_units(&s, id, super::super::owner(), 100).unwrap();
+            assert!(
+                !outbe_intex::api::release_if_spent(&s, id).unwrap(),
+                "the called series stays until forfeit"
+            );
+
+            let record = outbe_intex::api::get_series(&s, id).unwrap();
+            let close_at = outbe_intex::api::call_stamp(&s, &record).unwrap().close_at;
+            let due = IntexContract::day_end(IntexContract::deadline_day(close_at));
+            let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext::empty_for_tests(
+                    2,
+                    due,
+                    super::super::CHAIN_ID,
+                ),
+                s.clone(),
+            );
+            let mut budget = PassBudget::new(100, 100);
+            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+                .unwrap();
+            crate::cleanup::cleanup(&ctx).unwrap();
+            assert!(!outbe_intex::api::series_exists(&s, id).unwrap());
+        });
+
+        let closed: Vec<_> = storage
+            .get_events(INTEX_ADDRESS)
+            .iter()
+            .filter_map(|log| IIntex::IntexSeriesClosed::decode_log_data(log).ok())
+            .map(|event| {
+                (
+                    event.seriesId,
+                    event.issuanceCurrency,
+                    event.referenceCurrency,
+                    event.forfeitedCount,
+                    event.forfeitedAmountMinor,
+                )
+            })
+            .collect();
+        assert_eq!(closed, vec![(id.into(), 840, 840, 0, U256::ZERO)]);
+    }
 }

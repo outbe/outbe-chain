@@ -6,8 +6,7 @@
 //! 2. Hand the op to the enclave. The enclave decrypts, enforces invariants, and
 //!    re-encrypts deterministically.
 //! 3. Store the returned ciphertext verbatim.
-//! 4. Apply the plaintext aggregate delta.
-//! 5. Emit the matching event.
+//! 4. Emit the matching event.
 //!
 //! These methods are crate-private. Other crates reach them through [`crate::api`].
 //! The enclave is the sole party that sees plaintext balances (Enclave Return Rule).
@@ -187,6 +186,9 @@ pub(crate) fn execute_mine_gratis(
     storage: &StorageHandle<'_>,
     input: MineGratisInput,
 ) -> Result<MineGratisFromPromisResultV1> {
+    if input.encrypted_promis_minor.len() != outbe_tee::offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
+        return Err(PromisError::Rejected("decrypt failed".into()).into());
+    }
     let promis = Promis::new(storage.clone());
     let promis_nonce = input.promis_auth.op_nonce;
     check_op_nonce(&promis, input.caller, promis_nonce)?;

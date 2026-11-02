@@ -194,11 +194,13 @@ impl<'storage> CredisContract<'storage> {
         Ok(newly_opened)
     }
 
-    /// Takes a Credis out of its series, and removes the series from active queues when its last
-    /// unsettled member leaves. Series terms and `series_opened` remain in storage.
+    /// Takes a Credis out of its series. An uncalled series leaves the active queues when its
+    /// last unsettled member leaves. A called series stays in the forfeit queue until its
+    /// settlement deadline, so the close event still fires. Series terms and `series_opened`
+    /// remain in storage.
     pub fn leave_series(&mut self, series: SeriesId, credis_id: U256) -> Result<()> {
         self.series_index(series).remove(credis_id)?;
-        if self.series_member_count(series)? == 0 {
+        if self.series_member_count(series)? == 0 && self.series_called_at.read(&series)? == 0 {
             self.close_series_queues(series)?;
         }
         Ok(())

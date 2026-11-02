@@ -721,3 +721,81 @@ fn reservation_snapshots_call_profile_terms_and_called_settled_record_retains_ca
 
     teardown();
 }
+
+#[test]
+fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
+    use alloy_sol_types::SolEvent;
+    use outbe_credis::constants::CALL_LOOKBACK_DAYS;
+    use outbe_credis::precompile::ICredis;
+    use outbe_primitives::addresses::CREDIS_ADDRESS;
+    use outbe_primitives::series_id::SeriesId;
+
+    let mut provider = env();
+    let (id, series_id) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage, 1);
+        let series_id = CredisContract::new(storage.clone())
+            .get_credis(id)
+            .unwrap()
+            .series_id;
+        let at = CREATED_AT + (u64::from(CALL_LOOKBACK_DAYS) + 2) * DAY;
+        advance_to(&storage, at);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+        (id, series_id)
+    });
+
+    let payoff = StorageHandle::enter(&mut provider, |storage| {
+        runtime::quote_settlement(&storage, id).unwrap()
+    });
+    settle_principal(&mut provider, alice(), id, payoff);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let credis = CredisContract::new(storage.clone());
+        let record = credis.get_credis(id).unwrap();
+        assert!(record.is_settled());
+        assert_eq!(credis.series_member_count(series_id).unwrap(), 0);
+        assert_ne!(
+            credis.called_series_slot.read(&series_id).unwrap(),
+            0,
+            "a called series stays queued until its deadline"
+        );
+        let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;
+        advance_to(&storage, past);
+        finalize_through(&storage, past);
+        daily_pass(&storage, past).unwrap();
+        assert_eq!(credis.called_series_slot.read(&series_id).unwrap(), 0);
+        assert_eq!(credis.cleanup_series_slot.read(&series_id).unwrap(), 0);
+    });
+
+    let closed: Vec<_> = provider
+        .get_events(CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::CredisSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        closed[0].seriesId,
+        alloy_primitives::FixedBytes::from(series_id)
+    );
+    assert_eq!(closed[0].forfeitedCount, 0);
+    assert_eq!(closed[0].forfeitedAmountMinor, U256::ZERO);
+    assert_eq!(closed[0].issuanceCurrency, ISSUANCE_ISO);
+    assert_eq!(closed[0].referenceCurrency, REFERENCE_ISO);
+    assert_eq!(
+        SeriesId::for_pair(
+            series_id.day(),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency
+        )
+        .unwrap(),
+        series_id
+    );
+
+    teardown();
+}
