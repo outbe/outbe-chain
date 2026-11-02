@@ -497,8 +497,8 @@ mod reward_activity_tests {
     #[test]
     fn zero_reward_addresses_receive_expiring_balances_through_activity_and_distribution() {
         use outbe_agentreward::{
+            api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools},
             constants::REWARD_BALANCE_IDLE_SECONDS,
-            distribution::{advance_accruals, distribute_daily, PoolKind},
             schema::RewardPool,
         };
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -516,22 +516,41 @@ mod reward_activity_tests {
             TributeFactoryContract::new(storage.clone())
                 .record_agent_reward_activity(&wallets, &sras)
                 .unwrap();
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(1, now, 1), storage.clone());
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(2, now + 86_400, 1),
+                storage.clone(),
+            );
             let day = WorldwideDay::new(timestamp_to_date_key(now));
+            outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
             assert_eq!(
-                distribute_daily(
+                allocate_day_agent_rewards(
                     &ctx,
                     day,
-                    &[
-                        (PoolKind::Waa, U256::from(10)),
-                        (PoolKind::Sra, U256::from(20))
-                    ]
+                    DayAgentPools {
+                        waa: U256::from(10),
+                        sra: U256::from(20),
+                        ..Default::default()
+                    },
                 )
-                .unwrap(),
+                .unwrap()
+                .total_excess,
                 U256::ZERO
             );
-            assert_eq!(advance_accruals(&ctx).unwrap(), U256::ZERO);
+            outbe_emission::api::record_day_allocation(
+                storage.clone(),
+                day.value(),
+                outbe_emission::api::DayAllocationAmounts {
+                    emission_limit: U256::from(30),
+                    metadosis_limit: U256::ZERO,
+                    validators: U256::ZERO,
+                    waa: U256::from(10),
+                    sra: U256::from(20),
+                    cca: U256::ZERO,
+                    promis_limit: U256::ZERO,
+                },
+            )
+            .unwrap();
+            process_agent_rewards(&ctx).unwrap();
             let mut rewards = AgentRewardContract::new(storage.clone());
             for (pool, amount) in [(RewardPool::Waa, 10), (RewardPool::Sra, 20)] {
                 assert_eq!(
