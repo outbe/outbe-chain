@@ -16,11 +16,10 @@ use super::{
 
 /// Versioned calldata body system transactions.
 ///
-/// The wire-format swap is complete: Phase 1 system-tx input now
-/// carries the V2 slim
-/// [`crate::consensus_metadata::CertifiedParentAccountingMetadata`]
-/// instead of the V1 `ConsensusMetadataEnvelope`. The V2 payload omits the
-/// dead `encoded_finalize_votes` field (the V2 signer bitmap is authoritative).
+/// The wire-format swap is complete: Phase 1 system-tx input carries the V2 slim
+/// [`CertifiedParentAccountingMetadata`].
+/// The V2 payload omits the dead `encoded_finalize_votes` field
+/// (the V2 signer bitmap is authoritative).
 /// It carries the V2 `committee_set_hash`, `vrf_material_version`,
 /// `vrf_group_public_key_hash`, and `proof_kind` fields that the verifier needs.
 #[derive(Debug, Clone, PartialEq, Eq)]

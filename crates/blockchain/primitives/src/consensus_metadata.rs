@@ -3,11 +3,6 @@ use alloy_rlp::{Decodable as RlpDecodable, Encodable as RlpEncodable};
 
 use crate::error::{ConsensusMetadataError, Result};
 
-// The V2 slim [`CertifiedParentAccountingMetadata`] below replaced the V1
-// `ConsensusMetadataEnvelope`. The V1 magic + version are dropped. The
-// system-tx codec boundary rejects V1 wire bytes: `SystemTx::decode`
-// uses `CertifiedParentAccountingMetadata::decode`, which has its own `OAV3`
-// magic.
 const CERTIFIED_PARENT_ACCOUNTING_MAGIC: &[u8; 4] = b"OAV3";
 const CERTIFIED_PARENT_ACCOUNTING_VERSION: u8 = 1;
 
@@ -419,12 +414,6 @@ fn read_byte_payload(data: &[u8], offset: &mut usize, len: usize) -> Result<Vec<
     *offset = end;
     Ok(bytes.to_vec())
 }
-
-// The legacy `ConsensusMetadataEnvelope` test module was dropped together
-// with the V1 envelope itself. Coverage for the V2
-// [`CertifiedParentAccountingMetadata`] codec lives in
-// `crates/blockchain/primitives/tests/consensus_metadata.rs`. Those tests
-// exercise the canonical `OAV3` wire layout end-to-end.
 
 #[cfg(test)]
 mod reader_tests {
