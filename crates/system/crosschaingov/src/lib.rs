@@ -5,8 +5,8 @@
 //! contracts: on Outbe directly, on every other chain through its Interchain
 //! Account (OIP-00369).
 //!
-//! - [`executor::Executor`] runs the owner calls (`call_local`, `call_remote`)
-//!   and pays remote dispatch fees from the address balance. `fund` adds value
+//! - `runtime` runs the owner calls (`call_local`, `call_remote`) and pays
+//!   remote dispatch fees from the address balance. `fund` adds value
 //!   to that balance.
 //! - [`CrosschainVoteTarget`] stores the hash of an approved action.
 //!   Permissionless `applyApproved` then runs it. Every vote action is in
@@ -16,8 +16,8 @@
 //!   (`0x...EE14`), for its ISM rotation and bootstrap.
 
 pub mod errors;
-pub mod executor;
 pub mod precompile;
+pub mod runtime;
 pub mod schema;
 
 mod vote_target;

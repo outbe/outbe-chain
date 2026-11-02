@@ -1,7 +1,7 @@
 //! The one vote target of the owner address: strict JSON actions on our
 //! multi-chain contracts and on the Hyperlane chains.
 //!
-//! An action on our contracts only builds its owner calls. The executor runs
+//! An action on our contracts only builds its owner calls. The owner runs
 //! them. A Hyperlane action calls the methods of `hyperlanecontroller`. A
 //! chain id is also the Hyperlane domain of that chain.
 //!
@@ -10,9 +10,9 @@
 //! `applyApproved(proposalId, payload)` runs it later, with the owner address
 //! as `msg.sender` on Outbe and its Interchain Account on a remote chain.
 
+pub(crate) mod contract_upgrade;
 pub(crate) mod crosschain;
 pub(crate) mod tokens;
-pub(crate) mod upgrade;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
@@ -27,7 +27,6 @@ use outbe_vote::handlers::{
 use serde::Deserialize;
 
 use crate::errors::CrosschainGovError;
-use crate::executor::Executor;
 use crate::precompile::ICrosschainGov::{self, Call};
 use crate::schema::CrosschainGovContract;
 
@@ -183,11 +182,11 @@ impl Action {
         Ok(action)
     }
 
-    /// Runs the action. Every owner call goes through `executor`.
+    /// Runs the action. Every owner call goes through `gov`.
     fn apply(
         &self,
         controller: &mut HyperlaneControllerContract<'_>,
-        executor: &mut Executor<'_>,
+        gov: &mut CrosschainGovContract<'_>,
     ) -> Result<()> {
         match self {
             Self::AddHyperlaneChain {
@@ -205,10 +204,10 @@ impl Action {
             _ => {
                 let calls = self.calls(controller.local_domain()?);
                 for call in calls.local {
-                    executor.call_local(call.to, call.value, call.data)?;
+                    gov.call_local(call.to, call.value, call.data)?;
                 }
                 for (domain, remote) in &calls.remote {
-                    executor.call_remote(*domain, remote)?;
+                    gov.call_remote(*domain, remote)?;
                 }
                 Ok(())
             }
@@ -227,7 +226,11 @@ impl Action {
             } => Calls::on(
                 *chain_id,
                 outbe,
-                vec![upgrade::upgrade(*proxy, *implementation, call_data.clone())],
+                vec![contract_upgrade::upgrade(
+                    *proxy,
+                    *implementation,
+                    call_data.clone(),
+                )],
             ),
             Self::SetBridgePaused {
                 chain_id,
@@ -328,8 +331,7 @@ impl CrosschainGovContract<'_> {
             let action = Action::decode(payload, self.storage.chain_id()?)
                 .map_err(|_| VoteError::stored_payload_invalid("CrosschainGov"))?;
             let mut controller = HyperlaneControllerContract::new(self.storage.clone());
-            let mut executor = Executor::new(self.storage.clone());
-            action.apply(&mut controller, &mut executor)?;
+            action.apply(&mut controller, self)?;
             self.emit(ICrosschainGov::ApprovedActionApplied {
                 proposalId: proposal_id,
             })

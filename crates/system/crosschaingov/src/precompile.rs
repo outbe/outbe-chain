@@ -12,7 +12,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::CrosschainGovError;
-use crate::executor::Executor;
 use crate::schema::CrosschainGovContract;
 
 /// Precompiles that may make the owner call a contract through `callLocal` and
@@ -44,7 +43,6 @@ pub fn dispatch(
         |call| {
             use ICrosschainGov::ICrosschainGovCalls::*;
             let mut gov = CrosschainGovContract::new(storage.clone());
-            let mut executor = Executor::new(storage.clone());
             match call {
                 fund(c) => mutate_void_payable(
                     &storage,
@@ -54,20 +52,20 @@ pub fn dispatch(
                         sender: caller,
                         value,
                     },
-                    |sender, _, amount| executor.fund(sender, amount),
+                    |sender, _, amount| gov.fund(sender, amount),
                 ),
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
                     gov.apply_approved(c.proposalId, &c.payload)
                 }),
                 callLocal(c) => mutate(&storage, c, caller, |sender, c| {
                     require_owner_caller(sender)?;
-                    executor.call_local(c.call.to, c.call.value, c.call.data)
+                    gov.call_local(c.call.to, c.call.value, c.call.data)
                 }),
                 callRemote(c) => mutate(&storage, c, caller, |sender, c| {
                     require_owner_caller(sender)?;
-                    executor.call_remote(c.domain, &c.calls)
+                    gov.call_remote(c.domain, &c.calls)
                 }),
-                remoteAccount(c) => view(c, |c| executor.remote_account(c.domain)),
+                remoteAccount(c) => view(c, |c| gov.remote_account(c.domain)),
             }
         },
     )

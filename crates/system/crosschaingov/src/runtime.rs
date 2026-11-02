@@ -1,33 +1,23 @@
-//! The owner calls of the owner address: local calls and Interchain Account
-//! dispatch, paid from the address balance. The only code that calls another
-//! contract as the owner. It runs the calls of the vote actions and the
-//! `callLocal` and `callRemote` calls of the owner-caller list.
+//! The owner calls: local calls and Interchain Account dispatch, paid from the
+//! owner balance. The only code that calls another contract as the owner. It
+//! runs the calls of the vote actions and the `callLocal` and `callRemote`
+//! calls of the owner-caller list. Use these methods only in the frame of the
+//! owner address: every call has the frame address as `msg.sender`.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::error::Result;
-use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::CrosschainGovError;
 use crate::precompile::ICrosschainGov::{self, Call};
 use crate::schema::CrosschainGovContract;
 
-/// Runs the owner calls of the owner address. Use it only in the frame of
-/// that address: every call has the frame address as `msg.sender`.
-pub struct Executor<'a> {
-    gov: CrosschainGovContract<'a>,
+impl<'a> CrosschainGovContract<'a> {
     /// The Hyperlane registry, read only: the ICA router.
-    hyperlane: HyperlaneControllerContract<'a>,
-}
-
-impl<'a> Executor<'a> {
-    pub fn new(storage: StorageHandle<'a>) -> Self {
-        Self {
-            gov: CrosschainGovContract::new(storage.clone()),
-            hyperlane: HyperlaneControllerContract::new(storage),
-        }
+    fn hyperlane(&self) -> HyperlaneControllerContract<'a> {
+        HyperlaneControllerContract::new(self.storage.clone())
     }
 
     /// Calls `to` on this chain. The owner balance pays `value`.
@@ -36,11 +26,10 @@ impl<'a> Executor<'a> {
             return Err(CrosschainGovError::InvalidAddress.into());
         }
         self.require_balance(value)?;
-        let storage = self.gov.storage.clone();
+        let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            let ret = self.gov.storage.call(to, value, data)?;
-            self.gov
-                .emit(ICrosschainGov::LocalCallExecuted { target: to, value })?;
+            let ret = self.storage.call(to, value, data)?;
+            self.emit(ICrosschainGov::LocalCallExecuted { target: to, value })?;
             Ok(ret)
         })
     }
@@ -52,7 +41,7 @@ impl<'a> Executor<'a> {
         if calls.is_empty() {
             return Err(CrosschainGovError::EmptyCalls.into());
         }
-        let storage = self.gov.storage.clone();
+        let storage = self.storage.clone();
         storage.with_checkpoint(|| self.dispatch(domain, calls))
     }
 
@@ -61,17 +50,17 @@ impl<'a> Executor<'a> {
         if amount.is_zero() {
             return Err(CrosschainGovError::ZeroFund.into());
         }
-        self.gov.emit(ICrosschainGov::Funded { from, amount })
+        self.emit(ICrosschainGov::Funded { from, amount })
     }
 
     /// Interchain Account of the owner on `domain`, as the ICA router derives it.
     pub fn remote_account(&self, domain: u32) -> Result<Address> {
         self.require_remote(domain)?;
-        let ret = self.gov.storage.staticcall(
-            self.hyperlane.ica_router.read()?,
+        let ret = self.storage.staticcall(
+            self.hyperlane().ica_router.read()?,
             IInterchainAccountRouter::getRemoteInterchainAccountCall {
                 _destination: domain,
-                _owner: self.gov.address,
+                _owner: self.address,
             }
             .abi_encode()
             .into(),
@@ -87,7 +76,7 @@ impl<'a> Executor<'a> {
     }
 
     fn dispatch(&mut self, domain: u32, calls: &[Call]) -> Result<B256> {
-        let router = self.hyperlane.ica_router.read()?;
+        let router = self.hyperlane().ica_router.read()?;
         let fee = self.quote(router, domain)?;
         self.require_balance(fee)?;
         let calls = calls
@@ -98,7 +87,7 @@ impl<'a> Executor<'a> {
                 data: call.data.clone(),
             })
             .collect();
-        let ret = self.gov.storage.call(
+        let ret = self.storage.call(
             router,
             fee,
             IInterchainAccountRouter::callRemoteCall {
@@ -112,7 +101,7 @@ impl<'a> Executor<'a> {
             .map_err(|_| {
                 CrosschainGovError::UndecodableReturn("InterchainAccountRouter callRemote")
             })?;
-        self.gov.emit(ICrosschainGov::RemoteCallDispatched {
+        self.emit(ICrosschainGov::RemoteCallDispatched {
             domain,
             messageId: message_id,
             fee,
@@ -121,7 +110,7 @@ impl<'a> Executor<'a> {
     }
 
     fn quote(&self, router: Address, domain: u32) -> Result<U256> {
-        let ret = self.gov.storage.staticcall(
+        let ret = self.storage.staticcall(
             router,
             IInterchainAccountRouter::quoteGasPaymentCall {
                 _destination: domain,
@@ -136,20 +125,20 @@ impl<'a> Executor<'a> {
 
     /// Requires an initialized Hyperlane registry and a remote `domain`.
     fn require_remote(&self, domain: u32) -> Result<()> {
-        if !self.hyperlane.is_initialized()? {
+        if !self.hyperlane().is_initialized()? {
             return Err(CrosschainGovError::NotInitialized.into());
         }
         if domain == 0 {
             return Err(CrosschainGovError::InvalidDomain.into());
         }
-        if u64::from(domain) == self.gov.storage.chain_id()? {
+        if u64::from(domain) == self.storage.chain_id()? {
             return Err(CrosschainGovError::LocalDomainNotAllowed { domain }.into());
         }
         Ok(())
     }
 
     fn require_balance(&self, required: U256) -> Result<()> {
-        let available = self.gov.storage.balance(self.gov.address)?;
+        let available = self.storage.balance(self.address)?;
         if available < required {
             return Err(CrosschainGovError::InsufficientBalance {
                 required,

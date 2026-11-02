@@ -18,8 +18,8 @@ use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::executor::Executor;
 use crate::precompile::{dispatch, ICrosschainGov};
+use crate::schema::CrosschainGovContract;
 
 const CHAIN_ID: u64 = 54_322_345;
 const LOCAL: u32 = CHAIN_ID as u32;
@@ -196,7 +196,7 @@ fn a_remote_call_without_fee_balance_changes_nothing() {
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
     p.clear_events(CROSSCHAIN_GOV_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let err = Executor::new(storage)
+        let err = CrosschainGovContract::new(storage)
             .call_remote(
                 SEPOLIA,
                 &[Call {
@@ -219,7 +219,7 @@ fn remote_and_local_generic_calls() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     StorageHandle::enter(&mut p, |storage| {
-        let mut executor = Executor::new(storage);
+        let mut gov = CrosschainGovContract::new(storage);
         let calls = [Call {
             to: sepolia_ism(),
             value: U256::ZERO,
@@ -228,16 +228,15 @@ fn remote_and_local_generic_calls() {
                 .into(),
         }];
         assert_eq!(
-            executor.call_remote(SEPOLIA, &calls).unwrap(),
+            gov.call_remote(SEPOLIA, &calls).unwrap(),
             B256::repeat_byte(0xaa)
         );
-        assert!(executor.call_remote(LOCAL, &calls).is_err());
-        assert!(executor.call_remote(SEPOLIA, &[]).is_err());
+        assert!(gov.call_remote(LOCAL, &calls).is_err());
+        assert!(gov.call_remote(SEPOLIA, &[]).is_err());
 
-        executor
-            .call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))
+        gov.call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))
             .unwrap();
-        assert!(executor
+        assert!(gov
             .call_local(local_ism(), U256::from(1), Bytes::new())
             .is_err());
     });
@@ -521,7 +520,7 @@ mod vote_target {
     #[test]
     fn upgrade_contract_upgrades_the_proxy_locally_or_through_the_remote_account() {
         let upgrade = Bytes::from(
-            crate::vote_target::upgrade::IUUPSUpgradeable::upgradeToAndCallCall {
+            crate::vote_target::contract_upgrade::IUUPSUpgradeable::upgradeToAndCallCall {
                 newImplementation: v(0x9a),
                 data: Bytes::from_static(&[0x81, 0x29, 0xfc, 0x1c]),
             }
