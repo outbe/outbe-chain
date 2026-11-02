@@ -13,9 +13,9 @@ import {Router} from "../src/router/Router.sol";
 import {RouterAllocator} from "../src/allocators/RouterAllocator.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
-/// @dev Deploys RouterAllocator + the composition {Router} (a UUPS proxy via Create3Factory). The Router talks to
-///      the `crosschain` hub's `ERC7786Bridge`. This script has no LayerZero endpoint or eids. The
-///      protocol lives on the bridge.
+/// @dev Deploys RouterAllocator + the composition {Router} (a UUPS proxy via Create3Factory), both owned by the
+///      deployer. The Router talks to the `crosschain` hub's `ERC7786Bridge`. This script has no LayerZero
+///      endpoint or eids. The protocol lives on the bridge.
 ///
 /// Required env vars:
 ///   DEPLOYER_PK      - deployer private key
@@ -24,8 +24,9 @@ import {SALT_VERSION} from "@shared/SaltVersion.sol";
 ///   COMPACT_ADDRESS  - The Compact address
 ///   AUCTION_ADDRESS  - deployed Auction (immutable on the router)
 ///   BRIDGE_ADDRESS   - deployed ERC7786Bridge (the cross-chain hub facade)
-///   ROUTER_OWNER     - contract owner (admin)
-/// Optional: ESCROW_ADDRESS (address(0) disables collateral).
+/// Optional: ESCROW_ADDRESS (address(0) disables collateral), ROUTER_OWNER (the deployer owns the router
+///   and the allocator. This standalone script then gives the router to ROUTER_OWNER. DeployAll gives both to
+///   governance instead).
 contract DeployRouter is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -36,9 +37,12 @@ contract DeployRouter is Script {
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
         address escrow = vm.envOr("ESCROW_ADDRESS", address(0));
 
+        address deployer = vm.addr(deployerPrivateKey);
+        address routerOwner = vm.envOr("ROUTER_OWNER", deployer);
+
         vm.startBroadcast(deployerPrivateKey);
-        (address router, address allocator) =
-            deployRouter(factory, salt, bridge, compact, escrow, auction, vm.addr(deployerPrivateKey));
+        (address router, address allocator) = deployRouter(factory, salt, bridge, compact, escrow, auction, deployer);
+        if (routerOwner != deployer) Router(router).transferOwnership(routerOwner);
         vm.stopBroadcast();
 
         console2.log("RouterAllocator:", allocator);
@@ -69,11 +73,10 @@ contract DeployRouter is Script {
         bytes12 lockTag = allocator.buildLockTag(Scope.ChainSpecific, ResetPeriod.ThirtyDays);
         allocatorAddr = address(allocator);
 
-        address routerOwner = vm.envAddress("ROUTER_OWNER");
         bytes32 routerSalt = getRouterSalt(salt);
         address impl = address(new Router(bridge, compact, lockTag, escrow, auction));
         router = Create3Proxy.deploy(
-            Create3Factory(factory), routerSalt, impl, abi.encodeCall(Router.initialize, (routerOwner))
+            Create3Factory(factory), routerSalt, impl, abi.encodeCall(Router.initialize, (deployer))
         );
     }
 }

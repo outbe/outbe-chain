@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
-import {HYPERLANE_CONTROLLER} from "@precompiles/IHyperlaneController.sol";
+import {CROSSCHAIN_GOV} from "@precompiles/ICrosschainGov.sol";
 import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
 import {Route} from "../../script/routes/Routes.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
@@ -213,12 +213,12 @@ contract DeployGuardsTest is Test {
         assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
 
-    /// @dev Governance owns the bridge: the controller precompile on Outbe, its Interchain Account elsewhere.
+    /// @dev Governance owns the bridge: the CrosschainGov precompile on Outbe, its Interchain Account elsewhere.
     ///      The peer on the other chain is the same CREATE3 address, and the local chain is skipped.
     function test_Bridge_HasGovernanceOwnerAndPeers() public {
         vm.chainId(OUTBE_CHAIN);
         (, address outbeBridge) = deploy.deployRoute(address(factory), SALT, deploy.routeByLabel("USDT"));
-        assertEq(ERC7786TokenBridge(outbeBridge).owner(), HYPERLANE_CONTROLLER);
+        assertEq(ERC7786TokenBridge(outbeBridge).owner(), CROSSCHAIN_GOV);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(EXTERNAL_CHAIN)), outbeBridge);
         assertEq(ERC7786TokenBridge(outbeBridge).remoteBridges(uint32(OUTBE_CHAIN)), address(0));
 

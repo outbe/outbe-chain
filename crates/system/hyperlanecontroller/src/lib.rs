@@ -1,41 +1,50 @@
-//! `HyperlaneController` - governance-owned controller of the Hyperlane bridge (`0x...EE14`).
+//! Hyperlane controller: the module that runs the Hyperlane infrastructure
+//! for governance.
 //!
-//! The precompile owns every Hyperlane core contract on Outbe (Mailbox,
-//! ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
+//! The module is a library with no address of its own. It runs in the frame
+//! of the CrosschainGov precompile (`outbe-crosschaingov`, `0x…EE14`). That
+//! precompile owns every Hyperlane core contract on Outbe (Mailbox, ProxyAdmin,
+//! IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
 //! StorageMessageIdMultisigIsm). Through its Interchain Account, it also owns
-//! the same contracts on remote chains. It holds no validator set of its own.
-//! The ISMs are the source of truth. The controller only forwards owner calls.
+//! the same contracts on remote chains. This module holds no validator set of
+//! its own. The ISMs are the source of truth.
 //!
-//! - Direct write selectors are `initialize`, `fund`, permissionless `sync`,
-//!   `setHyperlaneSigner`, and `submitCheckpoint`.
+//! - [`dispatch()`] runs the Hyperlane selectors that the precompile sends on:
+//!   `initialize`, permissionless `sync`, `setHyperlaneSigner`,
+//!   `submitCheckpoint` and the views.
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
-//! - `CrosschainVoteTarget` stores the hash of an approved owner action.
-//!   Permissionless `applyApproved` then runs it through `call_local`,
-//!   `call_remote`, `add_domain`, or `remove_domain`, with the controller as
-//!   `msg.sender`. The vote tally runs where sub-calls are not available.
-//! - The controller pays remote dispatch fees (IGP quote) from its own
-//!   balance. `fund` adds value to that balance.
+//! - [`HyperlaneAction`] holds the vote actions on the Hyperlane
+//!   infrastructure: `addHyperlaneChain` and `removeHyperlaneChain`.
+//! - Every state-changing call to an ISM or to the ICA router goes through
+//!   the [`Owner`] trait. The precompile implements it, so `msg.sender` of
+//!   each call is `0x…EE14`. This module does not depend on the precompile.
 
+pub mod abi;
+pub mod actions;
 pub mod errors;
 pub mod lifecycle;
-pub mod precompile;
+pub mod owner;
 pub mod schema;
+pub mod sol_ext;
 
+mod dispatch;
+mod domains;
 mod ism_sync;
 mod liveness;
-mod remote;
 mod runtime;
-mod sol_ext;
-mod vote_target;
 
+pub use actions::HyperlaneAction;
+pub use dispatch::dispatch;
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
-pub use remote::RemoteCall;
+pub use owner::{Owner, RemoteCall};
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
-pub use vote_target::CrosschainVoteTarget;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;

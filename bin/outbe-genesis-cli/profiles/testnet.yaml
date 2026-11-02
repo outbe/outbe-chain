@@ -134,7 +134,7 @@ validator_set:
   max_validators: 128
   reregistration_cooldown_blocks: 151200
 
-# One-shot administrator that initializes HyperlaneController after the core contracts are deployed.
+# One-shot administrator that initializes the Hyperlane controller (CrosschainGov, 0x…EE14) after the core contracts are deployed.
 hyperlane_controller:
   admin: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
 

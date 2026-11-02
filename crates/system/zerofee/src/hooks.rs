@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256};
 use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_primitives::{error::PrecompileError, storage::StorageHandle};
 
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::abi::ICrosschainGov;
 use outbe_oracle::precompile::IOracle;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
 
@@ -36,7 +36,7 @@ impl fmt::Debug for ZeroFeeTransaction<'_> {
 pub enum ZeroFeeHookId {
     /// `Oracle.submitVote(ExchangeRateTuple[])`.
     OracleSubmitVote,
-    /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
+    /// `CrosschainGov.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
     HyperlaneSubmitCheckpoint,
     /// Own-lease `TeeRegistry.renewEnclave`.
     RenewEnclave,
@@ -356,15 +356,14 @@ static ORACLE_SUBMIT_VOTE_HOOK: ValidatorCallHook<IOracle::submitVoteCall> = Val
     oracle::validate_oracle_submit_vote_state,
 );
 
-/// `HyperlaneController.submitCheckpoint`: an active validator or its oracle
+/// `CrosschainGov.submitCheckpoint`: an active validator or its oracle
 /// delegate.
-static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
-    IHyperlaneController::submitCheckpointCall,
-> = ValidatorCallHook::new(
-    ZeroFeeHookId::HyperlaneSubmitCheckpoint,
-    hyperlane::CHECKPOINT_ENVELOPE,
-    |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
-);
+static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<ICrosschainGov::submitCheckpointCall> =
+    ValidatorCallHook::new(
+        ZeroFeeHookId::HyperlaneSubmitCheckpoint,
+        hyperlane::CHECKPOINT_ENVELOPE,
+        |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
+    );
 
 static RENEW_ENCLAVE_HOOK: RenewEnclaveHook = RenewEnclaveHook;
 

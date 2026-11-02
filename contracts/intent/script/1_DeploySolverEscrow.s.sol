@@ -24,14 +24,15 @@ contract DeploySolverEscrow is Script {
         uint256 collateralBps = vm.envOr("COLLATERAL_BPS", uint256(1000));
 
         vm.startBroadcast(deployerPrivateKey);
-        address escrow = deployEscrow(compact, collateralBps, vm.addr(deployerPrivateKey));
+        (address escrow, address allocator) = deployEscrow(compact, collateralBps, vm.addr(deployerPrivateKey));
         vm.stopBroadcast();
 
+        console2.log("SolverAllocator deployed at:", allocator);
         console2.log("SolverEscrow deployed at:", escrow);
         console2.log("NOTE: Call escrow.setAuthorizedCaller(router) after deploying the router.");
     }
 
-    function deployEscrow(address compact, uint256 collateralBps, address owner) public returns (address) {
+    function deployEscrow(address compact, uint256 collateralBps, address owner) public returns (address, address) {
         SolverAllocator allocator = SolverAllocator(
             address(
                 new ERC1967Proxy(
@@ -49,6 +50,6 @@ contract DeploySolverEscrow is Script {
             )
         );
         allocator.setArbiter(address(escrow));
-        return address(escrow);
+        return (address(escrow), address(allocator));
     }
 }

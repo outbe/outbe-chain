@@ -8,14 +8,14 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::sol;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 
 use crate::internal::eth;
 use crate::world::forge::{self, DEPLOYER_KEY};
 use crate::world::localnet::{BootstrapProfile, StartOpts};
 use crate::world::World;
 
-sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
+sol!("../../contracts/precompiles/src/ICrosschainGov.sol");
 
 sol! {
     interface IFixtureIsm {
@@ -133,7 +133,7 @@ fn live_controller_fixture(world: &mut World) {
             "create",
             "src/MockHyperlaneController.sol:MockHyperlaneIcaRouter",
         ],
-        &[&format!("{HYPERLANE_CONTROLLER_ADDRESS:#x}")],
+        &[&format!("{CROSSCHAIN_GOV_ADDRESS:#x}")],
         &[],
         &url,
     )
@@ -144,7 +144,7 @@ fn live_controller_fixture(world: &mut World) {
         ism,
         DEPLOYER_KEY,
         &IFixtureIsm::transferOwnershipCall {
-            next: HYPERLANE_CONTROLLER_ADDRESS,
+            next: CROSSCHAIN_GOV_ADDRESS,
         },
     );
     let chain_id = world
@@ -155,9 +155,9 @@ fn live_controller_fixture(world: &mut World) {
     let hook = eth::address_of(DEPLOYER_KEY).expect("fixture hook identity");
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::initializeCall {
+        &ICrosschainGov::initializeCall {
             icaRouter: router,
             validatorAnnounce: hook,
             domains: vec![domain],
@@ -167,9 +167,9 @@ fn live_controller_fixture(world: &mut World) {
     );
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::syncCall {},
+        &ICrosschainGov::syncCall {},
     );
     let keys = (0..world.validators.size())
         .map(|i| {
@@ -212,7 +212,7 @@ fn initial_ism(world: &mut World) {
     assert_ism(world, fixture.ism, &fixture.validators, 3, 4);
     assert_eq!(
         eth::read_call(&url(world), fixture.ism, &IFixtureIsm::ownerCall {}).expect("ISM owner"),
-        HYPERLANE_CONTROLLER_ADDRESS
+        CROSSCHAIN_GOV_ADDRESS
     );
 }
 
@@ -234,7 +234,7 @@ fn signed_checkpoint(
     fixture: &HyperlaneFixture,
     signer_key: &str,
     index: u32,
-) -> IHyperlaneController::submitCheckpointCall {
+) -> ICrosschainGov::submitCheckpointCall {
     let root = keccak256(format!("outbe-e2e-hyperlane-root-{index}"));
     let message_id = keccak256(format!("outbe-e2e-hyperlane-message-{index}"));
     let signer: PrivateKeySigner = signer_key.parse().expect("Hyperlane signer key");
@@ -247,7 +247,7 @@ fn signed_checkpoint(
             message_id,
         ))
         .expect("sign Hyperlane checkpoint");
-    IHyperlaneController::submitCheckpointCall {
+    ICrosschainGov::submitCheckpointCall {
         domain: fixture.domain,
         root,
         index,
@@ -264,23 +264,23 @@ fn rotated_checkpoints(world: &mut World) {
     fixture.rotated = signer.address();
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         &fixture.keys[0],
-        &IHyperlaneController::setHyperlaneSignerCall {
+        &ICrosschainGov::setHyperlaneSignerCall {
             signer: fixture.rotated,
         },
     );
     send(
         &url,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         DEPLOYER_KEY,
-        &IHyperlaneController::syncCall {},
+        &ICrosschainGov::syncCall {},
     );
     let invalid = signed_checkpoint(fixture, &fixture.keys[0], 1);
     assert!(
         eth::send_call(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[0],
             &invalid,
             None::<U256>
@@ -296,7 +296,7 @@ fn rotated_checkpoints(world: &mut World) {
         };
         send(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[index],
             &signed_checkpoint(fixture, signing_key, 1),
         );
@@ -305,7 +305,7 @@ fn rotated_checkpoints(world: &mut World) {
     assert!(
         eth::send_call(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[0],
             &stale,
             None::<U256>
@@ -325,8 +325,8 @@ fn rotated_ism(world: &mut World) {
         assert_eq!(
             eth::read_call(
                 &url(world),
-                HYPERLANE_CONTROLLER_ADDRESS,
-                &IHyperlaneController::submittedIndexCall {
+                CROSSCHAIN_GOV_ADDRESS,
+                &ICrosschainGov::submittedIndexCall {
                     validator: *validator,
                     domain: fixture.domain,
                 }
@@ -349,7 +349,7 @@ fn bridge_agent_outage(world: &mut World) {
         };
         send(
             &url,
-            HYPERLANE_CONTROLLER_ADDRESS,
+            CROSSCHAIN_GOV_ADDRESS,
             &fixture.keys[index],
             &signed_checkpoint(fixture, signing_key, 2),
         );
@@ -363,6 +363,51 @@ fn bridge_agent_outage(world: &mut World) {
         fixture.next_window += WINDOW;
     }
     assert!(fixture.next_window > head + 30);
+}
+
+/// Waits until the primary finalizes `target`, the height of liveness window
+/// `miss`.
+fn wait_for_liveness_window(
+    world: &mut World,
+    (miss, target): (u32, u64),
+    (deadline, budget): (Instant, Duration),
+) {
+    let primary = world.validators.primary_port();
+    loop {
+        let finalized = world.rpc.finalized(primary).expect("finalized head");
+        if finalized >= target {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Hyperlane liveness window {miss} did not reach finalized target {target} within {budget:?}: last finalized {finalized}"
+        );
+        if finalized.is_multiple_of(30) {
+            eprintln!("Hyperlane liveness: finalized={finalized} target={target}");
+        }
+        sleep(Duration::from_secs(2));
+    }
+}
+
+/// After window `miss`, the silent signer (`validators[3]`) has `miss` misses
+/// (zero again after the jail at the third), and the others have none.
+fn assert_miss_counts(world: &mut World, validators: &[Address], miss: u32) {
+    let miss_count = |world: &mut World, validator: Address| {
+        eth::read_call(
+            &url(world),
+            CROSSCHAIN_GOV_ADDRESS,
+            &ICrosschainGov::missCountCall { validator },
+        )
+        .expect("bridge signer miss count")
+    };
+    assert_eq!(
+        miss_count(world, validators[3]),
+        if miss == 3 { 0 } else { miss },
+        "silent bridge signer window {miss}"
+    );
+    for validator in &validators[..3] {
+        assert_eq!(miss_count(world, *validator), 0);
+    }
 }
 
 #[then("three liveness windows jail only the silent validator and resync the ISM")]
@@ -407,46 +452,8 @@ fn jailed_and_resynced(world: &mut World) {
         .checked_add(budget)
         .expect("Hyperlane liveness deadline overflow");
     for (miss, target) in (1..=3u32).zip(targets) {
-        loop {
-            let finalized = world.rpc.finalized(primary).expect("finalized head");
-            if finalized >= target {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "Hyperlane liveness window {miss} did not reach finalized target {target} within {budget:?}: last finalized {finalized}"
-            );
-            if finalized.is_multiple_of(30) {
-                eprintln!("Hyperlane liveness: finalized={finalized} target={target}");
-            }
-            sleep(Duration::from_secs(2));
-        }
-        let observed = eth::read_call(
-            &url(world),
-            HYPERLANE_CONTROLLER_ADDRESS,
-            &IHyperlaneController::missCountCall {
-                validator: validators[3],
-            },
-        )
-        .expect("silent bridge signer miss count");
-        assert_eq!(
-            observed,
-            if miss == 3 { 0 } else { miss },
-            "silent bridge signer window {miss}"
-        );
-        for validator in &validators[..3] {
-            assert_eq!(
-                eth::read_call(
-                    &url(world),
-                    HYPERLANE_CONTROLLER_ADDRESS,
-                    &IHyperlaneController::missCountCall {
-                        validator: *validator,
-                    },
-                )
-                .expect("active bridge signer miss count"),
-                0
-            );
-        }
+        wait_for_liveness_window(world, (miss, target), (deadline, budget));
+        assert_miss_counts(world, &validators, miss);
     }
     let mut expected = validators[..3].to_vec();
     expected[0] = rotated;

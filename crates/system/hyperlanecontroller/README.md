@@ -1,13 +1,31 @@
 # HyperlaneController
 
-`outbe-hyperlanecontroller` is the governance-owned controller of the Hyperlane
-bridge. It is the owner of every Hyperlane core contract on Outbe (Mailbox,
-ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
-StorageMessageIdMultisigIsm) and, through its Interchain Account (ICA), of the
-same contracts on every remote chain. Governance also gives it the ERC-7786
-bridge, its adapters and the token bridges.
+`outbe-hyperlanecontroller` runs the Hyperlane infrastructure for governance:
+the validator set in the ISMs, the liveness of the Hyperlane agents, and the
+domain registry.
 
-Address: `0x000000000000000000000000000000000000EE14` (`HYPERLANE_CONTROLLER_ADDRESS`).
+The crate is a library with no address of its own. It runs in the frame of the
+CrosschainGov precompile (`outbe-crosschaingov`, `0x000000000000000000000000000000000000EE14`,
+`CROSSCHAIN_GOV_ADDRESS`). That precompile owns every Hyperlane core contract on
+Outbe (Mailbox, ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
+StorageMessageIdMultisigIsm) and, through its Interchain Account (ICA), the same
+contracts on every remote chain. The precompile sends the Hyperlane selectors to
+`dispatch()` in this crate.
+
+Every state-changing call to an ISM or to the ICA router goes through the trait
+`Owner { call_local, call_remote }` (`owner.rs`). The precompile implements it,
+so `msg.sender` of each call is `0x…EE14`. This crate does not depend on
+`outbe-crosschaingov`.
+
+| file | content |
+|---|---|
+| `owner.rs` | the trait `Owner` and `RemoteCall` |
+| `actions.rs` | the vote actions `addHyperlaneChain` and `removeHyperlaneChain` |
+| `domains.rs` | the ICA router, the ISM and the hook of each domain |
+| `ism_sync.rs` | `sync` and `set_validators_and_threshold` |
+| `liveness.rs` | `setHyperlaneSigner`, `submitCheckpoint` and the liveness verdict |
+| `lifecycle.rs` | the begin-block entry points |
+| `dispatch.rs` | the Hyperlane selectors |
 
 ## State
 
@@ -23,13 +41,16 @@ Address: `0x000000000000000000000000000000000000EE14` (`HYPERLANE_CONTROLLER_ADD
 | 7    | `miss_count`    | `validator -> consecutive liveness-window misses`                     |
 | 8    | `validator_announce` | ValidatorAnnounce on Outbe; `outbe-feeder` reads the validator's bucket location from it |
 | 9    | `bootstrap_admin` | the only caller allowed to `initialize`; genesis seeds it          |
-| 10   | `approved_payload` | `proposal id -> keccak256(payload)` of an approved crosschain action; zero = none or applied |
-| 11   | `approved_at`   | `proposal id -> block of the approval`                                |
 
-Validator sets and thresholds are **not** stored here: the ISMs are the source
-of truth, the controller only forwards owner calls to them.
+The state lives in the account `0x…EE14`, slots 0-9. `outbe-crosschaingov`
+keeps its own state from slot 10. Validator sets and thresholds are **not**
+stored here: the ISMs are the source of truth, the controller only sends owner
+calls to them.
 
-## Direct selectors
+## Hyperlane selectors
+
+The CrosschainGov precompile sends these selectors here. `fund`,
+`applyApproved` and `remoteAccount` run in `outbe-crosschaingov`.
 
 - `initialize(icaRouter, validatorAnnounce, domains[], isms[], hooks[])` — one-shot. Caller must be the current
   owner of the Outbe ISM (the deployer that staged `transferOwnership` to the
@@ -37,7 +58,6 @@ of truth, the controller only forwards owner calls to them.
   dispatches `acceptOwnership()` to every remote ISM through its ICA (so `fund()` must
   come first),
   verifies it already owns `icaRouter`, and stores the table.
-- `fund()` payable — tops up the balance that pays IGP fees for ICA dispatches.
 - `sync()` — permissionless. Mirrors the active Outbe validator set into every ISM:
   validators = active validators, threshold = `ceil(2n/3)` (the vote quorum rule).
   No-op when the local ISM already matches, so a keeper can call it every epoch;
@@ -51,8 +71,6 @@ of truth, the controller only forwards owner calls to them.
   see below. Caller: an active validator or its oracle delegate (the feeder key).
 - `setHyperlaneSigner(signer)` — registers the key the validator's Hyperlane agent
   signs with when it differs from the validator address; zero resets.
-- `applyApproved(proposalId, payload)` — permissionless. Runs a crosschain action
-  that a vote approved (see below).
 - views: `icaRouter()`, `validatorAnnounce()`, `ismByDomain(domain)`, `hookByDomain(domain)`, `domains()`,
   `hyperlaneSigner(validator)`, `submittedIndex(validator, domain)`, `missCount(validator)`.
 
@@ -87,61 +105,36 @@ itself, so a fake self-signed checkpoint is indistinguishable from a real one.
 
 | method | effect |
 |---|---|
-| `set_validators_and_threshold(set, t)` | full rotation: `callRemote` to every remote ISM, then the local setter, in one checkpoint. `sync` and liveness call it |
-| `call_remote(domain, calls[])` | ICA call on a remote chain. Pays `quoteGasPayment(domain)` from the controller balance, and reverts before dispatch if the balance is too low |
-| `call_local(to, value, data)` | owner call on Outbe |
-| `add_domain(domain, ism, hook)` / `remove_domain(domain)` | start / stop the validator sync to a remote chain. Adding dispatches `acceptOwnership()` to its ISM. The local domain is fixed at `initialize` |
+| `set_validators_and_threshold(set, t, owner)` | full rotation: `owner.call_remote` to every remote ISM, then `owner.call_local` to the local ISM, in one checkpoint. `sync` and liveness call it |
+| `add_domain(domain, (ism, hook), owner)` / `remove_domain(domain)` | start / stop the validator sync to a remote chain. Adding sends `acceptOwnership()` to its ISM. The local domain is fixed at `initialize` |
 
-## Crosschain vote target
+## Vote actions
 
-`CrosschainVoteTarget` serves this address. Validators vote on one strict JSON
-action, so no proposal can carry a free `to` and `data`. The tally runs where
-sub-calls are not available. So an approved proposal stores only
-`keccak256(payload)` and the approval block. Anyone then calls
-`applyApproved(proposalId, payload)` with the same bytes, and the controller
-runs the action once. An approval older than the governance voting window is
-dropped with `ApprovedActionExpired`, so a stale approval cannot undo a newer
-one.
-
-A chain id is also the Hyperlane domain of that chain. Calls on the Outbe chain
-id go through `call_local`. Calls on another chain id go in one `call_remote`.
-A `link…` action does both: the Outbe side first, then one message with the
-mirror calls. Everything runs in one checkpoint.
-
-The bridge is `ERC7786Bridge` in `contracts/crosschain`: one per chain, between
-the token bridges and the transport adapters.
+The one vote target of `0x…EE14` is `CrosschainVoteTarget` in
+`outbe-crosschaingov`. It sends these two operations here. The payload is
+strict JSON with an `operation` field. `HyperlaneAction::decode` checks it when
+the proposal is created, and `HyperlaneAction::apply` runs it on
+`applyApproved`.
 
 | `operation` | fields | calls |
 |---|---|---|
-| `setBridgePaused` | `chainId`, `bridge`, `paused` | `bridge.pause()` or `bridge.unpause()` |
-| `setBridgeGateway` | `chainId`, `bridge`, `destinationChainId`, `adapter` | `bridge.setGateway(destinationChainId, adapter)`: the adapter the bridge sends through. A zero `adapter` clears the override |
-| `linkBridges` | `remoteChainId`, `bridge`, `adapter`, `remoteBridge`, `remoteAdapter` (Hyperlane adapters) | on each side: `adapter.setRouterWithChain` (the other adapter), `bridge.registerRemoteBridge` (ERC-7930 of the other bridge), `bridge.setGateway(other chain, adapter)` |
-| `linkTokenBridges` | `remoteChainId`, `tokenBridge`, `remoteTokenBridge` | on each side: `tokenBridge.addPeer(other chain, other token bridge)` |
 | `addHyperlaneChain` | `chainId`, `icaRouter`, `ism`, `hook` | the Outbe ICA router enrolls `icaRouter` (a no-op if the same router is enrolled, a revert if another one is), then `add_domain` |
 | `removeHyperlaneChain` | `chainId` | `remove_domain` |
 
-```json
-{"operation":"setBridgePaused","chainId":42161,"bridge":"0x…","paused":true}
-```
-
-The controller does not check what the addresses are. Voters check them:
-`token()` of both token bridges for `linkTokenBridges`, and the bridge and
-adapter addresses on both chains for `linkBridges`. A peer link cannot be
-removed.
-
-A remote action is asynchronous: `applyApproved` succeeds when the message is
-dispatched, not when the remote chain runs it.
+A chain id is also the Hyperlane domain of that chain. A new action that
+changes the Hyperlane infrastructure goes in `actions.rs`. An action on our own
+contracts goes in `outbe-crosschaingov`.
 
 ## Deploy order (hyperline)
 
 1. `mise run deploy-contracts` — stock contracts, owner = deployer key.
 2. `mise run controller:init` — runs the chain `ica:enroll` (link the
    InterchainAccountRouters both ways, while the deployer still owns them) →
-   `owner:transfer` (Outbe contracts → controller, remote contracts → the
-   controller's ICA computed on the remote router; the ISM transfer is two-step
+   `owner:transfer` (Outbe contracts → `0x…EE14`, remote contracts → its ICA
+   computed on the remote router; the ISM transfer is two-step
    and stays *pending* until accepted) → `initialize(icaRouter, validatorAnnounce,
    domains, isms, hooks)` from the deployer key (still `owner()` of the Outbe ISM).
-   Each step is idempotent and can be run on its own. `fund()` the controller
+   Each step is idempotent and can be run on its own. `fund()` `0x…EE14`
    before this step: `initialize` dispatches `acceptOwnership()` to every remote
    ISM through the ICA and pays the IGP quote for each.
 3. Test rotation; verify `validatorsAndThreshold` changed on the remote ISM.
@@ -156,18 +149,18 @@ chain goes through votes.
    2. Run `core deploy`.
    3. Run `ica:enroll`. Only the new chain's side applies. The Outbe router is
       enrolled by `addHyperlaneChain`.
-   4. Run `owner:transfer`. Everything goes to the controller's ICA, and the ISM
-      stays pending.
+   4. Run `owner:transfer`. Everything goes to the ICA of `0x…EE14`, and the
+      ISM stays pending.
    5. Configure the validator and relayer agents for the chain.
-2. In `contracts`, deploy the crosschain contracts (`DeployAll`, which hands
-   over to the ICA) and the token bridges on the new chain.
-3. `fund()` the controller. Each remote action pays the Hyperlane fee.
+2. In `contracts`, deploy the crosschain contracts, the token bridges and the
+   intent contracts on the new chain. Each `DeployAll` hands over to the ICA.
+3. `fund()` `0x…EE14`. Each remote action pays the Hyperlane fee.
 4. Vote, then call `applyApproved` for each action:
    1. `addHyperlaneChain`;
    2. `linkBridges`;
    3. `linkTokenBridges` for each token.
 
 Known gap: `call_remote` first asks the Outbe IGP for `quoteGasPayment`. The
-IGP reverts for a domain without a gas oracle config, and only its owner (the
-controller) can add one. No vote action sets it yet, so step 4.1 fails for a
+IGP reverts for a domain without a gas oracle config, and only its owner
+(`0x…EE14`) can add one. No vote action sets it yet, so step 4.1 fails for a
 chain that the deploy did not configure in the Outbe IGP.

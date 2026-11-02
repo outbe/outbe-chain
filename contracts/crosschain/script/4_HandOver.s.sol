@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
-import {HYPERLANE_CONTROLLER, IHyperlaneController} from "@precompiles/IHyperlaneController.sol";
+import {CROSSCHAIN_GOV, ICrosschainGov} from "@precompiles/ICrosschainGov.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
@@ -17,7 +17,7 @@ interface IEndpointDelegates {
 /// @dev Gives the hub and every deployed adapter to governance (OIP-00353). The deployer owns them
 ///      while it deploys and wires them. This last step transfers each owner role, and the
 ///      LayerZero OApp delegate, then reads them back.
-///      Governance is the HyperlaneController precompile on Outbe, and its Interchain Account on
+///      Governance is the CrosschainGov precompile on Outbe, and its Interchain Account on
 ///      any other chain. After this step, a gateway switch, a new remote, a gas default or a pause
 ///      is a governance proposal.
 ///
@@ -51,9 +51,9 @@ contract HandOver is Script {
         vm.stopBroadcast();
     }
 
-    /// @dev Governance on this chain: the controller on Outbe, its Interchain Account elsewhere.
+    /// @dev Governance on this chain: the precompile on Outbe, its Interchain Account elsewhere.
     function governanceOwner() public returns (address) {
-        if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return HYPERLANE_CONTROLLER;
+        if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return CROSSCHAIN_GOV;
         if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
         return _controllerAccount(uint32(block.chainid));
     }
@@ -91,16 +91,16 @@ contract HandOver is Script {
         console2.log("handed over to governance:", governance);
     }
 
-    /// @dev Asks the controller on Outbe for its Interchain Account on `domain`. A fork cannot run
+    /// @dev Asks the precompile on Outbe for its Interchain Account on `domain`. A fork cannot run
     ///      the precompile, so this is a raw `eth_call` to the Outbe node, as in
     ///      `contracts/tokens/script/routes/BaseRoute.sol`. `virtual` so a test harness can supply
     ///      the account.
     function _controllerAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
-            vm.toString(HYPERLANE_CONTROLLER),
+            vm.toString(CROSSCHAIN_GOV),
             '","data":"',
-            vm.toString(abi.encodeCall(IHyperlaneController.remoteAccount, (domain))),
+            vm.toString(abi.encodeCall(ICrosschainGov.remoteAccount, (domain))),
             '"},"latest"]'
         );
         string memory outbe = vm.envOr("OUTBE_RPC", string("outbe-testnet"));

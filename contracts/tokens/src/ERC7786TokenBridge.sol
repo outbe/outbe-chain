@@ -21,7 +21,7 @@ import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 ///         issuer-gated mint/burn sides. Composed transfers (`sendAndCall`) additionally invoke an
 ///         ERC-1363-style receiver hook on the destination after the tokens are credited.
 /// @dev The initializer sets the peer bridge on each remote domain. No function changes or removes
-///      a peer. The owner is governance: the HyperlaneController precompile on Outbe, and its
+///      a peer. The owner is governance: the CrosschainGov precompile on Outbe, and its
 ///      Interchain Account on other chains. The owner adds a peer for a new domain and authorizes
 ///      upgrades. UUPS upgradeable behind an ERC1967 proxy: the token, the hub, the mode and the
 ///      decimals are implementation immutables, so every upgrade must pass the same values.

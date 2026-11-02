@@ -1,5 +1,5 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 
 use crate::envelope::ZeroFeeEnvelope;
 
@@ -14,7 +14,7 @@ pub const MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE 
 
 /// Stateless envelope of a zero-fee checkpoint submission.
 pub(crate) const CHECKPOINT_ENVELOPE: ZeroFeeEnvelope = ZeroFeeEnvelope {
-    target: HYPERLANE_CONTROLLER_ADDRESS,
+    target: CROSSCHAIN_GOV_ADDRESS,
     min_max_fee_per_gas: MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
     max_calldata_bytes: MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
     max_gas_limit: MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,

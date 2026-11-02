@@ -2,10 +2,12 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
+use crate::abi::ICrosschainGov;
+use crate::domains::accept_remote_ism;
 use crate::errors::HyperlaneControllerError;
-use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
+use crate::Owner;
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -53,25 +55,15 @@ impl ControllerBootstrap<'_> {
 }
 
 impl HyperlaneControllerContract<'_> {
-    /// Hyperlane domain of this chain (= chain id).
-    pub fn local_domain(&self) -> Result<u32> {
-        u32::try_from(self.storage.chain_id()?)
-            .map_err(|_| HyperlaneControllerError::InvalidDomain.into())
-    }
-
-    pub fn is_initialized(&self) -> Result<bool> {
-        Ok(self.ica_router.read()? != Address::ZERO)
-    }
-
     /// One-shot bootstrap:
     /// 1. Accepts the pending ownership of the local ISM.
-    /// 2. Verifies that the controller already owns the ICA router.
+    /// 2. Verifies that `0x…EE14` already owns the ICA router.
     /// 3. Stores the router plus the whole `domain -> ISM` table.
     /// 4. Dispatches `acceptOwnership()` to every remote ISM through the
     ///    Interchain Account.
     ///
-    /// The controller must have funds first, because each dispatch pays the
-    /// IGP quote.
+    /// The owner must have funds first, because each dispatch pays the IGP
+    /// quote. Every ISM call goes through `owner`.
     ///
     /// Only the genesis-seeded bootstrap admin may call it. The admin must
     /// also be the current owner of the local ISM (the deployer that staged
@@ -81,6 +73,7 @@ impl HyperlaneControllerContract<'_> {
         &mut self,
         caller: Address,
         bootstrap: &ControllerBootstrap<'_>,
+        owner: &mut impl Owner,
     ) -> Result<()> {
         if self.is_initialized()? {
             return Err(HyperlaneControllerError::AlreadyInitialized.into());
@@ -97,11 +90,11 @@ impl HyperlaneControllerContract<'_> {
         self.require_owned(bootstrap.ica_router)?;
 
         let storage = self.storage.clone();
-        storage.with_checkpoint(|| self.install(bootstrap, local, local_ism))
+        storage.with_checkpoint(|| self.install(bootstrap, (local, local_ism), owner))
     }
 
     /// Requires that `caller` owns the local ISM and that the ISM ownership
-    /// is pending to this controller.
+    /// is pending to `0x…EE14`.
     fn require_ism_handover(&self, local_ism: Address, caller: Address) -> Result<()> {
         let owner = self.owner_of(local_ism)?;
         if owner != caller {
@@ -119,10 +112,10 @@ impl HyperlaneControllerContract<'_> {
     fn install(
         &mut self,
         bootstrap: &ControllerBootstrap<'_>,
-        local: u32,
-        local_ism: Address,
+        (local, local_ism): (u32, Address),
+        owner: &mut impl Owner,
     ) -> Result<()> {
-        self.storage.call(
+        owner.call_local(
             local_ism,
             U256::ZERO,
             IStorageMultisigIsm::acceptOwnershipCall {}
@@ -140,35 +133,12 @@ impl HyperlaneControllerContract<'_> {
         for ((domain, ism), hook) in table {
             self.write_domain(*domain, *ism, *hook)?;
             if *domain != local {
-                self.accept_remote_ism(*domain, *ism)?;
+                accept_remote_ism(owner, *domain, *ism)?;
             }
         }
-        self.emit(IHyperlaneController::Initialized {
+        self.emit(ICrosschainGov::Initialized {
             icaRouter: bootstrap.ica_router,
         })
-    }
-
-    /// Records a top-up. The payable route credits the value itself.
-    pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
-        if amount.is_zero() {
-            return Err(HyperlaneControllerError::ZeroFund.into());
-        }
-        self.emit(IHyperlaneController::Funded { from, amount })
-    }
-
-    /// Mirrors the active Outbe validator set into every ISM (validators =
-    /// the Hyperlane signer of every active validator, threshold =
-    /// [`consensus_threshold`]). Returns `false` when the local ISM already
-    /// matches, so a keeper can call it every epoch.
-    pub fn sync(&mut self) -> Result<bool> {
-        let active = self.active_signers()?;
-        let threshold = consensus_threshold(active.len())?;
-        let (current, current_threshold) = self.current_validators()?;
-        if current_threshold == threshold && same_set(&current, &active) {
-            return Ok(false);
-        }
-        self.set_validators_and_threshold(&active, threshold)?;
-        Ok(true)
     }
 }
 
@@ -180,14 +150,6 @@ pub fn consensus_threshold(active: usize) -> Result<u8> {
     }
     u8::try_from(active.saturating_mul(2).div_ceil(3))
         .map_err(|_| HyperlaneControllerError::InvalidValidatorCount { count: active }.into())
-}
-
-fn same_set(left: &[Address], right: &[Address]) -> bool {
-    let mut left = left.to_vec();
-    let mut right = right.to_vec();
-    left.sort_unstable();
-    right.sort_unstable();
-    left == right
 }
 
 /// Shape checks for the inputs that Hyperlane's `setValidatorsAndThreshold`

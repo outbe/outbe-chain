@@ -8042,6 +8042,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-crosschaingov"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-chain-constants",
+ "outbe-hyperlanecontroller",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-cycle"
 version = "0.1.0"
 dependencies = [
@@ -8258,6 +8275,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
+ "outbe-crosschaingov",
  "outbe-cycle",
  "outbe-desis",
  "outbe-emission",
@@ -8497,7 +8515,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-chain-constants",
  "outbe-macros",
  "outbe-primitives",
  "outbe-validatorset",

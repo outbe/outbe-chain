@@ -1,7 +1,7 @@
 # Test contracts
 
 Shared Solidity fixtures for the E2E harness. `MockHyperlaneIsm` and
-`MockHyperlaneIcaRouter` give the HyperlaneController precompile an owner
+`MockHyperlaneIcaRouter` give the CrosschainGov precompile (Hyperlane controller) an owner
 surface to drive.
 
 Build from this directory with `forge build`.

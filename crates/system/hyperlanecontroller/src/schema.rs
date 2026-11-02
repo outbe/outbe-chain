@@ -1,9 +1,13 @@
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256};
 use outbe_macros::{contract, storage_schema};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::storage::keys::address_u32_key;
 
 /// EVM storage layout for the Hyperlane controller.
+///
+/// The module has no address of its own. Its state lives in the frame of the
+/// CrosschainGov precompile at `0x…EE14`, in slots 0-9. `outbe-crosschaingov`
+/// keeps its own state in the slots after these.
 ///
 /// Storage slots:
 ///   0: ica_router - InterchainAccountRouter on Outbe (zero = not initialized)
@@ -24,11 +28,8 @@ use outbe_primitives::storage::keys::address_u32_key;
 ///      publish the location of their checkpoint bucket
 ///   9: bootstrap_admin - the only caller allowed to `initialize`. Genesis
 ///      seeds it. Zero = nobody can initialize
-///  10: approved_payload - mapping(proposal id => keccak256 of the approved
-///      crosschain action payload). Zero = none or already applied
-///  11: approved_at - mapping(proposal id => block of the approval)
 #[storage_schema]
-#[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
+#[contract(addr = CROSSCHAIN_GOV_ADDRESS)]
 pub struct HyperlaneControllerContract {
     #[attribute(order = 0)]
     pub ica_router: outbe_primitives::storage::dsl::Value<Address>,
@@ -59,12 +60,6 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 9)]
     pub bootstrap_admin: outbe_primitives::storage::dsl::Value<Address>,
-
-    #[attribute(order = 10)]
-    pub approved_payload: outbe_primitives::storage::dsl::Map<U256, B256>,
-
-    #[attribute(order = 11)]
-    pub approved_at: outbe_primitives::storage::dsl::Map<U256, u64>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

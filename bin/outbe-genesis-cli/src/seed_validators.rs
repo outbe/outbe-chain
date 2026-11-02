@@ -11,8 +11,8 @@ use crate::keccak::keccak256;
 use crate::seed_codec::{
     address_as_u256, address_bytes, alloc_balance_hex, parse_genesis_timestamp, parse_i128,
     parse_u256, parse_u64, pubkey_bytes, radicle_node_id_bytes, u64_bytes, write_mapping_bytes,
-    StorageBuilder, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
-    DEFAULT_UNBONDING_PERIOD, HYPERLANE_CONTROLLER_ADDRESS,
+    StorageBuilder, CROSSCHAIN_GOV_ADDRESS, DEFAULT_EPOCH_LENGTH_BLOCKS,
+    DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS, DEFAULT_UNBONDING_PERIOD,
     HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT, MIN_STAKE, STAKING_ADDRESS, VALIDATOR_SET_ADDRESS,
     VAULT_ROUTER_ADDRESS,
 };
@@ -202,7 +202,7 @@ pub fn seed_staking(
     Ok(total_staked)
 }
 
-/// Seed ValidatorSet, VaultRouter, HyperlaneController, and Staking for founding validators.
+/// Seed ValidatorSet, VaultRouter, the Hyperlane controller (at CrosschainGov), and Staking for founding validators.
 pub fn seed_founders(
     genesis: &Value,
     seed: &Value,
@@ -298,7 +298,7 @@ pub fn seed_founders(
         HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT,
         address_as_u256(hyperlane_admin)?,
     );
-    merge_storage_into_alloc(alloc, HYPERLANE_CONTROLLER_ADDRESS, &hyperlane_storage)?;
+    merge_storage_into_alloc(alloc, CROSSCHAIN_GOV_ADDRESS, &hyperlane_storage)?;
 
     let mut staking_storage = StorageBuilder::new();
     let total_staked = seed_staking(

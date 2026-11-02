@@ -7,9 +7,9 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::abi::ICrosschainGov;
 use outbe_oracle::precompile::IOracle;
-use outbe_primitives::addresses::{HYPERLANE_CONTROLLER_ADDRESS, ORACLE_ADDRESS};
+use outbe_primitives::addresses::{CROSSCHAIN_GOV_ADDRESS, ORACLE_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::transaction_call::TransactionCallFields;
 use outbe_validatorset::delegation::ValidatorDelegateRole;
@@ -88,8 +88,8 @@ fn hook_cases() -> Vec<HookCase> {
         },
         HookCase {
             hook: ZeroFeeHookId::HyperlaneSubmitCheckpoint,
-            target: HYPERLANE_CONTROLLER_ADDRESS,
-            selector: IHyperlaneController::submitCheckpointCall::SELECTOR,
+            target: CROSSCHAIN_GOV_ADDRESS,
+            selector: ICrosschainGov::submitCheckpointCall::SELECTOR,
             valid_input: crate::test_support::checkpoint_calldata().to_vec(),
             min_max_fee_per_gas: crate::hyperlane::MIN_ZERO_FEE_CHECKPOINT_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,

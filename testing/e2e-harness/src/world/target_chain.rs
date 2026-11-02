@@ -190,7 +190,7 @@ impl TargetChain {
                     // The run never governs the hub, so it names this chain as
                     // Outbe. The hand-over then needs no Interchain Account
                     // lookup on the localnet and parks the owner at the
-                    // controller address.
+                    // CrosschainGov address.
                     ("OUTBE_CHAIN_ID", chain_id.clone()),
                     ("CREATE3_FACTORY_ADDRESS", format!("{create3_factory:?}")),
                     ("HYPERLANE_MAILBOX", format!("{mailbox:?}")),

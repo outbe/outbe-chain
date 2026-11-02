@@ -3,7 +3,7 @@
 pragma solidity ^0.8.30;
 
 /**
- * @dev Minimal Hyperlane core interfaces used by the Outbe hyperlanecontroller precompile, vendored
+ * @dev Minimal Hyperlane core interfaces used by the Outbe hyperlanecontroller module, vendored
  * locally like {IHyperlane}. This file declares only the owner-side subset. Selectors match
  * Hyperlane core (hyperlane-xyz/core) 11.3.1.
  */

@@ -35,7 +35,7 @@ pub struct AccountConfig {
 
 /// Checkpoint submission settings. The attester reads this validator's own
 /// public-read bucket (the location it announced on-chain, `<bucket>/<domain>/`)
-/// for every domain that the HyperlaneController knows. It submits the latest
+/// for every domain that the Hyperlane controller knows. It submits the latest
 /// signed checkpoint of each domain.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

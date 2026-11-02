@@ -6,7 +6,7 @@
 pub mod vote {
     use alloy_primitives::{Address, U256};
     use outbe_coderegistry::vote_target::CodePatchVoteTarget;
-    use outbe_hyperlanecontroller::CrosschainVoteTarget;
+    use outbe_crosschaingov::CrosschainVoteTarget;
     use outbe_l2registry::L2RegistryVoteTarget;
     use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
     use outbe_primitives::block::BlockRuntimeContext;

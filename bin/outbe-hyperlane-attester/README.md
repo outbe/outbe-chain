@@ -2,7 +2,7 @@
 
 Proves on-chain that this validator's Hyperlane agent keeps signing. It reads the
 latest signed checkpoint per domain from the validator's own checkpoint bucket and
-submits it to the `HyperlaneController` precompile (`0x…EE14`) with
+submits it to the `CrosschainGov` precompile (`0x…EE14`, Hyperlane controller selectors) with
 `submitCheckpoint`. The controller jails validators that fall behind the quorum for
 `MAX_MISSES` liveness windows in a row (see `crates/system/hyperlanecontroller/README.md`).
 
@@ -37,7 +37,7 @@ bind_address = "0.0.0.0:9003"
 ```
 
 Nothing about the bucket is configured: every poll the attester reads
-`HyperlaneController.domains()` and `validatorAnnounce()`, then the validator's
+`CrosschainGov.domains()` and `validatorAnnounce()`, then the validator's
 latest announced location from `ValidatorAnnounce.getAnnouncedStorageLocations`
 (`s3+http://host:port/<validator>/<folder>`), and fetches
 `<bucket>/<domain>/checkpoint_latest_index.json` plus

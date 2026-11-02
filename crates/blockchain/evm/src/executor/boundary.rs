@@ -47,7 +47,7 @@ pub mod marker_addresses {
         OUTBE_SYSTEM_TX_ADDRESS,
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
-        HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_GOV_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
     ];

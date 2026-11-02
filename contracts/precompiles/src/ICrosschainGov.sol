@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @dev The HyperlaneController precompile. Matches `HYPERLANE_CONTROLLER_ADDRESS` in
+/// @dev The CrosschainGov precompile. Matches `CROSSCHAIN_GOV_ADDRESS` in
 ///      crates/blockchain/primitives/src/addresses.rs.
-address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
+address constant CROSSCHAIN_GOV = 0x000000000000000000000000000000000000EE14;
 
-/// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
+/// CrosschainGov precompile at `CROSSCHAIN_GOV`.
 ///
-/// Governance-owned controller of the Hyperlane bridge. Holds only the local
-/// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`
-/// table (the Outbe chain included under its own domain). Validator sets live
-/// in the ISMs themselves. The crosschain vote target approves owner actions,
-/// and `applyApproved` runs them (see the crate README for the JSON payloads).
-interface IHyperlaneController {
+/// Governance owner of every multi-chain contract: on Outbe directly, on every other chain
+/// through its Interchain Account. It owns the Hyperlane core contracts, the ERC-7786 hub, its
+/// gateway adapters, the token bridges and the intent contracts. The Hyperlane selectors
+/// (`initialize`, `sync`, `submitCheckpoint`, `setHyperlaneSigner` and the views) go to the
+/// Hyperlane controller module. That module holds the local InterchainAccountRouter address and
+/// a `domain -> StorageMessageIdMultisigIsm` table (the Outbe chain included under its own
+/// domain). Validator sets live in the ISMs themselves. The crosschain vote target approves
+/// owner actions, and `applyApproved` runs them (see the crate README for the JSON payloads).
+interface ICrosschainGov {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
     error NotInitialized();
@@ -98,14 +101,14 @@ interface IHyperlaneController {
     /// Runs a crosschain action that a governance vote approved. Permissionless: the vote decided,
     /// and `payload` must be the approved JSON (its keccak256 is stored). An action older than the
     /// governance voting window is dropped with `ApprovedActionExpired`, so a stale approval cannot
-    /// undo a newer one. A remote action pays the Hyperlane fee from the controller balance.
+    /// undo a newer one. A remote action pays the Hyperlane fee from the precompile balance.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
 
-    /// Interchain Account of the controller on `domain`. It executes every remote call of the
-    /// controller, so it is the governance owner of contracts on that chain.
+    /// Interchain Account of this precompile on `domain`. It executes every remote call of the
+    /// precompile, so it is the governance owner of contracts on that chain.
     function remoteAccount(uint32 domain) external view returns (address);
 
     /// ValidatorAnnounce on Outbe.
