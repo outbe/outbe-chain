@@ -38,6 +38,10 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) parent_hash: B256,
     /// Priority/coinbase fees collected by user transactions in this block.
     pub(super) current_block_validator_fees: U256,
+    /// Base fees and EIP-4844 blob fees burned by paid transactions in this block.
+    pub(super) current_block_burned_fees: U256,
+    /// Whether `settle_block_burned_fees` has already flushed this block's burned fees.
+    pub(super) burned_fees_settled: bool,
     /// Internal gas consumed by begin-zone system transactions under the
     /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
     /// Ethereum-visible block counters use each system tx envelope's visible
@@ -154,6 +158,8 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             block_state_root,
             parent_hash,
             current_block_validator_fees: U256::ZERO,
+            current_block_burned_fees: U256::ZERO,
+            burned_fees_settled: false,
             system_tx_execution_gas: 0,
             evm_signer,
             expected_begin_system_txs,
@@ -210,13 +216,18 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// Pre-encodes the final execution-produced header fields.
     /// The block-builder adapter owns the encoding. This executor entry point
     /// lets the opaque Reth builder path invoke it before parallel root freeze.
-    pub fn prepare_final_header_artifacts(
+    #[allow(private_bounds)]
+    pub fn prepare_final_header_artifacts<DB>(
         &mut self,
         timestamp_millis_part: u64,
     ) -> Result<(), BlockExecutionError>
     where
-        Evm: reth_ethereum::evm::primitives::Evm,
+        DB: StateDB,
+        DB::Error: std::fmt::Display,
+        Evm: reth_ethereum::evm::primitives::Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
+        Evm::Error: std::fmt::Display,
     {
+        self.settle_block_burned_fees()?;
         let enclave_witness = self.final_enclave_witness_bytes()?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
             self.final_extra_data.as_ref(),

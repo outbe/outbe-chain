@@ -106,7 +106,7 @@ use context::{build_block_context, validate_genesis_state};
 #[cfg(test)]
 use hooks::run_atomic_storage_hooks;
 
-use receipts::{validator_fee_for_gas, SystemFailureReceiptInput};
+use receipts::{burned_fee_for_gas, validator_fee_for_gas, SystemFailureReceiptInput};
 
 use zero_fee::zero_fee_transaction;
 

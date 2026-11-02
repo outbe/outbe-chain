@@ -1,7 +1,7 @@
 //! Error types for the PromisLimit module.
 
 use crate::precompile::IPromisLimit;
-use alloy_primitives::Bytes;
+use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -14,6 +14,8 @@ pub enum PromisLimitError {
     Overflow,
     #[error("promis limit underflow")]
     Underflow,
+    #[error("unauthorized promis limit burn caller {caller} for source {burn_source}")]
+    UnauthorizedBurnCaller { caller: Address, burn_source: u8 },
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -26,6 +28,13 @@ impl From<PromisLimitError> for PrecompileError {
         match err {
             PromisLimitError::Overflow => revert_with(I::Overflow {}),
             PromisLimitError::Underflow => revert_with(I::Underflow {}),
+            PromisLimitError::UnauthorizedBurnCaller {
+                caller,
+                burn_source,
+            } => revert_with(I::UnauthorizedBurnCaller {
+                caller,
+                source: burn_source,
+            }),
         }
     }
 }

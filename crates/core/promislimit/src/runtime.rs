@@ -1,7 +1,9 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::{
-    addresses::PROMIS_LIMIT_ADDRESS, error::Result, units::UNITS_PER_PROTOCOL_MINOR,
+    addresses::{PROMIS_LIMIT_ADDRESS, SYSTEM_ADDRESS},
+    error::Result,
+    units::UNITS_PER_PROTOCOL_MINOR,
 };
 
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
@@ -18,6 +20,14 @@ pub enum BurnSource {
     Proceeds = 5,
     LysisUnused = 6,
     NodForfeit = 7,
+}
+
+impl BurnSource {
+    /// Returns `true` when the EVM already burned the `COEN` units before
+    /// `PromisLimitContract::burn_to_promis_limit` is called.
+    pub const fn is_already_burned(self) -> bool {
+        matches!(self, Self::BaseFee | Self::BlobFee)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,14 +57,26 @@ impl PromisLimitContract<'_> {
         self.promis_limit.write(total)
     }
 
-    /// Burns `amount_minor` `COEN` units from `escrow`, credits whole Promis Limit minors
-    /// to `promis_limit`, and stores the remainder in `rest_minor`.
+    /// Routes `amount_minor` `COEN` units into the Promis Limit, credits whole Promis Limit
+    /// minors to `promis_limit`, and stores the remainder in `rest_minor`.
+    ///
+    /// Already-burned fee sources (`BurnSource::BaseFee | BurnSource::BlobFee`) may only be
+    /// passed by the block executor (`escrow == SYSTEM_ADDRESS`) and do not decrease any
+    /// account balance. All other sources must supply a non-system `escrow` account from
+    /// which `amount_minor` is burned.
     pub fn burn_to_promis_limit(
         &mut self,
         escrow: Address,
         amount_minor: U256,
         source: BurnSource,
     ) -> Result<U256> {
+        if source.is_already_burned() != (escrow == SYSTEM_ADDRESS) {
+            return Err(PromisLimitError::UnauthorizedBurnCaller {
+                caller: escrow,
+                burn_source: source as u8,
+            }
+            .into());
+        }
         if amount_minor.is_zero() {
             return Ok(U256::ZERO);
         }
@@ -70,16 +92,22 @@ impl PromisLimitContract<'_> {
         if !credited_minor.is_zero() {
             self.checked_credit(credited_minor)?;
         }
-        self.storage.decrease_balance(escrow, amount_minor)?;
+        if !source.is_already_burned() {
+            self.storage.decrease_balance(escrow, amount_minor)?;
+        }
         self.rest_minor.write(new_rest)?;
-        self.storage.emit_event(
-            PROMIS_LIMIT_ADDRESS,
-            IPromisLimit::NativeBurnedToPromisLimit {
-                source: source as u8,
-                burnedUnit: amount_minor,
-            }
-            .encode_log_data(),
-        )?;
+        // End-of-block already-burned fee settlement runs outside any transaction receipt;
+        // its event schema and transport carrier are owned by the Events review (§3.1, §5.2).
+        if !source.is_already_burned() {
+            self.storage.emit_event(
+                PROMIS_LIMIT_ADDRESS,
+                IPromisLimit::NativeBurnedToPromisLimit {
+                    source: source as u8,
+                    burnedUnit: amount_minor,
+                }
+                .encode_log_data(),
+            )?;
+        }
         guard.commit()?;
 
         Ok(credited_minor)

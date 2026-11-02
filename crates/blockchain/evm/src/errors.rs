@@ -896,4 +896,6 @@ impl From<SubCallDriverError> for outbe_primitives::storage::SubCallError {
 
 #[path = "errors/executor.rs"]
 mod executor;
-pub use executor::{ExecutorStorageError, ExecutorValidationError, SystemTxBuildError};
+pub use executor::{
+    BurnedFeeSettlementError, ExecutorStorageError, ExecutorValidationError, SystemTxBuildError,
+};
