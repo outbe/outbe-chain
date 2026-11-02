@@ -76,23 +76,20 @@ where
         if block_number == 0 {
             return Ok(Vec::new());
         }
-        use crate::system_tx::{LATE_FINALIZE_CREDITS_SELECTOR, RADICLE_PUBLICATION_SELECTOR};
-
         let mut system_txs = Vec::new();
         if block_number >= 2 {
             system_txs.push(self.certified_parent_begin_input(0)?);
-            self.append_begin_input(&mut system_txs, LATE_FINALIZE_CREDITS_SELECTOR, || {
+            self.append_begin_input(
+                &mut system_txs,
                 SystemTx::LateFinalizeCredits {
                     artifact: block_artifacts
                         .late_finalize_credits
                         .clone()
                         .unwrap_or_default(),
-                }
-            })?;
+                },
+            )?;
         }
-        self.append_begin_input(&mut system_txs, SystemTx::CycleTick.selector(), || {
-            SystemTx::CycleTick
-        })?;
+        self.append_begin_input(&mut system_txs, SystemTx::CycleTick)?;
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             &block_artifacts.consensus_header_artifact
         {
@@ -109,20 +106,15 @@ where
                 ExecutorValidationError::Ost3BootstrapForbiddenAtBlock { block_number }.into(),
             );
         }
-        self.append_begin_input(
-            &mut system_txs,
-            SystemTx::OracleSlashWindow.selector(),
-            || SystemTx::OracleSlashWindow,
-        )?;
-        self.append_begin_input(&mut system_txs, SystemTx::HookEvents.selector(), || {
-            SystemTx::HookEvents
-        })?;
+        self.append_begin_input(&mut system_txs, SystemTx::OracleSlashWindow)?;
+        self.append_begin_input(&mut system_txs, SystemTx::HookEvents)?;
         if let Some(batch) = &block_artifacts.radicle_publication {
-            self.append_begin_input(&mut system_txs, RADICLE_PUBLICATION_SELECTOR, || {
+            self.append_begin_input(
+                &mut system_txs,
                 SystemTx::RadiclePublication {
                     batch: batch.clone(),
-                }
-            })?;
+                },
+            )?;
         }
         Ok(system_txs)
     }
@@ -131,12 +123,12 @@ where
     fn append_begin_input(
         &self,
         system_txs: &mut Vec<BeginSystemTransaction>,
-        expected_selector: [u8; 4],
-        proposer_input: impl FnOnce() -> SystemTx,
+        expected_input: SystemTx,
     ) -> Result<(), BlockExecutionError> {
         let ordinal = system_txs.len();
+        let expected_selector = expected_input.selector();
         let input = if self.expected_begin_system_txs.is_empty() {
-            proposer_input()
+            expected_input
         } else {
             self.expected_begin_input(ordinal)?
         };
