@@ -4,10 +4,10 @@ use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
 use crate::executor::Executor;
-use crate::ism_sync::accept_remote_ism;
+use crate::ism::accept_remote_ism;
 use crate::precompile::ICrosschainGov;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::IStorageMultisigIsm;
+use crate::sol_ext::{IOwnable, IStorageMultisigIsm};
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -55,6 +55,41 @@ impl ControllerBootstrap<'_> {
 }
 
 impl HyperlaneControllerContract<'_> {
+    pub(crate) fn owner_of(&self, target: Address) -> Result<Address> {
+        let ret = self
+            .storage
+            .staticcall(target, IOwnable::ownerCall {}.abi_encode().into())?;
+        IOwnable::ownerCall::abi_decode_returns(&ret)
+            .map_err(|_| HyperlaneControllerError::UndecodableReturn("owner").into())
+    }
+
+    pub(crate) fn pending_owner_of(&self, target: Address) -> Result<Address> {
+        let ret = self.storage.staticcall(
+            target,
+            IStorageMultisigIsm::pendingOwnerCall {}.abi_encode().into(),
+        )?;
+        IStorageMultisigIsm::pendingOwnerCall::abi_decode_returns(&ret)
+            .map_err(|_| HyperlaneControllerError::UndecodableReturn("pendingOwner").into())
+    }
+
+    pub(crate) fn require_owned(&self, contract: Address) -> Result<()> {
+        if contract == Address::ZERO {
+            return Err(HyperlaneControllerError::InvalidAddress.into());
+        }
+        let owner = self.owner_of(contract)?;
+        if owner != self.address {
+            return Err(HyperlaneControllerError::NotOwnedByController { contract, owner }.into());
+        }
+        Ok(())
+    }
+
+    pub fn require_initialized(&self) -> Result<()> {
+        if !self.is_initialized()? {
+            return Err(HyperlaneControllerError::NotInitialized.into());
+        }
+        Ok(())
+    }
+
     /// Hyperlane domain of this chain (= chain id).
     pub fn local_domain(&self) -> Result<u32> {
         u32::try_from(self.storage.chain_id()?)

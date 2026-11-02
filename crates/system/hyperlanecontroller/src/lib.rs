@@ -23,9 +23,8 @@ pub mod schema;
 pub mod sol_ext;
 
 mod executor;
-mod ism_sync;
+mod ism;
 mod liveness;
-mod remote;
 mod runtime;
 
 pub use executor::{Executor, RemoteCall};

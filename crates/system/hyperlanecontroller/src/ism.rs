@@ -1,5 +1,6 @@
-//! Owner operations on the ISMs and the domain table. Every write to an ISM
-//! goes through [`Executor`].
+//! The ISMs and the domain table: reads of the ISMs, the validator rotation,
+//! and adding or removing a chain. Every write to an ISM goes through
+//! [`Executor`].
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
 //! crosschain vote target calls `add_domain` and `remove_domain`.
@@ -16,6 +17,32 @@ use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
 
 impl HyperlaneControllerContract<'_> {
+    /// Current set as stored by the local ISM (the source of truth).
+    pub(crate) fn current_validators(&self) -> Result<(Vec<Address>, u8)> {
+        let local_ism = self.local_ism()?;
+        let ret = self.storage.staticcall(
+            local_ism,
+            IStorageMultisigIsm::validatorsAndThresholdCall {
+                _message: Bytes::new(),
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        let decoded = IStorageMultisigIsm::validatorsAndThresholdCall::abi_decode_returns(&ret)
+            .map_err(|_| HyperlaneControllerError::UndecodableReturn("validatorsAndThreshold"))?;
+        Ok((decoded._0, decoded._1))
+    }
+
+    pub(crate) fn local_ism(&self) -> Result<Address> {
+        self.require_initialized()?;
+        let local = self.local_domain()?;
+        let ism = self.ism_by_domain.read(&local)?;
+        if ism == Address::ZERO {
+            return Err(HyperlaneControllerError::LocalDomainMissing { domain: local }.into());
+        }
+        Ok(ism)
+    }
+
     /// Full rotation: `setValidatorsAndThreshold` on every remote ISM through
     /// the Interchain Account, then on the local ISM. All calls run under one
     /// checkpoint. Any failure leaves every ISM untouched.
