@@ -1,30 +1,40 @@
-//! [`Owner`] for the controller address: local calls and Interchain Account
-//! dispatch, paid from the address balance.
+//! The owner calls of the owner address: local calls and Interchain Account
+//! dispatch, paid from the address balance. `hyperlanecontroller` makes its
+//! writes through them, and so do the vote actions of this crate.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::errors::HyperlaneControllerError;
-use crate::owner::{Owner, RemoteCall};
-use crate::precompile::IHyperlaneController;
-use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::IInterchainAccountRouter;
+use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
+use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
+use outbe_hyperlanecontroller::{HyperlaneControllerContract, OwnerCalls, RemoteCall};
 
-/// Runs the owner calls of the controller address.
-pub struct ControllerOwner<'a> {
+/// Runs the owner calls of the owner address. Use it only in the frame of
+/// that address: every call has the frame address as `msg.sender`.
+pub struct Owner<'a> {
     controller: HyperlaneControllerContract<'a>,
 }
 
-impl<'a> ControllerOwner<'a> {
+impl<'a> Owner<'a> {
     pub fn new(storage: StorageHandle<'a>) -> Self {
         Self {
             controller: HyperlaneControllerContract::new(storage),
         }
     }
 
-    /// Interchain Account of the controller on `domain`, as the ICA router derives it.
+    /// Records a top-up. The payable route credits the value itself.
+    pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Err(HyperlaneControllerError::ZeroFund.into());
+        }
+        self.controller
+            .emit(IHyperlaneController::Funded { from, amount })
+    }
+
+    /// Interchain Account of the owner on `domain`, as the ICA router derives it.
     pub fn remote_account(&self, domain: u32) -> Result<Address> {
         let controller = &self.controller;
         controller.require_initialized()?;
@@ -111,7 +121,7 @@ impl<'a> ControllerOwner<'a> {
     }
 }
 
-impl Owner for ControllerOwner<'_> {
+impl OwnerCalls for Owner<'_> {
     fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes> {
         if to == Address::ZERO {
             return Err(HyperlaneControllerError::InvalidAddress.into());

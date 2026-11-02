@@ -63,7 +63,7 @@ impl HyperlaneControllerContract<'_> {
         Ok(())
     }
 
-    pub(crate) fn require_initialized(&self) -> Result<()> {
+    pub fn require_initialized(&self) -> Result<()> {
         if !self.is_initialized()? {
             return Err(HyperlaneControllerError::NotInitialized.into());
         }

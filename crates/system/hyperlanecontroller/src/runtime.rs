@@ -4,7 +4,7 @@ use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
 use crate::ism_sync::accept_remote_ism;
-use crate::owner::Owner;
+use crate::owner_calls::OwnerCalls;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IStorageMultisigIsm;
@@ -81,7 +81,7 @@ impl HyperlaneControllerContract<'_> {
     /// calldata, so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
-        owner: &mut impl Owner,
+        owner: &mut impl OwnerCalls,
         caller: Address,
         bootstrap: &ControllerBootstrap<'_>,
     ) -> Result<()> {
@@ -121,7 +121,7 @@ impl HyperlaneControllerContract<'_> {
     /// takes ownership of every remote ISM.
     fn install(
         &mut self,
-        owner: &mut impl Owner,
+        owner: &mut impl OwnerCalls,
         bootstrap: &ControllerBootstrap<'_>,
         local: u32,
         local_ism: Address,
@@ -152,19 +152,11 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Records a top-up. The payable route credits the value itself.
-    pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
-        if amount.is_zero() {
-            return Err(HyperlaneControllerError::ZeroFund.into());
-        }
-        self.emit(IHyperlaneController::Funded { from, amount })
-    }
-
     /// Mirrors the active Outbe validator set into every ISM (validators =
     /// the Hyperlane signer of every active validator, threshold =
     /// [`consensus_threshold`]). Returns `false` when the local ISM already
     /// matches, so a keeper can call it every epoch.
-    pub fn sync(&mut self, owner: &mut impl Owner) -> Result<bool> {
+    pub fn sync(&mut self, owner: &mut impl OwnerCalls) -> Result<bool> {
         let active = self.active_signers()?;
         let threshold = consensus_threshold(active.len())?;
         let (current, current_threshold) = self.current_validators()?;

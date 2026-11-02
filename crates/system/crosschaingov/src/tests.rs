@@ -11,13 +11,14 @@ use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::errors::HyperlaneControllerError;
-use crate::owner::{Owner, RemoteCall};
-use crate::owner_impl::ControllerOwner;
-use crate::precompile::{dispatch, IHyperlaneController};
-use crate::runtime::validate_validators;
-use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
+use crate::owner_calls::Owner;
+use crate::precompile::dispatch;
+use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
+use outbe_hyperlanecontroller::precompile::IHyperlaneController;
+use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
+use outbe_hyperlanecontroller::{
+    validate_validators, HyperlaneControllerContract, OwnerCalls, RemoteCall,
+};
 use outbe_primitives::error::PrecompileError;
 use outbe_validatorset::contract::ValidatorSet;
 
@@ -322,6 +323,18 @@ fn initialize_is_gated_and_one_shot() {
 }
 
 #[test]
+fn the_storage_of_the_two_crates_does_not_overlap() {
+    let mut p = provider();
+    StorageHandle::enter(&mut p, |storage| {
+        let hub = HyperlaneControllerContract::new(storage.clone());
+        let gov = crate::schema::CrosschainGovContract::new(storage);
+        assert!(hub.bootstrap_admin.slot() < U256::from(32));
+        assert_eq!(gov.approved_payload.base_slot(), U256::from(32));
+        assert_eq!(gov.approved_at.base_slot(), U256::from(33));
+    });
+}
+
+#[test]
 fn fund_is_the_only_payable_selector() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
@@ -345,7 +358,7 @@ fn rotation_dispatches_every_remote_ism_then_the_local_one() {
     p.set_balance(HYPERLANE_CONTROLLER_ADDRESS, fee * U256::from(2));
     p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let mut owner = ControllerOwner::new(storage.clone());
+        let mut owner = Owner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         c.set_validators_and_threshold(&mut owner, &[v(1), v(2), v(3)], 2)
             .unwrap();
@@ -374,7 +387,7 @@ fn rotation_without_fee_balance_changes_nothing() {
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
     p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let mut owner = ControllerOwner::new(storage.clone());
+        let mut owner = Owner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         let err = c
             .set_validators_and_threshold(&mut owner, &[v(1), v(2)], 2)
@@ -392,7 +405,7 @@ fn remote_and_local_generic_calls() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     StorageHandle::enter(&mut p, |storage| {
-        let mut owner = ControllerOwner::new(storage);
+        let mut owner = Owner::new(storage);
         let calls = [RemoteCall {
             to: sepolia_ism(),
             value: U256::ZERO,
@@ -436,7 +449,7 @@ fn remote_account_is_the_router_derived_account() {
 fn domains_can_be_added_and_removed_except_the_local_one() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
-        let mut owner = ControllerOwner::new(storage.clone());
+        let mut owner = Owner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         c.add_domain(&mut owner, 1, v(5), hook(5)).unwrap();
         assert_eq!(c.domains.read_all().unwrap(), vec![LOCAL, SEPOLIA, BSC, 1]);
@@ -460,7 +473,7 @@ fn operations_require_initialization() {
     let mut p = provider();
     p.enable_sub_call_stub();
     StorageHandle::enter(&mut p, |storage| {
-        let mut owner = ControllerOwner::new(storage.clone());
+        let mut owner = Owner::new(storage.clone());
         let mut c = HyperlaneControllerContract::new(storage);
         assert!(matches!(
             c.set_validators_and_threshold(&mut owner, &[v(1)], 1),
@@ -536,13 +549,28 @@ mod sync {
 
     #[test]
     fn threshold_is_two_thirds_rounded_up() {
-        assert_eq!(crate::consensus_threshold(1).unwrap(), 1);
-        assert_eq!(crate::consensus_threshold(2).unwrap(), 2);
-        assert_eq!(crate::consensus_threshold(3).unwrap(), 2);
-        assert_eq!(crate::consensus_threshold(4).unwrap(), 3);
-        assert_eq!(crate::consensus_threshold(255).unwrap(), 170);
-        assert!(crate::consensus_threshold(0).is_err());
-        assert!(crate::consensus_threshold(256).is_err());
+        assert_eq!(
+            outbe_hyperlanecontroller::consensus_threshold(1).unwrap(),
+            1
+        );
+        assert_eq!(
+            outbe_hyperlanecontroller::consensus_threshold(2).unwrap(),
+            2
+        );
+        assert_eq!(
+            outbe_hyperlanecontroller::consensus_threshold(3).unwrap(),
+            2
+        );
+        assert_eq!(
+            outbe_hyperlanecontroller::consensus_threshold(4).unwrap(),
+            3
+        );
+        assert_eq!(
+            outbe_hyperlanecontroller::consensus_threshold(255).unwrap(),
+            170
+        );
+        assert!(outbe_hyperlanecontroller::consensus_threshold(0).is_err());
+        assert!(outbe_hyperlanecontroller::consensus_threshold(256).is_err());
     }
 
     #[test]
@@ -582,7 +610,7 @@ mod sync {
         stub_router_and_ism(&mut p, U256::ZERO, &[v(9), v(3), v(2), v(1)], 3);
         p.clear_events(HYPERLANE_CONTROLLER_ADDRESS);
         StorageHandle::enter(&mut p, |storage| {
-            let mut owner = ControllerOwner::new(storage.clone());
+            let mut owner = Owner::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
             assert!(!c.sync(&mut owner).unwrap());
         });
@@ -591,7 +619,7 @@ mod sync {
         // The validator address of v4 is not its signer: that set is stale.
         stub_router_and_ism(&mut p, U256::ZERO, &[v(4), v(3), v(2), v(1)], 3);
         StorageHandle::enter(&mut p, |storage| {
-            let mut owner = ControllerOwner::new(storage.clone());
+            let mut owner = Owner::new(storage.clone());
             let mut c = HyperlaneControllerContract::new(storage);
             assert!(c.sync(&mut owner).unwrap());
         });
@@ -600,9 +628,9 @@ mod sync {
 
 mod liveness {
     use super::*;
-    use crate::liveness::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
-    use crate::schema::validator_domain_key;
     use alloy_primitives::{b256, hex};
+    use outbe_hyperlanecontroller::schema::validator_domain_key;
+    use outbe_hyperlanecontroller::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
     use outbe_primitives::tee_signatures::recover_signer;
 
     /// Real checkpoints signed on outbetestnet by validator 0x4fe927… for the
@@ -1000,7 +1028,7 @@ mod liveness {
 
 mod vote_target {
     use super::*;
-    use crate::sol_ext::{IERC7786Bridge, IHyperlaneGatewayAdapter};
+    use crate::actions::crosschain::{IERC7786Bridge, IHyperlaneGatewayAdapter};
     use crate::CrosschainVoteTarget;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
@@ -1225,12 +1253,12 @@ mod vote_target {
         let enrolled = |p: &mut HashMapStorageProvider, router: B256| {
             p.stub_sub_call_at_selector(
                 ica_router(),
-                crate::sol_ext::IHyperlaneRouter::routersCall::SELECTOR,
+                outbe_hyperlanecontroller::sol_ext::IHyperlaneRouter::routersCall::SELECTOR,
                 Bytes::from(router.abi_encode()),
             );
         };
         let enroll = Bytes::from(
-            crate::sol_ext::IHyperlaneRouter::enrollRemoteRouterCall {
+            outbe_hyperlanecontroller::sol_ext::IHyperlaneRouter::enrollRemoteRouterCall {
                 _domain: ARBITRUM,
                 _router: v(0xe1).into_word(),
             }

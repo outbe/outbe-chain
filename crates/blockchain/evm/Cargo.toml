@@ -31,6 +31,7 @@ outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tee.workspace = true
 outbe-l2registry.workspace = true
 outbe-hyperlanecontroller.workspace = true
+outbe-crosschaingov.workspace = true
 outbe-coderegistry.workspace = true
 outbe-vote.workspace = true
 outbe-update.workspace = true

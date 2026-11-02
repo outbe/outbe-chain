@@ -1,0 +1,28 @@
+//! `crosschaingov` - the owner of every multi-chain contract (`0x...EE14`).
+//!
+//! The precompile at the owner address is in this crate. It owns the ERC-7786
+//! hub, the gateway adapters, the token bridges and the Hyperlane core
+//! contracts: on Outbe directly, on every other chain through its Interchain
+//! Account (OIP-00369).
+//!
+//! - [`owner_calls::Owner`] runs the owner calls (`call_local`, `call_remote`)
+//!   and pays remote dispatch fees from the address balance. `fund` adds value
+//!   to that balance.
+//! - [`CrosschainVoteTarget`] stores the hash of an approved action.
+//!   Permissionless `applyApproved` then runs it. Actions on our contracts are
+//!   in [`actions`]. Actions on the Hyperlane chains are in
+//!   `hyperlanecontroller::actions`.
+//! - The Hyperlane selectors (`initialize`, `sync`, `setHyperlaneSigner`,
+//!   `submitCheckpoint`, views) go to `hyperlanecontroller`.
+
+pub mod actions;
+pub mod owner_calls;
+pub mod precompile;
+pub mod schema;
+
+mod vote_target;
+
+pub use vote_target::CrosschainVoteTarget;
+
+#[cfg(test)]
+mod tests;

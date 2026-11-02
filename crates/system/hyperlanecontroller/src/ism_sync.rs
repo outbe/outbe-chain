@@ -1,5 +1,5 @@
 //! Owner operations on the ISMs and the domain table. Every write to an ISM
-//! goes through [`Owner`].
+//! goes through [`OwnerCalls`].
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
 //! crosschain vote target calls `add_domain` and `remove_domain`.
@@ -9,7 +9,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::owner::{Owner, RemoteCall};
+use crate::owner_calls::{OwnerCalls, RemoteCall};
 use crate::precompile::IHyperlaneController;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
@@ -21,7 +21,7 @@ impl HyperlaneControllerContract<'_> {
     /// checkpoint. Any failure leaves every ISM untouched.
     pub fn set_validators_and_threshold(
         &mut self,
-        owner: &mut impl Owner,
+        owner: &mut impl OwnerCalls,
         validators: &[Address],
         threshold: u8,
     ) -> Result<()> {
@@ -63,7 +63,7 @@ impl HyperlaneControllerContract<'_> {
     /// fixed at `initialize`.
     pub fn add_domain(
         &mut self,
-        owner: &mut impl Owner,
+        owner: &mut impl OwnerCalls,
         domain: u32,
         ism: Address,
         hook: Address,
@@ -101,7 +101,7 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    pub(crate) fn require_remote_domain(&self, domain: u32) -> Result<()> {
+    pub fn require_remote_domain(&self, domain: u32) -> Result<()> {
         if domain == 0 {
             return Err(HyperlaneControllerError::InvalidDomain.into());
         }
@@ -129,7 +129,11 @@ impl HyperlaneControllerContract<'_> {
 
 /// Accepts the pending ownership of a remote ISM from the Interchain Account:
 /// `callRemote(domain, [ism.acceptOwnership()])`.
-pub(crate) fn accept_remote_ism(owner: &mut impl Owner, domain: u32, ism: Address) -> Result<()> {
+pub(crate) fn accept_remote_ism(
+    owner: &mut impl OwnerCalls,
+    domain: u32,
+    ism: Address,
+) -> Result<()> {
     owner.call_remote(
         domain,
         &[RemoteCall {
