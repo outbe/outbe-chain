@@ -1,8 +1,11 @@
+use alloy_consensus::Transaction as _;
 use reth_ethereum::TransactionSigned;
 
 use super::{
-    decode_system_tx_kind, is_reserved_system_tx, BodyZone, SystemTxError, SystemTxKind,
-    MAX_SYSTEM_TXS_PER_BLOCK,
+    is_reserved_system_tx, BodyZone, SystemTx, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, ORACLE_SLASH_WINDOW_SELECTOR,
+    RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Structural split of block transactions into system begin-prefix, user middle,
@@ -23,27 +26,33 @@ impl<'a> SystemTxLayout<'a> {
         self.begin.len() + self.end.len()
     }
 
-    pub fn begin_block_kinds(&self) -> Result<Vec<SystemTxKind>, SystemTxError> {
+    pub fn begin_block_selectors(&self) -> Result<Vec<[u8; 4]>, SystemTxError> {
         self.begin
             .iter()
-            .map(|tx| decode_system_tx_kind(tx))
+            .map(|tx| {
+                let tx = *tx;
+                SystemTx::decode(tx.input()).map(|input| input.selector())
+            })
             .collect()
     }
 
-    pub fn end_block_kinds(&self) -> Result<Vec<SystemTxKind>, SystemTxError> {
+    pub fn end_block_selectors(&self) -> Result<Vec<[u8; 4]>, SystemTxError> {
         self.end
             .iter()
-            .map(|tx| decode_system_tx_kind(tx))
+            .map(|tx| {
+                let tx = *tx;
+                SystemTx::decode(tx.input()).map(|input| input.selector())
+            })
             .collect()
     }
 
-    /// True if the begin zone contains a system tx of `kind`. Callers use it to
+    /// True if the fully decoded begin zone contains a system tx with `selector`. Callers use it to
     /// derive the layout-signaled optional-phase flags (e.g. the one-time
-    /// [`SystemTxKind::TeeBootstrap`]). A successful [`split_system_layout`]
+    /// [`SystemTx::TeeBootstrap`]). A successful [`split_system_layout`]
     /// precludes a decode failure. This method treats a decode failure as absent.
-    pub fn has_begin_kind(&self, kind: SystemTxKind) -> bool {
-        self.begin_block_kinds()
-            .map(|kinds| kinds.contains(&kind))
+    pub fn has_begin_selector(&self, selector: [u8; 4]) -> bool {
+        self.begin_block_selectors()
+            .map(|selectors| selectors.contains(&selector))
             .unwrap_or(false)
     }
 }
@@ -56,32 +65,35 @@ pub fn split_system_layout<'a>(
     let mut previous_begin = None;
 
     while prefix_end < txs.len() && is_reserved_system_tx(&txs[prefix_end]) {
-        let kind = decode_system_tx_kind(&txs[prefix_end])?;
-        if kind.body_zone() == BodyZone::EndBlock {
+        let input = SystemTx::decode(txs[prefix_end].input())?;
+        if input.body_zone() == BodyZone::EndBlock {
             break;
         }
-        ensure_system_tx_in_zone(kind, BodyZone::BeginBlock)?;
-        ensure_monotonic(BodyZone::BeginBlock, previous_begin, kind)?;
-        previous_begin = Some(kind);
+        ensure_system_tx_in_zone(&input, BodyZone::BeginBlock)?;
+        previous_begin = Some(ensure_monotonic(
+            BodyZone::BeginBlock,
+            previous_begin,
+            &input,
+        )?);
         begin.push(&txs[prefix_end]);
         prefix_end += 1;
     }
 
-    let mut suffix_entries: Vec<(usize, SystemTxKind)> = Vec::new();
+    let mut suffix_entries = Vec::new();
     let mut suffix_start = txs.len();
     while suffix_start > prefix_end && is_reserved_system_tx(&txs[suffix_start - 1]) {
         suffix_start -= 1;
-        let kind = decode_system_tx_kind(&txs[suffix_start])?;
-        ensure_system_tx_in_zone(kind, BodyZone::EndBlock)?;
-        suffix_entries.push((suffix_start, kind));
+        let input = SystemTx::decode(txs[suffix_start].input())?;
+        ensure_system_tx_in_zone(&input, BodyZone::EndBlock)?;
+        suffix_entries.push(suffix_start);
     }
     suffix_entries.reverse();
 
     let mut previous_end = None;
     let mut end = Vec::with_capacity(suffix_entries.len());
-    for (index, kind) in suffix_entries {
-        ensure_monotonic(BodyZone::EndBlock, previous_end, kind)?;
-        previous_end = Some(kind);
+    for index in suffix_entries {
+        let input = SystemTx::decode(txs[index].input())?;
+        previous_end = Some(ensure_monotonic(BodyZone::EndBlock, previous_end, &input)?);
         end.push(&txs[index]);
     }
 
@@ -100,12 +112,12 @@ pub fn split_system_layout<'a>(
     })
 }
 
-pub fn expected_begin_block_kinds(
+pub fn expected_begin_block_selectors(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
-) -> Vec<SystemTxKind> {
-    expected_begin_block_kinds_for_publication(
+) -> Vec<[u8; 4]> {
+    expected_begin_block_selectors_for_publication(
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
@@ -113,46 +125,46 @@ pub fn expected_begin_block_kinds(
     )
 }
 
-pub fn expected_begin_block_kinds_for_publication(
+pub fn expected_begin_block_selectors_for_publication(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
     has_publication: bool,
-) -> Vec<SystemTxKind> {
+) -> Vec<[u8; 4]> {
     let mut expected = match block_number {
         0 => Vec::new(),
         1 => Vec::new(),
         _ => {
             vec![
-                SystemTxKind::CertifiedParentAccounting,
+                CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
                 // mandatory inclusion-window phase, ordered after Phase 1
                 // and before CycleTick for every block >= 2. It is empty when there
                 // is nothing to credit. Its body still drives the matured-window
                 // settlement.
-                SystemTxKind::LateFinalizeCredits,
+                LATE_FINALIZE_CREDITS_SELECTOR,
             ]
         }
     };
     if block_number > 0 {
-        expected.push(SystemTxKind::CycleTick);
+        expected.push(CYCLE_TICK_SELECTOR);
     }
     if block_number > 0 && has_boundary_outcome {
-        expected.push(SystemTxKind::BoundaryOutcome);
+        expected.push(BOUNDARY_OUTCOME_SELECTOR);
     }
     if block_number > 0 && has_tee_bootstrap {
-        expected.push(SystemTxKind::TeeBootstrap);
+        expected.push(TEE_BOOTSTRAP_SELECTOR);
     }
     if block_number > 0 {
-        expected.push(SystemTxKind::OracleSlashWindow);
-        expected.push(SystemTxKind::HookEvents);
+        expected.push(ORACLE_SLASH_WINDOW_SELECTOR);
+        expected.push(HOOK_EVENTS_SELECTOR);
         if has_publication {
-            expected.push(SystemTxKind::RadiclePublication);
+            expected.push(RADICLE_PUBLICATION_SELECTOR);
         }
     }
     expected
 }
 
-pub fn expected_end_block_kinds() -> Vec<SystemTxKind> {
+pub fn expected_end_block_selectors() -> Vec<[u8; 4]> {
     Vec::new()
 }
 
@@ -205,15 +217,15 @@ pub fn validate_system_tx_set_for_publication(
         });
     }
 
-    let expected_begin = expected_begin_block_kinds_for_publication(
+    let expected_begin = expected_begin_block_selectors_for_publication(
         block_number,
         has_boundary_outcome,
         has_tee_bootstrap,
         has_publication,
     );
-    let expected_end = expected_end_block_kinds();
-    let actual_begin = layout.begin_block_kinds()?;
-    let actual_end = layout.end_block_kinds()?;
+    let expected_end = expected_end_block_selectors();
+    let actual_begin = layout.begin_block_selectors()?;
+    let actual_end = layout.end_block_selectors()?;
     if actual_begin != expected_begin || actual_end != expected_end {
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin,
@@ -226,11 +238,11 @@ pub fn validate_system_tx_set_for_publication(
     }
 }
 
-fn ensure_system_tx_in_zone(kind: SystemTxKind, actual: BodyZone) -> Result<(), SystemTxError> {
-    let expected = kind.body_zone();
+fn ensure_system_tx_in_zone(input: &SystemTx, actual: BodyZone) -> Result<(), SystemTxError> {
+    let expected = input.body_zone();
     if expected != actual {
         return Err(SystemTxError::SystemTxInWrongZone {
-            kind,
+            kind: input.name(),
             expected,
             actual,
         });
@@ -240,32 +252,24 @@ fn ensure_system_tx_in_zone(kind: SystemTxKind, actual: BodyZone) -> Result<(), 
 
 fn ensure_monotonic(
     zone: BodyZone,
-    previous: Option<SystemTxKind>,
-    current: SystemTxKind,
-) -> Result<(), SystemTxError> {
-    let Some(previous) = previous else {
-        return Ok(());
-    };
-    let previous_order = previous
-        .order_in(zone)
-        .ok_or(SystemTxError::SystemTxInWrongZone {
-            kind: previous,
-            expected: previous.body_zone(),
-            actual: zone,
-        })?;
+    previous: Option<(u8, &'static str)>,
+    current: &SystemTx,
+) -> Result<(u8, &'static str), SystemTxError> {
     let current_order = current
         .order_in(zone)
         .ok_or(SystemTxError::SystemTxInWrongZone {
-            kind: current,
+            kind: current.name(),
             expected: current.body_zone(),
             actual: zone,
         })?;
-    if current_order <= previous_order {
-        return Err(SystemTxError::OutOfOrder {
-            zone,
-            previous,
-            current,
-        });
+    if let Some((previous_order, previous)) = previous {
+        if current_order <= previous_order {
+            return Err(SystemTxError::OutOfOrder {
+                zone,
+                previous,
+                current: current.name(),
+            });
+        }
     }
-    Ok(())
+    Ok((current_order, current.name()))
 }

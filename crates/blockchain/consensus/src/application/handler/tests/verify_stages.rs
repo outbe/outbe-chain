@@ -3,7 +3,7 @@ use crate::application::handler::verification::VerifyTask;
 use futures::{FutureExt as _, StreamExt as _};
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::signer::OutbeEvmSigner;
-use outbe_primitives::system_tx::SystemTxInputV2;
+use outbe_primitives::system_tx::SystemTx;
 
 fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> ConsensusBlock {
     let parent_hash = parent.map_or(B256::ZERO, ConsensusBlock::block_hash);
@@ -15,15 +15,15 @@ fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> Co
                 parent_hash,
                 extra_data: Bytes::new(),
                 inputs: vec![
-                    SystemTxInputV2::CertifiedParentAccounting {
+                    SystemTx::CertifiedParentAccounting {
                         metadata: crate::test_fixtures::finalized_metadata(parent_hash),
                     },
-                    SystemTxInputV2::LateFinalizeCredits {
+                    SystemTx::LateFinalizeCredits {
                         artifact: Default::default(),
                     },
-                    SystemTxInputV2::CycleTick,
-                    SystemTxInputV2::OracleSlashWindow,
-                    SystemTxInputV2::HookEvents,
+                    SystemTx::CycleTick,
+                    SystemTx::OracleSlashWindow,
+                    SystemTx::HookEvents,
                 ],
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },

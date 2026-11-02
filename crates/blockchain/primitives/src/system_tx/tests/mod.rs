@@ -9,7 +9,9 @@ use alloy_primitives::{address, Bytes, Signature, TxKind, B256, U256};
 use reth_ethereum::TransactionSigned;
 
 mod fixtures;
-use fixtures::{input_for, sample_metadata, CHAIN_ID};
+use fixtures::{
+    accounting, bootstrap, boundary, inputs, late_credits, publication, sample_metadata, CHAIN_ID,
+};
 
 mod input;
 

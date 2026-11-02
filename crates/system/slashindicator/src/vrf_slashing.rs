@@ -10,7 +10,7 @@ use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::slashing_journal::{record as journal_record, JournalRecord};
-use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTxInputV2};
+use outbe_primitives::system_tx::{recover_phase1_proposer, SystemTx};
 use outbe_primitives::time::iso8601_now;
 use outbe_validatorset::contract::ValidatorSet;
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
@@ -239,14 +239,14 @@ impl SlashIndicator<'_> {
         let (proposer, calldata) =
             recover_phase1_proposer(&ev.phase1_tx_bytes, chain_id, ev.child_block_number)
                 .map_err(SlashIndicatorError::phase1_tx_invalid)?;
-        let metadata = match SystemTxInputV2::decode(calldata.as_ref())
+        let metadata = match SystemTx::decode(calldata.as_ref())
             .map_err(SlashIndicatorError::phase1_calldata_decode_failed)?
         {
-            SystemTxInputV2::CertifiedParentAccounting { metadata } => metadata,
+            SystemTx::CertifiedParentAccounting { metadata } => metadata,
             other => {
                 return Err(
                     SlashIndicatorError::Phase1CalldataNotCertifiedParentAccounting {
-                        kind: format!("{:?}", other.kind()),
+                        kind: other.name(),
                     }
                     .into(),
                 );

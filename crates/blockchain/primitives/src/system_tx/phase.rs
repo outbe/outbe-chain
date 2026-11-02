@@ -1,6 +1,10 @@
 use alloy_primitives::B256;
 
-use super::{SystemTxKind, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
+use super::{
+    SystemTx, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
+    GENESIS_BOOTSTRAP_BLOCK_NUMBER, HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR,
+    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+};
 
 /// Executor cursor that names the next system-tx phase that the block executor
 /// expects to consume. With this enum, phase routing does not derive from
@@ -78,20 +82,24 @@ impl SystemTxPhase {
         }
     }
 
-    /// The begin-zone system-tx kind the cursor expects to consume next, or
+    /// The begin-zone system-tx selector the cursor expects to consume next, or
     /// `None` if the cursor is `UserTxs`.
-    pub const fn expected_kind(&self) -> Option<SystemTxKind> {
+    pub const fn expected_selector(&self) -> Option<[u8; 4]> {
         match self {
-            Self::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
-            Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
-            Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
-            Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
-            Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
-            Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
-            Self::HookEvents { .. } => Some(SystemTxKind::HookEvents),
-            Self::RadiclePublication { .. } => Some(SystemTxKind::RadiclePublication),
+            Self::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
+            Self::LateFinalizeCredits { .. } => Some(LATE_FINALIZE_CREDITS_SELECTOR),
+            Self::CycleTick { .. } => Some(CYCLE_TICK_SELECTOR),
+            Self::BoundaryOutcomeOptional { .. } => Some(BOUNDARY_OUTCOME_SELECTOR),
+            Self::TeeBootstrapOptional { .. } => Some(TEE_BOOTSTRAP_SELECTOR),
+            Self::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
+            Self::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
+            Self::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
             Self::UserTxs => None,
         }
+    }
+
+    pub fn accepts(&self, input: &SystemTx) -> bool {
+        self.expected_selector() == Some(input.selector())
     }
 
     /// Body index of the next expected begin-zone system tx, or `None` if

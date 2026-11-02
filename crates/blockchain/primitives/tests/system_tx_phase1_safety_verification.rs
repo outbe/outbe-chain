@@ -15,7 +15,7 @@
 //! `SystemTime`-derived state). Then proposer and validator paths would
 //! diverge on the per-block cursor sequence, and the block hash would split.
 
-use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
+use outbe_primitives::system_tx::*;
 use proptest::prelude::*;
 
 /// The full set of `SystemTxPhase` variants must equal the V2 contract:
@@ -110,11 +110,11 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 
-    /// Cursor's `expected_kind` is uniquely determined by the variant across
+    /// Cursor's `expected_selector` is uniquely determined by the variant across
     /// the entire reachable phase walk, including optional boundary,
     /// bootstrap, and publication branches.
     #[test]
-    fn proptest_expected_kind_is_stable_per_variant(
+    fn proptest_expected_selector_is_stable_per_variant(
         block_number in 0u64..1000,
         has_boundary_outcome in any::<bool>(),
         has_tee_bootstrap in any::<bool>(),
@@ -122,18 +122,18 @@ proptest! {
     ) {
         let mut cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
         for _ in 0..10 {
-            let a = cursor.expected_kind();
-            let b = cursor.expected_kind();
+            let a = cursor.expected_selector();
+            let b = cursor.expected_selector();
             prop_assert_eq!(a, b);
             let expected_for_variant = match cursor {
-                SystemTxPhase::Phase1Preexecuted { .. } => Some(SystemTxKind::CertifiedParentAccounting),
-                SystemTxPhase::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
-                SystemTxPhase::CycleTick { .. } => Some(SystemTxKind::CycleTick),
-                SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
-                SystemTxPhase::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
-                SystemTxPhase::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
-                SystemTxPhase::HookEvents { .. } => Some(SystemTxKind::HookEvents),
-                SystemTxPhase::RadiclePublication { .. } => Some(SystemTxKind::RadiclePublication),
+                SystemTxPhase::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
+                SystemTxPhase::LateFinalizeCredits { .. } => Some(LATE_FINALIZE_CREDITS_SELECTOR),
+                SystemTxPhase::CycleTick { .. } => Some(CYCLE_TICK_SELECTOR),
+                SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(BOUNDARY_OUTCOME_SELECTOR),
+                SystemTxPhase::TeeBootstrapOptional { .. } => Some(TEE_BOOTSTRAP_SELECTOR),
+                SystemTxPhase::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
+                SystemTxPhase::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
+                SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
                 SystemTxPhase::UserTxs => None,
             };
             prop_assert_eq!(a, expected_for_variant);
@@ -147,7 +147,7 @@ proptest! {
             );
         }
         prop_assert_eq!(cursor, SystemTxPhase::UserTxs);
-        prop_assert_eq!(cursor.expected_kind(), None);
+        prop_assert_eq!(cursor.expected_selector(), None);
     }
 }
 

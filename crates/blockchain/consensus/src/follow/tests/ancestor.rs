@@ -5,7 +5,7 @@ fn child_accounting_recovers_only_exact_parent_finalization() {
     use alloy_consensus::SignableTransaction as _;
     use outbe_primitives::{
         consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-        system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind},
+        system_tx::{build_unsigned_system_tx, SystemTx},
     };
     use reth_ethereum::{primitives::SealedBlock, Block};
     let signer = committee(150);
@@ -18,14 +18,13 @@ fn child_accounting_recovers_only_exact_parent_finalization() {
         ..Default::default()
     };
     let child = |metadata: CertifiedParentAccountingMetadata| {
-        let data = SystemTxInputV2::CertifiedParentAccounting { metadata }
+        let data = SystemTx::CertifiedParentAccounting { metadata }
             .encode()
             .unwrap();
-        let transaction =
-            build_unsigned_system_tx(SystemTxKind::CertifiedParentAccounting, 0, 44, 1, data)
-                .unwrap()
-                .into_signed(alloy_primitives::Signature::test_signature())
-                .into();
+        let transaction = build_unsigned_system_tx(0, 44, 1, data)
+            .unwrap()
+            .into_signed(alloy_primitives::Signature::test_signature())
+            .into();
         let mut raw = Block::default();
         raw.header.number = 44;
         raw.header.parent_hash = parent.block.block_hash();

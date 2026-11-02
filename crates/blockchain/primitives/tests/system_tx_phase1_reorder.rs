@@ -1,15 +1,13 @@
 //! - Phase 1 pre-execution reorder invariants.
 //!
 //! Tests in this file pin the public-API surface of `SystemTxPhase` and
-//! `expected_begin_block_kinds` that drive the begin-zone phase routing.
+//! `expected_begin_block_selectors` that drive the begin-zone phase routing.
 //! Some tests assert the *cursor-level* invariant that lays the foundation
 //! for moving Phase 1 commit into pre-execution. Tests whose verification
 //! requires the actual commit-timing move are marked `#[ignore]`. They point
 //! to (Phase 1 commit-into-pre-execution + state-root ordering).
 
-use outbe_primitives::system_tx::{
-    expected_begin_block_kinds, SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER,
-};
+use outbe_primitives::system_tx::*;
 
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
@@ -22,7 +20,7 @@ const BLOCK_42: u64 = 42;
 fn apply_pre_execution_changes_skips_phase1_for_block_1() {
     let cursor = SystemTxPhase::initial_for_block(BLOCK_1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
-    assert_eq!(cursor.expected_kind(), Some(SystemTxKind::CycleTick));
+    assert_eq!(cursor.expected_selector(), Some(CYCLE_TICK_SELECTOR));
     assert!(matches!(cursor, SystemTxPhase::CycleTick { .. }));
     // Crucially, no Phase 1 variant for block 1.
     assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
@@ -57,28 +55,28 @@ fn phase1_receipt_index_0_before_cycle_tick() {
 /// body receipt slots.
 #[test]
 fn phase1_reordering_preserves_body_receipt_order() {
-    let kinds_no_boundary = expected_begin_block_kinds(BLOCK_42, false, false);
+    let kinds_no_boundary = expected_begin_block_selectors(BLOCK_42, false, false);
     assert_eq!(
         kinds_no_boundary,
         vec![
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+            LATE_FINALIZE_CREDITS_SELECTOR,
+            CYCLE_TICK_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ]
     );
 
-    let kinds_with_boundary = expected_begin_block_kinds(BLOCK_42, true, false);
+    let kinds_with_boundary = expected_begin_block_selectors(BLOCK_42, true, false);
     assert_eq!(
         kinds_with_boundary,
         vec![
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+            LATE_FINALIZE_CREDITS_SELECTOR,
+            CYCLE_TICK_SELECTOR,
+            BOUNDARY_OUTCOME_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ]
     );
 

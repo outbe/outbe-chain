@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use outbe_primitives::system_tx::SystemTxKind;
 use outbe_protocol_benchmarks::{
     run_scenario, scenarios::system_tx::SystemTxScenario, ChildFrameFidelity, GasLedger, RunConfig,
     ScenarioFidelity,
@@ -13,19 +12,19 @@ fn every_system_tx_kind_has_an_explicit_rust_only_scenario() {
 
     let kinds = scenarios
         .iter()
-        .map(SystemTxScenario::kind)
+        .map(SystemTxScenario::name)
         .collect::<BTreeSet<_>>();
     assert_eq!(
         kinds,
         BTreeSet::from([
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::TeeBootstrap,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
-            SystemTxKind::RadiclePublication,
+            "certified-parent-accounting",
+            "late-finalize-credits",
+            "cycle-tick",
+            "boundary-outcome",
+            "tee-bootstrap",
+            "oracle-slash-window",
+            "hook-events",
+            "radicle-publication",
         ])
     );
 }
@@ -40,8 +39,21 @@ fn rust_only_system_tx_reports_visible_and_internal_ledgers_separately() {
                 warmups: 0,
             },
         )
-        .unwrap_or_else(|error| panic!("{:?} failed: {error}", scenario.kind()));
+        .unwrap_or_else(|error| panic!("{} failed: {error}", scenario.name()));
 
+        assert_eq!(
+            report.metadata.id,
+            format!("system-tx/{}/rust-wire/single", scenario.name())
+        );
+        assert_eq!(
+            report.artifacts["visible.block_gas_limit"],
+            if scenario.name() == "tee-bootstrap" {
+                "500000000"
+            } else {
+                "30000000"
+            },
+            "only the bootstrap fixture must retain block-1 gas allocation"
+        );
         assert_eq!(report.metadata.fidelity, ScenarioFidelity::PartialStubbed);
         assert!(report.calldata.is_some());
         assert!(report.gas_totals[&GasLedger::SystemVisible] >= 21_000);

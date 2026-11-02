@@ -234,7 +234,7 @@ where
         // `parent_consensus_metadata` in proposer mode). The metadata struct
         // carries the V2 wire fields the verifier needs.
         let input = self.phase1_verification_input(block_number, block_artifacts)?;
-        let SystemTxInputV2::CertifiedParentAccounting { metadata } = &input else {
+        let SystemTx::CertifiedParentAccounting { metadata } = &input else {
             return Err(
                 ExecutorValidationError::Phase1VerifierExpectedCertifiedParentAccountingInput
                     .into(),
@@ -363,12 +363,14 @@ where
 
         // Resolve canonical Phase 1 input + finalized summary for this block.
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let (kind, input, finalized_summary) = system_txs
+        let (input, finalized_summary) = system_txs
             .into_iter()
             .next()
             .ok_or(ExecutorValidationError::Phase1CommitMissingSystemTx { block_number })?;
-        if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
-            return Err(ExecutorValidationError::Phase1CommitUnexpectedKind { kind }.into());
+        if !matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
+            return Err(
+                ExecutorValidationError::Phase1CommitUnexpectedKind { kind: input.name() }.into(),
+            );
         }
         let calldata = input
             .encode()
@@ -428,7 +430,7 @@ where
         })?;
         if !result.result.is_success() {
             // Phase 1 (CertifiedParentAccounting) is consensus-critical
-            // (`SystemTxKind::revert_fails_block()` is true for it). A revert here is
+            // (`SystemTx::revert_fails_block()` is true for it). A revert here is
             // therefore a hard block failure, not a soft-receipt skip. Its finalized-parent
             // accounting is one-shot and never retried. The revert is deterministic in
             // committed chain state, so every validator rejects the same block.
@@ -462,17 +464,20 @@ where
         &self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-    ) -> Result<SystemTxInputV2, BlockExecutionError> {
+    ) -> Result<SystemTx, BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
         let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let Some((kind, input, _summary)) = system_txs.into_iter().next() else {
+        let Some((input, _summary)) = system_txs.into_iter().next() else {
             return Err(
                 ExecutorValidationError::Phase1VerifierMissingSystemTx { block_number }.into(),
             );
         };
-        if !matches!(kind, SystemTxKind::CertifiedParentAccounting) {
-            return Err(ExecutorValidationError::Phase1VerifierUnexpectedKind { kind }.into());
+        if !matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
+            return Err(ExecutorValidationError::Phase1VerifierUnexpectedKind {
+                kind: input.name(),
+            }
+            .into());
         }
         Ok(input)
     }
@@ -501,14 +506,8 @@ where
             let tx_hash = validate_witness(expected.tx(), "body[0]")?;
             (tx_hash, expected.tx().gas_limit())
         } else if let Some(signer) = &self.evm_signer {
-            let unsigned = build_unsigned_system_tx(
-                SystemTxKind::CertifiedParentAccounting,
-                0,
-                block_number,
-                chain_id,
-                calldata.clone(),
-            )
-            .map_err(ExecutorValidationError::phase1_commit_build_unsigned_witness)?;
+            let unsigned = build_unsigned_system_tx(0, block_number, chain_id, calldata.clone())
+                .map_err(ExecutorValidationError::phase1_commit_build_unsigned_witness)?;
             let signed = signer
                 .sign_unsigned(unsigned)
                 .map_err(ExecutorValidationError::phase1_commit_sign_witness)?;

@@ -50,7 +50,7 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx_with_gas_limit, SystemTxInputV2, SystemTxVisibleGasPlan,
+    build_unsigned_system_tx_with_gas_limit, SystemTx, SystemTxVisibleGasPlan,
 };
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
@@ -361,7 +361,7 @@ pub(crate) struct SystemBlockFixture {
     pub(crate) block_number: u64,
     pub(crate) parent_hash: B256,
     pub(crate) extra_data: Bytes,
-    pub(crate) inputs: Vec<SystemTxInputV2>,
+    pub(crate) inputs: Vec<SystemTx>,
     pub(crate) chain_id: u64,
 }
 
@@ -391,11 +391,7 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     } = fixture;
     let encoded_inputs = inputs
         .into_iter()
-        .map(|input| {
-            let kind = input.kind();
-            let calldata = input.encode().expect("input encodes");
-            (kind, calldata)
-        })
+        .map(|input| input.encode().expect("input encodes"))
         .collect::<Vec<_>>();
     let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
         .expect("visible gas plan builds");
@@ -405,10 +401,9 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     block.header.parent_hash = parent_hash;
     block.header.extra_data = extra_data;
     block.header.gas_limit = block_gas_limit;
-    for (ordinal, (kind, calldata)) in encoded_inputs.into_iter().enumerate() {
+    for (ordinal, calldata) in encoded_inputs.into_iter().enumerate() {
         let unsigned = build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                kind,
                 ordinal: ordinal.try_into().expect("test ordinal fits"),
                 block_number,
                 chain_id,
@@ -440,15 +435,15 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
             parent_hash,
             extra_data: Bytes::new(),
             inputs: vec![
-                SystemTxInputV2::CertifiedParentAccounting {
+                SystemTx::CertifiedParentAccounting {
                     metadata: finalized_metadata(parent_hash),
                 },
-                SystemTxInputV2::LateFinalizeCredits {
+                SystemTx::LateFinalizeCredits {
                     artifact: Default::default(),
                 },
-                SystemTxInputV2::CycleTick,
-                SystemTxInputV2::OracleSlashWindow,
-                SystemTxInputV2::HookEvents,
+                SystemTx::CycleTick,
+                SystemTx::OracleSlashWindow,
+                SystemTx::HookEvents,
             ],
             chain_id: outbe_primitives::chain::CHAIN_ID,
         },

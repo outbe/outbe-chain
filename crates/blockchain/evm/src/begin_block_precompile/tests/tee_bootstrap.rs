@@ -265,7 +265,7 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
         ),
     );
     provider.enter(|storage| {
-        let input = SystemTxInputV2::TeeBootstrap { payload }.encode().unwrap();
+        let input = SystemTx::TeeBootstrap { payload }.encode().unwrap();
         dispatch_inner(
             storage,
             &input,
@@ -316,6 +316,10 @@ fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
     let policy = tee_policy_v1();
     let payload = tee_payload_v1(1, &all_keys, policy, snapshot_hash);
 
+    assert!(SystemTx::TeeBootstrap {
+        payload: payload.clone()
+    }
+    .revert_fails_block());
     run_bootstrap_v1(&mut provider, payload)
         .expect_err("synthetic quote must reach and fail the public DCAP verifier");
     assert!(!is_bootstrapped(&mut provider));
@@ -325,7 +329,6 @@ fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
             .unwrap()
             .is_none());
     });
-    assert!(outbe_primitives::system_tx::SystemTxKind::TeeBootstrap.revert_fails_block());
 }
 
 #[test]

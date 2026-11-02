@@ -19,10 +19,9 @@
 use alloy_consensus::{Block as AlloyBlock, Header, Transaction as _, TxLegacy};
 use alloy_primitives::{Address, Bloom, Bytes, TxKind, B256, B64, U256};
 use outbe_evm::system_tx::{
-    build_unsigned_system_tx, system_tx_visible_gas_limit, SystemTxInputV2, SystemTxKind,
-    BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
-    ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
-    SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    build_unsigned_system_tx, system_tx_visible_gas_limit, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
+    SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
@@ -123,7 +122,7 @@ fn header_for_transactions(
 }
 
 /// Build a signed system tx with an arbitrary `input` payload, bypassing the
-/// V2-vs-calldata sanity check in `build_unsigned_system_tx`. Used by the
+/// Full calldata validation in `build_unsigned_system_tx`. Used by the
 /// legacy V1 / unknown-selector / wrong-version-byte tests.
 fn signed_with_raw_input(signer: &OutbeEvmSigner, nonce: u64, input: Vec<u8>) -> TransactionSigned {
     let tx = TxLegacy {
@@ -143,13 +142,11 @@ fn signed_with_raw_input(signer: &OutbeEvmSigner, nonce: u64, input: Vec<u8>) ->
 /// only the layout - not the calldata - is exercised.
 fn signed_v2(
     signer: &OutbeEvmSigner,
-    kind: SystemTxKind,
     ordinal: u8,
     block_number: u64,
-    input: SystemTxInputV2,
+    input: SystemTx,
 ) -> TransactionSigned {
     let unsigned = build_unsigned_system_tx(
-        kind,
         ordinal,
         block_number,
         TEST_CHAIN_ID,
@@ -254,13 +251,7 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 #[test]
 fn block_0_has_no_begin_zone_system_txs_under_v2() {
     let signer = signer();
-    let tx = signed_v2(
-        &signer,
-        SystemTxKind::CycleTick,
-        0,
-        0,
-        SystemTxInputV2::CycleTick,
-    );
+    let tx = signed_v2(&signer, 0, 0, SystemTx::CycleTick);
     let body = body(vec![tx]);
     let header = header_for(0, B256::ZERO);
 
@@ -283,20 +274,8 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 #[test]
 fn block_1_layout_requires_boundary_outcome_for_v2() {
     let signer = signer();
-    let cycle = signed_v2(
-        &signer,
-        SystemTxKind::CycleTick,
-        0,
-        1,
-        SystemTxInputV2::CycleTick,
-    );
-    let oracle = signed_v2(
-        &signer,
-        SystemTxKind::OracleSlashWindow,
-        1,
-        1,
-        SystemTxInputV2::OracleSlashWindow,
-    );
+    let cycle = signed_v2(&signer, 0, 1, SystemTx::CycleTick);
+    let oracle = signed_v2(&signer, 1, 1, SystemTx::OracleSlashWindow);
     let body = body(vec![cycle, oracle]);
     let header = header_for(1, B256::ZERO);
 
@@ -321,20 +300,8 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let signer = signer();
 
     // (a) block 2 with only CycleTick + OracleSlashWindow - no CertifiedParentAccounting.
-    let cycle = signed_v2(
-        &signer,
-        SystemTxKind::CycleTick,
-        0,
-        2,
-        SystemTxInputV2::CycleTick,
-    );
-    let oracle = signed_v2(
-        &signer,
-        SystemTxKind::OracleSlashWindow,
-        1,
-        2,
-        SystemTxInputV2::OracleSlashWindow,
-    );
+    let cycle = signed_v2(&signer, 0, 2, SystemTx::CycleTick);
+    let oracle = signed_v2(&signer, 1, 2, SystemTx::OracleSlashWindow);
     let body_missing_phase1 = body(vec![cycle, oracle]);
     let header_missing = header_for(2, B256::ZERO);
     let err_missing = validate_system_tx_consensus_boundary(&body_missing_phase1, &header_missing)
@@ -353,43 +320,23 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let wrong_parent = B256::with_last_byte(0xBB);
     let phase1 = signed_v2(
         &signer,
-        SystemTxKind::CertifiedParentAccounting,
         0,
         2,
-        SystemTxInputV2::CertifiedParentAccounting {
+        SystemTx::CertifiedParentAccounting {
             metadata: phase1_metadata(1, wrong_parent),
         },
     );
     let late2 = signed_v2(
         &signer,
-        SystemTxKind::LateFinalizeCredits,
         1,
         2,
-        SystemTxInputV2::LateFinalizeCredits {
+        SystemTx::LateFinalizeCredits {
             artifact: Default::default(),
         },
     );
-    let cycle2 = signed_v2(
-        &signer,
-        SystemTxKind::CycleTick,
-        2,
-        2,
-        SystemTxInputV2::CycleTick,
-    );
-    let oracle2 = signed_v2(
-        &signer,
-        SystemTxKind::OracleSlashWindow,
-        3,
-        2,
-        SystemTxInputV2::OracleSlashWindow,
-    );
-    let hook_events2 = signed_v2(
-        &signer,
-        SystemTxKind::HookEvents,
-        4,
-        2,
-        SystemTxInputV2::HookEvents,
-    );
+    let cycle2 = signed_v2(&signer, 2, 2, SystemTx::CycleTick);
+    let oracle2 = signed_v2(&signer, 3, 2, SystemTx::OracleSlashWindow);
+    let hook_events2 = signed_v2(&signer, 4, 2, SystemTx::HookEvents);
     let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2, hook_events2]);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
@@ -584,43 +531,23 @@ fn begin_zone_txs_block2(
     vec![
         signed_v2(
             signer,
-            SystemTxKind::CertifiedParentAccounting,
             0,
             2,
-            SystemTxInputV2::CertifiedParentAccounting {
+            SystemTx::CertifiedParentAccounting {
                 metadata: phase1_metadata(1, parent_hash),
             },
         ),
         signed_v2(
             signer,
-            SystemTxKind::LateFinalizeCredits,
             1,
             2,
-            SystemTxInputV2::LateFinalizeCredits {
+            SystemTx::LateFinalizeCredits {
                 artifact: late_artifact,
             },
         ),
-        signed_v2(
-            signer,
-            SystemTxKind::CycleTick,
-            2,
-            2,
-            SystemTxInputV2::CycleTick,
-        ),
-        signed_v2(
-            signer,
-            SystemTxKind::OracleSlashWindow,
-            3,
-            2,
-            SystemTxInputV2::OracleSlashWindow,
-        ),
-        signed_v2(
-            signer,
-            SystemTxKind::HookEvents,
-            4,
-            2,
-            SystemTxInputV2::HookEvents,
-        ),
+        signed_v2(signer, 2, 2, SystemTx::CycleTick),
+        signed_v2(signer, 3, 2, SystemTx::OracleSlashWindow),
+        signed_v2(signer, 4, 2, SystemTx::HookEvents),
     ]
 }
 

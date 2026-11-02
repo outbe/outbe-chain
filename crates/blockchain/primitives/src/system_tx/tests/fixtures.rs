@@ -163,25 +163,45 @@ fn sample_tee_bootstrap() -> crate::tee_bootstrap_v2::TeeBootstrapV2 {
     }
 }
 
-pub(super) fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
-    match kind {
-        SystemTxKind::CertifiedParentAccounting => SystemTxInputV2::CertifiedParentAccounting {
-            metadata: sample_metadata(),
-        },
-        SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
-            artifact: LateFinalizeCreditsArtifact::default(),
-        },
-        SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
-            artifact: sample_boundary(),
-        },
-        SystemTxKind::TeeBootstrap => SystemTxInputV2::TeeBootstrap {
-            payload: sample_tee_bootstrap(),
-        },
-        SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
-        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
-            batch: crate::radicle_publication::tests::batch(1),
-        },
+pub(super) fn accounting() -> SystemTx {
+    SystemTx::CertifiedParentAccounting {
+        metadata: sample_metadata(),
     }
+}
+
+pub(super) fn late_credits() -> SystemTx {
+    SystemTx::LateFinalizeCredits {
+        artifact: LateFinalizeCreditsArtifact::default(),
+    }
+}
+
+pub(super) fn boundary() -> SystemTx {
+    SystemTx::BoundaryOutcome {
+        artifact: sample_boundary(),
+    }
+}
+
+pub(super) fn bootstrap() -> SystemTx {
+    SystemTx::TeeBootstrap {
+        payload: sample_tee_bootstrap(),
+    }
+}
+
+pub(super) fn publication() -> SystemTx {
+    SystemTx::RadiclePublication {
+        batch: crate::radicle_publication::tests::batch(1),
+    }
+}
+
+pub(super) fn inputs() -> [SystemTx; 8] {
+    [
+        accounting(),
+        late_credits(),
+        SystemTx::CycleTick,
+        boundary(),
+        bootstrap(),
+        SystemTx::OracleSlashWindow,
+        SystemTx::HookEvents,
+        publication(),
+    ]
 }

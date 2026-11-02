@@ -949,11 +949,9 @@ pub(super) fn observe_cycle_tick(
     mut execute: impl FnMut(Recovered<TransactionSigned>) -> CycleObservation,
 ) -> Option<CycleObservation> {
     for tx in system_txs {
-        let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
-            .expect(decode_message)
-            .kind();
+        let input = SystemTx::decode(tx.tx().input().as_ref()).expect(decode_message);
         let observation = execute(tx);
-        if kind == SystemTxKind::CycleTick {
+        if matches!(input, SystemTx::CycleTick) {
             return Some(observation);
         }
     }

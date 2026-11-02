@@ -2,7 +2,7 @@ use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx, split_system_layout, system_tx_visible_gas_limit,
-    validate_active_system_tx_set, SystemTxInputV2, SystemTxKind, MAX_SYSTEM_TXS_PER_BLOCK,
+    validate_active_system_tx_set, SystemTx, MAX_SYSTEM_TXS_PER_BLOCK,
     SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_primitives::{
@@ -68,58 +68,41 @@ fn large_boundary() -> DkgBoundaryArtifact {
     artifact
 }
 
-fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
-    match kind {
-        SystemTxKind::CertifiedParentAccounting => SystemTxInputV2::CertifiedParentAccounting {
-            metadata: sample_metadata(),
-        },
-        SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
-            artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact::default(),
-        },
-        SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
-            artifact: sample_boundary(),
-        },
-        SystemTxKind::TeeBootstrap => SystemTxInputV2::TeeBootstrap {
-            payload: {
-                use outbe_primitives::tee_test_utils::{
-                    gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
-                };
-                let mut consensus_public = [0_u8; 48];
-                consensus_public[0] = 1;
-                let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11))
-                    .expect("test GramineDirectDev policy is canonical");
-                gramine_direct_bootstrap_v2(
-                    policy,
-                    B256::repeat_byte(0x66),
-                    BLOCK_NUMBER,
-                    1_000_000,
-                    &[DevValidatorV1 {
-                        evm_secret: [1; 32],
-                        bls_minpk_public: consensus_public,
-                    }],
-                )
-                .expect("test GramineDirectDev OST3 payload is canonical")
-            },
-        },
-        SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
-        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
-            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
-        },
+fn accounting() -> SystemTx {
+    SystemTx::CertifiedParentAccounting {
+        metadata: sample_metadata(),
     }
 }
 
-fn signed_system_tx(kind: SystemTxKind, ordinal: u8, input: SystemTxInputV2) -> TransactionSigned {
+fn late_credits() -> SystemTx {
+    SystemTx::LateFinalizeCredits {
+        artifact: Default::default(),
+    }
+}
+
+fn boundary() -> SystemTx {
+    SystemTx::BoundaryOutcome {
+        artifact: sample_boundary(),
+    }
+}
+
+fn canonical_inputs() -> Vec<SystemTx> {
+    vec![
+        accounting(),
+        late_credits(),
+        SystemTx::CycleTick,
+        boundary(),
+        SystemTx::OracleSlashWindow,
+        SystemTx::HookEvents,
+    ]
+}
+
+fn system_tx(input: SystemTx, ordinal: u8) -> TransactionSigned {
     let input = input.encode().expect("system input encodes");
-    build_unsigned_system_tx(kind, ordinal, BLOCK_NUMBER, CHAIN_ID, input)
+    build_unsigned_system_tx(ordinal, BLOCK_NUMBER, CHAIN_ID, input)
         .expect("system tx builds")
         .into_signed(Signature::test_signature())
         .into()
-}
-
-fn system_tx(kind: SystemTxKind, ordinal: u8) -> TransactionSigned {
-    signed_system_tx(kind, ordinal, input_for(kind))
 }
 
 fn user_tx() -> TransactionSigned {
@@ -139,12 +122,12 @@ fn user_tx() -> TransactionSigned {
 #[test]
 fn full_begin_system_prefix_validates_before_user_transactions() {
     let txs = vec![
-        system_tx(SystemTxKind::CertifiedParentAccounting, 0),
-        system_tx(SystemTxKind::LateFinalizeCredits, 1),
-        system_tx(SystemTxKind::CycleTick, 2),
-        system_tx(SystemTxKind::BoundaryOutcome, 3),
-        system_tx(SystemTxKind::OracleSlashWindow, 4),
-        system_tx(SystemTxKind::HookEvents, 5),
+        system_tx(accounting(), 0),
+        system_tx(late_credits(), 1),
+        system_tx(SystemTx::CycleTick, 2),
+        system_tx(boundary(), 3),
+        system_tx(SystemTx::OracleSlashWindow, 4),
+        system_tx(SystemTx::HookEvents, 5),
         user_tx(),
     ];
 
@@ -154,16 +137,12 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
 
     assert_eq!(
         layout
-            .begin_block_kinds()
+            .begin_block_selectors()
             .expect("begin_block kinds decode"),
-        vec![
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
-        ]
+        canonical_inputs()
+            .iter()
+            .map(SystemTx::selector)
+            .collect::<Vec<_>>()
     );
     assert_eq!(layout.user.len(), 1);
     assert!(layout.end.is_empty());
@@ -173,44 +152,44 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
 fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
     use outbe_primitives::system_tx::SystemTxError;
 
-    let canonical_with_boundary = vec![
-        SystemTxKind::CertifiedParentAccounting,
-        SystemTxKind::LateFinalizeCredits,
-        SystemTxKind::CycleTick,
-        SystemTxKind::BoundaryOutcome,
-        SystemTxKind::OracleSlashWindow,
-        SystemTxKind::HookEvents,
-    ];
-    let missing_oracle_kinds: Vec<SystemTxKind> = canonical_with_boundary
-        .iter()
-        .copied()
-        .filter(|&kind| kind != SystemTxKind::OracleSlashWindow)
+    let canonical_with_boundary = canonical_inputs();
+    let missing_oracle_inputs: Vec<SystemTx> = canonical_inputs()
+        .into_iter()
+        .filter(|input| !matches!(input, SystemTx::OracleSlashWindow))
         .collect();
-    let missing_oracle: Vec<TransactionSigned> = missing_oracle_kinds
+    let missing_oracle: Vec<TransactionSigned> = missing_oracle_inputs
         .iter()
+        .cloned()
         .enumerate()
-        .map(|(ordinal, &kind)| system_tx(kind, ordinal as u8))
+        .map(|(ordinal, input)| system_tx(input, ordinal as u8))
         .collect();
     let layout = split_system_layout(&missing_oracle).expect("layout splits");
     assert_eq!(
         validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false),
         Err(SystemTxError::ActiveSystemTxSetMismatch {
-            expected_begin: canonical_with_boundary.clone(),
+            expected_begin: canonical_with_boundary
+                .iter()
+                .map(SystemTx::selector)
+                .collect(),
             expected_end: Vec::new(),
-            actual_begin: missing_oracle_kinds,
+            actual_begin: missing_oracle_inputs
+                .iter()
+                .map(SystemTx::selector)
+                .collect(),
             actual_end: Vec::new(),
         })
     );
 
-    let canonical_without_boundary: Vec<SystemTxKind> = canonical_with_boundary
+    let canonical_without_boundary: Vec<[u8; 4]> = canonical_with_boundary
         .iter()
-        .copied()
-        .filter(|&kind| kind != SystemTxKind::BoundaryOutcome)
+        .filter(|input| !matches!(input, SystemTx::BoundaryOutcome { .. }))
+        .map(SystemTx::selector)
         .collect();
     let unexpected_boundary: Vec<TransactionSigned> = canonical_with_boundary
         .iter()
+        .cloned()
         .enumerate()
-        .map(|(ordinal, &kind)| system_tx(kind, ordinal as u8))
+        .map(|(ordinal, input)| system_tx(input, ordinal as u8))
         .collect();
     let layout = split_system_layout(&unexpected_boundary).expect("layout splits");
     assert_eq!(
@@ -218,7 +197,10 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin: canonical_without_boundary,
             expected_end: Vec::new(),
-            actual_begin: canonical_with_boundary,
+            actual_begin: canonical_with_boundary
+                .iter()
+                .map(SystemTx::selector)
+                .collect(),
             actual_end: Vec::new(),
         })
     );
@@ -229,18 +211,8 @@ fn system_tx_wire_limits_leave_runtime_gas_headroom() {
     assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 16);
     assert_eq!(SYSTEM_TX_ARTIFACT_GAS_LIMIT, 10_000_000_000);
 
-    for (ordinal, kind) in [
-        SystemTxKind::CertifiedParentAccounting,
-        SystemTxKind::LateFinalizeCredits,
-        SystemTxKind::CycleTick,
-        SystemTxKind::BoundaryOutcome,
-        SystemTxKind::OracleSlashWindow,
-        SystemTxKind::HookEvents,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let tx = system_tx(kind, ordinal.try_into().expect("ordinal fits"));
+    for (ordinal, input) in canonical_inputs().into_iter().enumerate() {
+        let tx = system_tx(input, ordinal.try_into().expect("ordinal fits"));
         assert_eq!(
             tx.gas_limit(),
             system_tx_visible_gas_limit(tx.input()).expect("visible system gas computes")
@@ -258,37 +230,30 @@ fn system_tx_wire_limits_leave_runtime_gas_headroom() {
 #[test]
 fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
     let txs = vec![
-        signed_system_tx(
-            SystemTxKind::CertifiedParentAccounting,
-            0,
-            SystemTxInputV2::CertifiedParentAccounting {
+        system_tx(
+            SystemTx::CertifiedParentAccounting {
                 metadata: large_metadata(),
             },
+            0,
         ),
         // mandatory phase. The realistic per-block late-credit count is
         // <= K (a few in-window targets), so an empty/small artifact here keeps
         // the worst case dominated by CPA + BoundaryOutcome.
-        signed_system_tx(
-            SystemTxKind::LateFinalizeCredits,
-            1,
-            SystemTxInputV2::LateFinalizeCredits {
+        system_tx(
+            SystemTx::LateFinalizeCredits {
                 artifact: Default::default(),
             },
+            1,
         ),
-        signed_system_tx(SystemTxKind::CycleTick, 2, SystemTxInputV2::CycleTick),
-        signed_system_tx(
-            SystemTxKind::BoundaryOutcome,
-            3,
-            SystemTxInputV2::BoundaryOutcome {
+        system_tx(SystemTx::CycleTick, 2),
+        system_tx(
+            SystemTx::BoundaryOutcome {
                 artifact: large_boundary(),
             },
+            3,
         ),
-        signed_system_tx(
-            SystemTxKind::OracleSlashWindow,
-            4,
-            SystemTxInputV2::OracleSlashWindow,
-        ),
-        signed_system_tx(SystemTxKind::HookEvents, 5, SystemTxInputV2::HookEvents),
+        system_tx(SystemTx::OracleSlashWindow, 4),
+        system_tx(SystemTx::HookEvents, 5),
     ];
     let layout = split_system_layout(&txs).expect("worst-case system prefix layout splits");
     validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
@@ -316,7 +281,7 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
 
 #[test]
 fn gas_15_visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_replay() {
-    let cycle = system_tx(SystemTxKind::CycleTick, 1);
+    let cycle = system_tx(SystemTx::CycleTick, 1);
 
     assert!(
         cycle.gas_limit() <= USER_BLOCK_GAS_LIMIT,

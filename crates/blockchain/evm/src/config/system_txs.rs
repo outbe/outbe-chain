@@ -2,8 +2,7 @@ use crate::system_tx::build_unsigned_system_tx;
 use crate::system_tx::build_unsigned_system_tx_with_gas_limit;
 use crate::system_tx::split_system_layout;
 use crate::system_tx::validate_system_tx_set_for_publication;
-use crate::system_tx::SystemTxInputV2;
-use crate::system_tx::SystemTxKind;
+use crate::system_tx::SystemTx;
 use crate::system_tx::SystemTxVisibleGasPlan;
 
 use alloy_consensus::Transaction as _;
@@ -66,7 +65,7 @@ pub(super) fn system_tx_expectations_for_block(
         }
     };
 
-    let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
+    let has_tee_bootstrap = layout.has_begin_selector(crate::system_tx::TEE_BOOTSTRAP_SELECTOR);
     if let Err(error) = validate_system_tx_set_for_publication(
         &layout,
         block.header().number(),
@@ -148,23 +147,23 @@ impl OutbeEvmConfig {
                 }
                 .into());
             }
-            inputs.push(SystemTxInputV2::CertifiedParentAccounting { metadata });
+            inputs.push(SystemTx::CertifiedParentAccounting { metadata });
         }
         if block_number >= 2 {
             // Mandatory inclusion-window phase after Phase 1. The
             // gathered credits ride in the header artifact (empty until Phase 7).
             // Executor parity re-derives the same input on the verifier path.
-            inputs.push(SystemTxInputV2::LateFinalizeCredits {
+            inputs.push(SystemTx::LateFinalizeCredits {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
         }
         if block_number >= 1 {
-            inputs.push(SystemTxInputV2::CycleTick);
+            inputs.push(SystemTx::CycleTick);
         }
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             artifacts.consensus_header_artifact
         {
-            inputs.push(SystemTxInputV2::BoundaryOutcome { artifact });
+            inputs.push(SystemTx::BoundaryOutcome { artifact });
         }
         // The greenfield network has exactly one bootstrap wire path: canonical
         // OST3 is mandatory at block 1 and forbidden at every other height.
@@ -184,28 +183,27 @@ impl OutbeEvmConfig {
             if &payload.authority.policy != expected_policy {
                 return Err(SystemTxBuildError::Block1Ost3PolicyScheduleMismatch.into());
             }
-            inputs.push(SystemTxInputV2::TeeBootstrap { payload });
+            inputs.push(SystemTx::TeeBootstrap { payload });
         } else if pending_tee_bootstrap.is_some() {
             return Err(SystemTxBuildError::Ost3BootstrapForbiddenAtBlock { block_number }.into());
         }
         if block_number >= 1 {
-            inputs.push(SystemTxInputV2::OracleSlashWindow);
+            inputs.push(SystemTx::OracleSlashWindow);
         }
         if block_number >= 1 {
-            inputs.push(SystemTxInputV2::HookEvents);
+            inputs.push(SystemTx::HookEvents);
         }
         if let Some(batch) = artifacts.radicle_publication {
-            inputs.push(SystemTxInputV2::RadiclePublication { batch });
+            inputs.push(SystemTx::RadiclePublication { batch });
         }
 
         let encoded_inputs = inputs
             .into_iter()
             .map(|input| {
-                let kind = input.kind();
                 let calldata = input
                     .encode()
                     .map_err(SystemTxBuildError::encode_system_tx_input)?;
-                Ok((kind, calldata))
+                Ok(calldata)
             })
             .collect::<Result<Vec<_>, BlockExecutionError>>()?;
         let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
@@ -214,7 +212,7 @@ impl OutbeEvmConfig {
         encoded_inputs
             .into_iter()
             .enumerate()
-            .map(|(ordinal, (kind, calldata))| {
+            .map(|(ordinal, calldata)| {
                 let gas_limit = gas_plan
                     .gas_limit(ordinal)
                     .ok_or(SystemTxBuildError::VisibleGasPlanMissingOrdinal { ordinal })?;
@@ -225,12 +223,7 @@ impl OutbeEvmConfig {
                 // calldata equality check guarantees that the tx fed to
                 // pre-exec and the tx in body[0] are byte-identical. This
                 // holds even if the calldata derivation ever diverges.
-                if ordinal == 0
-                    && matches!(
-                        kind,
-                        crate::system_tx::SystemTxKind::CertifiedParentAccounting
-                    )
-                {
+                if ordinal == 0 && block_number >= 2 {
                     if let Some(prebuilt) = prebuilt_phase1_tx.as_ref() {
                         if prebuilt.tx().input() != &calldata {
                             return Err(SystemTxBuildError::PrebuiltPhase1CalldataDiverges.into());
@@ -248,7 +241,6 @@ impl OutbeEvmConfig {
 
                 let unsigned = build_unsigned_system_tx_with_gas_limit(
                     outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                        kind,
                         ordinal: ordinal.try_into().map_err(|_| {
                             SystemTxBuildError::SystemTxOrdinalExceedsU8 { ordinal }
                         })?,
@@ -317,12 +309,11 @@ impl OutbeEvmConfig {
             .into());
         }
 
-        let input = SystemTxInputV2::CertifiedParentAccounting { metadata };
-        let kind = input.kind();
+        let input = SystemTx::CertifiedParentAccounting { metadata };
         let calldata = input
             .encode()
             .map_err(SystemTxBuildError::phase1_prebuild_encode_input)?;
-        let unsigned = build_unsigned_system_tx(kind, 0, block_number, chain_id, calldata)
+        let unsigned = build_unsigned_system_tx(0, block_number, chain_id, calldata)
             .map_err(SystemTxBuildError::phase1_prebuild_build_unsigned_tx)?;
         let signed = signer
             .sign_unsigned(unsigned)

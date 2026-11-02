@@ -123,19 +123,19 @@ mod tests {
         encode_consensus_header_artifact, ConsensusHeaderArtifact,
     };
     use outbe_primitives::signer::OutbeEvmSigner;
-    use outbe_primitives::system_tx::SystemTxInputV2;
+    use outbe_primitives::system_tx::SystemTx;
 
-    fn steady_system_inputs(parent_hash: B256) -> Vec<SystemTxInputV2> {
+    fn steady_system_inputs(parent_hash: B256) -> Vec<SystemTx> {
         vec![
-            SystemTxInputV2::CertifiedParentAccounting {
+            SystemTx::CertifiedParentAccounting {
                 metadata: finalized_metadata(parent_hash),
             },
-            SystemTxInputV2::LateFinalizeCredits {
+            SystemTx::LateFinalizeCredits {
                 artifact: Default::default(),
             },
-            SystemTxInputV2::CycleTick,
-            SystemTxInputV2::OracleSlashWindow,
-            SystemTxInputV2::HookEvents,
+            SystemTx::CycleTick,
+            SystemTx::OracleSlashWindow,
+            SystemTx::HookEvents,
         ]
     }
 
@@ -455,18 +455,18 @@ mod tests {
                 )
                 .expect("header artifact encodes"),
                 inputs: vec![
-                    SystemTxInputV2::CertifiedParentAccounting {
+                    SystemTx::CertifiedParentAccounting {
                         metadata: finalized_metadata(parent_hash),
                     },
-                    SystemTxInputV2::LateFinalizeCredits {
+                    SystemTx::LateFinalizeCredits {
                         artifact: Default::default(),
                     },
-                    SystemTxInputV2::CycleTick,
-                    SystemTxInputV2::BoundaryOutcome {
+                    SystemTx::CycleTick,
+                    SystemTx::BoundaryOutcome {
                         artifact: tx_artifact,
                     },
-                    SystemTxInputV2::OracleSlashWindow,
-                    SystemTxInputV2::HookEvents,
+                    SystemTx::OracleSlashWindow,
+                    SystemTx::HookEvents,
                 ],
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },

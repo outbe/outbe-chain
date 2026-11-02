@@ -4,7 +4,7 @@ use super::super::*;
 
 struct ValidatedReservedSystemTx {
     body_index: usize,
-    expected_phase: SystemTxKind,
+    input: SystemTx,
     finalized_summary: Option<AccountedParentArtifact>,
     visible_base_gas: u64,
     visible_gas_limit: u64,
@@ -13,7 +13,7 @@ struct ValidatedReservedSystemTx {
 
 struct ReservedSystemReceiptContext {
     body_index: usize,
-    expected_phase: SystemTxKind,
+    input: SystemTx,
     block_number: u64,
     visible_base_gas: u64,
     visible_gas_limit: u64,
@@ -68,14 +68,14 @@ where
         // `advance_after_commit` call below).
         let ValidatedReservedSystemTx {
             body_index,
-            expected_phase,
+            input,
             finalized_summary,
             visible_base_gas,
             visible_gas_limit,
             proposer,
         } = self.validate_reserved_system_tx((tx, signer), block_number, &block_artifacts)?;
 
-        if expected_phase == SystemTxKind::HookEvents {
+        if matches!(input, SystemTx::HookEvents) {
             return self.commit_reserved_hook_receipt(tx, &block_artifacts, visible_base_gas);
         }
 
@@ -120,9 +120,10 @@ where
         let has_tee_bootstrap = self.block_has_tee_bootstrap();
         // Only EVM result failures use the soft-failure receipt path.
         // Raw engine/provider `Err` was handled above as fatal.
+        let expected_phase = input.name();
         let result = transact_outcome.map_err(|error| {
             let reason = format!(
-                "system tx {expected_phase:?} execution failed at body_index={body_index}: {error}"
+                "system tx {expected_phase} execution failed at body_index={body_index}: {error}"
             );
             if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
                 tracing::error!(target: "outbe::executor", %reason);
@@ -131,7 +132,7 @@ where
         })?;
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
-            expected_phase,
+            input,
             block_number,
             visible_base_gas,
             visible_gas_limit,
@@ -233,7 +234,7 @@ where
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let ReservedSystemReceiptContext {
             body_index,
-            expected_phase,
+            input,
             block_number,
             visible_base_gas,
             visible_gas_limit,
@@ -242,9 +243,10 @@ where
             has_tee_bootstrap,
             has_publication,
         } = context;
+        let expected_phase = input.name();
         tracing::error!(
             target: "outbe::executor",
-            ?expected_phase,
+            expected_phase,
             body_index,
             block_number,
             gas_used = result.tx_gas_used(),
@@ -265,7 +267,7 @@ where
         // aggregate internal-work budget. An OOG consumes the full
         // system-call gas limit and therefore remains a hard aggregate
         // budget failure once earlier mandatory phases have run.
-        if expected_phase.revert_fails_block() {
+        if input.revert_fails_block() {
             let err = crate::errors::ExecutorValidationError::critical_system_tx_did_not_succeed(
                 expected_phase,
                 body_index,
@@ -277,7 +279,7 @@ where
             return Err(err.into());
         }
         let reason = format!(
-            "system tx {expected_phase:?} did not succeed at body_index={body_index}: {:?}",
+            "system tx {expected_phase} did not succeed at body_index={body_index}: {:?}",
             result
         );
         let tx_type = tx.tx_type();
@@ -362,19 +364,13 @@ where
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<ValidatedReservedSystemTx, BlockExecutionError> {
         let (tx, signer) = transaction;
-        let (
-            body_index,
-            expected_phase,
-            expected_input,
-            finalized_summary,
-            visible_base_gas,
-            planned_gas_limit,
-        ) = self.expected_system_tx_for_cursor(block_number, block_artifacts)?;
-        validate_reserved_system_input(tx, body_index, (expected_phase, &expected_input))?;
+        let (body_index, expected_input, finalized_summary, visible_base_gas, planned_gas_limit) =
+            self.expected_system_tx_for_cursor(block_number, block_artifacts)?;
+        validate_reserved_system_input(tx, body_index, &expected_input)?;
 
         self.validate_reserved_system_envelope(
             tx,
-            (body_index, expected_phase, planned_gas_limit),
+            (body_index, expected_input.name(), planned_gas_limit),
             block_number,
         )?;
         let visible_gas_limit = tx.gas_limit();
@@ -386,7 +382,7 @@ where
             return Err(
                 crate::errors::ExecutorValidationError::SystemTxSignerMismatch {
                     body_index,
-                    expected_phase,
+                    expected_phase: expected_input.name(),
                     proposer,
                     signer,
                 }
@@ -396,7 +392,7 @@ where
 
         Ok(ValidatedReservedSystemTx {
             body_index,
-            expected_phase,
+            input: expected_input,
             finalized_summary,
             visible_base_gas,
             visible_gas_limit,
@@ -407,7 +403,7 @@ where
     fn validate_reserved_system_envelope(
         &self,
         tx: &TransactionSigned,
-        expected: (usize, SystemTxKind, u64),
+        expected: (usize, &'static str, u64),
         block_number: u64,
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
@@ -418,7 +414,6 @@ where
         })?;
         let unsigned = build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                kind: expected_phase,
                 ordinal,
                 block_number,
                 chain_id: self.inner.evm.chain_id(),
@@ -443,17 +438,17 @@ where
 fn validate_reserved_system_input(
     tx: &TransactionSigned,
     body_index: usize,
-    expected: (SystemTxKind, &SystemTxInputV2),
+    expected_input: &SystemTx,
 ) -> Result<(), BlockExecutionError> {
     use crate::errors::ExecutorValidationError;
 
-    let (expected_phase, expected_input) = expected;
+    let expected_phase = expected_input.name();
     let actual_input =
-        SystemTxInputV2::decode(tx.input().as_ref()).map_err(|error| -> BlockExecutionError {
+        SystemTx::decode(tx.input().as_ref()).map_err(|error| -> BlockExecutionError {
             ExecutorValidationError::decode_system_tx_at_body_index(body_index, error).into()
         })?;
-    let actual_phase = actual_input.kind();
-    if actual_phase != expected_phase {
+    let actual_phase = actual_input.name();
+    if actual_input.selector() != expected_input.selector() {
         return Err(ExecutorValidationError::SystemTxPhaseMismatch {
             body_index,
             expected_phase,

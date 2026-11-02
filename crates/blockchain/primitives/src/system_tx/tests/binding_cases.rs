@@ -7,7 +7,7 @@ use super::primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    system_tx::{SystemTxInputV2, SystemTxLayout},
+    system_tx::{SystemTx, SystemTxLayout},
     OutbeBlockBody, OutbeHeader,
 };
 use alloy_consensus::{Header, SignableTransaction, TxLegacy};
@@ -70,12 +70,12 @@ fn transaction(input: Bytes) -> TransactionSigned {
     .into()
 }
 
-fn encoded(input: SystemTxInputV2) -> Bytes {
+fn encoded(input: SystemTx) -> Bytes {
     input.encode().expect("valid binding fixture encodes")
 }
 
 fn parent(hash: B256) -> Bytes {
-    encoded(SystemTxInputV2::CertifiedParentAccounting {
+    encoded(SystemTx::CertifiedParentAccounting {
         metadata: CertifiedParentAccountingMetadata {
             finalized_block_number: 41,
             finalized_block_hash: hash,
@@ -120,20 +120,20 @@ fn boundary() -> DkgBoundaryArtifact {
 fn steady_inputs() -> Vec<Bytes> {
     let mut inputs = vec![
         parent(B256::repeat_byte(0x41)),
-        encoded(SystemTxInputV2::LateFinalizeCredits {
+        encoded(SystemTx::LateFinalizeCredits {
             artifact: Default::default(),
         }),
     ];
     inputs.extend([
-        encoded(SystemTxInputV2::CycleTick),
-        encoded(SystemTxInputV2::OracleSlashWindow),
-        encoded(SystemTxInputV2::HookEvents),
+        encoded(SystemTx::CycleTick),
+        encoded(SystemTx::OracleSlashWindow),
+        encoded(SystemTx::HookEvents),
     ]);
     inputs
 }
 
 pub(super) fn cases() -> Vec<Case> {
-    let cycle = encoded(SystemTxInputV2::CycleTick);
+    let cycle = encoded(SystemTx::CycleTick);
     let malformed = Bytes::from_static(b"OSA3\x02");
     let mut cases = vec![
         Case::new("genesis_empty", Check::Layout, 0, vec![]),
@@ -195,7 +195,7 @@ pub(super) fn cases() -> Vec<Case> {
     bad_artifacts.header.inner.extra_data = Bytes::from_static(b"bad artifacts");
     cases.push(bad_artifacts);
     let artifact = boundary();
-    let matching = encoded(SystemTxInputV2::BoundaryOutcome {
+    let matching = encoded(SystemTx::BoundaryOutcome {
         artifact: artifact.clone(),
     });
     let mut mismatched = artifact.clone();
@@ -205,7 +205,7 @@ pub(super) fn cases() -> Vec<Case> {
         ("boundary_matches", vec![matching.clone()]),
         (
             "boundary_mismatch",
-            vec![encoded(SystemTxInputV2::BoundaryOutcome {
+            vec![encoded(SystemTx::BoundaryOutcome {
                 artifact: mismatched,
             })],
         ),
@@ -266,7 +266,7 @@ pub(super) fn assert_diagnostics(
         ("boundary_mismatch", Some("BoundaryOutcome system tx artifact mismatch"), Some("BoundaryOutcome system tx artifact mismatch")),
         ("boundary_match_then_bad_input", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
         ("bad_input_before_boundary_match", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, OracleSlashWindow, HookEvents], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents], expected end [], actual begin [CertifiedParentAccounting, LateFinalizeCredits, CycleTick, OracleSlashWindow, HookEvents], actual end []")),
+        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end []")),
     ];
     let cases = cases();
     assert_eq!(cases.len(), expected.len());

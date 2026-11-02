@@ -15,7 +15,11 @@ use alloy_rpc_types_engine::PayloadId;
 use outbe_primitives::runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE;
 
 use outbe_evm::{
-    system_tx::{split_system_layout, system_tx_intrinsic_gas, SystemTxKind},
+    system_tx::{
+        split_system_layout, system_tx_intrinsic_gas, BOUNDARY_OUTCOME_SELECTOR,
+        CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
+        TEE_BOOTSTRAP_SELECTOR,
+    },
     OutbeEvmSigner,
 };
 use outbe_primitives::{
@@ -450,13 +454,13 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
     let layout = split_system_layout(body).expect("built payload has canonical system layout");
 
     assert_eq!(
-        layout.begin_block_kinds().expect("begin inputs decode"),
+        layout.begin_block_selectors().expect("begin inputs decode"),
         vec![
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::TeeBootstrap,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CYCLE_TICK_SELECTOR,
+            BOUNDARY_OUTCOME_SELECTOR,
+            TEE_BOOTSTRAP_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ]
     );
     assert!(layout.user.is_empty());
@@ -526,14 +530,14 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
     assert_eq!(
         split_system_layout(retry_body)
             .expect("retry payload has canonical system layout")
-            .begin_block_kinds()
+            .begin_block_selectors()
             .expect("retry begin inputs decode"),
         vec![
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::TeeBootstrap,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CYCLE_TICK_SELECTOR,
+            BOUNDARY_OUTCOME_SELECTOR,
+            TEE_BOOTSTRAP_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ]
     );
 }

@@ -43,16 +43,14 @@ pub fn parent_finalization_from_child(
     child: &ConsensusBlock,
 ) -> Option<Finalization> {
     use alloy_consensus::Transaction as _;
-    use outbe_primitives::{
-        consensus_metadata::ParentParticipationProof, system_tx::SystemTxInputV2,
-    };
+    use outbe_primitives::{consensus_metadata::ParentParticipationProof, system_tx::SystemTx};
     if parent.number().checked_add(1)? != child.number() || child.parent_digest() != parent.digest()
     {
         return None;
     }
     for transaction in &child.body().transactions {
-        let Ok(SystemTxInputV2::CertifiedParentAccounting { metadata }) =
-            SystemTxInputV2::decode(transaction.input().as_ref())
+        let Ok(SystemTx::CertifiedParentAccounting { metadata }) =
+            SystemTx::decode(transaction.input().as_ref())
         else {
             continue;
         };

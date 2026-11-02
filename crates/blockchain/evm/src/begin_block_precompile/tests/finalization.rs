@@ -53,7 +53,7 @@ fn dispatch_phase1(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
     );
     provider.enter(|storage| {
-        let input = SystemTxInputV2::CertifiedParentAccounting { metadata }
+        let input = SystemTx::CertifiedParentAccounting { metadata }
             .encode()
             .unwrap();
         with_preloaded_system_tx_context(
@@ -93,7 +93,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         storage
             .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, preloaded_fee)
             .unwrap();
-        let input = SystemTxInputV2::CertifiedParentAccounting {
+        let input = SystemTx::CertifiedParentAccounting {
             metadata: meta.clone(),
         }
         .encode()
@@ -127,7 +127,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         outbe_primitives::storage::MetadosisMutationPurposeTag::CertifiedFinality,
     );
     provider.enter(|storage| {
-        let input = SystemTxInputV2::CertifiedParentAccounting {
+        let input = SystemTx::CertifiedParentAccounting {
             metadata: meta.clone(),
         }
         .encode()
@@ -205,7 +205,7 @@ fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
                 validator: VALIDATOR,
             },
         ];
-        let input = SystemTxInputV2::CertifiedParentAccounting { metadata }
+        let input = SystemTx::CertifiedParentAccounting { metadata }
             .encode()
             .unwrap();
         with_preloaded_system_tx_context(
@@ -225,7 +225,7 @@ fn dispatch_finalization_counts_duplicate_missed_proposer_events_by_index() {
 fn finalization_rejects_non_parent_metadata_before_summary_use() {
     let mut provider = configured_storage(3, 1_700_000_000);
     provider.enter(|storage| {
-        let input = SystemTxInputV2::CertifiedParentAccounting {
+        let input = SystemTx::CertifiedParentAccounting {
             metadata: metadata(),
         }
         .encode()

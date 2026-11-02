@@ -5,9 +5,7 @@ fn test_signer(seed: u8) -> OutbeEvmSigner {
 }
 
 fn phase1_calldata() -> Bytes {
-    input_for(SystemTxKind::CertifiedParentAccounting)
-        .encode()
-        .expect("phase1 input encodes")
+    accounting().encode().expect("phase1 input encodes")
 }
 
 fn signed_phase1(
@@ -16,14 +14,8 @@ fn signed_phase1(
     chain_id: u64,
     calldata: Bytes,
 ) -> TransactionSigned {
-    let unsigned = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        block_number,
-        chain_id,
-        calldata,
-    )
-    .expect("phase1 tx builds");
+    let unsigned =
+        build_unsigned_system_tx(0, block_number, chain_id, calldata).expect("phase1 tx builds");
     signer.sign_unsigned(unsigned).expect("phase1 signs")
 }
 
@@ -91,14 +83,8 @@ fn phase1_witness_validation_rejects_wrong_chain_id_and_nonce() {
 fn phase1_witness_validation_rejects_noncanonical_envelope_shape() {
     let signer = test_signer(1);
     let calldata = phase1_calldata();
-    let base = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        42,
-        CHAIN_ID,
-        calldata.clone(),
-    )
-    .expect("phase1 tx builds");
+    let base =
+        build_unsigned_system_tx(0, 42, CHAIN_ID, calldata.clone()).expect("phase1 tx builds");
 
     let mut wrong_gas = base.clone();
     wrong_gas.gas_limit = wrong_gas.gas_limit.saturating_add(1);
@@ -151,7 +137,7 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
 
     let mut altered = sample_metadata();
     altered.finalized_block_hash = B256::repeat_byte(0x99);
-    let altered_calldata = SystemTxInputV2::CertifiedParentAccounting { metadata: altered }
+    let altered_calldata = SystemTx::CertifiedParentAccounting { metadata: altered }
         .encode()
         .expect("altered phase1 input encodes");
     assert!(matches!(
@@ -165,17 +151,9 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
         Err(SystemTxError::Phase1CalldataMismatch)
     ));
 
-    let cycle_calldata = input_for(SystemTxKind::CycleTick)
-        .encode()
-        .expect("cycle input encodes");
-    let cycle_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CycleTick,
-        0,
-        42,
-        CHAIN_ID,
-        cycle_calldata.clone(),
-    )
-    .expect("cycle tx builds");
+    let cycle_calldata = SystemTx::CycleTick.encode().expect("cycle input encodes");
+    let cycle_unsigned =
+        build_unsigned_system_tx(0, 42, CHAIN_ID, cycle_calldata.clone()).expect("cycle tx builds");
     let signed_cycle = signer.sign_unsigned(cycle_unsigned).expect("cycle signs");
     assert!(matches!(
         validate_phase1_witness_against(
@@ -186,8 +164,8 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
             42
         ),
         Err(SystemTxError::CalldataKindMismatch {
-            expected: SystemTxKind::CertifiedParentAccounting,
-            actual: SystemTxKind::CycleTick,
+            expected: "CertifiedParentAccounting",
+            actual: "CycleTick",
         })
     ));
 }
@@ -196,7 +174,7 @@ fn phase1_witness_validation_rejects_wrong_calldata_or_kind() {
 fn canonical_phase1_calldata_changes_signature_hash() {
     let mut left_meta = sample_metadata();
     left_meta.finalized_block_hash = B256::repeat_byte(0x11);
-    let left = SystemTxInputV2::CertifiedParentAccounting {
+    let left = SystemTx::CertifiedParentAccounting {
         metadata: left_meta,
     }
     .encode()
@@ -204,28 +182,14 @@ fn canonical_phase1_calldata_changes_signature_hash() {
 
     let mut right_meta = sample_metadata();
     right_meta.finalized_block_hash = B256::repeat_byte(0x22);
-    let right = SystemTxInputV2::CertifiedParentAccounting {
+    let right = SystemTx::CertifiedParentAccounting {
         metadata: right_meta,
     }
     .encode()
     .expect("right input encodes");
 
-    let left_tx = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        42,
-        CHAIN_ID,
-        left,
-    )
-    .expect("left tx builds");
-    let right_tx = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        42,
-        CHAIN_ID,
-        right,
-    )
-    .expect("right tx builds");
+    let left_tx = build_unsigned_system_tx(0, 42, CHAIN_ID, left).expect("left tx builds");
+    let right_tx = build_unsigned_system_tx(0, 42, CHAIN_ID, right).expect("right tx builds");
 
     assert_ne!(left_tx.signature_hash(), right_tx.signature_hash());
 }

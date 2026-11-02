@@ -282,8 +282,8 @@ pub enum SlashIndicatorError {
     /// The Phase 1 calldata is not a certified parent accounting payload.
     #[error("phase1 calldata is not CertifiedParentAccounting: {kind}")]
     Phase1CalldataNotCertifiedParentAccounting {
-        /// Debug representation of the decoded system transaction kind.
-        kind: String,
+        /// Diagnostic name of the decoded system transaction variant.
+        kind: &'static str,
     },
 
     /// No committee snapshot exists for the finalized epoch and committee hash.

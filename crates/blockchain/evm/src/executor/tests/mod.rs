@@ -8,7 +8,7 @@ use crate::{
     signer::OutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas,
-        SystemTxInputV2, SystemTxKind,
+        SystemTx,
     },
 };
 use alloy_consensus::{TxEip1559, TxEip7702, TxReceipt as _};

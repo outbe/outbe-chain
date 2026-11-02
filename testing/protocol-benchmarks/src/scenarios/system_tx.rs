@@ -6,8 +6,8 @@ use outbe_primitives::{
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
     reshare_artifact::LateFinalizeCreditsArtifact,
     system_tx::{
-        protocol_block_gas_limit, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
-        OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+        protocol_block_gas_limit, SystemTx, SystemTxVisibleGasPlan, OUTBE_SYSTEM_TX_ADDRESS,
+        SYSTEM_TX_VISIBLE_GAS_FLOOR,
     },
 };
 
@@ -22,12 +22,13 @@ const BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SystemTxScenario {
-    kind: SystemTxKind,
+    name: &'static str,
+    fixture: fn() -> Result<SystemTx, String>,
 }
 
 #[derive(Clone)]
 pub struct PreparedSystemTx {
-    input: SystemTxInputV2,
+    input: SystemTx,
     block_number: u64,
 }
 
@@ -35,25 +36,45 @@ impl SystemTxScenario {
     #[must_use]
     pub const fn all() -> [Self; 8] {
         [
-            Self::new(SystemTxKind::CertifiedParentAccounting),
-            Self::new(SystemTxKind::LateFinalizeCredits),
-            Self::new(SystemTxKind::CycleTick),
-            Self::new(SystemTxKind::BoundaryOutcome),
-            Self::new(SystemTxKind::TeeBootstrap),
-            Self::new(SystemTxKind::OracleSlashWindow),
-            Self::new(SystemTxKind::HookEvents),
-            Self::new(SystemTxKind::RadiclePublication),
+            Self::new("certified-parent-accounting", || {
+                Ok(SystemTx::CertifiedParentAccounting {
+                    metadata: sample_metadata(),
+                })
+            }),
+            Self::new("late-finalize-credits", || {
+                Ok(SystemTx::LateFinalizeCredits {
+                    artifact: LateFinalizeCreditsArtifact::default(),
+                })
+            }),
+            Self::new("cycle-tick", || Ok(SystemTx::CycleTick)),
+            Self::new("boundary-outcome", || {
+                Ok(SystemTx::BoundaryOutcome {
+                    artifact: sample_boundary(),
+                })
+            }),
+            Self::new("tee-bootstrap", || {
+                Ok(SystemTx::TeeBootstrap {
+                    payload: sample_tee_bootstrap()?,
+                })
+            }),
+            Self::new("oracle-slash-window", || Ok(SystemTx::OracleSlashWindow)),
+            Self::new("hook-events", || Ok(SystemTx::HookEvents)),
+            Self::new("radicle-publication", || {
+                Ok(SystemTx::RadiclePublication {
+                    batch: outbe_primitives::test_utils::sample_radicle_publication_batch(32),
+                })
+            }),
         ]
     }
 
     #[must_use]
-    pub const fn new(kind: SystemTxKind) -> Self {
-        Self { kind }
+    pub const fn new(name: &'static str, fixture: fn() -> Result<SystemTx, String>) -> Self {
+        Self { name, fixture }
     }
 
     #[must_use]
-    pub const fn kind(&self) -> SystemTxKind {
-        self.kind
+    pub const fn name(&self) -> &'static str {
+        self.name
     }
 }
 
@@ -61,7 +82,7 @@ impl BenchmarkScenario for SystemTxScenario {
     type Prepared = PreparedSystemTx;
 
     fn metadata(&self) -> ScenarioMetadata {
-        let name = kind_name(self.kind);
+        let name = self.name;
         ScenarioMetadata::new(
             format!("system-tx/{name}/rust-wire/single"),
             format!("System tx {name} (Rust wire/accounting only)"),
@@ -72,13 +93,15 @@ impl BenchmarkScenario for SystemTxScenario {
     }
 
     fn prepare(&self, _profile: Profile) -> Result<Self::Prepared, String> {
+        let input = (self.fixture)()?;
+        let block_number = if matches!(input, SystemTx::TeeBootstrap { .. }) {
+            BOOTSTRAP_BLOCK_NUMBER
+        } else {
+            STEADY_BLOCK_NUMBER
+        };
         Ok(PreparedSystemTx {
-            input: input_for(self.kind)?,
-            block_number: if self.kind == SystemTxKind::TeeBootstrap {
-                BOOTSTRAP_BLOCK_NUMBER
-            } else {
-                STEADY_BLOCK_NUMBER
-            },
+            input,
+            block_number,
         })
     }
 
@@ -90,14 +113,13 @@ impl BenchmarkScenario for SystemTxScenario {
         let encode_ns = elapsed_ns(encode_started);
 
         let decode_started = Instant::now();
-        let decoded =
-            SystemTxInputV2::decode(calldata.as_ref()).map_err(|error| error.to_string())?;
+        let decoded = SystemTx::decode(calldata.as_ref()).map_err(|error| error.to_string())?;
         let decode_ns = elapsed_ns(decode_started);
 
         let gas_plan_started = Instant::now();
         let plan = SystemTxVisibleGasPlan::new(
             protocol_block_gas_limit(prepared.block_number),
-            &[(self.kind, calldata.clone())],
+            std::slice::from_ref(&calldata),
         )
         .map_err(|error| error.to_string())?;
         let gas_plan_ns = elapsed_ns(gas_plan_started);
@@ -165,11 +187,12 @@ impl BenchmarkScenario for SystemTxScenario {
         .with_calldata(calldata_stats)
         .with_postcondition(
             "system_tx.codec_round_trip_kind",
-            (decoded.kind() == self.kind).to_string(),
+            (std::mem::discriminant(&decoded) == std::mem::discriminant(&prepared.input))
+                .to_string(),
         )
         .with_postcondition(
             "system_tx.body_zone",
-            format!("{:?}", self.kind.body_zone()),
+            format!("{:?}", prepared.input.body_zone()),
         )
         .with_postcondition(
             "system_tx.visible_charge_conserved",
@@ -192,7 +215,7 @@ impl BenchmarkScenario for SystemTxScenario {
         observation.child_frames.push(ChildFrameTrace {
             label: "production system-tx execution".to_owned(),
             target: format!("{OUTBE_SYSTEM_TX_ADDRESS:?}"),
-            selector: format!("0x{}", hex::encode(self.kind.selector())),
+            selector: format!("0x{}", hex::encode(prepared.input.selector())),
             status: concat!("excluded; TO", "DO outbe-chain-6le.7").to_owned(),
             gas_used: 0,
             fidelity: ChildFrameFidelity::BenchmarkStub,
@@ -203,42 +226,6 @@ impl BenchmarkScenario for SystemTxScenario {
 
 fn elapsed_ns(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
-}
-
-const fn kind_name(kind: SystemTxKind) -> &'static str {
-    match kind {
-        SystemTxKind::CertifiedParentAccounting => "certified-parent-accounting",
-        SystemTxKind::LateFinalizeCredits => "late-finalize-credits",
-        SystemTxKind::CycleTick => "cycle-tick",
-        SystemTxKind::BoundaryOutcome => "boundary-outcome",
-        SystemTxKind::TeeBootstrap => "tee-bootstrap",
-        SystemTxKind::OracleSlashWindow => "oracle-slash-window",
-        SystemTxKind::HookEvents => "hook-events",
-        SystemTxKind::RadiclePublication => "radicle-publication",
-    }
-}
-
-fn input_for(kind: SystemTxKind) -> Result<SystemTxInputV2, String> {
-    Ok(match kind {
-        SystemTxKind::CertifiedParentAccounting => SystemTxInputV2::CertifiedParentAccounting {
-            metadata: sample_metadata(),
-        },
-        SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
-            artifact: LateFinalizeCreditsArtifact::default(),
-        },
-        SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
-            artifact: sample_boundary(),
-        },
-        SystemTxKind::TeeBootstrap => SystemTxInputV2::TeeBootstrap {
-            payload: sample_tee_bootstrap()?,
-        },
-        SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
-        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
-            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(32),
-        },
-    })
 }
 
 fn sample_metadata() -> CertifiedParentAccountingMetadata {
