@@ -1,7 +1,7 @@
 //! EVM-level witness scope attachment for direct RPC, prewarm, and historical trace replay.
 
 use crate::begin_block_precompile::PreloadedSystemTxContext;
-use crate::system_tx::SystemTxInputV2;
+use crate::system_tx::SystemTx;
 use alloy_primitives::{Bytes, Log, TxKind};
 use outbe_tee::witness::{
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
@@ -163,10 +163,7 @@ fn trace_action_for_tx(
             gas_limit: tx.gas_limit,
         };
     }
-    if matches!(
-        SystemTxInputV2::decode(&tx.data),
-        Ok(SystemTxInputV2::HookEvents)
-    ) {
+    if matches!(SystemTx::decode(&tx.data), Ok(SystemTx::HookEvents)) {
         return DetachedTraceTxAction::SyntheticHookEvents {
             gas_limit: tx.gas_limit,
             logs: meta.hook_event_logs.clone(),

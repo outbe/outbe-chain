@@ -5,7 +5,7 @@ use crate::error::{ConsensusMetadataError, Result};
 
 // The V2 slim [`CertifiedParentAccountingMetadata`] below replaced the V1
 // `ConsensusMetadataEnvelope`. The V1 magic + version are dropped. The
-// system-tx codec boundary rejects V1 wire bytes: `SystemTxInputV2::decode`
+// system-tx codec boundary rejects V1 wire bytes: `SystemTx::decode`
 // uses `CertifiedParentAccountingMetadata::decode`, which has its own `OAV3`
 // magic.
 const CERTIFIED_PARENT_ACCOUNTING_MAGIC: &[u8; 4] = b"OAV3";

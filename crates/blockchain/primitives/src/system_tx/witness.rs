@@ -8,8 +8,8 @@ use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::SignedTransaction;
 
 use super::{
-    build_unsigned_system_tx, system_tx_nonce, system_tx_visible_gas_limit, SystemTxError,
-    SystemTxInputV2, SystemTxKind, OUTBE_SYSTEM_TX_ADDRESS,
+    build_unsigned_system_tx, system_tx_nonce, system_tx_visible_gas_limit, SystemTx,
+    SystemTxError, OUTBE_SYSTEM_TX_ADDRESS,
 };
 
 /// Validate that a signed Phase 1 system transaction is the canonical
@@ -82,13 +82,8 @@ fn validate_phase1_envelope_shape(
         });
     }
     validate_phase1_calldata(tx, calldata)?;
-    let expected_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        block_number,
-        chain_id,
-        Bytes::copy_from_slice(calldata),
-    )?;
+    let expected_unsigned =
+        build_unsigned_system_tx(0, block_number, chain_id, Bytes::copy_from_slice(calldata))?;
     if tx.signature_hash() != expected_unsigned.signature_hash() {
         return Err(SystemTxError::Phase1SignatureHashMismatch);
     }
@@ -118,11 +113,11 @@ fn validate_phase1_calldata(tx: &TransactionSigned, calldata: &[u8]) -> Result<(
     if tx.input().as_ref() != calldata {
         return Err(SystemTxError::Phase1CalldataMismatch);
     }
-    let actual = SystemTxInputV2::decode(calldata)?.kind();
-    if actual != SystemTxKind::CertifiedParentAccounting {
+    let actual = SystemTx::decode(calldata)?;
+    if !matches!(actual, SystemTx::CertifiedParentAccounting { .. }) {
         return Err(SystemTxError::CalldataKindMismatch {
-            expected: SystemTxKind::CertifiedParentAccounting,
-            actual,
+            expected: "CertifiedParentAccounting",
+            actual: actual.name(),
         });
     }
     Ok(())

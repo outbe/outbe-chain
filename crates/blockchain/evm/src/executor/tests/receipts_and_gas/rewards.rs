@@ -195,8 +195,8 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
     );
     let late_tx = system_txs.next().unwrap();
     assert!(matches!(
-        SystemTxInputV2::decode(late_tx.tx().input()).unwrap(),
-        SystemTxInputV2::LateFinalizeCredits { .. }
+        SystemTx::decode(late_tx.tx().input()).unwrap(),
+        SystemTx::LateFinalizeCredits { .. }
     ));
     if invalid_slash_percent {
         use alloy_sol_types::SolError;

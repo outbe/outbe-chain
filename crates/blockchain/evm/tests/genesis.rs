@@ -22,7 +22,11 @@
 //!   reads `last_accounted_block_number`.
 
 use alloy_primitives::Address;
-use outbe_evm::system_tx::{expected_begin_block_kinds, SystemTxKind};
+use outbe_evm::system_tx::{
+    expected_begin_block_selectors, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
+    ORACLE_SLASH_WINDOW_SELECTOR,
+};
 use outbe_gem::GemContract;
 use outbe_intex::IntexContract;
 use outbe_primitives::addresses::{GEM_ADDRESS, INTEX_ADDRESS};
@@ -318,7 +322,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // Runtime begin-zone ordering invariants.
 //
 // These tests pin the V2 system-transaction layout contract surfaced through
-// `outbe_evm::system_tx::expected_begin_block_kinds`. The contract is the
+// `outbe_evm::system_tx::expected_begin_block_selectors`. The contract is the
 // single source of truth for which kinds appear in which order at each
 // block height. The executor and the block builder both consume it. Pinning
 // it here keeps the genesis-bootstrap requirements (block 1 BoundaryOutcome
@@ -339,7 +343,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 #[test]
 fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     use alloy_primitives::{keccak256, Bytes, B256, U256};
-    use outbe_evm::{begin_block_precompile::dispatch, system_tx::SystemTxInputV2};
+    use outbe_evm::{begin_block_precompile::dispatch, system_tx::SystemTx};
     use outbe_primitives::{
         addresses::SYSTEM_ADDRESS,
         consensus::{DkgBoundaryArtifact, ReshareResult},
@@ -412,9 +416,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
                 active_set_hash,
             },
         };
-        let input = SystemTxInputV2::BoundaryOutcome { artifact }
-            .encode()
-            .unwrap();
+        let input = SystemTx::BoundaryOutcome { artifact }.encode().unwrap();
         dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
             .expect("block 1 genesis DKG BoundaryOutcome must commit epoch-0 snapshot");
     });
@@ -435,12 +437,12 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
 /// no `CertifiedParentAccounting`) vs block 2 (`CertifiedParentAccounting` first).
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
-    let block1 = expected_begin_block_kinds(1, true, false);
+    let block1 = expected_begin_block_selectors(1, true, false);
     let expected_block1 = vec![
-        SystemTxKind::CycleTick,
-        SystemTxKind::BoundaryOutcome,
-        SystemTxKind::OracleSlashWindow,
-        SystemTxKind::HookEvents,
+        CYCLE_TICK_SELECTOR,
+        BOUNDARY_OUTCOME_SELECTOR,
+        ORACLE_SLASH_WINDOW_SELECTOR,
+        HOOK_EVENTS_SELECTOR,
     ];
     assert_eq!(
         block1, expected_block1,
@@ -449,10 +451,10 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
          the genesis DKG VRF snapshot writer and CertifiedParentAccounting is absent"
     );
 
-    let block2 = expected_begin_block_kinds(2, false, false);
+    let block2 = expected_begin_block_selectors(2, false, false);
     assert_eq!(
         block2.first(),
-        Some(&SystemTxKind::CertifiedParentAccounting),
+        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
         "block 2's first begin-zone tx must be CertifiedParentAccounting, the \
          first reader of the snapshot seeded at block 1"
     );
@@ -463,23 +465,23 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
 /// replacement for the legacy exact-parent finalization invariant per Epic
 #[test]
 fn block2_requires_v2_parent_accounting() {
-    let block2_without_boundary = expected_begin_block_kinds(2, false, false);
-    let block2_with_boundary = expected_begin_block_kinds(2, true, false);
+    let block2_without_boundary = expected_begin_block_selectors(2, false, false);
+    let block2_with_boundary = expected_begin_block_selectors(2, true, false);
     assert_eq!(
         block2_without_boundary.first(),
-        Some(&SystemTxKind::CertifiedParentAccounting)
+        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR)
     );
     assert_eq!(
         block2_with_boundary.first(),
-        Some(&SystemTxKind::CertifiedParentAccounting)
+        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR)
     );
 
     // Higher blocks (e.g. 100) keep the same requirement. The V2 contract is
     // not localized to block 2.
-    let block100 = expected_begin_block_kinds(100, false, false);
+    let block100 = expected_begin_block_selectors(100, false, false);
     assert_eq!(
         block100.first(),
-        Some(&SystemTxKind::CertifiedParentAccounting),
+        Some(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
         "every block N >= 2 must run CertifiedParentAccounting first"
     );
 }
@@ -491,9 +493,9 @@ fn block2_requires_v2_parent_accounting() {
 /// because of this exact invariant.
 #[test]
 fn block0_and_block1_do_not_require_parent_accounting() {
-    let block0_no_boundary = expected_begin_block_kinds(0, false, false);
-    let block0_with_boundary = expected_begin_block_kinds(0, true, false);
-    let block1_with_boundary = expected_begin_block_kinds(1, true, false);
+    let block0_no_boundary = expected_begin_block_selectors(0, false, false);
+    let block0_with_boundary = expected_begin_block_selectors(0, true, false);
+    let block1_with_boundary = expected_begin_block_selectors(1, true, false);
 
     assert!(
         block0_no_boundary.is_empty(),
@@ -505,7 +507,7 @@ fn block0_and_block1_do_not_require_parent_accounting() {
          requires block_number > 0); got {block0_with_boundary:?}"
     );
     assert!(
-        !block1_with_boundary.contains(&SystemTxKind::CertifiedParentAccounting),
+        !block1_with_boundary.contains(&CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
         "block 1 must not run CertifiedParentAccounting; the V2 contract \
          starts Phase 1 at block N >= 2"
     );

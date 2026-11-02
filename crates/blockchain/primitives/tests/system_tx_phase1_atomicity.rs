@@ -12,7 +12,10 @@
 //! Tests that require the actual Phase 1 commit-into-pre-execution move are
 //! marked `#[ignore]` and reference the follow-up.
 
-use outbe_primitives::system_tx::{SystemTxKind, SystemTxPhase, GENESIS_BOOTSTRAP_BLOCK_NUMBER};
+use outbe_primitives::system_tx::{
+    SystemTxPhase, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, GENESIS_BOOTSTRAP_BLOCK_NUMBER,
+    LATE_FINALIZE_CREDITS_SELECTOR,
+};
 
 const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
@@ -83,24 +86,24 @@ fn debug_assert_system_tx_phase_cursor_after_preexec_for_block1_and_phase1() {
         SystemTxPhase::UserTxs
     );
     assert_eq!(user.body_index(), None);
-    assert_eq!(user.expected_kind(), None);
+    assert_eq!(user.expected_selector(), None);
 }
 
 /// Cursor on Phase 1 path identifies the correct expected kind. Establishes
-/// the invariant that the cursor's `expected_kind` is the single source of
+/// the invariant that the cursor's `expected_selector` is the single source of
 /// truth for the next system-tx kind.
 #[test]
 fn preexecuted_phase1_body_tx_is_validated_but_not_reexecuted() {
     let cursor = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     assert_eq!(
-        cursor.expected_kind(),
-        Some(SystemTxKind::CertifiedParentAccounting),
+        cursor.expected_selector(),
+        Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
     );
     // After Phase 1 commit, cursor moves to LateFinalizeCredits (the
     // mandatory inclusion-window phase) before CycleTick.
     let after = cursor.advance_after_commit(true, false);
     assert_eq!(
-        after.expected_kind(),
-        Some(SystemTxKind::LateFinalizeCredits)
+        after.expected_selector(),
+        Some(LATE_FINALIZE_CREDITS_SELECTOR)
     );
 }

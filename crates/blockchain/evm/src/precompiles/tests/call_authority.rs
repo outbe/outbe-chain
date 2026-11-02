@@ -10,14 +10,14 @@ use outbe_primitives::{
         metadosis_process_ready_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag as Purpose,
     },
-    system_tx::SystemTxInputV2,
+    system_tx::SystemTx,
 };
 
 const TEST_CHAIN_ID: u64 = 42;
 const TEST_BLOCK_NUMBER: u64 = 9;
 const TEST_TIMESTAMP: u64 = 1_704_067_200;
 
-fn encoded(input: SystemTxInputV2) -> Bytes {
+fn encoded(input: SystemTx) -> Bytes {
     input.encode().expect("valid system-tx fixture")
 }
 
@@ -44,8 +44,8 @@ fn boundary() -> DkgBoundaryArtifact {
     }
 }
 
-fn system_entitlements(input: SystemTxInputV2) -> MetadosisMutationEntitlements {
-    let cycle_active_utc_day = matches!(input, SystemTxInputV2::CycleTick).then(|| {
+fn system_entitlements(input: SystemTx) -> MetadosisMutationEntitlements {
+    let cycle_active_utc_day = matches!(input, SystemTx::CycleTick).then(|| {
         outbe_primitives::time::previous_date_key(outbe_primitives::time::timestamp_to_date_key(
             TEST_TIMESTAMP,
         ))
@@ -90,7 +90,7 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
 
 #[test]
 fn protocol_cycle_entitles_genesis_initialization_at_block_one() {
-    let data = encoded(SystemTxInputV2::CycleTick);
+    let data = encoded(SystemTx::CycleTick);
     let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
         data: data.as_ref(),
@@ -114,11 +114,11 @@ fn protocol_cycle_entitles_genesis_initialization_at_block_one() {
 #[test]
 fn exact_production_causes_receive_only_their_purpose() {
     assert_eq!(
-        system_entitlements(SystemTxInputV2::CycleTick),
+        system_entitlements(SystemTx::CycleTick),
         expected_cycle_entitlements(),
     );
     assert_eq!(
-        system_entitlements(SystemTxInputV2::LateFinalizeCredits {
+        system_entitlements(SystemTx::LateFinalizeCredits {
             artifact: LateFinalizeCreditsArtifact::default(),
         }),
         MetadosisMutationEntitlements::exact(
@@ -127,7 +127,7 @@ fn exact_production_causes_receive_only_their_purpose() {
         ),
     );
     assert_eq!(
-        system_entitlements(SystemTxInputV2::BoundaryOutcome {
+        system_entitlements(SystemTx::BoundaryOutcome {
             artifact: boundary(),
         }),
         MetadosisMutationEntitlements::NONE,
@@ -141,7 +141,7 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
     for _ in 0..6 {
         active_day = outbe_primitives::time::previous_date_key(active_day).expect("date step");
     }
-    let data = encoded(SystemTxInputV2::CycleTick);
+    let data = encoded(SystemTx::CycleTick);
     let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
         address: OUTBE_SYSTEM_TX_ADDRESS,
         data: data.as_ref(),
@@ -182,7 +182,7 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
 
 #[test]
 fn route_or_envelope_mismatch_grants_no_mutation_authority() {
-    let cycle = encoded(SystemTxInputV2::CycleTick);
+    let cycle = encoded(SystemTx::CycleTick);
     for (address, caller, is_static, value) in [
         (Address::repeat_byte(1), SYSTEM_ADDRESS, false, U256::ZERO),
         (
@@ -230,7 +230,7 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
     );
 
     assert_eq!(
-        system_entitlements(SystemTxInputV2::OracleSlashWindow),
+        system_entitlements(SystemTx::OracleSlashWindow),
         MetadosisMutationEntitlements::NONE,
     );
 }

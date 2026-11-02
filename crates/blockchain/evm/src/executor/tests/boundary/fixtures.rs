@@ -89,14 +89,14 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         .build()
 }
 
-pub(super) fn begin_system_tx_kinds(
+pub(super) fn begin_system_tx_selectors(
     txs: &[reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>],
-) -> Vec<crate::system_tx::SystemTxKind> {
+) -> Vec<[u8; 4]> {
     txs.iter()
         .map(|tx| {
-            SystemTxInputV2::decode(tx.tx().input().as_ref())
+            SystemTx::decode(tx.tx().input().as_ref())
                 .expect("begin-zone calldata decodes")
-                .kind()
+                .selector()
         })
         .collect()
 }

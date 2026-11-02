@@ -162,20 +162,20 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         "legacy transaction body must RLP-encode as a list, not a typed envelope"
     );
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[0].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::CycleTick
+        SystemTx::decode(system_txs[0].tx().input().as_ref()).unwrap(),
+        SystemTx::CycleTick
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::TeeBootstrap { .. }
+        SystemTx::decode(system_txs[1].tx().input().as_ref()).unwrap(),
+        SystemTx::TeeBootstrap { .. }
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::OracleSlashWindow
+        SystemTx::decode(system_txs[2].tx().input().as_ref()).unwrap(),
+        SystemTx::OracleSlashWindow
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::HookEvents
+        SystemTx::decode(system_txs[3].tx().input().as_ref()).unwrap(),
+        SystemTx::HookEvents
     ));
     drop(executor);
 

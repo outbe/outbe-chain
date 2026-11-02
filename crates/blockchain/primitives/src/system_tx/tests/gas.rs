@@ -3,20 +3,13 @@ use super::*;
 #[test]
 fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
     let inputs = [
-        input_for(SystemTxKind::CertifiedParentAccounting)
-            .encode()
-            .expect("CPA input encodes"),
-        input_for(SystemTxKind::CycleTick)
+        accounting().encode().expect("CPA input encodes"),
+        SystemTx::CycleTick
             .encode()
             .expect("CycleTick input encodes"),
-        input_for(SystemTxKind::HookEvents)
+        SystemTx::HookEvents
             .encode()
             .expect("HookEvents input encodes"),
-    ];
-    let entries = [
-        (SystemTxKind::CertifiedParentAccounting, inputs[0].clone()),
-        (SystemTxKind::CycleTick, inputs[1].clone()),
-        (SystemTxKind::HookEvents, inputs[2].clone()),
     ];
     let intrinsic_total = inputs
         .iter()
@@ -24,7 +17,7 @@ fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
         .sum::<u64>();
     let block_gas_limit = intrinsic_total + 50_000;
 
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &entries)
+    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &inputs)
         .expect("system gas plan fits the block");
 
     assert_eq!(plan.gas_limit(0), Some(plan.intrinsic_gas(0).unwrap()));
@@ -39,13 +32,29 @@ fn visible_gas_plan_assigns_only_cycle_the_block_remainder() {
 }
 
 #[test]
+fn gas_plan_rejects_duplicate_cycle_and_malformed_body() {
+    let cycle = SystemTx::CycleTick.encode().unwrap();
+    assert_eq!(
+        SystemTxVisibleGasPlan::new(u64::MAX, &[cycle.clone(), cycle]),
+        Err(SystemTxError::DuplicateCycleTickGasBudget)
+    );
+    assert_eq!(
+        SystemTxVisibleGasPlan::new(u64::MAX, &[Bytes::from_static(b"OSC2\x02\x00")]),
+        Err(SystemTxError::UnexpectedBody {
+            kind: "CycleTick",
+            len: 1
+        })
+    );
+}
+
+#[test]
 fn visible_gas_plan_rejects_system_intrinsic_gas_above_the_block_limit() {
-    let cycle = input_for(SystemTxKind::CycleTick)
+    let cycle = SystemTx::CycleTick
         .encode()
         .expect("CycleTick input encodes");
     let intrinsic = system_tx_intrinsic_gas(&cycle).expect("intrinsic gas computes");
 
-    let error = SystemTxVisibleGasPlan::new(intrinsic - 1, &[(SystemTxKind::CycleTick, cycle)])
+    let error = SystemTxVisibleGasPlan::new(intrinsic - 1, &[cycle])
         .expect_err("system envelope cannot exceed the block gas limit");
 
     assert_eq!(

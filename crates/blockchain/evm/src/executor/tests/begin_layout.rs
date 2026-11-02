@@ -1,13 +1,13 @@
 use super::*;
 use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
+use outbe_primitives::system_tx::{
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+};
 use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
 use reth_primitives_traits::Recovered;
 
-type BeginInputs = Vec<(
-    SystemTxKind,
-    SystemTxInputV2,
-    Option<AccountedParentArtifact>,
-)>;
+type BeginInputs = Vec<(SystemTx, Option<AccountedParentArtifact>)>;
 
 struct Scenario {
     height: u64,
@@ -29,8 +29,14 @@ fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
         let proposer = scenario.resolve().unwrap();
         let body = scenario.signed_body();
         assert_signed_begin_body(&scenario, &proposer, &body);
-        assert_eq!(proposer[proposer.len() - 2].0, SystemTxKind::HookEvents);
-        assert_eq!(proposer.last().unwrap().0, SystemTxKind::RadiclePublication);
+        assert!(matches!(
+            proposer[proposer.len() - 2].0,
+            SystemTx::HookEvents
+        ));
+        assert!(matches!(
+            proposer.last().unwrap().0,
+            SystemTx::RadiclePublication { .. }
+        ));
         scenario.body = body;
         let verifier = scenario.resolve().unwrap();
         assert_eq!(proposer, verifier);
@@ -107,14 +113,9 @@ impl Scenario {
     }
 }
 
-fn signed_input(
-    input: SystemTxInputV2,
-    height: u64,
-    ordinal: usize,
-) -> Recovered<TransactionSigned> {
+fn signed_input(input: SystemTx, height: u64, ordinal: usize) -> Recovered<TransactionSigned> {
     let signer = test_evm_signer();
     let unsigned = build_unsigned_system_tx(
-        input.kind(),
         ordinal.try_into().unwrap(),
         height,
         CHAIN_ID,
@@ -206,12 +207,11 @@ fn assert_signed_begin_body(
     body: &[Recovered<TransactionSigned>],
 ) {
     assert_eq!(proposer.len(), body.len());
-    for ((kind, input, summary), tx) in proposer.iter().zip(body) {
-        assert_eq!(input.kind(), *kind);
+    for ((input, summary), tx) in proposer.iter().zip(body) {
         assert_eq!(&input.encode().unwrap(), tx.tx().input());
         assert_eq!(
             *summary,
-            if *kind == SystemTxKind::CertifiedParentAccounting {
+            if matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
                 scenario.hint
             } else {
                 None
@@ -225,16 +225,16 @@ fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
         assert!(proposer.is_empty());
         return;
     }
-    let kinds: Vec<_> = proposer.iter().map(|(kind, _, _)| *kind).collect();
-    assert_eq!(kinds.last(), Some(&SystemTxKind::HookEvents));
-    assert_eq!(kinds.contains(&SystemTxKind::TeeBootstrap), height == 1);
-    assert!(kinds.contains(&SystemTxKind::CycleTick));
+    let selectors: Vec<_> = proposer.iter().map(|(input, _)| input.selector()).collect();
+    assert_eq!(selectors.last(), Some(&HOOK_EVENTS_SELECTOR));
+    assert_eq!(selectors.contains(&TEE_BOOTSTRAP_SELECTOR), height == 1);
+    assert!(selectors.contains(&CYCLE_TICK_SELECTOR));
     if height >= 2 {
         assert_eq!(
-            &kinds[..2],
+            &selectors[..2],
             &[
-                SystemTxKind::CertifiedParentAccounting,
-                SystemTxKind::LateFinalizeCredits
+                CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+                LATE_FINALIZE_CREDITS_SELECTOR
             ]
         );
     }
@@ -281,13 +281,19 @@ fn verifier_reports_missing_malformed_and_wrong_kind_at_the_first_bad_ordinal() 
                 .contains("decode expected begin system tx input:"));
             scenario.body = canonical.clone();
             scenario.body[ordinal] = canonical[(ordinal + 1) % canonical.len()].clone();
-            let kind = SystemTxInputV2::decode(canonical[ordinal].tx().input())
-                .unwrap()
-                .kind();
-            let expected = if kind == SystemTxKind::TeeBootstrap {
+            let input = SystemTx::decode(canonical[ordinal].tx().input()).unwrap();
+            let expected = if matches!(input, SystemTx::TeeBootstrap { .. }) {
                 format!("expected mandatory OST3 system tx at ordinal {ordinal}")
+            } else if matches!(
+                input,
+                SystemTx::CertifiedParentAccounting { .. } | SystemTx::BoundaryOutcome { .. }
+            ) {
+                format!("expected {} system tx at ordinal {ordinal}", input.name())
             } else {
-                format!("expected {kind:?} system tx at ordinal {ordinal}")
+                format!(
+                    "expected {:?} system tx at ordinal {ordinal}",
+                    input.selector()
+                )
             };
             let error = scenario.resolve().unwrap_err().to_string();
             assert!(error.contains(&expected), "{error}");
@@ -318,7 +324,7 @@ fn genesis_ignores_stale_inputs_and_block_one_requires_bootstrap_from_its_active
         .resolve()
         .unwrap()
         .iter()
-        .any(|(kind, _, _)| *kind == SystemTxKind::TeeBootstrap));
+        .any(|(input, _)| matches!(input, SystemTx::TeeBootstrap { .. })));
 }
 
 #[test]
@@ -347,8 +353,10 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
         .body
         .iter()
         .position(|tx| {
-            SystemTxInputV2::decode(tx.tx().input()).unwrap().kind()
-                == SystemTxKind::BoundaryOutcome
+            matches!(
+                SystemTx::decode(tx.tx().input()).unwrap(),
+                SystemTx::BoundaryOutcome { .. }
+            )
         })
         .unwrap();
     let ConsensusHeaderArtifact::BoundaryOutcome(mut artifact) = scenario
@@ -361,8 +369,7 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
     };
     artifact.dkg_cycle += 1;
     let original_boundary = scenario.body[boundary].clone();
-    scenario.body[boundary] =
-        signed_input(SystemTxInputV2::BoundaryOutcome { artifact }, 2, boundary);
+    scenario.body[boundary] = signed_input(SystemTx::BoundaryOutcome { artifact }, 2, boundary);
     assert!(scenario
         .resolve()
         .unwrap_err()
@@ -373,8 +380,10 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
         .body
         .iter()
         .position(|tx| {
-            SystemTxInputV2::decode(tx.tx().input()).unwrap().kind()
-                == SystemTxKind::OracleSlashWindow
+            matches!(
+                SystemTx::decode(tx.tx().input()).unwrap(),
+                SystemTx::OracleSlashWindow
+            )
         })
         .unwrap();
     scenario.body[oracle] =

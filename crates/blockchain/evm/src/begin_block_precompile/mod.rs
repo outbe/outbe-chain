@@ -2,11 +2,11 @@
 //!
 //! The precompile is called through `transact_system_call` with
 //! `SYSTEM_ADDRESS` as the EVM caller. It decodes a versioned
-//! [`SystemTxInputV2`](crate::system_tx::SystemTxInputV2) payload and routes to
+//! [`SystemTx`](crate::system_tx::SystemTx) payload and routes to
 //! the begin_block system tx body. Thus runtime events are emitted through the
 //! EVM journal and become receipt-visible.
 
-use crate::system_tx::SystemTxInputV2;
+use crate::system_tx::SystemTx;
 use alloy_primitives::Address;
 use alloy_primitives::Bytes;
 use alloy_primitives::U256;
@@ -125,41 +125,41 @@ fn dispatch_inner(
     }
     outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
 
-    let input = SystemTxInputV2::decode(data)
+    let input = SystemTx::decode(data)
         .map_err(crate::errors::BeginBlockPrecompileError::invalid_system_tx_input)?;
 
     match input {
-        SystemTxInputV2::CertifiedParentAccounting { metadata } => {
+        SystemTx::CertifiedParentAccounting { metadata } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_finalization_and_slashing(&ctx, &metadata)?;
         }
-        SystemTxInputV2::LateFinalizeCredits { artifact } => {
+        SystemTx::LateFinalizeCredits { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_late_finalize_credits(&ctx, &artifact)?;
         }
-        SystemTxInputV2::CycleTick => {
+        SystemTx::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_cycle_tick_at_activation(&ctx, 1)?;
         }
-        SystemTxInputV2::BoundaryOutcome { artifact } => {
+        SystemTx::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_boundary_outcome(&ctx, &artifact)?;
         }
-        SystemTxInputV2::TeeBootstrap { payload } => {
+        SystemTx::TeeBootstrap { payload } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             prepare_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
             run_tee_bootstrap_v1(&ctx, &payload)?;
         }
-        SystemTxInputV2::OracleSlashWindow => {
+        SystemTx::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_oracle_slash_window(&ctx)?;
             run_hyperlane_liveness_window(&ctx);
         }
-        SystemTxInputV2::HookEvents => {
+        SystemTx::HookEvents => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_hook_events(&ctx)?;
         }
-        SystemTxInputV2::RadiclePublication { batch } => {
+        SystemTx::RadiclePublication { batch } => {
             outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
     }

@@ -10,8 +10,8 @@ use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
-        SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT,
-        STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
+        SystemTx, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT,
+        TEE_BOOTSTRAP_SELECTOR,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -324,7 +324,7 @@ fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
 #[test]
 fn ost3_system_calldata_roundtrips_the_canonical_bootstrap() {
     let payload = fixture();
-    let calldata = SystemTxInputV2::TeeBootstrap {
+    let calldata = SystemTx::TeeBootstrap {
         payload: payload.clone(),
     }
     .encode()
@@ -332,8 +332,8 @@ fn ost3_system_calldata_roundtrips_the_canonical_bootstrap() {
     assert_eq!(&calldata[..4], b"OST3");
     assert_eq!(TEE_BOOTSTRAP_SELECTOR, *b"OST3");
     assert_eq!(
-        SystemTxInputV2::decode(&calldata).unwrap(),
-        SystemTxInputV2::TeeBootstrap { payload }
+        SystemTx::decode(&calldata).unwrap(),
+        SystemTx::TeeBootstrap { payload }
     );
 }
 
@@ -346,22 +346,15 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
             &TeeRegistryGasScheduleV1::normative(),
         )
         .unwrap();
-    let cycle = SystemTxInputV2::CycleTick.encode().unwrap();
-    let bootstrap = SystemTxInputV2::TeeBootstrap { payload }.encode().unwrap();
+    let cycle = SystemTx::CycleTick.encode().unwrap();
+    let bootstrap = SystemTx::TeeBootstrap { payload }.encode().unwrap();
     let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
     let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
     let cycle_remainder = 77_777;
     let block_gas_limit =
         cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder;
 
-    let plan = SystemTxVisibleGasPlan::new(
-        block_gas_limit,
-        &[
-            (SystemTxKind::CycleTick, cycle),
-            (SystemTxKind::TeeBootstrap, bootstrap),
-        ],
-    )
-    .unwrap();
+    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &[cycle, bootstrap]).unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
     assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
@@ -476,26 +469,25 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         tee_expired_target_exclusions_hash: B256::ZERO,
     };
     let inputs = vec![
-        SystemTxInputV2::CycleTick,
-        SystemTxInputV2::BoundaryOutcome { artifact },
-        SystemTxInputV2::TeeBootstrap { payload },
-        SystemTxInputV2::OracleSlashWindow,
-        SystemTxInputV2::HookEvents,
+        SystemTx::CycleTick,
+        SystemTx::BoundaryOutcome { artifact },
+        SystemTx::TeeBootstrap { payload },
+        SystemTx::OracleSlashWindow,
+        SystemTx::HookEvents,
     ];
     let encoded = inputs
         .into_iter()
-        .map(|input| (input.kind(), input.encode().unwrap()))
+        .map(|input| input.encode().unwrap())
         .collect::<Vec<_>>();
-    let bootstrap_len = encoded[3].1.len();
+    let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
     let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()
-        .map(|(ordinal, (kind, calldata))| {
+        .map(|(ordinal, calldata)| {
             build_unsigned_system_tx_with_gas_limit(
                 outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                    kind,
                     ordinal: u8::try_from(ordinal).unwrap(),
                     block_number: 1,
                     chain_id: 1,
@@ -628,7 +620,7 @@ fn assembly_rejects_logical_work_over_bootstrap_gas_cap() {
 fn canonical_bootstrap_protocol_fingerprint_is_stable() {
     let payload = fixture();
     let encoded = codec::encode_canonical(&payload).unwrap();
-    let calldata = SystemTxInputV2::TeeBootstrap {
+    let calldata = SystemTx::TeeBootstrap {
         payload: payload.clone(),
     }
     .encode()

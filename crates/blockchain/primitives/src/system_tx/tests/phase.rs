@@ -41,7 +41,7 @@ fn initial_for_block_block_1_is_cycletick() {
     // block 1 (genesis bootstrap) skips Phase 1 and starts at CycleTick.
     let cursor = SystemTxPhase::initial_for_block(1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
-    assert_eq!(cursor.expected_kind(), Some(SystemTxKind::CycleTick));
+    assert_eq!(cursor.expected_selector(), Some(CYCLE_TICK_SELECTOR));
     assert_eq!(cursor.body_index(), Some(0));
 }
 
@@ -63,8 +63,8 @@ fn initial_for_block_block_2_is_phase1_preexecuted() {
         assert_eq!(tx_hash, B256::ZERO);
     }
     assert_eq!(
-        cursor.expected_kind(),
-        Some(SystemTxKind::CertifiedParentAccounting)
+        cursor.expected_selector(),
+        Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR)
     );
 }
 
@@ -77,7 +77,7 @@ fn initial_for_block_block_0_is_cycletick_placeholder() {
 }
 
 #[test]
-fn expected_kind_returns_phase_for_each_variant() {
+fn expected_selector_returns_phase_for_each_variant() {
     let cases = [
         (
             SystemTxPhase::Phase1Preexecuted {
@@ -85,40 +85,43 @@ fn expected_kind_returns_phase_for_each_variant() {
                 tx_hash: B256::ZERO,
                 receipt_index: 0,
             },
-            Some(SystemTxKind::CertifiedParentAccounting),
+            Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
         ),
         (
             SystemTxPhase::LateFinalizeCredits { body_index: 1 },
-            Some(SystemTxKind::LateFinalizeCredits),
+            Some(LATE_FINALIZE_CREDITS_SELECTOR),
         ),
         (
             SystemTxPhase::CycleTick { body_index: 2 },
-            Some(SystemTxKind::CycleTick),
+            Some(CYCLE_TICK_SELECTOR),
         ),
         (
             SystemTxPhase::BoundaryOutcomeOptional { body_index: 4 },
-            Some(SystemTxKind::BoundaryOutcome),
+            Some(BOUNDARY_OUTCOME_SELECTOR),
         ),
         (
             SystemTxPhase::TeeBootstrapOptional { body_index: 5 },
-            Some(SystemTxKind::TeeBootstrap),
+            Some(TEE_BOOTSTRAP_SELECTOR),
         ),
         (
             SystemTxPhase::OracleSlashWindow { body_index: 6 },
-            Some(SystemTxKind::OracleSlashWindow),
+            Some(ORACLE_SLASH_WINDOW_SELECTOR),
         ),
         (
             SystemTxPhase::HookEvents { body_index: 7 },
-            Some(SystemTxKind::HookEvents),
+            Some(HOOK_EVENTS_SELECTOR),
         ),
         (
             SystemTxPhase::RadiclePublication { body_index: 8 },
-            Some(SystemTxKind::RadiclePublication),
+            Some(RADICLE_PUBLICATION_SELECTOR),
         ),
         (SystemTxPhase::UserTxs, None),
     ];
     for (phase, expected) in cases {
-        assert_eq!(phase.expected_kind(), expected, "phase={phase:?}");
+        assert_eq!(phase.expected_selector(), expected, "phase={phase:?}");
+        for input in inputs() {
+            assert_eq!(phase.accepts(&input), expected == Some(input.selector()));
+        }
     }
 }
 

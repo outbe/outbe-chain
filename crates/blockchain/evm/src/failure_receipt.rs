@@ -10,7 +10,7 @@
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,
 //! `BoundaryOutcome`, `TeeBootstrap`) fails the block. See
-//! `SystemTxKind::revert_fails_block`.
+//! `SystemTx::revert_fails_block`.
 //!
 //! Instead, it pushes a synthetic receipt with `success=0` and exactly one
 //! log. The log carries a stable `code` plus a free-form `reason` string.

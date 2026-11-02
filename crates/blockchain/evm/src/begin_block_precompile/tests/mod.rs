@@ -1,6 +1,6 @@
 use super::*;
 use crate::executor::AccountedParentArtifact;
-use crate::system_tx::SystemTxInputV2;
+use crate::system_tx::SystemTx;
 use alloy_primitives::address;
 use alloy_primitives::keccak256;
 use alloy_primitives::Address;

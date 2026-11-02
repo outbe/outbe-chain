@@ -6,7 +6,7 @@ use alloy_sol_types::SolEvent;
 use crate::addresses::{STABLECOIN_FACTORY_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS};
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
-/// [`SystemTxKind::HookEvents`](crate::system_tx::SystemTxKind::HookEvents)
+/// [`SystemTx::HookEvents`](crate::system_tx::SystemTx::HookEvents)
 /// begin-zone system transaction receipt.
 pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
     VOTE_ADDRESS,

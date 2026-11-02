@@ -80,13 +80,14 @@ pub(super) fn validate_envelopes(
     chain_id: u64,
 ) -> Result<(), BlockValidationError> {
     let mut canonical_inputs = Vec::with_capacity(layout.system_tx_count());
+    let mut names = Vec::with_capacity(layout.system_tx_count());
     for tx in layout.begin.iter().chain(layout.end.iter()) {
         let tx = *tx;
-        let input = outbe_primitives::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
+        let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
             .map_err(BlockValidationError::DecodeSystemTxInput)?;
-        let kind = input.kind();
+        names.push(input.name());
         let calldata = input.encode()?;
-        canonical_inputs.push((kind, calldata));
+        canonical_inputs.push(calldata);
     }
     let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
         header.gas_limit(),
@@ -94,11 +95,12 @@ pub(super) fn validate_envelopes(
     )
     .map_err(BlockValidationError::PlanVisibleGas)?;
 
-    for (ordinal, (tx, (kind, calldata))) in layout
+    for (ordinal, ((tx, calldata), kind)) in layout
         .begin
         .iter()
         .chain(layout.end.iter())
         .zip(canonical_inputs)
+        .zip(names)
         .enumerate()
     {
         let tx = *tx;
@@ -107,7 +109,6 @@ pub(super) fn validate_envelopes(
             .map_err(|_| BlockValidationError::OrdinalOverflow(ordinal))?;
         let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                kind,
                 ordinal,
                 block_number: header.number(),
                 chain_id,

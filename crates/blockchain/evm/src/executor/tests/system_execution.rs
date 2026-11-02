@@ -344,6 +344,24 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         expected_code_topic,
         "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
     );
+    // Pin the real execution path's pre-refactor reason, including the unquoted phase name.
+    let expected_reason = concat!(
+        "system tx OracleSlashWindow did not succeed at body_index=2: ",
+        "Revert { gas: ResultGas { total_gas_spent: 42000, state_gas_spent: 0, ",
+        "refunded: 0, floor_gas: 0 }, logs: [], output: ",
+        "0x666f72636564204f757462652073797374656d2d63616c6c20726576657274 }"
+    );
+    let mut expected_log_data = vec![0u8; 64];
+    expected_log_data[31] = 32;
+    expected_log_data[32..64]
+        .copy_from_slice(&U256::from(expected_reason.len()).to_be_bytes::<32>());
+    expected_log_data.extend_from_slice(expected_reason.as_bytes());
+    expected_log_data.resize(64 + expected_reason.len().div_ceil(32) * 32, 0);
+    assert_eq!(
+        failure_receipt.logs[0].data.data.as_ref(),
+        expected_log_data.as_slice(),
+        "GAS-11: soft-failure reason bytes must remain unchanged"
+    );
 
     let hook_events_gas = executor
         .execute_transaction(hook_events_tx)
@@ -626,14 +644,8 @@ fn verifier_rejects_begin_system_tx_signature_hash_mismatch() {
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
 
-    let wrong_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CycleTick,
-        0,
-        2,
-        CHAIN_ID,
-        SystemTxInputV2::CycleTick.encode().unwrap(),
-    )
-    .unwrap();
+    let wrong_unsigned =
+        build_unsigned_system_tx(0, 2, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
     let wrong_signed = signer.sign_unsigned(wrong_unsigned).unwrap();
     let wrong_recovered = reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
     let canonical = begin_system_txs_for_test(
@@ -687,20 +699,13 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
     })
     .expect("extra_data encodes");
 
-    let cycle_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CycleTick,
-        0,
-        1,
-        CHAIN_ID,
-        SystemTxInputV2::CycleTick.encode().unwrap(),
-    )
-    .unwrap();
+    let cycle_unsigned =
+        build_unsigned_system_tx(0, 1, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
     let boundary_unsigned = build_unsigned_system_tx(
-        SystemTxKind::BoundaryOutcome,
         1,
         1,
         CHAIN_ID,
-        SystemTxInputV2::BoundaryOutcome {
+        SystemTx::BoundaryOutcome {
             artifact: tx_artifact,
         }
         .encode()
@@ -751,10 +756,9 @@ fn verifier_rejects_begin_system_tx_signer_mismatch() {
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
-    let cycle_input = SystemTxInputV2::CycleTick.encode().unwrap();
+    let cycle_input = SystemTx::CycleTick.encode().unwrap();
     let unsigned = build_unsigned_system_tx_with_gas_limit(
         outbe_primitives::system_tx::SystemTxEnvelopeInput {
-            kind: SystemTxKind::CycleTick,
             ordinal: 0,
             block_number: 1,
             chain_id: CHAIN_ID,

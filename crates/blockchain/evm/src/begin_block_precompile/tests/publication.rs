@@ -126,7 +126,7 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
             })
             .collect(),
     };
-    let input = SystemTxInputV2::RadiclePublication {
+    let input = SystemTx::RadiclePublication {
         batch: batch.clone(),
     }
     .encode()
@@ -140,7 +140,7 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
         .is_err());
     let mut invalid = batch;
     invalid.attestations[3].signature = invalid.attestations[0].signature;
-    let invalid = SystemTxInputV2::RadiclePublication { batch: invalid }
+    let invalid = SystemTx::RadiclePublication { batch: invalid }
         .encode()
         .unwrap();
     assert!(provider

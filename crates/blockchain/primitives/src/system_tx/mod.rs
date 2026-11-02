@@ -22,23 +22,35 @@ pub mod binding;
 mod envelope;
 mod gas;
 mod input;
-mod kind;
 mod layout;
 mod phase;
 mod witness;
 
-pub use input::SystemTxInputV2;
+pub use input::SystemTx;
 
-pub use kind::{
-    decode_system_tx_kind, is_reserved_system_tx, selector_from_input,
-    system_tx_kind_from_selector, BodyZone, SystemTxKind,
-};
+/// Body-zone position of a system transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyZone {
+    BeginBlock,
+    EndBlock,
+}
+
+pub fn selector_from_input(input: &[u8]) -> Result<[u8; 4], SystemTxError> {
+    input
+        .get(..4)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(SystemTxError::InputTooShort { len: input.len() })
+}
+
+pub fn is_reserved_system_tx<T: alloy_consensus::Transaction + ?Sized>(tx: &T) -> bool {
+    tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
+}
 
 pub use phase::SystemTxPhase;
 
 pub use layout::{
-    expected_begin_block_kinds, expected_begin_block_kinds_for_publication,
-    expected_end_block_kinds, split_system_layout, validate_active_system_tx_set,
+    expected_begin_block_selectors, expected_begin_block_selectors_for_publication,
+    expected_end_block_selectors, split_system_layout, validate_active_system_tx_set,
     validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
@@ -57,13 +69,13 @@ pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
 /// rejects any other value, so V1 bodies with `1` are rejected at every height.
 pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
 
-/// Selector for [`SystemTxKind::CertifiedParentAccounting`] (V2 OSA3).
+/// Selector for [`SystemTx::CertifiedParentAccounting`] (V2 OSA3).
 pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = *b"OSA3";
-/// Selector for [`SystemTxKind::CycleTick`] (V2 OSC2).
+/// Selector for [`SystemTx::CycleTick`] (V2 OSC2).
 pub const CYCLE_TICK_SELECTOR: [u8; 4] = *b"OSC2";
-/// Selector for [`SystemTxKind::BoundaryOutcome`] (V2 OSB2).
+/// Selector for [`SystemTx::BoundaryOutcome`] (V2 OSB2).
 pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = *b"OSB2";
-/// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
+/// Selector for [`SystemTx::OracleSlashWindow`] (V2 OSO2).
 pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
 /// Selector for the evidence-carrying V1 TEE bootstrap payload.
 ///
@@ -71,9 +83,9 @@ pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
 /// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
 /// networks.
 pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
-/// Selector for [`SystemTxKind::LateFinalizeCredits`].
+/// Selector for [`SystemTx::LateFinalizeCredits`].
 pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
-/// Selector for [`SystemTxKind::HookEvents`] (V2 OSH2).
+/// Selector for [`SystemTx::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
 pub const RADICLE_PUBLICATION_SELECTOR: [u8; 4] = *b"OSP2";
 
@@ -124,16 +136,16 @@ pub enum SystemTxError {
     UnknownSelector([u8; 4]),
     #[error("unsupported system tx input version: {0}")]
     UnsupportedVersion(u8),
-    #[error("unexpected body for {kind:?}: {len} bytes")]
-    UnexpectedBody { kind: SystemTxKind, len: usize },
+    #[error("unexpected body for {kind}: {len} bytes")]
+    UnexpectedBody { kind: &'static str, len: usize },
     #[error("missing boundary outcome body")]
     MissingBoundaryOutcomeBody,
     #[error("system tx codec error: {0}")]
     Codec(String),
-    #[error("calldata kind mismatch: expected {expected:?}, actual {actual:?}")]
+    #[error("calldata kind mismatch: expected {expected}, actual {actual}")]
     CalldataKindMismatch {
-        expected: SystemTxKind,
-        actual: SystemTxKind,
+        expected: &'static str,
+        actual: &'static str,
     },
     #[error("system tx ordinal {ordinal} exceeds max {max}")]
     OrdinalTooLarge { ordinal: u8, max: u8 },
@@ -154,19 +166,17 @@ pub enum SystemTxError {
     },
     #[error("system tx visible gas plan contains more than one CycleTick")]
     DuplicateCycleTickGasBudget,
-    #[error("system tx kind {kind:?} is in {actual:?} zone, expected {expected:?}")]
+    #[error("system tx kind {kind} is in {actual:?} zone, expected {expected:?}")]
     SystemTxInWrongZone {
-        kind: SystemTxKind,
+        kind: &'static str,
         expected: BodyZone,
         actual: BodyZone,
     },
-    #[error(
-        "system tx kind order violation in {zone:?}: previous {previous:?}, current {current:?}"
-    )]
+    #[error("system tx kind order violation in {zone:?}: previous {previous}, current {current}")]
     OutOfOrder {
         zone: BodyZone,
-        previous: SystemTxKind,
-        current: SystemTxKind,
+        previous: &'static str,
+        current: &'static str,
     },
     #[error("reserved system tx found in user zone at transaction index {index}")]
     MidBlockSystemTx { index: usize },
@@ -176,10 +186,10 @@ pub enum SystemTxError {
         "active system tx set mismatch: expected begin {expected_begin:?}, expected end {expected_end:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
     )]
     ActiveSystemTxSetMismatch {
-        expected_begin: Vec<SystemTxKind>,
-        expected_end: Vec<SystemTxKind>,
-        actual_begin: Vec<SystemTxKind>,
-        actual_end: Vec<SystemTxKind>,
+        expected_begin: Vec<[u8; 4]>,
+        expected_end: Vec<[u8; 4]>,
+        actual_begin: Vec<[u8; 4]>,
+        actual_end: Vec<[u8; 4]>,
     },
     #[error(
         "V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"

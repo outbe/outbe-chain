@@ -1,7 +1,7 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_publication, SystemTxError, SystemTxInputV2,
-    SystemTxKind, SystemTxLayout,
+    split_system_layout, validate_system_tx_set_for_publication, SystemTx, SystemTxError,
+    SystemTxLayout, TEE_BOOTSTRAP_SELECTOR,
 };
 use crate::{
     error::PrecompileError,
@@ -73,7 +73,7 @@ pub fn validate_system_layout<'a>(
         &artifacts.consensus_header_artifact,
         Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
     );
-    let has_tee_bootstrap = layout.has_begin_kind(SystemTxKind::TeeBootstrap);
+    let has_tee_bootstrap = layout.has_begin_selector(TEE_BOOTSTRAP_SELECTOR);
     validate_system_tx_set_for_publication(
         &layout,
         header.number(),
@@ -95,8 +95,8 @@ pub fn validate_publication_binding(
     };
     for tx in &layout.begin {
         let tx = *tx;
-        if let SystemTxInputV2::RadiclePublication { batch } =
-            SystemTxInputV2::decode(tx.input().as_ref()).map_err(PublicationBindingError::Decode)?
+        if let SystemTx::RadiclePublication { batch } =
+            SystemTx::decode(tx.input().as_ref()).map_err(PublicationBindingError::Decode)?
         {
             return if &batch == expected {
                 Ok(())
@@ -123,9 +123,9 @@ pub fn validate_parent_accounting_binding(
         .ok_or(ParentAccountingBindingError::Missing {
             block_number: header.number(),
         })?;
-    let input = SystemTxInputV2::decode(tx.input().as_ref())
-        .map_err(ParentAccountingBindingError::Decode)?;
-    let SystemTxInputV2::CertifiedParentAccounting { metadata } = input else {
+    let input =
+        SystemTx::decode(tx.input().as_ref()).map_err(ParentAccountingBindingError::Decode)?;
+    let SystemTx::CertifiedParentAccounting { metadata } = input else {
         return Err(ParentAccountingBindingError::WrongKind);
     };
     if metadata.finalized_block_hash != header.parent_hash() {
@@ -151,9 +151,8 @@ pub fn validate_boundary_outcome_binding(
     let mut matched = false;
     for tx in layout.begin.iter().chain(layout.end.iter()) {
         let tx = *tx;
-        let input =
-            SystemTxInputV2::decode(tx.input().as_ref()).map_err(BoundaryBindingError::Decode)?;
-        if let SystemTxInputV2::BoundaryOutcome { artifact } = input {
+        let input = SystemTx::decode(tx.input().as_ref()).map_err(BoundaryBindingError::Decode)?;
+        if let SystemTx::BoundaryOutcome { artifact } = input {
             if &artifact != header_artifact {
                 return Err(BoundaryBindingError::Mismatch);
             }

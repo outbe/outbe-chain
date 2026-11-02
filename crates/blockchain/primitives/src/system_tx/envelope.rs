@@ -4,14 +4,13 @@ use alloy_primitives::TxKind;
 use alloy_primitives::U256;
 
 use super::{
-    system_tx_intrinsic_gas, SystemTxError, SystemTxInputV2, SystemTxKind,
-    MAX_SYSTEM_TXS_PER_BLOCK, OUTBE_SYSTEM_TX_ADDRESS,
+    system_tx_intrinsic_gas, SystemTx, SystemTxError, MAX_SYSTEM_TXS_PER_BLOCK,
+    OUTBE_SYSTEM_TX_ADDRESS,
 };
 
 /// Ordered system-transaction envelope inputs with an explicit visible gas limit.
 #[derive(Debug)]
 pub struct SystemTxEnvelopeInput {
-    pub kind: SystemTxKind,
     pub ordinal: u8,
     pub block_number: u64,
     pub chain_id: u64,
@@ -36,7 +35,6 @@ pub fn system_tx_nonce(block_number: u64, ordinal: u8) -> Result<u64, SystemTxEr
 }
 
 pub fn build_unsigned_system_tx(
-    kind: SystemTxKind,
     ordinal: u8,
     block_number: u64,
     chain_id: u64,
@@ -44,7 +42,6 @@ pub fn build_unsigned_system_tx(
 ) -> Result<TxLegacy, SystemTxError> {
     let gas_limit = system_tx_intrinsic_gas(calldata.as_ref())?;
     build_unsigned_system_tx_with_gas_limit(SystemTxEnvelopeInput {
-        kind,
         ordinal,
         block_number,
         chain_id,
@@ -57,7 +54,6 @@ pub fn build_unsigned_system_tx_with_gas_limit(
     input: SystemTxEnvelopeInput,
 ) -> Result<TxLegacy, SystemTxError> {
     let SystemTxEnvelopeInput {
-        kind,
         ordinal,
         block_number,
         chain_id,
@@ -65,13 +61,7 @@ pub fn build_unsigned_system_tx_with_gas_limit(
         gas_limit,
     } = input;
 
-    let actual = SystemTxInputV2::decode(calldata.as_ref())?.kind();
-    if actual != kind {
-        return Err(SystemTxError::CalldataKindMismatch {
-            expected: kind,
-            actual,
-        });
-    }
+    SystemTx::decode(calldata.as_ref())?;
     let intrinsic_gas = system_tx_intrinsic_gas(calldata.as_ref())?;
     if gas_limit < intrinsic_gas {
         return Err(SystemTxError::GasLimitBelowIntrinsic {

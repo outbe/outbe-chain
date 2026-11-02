@@ -8,8 +8,10 @@ use crate::reshare_artifact::LateFinalizeCreditsArtifact;
 use alloy_primitives::Bytes;
 
 use super::{
-    selector_from_input, system_tx_kind_from_selector, SystemTxError, SystemTxKind,
-    SYSTEM_TX_INPUT_VERSION,
+    selector_from_input, BodyZone, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
+    SYSTEM_TX_INPUT_VERSION, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Versioned calldata body system transactions.
@@ -22,7 +24,7 @@ use super::{
 /// It carries the V2 `committee_set_hash`, `vrf_material_version`,
 /// `vrf_group_public_key_hash`, and `proof_kind` fields that the verifier needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SystemTxInputV2 {
+pub enum SystemTx {
     CertifiedParentAccounting {
         metadata: CertifiedParentAccountingMetadata,
     },
@@ -43,24 +45,71 @@ pub enum SystemTxInputV2 {
     },
 }
 
-impl SystemTxInputV2 {
-    pub const fn kind(&self) -> SystemTxKind {
+impl SystemTx {
+    pub const fn name(&self) -> &'static str {
         match self {
-            Self::CertifiedParentAccounting { .. } => SystemTxKind::CertifiedParentAccounting,
-            Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
-            Self::CycleTick => SystemTxKind::CycleTick,
-            Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
-            Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
-            Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
-            Self::HookEvents => SystemTxKind::HookEvents,
-            Self::RadiclePublication { .. } => SystemTxKind::RadiclePublication,
+            Self::CertifiedParentAccounting { .. } => "CertifiedParentAccounting",
+            Self::LateFinalizeCredits { .. } => "LateFinalizeCredits",
+            Self::CycleTick => "CycleTick",
+            Self::BoundaryOutcome { .. } => "BoundaryOutcome",
+            Self::TeeBootstrap { .. } => "TeeBootstrap",
+            Self::OracleSlashWindow => "OracleSlashWindow",
+            Self::HookEvents => "HookEvents",
+            Self::RadiclePublication { .. } => "RadiclePublication",
+        }
+    }
+
+    pub const fn selector(&self) -> [u8; 4] {
+        match self {
+            Self::CertifiedParentAccounting { .. } => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+            Self::LateFinalizeCredits { .. } => LATE_FINALIZE_CREDITS_SELECTOR,
+            Self::CycleTick => CYCLE_TICK_SELECTOR,
+            Self::BoundaryOutcome { .. } => BOUNDARY_OUTCOME_SELECTOR,
+            Self::TeeBootstrap { .. } => TEE_BOOTSTRAP_SELECTOR,
+            Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
+            Self::HookEvents => HOOK_EVENTS_SELECTOR,
+            Self::RadiclePublication { .. } => RADICLE_PUBLICATION_SELECTOR,
+        }
+    }
+
+    pub const fn body_zone(&self) -> BodyZone {
+        BodyZone::BeginBlock
+    }
+
+    /// Economic and consensus-critical phases fail the block on revert or halt.
+    /// Oracle and hook failures are soft only within the aggregate work budget.
+    pub const fn revert_fails_block(&self) -> bool {
+        !matches!(self, Self::OracleSlashWindow | Self::HookEvents)
+    }
+
+    pub const fn begin_order(&self) -> Option<u8> {
+        Some(match self {
+            Self::CertifiedParentAccounting { .. } => 0,
+            Self::LateFinalizeCredits { .. } => 1,
+            Self::CycleTick => 2,
+            Self::BoundaryOutcome { .. } => 3,
+            Self::TeeBootstrap { .. } => 4,
+            Self::OracleSlashWindow => 5,
+            Self::HookEvents => 6,
+            Self::RadiclePublication { .. } => 7,
+        })
+    }
+
+    pub const fn end_order(&self) -> Option<u8> {
+        None
+    }
+
+    pub const fn order_in(&self, zone: BodyZone) -> Option<u8> {
+        match zone {
+            BodyZone::BeginBlock => self.begin_order(),
+            BodyZone::EndBlock => self.end_order(),
         }
     }
 
     /// Encode as `selector(4) || version(1) || canonical_body`.
     pub fn encode(&self) -> Result<Bytes, SystemTxError> {
         let mut out = Vec::new();
-        let selector = self.kind().selector();
+        let selector = self.selector();
         out.extend_from_slice(&selector);
         out.push(SYSTEM_TX_INPUT_VERSION);
         match self {
@@ -106,34 +155,44 @@ impl SystemTxInputV2 {
             return Err(SystemTxError::InputTooShort { len: data.len() });
         }
         let selector = selector_from_input(data)?;
-        let kind = system_tx_kind_from_selector(selector)?;
+        if !matches!(
+            selector,
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR
+                | LATE_FINALIZE_CREDITS_SELECTOR
+                | CYCLE_TICK_SELECTOR
+                | BOUNDARY_OUTCOME_SELECTOR
+                | TEE_BOOTSTRAP_SELECTOR
+                | ORACLE_SLASH_WINDOW_SELECTOR
+                | HOOK_EVENTS_SELECTOR
+                | RADICLE_PUBLICATION_SELECTOR
+        ) {
+            return Err(SystemTxError::UnknownSelector(selector));
+        }
         let version = data[4];
         if version != SYSTEM_TX_INPUT_VERSION {
             return Err(SystemTxError::UnsupportedVersion(version));
         }
         let body = &data[5..];
-        match kind {
-            SystemTxKind::CertifiedParentAccounting => Ok(Self::CertifiedParentAccounting {
+        match selector {
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR => Ok(Self::CertifiedParentAccounting {
                 metadata: CertifiedParentAccountingMetadata::decode(body)
                     .map_err(SystemTxError::from_precompile)?,
             }),
-            SystemTxKind::LateFinalizeCredits => Ok(Self::LateFinalizeCredits {
+            LATE_FINALIZE_CREDITS_SELECTOR => Ok(Self::LateFinalizeCredits {
                 // Empty body => empty (no-op) artifact. The matured-window close
                 // still runs on execution.
                 artifact: decode_late_finalize_credits_artifact(body)
                     .map_err(SystemTxError::from_precompile)?
                     .unwrap_or_default(),
             }),
-            SystemTxKind::CycleTick => Self::decode_empty_body(kind, body, Self::CycleTick),
-            SystemTxKind::OracleSlashWindow => {
-                Self::decode_empty_body(kind, body, Self::OracleSlashWindow)
-            }
-            SystemTxKind::HookEvents => Self::decode_empty_body(kind, body, Self::HookEvents),
-            SystemTxKind::RadiclePublication => Ok(Self::RadiclePublication {
+            CYCLE_TICK_SELECTOR => Self::decode_empty_body(body, Self::CycleTick),
+            ORACLE_SLASH_WINDOW_SELECTOR => Self::decode_empty_body(body, Self::OracleSlashWindow),
+            HOOK_EVENTS_SELECTOR => Self::decode_empty_body(body, Self::HookEvents),
+            RADICLE_PUBLICATION_SELECTOR => Ok(Self::RadiclePublication {
                 batch: crate::radicle_publication::PublicationBatch::from_bytes(body)
                     .map_err(SystemTxError::from_precompile)?,
             }),
-            SystemTxKind::BoundaryOutcome => {
+            BOUNDARY_OUTCOME_SELECTOR => {
                 let Some(artifact) =
                     decode_boundary_artifact(body).map_err(SystemTxError::from_precompile)?
                 else {
@@ -141,22 +200,19 @@ impl SystemTxInputV2 {
                 };
                 Ok(Self::BoundaryOutcome { artifact })
             }
-            SystemTxKind::TeeBootstrap => Ok(Self::TeeBootstrap {
+            TEE_BOOTSTRAP_SELECTOR => Ok(Self::TeeBootstrap {
                 payload: crate::tee_bootstrap_v2::codec::decode_canonical(body)
                     .map_err(SystemTxError::codec)?,
             }),
+            other => Err(SystemTxError::UnknownSelector(other)),
         }
     }
-    fn decode_empty_body(
-        kind: SystemTxKind,
-        body: &[u8],
-        value: Self,
-    ) -> Result<Self, SystemTxError> {
+    fn decode_empty_body(body: &[u8], value: Self) -> Result<Self, SystemTxError> {
         if body.is_empty() {
             Ok(value)
         } else {
             Err(SystemTxError::UnexpectedBody {
-                kind,
+                kind: value.name(),
                 len: body.len(),
             })
         }

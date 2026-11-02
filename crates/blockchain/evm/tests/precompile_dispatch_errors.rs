@@ -8,7 +8,7 @@ use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::{
     addresses::{CCA_REGISTRY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS},
     storage::gas::PRECOMPILE_BASE_GAS,
-    system_tx::SystemTxInputV2,
+    system_tx::SystemTx,
 };
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
@@ -120,7 +120,7 @@ fn transact(db: CacheDB<EmptyDB>, to: Address, data: Bytes, gas: u64) -> Executi
 
 #[test]
 fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
-    let data = SystemTxInputV2::CycleTick.encode().unwrap();
+    let data = SystemTx::CycleTick.encode().unwrap();
     assert_eq!(data.len(), 5);
     let intrinsic = 21_000
         + data
@@ -163,7 +163,7 @@ fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
 
 #[test]
 fn cycle_probe_requires_both_system_callee_and_system_caller() {
-    let data = SystemTxInputV2::CycleTick.encode().unwrap();
+    let data = SystemTx::CycleTick.encode().unwrap();
     let intrinsic = 21_000
         + data
             .iter()
@@ -197,7 +197,7 @@ fn cycle_probe_requires_both_system_callee_and_system_caller() {
 
 #[test]
 fn system_cycle_probe_out_of_gas_is_an_evm_halt() {
-    let data = SystemTxInputV2::CycleTick.encode().unwrap();
+    let data = SystemTx::CycleTick.encode().unwrap();
     let intrinsic = 21_000
         + data
             .iter()
