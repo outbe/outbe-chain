@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Script} from "forge-std/Script.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Deploy} from "./Create3Deploy.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
@@ -15,6 +16,15 @@ import {SALT_VERSION} from "@shared/SaltVersion.sol";
 ///      project may build it, because its address depends on the bytecode its compiler emits.
 ///      Proxy addresses then depend only on `(factory, deployer, salt)`.
 abstract contract BaseScript is Script {
+    /// @notice The proxy belongs to governance (HandOver.s.sol). Change it by a governance
+    ///         proposal, not by a deploy.
+    error HandedOverToGovernance(address proxy);
+
+    /// @notice Reverts when `deployer` is no longer the admin of `proxy`.
+    function requireDeployerAdmin(address proxy, address deployer) internal view {
+        if (!IAccessControl(proxy).hasRole(bytes32(0), deployer)) revert HandedOverToGovernance(proxy);
+    }
+
     /// @notice CREATE3 salt version. `SALT_VERSION` in the env overrides it, so a test run can
     ///         target a throwaway address set without disturbing the pinned production set. A
     ///         blank or unset value selects production.

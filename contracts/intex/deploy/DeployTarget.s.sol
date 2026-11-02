@@ -76,6 +76,11 @@ contract DeployTarget is BaseScript {
             address(new TargetRouter(bridge, originChainId)),
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
+        requireDeployerAdmin(nft, deployer);
+        requireDeployerAdmin(escrow, deployer);
+        requireDeployerAdmin(auction, deployer);
+        requireDeployerAdmin(nftBridge, deployer);
+        requireDeployerAdmin(router, deployer);
 
         // Winners issue their own units through the auction.
         if (address(IntexAuction(auction).intexContract()) != nft) IntexAuction(auction).setIntexContract(nft);
