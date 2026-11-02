@@ -538,6 +538,8 @@ fn configuration_rejects_ambiguous_or_incompatible_markets() {
     config.markets[0].pool = protocols()[0].clone();
     config.chain_id = 56;
     assert!(config.validate().is_err());
+    config.chain_id = 11155111;
+    config.validate().unwrap();
     config.chain_id = 1;
     config.markets[0].quote_token = config.markets[0].base_token;
     assert!(config.validate().is_err());

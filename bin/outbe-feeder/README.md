@@ -226,7 +226,7 @@ volume-weighted mean rounded down.
 | `huobi` | Working | Huobi WebSocket ticker/candle streams with REST bootstrap fallback |
 | `mexc` | Working | MEXC protobuf WebSocket ticker/candle streams with REST bootstrap fallback |
 | `coinbase` | Working | Coinbase WebSocket ticker stream with REST bootstrap fallback |
-| `uniswap` | Implemented | Ethereum V2/V3/V4 pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
+| `uniswap` | Implemented | Ethereum or Sepolia V2/V3/V4 pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
 | `pancakeswap` | Implemented | BNB Chain V2/V3/Infinity CL/Bin pool spot rate and 1h COEN swap volume, read a few blocks behind the head |
 
 Provider errors, non-success responses, unsupported custom pairs, and timeouts are logged and skipped. The feeder does not fabricate fallback prices from failed providers.
@@ -322,7 +322,7 @@ Each `[[dex_providers]]` contains:
 
 | Field | Meaning |
 |---|---|
-| `name`, `chain_id` | `uniswap`, `1` (Ethereum), or `pancakeswap`, `56` (BNB Chain) |
+| `name`, `chain_id` | `uniswap`, `1` (Ethereum) or `11155111` (Sepolia), or `pancakeswap`, `56` (BNB Chain) |
 | `rpc_endpoint` | HTTP(S) JSON-RPC, separate from the destination `[chain]` RPC. Omitted takes `rpc_endpoints.<chain_id>` |
 | `poll_interval_secs` | Poll/retry delay, default 2 seconds, allowed 1–10 |
 | `log_chunk_blocks` | Maximum blocks per log request, default 2000, allowed 1–10000; errors reduce the range down to one block |
