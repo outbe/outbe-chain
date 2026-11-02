@@ -102,19 +102,20 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// One-shot bootstrap:
-    /// 1. Accepts the pending ownership of the local ISM.
-    /// 2. Verifies that the controller already owns the ICA router.
+    /// 1. Verifies that the owner (`CROSSCHAIN_GOV_ADDRESS`) already owns the
+    ///    ICA router.
+    /// 2. The owner accepts the pending ownership of the local ISM.
     /// 3. Stores the router plus the whole `domain -> ISM` table.
-    /// 4. Dispatches `acceptOwnership()` to every remote ISM through the
+    /// 4. The owner sends `acceptOwnership()` to every remote ISM through its
     ///    Interchain Account.
     ///
-    /// The controller must have funds first, because each dispatch pays the
-    /// IGP quote.
+    /// The owner must have funds first, because each remote call pays the IGP
+    /// quote.
     ///
     /// Only the genesis-seeded bootstrap admin may call it. The admin must
     /// also be the current owner of the local ISM (the deployer that staged
-    /// `transferOwnership` to this precompile). The ISM address comes from
-    /// calldata, so the ISM owner check alone does not restrict the caller.
+    /// `transferOwnership` to the owner). The ISM address comes from calldata,
+    /// so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
         caller: Address,

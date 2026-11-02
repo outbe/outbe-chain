@@ -26,10 +26,10 @@ pub enum HyperlaneControllerError {
     #[error("caller {caller} is not the current owner {owner} of the local ISM")]
     NotIsmOwner { caller: Address, owner: Address },
 
-    #[error("local ISM pending owner is {pending}, expected the controller")]
+    #[error("local ISM pending owner is {pending}, expected the owner")]
     IsmNotPendingToController { pending: Address },
 
-    #[error("contract {contract} is owned by {owner}, expected the controller")]
+    #[error("contract {contract} is owned by {owner}, expected the owner")]
     NotOwnedByController { contract: Address, owner: Address },
 
     #[error("address must be non-zero")]
