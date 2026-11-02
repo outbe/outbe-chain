@@ -49,6 +49,7 @@ contract DeploySolverEscrow is Script {
             )
         );
         allocator.setArbiter(address(escrow));
+        console2.log("SolverAllocator:", address(allocator));
         return address(escrow);
     }
 }

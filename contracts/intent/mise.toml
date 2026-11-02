@@ -69,6 +69,13 @@ set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
 forge script script/4_ConfigureAll.s.sol:ConfigureAll --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
 '''
 
+[tasks.hand-over]
+description = "Give every intent contract to governance (run last, after deploy-all and ConfigureRouter)"
+run = '''
+set -a; f="${ENV_FILE:-.env}"; [ -f "$f" ] && . "$f"; set +a
+forge script script/5_HandOver.s.sol:HandOver --rpc-url "$NETWORK" --broadcast --slow --legacy -vvv --skip-simulation
+'''
+
 [tasks.deploy-all]
 description = "Deploy everything"
 run = '''
