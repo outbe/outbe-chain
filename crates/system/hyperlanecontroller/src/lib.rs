@@ -12,7 +12,7 @@
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
 //! - `actions` holds the vote actions on the Hyperlane chains.
-//! - Every write to an ISM or the ICA router goes through [`OwnerCalls`],
+//! - Every write to an ISM or the ICA router goes through [`Executor`],
 //!   which `crosschaingov` implements.
 
 pub mod actions;
@@ -22,15 +22,15 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
+mod executor;
 mod ism_sync;
 mod liveness;
-mod owner_calls;
 mod remote;
 mod runtime;
 
+pub use executor::{Executor, RemoteCall};
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
-pub use owner_calls::{OwnerCalls, RemoteCall};
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;

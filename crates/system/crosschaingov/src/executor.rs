@@ -10,15 +10,15 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
 use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
-use outbe_hyperlanecontroller::{HyperlaneControllerContract, OwnerCalls, RemoteCall};
+use outbe_hyperlanecontroller::{HyperlaneControllerContract, RemoteCall};
 
 /// Runs the owner calls of the owner address. Use it only in the frame of
 /// that address: every call has the frame address as `msg.sender`.
-pub struct Owner<'a> {
+pub struct Executor<'a> {
     controller: HyperlaneControllerContract<'a>,
 }
 
-impl<'a> Owner<'a> {
+impl<'a> Executor<'a> {
     pub fn new(storage: StorageHandle<'a>) -> Self {
         Self {
             controller: HyperlaneControllerContract::new(storage),
@@ -121,7 +121,7 @@ impl<'a> Owner<'a> {
     }
 }
 
-impl OwnerCalls for Owner<'_> {
+impl outbe_hyperlanecontroller::Executor for Executor<'_> {
     fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes> {
         if to == Address::ZERO {
             return Err(HyperlaneControllerError::InvalidAddress.into());

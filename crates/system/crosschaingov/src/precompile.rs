@@ -13,7 +13,7 @@ use outbe_hyperlanecontroller::{
     ControllerBootstrap, HyperlaneControllerContract, SignedCheckpoint,
 };
 
-use crate::owner_calls::Owner;
+use crate::executor::Executor;
 use crate::schema::CrosschainGovContract;
 
 /// Selectors that accept native value: only `fund`, the top-up of the balance
@@ -37,11 +37,11 @@ pub fn dispatch(
             use IHyperlaneController::IHyperlaneControllerCalls::*;
             let mut controller = HyperlaneControllerContract::new(storage.clone());
             let mut gov = CrosschainGovContract::new(storage.clone());
-            let mut owner = Owner::new(storage.clone());
+            let mut executor = Executor::new(storage.clone());
             match call {
                 initialize(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.initialize(
-                        &mut owner,
+                        &mut executor,
                         sender,
                         &ControllerBootstrap {
                             ica_router: c.icaRouter,
@@ -60,9 +60,9 @@ pub fn dispatch(
                         sender: caller,
                         value,
                     },
-                    |sender, _, amount| owner.fund(sender, amount),
+                    |sender, _, amount| executor.fund(sender, amount),
                 ),
-                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync(&mut owner)),
+                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync(&mut executor)),
                 applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
                     gov.apply_approved(c.proposalId, &c.payload)
                 }),
@@ -82,7 +82,7 @@ pub fn dispatch(
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),
-                remoteAccount(c) => view(c, |c| owner.remote_account(c.domain)),
+                remoteAccount(c) => view(c, |c| executor.remote_account(c.domain)),
                 validatorAnnounce(c) => view(c, |_| controller.validator_announce.read()),
                 ismByDomain(c) => view(c, |c| controller.ism_by_domain.read(&c.domain)),
                 hookByDomain(c) => view(c, |c| controller.hook_by_domain.read(&c.domain)),

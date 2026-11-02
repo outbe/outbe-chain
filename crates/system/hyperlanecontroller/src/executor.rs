@@ -1,7 +1,7 @@
 //! Owner calls of the controller address.
 //!
 //! The controller owns no contract by itself. Every write to an ISM or to the
-//! ICA router goes through [`OwnerCalls`], which the module that serves the address
+//! ICA router goes through [`Executor`], which the module that serves the address
 //! implements. All calls run in the frame of that address, so it is the
 //! `msg.sender` of each call.
 
@@ -17,7 +17,7 @@ pub struct RemoteCall {
 }
 
 /// Owner calls of the controller address.
-pub trait OwnerCalls {
+pub trait Executor {
     /// Calls `to` on this chain. The owner balance pays `value`.
     fn call_local(&mut self, to: Address, value: U256, data: Bytes) -> Result<Bytes>;
 

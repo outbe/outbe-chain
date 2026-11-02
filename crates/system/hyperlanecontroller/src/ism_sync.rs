@@ -1,5 +1,5 @@
 //! Owner operations on the ISMs and the domain table. Every write to an ISM
-//! goes through [`OwnerCalls`].
+//! goes through [`Executor`].
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
 //! crosschain vote target calls `add_domain` and `remove_domain`.
@@ -9,7 +9,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::owner_calls::{OwnerCalls, RemoteCall};
+use crate::executor::{Executor, RemoteCall};
 use crate::precompile::IHyperlaneController;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
@@ -21,7 +21,7 @@ impl HyperlaneControllerContract<'_> {
     /// checkpoint. Any failure leaves every ISM untouched.
     pub fn set_validators_and_threshold(
         &mut self,
-        owner: &mut impl OwnerCalls,
+        executor: &mut impl Executor,
         validators: &[Address],
         threshold: u8,
     ) -> Result<()> {
@@ -42,7 +42,7 @@ impl HyperlaneControllerContract<'_> {
                     continue;
                 }
                 let ism = self.ism_by_domain.read(&domain)?;
-                owner.call_remote(
+                executor.call_remote(
                     domain,
                     &[RemoteCall {
                         to: ism,
@@ -51,7 +51,7 @@ impl HyperlaneControllerContract<'_> {
                     }],
                 )?;
             }
-            owner.call_local(local_ism, U256::ZERO, data)?;
+            executor.call_local(local_ism, U256::ZERO, data)?;
             self.emit(IHyperlaneController::ValidatorsAndThresholdApplied {
                 threshold,
                 validatorCount: U256::from(validators.len()),
@@ -63,7 +63,7 @@ impl HyperlaneControllerContract<'_> {
     /// fixed at `initialize`.
     pub fn add_domain(
         &mut self,
-        owner: &mut impl OwnerCalls,
+        executor: &mut impl Executor,
         domain: u32,
         ism: Address,
         hook: Address,
@@ -73,7 +73,7 @@ impl HyperlaneControllerContract<'_> {
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.write_domain(domain, ism, hook)?;
-            accept_remote_ism(owner, domain, ism)
+            accept_remote_ism(executor, domain, ism)
         })
     }
 
@@ -130,11 +130,11 @@ impl HyperlaneControllerContract<'_> {
 /// Accepts the pending ownership of a remote ISM from the Interchain Account:
 /// `callRemote(domain, [ism.acceptOwnership()])`.
 pub(crate) fn accept_remote_ism(
-    owner: &mut impl OwnerCalls,
+    executor: &mut impl Executor,
     domain: u32,
     ism: Address,
 ) -> Result<()> {
-    owner.call_remote(
+    executor.call_remote(
         domain,
         &[RemoteCall {
             to: ism,

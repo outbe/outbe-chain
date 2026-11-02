@@ -9,7 +9,7 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_hyperlanecontroller::errors::HyperlaneControllerError;
 use outbe_hyperlanecontroller::precompile::IHyperlaneController;
-use outbe_hyperlanecontroller::{actions as hyperlane, HyperlaneControllerContract, OwnerCalls};
+use outbe_hyperlanecontroller::{actions as hyperlane, Executor as _, HyperlaneControllerContract};
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -20,7 +20,7 @@ use outbe_vote::handlers::{
 };
 
 use crate::actions::Action;
-use crate::owner_calls::Owner;
+use crate::executor::Executor;
 use crate::schema::CrosschainGovContract;
 
 /// A payload goes to the module that owns its operation.
@@ -66,16 +66,16 @@ impl CrosschainGovContract<'_> {
             let payload = Payload::decode(payload, self.storage.chain_id()?)
                 .map_err(|_| VoteError::stored_payload_invalid("CrosschainGov"))?;
             let mut controller = HyperlaneControllerContract::new(self.storage.clone());
-            let mut owner = Owner::new(self.storage.clone());
+            let mut executor = Executor::new(self.storage.clone());
             match payload {
-                Payload::Hyperlane(action) => action.apply(&mut controller, &mut owner)?,
+                Payload::Hyperlane(action) => action.apply(&mut controller, &mut executor)?,
                 Payload::Contracts(action) => {
                     let calls = action.calls(controller.local_domain()?);
                     for call in calls.local {
-                        owner.call_local(call.to, call.value, call.data)?;
+                        executor.call_local(call.to, call.value, call.data)?;
                     }
                     if let Some((chain_id, remote)) = calls.remote {
-                        owner.call_remote(chain_id, &remote)?;
+                        executor.call_remote(chain_id, &remote)?;
                     }
                 }
             }

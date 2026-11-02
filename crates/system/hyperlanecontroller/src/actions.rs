@@ -11,7 +11,7 @@ use outbe_vote::errors::VoteError;
 use serde::Deserialize;
 
 use crate::errors::HyperlaneControllerError;
-use crate::owner_calls::OwnerCalls;
+use crate::executor::Executor;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::IHyperlaneRouter;
 
@@ -64,7 +64,7 @@ impl Action {
     pub fn apply(
         &self,
         controller: &mut HyperlaneControllerContract<'_>,
-        owner: &mut impl OwnerCalls,
+        executor: &mut impl Executor,
     ) -> Result<()> {
         match self {
             Self::AddHyperlaneChain {
@@ -73,8 +73,8 @@ impl Action {
                 ism,
                 hook,
             } => {
-                controller.enroll_ica_router(owner, *chain_id, *ica_router)?;
-                controller.add_domain(owner, *chain_id, *ism, *hook)
+                controller.enroll_ica_router(executor, *chain_id, *ica_router)?;
+                controller.add_domain(executor, *chain_id, *ism, *hook)
             }
             Self::RemoveHyperlaneChain { chain_id } => controller.remove_domain(*chain_id),
         }
@@ -88,7 +88,7 @@ impl HyperlaneControllerContract<'_> {
     /// reverts.
     fn enroll_ica_router(
         &mut self,
-        owner: &mut impl OwnerCalls,
+        executor: &mut impl Executor,
         domain: u32,
         router: Address,
     ) -> Result<()> {
@@ -113,7 +113,7 @@ impl HyperlaneControllerContract<'_> {
             _router: router.into_word(),
         }
         .abi_encode();
-        owner
+        executor
             .call_local(ica_router, U256::ZERO, data.into())
             .map(|_| ())
     }

@@ -5,7 +5,7 @@
 //! contracts: on Outbe directly, on every other chain through its Interchain
 //! Account (OIP-00369).
 //!
-//! - [`owner_calls::Owner`] runs the owner calls (`call_local`, `call_remote`)
+//! - [`executor::Executor`] runs the owner calls (`call_local`, `call_remote`)
 //!   and pays remote dispatch fees from the address balance. `fund` adds value
 //!   to that balance.
 //! - [`CrosschainVoteTarget`] stores the hash of an approved action.
@@ -16,7 +16,7 @@
 //!   `submitCheckpoint`, views) go to `hyperlanecontroller`.
 
 pub mod actions;
-pub mod owner_calls;
+pub mod executor;
 pub mod precompile;
 pub mod schema;
 

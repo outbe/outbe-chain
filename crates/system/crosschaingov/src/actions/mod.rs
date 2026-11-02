@@ -1,7 +1,7 @@
 //! Vote actions on our multi-chain contracts.
 //!
 //! An action only builds its owner calls ([`Calls`]). The vote target runs
-//! them through the owner. A chain id is also the Hyperlane domain of that
+//! them through the executor. A chain id is also the Hyperlane domain of that
 //! chain.
 
 pub(crate) mod crosschain;
