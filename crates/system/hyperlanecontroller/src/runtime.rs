@@ -4,8 +4,7 @@ use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::error::Result;
 
 use crate::errors::HyperlaneControllerError;
-use crate::gov;
-use crate::ism::accept_remote_ism;
+use crate::ism::{accept_remote_ism, call, call_local};
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
 use crate::sol_ext::{IOwnable, IStorageMultisigIsm};
@@ -162,9 +161,9 @@ impl HyperlaneControllerContract<'_> {
         local: u32,
         local_ism: Address,
     ) -> Result<()> {
-        gov::call_local(
+        call_local(
             &self.storage,
-            gov::call(
+            call(
                 local_ism,
                 IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
             ),

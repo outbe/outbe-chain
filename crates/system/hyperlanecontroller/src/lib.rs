@@ -19,7 +19,6 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
-mod gov;
 mod ism;
 mod liveness;
 mod runtime;

@@ -1,6 +1,7 @@
 //! The ISMs and the domain table: reads of the ISMs, the validator rotation,
-//! and adding or removing a chain. Every write to an ISM is an owner call
-//! through the CrosschainGov precompile.
+//! and adding or removing a chain. Every write to an ISM or the ICA router is
+//! an owner call through the CrosschainGov precompile (see the end of the
+//! file).
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
 //! vote actions in `crosschaingov` call `enroll_ica_router`, `add_domain` and
@@ -8,15 +9,15 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
-use crate::gov;
 use crate::precompile::IHyperlaneController;
 use crate::runtime::validate_validators;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{IHyperlaneRouter, IStorageMultisigIsm};
+use crate::sol_ext::{ICrosschainGov, IHyperlaneRouter, IStorageMultisigIsm};
 
 impl HyperlaneControllerContract<'_> {
     /// Enrolls the ICA router of `domain` on the Outbe ICA router, so that a
@@ -45,7 +46,7 @@ impl HyperlaneControllerContract<'_> {
             _router: router.into_word(),
         }
         .abi_encode();
-        gov::call_local(&self.storage, gov::call(ica_router, data))
+        call_local(&self.storage, call(ica_router, data))
     }
 
     /// Current set as stored by the local ISM (the source of truth).
@@ -97,10 +98,10 @@ impl HyperlaneControllerContract<'_> {
             for domain in self.domains.read_all()? {
                 if domain != local {
                     let ism = self.ism_by_domain.read(&domain)?;
-                    gov::call_remote(&self.storage, domain, vec![gov::call(ism, data.clone())])?;
+                    call_remote(&self.storage, domain, vec![call(ism, data.clone())])?;
                 }
             }
-            gov::call_local(&self.storage, gov::call(local_ism, data))?;
+            call_local(&self.storage, call(local_ism, data))?;
             self.emit(IHyperlaneController::ValidatorsAndThresholdApplied {
                 threshold,
                 validatorCount: U256::from(validators.len()),
@@ -173,12 +174,49 @@ impl HyperlaneControllerContract<'_> {
 /// Accepts the pending ownership of a remote ISM from the Interchain Account:
 /// `callRemote(domain, [ism.acceptOwnership()])`.
 pub(crate) fn accept_remote_ism(storage: &StorageHandle, domain: u32, ism: Address) -> Result<()> {
-    gov::call_remote(
+    call_remote(
         storage,
         domain,
-        vec![gov::call(
+        vec![call(
             ism,
             IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
         )],
     )
+}
+
+// Owner calls. The controller owns no contract: it calls the owner
+// (`CROSSCHAIN_GOV_ADDRESS`) like a contract, `callLocal` for a call on Outbe
+// and `callRemote` for a call on another chain. The owner checks that the
+// caller is in its owner-caller list.
+
+/// A zero-value call of `to`.
+pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainGov::Call {
+    ICrosschainGov::Call {
+        to,
+        value: U256::ZERO,
+        data: data.into(),
+    }
+}
+
+/// The owner calls `call.to` on Outbe.
+pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainGov::Call) -> Result<()> {
+    owner_call(storage, ICrosschainGov::callLocalCall { call }.abi_encode())
+}
+
+/// The owner runs `calls` on `domain` through its Interchain Account.
+pub(crate) fn call_remote(
+    storage: &StorageHandle,
+    domain: u32,
+    calls: Vec<ICrosschainGov::Call>,
+) -> Result<()> {
+    owner_call(
+        storage,
+        ICrosschainGov::callRemoteCall { domain, calls }.abi_encode(),
+    )
+}
+
+fn owner_call(storage: &StorageHandle, data: Vec<u8>) -> Result<()> {
+    storage
+        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
 }
