@@ -66,13 +66,6 @@ contract HandOver is Script {
             vm.toString(abi.encodeCall(ICrosschainGov.remoteAccount, (domain))),
             '"},"latest"]'
         );
-        // forge-std 1.8.1 has no `rpc(url, method, params)` in its Vm interface, but forge has the
-        // cheatcode, so the script calls it by signature.
-        (bool ok, bytes memory ret) = address(vm)
-            .call(
-                abi.encodeWithSignature("rpc(string,string,string)", vm.envString("OUTBE_RPC_URL"), "eth_call", params)
-            );
-        require(ok, "eth_call to the Outbe node failed");
-        return abi.decode(abi.decode(ret, (bytes)), (address));
+        return abi.decode(vm.rpc(vm.envString("OUTBE_RPC_URL"), "eth_call", params), (address));
     }
 }

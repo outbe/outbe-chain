@@ -7,9 +7,9 @@ integrity = "2f539b6241258fc3c127c97225b3cb1b5e9225e422d2c1cb233c52a6f5c29002"
 
 [[dependencies]]
 name = "forge-std"
-version = "1.8.1"
+version = "1.16.1"
 git = "https://github.com/foundry-rs/forge-std"
-rev = "bb4ceea94d6f10eeb5b41dc2391c6c8bf8e734ef"
+rev = "b3bc8b154382a75d0b0ef22d7fd4a0a5f0feee0e"
 
 [[dependencies]]
 name = "openzeppelin-contracts"
