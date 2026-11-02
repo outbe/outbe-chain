@@ -13,7 +13,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_common::pow;
 
 use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemIssued, GemMined, GemPositionIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemIssued, GemPositionCreated, GemSeriesOpened, GemSettled};
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -61,7 +61,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_gems_issued.write(new_total)?;
 
-    emit_gem_issued(storage, gem_id, U256::ZERO)?;
+    emit_gem_issued(storage, gem_id)?;
 
     Ok(gem_id)
 }
@@ -86,7 +86,33 @@ fn add_gem_with_call_anchor(
         params.reference_currency,
         outbe_gem::config::read(storage)?,
     )?;
-    gem_api::add_gem(storage, params)
+    let (gem_id, opened_new_sub_series) = gem_api::add_gem_opening_sub_series(storage, params)?;
+    if opened_new_sub_series {
+        emit_gem_series_opened(storage, gem_id, call_anchor_price_minor)?;
+    }
+    Ok(gem_id)
+}
+
+fn emit_gem_series_opened(
+    storage: &StorageHandle<'_>,
+    gem_id: U256,
+    entry_price_minor: U256,
+) -> Result<()> {
+    let gem = load_view(storage, gem_id)?;
+    emit_event(
+        storage,
+        GemSeriesOpened {
+            seriesId: gem.item.series_id.into(),
+            subSeriesId: gem.item.sub_series_id,
+            issuanceCurrency: gem.item.issuance_currency,
+            referenceCurrency: gem.item.reference_currency,
+            entryPriceMinor: entry_price_minor,
+            callPriceMinor: gem.terms.call_price_minor,
+            callWindow: u64::from(gem.terms.call_window_seconds),
+            callThreshold: u64::from(gem.terms.call_threshold_seconds),
+            callNoticePeriod: u64::from(gem.terms.call_notice_period_seconds),
+        },
+    )
 }
 
 /// The call anchor marked up by the call rate, plus the profile's other call terms.
@@ -114,26 +140,19 @@ pub(crate) fn derived_call_terms(
     }))
 }
 
-/// Announce a new gem with the terms its group sealed. A gem joining an open group
-/// reports that group's terms, not the live profile.
-fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256, position_id: U256) -> Result<()> {
+/// Announce a new gem with its series, sub-series, currencies and cleartext load payload.
+fn emit_gem_issued(storage: &StorageHandle<'_>, gem_id: U256) -> Result<()> {
     let gem = load_view(storage, gem_id)?;
     emit_event(
         storage,
         GemIssued {
             gemId: gem_id,
             owner: gem.item.owner,
-            promisLoadMinor: gem.item.promis_load_minor,
-            entryPriceMinor: gem.item.entry_price_minor,
+            seriesId: gem.item.series_id.into(),
+            subSeriesId: gem.item.sub_series_id,
             issuanceCurrency: gem.item.issuance_currency,
             referenceCurrency: gem.item.reference_currency,
-            issuedAt: gem.item.issued_at,
-            callPriceMinor: gem.terms.call_price_minor,
-            callWindow: gem.terms.call_window_seconds,
-            callThreshold: gem.terms.call_threshold_seconds,
-            callNoticePeriod: gem.terms.call_notice_period_seconds,
-            positionId: position_id,
-            groupKey: gem.item.group_key,
+            payload: gem.item.promis_load_minor.to_be_bytes::<32>().into(),
         },
     )
 }
@@ -202,15 +221,13 @@ pub fn issue_gem_position(
 
     emit_event(
         storage,
-        GemPositionIssued {
+        GemPositionCreated {
             positionId: position_id,
-            merchant: caller,
-            sourceIntexId: outbe_intex::intex_id(source_series_id),
-            capacityMinor: capacity,
+            owner: caller,
+            seriesId: source_series_id.into(),
             issuanceCurrency: series.issuance_currency,
             referenceCurrency: series.reference_currency,
-            issuedAt: issued_at,
-            expiresAt: position.expires_at,
+            payload: capacity.to_be_bytes::<32>().into(),
         },
     )?;
 
@@ -307,7 +324,7 @@ pub fn issue_merchant_gem(
         .ok_or(GemFactoryError::Overflow)?;
     factory.total_gems_issued.write(new_total)?;
 
-    emit_gem_issued(storage, gem_id, position_id)?;
+    emit_gem_issued(storage, gem_id)?;
 
     Ok(gem_id)
 }
@@ -349,8 +366,9 @@ pub fn settle_gem(
                 gemId: gem_id,
                 owner: gem.item.owner,
                 asset,
-                paymentMinor: quote.payment_minor,
-                settlementCurrency: quote.settlement_currency,
+                issuanceCurrency: gem.item.issuance_currency,
+                referenceCurrency: gem.item.reference_currency,
+                amountMinor: quote.payment_minor,
             },
         )
     })
@@ -473,15 +491,6 @@ pub fn mine_promis(
             item.owner,
             item.promis_load_minor,
             auth,
-        )?;
-
-        emit_event(
-            storage,
-            GemMined {
-                gemId: gem_id,
-                owner: item.owner,
-                promisLoadMinor: item.promis_load_minor,
-            },
         )?;
 
         Ok(item.promis_load_minor)

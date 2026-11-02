@@ -484,7 +484,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
     assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
     let called = events
         .iter()
-        .filter(|log| IGem::GemGroupCalled::decode_log_data(log).is_ok())
+        .filter(|log| IGem::GemSeriesCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
 }

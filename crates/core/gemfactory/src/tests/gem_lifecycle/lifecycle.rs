@@ -644,3 +644,53 @@ fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
         assert_eq!(api::balance_of(storage, params.owner).unwrap(), 1);
     });
 }
+
+#[test]
+fn one_group_calls_and_closes_each_series_pair() {
+    use outbe_primitives::addresses::GEM_ADDRESS;
+
+    let mut provider = provider_at(T_NOW);
+    let expected = StorageHandle::enter(&mut provider, |storage| {
+        let usd_id = add(&storage, sample_params(ALICE));
+        let mut eur = sample_params(BOB);
+        eur.issuance_currency = EUR;
+        let eur_id = add(&storage, eur);
+        let usd = item(&storage, usd_id).unwrap();
+        let eur_item = item(&storage, eur_id).unwrap();
+        assert_eq!(usd.group_key, eur_item.group_key);
+        assert_ne!(
+            (usd.series_id, usd.sub_series_id),
+            (eur_item.series_id, eur_item.sub_series_id)
+        );
+        call_gem(&storage, usd_id, T_NOW);
+        let notice = view(&storage, usd_id).terms.call_notice_period_seconds;
+        let due = GemContract::day_end(GemContract::deadline_day(T_NOW + u64::from(notice)));
+        begin_block_at(&storage, due);
+        [usd, eur_item]
+    });
+
+    let events = provider.get_events(GEM_ADDRESS);
+    let called: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemSeriesCalled::decode_log_data(log).ok())
+        .collect();
+    let closed: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(called.len(), 2);
+    assert_eq!(closed.len(), 2);
+    for (event, gem) in called.iter().zip(expected.iter()) {
+        assert_eq!(outbe_intex::SeriesId::from(event.seriesId), gem.series_id);
+        assert_eq!(event.subSeriesId, gem.sub_series_id);
+        assert_eq!(event.issuanceCurrency, gem.issuance_currency);
+        assert_eq!(event.referenceCurrency, gem.reference_currency);
+        assert_eq!(event.calledAt, T_NOW);
+    }
+    for (event, gem) in closed.iter().zip(expected.iter()) {
+        assert_eq!(outbe_intex::SeriesId::from(event.seriesId), gem.series_id);
+        assert_eq!(event.subSeriesId, gem.sub_series_id);
+        assert_eq!(event.forfeitedCount, 1);
+        assert_eq!(event.forfeitedAmountMinor, gem.promis_load_minor);
+    }
+}

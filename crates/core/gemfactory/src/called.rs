@@ -3,7 +3,7 @@
 //! and every CycleTick walks a slice of it.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
+use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemSeriesCalled};
 
 use crate::errors::GemFactoryError;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
@@ -261,9 +261,15 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
     gem.record_group_called(group, now, deadline)?;
-    gem.emit(GemGroupCalled {
-        groupKey: group,
-        calledAt: now,
-        settlementDeadline: deadline,
-    })
+    for sub in gem.group_sub_series(group)? {
+        gem.emit(GemSeriesCalled {
+            seriesId: sub.series_id.into(),
+            subSeriesId: sub.sub_series_id,
+            issuanceCurrency: sub.issuance_currency,
+            referenceCurrency: sub.reference_currency,
+            calledAt: now,
+            settlementDeadline: deadline,
+        })?;
+    }
+    Ok(())
 }

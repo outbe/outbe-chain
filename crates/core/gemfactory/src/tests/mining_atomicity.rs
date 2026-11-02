@@ -1,9 +1,6 @@
 //! Mining is one transition: a Gem that fails to mint its Promis is not burned.
 
 use super::*;
-use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
-
-use crate::precompile::IGemFactory;
 
 /// One settled Gem of `load` Promis owned by Alice, priced at 2 COEN/USD.
 fn settled_gem(load: U256) -> (HashMapStorageProvider, U256) {
@@ -139,9 +136,11 @@ fn a_mining_that_fails_after_any_write_keeps_the_settled_gem_and_mines_once_on_r
             );
         });
         let mined = provider
-            .get_events(GEM_FACTORY_ADDRESS)
+            .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
             .iter()
-            .filter(|log| IGemFactory::GemMined::decode_log_data(log).is_ok())
+            .filter(|log| {
+                outbe_promis::precompile::IPromis::PromisMinedFromGem::decode_log_data(log).is_ok()
+            })
             .count();
         assert_eq!(mined, 1, "failure {failure_at}");
     }

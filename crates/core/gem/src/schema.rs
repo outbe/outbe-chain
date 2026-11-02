@@ -350,6 +350,38 @@ pub struct GemContract {
     /// `sub_series_key(series, call price)` -> its sub-series number + 1. 0 = not numbered.
     #[attribute(order = 58)]
     pub sub_series_of_price: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// `sub_series_id_key(series, sub_series_id)` -> whether `(series, sub_series_id)` has opened.
+    #[attribute(order = 59)]
+    pub sub_series_opened: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// `group` -> list of `group_sub_series_key(group, series_id, sub_series_id)`.
+    #[attribute(order = 60)]
+    pub group_sub_series_keys:
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<B256>>,
+    #[attribute(order = 61)]
+    pub group_sub_series_present: outbe_primitives::storage::dsl::Map<B256, bool>,
+    #[attribute(order = 62)]
+    pub group_sub_series_series_id: outbe_primitives::storage::dsl::Map<B256, SeriesId>,
+    #[attribute(order = 63)]
+    pub group_sub_series_sub_id: outbe_primitives::storage::dsl::Map<B256, u16>,
+    #[attribute(order = 64)]
+    pub group_sub_series_issuance_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    #[attribute(order = 65)]
+    pub group_sub_series_reference_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    #[attribute(order = 66)]
+    pub group_sub_series_unpaid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 67)]
+    pub group_sub_series_unpaid_load: outbe_primitives::storage::dsl::Map<B256, U256>,
+}
+
+/// Summary of one `(series_id, sub_series_id)` within a call group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupSubSeriesSummary {
+    pub series_id: SeriesId,
+    pub sub_series_id: u16,
+    pub issuance_currency: u16,
+    pub reference_currency: u16,
+    pub unpaid_count: u32,
+    pub unpaid_load: U256,
 }
 
 impl GemContract<'_> {

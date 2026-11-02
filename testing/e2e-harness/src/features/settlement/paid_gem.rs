@@ -311,14 +311,20 @@ impl PaidGem {
         let gem_id = self.gem_id;
         let gem = &self.gem;
         let keys = &self.keys;
-        assert_receipt_event(
+        let mined_event = eth::receipt_event::<eth::IPromis::PromisMinedFromGem>(
             &mint.receipt,
-            addresses::GEM_FACTORY_ADDR,
-            &eth::IGemFactory::GemMined {
-                gemId: gem_id,
+            addresses::PROMIS_ADDR,
+        );
+        assert_eq!(mined_event.gemId, gem_id);
+        assert_eq!(mined_event.account, owner);
+        assert_eq!(
+            outbe_tee::decrypt_promis_balance(
+                &keys.view,
                 owner,
-                promisLoadMinor: gem.promisLoadMinor,
-            },
+                mined_event.encryptedAmountMinor.as_ref(),
+            )
+            .expect("decrypt PromisMinedFromGem amount"),
+            gem.promisLoadMinor
         );
         for &p in ports {
             let peer_url = world.rpc.url(p);
