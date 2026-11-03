@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256};
 use outbe_primitives::{
-    block::{BlockContext, BlockContextInput, ZeroGenesisTimestamp},
+    block::{BlockContext, ZeroGenesisTimestamp},
     error::Result,
     storage::{
         hashmap::HashMapStorageProvider,
