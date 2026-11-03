@@ -340,13 +340,15 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
         let activation_timestamp = TEST_BLOCK_TIMESTAMP_BASE + 600;
         let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
         let ctx = BlockRuntimeContext::new(
-            BlockContext::new(
-                activation_block,
-                activation_timestamp,
-                CHAIN_ID,
-                validator,
-                vec![validator],
-            ),
+            BlockContext {
+                block_number: activation_block,
+                timestamp: activation_timestamp,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: activation_timestamp.max(1),
+                proposer: validator,
+                validators: vec![validator],
+            },
             storage.clone(),
         );
 

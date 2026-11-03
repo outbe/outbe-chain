@@ -424,7 +424,15 @@ async fn exercise_patch_vote(
         state
             .enter(|s| {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(*height, 1_700_000_000 + *height, chain_id),
+                    BlockContext {
+                        block_number: *height,
+                        timestamp: 1_700_000_000 + *height,
+                        chain_id,
+                        genesis_hash: alloy_primitives::B256::ZERO,
+                        genesis_timestamp: (1_700_000_000 + *height).max(1),
+                        proposer: alloy_primitives::Address::ZERO,
+                        validators: Vec::new(),
+                    },
                     s.clone(),
                 );
                 Vote::new(s).process_begin_block(&ctx, &REGISTRY)

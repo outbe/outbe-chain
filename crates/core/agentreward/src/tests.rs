@@ -43,7 +43,15 @@ fn allocate_fixture(
     pools: &[(PoolKind, U256)],
 ) -> outbe_primitives::error::Result<U256> {
     let allocation_ctx = outbe_primitives::block::BlockRuntimeContext::new(
-        outbe_primitives::block::BlockContext::empty_for_tests(10_000, 2_000_000_000, CHAIN_ID),
+        outbe_primitives::block::BlockContext {
+            block_number: 10_000,
+            timestamp: 2_000_000_000,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 2_000_000_000,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         ctx.storage.clone(),
     );
     outbe_rewards::api::close_day_participation(&allocation_ctx, day.value())?;
@@ -92,7 +100,15 @@ fn credit_next_block(
         0
     };
     let next = outbe_primitives::block::BlockRuntimeContext::new(
-        outbe_primitives::block::BlockContext::empty_for_tests(height, 2_000_000_000, CHAIN_ID),
+        outbe_primitives::block::BlockContext {
+            block_number: height,
+            timestamp: 2_000_000_000,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 2_000_000_000,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         ctx.storage.clone(),
     );
     crate::api::process_agent_rewards(&next)?;
@@ -124,7 +140,15 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::new(1, 1, CHAIN_ID, Address::ZERO, Vec::new()),
+            outbe_primitives::block::BlockContext {
+                block_number: 1,
+                timestamp: 1,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         let mut contract = AgentRewardContract::new(storage.clone());
@@ -208,7 +232,15 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::new(1, 1, CHAIN_ID, Address::ZERO, Vec::new()),
+            outbe_primitives::block::BlockContext {
+                block_number: 1,
+                timestamp: 1,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         let mut contract = AgentRewardContract::new(storage.clone());
@@ -316,7 +348,15 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
         assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 1);
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            outbe_primitives::block::BlockContext {
+                block_number: 1,
+                timestamp: T_NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(T_NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage,
         );
         outbe_rewards::api::close_day_participation(&ctx, wwd.value()).unwrap();
@@ -1078,13 +1118,15 @@ mod distribute_daily_tests {
     const DAY: WorldwideDay = WorldwideDay::new(20240115);
 
     fn block_ctx() -> BlockContext {
-        BlockContext::new(
-            1,
-            1_705_276_800, // 2024-01-15 UTC
-            TEST_CHAIN_ID,
-            alloy_primitives::Address::ZERO,
-            Vec::new(),
-        )
+        BlockContext {
+            block_number: 1,
+            timestamp: 1_705_276_800, // 2024-01-15 UTC
+            chain_id: TEST_CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_705_276_800,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        }
     }
 
     fn run<R>(f: impl FnOnce(&BlockRuntimeContext) -> R) -> R {
@@ -1444,7 +1486,15 @@ fn distribution_failure_restores_prior_pools_and_counts() {
             .add_claimable_reward(RewardPool::Sra, alice, U256::MAX)
             .unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            outbe_primitives::block::BlockContext {
+                block_number: 1,
+                timestamp: T_NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(T_NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         assert!(distribute_and_credit(
@@ -1508,7 +1558,15 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
         let mut contract = AgentRewardContract::new(storage.clone());
         contract.increment_waa_tribute(day, alice).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+            outbe_primitives::block::BlockContext {
+                block_number: 1,
+                timestamp: T_NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(T_NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         distribute_and_credit(&ctx, day, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
@@ -1625,7 +1683,15 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
     let distribute = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |storage| {
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-                outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, CHAIN_ID),
+                outbe_primitives::block::BlockContext {
+                    block_number: 1,
+                    timestamp: T_NOW,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(T_NOW, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage,
             );
             distribute_and_credit(

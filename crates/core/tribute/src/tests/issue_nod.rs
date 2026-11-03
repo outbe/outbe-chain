@@ -652,8 +652,15 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         let call_ts = date_key_to_utc_timestamp(cursor_day).unwrap() + 3_600;
         storage.set_block_timestamp(U256::from(call_ts)).unwrap();
         let call_ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(20, call_ts, 1)
-                .with_genesis_timestamp(GENESIS_TIMESTAMP),
+            outbe_primitives::block::BlockContext {
+                block_number: 20,
+                timestamp: call_ts,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: GENESIS_TIMESTAMP,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         outbe_nodfactory::called::schedule_call_pass(&call_ctx).unwrap();
@@ -1164,8 +1171,15 @@ fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u
     }
     loop {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(height, timestamp, 1)
-                .with_genesis_timestamp(GENESIS_TIMESTAMP),
+            outbe_primitives::block::BlockContext {
+                block_number: height,
+                timestamp,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: GENESIS_TIMESTAMP,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         outbe_nodfactory::called::process_call_pass(&ctx).unwrap();

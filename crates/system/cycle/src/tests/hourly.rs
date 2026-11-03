@@ -8,7 +8,7 @@ fn hourly_protocol_cycle_executes_due_emission_day_at_metadosis_start() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     let (emission_day, fire_at) = storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
+        run_cycle_tick(&anchor).unwrap();
         let wwd = outbe_primitives::time::WorldwideDay::new(20_240_101);
         let wwd_proj = outbe_metadosis::api::worldwide_day(handle.clone(), wwd)
             .unwrap()

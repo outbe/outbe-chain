@@ -242,7 +242,15 @@ fn proposer_validator_same_state_root() {
         drop(executor);
 
         // Read the recorded live-credit voters + the settled fee-share balances.
-        let read_ctx = BlockContext::new(settle_block, settle_block, CHAIN_ID, proposer, vec![]);
+        let read_ctx = BlockContext {
+            block_number: settle_block,
+            timestamp: settle_block,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: settle_block.max(1),
+            proposer,
+            validators: vec![],
+        };
         let mut provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
         let (count, voters, voter_balance, rewards_balance, absentee_miss) =
@@ -380,7 +388,15 @@ fn seed_late_credit_escrow(
     // payout + residue burn. Advance the accounting marker, so that the N+K CPA progress
     // gate passes.
     let seed_ctx = BlockRuntimeContext::new(
-        BlockContext::new(settle_target, 1, CHAIN_ID, Address::ZERO, vec![]),
+        BlockContext {
+            block_number: settle_target,
+            timestamp: 1,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: Address::ZERO,
+            validators: vec![],
+        },
         storage,
     );
     outbe_rewards::late_settlement::escrow_block_fee(

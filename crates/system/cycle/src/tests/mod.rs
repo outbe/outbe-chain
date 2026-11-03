@@ -14,12 +14,11 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
-use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
 use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
@@ -39,7 +38,15 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     storage.set_block_number(1);
     storage.enter(|handle| {
         let ctx = runtime_context(
-            BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
+            BlockContext {
+                block_number: 1,
+                timestamp: GENESIS_TS,
+                chain_id,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: GENESIS_TS.max(1),
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
             handle,
         );
         let owner = Address::repeat_byte(0xA0);
@@ -71,8 +78,15 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
 }
 
 pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-    BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
-        .with_genesis_timestamp(GENESIS_TS)
+    BlockContext {
+        block_number,
+        timestamp,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: GENESIS_TS,
+        proposer: Address::ZERO,
+        validators: Vec::new(),
+    }
 }
 
 /// Synchronizes provider time; callers set provider height before entering each block.
@@ -153,19 +167,15 @@ pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::
     crate::runtime::dispatch_triggers(ctx)
 }
 
-pub(super) fn run_cycle_lifecycle(
-    ctx: &BlockRuntimeContext,
-) -> outbe_primitives::error::Result<()> {
-    run_cycle_lifecycle_at_activation(ctx, 1)
+pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    run_cycle_tick_at_activation(ctx, 1)
 }
 
-pub(super) fn run_cycle_lifecycle_at_activation(
+pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    let lifecycle = CycleLifecycleContext::new(ctx.clone())
-        .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-    <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
+    crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
 pub(super) fn run_emission_limit_daily(

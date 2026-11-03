@@ -1,4 +1,4 @@
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
@@ -80,4 +80,13 @@ pub struct Update {
 
     #[attribute(order = 4)]
     pub version_history: Mapping<u64, ProtocolVersion>,
+
+    /// Proposal id => keccak256 of the approved `upgradeContract` payload.
+    /// Zero = none or already applied.
+    #[attribute(order = 5)]
+    pub approved_upgrades: outbe_primitives::storage::dsl::Map<U256, B256>,
+
+    /// Proposal id => block of the approval.
+    #[attribute(order = 6)]
+    pub approved_upgrade_at: outbe_primitives::storage::dsl::Map<U256, u64>,
 }

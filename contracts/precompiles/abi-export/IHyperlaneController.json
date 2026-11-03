@@ -32,13 +32,6 @@
   },
   {
     "type": "function",
-    "name": "fund",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
     "name": "hookByDomain",
     "inputs": [
       {
@@ -155,25 +148,6 @@
         "name": "",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "remoteAccount",
-    "inputs": [
-      {
-        "name": "domain",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -359,25 +333,6 @@
   },
   {
     "type": "event",
-    "name": "Funded",
-    "inputs": [
-      {
-        "name": "from",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "HyperlaneSignerSet",
     "inputs": [
       {
@@ -442,50 +397,6 @@
   },
   {
     "type": "event",
-    "name": "LocalCallExecuted",
-    "inputs": [
-      {
-        "name": "target",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RemoteCallDispatched",
-    "inputs": [
-      {
-        "name": "domain",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "messageId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "fee",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "ValidatorsAndThresholdApplied",
     "inputs": [
       {
@@ -521,29 +432,8 @@
   },
   {
     "type": "error",
-    "name": "EmptyCalls",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HookLengthMismatch",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InsufficientBalance",
-    "inputs": [
-      {
-        "name": "required",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "available",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -554,17 +444,6 @@
     "type": "error",
     "name": "InvalidDomain",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidProposalPayload",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "string",
-        "internalType": "string"
-      }
-    ]
   },
   {
     "type": "error",
@@ -622,7 +501,7 @@
   },
   {
     "type": "error",
-    "name": "IsmNotPendingToController",
+    "name": "IsmNotPendingToOwner",
     "inputs": [
       {
         "name": "pending",
@@ -703,7 +582,7 @@
   },
   {
     "type": "error",
-    "name": "NotOwnedByController",
+    "name": "NotOwnedByOwner",
     "inputs": [
       {
         "name": "target",
@@ -829,10 +708,5 @@
         "internalType": "uint32"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "ZeroFund",
-    "inputs": []
   }
 ]

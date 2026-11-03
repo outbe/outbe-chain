@@ -115,14 +115,17 @@ pub(super) fn provider_from_storage(
 }
 
 pub(super) fn runtime_ctx(storage: StorageHandle<'_>) -> BlockRuntimeContext<'_> {
+    let timestamp = storage.now_secs().unwrap();
     BlockRuntimeContext::new(
-        BlockContext::new(
-            storage.block_number().unwrap(),
-            storage.now_secs().unwrap(),
-            storage.chain_id().unwrap(),
-            VALIDATOR,
-            vec![VALIDATOR],
-        ),
+        BlockContext {
+            block_number: storage.block_number().unwrap(),
+            timestamp,
+            chain_id: storage.chain_id().unwrap(),
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: timestamp.max(1),
+            proposer: VALIDATOR,
+            validators: vec![VALIDATOR],
+        },
         storage,
     )
 }

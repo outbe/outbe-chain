@@ -28,6 +28,9 @@ mod witness;
 
 pub use input::SystemTx;
 
+/// Four-byte kind selector for a system transaction.
+pub type SysTxSelector = [u8; 4];
+
 /// Body-zone position of a system transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyZone {
@@ -35,7 +38,7 @@ pub enum BodyZone {
     EndBlock,
 }
 
-pub fn selector_from_input(input: &[u8]) -> Result<[u8; 4], SystemTxError> {
+pub fn selector_from_input(input: &[u8]) -> Result<SysTxSelector, SystemTxError> {
     input
         .get(..4)
         .and_then(|bytes| bytes.try_into().ok())
@@ -70,24 +73,24 @@ pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
 pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
 
 /// Selector for [`SystemTx::CertifiedParentAccounting`] (V2 OSA3).
-pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = *b"OSA3";
+pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: SysTxSelector = *b"OSA3";
 /// Selector for [`SystemTx::CycleTick`] (V2 OSC2).
-pub const CYCLE_TICK_SELECTOR: [u8; 4] = *b"OSC2";
+pub const CYCLE_TICK_SELECTOR: SysTxSelector = *b"OSC2";
 /// Selector for [`SystemTx::BoundaryOutcome`] (V2 OSB2).
-pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = *b"OSB2";
+pub const BOUNDARY_OUTCOME_SELECTOR: SysTxSelector = *b"OSB2";
 /// Selector for [`SystemTx::OracleSlashWindow`] (V2 OSO2).
-pub const ORACLE_SLASH_WINDOW_SELECTOR: [u8; 4] = *b"OSO2";
+pub const ORACLE_SLASH_WINDOW_SELECTOR: SysTxSelector = *b"OSO2";
 /// Selector for the evidence-carrying V1 TEE bootstrap payload.
 ///
 /// `OST2` was never a valid selector for this greenfield chain. Only `OST3`
 /// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
 /// networks.
-pub const TEE_BOOTSTRAP_SELECTOR: [u8; 4] = *b"OST3";
+pub const TEE_BOOTSTRAP_SELECTOR: SysTxSelector = *b"OST3";
 /// Selector for [`SystemTx::LateFinalizeCredits`].
-pub const LATE_FINALIZE_CREDITS_SELECTOR: [u8; 4] = *b"OSL2";
+pub const LATE_FINALIZE_CREDITS_SELECTOR: SysTxSelector = *b"OSL2";
 /// Selector for [`SystemTx::HookEvents`] (V2 OSH2).
-pub const HOOK_EVENTS_SELECTOR: [u8; 4] = *b"OSH2";
-pub const RADICLE_PUBLICATION_SELECTOR: [u8; 4] = *b"OSP2";
+pub const HOOK_EVENTS_SELECTOR: SysTxSelector = *b"OSH2";
+pub const RADICLE_PUBLICATION_SELECTOR: SysTxSelector = *b"OSP2";
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
@@ -133,7 +136,7 @@ pub enum SystemTxError {
     #[error("system tx input too short: {len} bytes")]
     InputTooShort { len: usize },
     #[error("unknown system tx selector: 0x{0:02x?}")]
-    UnknownSelector([u8; 4]),
+    UnknownSelector(SysTxSelector),
     #[error("unsupported system tx input version: {0}")]
     UnsupportedVersion(u8),
     #[error("unexpected body for {kind}: {len} bytes")]
@@ -186,10 +189,10 @@ pub enum SystemTxError {
         "active system tx set mismatch: expected begin {expected_begin:?}, expected end {expected_end:?}, actual begin {actual_begin:?}, actual end {actual_end:?}"
     )]
     ActiveSystemTxSetMismatch {
-        expected_begin: Vec<[u8; 4]>,
-        expected_end: Vec<[u8; 4]>,
-        actual_begin: Vec<[u8; 4]>,
-        actual_end: Vec<[u8; 4]>,
+        expected_begin: Vec<SysTxSelector>,
+        expected_end: Vec<SysTxSelector>,
+        actual_begin: Vec<SysTxSelector>,
+        actual_end: Vec<SysTxSelector>,
     },
     #[error(
         "V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"

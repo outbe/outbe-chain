@@ -11,6 +11,7 @@ use crate::{encode_protocol_version, ProtocolVersion};
 use outbe_primitives::error::{PrecompileError, Result};
 use serde_json::Value;
 
+mod contract_upgrade;
 mod events;
 mod handlers;
 mod lifecycle;
@@ -53,7 +54,15 @@ pub(super) fn with_update_provider<F: FnOnce(StorageHandle)>(f: F) -> HashMapSto
 
 pub(super) fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(block_number, 0, TEST_CHAIN_ID),
+        BlockContext {
+            block_number,
+            timestamp: 0,
+            chain_id: TEST_CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage,
     )
 }

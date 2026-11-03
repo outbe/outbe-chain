@@ -1,9 +1,10 @@
 use alloy_primitives::B256;
 
 use super::{
-    SystemTx, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
-    GENESIS_BOOTSTRAP_BLOCK_NUMBER, HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR,
-    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    SysTxSelector, SystemTx, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+    CYCLE_TICK_SELECTOR, GENESIS_BOOTSTRAP_BLOCK_NUMBER, HOOK_EVENTS_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
+    TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Executor cursor that names the next system-tx phase that the block executor
@@ -84,7 +85,7 @@ impl SystemTxPhase {
 
     /// The begin-zone system-tx selector the cursor expects to consume next, or
     /// `None` if the cursor is `UserTxs`.
-    pub const fn expected_selector(&self) -> Option<[u8; 4]> {
+    pub const fn expected_selector(&self) -> Option<SysTxSelector> {
         match self {
             Self::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
             Self::LateFinalizeCredits { .. } => Some(LATE_FINALIZE_CREDITS_SELECTOR),

@@ -129,7 +129,15 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
         "the base fee component is credited to no account"
     );
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, REWARDS_ADDRESS, vec![REWARDS_ADDRESS]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: REWARDS_ADDRESS,
+        validators: vec![REWARDS_ADDRESS],
+    };
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
@@ -404,7 +412,15 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     assert!(expected_limit > U256::ZERO);
     assert!(expected_rest > U256::ZERO);
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, REWARDS_ADDRESS, vec![REWARDS_ADDRESS]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: REWARDS_ADDRESS,
+        validators: vec![REWARDS_ADDRESS],
+    };
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
@@ -531,7 +547,15 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
         "sender debit minus tip must equal burned base fee plus burned blob fee"
     );
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, REWARDS_ADDRESS, vec![REWARDS_ADDRESS]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: REWARDS_ADDRESS,
+        validators: vec![REWARDS_ADDRESS],
+    };
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
@@ -618,7 +642,15 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
 
     let (_evm, _result) = executor.finish().expect("executor finish should succeed");
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, REWARDS_ADDRESS, vec![validator]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: REWARDS_ADDRESS,
+        validators: vec![validator],
+    };
     let mut provider = DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let promis = PromisLimitContract::new(storage.clone());
@@ -878,7 +910,15 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
 
     // Verify idempotence (credited exactly once on proposer and identical on validator).
     for state in [&mut proposer_state, &mut validator_state] {
-        let read_ctx = BlockContext::new(1, 1, CHAIN_ID, REWARDS_ADDRESS, vec![REWARDS_ADDRESS]);
+        let read_ctx = BlockContext {
+            block_number: 1,
+            timestamp: 1,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: REWARDS_ADDRESS,
+            validators: vec![REWARDS_ADDRESS],
+        };
         let mut provider = DirectStorageProvider::new(state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
             let promis = PromisLimitContract::new(storage);

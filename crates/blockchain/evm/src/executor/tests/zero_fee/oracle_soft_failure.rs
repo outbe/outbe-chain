@@ -199,7 +199,15 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
         .unwrap_or_default();
     assert_eq!(feeder_balance_before, U256::ZERO);
 
-    let setup_read_ctx = BlockContext::new(1, 1, CHAIN_ID, OWNER, vec![validator]);
+    let setup_read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: OWNER,
+        validators: vec![validator],
+    };
     let mut setup_provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, setup_read_ctx);
     StorageHandle::enter(&mut setup_provider, |storage| {

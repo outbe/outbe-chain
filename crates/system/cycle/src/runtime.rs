@@ -1,6 +1,6 @@
 //! Per-block trigger dispatch loop.
 //!
-//! Runs from [`crate::lifecycle::CycleLifecycle::begin_block`] on every
+//! Runs from [`handle_cycle_tick`] on every
 //! block during the begin-zone CycleTick phase. Iterates the genesis-resolved
 //! trigger table
 //! and fires any trigger whose next slot has been reached.
@@ -15,6 +15,35 @@ use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
 use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
 use crate::ICycle;
+
+/// Runs the CycleTick system-transaction body after parent accounting and
+/// canonical late-credit windows. Fresh genesis initializes WorldwideDays at
+/// block 1; other activation profiles supply their initialization height.
+pub fn handle_cycle_tick(
+    ctx: &BlockRuntimeContext<'_>,
+    metadosis_genesis_activation_height: u64,
+) -> Result<()> {
+    if ctx.block.block_number == metadosis_genesis_activation_height {
+        outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
+    }
+    // ProtocolCycle does not wait for multi-block factory passes.
+    // Factories return capacity below. Subsequent reserve consumers can use this capacity.
+    dispatch_triggers(ctx)?;
+    crate::handler::credit_reward_slice(ctx)?;
+    // Each factory finishes calls before forfeits for its pinned closed day.
+    // Gem includes position expiry. Credis includes collateral-return cleanup.
+    outbe_nodfactory::called::process_call_pass(ctx)?;
+    outbe_gemfactory::called::process_call_pass(ctx)?;
+    outbe_intexfactory::called::process_call_pass(ctx)?;
+    outbe_credisfactory::called::process_call_pass(ctx)?;
+    outbe_intexfactory::notify::send_call_notices(ctx)?;
+    // These final sweeps only delete state after value accounting completes.
+    // Credis moves value during cleanup, so its coupled pass above performs that cleanup instead.
+    outbe_gemfactory::hooks::cleanup(ctx)?;
+    outbe_intexfactory::hooks::cleanup(ctx)?;
+    outbe_gemfactory::hooks::cleanup_positions(ctx)?;
+    Ok(())
+}
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
 /// ctx.block.timestamp`. The checkpoint around a handler contains only that

@@ -25,7 +25,7 @@ use outbe_primitives::storage::keys::address_u32_key;
 ///   9: bootstrap_admin - the only caller allowed to `initialize`. Genesis
 ///      seeds it. Zero = nobody can initialize
 ///  10: approved_payload - mapping(proposal id => keccak256 of the approved
-///      crosschain action payload). Zero = none or already applied
+///      action payload). Zero = none or already applied
 ///  11: approved_at - mapping(proposal id => block of the approval)
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]

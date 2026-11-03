@@ -161,8 +161,18 @@ fn deploy_forwarder(db: &mut CacheDB<EmptyDB>, address: Address, mode: Forward) 
 }
 
 fn with_storage<R>(db: &mut CacheDB<EmptyDB>, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
-    let mut provider =
-        DirectStorageProvider::new(db, BlockContext::empty_for_tests(1, NOW, CHAIN_ID));
+    let mut provider = DirectStorageProvider::new(
+        db,
+        BlockContext {
+            block_number: 1,
+            timestamp: NOW,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: NOW.max(1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+    );
     let result = StorageHandle::enter(&mut provider, f);
     provider.flush().unwrap();
     result

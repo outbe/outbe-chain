@@ -192,6 +192,8 @@ pub const TEE_REGISTRY_ADDRESS: Address = address!("0x00000000000000000000000000
 ///
 /// Hosts proposal/vote state and the active protocol version. Callable
 /// dispatch is registered at `UPDATE_ADDRESS`. Lifecycle activation is wired later.
+/// It also runs approved `upgradeContracts` proposals through
+/// `CROSSCHAIN_BRIDGE_ADDRESS`.
 pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
 
 /// Generic on-chain vote precompile address.
@@ -225,15 +227,26 @@ pub const CODE_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000
 
 /// HyperlaneController precompile address (stateful).
 ///
-/// Governance-owned controller of the Hyperlane bridge. It owns the Outbe
-/// Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter and the
-/// storage multisig ISM. Through its Interchain Account, it also owns the same
-/// contracts on remote chains. It stores only the local ISM / router addresses
-/// and the `domain -> remote ISM` table. Validator sets live in the ISMs.
-/// `fund` is the only payable selector (float that pays ICA fees). The
-/// validator vote target applies every mutation. See `outbe-hyperlanecontroller`.
+/// The Hyperlane infrastructure of the owner: the validator set in
+/// the ISMs, liveness, and the domain table. It owns no contract. It asks
+/// `CROSSCHAIN_BRIDGE_ADDRESS` to run its owner calls through `callLocal` and
+/// `callRemote`. Its vote target adds and removes the Hyperlane chains. See
+/// `outbe-hyperlanecontroller`.
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE14");
+
+/// CrosschainBridge precompile address (stateful).
+///
+/// The owner of every multi-chain contract: the ERC-7786 hub, its
+/// gateway adapters, the token bridges and the Hyperlane core contracts
+/// (Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter, storage
+/// multisig ISM). Through its Interchain Account, it also owns the same
+/// contracts on remote chains. `fund` is the only payable selector (float that
+/// pays ICA fees). It has no vote target: the Update `upgradeContracts` vote
+/// upgrades and configures the contracts through it. See
+/// `outbe-crosschainbridge`.
+pub const CROSSCHAIN_BRIDGE_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE15");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];

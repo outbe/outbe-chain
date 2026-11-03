@@ -42,13 +42,15 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
             .unwrap();
     });
     let number = CREATED + VOTING_WINDOW_BLOCKS + 1;
-    let context = BlockContext::new(
-        number,
-        1_700_000_000,
-        CHAIN_ID,
+    let context = BlockContext {
+        block_number: number,
+        timestamp: 1_700_000_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
         proposer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
+        validators: validators.iter().map(|(address, _)| *address).collect(),
+    };
 
     super::run_atomic_storage_hooks(&mut state, context.clone(), |ctx| {
         super::run_outbe_pre_execution_hooks(ctx, None)?;
@@ -199,7 +201,15 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     );
     drop(executor);
 
-    let read_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer, absent]);
+    let read_ctx = BlockContext {
+        block_number: 2,
+        timestamp: 2,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 2,
+        proposer,
+        validators: vec![proposer, absent],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -244,13 +254,15 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
                 .expect("schedule update");
         });
 
-    let ctx = BlockContext::new(
-        ACTIVATION_BLOCK,
-        ACTIVATION_BLOCK,
-        CHAIN_ID,
+    let ctx = BlockContext {
+        block_number: ACTIVATION_BLOCK,
+        timestamp: ACTIVATION_BLOCK,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: ACTIVATION_BLOCK.max(1),
         proposer,
-        vec![proposer],
-    );
+        validators: vec![proposer],
+    };
     let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
         super::run_outbe_pre_execution_hooks(hook_ctx, None)
     })
@@ -334,13 +346,15 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
         });
 
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
-    let block_context = BlockContext::new(
-        finalization_block,
-        1_700_000_000,
-        CHAIN_ID,
-        issuer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
+    let block_context = BlockContext {
+        block_number: finalization_block,
+        timestamp: 1_700_000_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
+        proposer: issuer,
+        validators: validators.iter().map(|(address, _)| *address).collect(),
+    };
     let (_, hook_events) =
         super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
             super::run_outbe_pre_execution_hooks(hook_ctx, None)
@@ -499,13 +513,15 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
         },
     );
 
-    let ctx = BlockContext::new(
-        HOOK_BLOCK,
-        TIMESTAMP,
-        CHAIN_ID,
+    let ctx = BlockContext {
+        block_number: HOOK_BLOCK,
+        timestamp: TIMESTAMP,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: TIMESTAMP.max(1),
         proposer,
-        vec![proposer, subject],
-    );
+        validators: vec![proposer, subject],
+    };
     let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
         super::run_outbe_pre_execution_hooks(hook_ctx, None)
     })

@@ -81,13 +81,15 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         // because we are well past block 1. The genesis-state validation branch
         // runs only when `block_number <= 1`.
         let ctx = BlockRuntimeContext::new(
-            BlockContext::new(
-                boundary_block,
-                /*timestamp=*/ 1_700_000_000,
-                CHAIN_ID,
-                PROPOSER,
-                Vec::new(),
-            ),
+            BlockContext {
+                block_number: boundary_block,
+                timestamp: /*timestamp=*/ 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: PROPOSER,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");
@@ -121,13 +123,15 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
         seed_validator_set(storage.clone(), 1);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::new(
-                mid_epoch_block,
-                1_700_000_000,
-                CHAIN_ID,
-                PROPOSER,
-                Vec::new(),
-            ),
+            BlockContext {
+                block_number: mid_epoch_block,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: PROPOSER,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hook chain must succeed");

@@ -203,7 +203,15 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
         U256::from(9),
     );
     let mut database = CacheDB::new(EmptyDB::default());
-    let block = BlockContext::new(1, 1, outbe_primitives::chain::CHAIN_ID, owner, vec![owner]);
+    let block = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: outbe_primitives::chain::CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: owner,
+        validators: vec![owner],
+    };
     let mut provider = DirectStorageProvider::new(&mut database, block);
     StorageHandle::enter(&mut provider, |storage| {
         outbe_nod::test_support::add(&storage, &item).unwrap();

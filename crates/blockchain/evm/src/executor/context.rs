@@ -1,5 +1,45 @@
 use super::*;
 
+impl<E> OutbeBlockExecutor<'_, E> {
+    pub(in crate::executor) fn block_context(
+        &self,
+        block_number: u64,
+        timestamp: u64,
+        proposer: Address,
+    ) -> BlockContext {
+        BlockContext {
+            block_number,
+            timestamp,
+            chain_id: self.chain_id,
+            genesis_hash: self.genesis_hash,
+            genesis_timestamp: self.genesis_timestamp,
+            proposer,
+            validators: Vec::new(),
+        }
+    }
+}
+
+pub(in crate::executor) fn read_committee_snapshot<DB>(
+    db: &mut DB,
+    context: BlockContext,
+    snapshot_key: B256,
+    validation_error: impl FnOnce(PrecompileError) -> crate::errors::ExecutorValidationError,
+) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>, BlockExecutionError>
+where
+    DB: StateDB,
+    DB::Error: std::fmt::Display,
+{
+    let mut provider = DirectStorageProvider::new(db, context);
+    let storage = StorageHandle::new(&mut provider);
+    outbe_validatorset::state::read_committee_snapshot(storage, snapshot_key).map_err(|error| {
+        if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
+            BlockExecutionError::other(error)
+        } else {
+            validation_error(error).into()
+        }
+    })
+}
+
 pub(in crate::executor) fn build_block_context<DB>(
     db: &mut DB,
     mut context: BlockContext,

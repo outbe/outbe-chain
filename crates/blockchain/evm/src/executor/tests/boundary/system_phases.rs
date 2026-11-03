@@ -158,7 +158,15 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     drop(executor);
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![proposer],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -290,7 +298,15 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     assert!(executor.receipts()[6].success);
     drop(executor);
 
-    let read_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer, joining]);
+    let read_ctx = BlockContext {
+        block_number: 2,
+        timestamp: 2,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 2,
+        proposer,
+        validators: vec![proposer, joining],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -345,7 +361,15 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     let stake = U256::from(1_000u64);
     let mut setup_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
         &mut state,
-        BlockContext::new(1, 1, CHAIN_ID, proposer, vec![old_active, proposer]),
+        BlockContext {
+            block_number: 1,
+            timestamp: 1,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer,
+            validators: vec![old_active, proposer],
+        },
     );
     StorageHandle::enter(&mut setup_provider, |storage| {
         storage.set_balance(STAKING_ADDRESS, stake)?;
@@ -446,7 +470,15 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     );
     drop(executor);
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![old_active, proposer]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![old_active, proposer],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -529,7 +561,15 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
                 .write(proposal_id)
                 .unwrap();
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(100, TEST_BLOCK_TIMESTAMP_BASE, CHAIN_ID),
+                BlockContext {
+                    block_number: 100,
+                    timestamp: TEST_BLOCK_TIMESTAMP_BASE,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: TEST_BLOCK_TIMESTAMP_BASE.max(1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
 

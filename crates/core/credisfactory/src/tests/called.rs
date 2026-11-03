@@ -270,8 +270,15 @@ fn a_node_local_failure_while_calling_a_credis_fails_the_scan() {
     storage.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
-                .with_genesis_timestamp(CREATED_AT - DAY),
+            outbe_primitives::block::BlockContext {
+                block_number: BLOCK_NUMBER,
+                timestamp: at,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: CREATED_AT - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::called::scan_and_call(&ctx)

@@ -1,6 +1,24 @@
 [
   {
     "type": "function",
+    "name": "applyApproved",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "payload",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getActiveVersion",
     "inputs": [],
     "outputs": [
@@ -105,6 +123,32 @@
   },
   {
     "type": "event",
+    "name": "ContractUpgradeApplied",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ContractUpgradeExpired",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ScheduledUpdateCreated",
     "inputs": [
       {
@@ -187,6 +231,17 @@
     "type": "error",
     "name": "ActiveVersionDoesNotFitU32",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ApprovedPayloadMismatch",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -301,6 +356,17 @@
     "type": "error",
     "name": "UnexpectedAppliedClassification",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnknownApprovedUpgrade",
+    "inputs": [
+      {
+        "name": "proposalId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -72,7 +72,15 @@ fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u64) {
 
 fn drain(handle: &StorageHandle<'_>) {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, NOW, CHAIN_ID),
+        BlockContext {
+            block_number: 1,
+            timestamp: NOW,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(NOW, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         handle.clone(),
     );
     send_call_notices(&ctx).expect("a dropped notice never fails the drain");

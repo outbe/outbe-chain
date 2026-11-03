@@ -16,6 +16,8 @@ contracts/*
 !contracts/precompiles/**
 !contracts/predeploys
 !contracts/predeploys/**
+!contracts/shared
+!contracts/shared/**
 !contracts/tokens
 !contracts/tokens/**
 .serena

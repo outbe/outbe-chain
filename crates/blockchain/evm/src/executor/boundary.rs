@@ -15,7 +15,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 34] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 35] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -48,6 +48,7 @@ pub mod marker_addresses {
         TEE_REGISTRY_ADDRESS,
         L2_REGISTRY_ADDRESS,
         HYPERLANE_CONTROLLER_ADDRESS,
+        CROSSCHAIN_BRIDGE_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
     ];
@@ -298,17 +299,8 @@ where
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
-        let chain_id = self.inner.evm.chain_id();
+        let ctx = self.block_context(block_number, timestamp, proposer);
         let db = self.inner.evm.db_mut();
-        let ctx = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash: self.genesis_hash,
-            genesis_timestamp: self.genesis_timestamp,
-            proposer,
-            validators: Vec::new(),
-        });
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);

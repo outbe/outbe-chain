@@ -75,8 +75,15 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     }
     drop(executor);
 
-    let block =
-        BlockContext::empty_for_tests(1, block_ts, CHAIN_ID).with_genesis_timestamp(genesis_ts);
+    let block = BlockContext {
+        block_number: 1,
+        timestamp: block_ts,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: genesis_ts,
+        proposer: alloy_primitives::Address::ZERO,
+        validators: Vec::new(),
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, block);
     StorageHandle::enter(&mut provider, |storage| {
@@ -680,7 +687,15 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         }
         drop(executor);
 
-        let read_ctx = BlockContext::new(1, block_timestamp, CHAIN_ID, proposer, vec![proposer]);
+        let read_ctx = BlockContext {
+            block_number: 1,
+            timestamp: block_timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: block_timestamp.max(1),
+            proposer,
+            validators: vec![proposer],
+        };
         let mut provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
         StorageHandle::enter(&mut provider, |storage| {
@@ -927,7 +942,15 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
         .with_database(db)
         .with_bundle_update()
         .build();
-    let setup = BlockContext::new(7, 1_000, CHAIN_ID, OWNER, Vec::new());
+    let setup = BlockContext {
+        block_number: 7,
+        timestamp: 1_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_000,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
     super::run_atomic_storage_hooks(&mut state, setup, |ctx| {
         for address in [
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
@@ -967,7 +990,15 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     })
     .expect("unbonding fixture");
 
-    let run = BlockContext::new(8, 2_000, CHAIN_ID, OWNER, Vec::new());
+    let run = BlockContext {
+        block_number: 8,
+        timestamp: 2_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 2_000,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
     let error = super::run_atomic_storage_hooks(&mut state, run, |ctx| {
         assert_eq!(
             ValidatorSet::new(ctx.storage.clone()).registered_validator_addresses()?,
@@ -1009,7 +1040,15 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
         matches!(cause, Some(StakingError::StakeAccountingUnderflow { validator }) if *validator == corrupt)
     );
 
-    let read = BlockContext::new(8, 2_000, CHAIN_ID, OWNER, Vec::new());
+    let read = BlockContext {
+        block_number: 8,
+        timestamp: 2_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 2_000,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
     let (_, logs) = super::run_atomic_storage_hooks(&mut state, read, |ctx| {
         let staking = Staking::new(ctx.storage.clone());
         assert_eq!(staking.stake_amount.read(&healthy)?, U256::from(1_000u64));
@@ -1041,7 +1080,15 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         .with_database(db)
         .with_bundle_update()
         .build();
-    let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
+    let ctx = BlockContext {
+        block_number: 7,
+        timestamp: 84,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 84,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
     let address = address!("0x1111111111111111111111111111111111111111");
     let slot = U256::from(0x46u64);
     let value = U256::from(0x193u64);
@@ -1068,7 +1115,15 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         "failed hook batch must not persist code"
     );
 
-    let ctx = BlockContext::new(8, 96, CHAIN_ID, OWNER, Vec::new());
+    let ctx = BlockContext {
+        block_number: 8,
+        timestamp: 96,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 96,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
     let (changes, events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
         hook_ctx.storage.set_code(address, marker.clone())?;
         hook_ctx.storage.sstore(address, slot, value)?;
@@ -1096,7 +1151,15 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         .with_database(db)
         .with_bundle_update()
         .build();
-    let ctx = BlockContext::new(7, 84, CHAIN_ID, OWNER, Vec::new());
+    let ctx = BlockContext {
+        block_number: 7,
+        timestamp: 84,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 84,
+        proposer: OWNER,
+        validators: Vec::new(),
+    };
 
     let error = super::run_atomic_storage_hooks(&mut state, ctx, |_hook_ctx| {
         Err(outbe_primitives::error::PrecompileError::Storage(

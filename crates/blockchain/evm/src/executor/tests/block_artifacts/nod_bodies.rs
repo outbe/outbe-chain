@@ -248,7 +248,15 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         U256::from(16),
         978,
     );
-    let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+    let ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![proposer],
+    };
 
     let tribute_fixture = || TributeData {
         tribute_id,

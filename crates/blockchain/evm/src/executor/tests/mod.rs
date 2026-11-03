@@ -92,3 +92,28 @@ mod system_execution;
 mod system_failure_codes;
 mod timestamp;
 mod zero_fee;
+
+#[test]
+fn executor_context_uses_canonical_chain_identity() {
+    let chain_spec = test_chain_spec();
+    let config = OutbeEvmConfig::new(chain_spec.clone());
+    let mut state = State::builder()
+        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
+        .with_bundle_update()
+        .build();
+    let mut env = test_evm_env(7, REWARDS_ADDRESS);
+    env.cfg_env.chain_id = CHAIN_ID + 1;
+    let evm = config.evm_with_env(&mut state, env);
+    let executor = config.create_executor(evm, execution_ctx(Some(7), Bytes::new()));
+    let proposer = Address::repeat_byte(0x42);
+    let context = executor.block_context(7, TEST_BLOCK_TIMESTAMP_BASE, proposer);
+
+    assert_eq!(executor.chain_id, chain_spec.chain.id());
+    assert_eq!(context.chain_id, chain_spec.chain.id());
+    assert_eq!(context.genesis_hash, chain_spec.genesis_hash());
+    assert_eq!(context.genesis_timestamp, chain_spec.genesis_timestamp());
+    assert_eq!(context.block_number, 7);
+    assert_eq!(context.timestamp, TEST_BLOCK_TIMESTAMP_BASE);
+    assert_eq!(context.proposer, proposer);
+    assert!(context.validators.is_empty());
+}

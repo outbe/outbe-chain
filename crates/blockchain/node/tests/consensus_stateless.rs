@@ -28,6 +28,7 @@ use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconCo
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
+use outbe_primitives::system_tx::SysTxSelector;
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum::{consensus::Consensus, TransactionSigned};
@@ -219,7 +220,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 #[test]
 fn legacy_v1_system_tx_rejected_at_all_heights() {
     let signer = signer();
-    let v1_selectors: [&[u8; 4]; 4] = [b"OSF1", b"OSC1", b"OSB1", b"OSO1"];
+    let v1_selectors: [&SysTxSelector; 4] = [b"OSF1", b"OSC1", b"OSB1", b"OSO1"];
     let heights: [u64; 5] = [0, 1, 2, 7, 100];
 
     for height in heights {

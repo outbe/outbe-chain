@@ -4,8 +4,8 @@ use super::super::value_policy::{
 use crate::precompile_routes::{self, ValuePolicy};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::{
-    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, GRATIS_ADDRESS,
-    HYPERLANE_CONTROLLER_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, CROSSCHAIN_BRIDGE_ADDRESS, DESIS_ADDRESS,
+    GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
 };
 use revm::interpreter::CallValue;
 
@@ -16,7 +16,7 @@ const PAYABLE: [Address; 6] = [
     CREDIS_FACTORY_ADDRESS,
     CCA_REGISTRY_ADDRESS,
     // fund refills the float that pays Interchain Account dispatch fees.
-    HYPERLANE_CONTROLLER_ADDRESS,
+    CROSSCHAIN_BRIDGE_ADDRESS,
 ];
 
 fn policy(address: Address) -> ValuePolicy {

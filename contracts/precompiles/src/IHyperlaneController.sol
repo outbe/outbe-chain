@@ -7,11 +7,13 @@ address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE
 
 /// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
 ///
-/// Governance-owned controller of the Hyperlane bridge. Holds only the local
-/// InterchainAccountRouter address and a `domain -> StorageMessageIdMultisigIsm`
-/// table (the Outbe chain included under its own domain). Validator sets live
-/// in the ISMs themselves. The crosschain vote target approves owner actions,
-/// and `applyApproved` runs them (see the crate README for the JSON payloads).
+/// The Hyperlane infrastructure of the owner: the local InterchainAccountRouter
+/// address, a `domain -> StorageMessageIdMultisigIsm` table (the Outbe chain
+/// included under its own domain), and the liveness of the validator agents.
+/// Validator sets live in the ISMs themselves. It owns no contract: the owner
+/// is `CROSSCHAIN_BRIDGE`. This precompile makes every ISM and router call through
+/// `CROSSCHAIN_BRIDGE.callLocal` and `CROSSCHAIN_BRIDGE.callRemote`. Its vote target adds and
+/// removes the Hyperlane chains (`addHyperlaneChain`, `removeHyperlaneChain`).
 interface IHyperlaneController {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
@@ -19,8 +21,8 @@ interface IHyperlaneController {
     error LocalDomainMissing(uint32 domain);
     error NotBootstrapAdmin(address caller, address admin);
     error NotIsmOwner(address caller, address owner);
-    error IsmNotPendingToController(address pending);
-    error NotOwnedByController(address target, address owner);
+    error IsmNotPendingToOwner(address pending);
+    error NotOwnedByOwner(address target, address owner);
     error InvalidAddress();
     error InvalidDomain();
     error IsmLengthMismatch();
@@ -36,22 +38,15 @@ interface IHyperlaneController {
     error InvalidValidatorCount(uint64 count);
     error InvalidThreshold(uint8 threshold, uint64 validators);
     error InvalidValidator(address validator);
-    error EmptyCalls();
-    error ZeroFund();
-    error InsufficientBalance(uint256 required, uint256 available);
     error UndecodableReturn(string value);
-    error InvalidProposalPayload(string value);
+    error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
     error UnknownApprovedAction(uint256 proposalId);
     error ApprovedPayloadMismatch(uint256 proposalId);
-    error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
     event DomainRemoved(uint32 indexed domain);
     event ValidatorsAndThresholdApplied(uint8 threshold, uint256 validatorCount);
-    event RemoteCallDispatched(uint32 indexed domain, bytes32 indexed messageId, uint256 fee);
-    event LocalCallExecuted(address indexed target, uint256 value);
-    event Funded(address indexed from, uint256 amount);
     event HyperlaneSignerSet(address indexed validator, address indexed signer);
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event LivenessMiss(address indexed validator, uint32 misses);
@@ -63,9 +58,10 @@ interface IHyperlaneController {
     /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
     /// checkpoints the validators sign. `validatorAnnounce` is the Outbe
     /// ValidatorAnnounce where validators publish their checkpoint bucket.
-    /// Caller must be the current owner of the Outbe ISM (the deployer that
-    /// staged `transferOwnership` to this precompile). The precompile accepts
-    /// that pending ownership and verifies it owns `icaRouter`.
+    /// Caller must be the bootstrap admin and the current owner of the Outbe
+    /// ISM (the deployer that staged `transferOwnership` to `CROSSCHAIN_BRIDGE`).
+    /// `CROSSCHAIN_BRIDGE` accepts that pending ownership, and must already own
+    /// `icaRouter`.
     function initialize(
         address icaRouter,
         address validatorAnnounce,
@@ -79,6 +75,13 @@ interface IHyperlaneController {
     /// oracle delegate.
     function setHyperlaneSigner(address signer) external;
 
+    /// Runs a Hyperlane chain action that a governance vote approved. Permissionless: the vote
+    /// decided, and `payload` must be the approved JSON (its keccak256 is stored). An action older
+    /// than the governance voting window is dropped with `ApprovedActionExpired`, so a stale
+    /// approval cannot undo a newer one. A remote action pays the Hyperlane fee from the
+    /// `CROSSCHAIN_BRIDGE` balance.
+    function applyApproved(uint256 proposalId, bytes calldata payload) external;
+
     /// Liveness proof: an active validator (or its oracle delegate, the feeder
     /// key) submits its latest signed checkpoint for `domain`. The signature is
     /// recovered over the Hyperlane digest and must match the validator's
@@ -86,27 +89,15 @@ interface IHyperlaneController {
     function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
         external;
 
-    /// Tops up the balance that pays Interchain Account dispatch fees (IGP quote).
-    function fund() external payable;
-
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
     /// already matches. Permissionless: it only applies what consensus decided.
-    /// Returns whether a rotation was dispatched.
+    /// `CROSSCHAIN_BRIDGE` runs the ISM calls. Returns whether a rotation was
+    /// dispatched.
     function sync() external returns (bool changed);
-
-    /// Runs a crosschain action that a governance vote approved. Permissionless: the vote decided,
-    /// and `payload` must be the approved JSON (its keccak256 is stored). An action older than the
-    /// governance voting window is dropped with `ApprovedActionExpired`, so a stale approval cannot
-    /// undo a newer one. A remote action pays the Hyperlane fee from the controller balance.
-    function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// InterchainAccountRouter on Outbe.
     function icaRouter() external view returns (address);
-
-    /// Interchain Account of the controller on `domain`. It executes every remote call of the
-    /// controller, so it is the governance owner of contracts on that chain.
-    function remoteAccount(uint32 domain) external view returns (address);
 
     /// ValidatorAnnounce on Outbe.
     function validatorAnnounce() external view returns (address);

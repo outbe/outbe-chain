@@ -87,7 +87,15 @@ pub(super) fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Re
     let chain_id = provider.chain_id();
     provider.enter(|storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(height, 1_700_000_000 + height, chain_id),
+            BlockContext {
+                block_number: height,
+                timestamp: 1_700_000_000 + height,
+                chain_id,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (1_700_000_000 + height).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         Vote::new(storage).process_begin_block(&ctx, &REGISTRY)
@@ -149,8 +157,18 @@ fn abi_vote_approves_exact_revision_once_only_after_deadline() {
     provider.enter(|storage| {
         let registry = CodeRegistry::new(storage.clone());
         let before = registry.patch_approval(id).unwrap().unwrap();
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(14, 99, CHAIN_ID), storage);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 14,
+                timestamp: 99,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 99,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        );
         let context = VoteTargetContext {
             proposer: A,
             attached_value: U256::ZERO,
@@ -386,5 +404,7 @@ fn maximum_electorate_has_bounded_cast_and_tally_storage_gas() {
     assert!(maximum_cast_gas > 0 && maximum_cast_gas < 2_000_000);
     assert!(tally_gas > 0 && tally_gas < 5_000_000);
     assert!(approval(&mut provider, id).approved);
-    println!("Patch electorate n=256 yes=171 maximum_cast_storage_gas={maximum_cast_gas} terminal_storage_gas={tally_gas}");
+    println!(
+        "Patch electorate n=256 yes=171 maximum_cast_storage_gas={maximum_cast_gas} terminal_storage_gas={tally_gas}"
+    );
 }

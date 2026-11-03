@@ -1,19 +1,15 @@
-use outbe_primitives::block::BlockLifecycle;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 
 use super::current_preloaded_system_tx_context;
 
-pub(super) fn run_cycle_tick_at_activation(
+pub(super) fn run_cycle_tick(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     enforce_tee_lease_deadlines(ctx)?;
-    let lifecycle = outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone())
-        .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-    <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)?;
-    Ok(())
+    outbe_cycle::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE

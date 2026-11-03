@@ -100,7 +100,15 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
             storage.set_balance(STAKING_ADDRESS, total).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
-            BlockContext::new(1, TEST_BLOCK_TIMESTAMP_BASE, CHAIN_ID, proposer, vec![]),
+            BlockContext {
+                block_number: 1,
+                timestamp: TEST_BLOCK_TIMESTAMP_BASE,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: TEST_BLOCK_TIMESTAMP_BASE.max(1),
+                proposer,
+                validators: vec![],
+            },
             storage.clone(),
         );
         escrow_block_fee(
@@ -227,13 +235,15 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         assert_eq!(executor.receipts(), before_late.as_slice());
         drop(executor);
 
-        let read = BlockContext::new(
+        let read = BlockContext {
             block_number,
-            TEST_BLOCK_TIMESTAMP_BASE + block_number,
-            CHAIN_ID,
+            timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: (TEST_BLOCK_TIMESTAMP_BASE + block_number).max(1),
             proposer,
-            vec![],
-        );
+            validators: vec![],
+        };
         let mut provider =
             outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read);
         StorageHandle::enter(&mut provider, |storage| {
@@ -310,13 +320,15 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
     drop(executor);
     let mut provider = super::super::DirectStorageProvider::new(
         &mut state,
-        BlockContext::new(
+        BlockContext {
             block_number,
-            TEST_BLOCK_TIMESTAMP_BASE + block_number,
-            CHAIN_ID,
+            timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: (TEST_BLOCK_TIMESTAMP_BASE + block_number).max(1),
             proposer,
-            vec![],
-        ),
+            validators: vec![],
+        },
     );
     let storage = StorageHandle::new(&mut provider);
     for voter in voters {

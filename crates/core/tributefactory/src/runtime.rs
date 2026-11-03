@@ -517,7 +517,15 @@ mod reward_activity_tests {
                 .record_agent_reward_activity(&wallets, &sras)
                 .unwrap();
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(2, now + 86_400, 1),
+                BlockContext {
+                    block_number: 2,
+                    timestamp: now + 86_400,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(now + 86_400, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             let day = WorldwideDay::new(timestamp_to_date_key(now));

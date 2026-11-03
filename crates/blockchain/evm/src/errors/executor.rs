@@ -4,7 +4,9 @@ use super::TeeAttestationActivationError;
 use alloy_evm::block::{BlockExecutionError, BlockValidationError};
 use alloy_primitives::{Address, B256};
 use core::fmt::{Debug, Display};
-use outbe_primitives::{error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact};
+use outbe_primitives::{
+    error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact, system_tx::SysTxSelector,
+};
 
 /// Node-local storage and body-read errors in the block executor and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -378,7 +380,7 @@ pub enum ExecutorValidationError {
     #[error("unexpected system tx at body_index={body_index}; expected begin_block system txs {expected:?}")]
     UnexpectedBeginSystemTx {
         body_index: usize,
-        expected: Vec<[u8; 4]>,
+        expected: Vec<SysTxSelector>,
     },
     #[error("missing parent consensus metadata for CertifiedParentAccounting")]
     MissingParentConsensusMetadata,
@@ -415,8 +417,8 @@ pub enum ExecutorValidationError {
     )]
     SystemTxCursorBodyMismatch {
         body_index: usize,
-        expected_kind: [u8; 4],
-        resolved_kind: [u8; 4],
+        expected_kind: SysTxSelector,
+        resolved_kind: SysTxSelector,
     },
     #[error(
         "critical system tx {expected_phase} did not succeed (revert/halt) at body_index={body_index}, block_number={block_number}, failure_code={code}: {result}"

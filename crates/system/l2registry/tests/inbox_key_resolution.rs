@@ -194,7 +194,15 @@ fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
 /// Registers `chain_id` for `l1_address` with `public_key`. An empty key or 256
 /// zero bytes selects live inbox resolution, in the same state the EVM reads.
 fn register(db: &mut CacheDB<EmptyDB>, chain_id: u64, l1_address: Address, public_key: &[u8]) {
-    let context = BlockContext::empty_for_tests(1, NOW, CHAIN_ID);
+    let context = BlockContext {
+        block_number: 1,
+        timestamp: NOW,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: NOW.max(1),
+        proposer: alloy_primitives::Address::ZERO,
+        validators: Vec::new(),
+    };
     let mut provider = DirectStorageProvider::new(db, context);
     StorageHandle::enter(&mut provider, |storage| {
         L2RegistryContract::new(storage)

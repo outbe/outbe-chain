@@ -31,6 +31,7 @@ members = [
     "crates/system/update",
     "crates/system/vote",
     "crates/system/hyperlanecontroller",
+    "crates/system/crosschainbridge",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -111,6 +112,7 @@ default-members = [
     "crates/system/update",
     "crates/system/vote",
     "crates/system/hyperlanecontroller",
+    "crates/system/crosschainbridge",
     # core outbe
     "crates/core/gratis",
     "crates/core/promis",
@@ -207,6 +209,7 @@ outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
 outbe-hyperlanecontroller = { path = "crates/system/hyperlanecontroller" }
+outbe-crosschainbridge = { path = "crates/system/crosschainbridge" }
 outbe-coderegistry = { path = "crates/system/coderegistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }

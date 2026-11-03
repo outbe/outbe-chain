@@ -74,8 +74,15 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
         seed_called_candidate(&s, 20260101);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -145,8 +152,15 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
         assert_eq!(progress.lastDayPriceMinor, U256::from(TRIGGER + 1));
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -165,7 +179,15 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
 /// group now carries.
 fn call_and_deadline(s: &StorageHandle<'_>, member: SeriesId, scan_ts: u64) -> u64 {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID).with_genesis_timestamp(scan_ts - DAY),
+        BlockContext {
+            block_number: 1,
+            timestamp: scan_ts,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: scan_ts - DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         s.clone(),
     );
     called::scan_and_call(&ctx).unwrap();
@@ -183,8 +205,15 @@ fn due(deadline: u64) -> u64 {
 
 fn sweep_at(s: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(2, now, CHAIN_ID)
-            .with_genesis_timestamp(ISSUED_AT + 59 * DAY),
+        BlockContext {
+            block_number: 2,
+            timestamp: now,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: ISSUED_AT + 59 * DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         s.clone(),
     );
     called::daily_pass(&ctx).unwrap();
@@ -444,8 +473,15 @@ fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
             seed_called_candidate(&s, day);
         }
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
@@ -487,8 +523,15 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
 
@@ -551,8 +594,15 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), SWEEP_WRITES_PER_BLOCK);
@@ -560,8 +610,15 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         // The next slice lands after midnight. Pinned to the day it opened on,
         // the sweep finishes on the terms it started with.
         let next_day = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, scan_ts + DAY, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 2,
+                timestamp: scan_ts + DAY,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::process_call_pass(&next_day).unwrap(), 1);
@@ -588,8 +645,15 @@ fn a_sweep_opened_a_day_later_sees_the_window_expire() {
         seed_called_candidate(&s, 20260101);
 
         let next_day = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts + DAY, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts + DAY,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&next_day).unwrap(), 0);
@@ -608,8 +672,15 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
         seed_called_candidate(&s, 20260101);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         // Every block retries scheduling, independently of daily trigger success.
@@ -632,8 +703,15 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 4);
@@ -669,8 +747,15 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(
@@ -705,8 +790,15 @@ fn a_window_price_out_of_range_skips_the_currency() {
         seed_called_candidate(&s, 20260101);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 0, "nothing is called");
@@ -741,8 +833,15 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(
@@ -765,8 +864,15 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         let later_day = previous_date_key(timestamp_to_date_key(later_ts)).expect("date step");
         fill_window(&oracle, later_day, pair, U256::from(TRIGGER * 4));
         let later = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, later_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 2,
+                timestamp: later_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         called::scan_and_call(&later).unwrap();

@@ -276,8 +276,15 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     .max()
     .unwrap_or(BLOCK_NUMBER);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID)
-            .with_genesis_timestamp(START - DAY),
+        BlockContext {
+            block_number: height,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: START - DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     )
 }
@@ -1154,8 +1161,15 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             CALL_THRESHOLD_DAYS,
         );
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
-                .with_genesis_timestamp(START - DAY),
+            BlockContext {
+                block_number: BLOCK_NUMBER,
+                timestamp: at,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: START - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         let mut nod = NodContract::new(storage.clone());
@@ -1307,8 +1321,15 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         .unwrap()
         .unwrap();
         let same_height = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID)
-                .with_genesis_timestamp(START - DAY),
+            BlockContext {
+                block_number: allowance.height,
+                timestamp: past,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: START - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         assert_eq!(crate::cleanup::cleanup(&same_height).unwrap(), 0);
@@ -1729,8 +1750,15 @@ fn a_running_call_sweep_keeps_its_day() {
         nod.call_latest_day.write(day).unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID)
-                .with_genesis_timestamp(START - DAY),
+            BlockContext {
+                block_number: BLOCK_NUMBER,
+                timestamp: later,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: START - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx).unwrap();
@@ -1790,8 +1818,15 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
-                .with_genesis_timestamp(START - DAY),
+            BlockContext {
+                block_number: BLOCK_NUMBER,
+                timestamp: at,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: START - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx)

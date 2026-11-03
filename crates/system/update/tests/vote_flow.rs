@@ -114,7 +114,15 @@ fn with_vote_runtime_at<F: FnOnce(StorageHandle, u64)>(current: u64, f: F) {
 
 fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
     BlockRuntimeContext::new(
-        BlockContext::new(block_number, block_number, CHAIN_ID, PROPOSER, Vec::new()),
+        BlockContext {
+            block_number,
+            timestamp: block_number,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: block_number.max(1),
+            proposer: PROPOSER,
+            validators: Vec::new(),
+        },
         storage,
     )
 }

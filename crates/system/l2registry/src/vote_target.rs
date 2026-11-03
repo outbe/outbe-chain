@@ -216,7 +216,15 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                BlockContext {
+                    block_number: 30,
+                    timestamp: 1_700_000_000,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             assert_eq!(
@@ -300,7 +308,15 @@ mod tests {
             let mut provider = HashMapStorageProvider::new(1);
             StorageHandle::enter(&mut provider, |storage| {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                    BlockContext {
+                        block_number: 30,
+                        timestamp: 1_700_000_000,
+                        chain_id: 1,
+                        genesis_hash: alloy_primitives::B256::ZERO,
+                        genesis_timestamp: 1_700_000_000,
+                        proposer: alloy_primitives::Address::ZERO,
+                        validators: Vec::new(),
+                    },
                     storage.clone(),
                 );
                 assert_eq!(
@@ -329,7 +345,15 @@ mod tests {
             let target = L2RegistryVoteTarget;
             target.validate(payload.as_bytes(), vote_context()).unwrap();
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                BlockContext {
+                    block_number: 30,
+                    timestamp: 1_700_000_000,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             assert_eq!(
@@ -356,7 +380,15 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let target = L2RegistryVoteTarget;
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                BlockContext {
+                    block_number: 30,
+                    timestamp: 1_700_000_000,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             assert!(matches!(

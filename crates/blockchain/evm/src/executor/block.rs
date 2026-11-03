@@ -14,6 +14,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Inner Ethereum execution strategy.
     pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
     /// Immutable chain identity sourced from the executor's canonical ChainSpec.
+    pub(super) chain_id: u64,
     pub(super) genesis_hash: B256,
     pub(super) genesis_timestamp: u64,
     /// Optional bridge to the consensus layer for finalization data.
@@ -143,10 +144,12 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                 },
             dependencies: BlockExecutionDependencies { bridge, evm_signer },
         } = inputs;
+        let chain_id = inner.spec.chain.id();
         let genesis_hash = inner.spec.genesis_hash();
         let genesis_timestamp = inner.spec.genesis_timestamp();
         Self {
             inner,
+            chain_id,
             genesis_hash,
             genesis_timestamp,
             bridge,

@@ -1,41 +1,37 @@
-//! `HyperlaneController` - governance-owned controller of the Hyperlane bridge (`0x...EE14`).
+//! `HyperlaneController` - the Hyperlane infrastructure precompile (`0x...EE14`).
 //!
-//! The precompile owns every Hyperlane core contract on Outbe (Mailbox,
-//! ProxyAdmin, IGP, gas oracle, ProtocolFee, InterchainAccountRouter,
-//! StorageMessageIdMultisigIsm). Through its Interchain Account, it also owns
-//! the same contracts on remote chains. It holds no validator set of its own.
-//! The ISMs are the source of truth. The controller only forwards owner calls.
+//! It keeps the validator set in the ISMs, the liveness of the validator
+//! agents, and the domain table. It owns no contract. The owner of every
+//! Hyperlane core contract (Mailbox, ProxyAdmin, IGP, gas oracle, ProtocolFee,
+//! InterchainAccountRouter, StorageMessageIdMultisigIsm) is `crosschainbridge`
+//! (`0x...EE15`), on Outbe directly and on remote chains through its
+//! Interchain Account.
 //!
-//! - Direct write selectors are `initialize`, `fund`, permissionless `sync`,
-//!   `setHyperlaneSigner`, and `submitCheckpoint`.
+//! - It holds no validator set of its own. The ISMs are the source of truth.
 //! - `sync` rotates validators through `set_validators_and_threshold`.
 //!   Begin-block liveness calls the same rotation.
-//! - `CrosschainVoteTarget` stores the hash of an approved owner action.
-//!   Permissionless `applyApproved` then runs it through `call_local`,
-//!   `call_remote`, `add_domain`, or `remove_domain`, with the controller as
-//!   `msg.sender`. The vote tally runs where sub-calls are not available.
-//! - The controller pays remote dispatch fees (IGP quote) from its own
-//!   balance. `fund` adds value to that balance.
+//! - A write to an ISM or the ICA router is an owner call: the controller
+//!   calls `crosschainbridge` like a contract (`callLocal`, `callRemote`).
+//! - [`HyperlaneVoteTarget`] adds and removes the Hyperlane chains by a
+//!   validator vote. Permissionless `applyApproved` runs an approved action.
 
 pub mod errors;
 pub mod lifecycle;
 pub mod precompile;
 pub mod schema;
+pub mod sol_ext;
 
-mod ism_sync;
+mod ism;
 mod liveness;
-mod remote;
 mod runtime;
-mod sol_ext;
 mod vote_target;
 
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
-pub use remote::RemoteCall;
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
-pub use vote_target::CrosschainVoteTarget;
+pub use vote_target::HyperlaneVoteTarget;
 
 #[cfg(test)]
 mod tests;

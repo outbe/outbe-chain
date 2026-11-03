@@ -170,7 +170,8 @@ async fn prepare_enclave_upgrade_payload(
     let value: serde_json::Value = serde_json::from_str(&payload)?;
     let update = match outbe_update::payload::UpdateVotePayload::from_value(&value)? {
         outbe_update::payload::UpdateVotePayload::ScheduleUpdate(update) => update,
-        outbe_update::payload::UpdateVotePayload::RevokeEnclaveBindingV1(_) => {
+        outbe_update::payload::UpdateVotePayload::RevokeEnclaveBindingV1(_)
+        | outbe_update::payload::UpdateVotePayload::UpgradeContracts(_) => {
             return Ok(payload);
         }
     };

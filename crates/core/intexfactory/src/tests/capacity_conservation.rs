@@ -60,7 +60,15 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             .unwrap();
         // The pass starts the day before the deadline, and the Oracle is final past its close.
         super::called::prepare_daily_pass(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, DEADLINE, 1).with_genesis_timestamp(DEADLINE - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: DEADLINE,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: DEADLINE - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         ))
         .unwrap();
@@ -83,7 +91,15 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, at, 1).with_genesis_timestamp(DEADLINE - DAY),
+            BlockContext {
+                block_number: 2,
+                timestamp: at,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: DEADLINE - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s,
         );
         super::called::daily_pass(&ctx)?;

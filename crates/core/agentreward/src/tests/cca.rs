@@ -6,7 +6,15 @@ const DAY: WorldwideDay = WorldwideDay::new(20231113);
 
 fn ctx<'a>(storage: StorageHandle<'a>, height: u64) -> BlockRuntimeContext<'a> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, 2_000_000_000, CHAIN_ID),
+        BlockContext {
+            block_number: height,
+            timestamp: 2_000_000_000,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 2_000_000_000,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage,
     )
 }
