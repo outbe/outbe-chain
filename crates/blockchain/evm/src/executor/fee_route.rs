@@ -98,14 +98,10 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     ) -> Result<BlockContext, BlockExecutionError> {
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
-        Ok(BlockContext {
-            block_number: self.inner.evm.block().number().saturating_to::<u64>(),
+        Ok(self.block_context(
+            self.inner.evm.block().number().saturating_to::<u64>(),
             timestamp,
-            chain_id: self.inner.evm.chain_id(),
-            genesis_hash: self.genesis_hash,
-            genesis_timestamp: self.genesis_timestamp,
-            proposer: self.inner.evm.block().beneficiary(),
-            validators: Vec::new(),
-        })
+            self.inner.evm.block().beneficiary(),
+        ))
     }
 }

@@ -213,7 +213,7 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
         use outbe_consensus::proof::verify_v2_proof;
-        use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
+        use outbe_validatorset::state::committee_snapshot_key;
 
         if block_number <= crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER {
             if block_number > 0 && self.inner.evm.block().prevrandao() != Some(B256::ZERO) {
@@ -248,7 +248,6 @@ where
             committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
-        let chain_id = self.inner.evm.chain_id();
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
@@ -256,32 +255,19 @@ where
         let cert_bytes = metadata.proof.clone();
         let metadata_for_verify = metadata.clone();
 
-        let snapshot = {
-            let db = self.inner.evm.db_mut();
-            let ctx = BlockContext {
-                block_number,
-                timestamp,
-                chain_id,
-                genesis_hash: self.genesis_hash,
-                genesis_timestamp: self.genesis_timestamp,
-                proposer,
-                validators: Vec::new(),
-            };
-            let mut provider = DirectStorageProvider::new(db, ctx);
-            let storage = StorageHandle::new(&mut provider);
-            read_committee_snapshot(storage, snapshot_key).map_err(|error| {
-                if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                    BlockExecutionError::other(error)
-                } else {
-                    ExecutorValidationError::phase1_read_committee_snapshot(
-                        metadata_for_verify.finalized_epoch,
-                        snapshot_key,
-                        error,
-                    )
-                    .into()
-                }
-            })?
-        };
+        let ctx = self.block_context(block_number, timestamp, proposer);
+        let snapshot = context::read_committee_snapshot(
+            self.inner.evm.db_mut(),
+            ctx,
+            snapshot_key,
+            |error| {
+                ExecutorValidationError::phase1_read_committee_snapshot(
+                    metadata_for_verify.finalized_epoch,
+                    snapshot_key,
+                    error,
+                )
+            },
+        )?;
         let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
             epoch: metadata_for_verify.finalized_epoch,
             snapshot_key,

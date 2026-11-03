@@ -63,7 +63,7 @@ where
                 self.init_rpc_direct_witness_state();
                 self.inner.evm.set_witness_state(self.witness_state.clone());
                 crate::executor::witness::install_detached_trace_witness_with_meta(
-                    self.inner.evm.chain_id(),
+                    self.chain_id,
                     block_number,
                     timestamp,
                     self.witness_state.clone(),
@@ -74,7 +74,6 @@ where
         }
 
         // 4. Extract block context before taking a mutable DB borrow.
-        let chain_id = self.inner.evm.chain_id();
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
         let proposer = self
@@ -131,19 +130,9 @@ where
             let (_hook_changes, hook_events) = {
                 let witness_state = self.witness_state.clone();
                 let base_extra_data = self.block_extra_data.clone();
+                let ctx = self.block_context(block_number, timestamp, proposer);
                 let db = self.inner.evm.db_mut();
-                let ctx = build_block_context(
-                    db,
-                    BlockContext {
-                        block_number,
-                        timestamp,
-                        chain_id,
-                        genesis_hash: self.genesis_hash,
-                        genesis_timestamp: self.genesis_timestamp,
-                        proposer,
-                        validators: Vec::new(),
-                    },
-                )?;
+                let ctx = build_block_context(db, ctx)?;
                 hooks::run_atomic_storage_hooks_with_pre_flush(
                     db,
                     ctx,
@@ -195,7 +184,7 @@ where
             crate::system_tx::SystemTxPhase::Phase1Preexecuted { tx_hash, .. } if !tx_hash.is_zero()
         );
         crate::executor::witness::install_detached_trace_witness_with_meta(
-            chain_id,
+            self.chain_id,
             block_number,
             timestamp,
             self.witness_state.clone(),

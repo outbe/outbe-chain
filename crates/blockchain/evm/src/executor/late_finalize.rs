@@ -34,7 +34,7 @@ where
     ) -> Result<(), BlockExecutionError> {
         use outbe_consensus::proof::verify_late_finalize_proof;
         use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
-        use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
+        use outbe_validatorset::state::committee_snapshot_key;
 
         if block_number <= crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER {
             return Ok(());
@@ -51,7 +51,6 @@ where
 
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
-        let chain_id = self.inner.evm.chain_id();
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
@@ -89,32 +88,19 @@ where
             // FATAL and aborts the block. This pre-exec gate covers the BLS proof
             // (committee snapshot exists from the epoch boundary).
             let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
-            let snapshot = {
-                let db = self.inner.evm.db_mut();
-                let ctx = BlockContext {
-                    block_number,
-                    timestamp,
-                    chain_id,
-                    genesis_hash: self.genesis_hash,
-                    genesis_timestamp: self.genesis_timestamp,
-                    proposer,
-                    validators: Vec::new(),
-                };
-                let mut provider = DirectStorageProvider::new(db, ctx);
-                let storage = StorageHandle::new(&mut provider);
-                read_committee_snapshot(storage, snapshot_key).map_err(|error| {
-                    if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
-                        BlockExecutionError::other(error)
-                    } else {
-                        ExecutorValidationError::late_finalize_read_committee_snapshot(
-                            credit.epoch,
-                            snapshot_key,
-                            error,
-                        )
-                        .into()
-                    }
-                })?
-            };
+            let ctx = self.block_context(block_number, timestamp, proposer);
+            let snapshot = context::read_committee_snapshot(
+                self.inner.evm.db_mut(),
+                ctx,
+                snapshot_key,
+                |error| {
+                    ExecutorValidationError::late_finalize_read_committee_snapshot(
+                        credit.epoch,
+                        snapshot_key,
+                        error,
+                    )
+                },
+            )?;
             let Some(snapshot) = snapshot else {
                 return Err(
                     ExecutorValidationError::LateFinalizeMissingCommitteeSnapshot {
