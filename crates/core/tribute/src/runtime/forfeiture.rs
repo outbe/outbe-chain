@@ -409,12 +409,10 @@ fn check_tribute_forfeited(
     let completed_at = contract.day_metadosis_completed_at.read(&day)?;
     if completed_at == 0 {
         let recorded = contract.day_emission_day.read(&day)?;
-        let candidate = if recorded != 0 {
-            recorded
-        } else {
-            derive_wwd_emission_day(day)?
-        };
-        let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), candidate)?
+        if recorded == 0 {
+            return Ok((false, None));
+        }
+        let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), recorded)?
             .is_some_and(|e| {
                 matches!(
                     e.metadosis_state,
@@ -441,14 +439,4 @@ fn check_tribute_forfeited(
         )),
         None => Ok((true, None)),
     }
-}
-
-fn derive_wwd_emission_day(day: WorldwideDay) -> Result<u32> {
-    let offering_end = day
-        .start_timestamp()
-        .map_err(crate::errors::date_step_error)?
-        .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
-        .saturating_add(outbe_chain_constants::get_metadosis_lookback_delay_seconds())
-        .saturating_add(outbe_chain_constants::get_metadosis_offering_period_seconds());
-    Ok(outbe_primitives::time::timestamp_to_date_key(offering_end))
 }

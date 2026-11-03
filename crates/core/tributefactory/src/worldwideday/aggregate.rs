@@ -10,7 +10,7 @@ use crate::schema::TributeFactoryContract;
 use super::{
     constants::{MAX_ACTIVE_WWDS, MAX_PIPELINE_WWDS},
     errors::WwdStorageCorruptionError,
-    schema::{wwd_state, WorldwideDay as WorldwideDayRecord},
+    schema::WorldwideDay as WorldwideDayRecord,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,7 +31,6 @@ pub struct WwdProjection {
     pub forming_end: u64,
     pub offerings_start: u64,
     pub offering_end: u64,
-    pub state: u8,
 }
 
 impl WwdProjection {
@@ -50,15 +49,12 @@ impl WwdProjection {
                 .map_err(super::errors::date_step_error)?,
             offerings_start: record.offering_start,
             offering_end: record.offering_end,
-            state: record.state,
         })
     }
 
     #[must_use]
     pub const fn is_offering_at(&self, timestamp: u64) -> bool {
-        self.state == wwd_state::ACTIVE
-            && timestamp >= self.offerings_start
-            && timestamp < self.offering_end
+        timestamp >= self.offerings_start && timestamp < self.offering_end
     }
 }
 
@@ -86,21 +82,18 @@ impl ValidatedWwdAggregate {
 
     pub fn load_and_validate(storage: StorageHandle<'_>) -> Result<Self> {
         let contract = TributeFactoryContract::new(storage);
-        let active_set = collect_unique("active", contract.active_wwd.read_all()?)?;
         let pipeline_set = collect_unique("pipeline", contract.pipeline_wwd.read_all()?)?;
-        let mut combined_set = pipeline_set;
-        combined_set.extend(active_set);
-        if combined_set.len() > MAX_ACTIVE_WWDS {
+        if pipeline_set.len() > MAX_ACTIVE_WWDS {
             return Err(
                 WwdStorageCorruptionError::ActiveWwdPopulationExceedsDerivedCap {
-                    count: combined_set.len(),
+                    count: pipeline_set.len(),
                     max_active_wwds: MAX_ACTIVE_WWDS,
                 }
                 .into(),
             );
         }
         let mut records = BTreeMap::new();
-        for wwd in &combined_set {
+        for wwd in &pipeline_set {
             let record = contract
                 .worldwide_days
                 .get(*wwd)?
@@ -108,7 +101,7 @@ impl ValidatedWwdAggregate {
             validate_record_shape(*wwd, &record)?;
             records.insert(*wwd, WwdProjection::from_record(*wwd, &record)?);
         }
-        let active_order: Vec<WorldwideDay> = combined_set.into_iter().collect();
+        let active_order: Vec<WorldwideDay> = pipeline_set.into_iter().collect();
         Ok(Self {
             records,
             active_order,
@@ -135,33 +128,23 @@ pub fn create_worldwide_day(
     }
 
     validate_schedule_shape(worldwide_day, &schedule)?;
-    let now = u64::try_from(factory.storage.timestamp()?).unwrap_or(0);
-    let is_historical_closed = now > 0 && schedule.offering_end <= now;
     let record = WorldwideDayRecord {
         wwd: worldwide_day,
         emission_day: schedule.day,
         offering_start: schedule.offerings_start,
         offering_end: schedule.offering_end,
-        state: if is_historical_closed {
-            wwd_state::CLOSED
-        } else {
-            wwd_state::PENDING
-        },
     };
     validate_record_shape(worldwide_day, &record)?;
 
-    if is_historical_closed {
-        factory.worldwide_days.create(&record)?;
-        let mut tribute = TributeContract::new(factory.storage.clone());
-        if !tribute.is_day_sealed(worldwide_day)? {
-            tribute.seal_day(worldwide_day)?;
-        }
-    } else {
-        let pipeline = factory.pipeline_wwd.read_all()?;
-        ensure_pipeline_capacity(&pipeline, worldwide_day, schedule.forming_start, now)?;
-        factory.worldwide_days.create(&record)?;
-        factory.pipeline_wwd.insert(worldwide_day)?;
-    }
+    let pipeline = factory.pipeline_wwd.read_all()?;
+    ensure_pipeline_capacity(&pipeline, worldwide_day)?;
+    factory.worldwide_days.create(&record)?;
+    factory.pipeline_wwd.insert(worldwide_day)?;
+
+    let tribute = TributeContract::new(factory.storage.clone());
+    tribute
+        .day_emission_day
+        .write(&worldwide_day, schedule.day)?;
 
     factory.emit(ITributeFactory::WorldwideDayOpened {
         worldwideDay: worldwide_day.into(),
@@ -177,31 +160,8 @@ pub fn create_worldwide_day(
     Ok(true)
 }
 
-fn ensure_pipeline_capacity(
-    pipeline: &[WorldwideDay],
-    worldwide_day: WorldwideDay,
-    forming_start: u64,
-    now: u64,
-) -> Result<()> {
-    let in_flight = now == 0 || forming_start <= now;
-    let bucket_count = if now == 0 {
-        pipeline.len()
-    } else {
-        pipeline
-            .iter()
-            .filter(|existing| {
-                existing
-                    .start_timestamp()
-                    .is_ok_and(|start| (start <= now) == in_flight)
-            })
-            .count()
-    };
-    let bucket_cap = if in_flight {
-        MAX_PIPELINE_WWDS
-    } else {
-        outbe_chain_constants::get_metadosis_lookahead_days() as usize
-    };
-    if bucket_count >= bucket_cap {
+fn ensure_pipeline_capacity(pipeline: &[WorldwideDay], worldwide_day: WorldwideDay) -> Result<()> {
+    if pipeline.len() >= MAX_PIPELINE_WWDS {
         return Err(WwdStorageCorruptionError::ActiveWwdCapReached {
             max_active_wwds: MAX_PIPELINE_WWDS,
             wwd: worldwide_day,
@@ -211,48 +171,15 @@ fn ensure_pipeline_capacity(
     Ok(())
 }
 
-pub fn activate_worldwide_day(
-    factory: &mut TributeFactoryContract<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<()> {
-    let mut record = factory
-        .worldwide_days
-        .get(worldwide_day)?
-        .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd: worldwide_day })?;
-    if record.state != wwd_state::ACTIVE {
-        record.state = wwd_state::ACTIVE;
-        factory.worldwide_days.update(&record)?;
-    }
-    factory.active_wwd.insert(worldwide_day)?;
-    factory.pipeline_wwd.insert(worldwide_day)?;
-    Ok(())
-}
-
 pub fn close_worldwide_day(
     factory: &mut TributeFactoryContract<'_>,
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
-    if let Some(mut record) = factory.worldwide_days.get(worldwide_day)? {
-        if record.state != wwd_state::CLOSED {
-            record.state = wwd_state::CLOSED;
-            factory.worldwide_days.update(&record)?;
-        }
-    }
-    factory.active_wwd.remove(&worldwide_day)?;
     factory.pipeline_wwd.remove(&worldwide_day)?;
     let mut tribute = TributeContract::new(factory.storage.clone());
     if !tribute.is_day_sealed(worldwide_day)? {
         tribute.seal_day(worldwide_day)?;
     }
-    Ok(())
-}
-
-pub fn remove_active_worldwide_day(
-    factory: &mut TributeFactoryContract<'_>,
-    worldwide_day: WorldwideDay,
-) -> Result<()> {
-    outbe_tribute::runtime::require_worldwide_day_removal_lease(&factory.storage)?;
-    close_worldwide_day(factory, worldwide_day)?;
     Ok(())
 }
 
@@ -273,10 +200,7 @@ fn validate_schedule_shape(wwd: WorldwideDay, schedule: &NewWwdSchedule) -> Resu
 }
 
 fn validate_record_shape(wwd: WorldwideDay, record: &WorldwideDayRecord) -> Result<()> {
-    if record.offering_start == 0
-        || record.offering_start > record.offering_end
-        || record.state > wwd_state::CLOSED
-    {
+    if record.offering_start == 0 || record.offering_start > record.offering_end {
         return Err(WwdStorageCorruptionError::WwdNonMonotonicPhaseBoundaries { wwd }.into());
     }
     Ok(())

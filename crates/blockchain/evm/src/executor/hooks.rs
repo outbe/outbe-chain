@@ -61,9 +61,9 @@ pub(crate) fn enforce_enclave_upgrade_deadline(
 /// 4. `enforce_enclave_upgrade_deadline` - when an enclave upgrade sweep is due,
 ///    jail each active validator without the successor enclave binding and
 ///    slash `slash_amount_percent()` of its stake. It runs after Update.
-/// 5. `RewardsLifecycle::begin_block` - locks `genesis_utc_day` on
-///    block 0. The per-block emission and per-day settle paths
-///    moved to the Cycle module.
+/// 5. `RewardsLifecycle::begin_block` is a no-op. The start date is the
+///    UTC date of the genesis timestamp. The per-block emission and
+///    per-day settle paths moved to the Cycle module.
 /// 6. The Metadosis WWD state machine moved to the hourly ProtocolCycle
 ///    handler. There is no per-block hook here anymore.
 /// 7. Staking matured-unbonding processing.
@@ -117,9 +117,9 @@ fn run_outbe_pre_execution_hooks_inner(
     // and AgentReward / Metadosis dispatch all run from ProtocolCycle's
     // persisted UTC-day decision instead.
 
-    // Rewards lifecycle: locks `genesis_utc_day` on block 0. Day-
-    // boundary settle moved out of Rewards (Phase 3). The
-    // Cycle handler now owns the daily orchestration.
+    // Rewards lifecycle is a no-op. The start date is the UTC date of the
+    // genesis timestamp. Day-boundary settle moved out of Rewards (Phase 3).
+    // The Cycle handler now owns the daily orchestration.
     <outbe_rewards::lifecycle::RewardsLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
     // Metadosis WWD state machine + lysis distribution moved to the

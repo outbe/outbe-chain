@@ -1,6 +1,5 @@
 //! Daily validator rewards include canonical late voters, including across UTC midnight.
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
@@ -23,11 +22,6 @@ fn block(height: u64) -> BlockContext {
 }
 
 fn seed(ctx: &BlockRuntimeContext) {
-    let genesis = BlockRuntimeContext::new(
-        BlockContext::new(0, MIDNIGHT - SECONDS_PER_DAY, 1, Address::ZERO, vec![]),
-        ctx.storage.clone(),
-    );
-    outbe_rewards::runtime::ensure_genesis_anchor(&genesis).unwrap();
     let metadata = CertifiedParentAccountingMetadata {
         finalized_block_number: 10,
         finalized_block_hash: HASH,

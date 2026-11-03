@@ -32,8 +32,6 @@ pub enum CycleError {
     AllocationWithoutMetadosisReceipt,
     #[error("Cycle allocation disagrees with the Metadosis day-limit receipt")]
     AllocationDisagreesWithMetadosisReceipt,
-    #[error("ProtocolCycle active UTC day is not initialized in genesis")]
-    ActiveUtcDayNotInitialized,
     #[error("last_accounted_block_number regression: current={current}, attempted={attempted}")]
     BlockNumberRegression { current: u64, attempted: u64 },
     #[error("accounting progress input is zero")]
@@ -107,9 +105,6 @@ impl From<CycleError> for PrecompileError {
             CycleError::AllocationDisagreesWithMetadosisReceipt => PrecompileError::RevertBytes(
                 Bytes::from(ICycle::AllocationDisagreesWithMetadosisReceipt {}.abi_encode()),
             ),
-            CycleError::ActiveUtcDayNotInitialized => PrecompileError::RevertBytes(Bytes::from(
-                ICycle::ActiveUtcDayNotInitialized {}.abi_encode(),
-            )),
             CycleError::BlockNumberRegression { current, attempted } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     ICycle::BlockNumberRegression { current, attempted }.abi_encode(),
@@ -231,10 +226,6 @@ mod tests {
             (
                 CycleError::AllocationDisagreesWithMetadosisReceipt,
                 ICycle::AllocationDisagreesWithMetadosisReceipt::SELECTOR,
-            ),
-            (
-                CycleError::ActiveUtcDayNotInitialized,
-                ICycle::ActiveUtcDayNotInitialized::SELECTOR,
             ),
             (
                 CycleError::BlockNumberRegression {

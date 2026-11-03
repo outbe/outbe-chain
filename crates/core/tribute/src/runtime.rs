@@ -334,11 +334,6 @@ pub fn require_worldwide_day_creation_lease(
     )
 }
 
-/// Process-ready completion and advance-due failure remove the active day.
-pub fn require_worldwide_day_removal_lease(storage: &StorageHandle<'_>) -> Result<()> {
-    accept_day_lease(storage, &[DayLease::ProcessReady, DayLease::AdvanceDue])
-}
-
 /// Creation, offering sync, failure, and settlement each seal under their own binding.
 pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<()> {
     accept_day_lease(
