@@ -69,7 +69,6 @@ members = [
     "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # testing
-    "testing/e2e-harness",
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
     "crates/zk/poseidon",
@@ -77,7 +76,7 @@ members = [
     "crates/zk/outbe-zk-backend",
 ]
 # Exclude testing/* from default workspace builds (`cargo build`, `cargo build --release`,
-# `cargo tree -e features,no-dev`) so benchmark/harness dependencies such as `test-enclave`
+# `cargo tree -e features,no-dev`) so benchmark dependencies such as `test-enclave`
 # are never unified into production binaries. Explicit `--workspace` or `-p` flags still
 # select them for `clippy`, `nextest`, and benchmark runs.
 default-members = [

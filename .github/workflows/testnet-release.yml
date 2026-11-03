@@ -579,7 +579,7 @@ jobs:
           mkdir "${RUNNER_TEMP}/signed"
           tar -xf "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
-          cargo run --locked -p outbe-e2e-harness --features release-sgx-e2e --bin outbe-release-sgx-e2e -- \
+          cargo run --locked -p xtask --features release-sgx-e2e --bin outbe-release-sgx-e2e -- \
             --network testnet \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \
@@ -608,7 +608,7 @@ jobs:
           EXACT_IMAGE: ${{ needs.package-and-sign-image.outputs.exact_image }}
         run: |
           set -euo pipefail
-          cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+          cargo run --locked -p xtask --features release-sgx-e2e --bin outbe-release-dcap-evidence -- \
             --network testnet \
             --image "${EXACT_IMAGE}" \
             --bundle "${RUNNER_TEMP}/signed" \

@@ -8088,79 +8088,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-e2e-harness"
-version = "0.1.0"
-dependencies = [
- "alloy-eips",
- "alloy-network",
- "alloy-primitives",
- "alloy-provider",
- "alloy-rpc-types",
- "alloy-signer",
- "alloy-signer-local",
- "alloy-sol-types",
- "ark-bn254",
- "ark-ff 0.6.0",
- "base64 0.22.1",
- "blst",
- "bytes",
- "clap",
- "commonware-codec",
- "commonware-consensus",
- "commonware-cryptography",
- "commonware-parallel",
- "commonware-utils",
- "cucumber",
- "eyre",
- "futures",
- "hex",
- "k256 0.13.4",
- "libc",
- "multibase",
- "outbe-agentreward",
- "outbe-chain-constants",
- "outbe-coderegistry",
- "outbe-common",
- "outbe-consensus",
- "outbe-credis",
- "outbe-desis",
- "outbe-emission",
- "outbe-evm",
- "outbe-gem",
- "outbe-genesis-cli",
- "outbe-intexfactory",
- "outbe-l2registry",
- "outbe-metadosis",
- "outbe-nod",
- "outbe-oracle",
- "outbe-primitives",
- "outbe-radicle",
- "outbe-slashindicator",
- "outbe-tee",
- "outbe-tee-enclave",
- "outbe-tribute",
- "outbe-tributefactory",
- "outbe-update",
- "outbe-zk",
- "outbe-zk-backend",
- "radicle",
- "rand 0.10.2",
- "rand 0.8.6",
- "rand_core 0.6.4",
- "reth-ethereum",
- "rustix",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "time",
- "tokio",
- "walkdir",
- "xshell",
- "yaml_serde",
-]
-
-[[package]]
 name = "outbe-emission"
 version = "0.1.0"
 dependencies = [
@@ -17564,36 +17491,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "xshell"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e7290c623014758632efe00737145b6867b66292c42167f2ec381eb566a373d"
-dependencies = [
- "xshell-macros",
-]
-
-[[package]]
-name = "xshell-macros"
-version = "0.2.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
-
-[[package]]
 name = "xtask"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "base64 0.22.1",
  "blst",
  "clap",
+ "cucumber",
  "eyre",
  "filetime",
  "hex",
+ "libc",
  "outbe-consensus",
  "outbe-evm",
  "outbe-genesis-cli",
  "outbe-primitives",
  "outbe-tee",
+ "rand_core 0.6.4",
  "reth-ethereum",
  "serde",
  "serde_json",
@@ -17601,6 +17518,7 @@ dependencies = [
  "tar",
  "tempfile",
  "time",
+ "tokio",
  "walkdir",
 ]
 
