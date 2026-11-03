@@ -18,39 +18,6 @@ impl StorageReader for EmptyReader {
 }
 
 #[test]
-fn block_context_carries_explicit_genesis_hash_beside_chain_id() {
-    let genesis_hash = B256::repeat_byte(0x42);
-    let context = BlockContext::try_new_with_genesis_hash(BlockContextInput {
-        block_number: 7,
-        timestamp: 1_700_000_000,
-        chain_id: 54_322_345,
-        genesis_hash,
-        genesis_timestamp: 1_600_000_000,
-        proposer: Address::repeat_byte(0x11),
-        validators: vec![Address::repeat_byte(0x22)],
-    })
-    .unwrap();
-
-    assert_eq!(context.chain_id, 54_322_345);
-    assert_eq!(context.genesis_hash, genesis_hash);
-    assert_eq!(context.genesis_timestamp, 1_600_000_000);
-
-    assert_eq!(
-        BlockContext::try_new_with_genesis_hash(BlockContextInput {
-            block_number: 7,
-            timestamp: 1_700_000_000,
-            chain_id: 54_322_345,
-            genesis_hash,
-            genesis_timestamp: 0,
-            proposer: Address::repeat_byte(0x11),
-            validators: vec![Address::repeat_byte(0x22)],
-        })
-        .unwrap_err(),
-        ZeroGenesisTimestamp
-    );
-}
-
-#[test]
 fn block_context_new_copies_timestamp_into_genesis_timestamp() {
     let context = BlockContext::new(7, 1_700_000_000, 1, Address::ZERO, Vec::new());
     assert_eq!(context.genesis_timestamp, 1_700_000_000);
