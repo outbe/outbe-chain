@@ -1,7 +1,7 @@
 //! The owner calls: local calls and Interchain Account dispatch, paid from the
 //! owner balance. The only code that calls another contract as the owner. It
 //! runs the calls of the vote actions and the `callLocal` and `callRemote`
-//! calls of the owner-caller list. Use these methods only in the frame of the
+//! calls of the allowed-caller list. Use these methods only in the frame of the
 //! owner address: every call has the frame address as `msg.sender`.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -10,7 +10,7 @@ use outbe_hyperlanecontroller::sol_ext::IInterchainAccountRouter;
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 use outbe_primitives::error::Result;
 
-use crate::constants::OWNER_CALLERS;
+use crate::constants::ALLOWED_CALLERS;
 use crate::errors::CrosschainBridgeError;
 use crate::precompile::ICrosschainBridge::{self, Call};
 use crate::schema::CrosschainBridgeContract;
@@ -18,9 +18,9 @@ use crate::schema::CrosschainBridgeContract;
 impl<'a> CrosschainBridgeContract<'a> {
     /// Requires that `caller` may make the owner call a contract through
     /// `callLocal` and `callRemote`.
-    pub fn require_owner_caller(caller: Address) -> Result<()> {
-        if !OWNER_CALLERS.contains(&caller) {
-            return Err(CrosschainBridgeError::NotOwnerCaller { caller }.into());
+    pub fn require_allowed_caller(caller: Address) -> Result<()> {
+        if !ALLOWED_CALLERS.contains(&caller) {
+            return Err(CrosschainBridgeError::CallerNotAllowed { caller }.into());
         }
         Ok(())
     }

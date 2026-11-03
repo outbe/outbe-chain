@@ -1,24 +1,6 @@
 [
   {
     "type": "function",
-    "name": "applyApproved",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "payload",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "callLocal",
     "inputs": [
       {
@@ -122,32 +104,6 @@
   },
   {
     "type": "event",
-    "name": "ApprovedActionApplied",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ApprovedActionExpired",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Funded",
     "inputs": [
       {
@@ -211,12 +167,12 @@
   },
   {
     "type": "error",
-    "name": "ApprovedPayloadMismatch",
+    "name": "CallerNotAllowed",
     "inputs": [
       {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -269,34 +225,12 @@
   },
   {
     "type": "error",
-    "name": "NotOwnerCaller",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "UndecodableReturn",
     "inputs": [
       {
         "name": "value",
         "type": "string",
         "internalType": "string"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnknownApprovedAction",
-    "inputs": [
-      {
-        "name": "proposalId",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ]
   },

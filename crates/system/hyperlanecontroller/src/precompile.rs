@@ -51,6 +51,9 @@ pub fn dispatch(
                 setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
                 }),
+                applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
+                    controller.apply_approved(c.proposalId, &c.payload)
+                }),
                 submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.submit_checkpoint(
                         sender,

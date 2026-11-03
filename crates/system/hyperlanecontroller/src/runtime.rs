@@ -252,7 +252,7 @@ pub fn validate_validators(
 // Owner calls. The controller owns no contract: it calls the owner
 // (`CROSSCHAIN_BRIDGE_ADDRESS`) like a contract, `callLocal` for a call on Outbe
 // and `callRemote` for a call on another chain. The owner checks that the
-// caller is in its owner-caller list.
+// caller is in its allowed-caller list.
 
 /// A zero-value call of `to`.
 pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainBridge::Call {

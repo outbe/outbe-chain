@@ -11,8 +11,8 @@ use crate::precompile::ICrosschainBridge;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CrosschainBridgeError {
-    #[error("caller {caller} may not make owner calls")]
-    NotOwnerCaller { caller: Address },
+    #[error("caller {caller} is not in the allowed-caller list")]
+    CallerNotAllowed { caller: Address },
 
     #[error("the Hyperlane registry is not initialized")]
     NotInitialized,
@@ -37,19 +37,13 @@ pub enum CrosschainBridgeError {
 
     #[error("undecodable return data from {0}")]
     UndecodableReturn(&'static str),
-
-    #[error("no approved action for proposal {proposal_id}")]
-    UnknownApprovedAction { proposal_id: U256 },
-
-    #[error("payload does not match the approved action of proposal {proposal_id}")]
-    ApprovedPayloadMismatch { proposal_id: U256 },
 }
 
 impl From<CrosschainBridgeError> for PrecompileError {
     fn from(error: CrosschainBridgeError) -> Self {
         let bytes = match error {
-            CrosschainBridgeError::NotOwnerCaller { caller } => {
-                ICrosschainBridge::NotOwnerCaller { caller }.abi_encode()
+            CrosschainBridgeError::CallerNotAllowed { caller } => {
+                ICrosschainBridge::CallerNotAllowed { caller }.abi_encode()
             }
             CrosschainBridgeError::NotInitialized => {
                 ICrosschainBridge::NotInitialized {}.abi_encode()
@@ -76,18 +70,6 @@ impl From<CrosschainBridgeError> for PrecompileError {
             CrosschainBridgeError::UndecodableReturn(value) => {
                 ICrosschainBridge::UndecodableReturn {
                     value: value.to_string(),
-                }
-                .abi_encode()
-            }
-            CrosschainBridgeError::UnknownApprovedAction { proposal_id } => {
-                ICrosschainBridge::UnknownApprovedAction {
-                    proposalId: proposal_id,
-                }
-                .abi_encode()
-            }
-            CrosschainBridgeError::ApprovedPayloadMismatch { proposal_id } => {
-                ICrosschainBridge::ApprovedPayloadMismatch {
-                    proposalId: proposal_id,
                 }
                 .abi_encode()
             }

@@ -918,3 +918,167 @@ mod liveness {
         });
     }
 }
+
+mod vote_target {
+    use super::*;
+    use crate::sol_ext::IHyperlaneRouter;
+    use crate::HyperlaneVoteTarget;
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+
+    const APPROVED_AT: u64 = 30;
+    const ARBITRUM: u32 = 42_161;
+
+    fn context() -> VoteTargetContext {
+        VoteTargetContext {
+            proposer: v(1),
+            attached_value: U256::ZERO,
+            block_number: APPROVED_AT,
+            chain_id: CHAIN_ID,
+        }
+    }
+
+    fn add_arbitrum() -> String {
+        format!(
+            r#"{{"operation":"addHyperlaneChain","chainId":{ARBITRUM},"icaRouter":"{:#x}","ism":"{:#x}","hook":"{:#x}"}}"#,
+            v(0xe1),
+            v(0xd1),
+            hook(9)
+        )
+    }
+
+    fn remove(chain_id: u32) -> String {
+        format!(r#"{{"operation":"removeHyperlaneChain","chainId":{chain_id}}}"#)
+    }
+
+    fn approve(p: &mut HashMapStorageProvider, payload: &str) {
+        StorageHandle::enter(p, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(APPROVED_AT, 1_700_000_000, CHAIN_ID),
+                storage,
+            );
+            assert_eq!(
+                HyperlaneVoteTarget
+                    .handle_approved(&ctx, U256::ONE, payload.as_bytes(), context())
+                    .unwrap(),
+                TargetExecutionOutcome::Applied
+            );
+        });
+        p.set_block_number(APPROVED_AT);
+    }
+
+    fn apply(p: &mut HashMapStorageProvider, payload: &str) -> Result<Bytes, PrecompileError> {
+        let call = IHyperlaneController::applyApprovedCall {
+            proposalId: U256::ONE,
+            payload: payload.as_bytes().to_vec().into(),
+        };
+        StorageHandle::enter(p, |storage| {
+            dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO)
+        })
+    }
+
+    #[test]
+    fn validate_accepts_both_actions_and_rejects_bad_fields() {
+        for payload in [add_arbitrum(), remove(ARBITRUM)] {
+            HyperlaneVoteTarget
+                .validate(payload.as_bytes(), context())
+                .unwrap_or_else(|e| panic!("{payload}: {e:?}"));
+        }
+        let zero = format!("{:#x}", Address::ZERO);
+        for payload in [
+            "{}".to_string(),
+            remove(LOCAL),
+            remove(0),
+            add_arbitrum().replace(&format!("{:#x}", v(0xd1)), &zero),
+            add_arbitrum().replace('}', r#","extra":1}"#),
+            r#"{"operation":"setBridgePaused","chainId":97}"#.to_string(),
+        ] {
+            assert!(
+                HyperlaneVoteTarget
+                    .validate(payload.as_bytes(), context())
+                    .is_err(),
+                "{payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn add_hyperlane_chain_enrolls_the_ica_router_once_then_adds_the_domain() {
+        let enrolled = |p: &mut HashMapStorageProvider, router: B256| {
+            p.stub_sub_call_at_selector(
+                ica_router(),
+                IHyperlaneRouter::routersCall::SELECTOR,
+                Bytes::from(router.abi_encode()),
+            );
+        };
+        let enroll = Bytes::from(
+            IHyperlaneRouter::enrollRemoteRouterCall {
+                _domain: ARBITRUM,
+                _router: v(0xe1).into_word(),
+            }
+            .abi_encode(),
+        );
+
+        // A new chain: enroll on Outbe, then accept the remote ISM through the ICA.
+        let mut p = initialized_provider();
+        enrolled(&mut p, B256::ZERO);
+        approve(&mut p, &add_arbitrum());
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &add_arbitrum()).unwrap();
+        let sent = owner_calls(&p, start);
+        assert_eq!(sent[0], (None, ica_router(), enroll));
+        assert_eq!(sent[1].0, Some(ARBITRUM));
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.ism_by_domain.read(&ARBITRUM).unwrap(), v(0xd1));
+        });
+
+        // The deployer enrolled the same router: no second enrollment.
+        let mut p = initialized_provider();
+        enrolled(&mut p, v(0xe1).into_word());
+        approve(&mut p, &add_arbitrum());
+        let start = p.sub_call_inputs().len();
+        apply(&mut p, &add_arbitrum()).unwrap();
+        assert!(owner_calls(&p, start)
+            .iter()
+            .all(|(domain, _, _)| domain.is_some()));
+
+        // Another router is enrolled: nothing applies.
+        let mut p = initialized_provider();
+        enrolled(&mut p, v(0xe2).into_word());
+        approve(&mut p, &add_arbitrum());
+        let err = apply(&mut p, &add_arbitrum()).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::RemoteRouterMismatch::SELECTOR
+        );
+    }
+
+    #[test]
+    fn apply_runs_once_rejects_another_payload_and_drops_an_expired_action() {
+        let mut p = initialized_provider();
+        approve(&mut p, &remove(SEPOLIA));
+        let err = apply(&mut p, &remove(BSC)).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::ApprovedPayloadMismatch::SELECTOR
+        );
+        apply(&mut p, &remove(SEPOLIA)).unwrap();
+        let err = apply(&mut p, &remove(SEPOLIA)).unwrap_err();
+        assert_eq!(
+            revert_selector(err),
+            IHyperlaneController::UnknownApprovedAction::SELECTOR
+        );
+
+        let mut p = initialized_provider();
+        approve(&mut p, &remove(BSC));
+        p.set_block_number(
+            APPROVED_AT + outbe_chain_constants::get_governance_voting_window_blocks() + 1,
+        );
+        apply(&mut p, &remove(BSC)).unwrap();
+        StorageHandle::enter(&mut p, |storage| {
+            let c = HyperlaneControllerContract::new(storage);
+            assert_eq!(c.ism_by_domain.read(&BSC).unwrap(), bsc_ism());
+        });
+    }
+}

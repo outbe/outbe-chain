@@ -12,7 +12,8 @@ address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE
 /// included under its own domain), and the liveness of the validator agents.
 /// Validator sets live in the ISMs themselves. It owns no contract: the owner
 /// is `CROSSCHAIN_BRIDGE`. This precompile makes every ISM and router call through
-/// `CROSSCHAIN_BRIDGE.callLocal` and `CROSSCHAIN_BRIDGE.callRemote`.
+/// `CROSSCHAIN_BRIDGE.callLocal` and `CROSSCHAIN_BRIDGE.callRemote`. Its vote target adds and
+/// removes the Hyperlane chains (`addHyperlaneChain`, `removeHyperlaneChain`).
 interface IHyperlaneController {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
@@ -39,6 +40,8 @@ interface IHyperlaneController {
     error InvalidValidator(address validator);
     error UndecodableReturn(string value);
     error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
+    error UnknownApprovedAction(uint256 proposalId);
+    error ApprovedPayloadMismatch(uint256 proposalId);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
@@ -48,6 +51,8 @@ interface IHyperlaneController {
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event LivenessMiss(address indexed validator, uint32 misses);
     event LivenessJailed(address indexed validator);
+    event ApprovedActionApplied(uint256 indexed proposalId);
+    event ApprovedActionExpired(uint256 indexed proposalId);
 
     /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
     /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
@@ -69,6 +74,13 @@ interface IHyperlaneController {
     /// it differs from the validator address. Caller: the validator or its
     /// oracle delegate.
     function setHyperlaneSigner(address signer) external;
+
+    /// Runs a Hyperlane chain action that a governance vote approved. Permissionless: the vote
+    /// decided, and `payload` must be the approved JSON (its keccak256 is stored). An action older
+    /// than the governance voting window is dropped with `ApprovedActionExpired`, so a stale
+    /// approval cannot undo a newer one. A remote action pays the Hyperlane fee from the
+    /// `CROSSCHAIN_BRIDGE` balance.
+    function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// Liveness proof: an active validator (or its oracle delegate, the feeder
     /// key) submits its latest signed checkpoint for `domain`. The signature is

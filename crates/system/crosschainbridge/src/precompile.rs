@@ -4,7 +4,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
+    dispatch_call, mutate, mutate_void_payable, reject_value_unless_payable, view,
     PayableCallContext,
 };
 use outbe_primitives::error::Result;
@@ -47,15 +47,12 @@ pub fn dispatch(
                     },
                     |sender, _, amount| gov.fund(sender, amount),
                 ),
-                applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
-                    gov.apply_approved(c.proposalId, &c.payload)
-                }),
                 callLocal(c) => mutate(&storage, c, caller, |sender, c| {
-                    CrosschainBridgeContract::require_owner_caller(sender)?;
+                    CrosschainBridgeContract::require_allowed_caller(sender)?;
                     gov.call_local(c.call.to, c.call.value, c.call.data)
                 }),
                 callRemote(c) => mutate(&storage, c, caller, |sender, c| {
-                    CrosschainBridgeContract::require_owner_caller(sender)?;
+                    CrosschainBridgeContract::require_allowed_caller(sender)?;
                     gov.call_remote(c.domain, &c.calls)
                 }),
                 remoteAccount(c) => view(c, |c| gov.remote_account(c.domain)),

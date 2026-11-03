@@ -8,22 +8,19 @@
 //! - `runtime` runs the owner calls (`call_local`, `call_remote`) and pays
 //!   remote dispatch fees from the address balance. `fund` adds value
 //!   to that balance.
-//! - [`CrosschainVoteTarget`] stores the hash of an approved action.
-//!   Permissionless `applyApproved` then runs it. Every vote action is in
-//!   `vote_target`: the actions on our contracts and on the Hyperlane chains.
-//! - `callLocal` and `callRemote` let a precompile in [`constants::OWNER_CALLERS`]
-//!   make the owner call a contract. Today this is the HyperlaneController
-//!   (`0x...EE14`), for its ISM rotation and bootstrap.
+//! - `callLocal` and `callRemote` let a precompile in [`constants::ALLOWED_CALLERS`]
+//!   make the owner call a contract: the HyperlaneController (`0x...EE14`) for
+//!   its ISM rotation, bootstrap and Hyperlane chain votes, and Update for an
+//!   approved `upgradeContracts` proposal. An upgrade or a configuration change
+//!   of our contracts is an `upgradeContracts` vote.
+//!
+//! It has no vote target and no storage of its own.
 
 pub mod constants;
 pub mod errors;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
-
-mod vote_target;
-
-pub use vote_target::CrosschainVoteTarget;
 
 #[cfg(test)]
 mod tests;

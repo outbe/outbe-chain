@@ -12,6 +12,8 @@
 //!   Begin-block liveness calls the same rotation.
 //! - A write to an ISM or the ICA router is an owner call: the controller
 //!   calls `crosschainbridge` like a contract (`callLocal`, `callRemote`).
+//! - [`HyperlaneVoteTarget`] adds and removes the Hyperlane chains by a
+//!   validator vote. Permissionless `applyApproved` runs an approved action.
 
 pub mod errors;
 pub mod lifecycle;
@@ -22,12 +24,14 @@ pub mod sol_ext;
 mod ism;
 mod liveness;
 mod runtime;
+mod vote_target;
 
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};
 pub use schema::HyperlaneControllerContract;
+pub use vote_target::HyperlaneVoteTarget;
 
 #[cfg(test)]
 mod tests;

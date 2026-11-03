@@ -192,6 +192,8 @@ pub const TEE_REGISTRY_ADDRESS: Address = address!("0x00000000000000000000000000
 ///
 /// Hosts proposal/vote state and the active protocol version. Callable
 /// dispatch is registered at `UPDATE_ADDRESS`. Lifecycle activation is wired later.
+/// It also runs approved `upgradeContracts` proposals through
+/// `CROSSCHAIN_BRIDGE_ADDRESS` (OIP-00369).
 pub const UPDATE_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE0B");
 
 /// Generic on-chain vote precompile address.
@@ -228,7 +230,8 @@ pub const CODE_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000
 /// The Hyperlane infrastructure of the owner (OIP-00369): the validator set in
 /// the ISMs, liveness, and the domain table. It owns no contract. It asks
 /// `CROSSCHAIN_BRIDGE_ADDRESS` to run its owner calls through `callLocal` and
-/// `callRemote`. See `outbe-hyperlanecontroller`.
+/// `callRemote`. Its vote target adds and removes the Hyperlane chains. See
+/// `outbe-hyperlanecontroller`.
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE14");
 
@@ -239,7 +242,8 @@ pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
 /// (Mailbox, ProxyAdmin, IGP, ProtocolFee, InterchainAccountRouter, storage
 /// multisig ISM). Through its Interchain Account, it also owns the same
 /// contracts on remote chains. `fund` is the only payable selector (float that
-/// pays ICA fees). The validator vote target applies every owner action. See
+/// pays ICA fees). It has no vote target: the Update `upgradeContracts` vote
+/// upgrades and configures the contracts through it. See
 /// `outbe-crosschainbridge`.
 pub const CROSSCHAIN_BRIDGE_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE15");

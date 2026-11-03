@@ -8,9 +8,9 @@ address constant CROSSCHAIN_BRIDGE = 0x000000000000000000000000000000000000EE15;
 /// CrosschainBridge precompile at `CROSSCHAIN_BRIDGE` (OIP-00369).
 ///
 /// The owner of every multi-chain contract: on Outbe directly, on another chain
-/// through its Interchain Account. The crosschain vote target approves owner
-/// actions, and `applyApproved` runs them (see `crates/system/crosschainbridge` for
-/// the JSON payloads).
+/// through its Interchain Account. It has no vote of its own. An upgrade or a configuration
+/// change of our contracts is the `upgradeContracts` vote of IUpdate, and a Hyperlane chain
+/// change is a vote of IHyperlaneController. Both call `callLocal` and `callRemote` here.
 interface ICrosschainBridge {
     /// One owner call.
     struct Call {
@@ -20,7 +20,7 @@ interface ICrosschainBridge {
     }
 
     /// Caller-facing domain revert.
-    error NotOwnerCaller(address caller);
+    error CallerNotAllowed(address caller);
     error NotInitialized();
     error InvalidAddress();
     error InvalidDomain();
@@ -29,27 +29,16 @@ interface ICrosschainBridge {
     error ZeroFund();
     error InsufficientBalance(uint256 required, uint256 available);
     error UndecodableReturn(string value);
-    error UnknownApprovedAction(uint256 proposalId);
-    error ApprovedPayloadMismatch(uint256 proposalId);
 
     event RemoteCallDispatched(uint32 indexed domain, bytes32 indexed messageId, uint256 fee);
     event LocalCallExecuted(address indexed target, uint256 value);
     event Funded(address indexed from, uint256 amount);
-    event ApprovedActionApplied(uint256 indexed proposalId);
-    event ApprovedActionExpired(uint256 indexed proposalId);
 
     /// Tops up the balance that pays Interchain Account dispatch fees (IGP quote).
     function fund() external payable;
 
-    /// Runs a crosschain action that a governance vote approved. Permissionless: the vote decided,
-    /// and `payload` must be the approved JSON (its keccak256 is stored). An action older than the
-    /// governance voting window is dropped with `ApprovedActionExpired`, so a stale approval cannot
-    /// undo a newer one. A remote action pays the Hyperlane fee from the owner balance.
-    function applyApproved(uint256 proposalId, bytes calldata payload) external;
-
     /// Calls `call.to` on Outbe as the owner. The owner balance pays `call.value`. Only a
-    /// precompile in the owner-caller list may call it: today the HyperlaneController and the
-    /// owner itself.
+    /// precompile in the allowed-caller list may call it: the HyperlaneController and Update.
     function callLocal(Call calldata call) external returns (bytes memory);
 
     /// Runs `calls` on `domain` through the Interchain Account of the owner, in one message.
