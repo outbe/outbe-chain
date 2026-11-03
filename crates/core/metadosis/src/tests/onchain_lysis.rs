@@ -281,10 +281,11 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
     let executed = provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| IMetadosis::MetadosisExecuted::decode_log(event).ok())
+        .filter_map(|event| IMetadosis::MetadosisCompleted::decode_log(event).ok())
         .map(|event| event.data)
         .collect::<Vec<_>>();
     assert_eq!(executed.len(), 1);
+    assert_eq!(executed[0].emissionDay, DAY);
     assert_eq!(executed[0].status, "COMPLETED");
     let unused = executed[0].unusedLysisLimitMinor;
     assert!(!unused.is_zero());
@@ -455,17 +456,25 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
     let _transport = outbe_tee::lysis::test_transport::scope(exchange);
     for (limit, amounts) in [(1, vec![NOMINAL, NOMINAL + 1]), (LIMIT, vec![1, NOMINAL])] {
         let mut provider = fixture_with_amounts(limit, &amounts);
+        let promis_before = StorageHandle::enter(&mut provider, |storage| {
+            outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap()
+        });
         run(&mut provider).unwrap();
         StorageHandle::enter(&mut provider, |storage| {
             let metadosis = MetadosisContract::new(storage.clone());
+            let record = metadosis.emission_days().get(DAY).unwrap().unwrap();
+            assert_eq!(record.metadosis_state, emission_day_state::FAILED);
             assert_eq!(
-                metadosis
-                    .emission_days()
-                    .get(DAY)
-                    .unwrap()
-                    .unwrap()
-                    .metadosis_state,
-                emission_day_state::FAILED
+                record.state,
+                outbe_emission::schema::emission_day_state::COMPLETED
+            );
+            assert_eq!(
+                outbe_promislimit::PromisLimitContract::new(storage.clone())
+                    .promis_limit()
+                    .unwrap(),
+                promis_before + U256::from(limit)
             );
             let tribute = TributeContract::new(storage.clone());
             assert_eq!(
@@ -479,6 +488,15 @@ fn calculation_rejection_only_fails_the_day_and_preserves_all_economic_state() {
                 outbe_nod::api::balance_of(&storage, owner).unwrap() == 0
             }));
         });
+        let failed = provider
+            .get_ordered_events()
+            .iter()
+            .filter_map(|event| IMetadosis::MetadosisFailed::decode_log(event).ok())
+            .map(|event| event.data)
+            .collect::<Vec<_>>();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].emissionDay, DAY);
+        assert_eq!(failed[0].reason, 1);
         let after = provider.storage.clone();
         let events = provider.get_ordered_events().to_vec();
         run(&mut provider).unwrap();

@@ -3,7 +3,7 @@ use super::*;
 
 /// Tick entry for the fan-in gate: clear once every snapshot chain has finalized,
 /// or once the deadline passes (missing chains are excluded and reported via
-/// `ChainSkipped`). Returns `None` while the gate is not ready, and past the day's
+/// `BidsExpired`). Returns `None` while the gate is not ready, and past the day's
 /// last clearing time, which leaves the day to fail.
 pub fn force_clear(
     storage: StorageHandle<'_>,
@@ -174,22 +174,22 @@ fn clear_inner(
     contract.remove_gate_active(emission_day)?;
 
     for &chain_id in skipped {
-        contract.emit(IDesis::ChainSkipped {
+        contract.emit(IDesis::BidsExpired {
             emissionDay: emission_day.into(),
             srcChainId: chain_id,
         })?;
     }
 
     if result.issued_units == 0 {
-        contract.emit(IDesis::AuctionClearedEmpty {
+        contract.emit(IDesis::IntexAuctionCompletedEmpty {
             emissionDay: emission_day.into(),
             totalDemand: total_demand,
         })?;
     } else {
-        contract.emit(IDesis::AuctionCleared {
+        contract.emit(IDesis::IntexAuctionCompleted {
             emissionDay: emission_day.into(),
-            issuedUnits: result.issued_units,
-            clearingRate: result.clearing_rate,
+            units: result.issued_units,
+            clearingRate: u64::from(result.clearing_rate),
             totalDemand: total_demand,
         })?;
     }
@@ -204,16 +204,15 @@ fn clear_inner(
             allocation: desis_allocation_minor,
             limit: desis_limit_minor,
         })?;
-    contract.emit(IDesis::DesisAllocationRecorded {
+    contract.emit(IDesis::DesisLimitAllocated {
         emissionDay: emission_day.into(),
-        desisLimitMinor: desis_limit_minor,
-        desisAllocationMinor: desis_allocation_minor,
+        amountMinor: desis_allocation_minor,
+    })?;
+    contract.emit(IDesis::DesisLimitReturned {
+        emissionDay: emission_day.into(),
+        amountMinor: unused_desis_limit_minor,
     })?;
     if !unused_desis_limit_minor.is_zero() {
-        contract.emit(IDesis::UnusedDesisLimitReported {
-            emissionDay: emission_day.into(),
-            unusedDesisLimitMinor: unused_desis_limit_minor,
-        })?;
         PromisLimitContract::new(storage.clone()).checked_credit(unused_desis_limit_minor)?;
     }
 

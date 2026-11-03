@@ -100,7 +100,7 @@ impl OracleContract<'_> {
         }
         crate::scurve::process_wwd_scurves(self, worldwide_day, &day_vwaps)?;
 
-        let event = IOracle::WorldwideDayVwapStored {
+        let event = IOracle::WorldwideDayVwapSet {
             worldwideDay: worldwide_day.value(),
             startTime: start_time,
             endTime: end_time,

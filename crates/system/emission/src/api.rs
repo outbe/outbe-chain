@@ -320,6 +320,29 @@ pub fn record_metadosis_completed(
     Ok(record)
 }
 
+/// Marks Metadosis of `day` as `Cancelled` when `metadosis_limit == 0`.
+pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
+    let contract = EmissionContract::new(storage);
+    let mut record = contract
+        .emission_days
+        .get(day)?
+        .ok_or(EmissionError::EmissionDayNotFound)?;
+    if record.metadosis_state != metadosis_state::PENDING || record.metadosis_limit != 0 {
+        return Err(EmissionError::InvalidMetadosisStateTransition {
+            day,
+            from_state: record.metadosis_state,
+            to_state: metadosis_state::CANCELLED,
+        }
+        .into());
+    }
+    record.lysis_limit = 0;
+    record.desis_limit = 0;
+    record.nods = 0;
+    record.metadosis_state = metadosis_state::CANCELLED;
+    contract.emission_days.update(&record)?;
+    Ok(record)
+}
+
 /// Marks Metadosis of `day` as `Failed` and routes `metadosis_limit` to `promis_limit`.
 pub fn record_metadosis_failed(
     storage: StorageHandle<'_>,
@@ -728,5 +751,60 @@ mod tests {
             record_reward_pool_residue(storage.clone(), day, RewardPool::Waa, U256::ZERO).is_err()
         );
         assert_eq!(get_emission_day_record(storage, day).unwrap(), Some(record));
+    }
+
+    #[test]
+    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_cancelled() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let day = 20261001;
+
+        record_day_allocation(
+            storage.clone(),
+            day,
+            DayAllocationAmounts {
+                emission_limit: U256::from(100u64),
+                metadosis_limit: U256::from(20u64),
+                validators: U256::from(20u64),
+                waa: U256::from(20u64),
+                sra: U256::from(20u64),
+                cca: U256::from(20u64),
+                promis_limit: U256::ZERO,
+            },
+        )
+        .unwrap();
+
+        let err = record_metadosis_canceled(storage.clone(), day).unwrap_err();
+        assert_emission_error(
+            err,
+            EmissionError::InvalidMetadosisStateTransition {
+                day,
+                from_state: metadosis_state::PENDING,
+                to_state: metadosis_state::CANCELLED,
+            },
+        );
+
+        let mut zero_limit_record = get_emission_day_record(storage.clone(), day)
+            .unwrap()
+            .unwrap();
+        zero_limit_record.metadosis_limit = 0;
+        zero_limit_record.promis_limit = 20;
+        put_emission_day_record(storage.clone(), &zero_limit_record).unwrap();
+
+        let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
+        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELLED);
+        let completed = complete_emission_day(storage.clone(), day).unwrap();
+        assert_eq!(completed.state, emission_day_state::COMPLETED);
+        assert_eq!(completed.metadosis_state, metadosis_state::CANCELLED);
+
+        let repeat_err = record_metadosis_canceled(storage, day).unwrap_err();
+        assert_emission_error(
+            repeat_err,
+            EmissionError::InvalidMetadosisStateTransition {
+                day,
+                from_state: metadosis_state::CANCELLED,
+                to_state: metadosis_state::CANCELLED,
+            },
+        );
     }
 }

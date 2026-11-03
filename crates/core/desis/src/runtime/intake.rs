@@ -22,7 +22,7 @@ enum Intake {
     UnknownDay,
 }
 
-/// The `InboundIgnored` reason for a message the intake no longer takes. `None` while it is open.
+/// The `BidsIgnored` reason for a message the intake no longer takes. `None` while it is open.
 fn ignored_reason(stage: AuctionStage) -> Result<Option<u8>> {
     Ok(match intake_state(stage)? {
         Intake::Open => None,
@@ -45,7 +45,7 @@ fn emit_inbound_ignored(
     src_chain_id: u32,
     reason: u8,
 ) -> Result<()> {
-    contract.emit(IDesis::InboundIgnored {
+    contract.emit(IDesis::BidsIgnored {
         emissionDay: emission_day.into(),
         srcChainId: src_chain_id,
         reason,
@@ -58,7 +58,7 @@ fn emit_inbound_ignored(
 /// have arrived (see `try_finalize_chain`). The first batch fixes the chain's `total_batches` and
 /// every later one must agree. A redelivered batch (its bit already set) is an idempotent no-op, so
 /// the transport may safely re-deliver. A batch past clearing, or for a day this chain never
-/// briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
+/// briefed, is acknowledged with `BidsIgnored`: no later state could make it applicable.
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     inbound: Inbound,
@@ -110,7 +110,7 @@ pub fn process_bids_batch(
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
 /// `total_bids` bids for this day. Stage semantics mirror `process_bids_batch`. A marker may land
 /// before the batches it counts, which finalize the chain as they arrive. A marker the chain already
-/// recorded is a no-op when it agrees and is acknowledged with `InboundIgnored` when it does not: the
+/// recorded is a no-op when it agrees and is acknowledged with `BidsIgnored` when it does not: the
 /// first marker stands.
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
@@ -205,10 +205,9 @@ fn try_finalize_chain(
         return Ok(());
     }
     contract.chain_done.write(&key, 1u8)?;
-    contract.emit(IDesis::ChainBidsDone {
+    contract.emit(IDesis::BidsCompleted {
         emissionDay: emission_day.into(),
         srcChainId: chain_id,
-        bidsCount: bid_count,
     })
 }
 

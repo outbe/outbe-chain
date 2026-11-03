@@ -69,63 +69,31 @@ interface IDesis {
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
     // --- Events ---
-    event AuctionCreated(uint32 indexed emissionDay);
-    /// @notice The chain's bid intake finalized: BIDS_DONE marker and all batches arrived with
-    ///         matching totals.
-    event ChainBidsDone(uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 bidsCount);
-    /// @notice The chain missed the fan-in deadline. The clearing excluded its bids.
-    event ChainSkipped(uint32 indexed emissionDay, uint32 indexed srcChainId);
-    /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared
-    /// InboundReason codes:
-    /// - 2 = obsolete (the day already ended: completed, cancelled or failed).
-    /// - 3 = conflicting BIDS_DONE marker.
-    /// - 4 = day not found (never briefed here).
-    event InboundIgnored(uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason);
-    /// @notice The day was cancelled because it was briefed with no Desis limit, so it has
-    /// nothing to sell.
-    event AuctionCancelledNoLimit(uint32 indexed emissionDay);
-    /// @notice The day was cancelled because the oracle could price none of its reference
-    /// currencies, so no bid could have been measured against anything.
-    event AuctionCancelledUnpriced(uint32 indexed emissionDay);
-    /// @notice The day was cancelled because its Desis limit buys less than one Intex at the
-    ///         day's load.
-    event AuctionCancelledBelowOneUnit(uint32 indexed emissionDay, uint256 desisLimitMinor, uint128 promisLoadMinor);
-    /// @notice The day was cancelled because its auction would start with less than the minimum
-    ///         commit window.
-    event AuctionCancelledLateStart(uint32 indexed emissionDay);
-    /// @notice The day started but found no result by its last clearing time. `stage` is the
-    ///         stage it was in, which tells how far it got. Its unused Desis Limit returned to
-    ///         PromisLimit. The other chains read the day as failed from its schedule.
-    event AuctionFailed(uint32 indexed emissionDay, uint8 stage);
-    event AuctionCleared(uint32 indexed emissionDay, uint32 issuedUnits, uint32 clearingRate, uint64 totalDemand);
-    event AuctionClearedEmpty(uint32 indexed emissionDay, uint64 totalDemand);
-    /// @notice The day put `desisAllocationMinor` of its `desisLimitMinor` into issued Intex.
-    ///         The value is zero when the day was cancelled.
-    /// @dev Briefed days only. A day that fails pre-brief returns its Desis Limit via the
-    ///      Metadosis failure receipt.
-    event DesisAllocationRecorded(uint32 indexed emissionDay, uint256 desisLimitMinor, uint256 desisAllocationMinor);
-    /// @notice The part of the day's Desis Limit left unallocated returned to PromisLimit.
-    /// @dev Briefed days only. A day that fails pre-brief returns its Desis Limit via the
-    ///      Metadosis failure receipt.
-    event UnusedDesisLimitReported(uint32 indexed emissionDay, uint256 unusedDesisLimitMinor);
-    /// @notice The day dropped a reference currency because `takenBy` already claimed
-    /// the letter a series id spells it with. No bid may price in it for this day.
-    /// @notice The day's PROMIS load stepped because `isoCode` moved tenfold from the
-    ///         price it was captured at. Never emitted when the ladder takes its first
-    ///         position on a fresh chain.
-    event PromisLoadStepped(
+    event DesisLimitSet(uint32 indexed emissionDay, uint256 amountMinor);
+    event DesisLimitAllocated(uint32 indexed emissionDay, uint256 amountMinor);
+    event DesisLimitReturned(uint32 indexed emissionDay, uint256 amountMinor);
+    event IntexPromisLoadSet(
         uint32 indexed emissionDay,
-        uint128 previousLoadMinor,
-        uint128 newLoadMinor,
-        uint16 isoCode,
+        uint128 loadMinor,
+        uint16 referenceCurrency,
         uint256 rateMinor,
         uint256 referenceMinor
     );
-
-    /// @notice The only committed auction-brief rejection. Technical and
-    /// invariant failures revert instead of being converted to business state.
-    /// `reasonCode == 1` means the Desis Limit exceeds Desis' uint128 auction domain.
-    event AuctionBriefRejected(
-        uint32 indexed emissionDay, uint256 desisLimitMinor, uint256 maxAcceptedMinor, uint8 reasonCode
+    event IntexAuctionCreated(
+        uint32 indexed emissionDay,
+        uint64 commitEnd,
+        uint64 revealEnd,
+        uint64 issuanceEnd,
+        uint128 promisLoadMinor,
+        uint32 minBidRate,
+        uint32 minUnits,
+        uint128 bidBondMinor
     );
+    event IntexAuctionCanceled(uint32 indexed emissionDay, uint8 reason);
+    event IntexAuctionFailed(uint32 indexed emissionDay, uint8 stage);
+    event IntexAuctionCompleted(uint32 indexed emissionDay, uint32 units, uint64 clearingRate, uint64 totalDemand);
+    event IntexAuctionCompletedEmpty(uint32 indexed emissionDay, uint64 totalDemand);
+    event BidsCompleted(uint32 indexed emissionDay, uint32 indexed srcChainId);
+    event BidsExpired(uint32 indexed emissionDay, uint32 indexed srcChainId);
+    event BidsIgnored(uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason);
 }

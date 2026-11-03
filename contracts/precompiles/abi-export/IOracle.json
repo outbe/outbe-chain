@@ -1397,7 +1397,7 @@
   },
   {
     "type": "event",
-    "name": "WorldwideDayVwapStored",
+    "name": "WorldwideDayVwapSet",
     "inputs": [
       {
         "name": "worldwideDay",

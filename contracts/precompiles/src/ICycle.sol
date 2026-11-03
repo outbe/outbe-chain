@@ -30,4 +30,8 @@ interface ICycle {
     /// Emitted when a due handler reverts. `scheduledAt` is the recorded slot.
     /// The event carries no error text. A skipped dependency does not emit it.
     event CycleTriggerFailed(uint32 indexed id, uint64 scheduledAt, uint64 blockTimestamp, uint64 blockNumber);
+
+    /// Emitted when daily emission limit allocation reverts and the emission limit
+    /// goes to the Promis Limit once.
+    event DayEmissionLimitAllocationFailed(uint32 indexed emissionDay, uint256 emissionLimitMinor, uint8 reason);
 }
