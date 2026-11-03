@@ -12,6 +12,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {UPDATE} from "@precompiles/IUpdate.sol";
 
 /// @title UpgradeBase
 /// @author Outbe
@@ -24,8 +25,12 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 ///      ever needed.
 ///      Before the hand-over the deployer holds the upgrade authority (DEFAULT_ADMIN_ROLE) and
 ///      upgrades the proxy itself. After it, governance holds it: the script only deploys the
-///      implementation and prints the `upgradeContract` payload of the vote (OIP-00325).
+///      implementations and prints one `upgradeContracts` payload with every proxy of this chain.
+///      The vote targets the Update precompile.
 abstract contract UpgradeBase is BaseScript {
+    /// @dev The upgrades of the handed-over proxies, as `upgradeContracts` entries.
+    string[] internal governanceUpgrades;
+
     /// @dev Upgrade the proxy at `prefix`'s deterministic address to `newImpl`.
     function upgradeProxy(Create3Factory factory, address deployer, string memory prefix, address newImpl) internal {
         address proxy = predictProxy(factory, deployer, prefix);
@@ -35,10 +40,10 @@ abstract contract UpgradeBase is BaseScript {
             console.log(string.concat(prefix, " upgraded -> impl"), newImpl);
             return;
         }
-        console.log(string.concat(prefix, " belongs to governance. Vote payload:"));
-        console.log(
+        console.log(string.concat(prefix, " belongs to governance: impl"), newImpl);
+        governanceUpgrades.push(
             string.concat(
-                '{"operation":"upgradeContract","chainId":',
+                '{"chainId":',
                 vm.toString(block.chainid),
                 ',"proxy":"',
                 vm.toString(proxy),
@@ -47,6 +52,18 @@ abstract contract UpgradeBase is BaseScript {
                 '","callData":"0x"}'
             )
         );
+    }
+
+    /// @dev Prints the one vote payload for every handed-over proxy of this chain. Nothing to print
+    ///      if the deployer upgraded every proxy itself.
+    function printVotePayload() internal view {
+        if (governanceUpgrades.length == 0) return;
+        string memory upgrades = governanceUpgrades[0];
+        for (uint256 i = 1; i < governanceUpgrades.length; i++) {
+            upgrades = string.concat(upgrades, ",", governanceUpgrades[i]);
+        }
+        console.log("Vote on the Update precompile:", UPDATE);
+        console.log(string.concat('{"operation":"upgradeContracts","upgrades":[', upgrades, "]}"));
     }
 }
 
@@ -74,6 +91,7 @@ contract UpgradeTarget is UpgradeBase {
         upgradeProxy(factory, deployer, "TargetRouter", address(new TargetRouter(bridge, originChainId)));
 
         vm.stopBroadcast();
+        printVotePayload();
     }
 }
 
@@ -92,5 +110,6 @@ contract UpgradeOrigin is UpgradeBase {
         vm.startBroadcast(pk);
         upgradeProxy(factory, deployer, "OriginRouter", address(new OriginRouter(bridge)));
         vm.stopBroadcast();
+        printVotePayload();
     }
 }

@@ -2,12 +2,12 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
-import {CROSSCHAIN_GOV} from "@precompiles/ICrosschainGov.sol";
+import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {HandOver} from "../../deploy/HandOver.s.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 
-/// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainGov.
+/// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainBridge.
 contract HandOverHarness is HandOver {
     address internal constant GOVERNANCE_ICA = address(uint160(0x1CA));
 
@@ -38,9 +38,9 @@ contract HandOverTest is Test {
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), address(0xB0B)), "operational roles stay");
     }
 
-    function test_GovernanceOwner_IsCrosschainGovOnOutbeAndItsAccountElsewhere() public {
+    function test_GovernanceOwner_IsCrosschainBridgeOnOutbeAndItsAccountElsewhere() public {
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
-        assertEq(script.governanceOwner(), CROSSCHAIN_GOV, "Outbe");
+        assertEq(script.governanceOwner(), CROSSCHAIN_BRIDGE, "Outbe");
 
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");

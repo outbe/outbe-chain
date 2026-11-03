@@ -4,16 +4,16 @@ pragma solidity 0.8.30;
 import {console} from "forge-std/console.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
-import {CROSSCHAIN_GOV, ICrosschainGov} from "@precompiles/ICrosschainGov.sol";
+import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBridge.sol";
 import {BaseScript} from "./BaseScript.s.sol";
 
 /// @title HandOver
 /// @author Outbe
-/// @notice Gives `DEFAULT_ADMIN_ROLE` of every intex proxy on this chain to governance (OIP-00325),
+/// @notice Gives `DEFAULT_ADMIN_ROLE` of every intex proxy on this chain to governance,
 ///         removes it from the deployer, and reads the roles back.
-/// @dev Governance is CrosschainGov on Outbe and its Interchain Account on any other chain. Run it
+/// @dev Governance is CrosschainBridge on Outbe and its Interchain Account on any other chain. Run it
 ///      last: after DeployOrigin or DeployTarget and the CD wiring of the system roles. After it,
-///      an upgrade or a configuration change is a governance proposal (`upgradeContract`).
+///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
 ///      here: Outbe has the OriginRouter and the target proxies, a remote target has the target
 ///      proxies only.
@@ -46,9 +46,9 @@ contract HandOver is BaseScript {
         console.log("governance:", governance);
     }
 
-    /// @dev Governance on this chain: CrosschainGov on Outbe, its Interchain Account elsewhere.
+    /// @dev Governance on this chain: CrosschainBridge on Outbe, its Interchain Account elsewhere.
     function governanceOwner() public returns (address) {
-        if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return CROSSCHAIN_GOV;
+        if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return CROSSCHAIN_BRIDGE;
         if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
         return _governanceAccount(uint32(block.chainid));
     }
@@ -63,15 +63,15 @@ contract HandOver is BaseScript {
         if (!c.hasRole(admin, governance) || c.hasRole(admin, deployer)) revert NotHandedOver(proxy);
     }
 
-    /// @dev Asks CrosschainGov on Outbe for its Interchain Account on `domain`. A fork cannot run
+    /// @dev Asks CrosschainBridge on Outbe for its Interchain Account on `domain`. A fork cannot run
     ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
     ///      harness can supply the account.
     function _governanceAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
-            vm.toString(CROSSCHAIN_GOV),
+            vm.toString(CROSSCHAIN_BRIDGE),
             '","data":"',
-            vm.toString(abi.encodeCall(ICrosschainGov.remoteAccount, (domain))),
+            vm.toString(abi.encodeCall(ICrosschainBridge.remoteAccount, (domain))),
             '"},"latest"]'
         );
         return abi.decode(vm.rpc(vm.envString("OUTBE_RPC_URL"), "eth_call", params), (address));
