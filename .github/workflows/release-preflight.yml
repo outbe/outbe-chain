@@ -294,10 +294,10 @@ jobs:
             "${PREFLIGHT_TOOLCHAIN_IMAGE}" \
             bash -c '
               set -euo pipefail
-              cargo check --locked --release --package outbe-e2e-harness \
+              cargo check --locked --release --package xtask \
                 --features release-sgx-e2e --bin outbe-release-sgx-e2e
-              cargo check --locked --release --package outbe-e2e-harness \
-                --bin outbe-release-dcap-evidence
+              cargo check --locked --release --package xtask \
+                --features release-sgx-e2e --bin outbe-release-dcap-evidence
             '
           test -z "$(git status --porcelain=v1 --untracked-files=all)"
 

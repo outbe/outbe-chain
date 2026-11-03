@@ -4,29 +4,57 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+default-run = "xtask"
 
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
 
+[[bin]]
+name = "outbe-release-sgx-e2e"
+path = "src/bin/outbe-release-sgx-e2e.rs"
+required-features = ["release-sgx-e2e"]
+
+[[bin]]
+name = "outbe-release-dcap-evidence"
+path = "src/bin/outbe-release-dcap-evidence.rs"
+required-features = ["release-sgx-e2e"]
+
+[features]
+release-sgx-e2e = [
+    "dep:alloy-signer",
+    "dep:alloy-signer-local",
+    "dep:cucumber",
+    "dep:libc",
+    "dep:rand_core",
+    "dep:tokio",
+]
+
 [dependencies]
 alloy-primitives = { workspace = true, features = ["std"] }
+# Probe-only dependencies. The release-sgx-e2e feature activates them.
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
 base64 = "0.22"
 blst.workspace = true
 clap.workspace = true
+cucumber = { version = "0.21", optional = true }
 eyre.workspace = true
 filetime.workspace = true
 hex.workspace = true
+libc = { workspace = true, optional = true }
 outbe-consensus.workspace = true
 outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-tee.workspace = true
+rand_core = { workspace = true, optional = true }
 reth-ethereum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 tempfile.workspace = true
+tokio = { workspace = true, optional = true }
 walkdir.workspace = true
 tar.workspace = true
 
