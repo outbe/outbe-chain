@@ -51,20 +51,8 @@ fn apply_day_limit(ctx: &BlockRuntimeContext, base_limit: U256) -> Result<()> {
     let utc_day = timestamp_to_date_key(ctx.block.timestamp);
     crate::lifecycle::ensure_emission_day_with_limit(&mut metadosis, ctx, utc_day, base_limit)?;
 
-    let carry_over = PromisLimitContract::new(ctx.storage.clone()).promis_limit()?;
-    metadosis.emit(IMetadosis::MetadosisAccumulation {
-        date: utc_day,
+    metadosis.emit(IMetadosis::MetadosisLimitSet {
+        emissionDay: utc_day,
         metadosisLimitMinor: base_limit,
-        totalAccumulatedMinor: base_limit,
-        blockNumber: ctx.block.block_number,
-    })?;
-    metadosis.emit(IMetadosis::DayLimitFormed {
-        worldwideDay: utc_day,
-        baseLimitMinor: base_limit,
-        promisLimitBeforeMinor: carry_over,
-        promisLimitTakenMinor: U256::ZERO,
-        promisLimitAfterMinor: carry_over,
-        metadosisLimitMinor: base_limit,
-        blockNumber: ctx.block.block_number,
     })
 }

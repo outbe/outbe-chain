@@ -265,7 +265,9 @@ fn assert_clearing_event(view: &SettledView<'_>, expected: &auction_reference::C
         crate::internal::addresses::DESIS_ADDR,
         view.height,
         vec![
-            json!(keccak256("AuctionCleared(uint32,uint32,uint32,uint64)")),
+            json!(keccak256(
+                "IntexAuctionCompleted(uint32,uint32,uint64,uint64)"
+            )),
             word(U256::from(view.day)),
         ],
     );

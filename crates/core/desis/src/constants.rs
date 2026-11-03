@@ -3,9 +3,6 @@ pub use outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS;
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// The rung the first Intex carries: 10^12 minor, 1 000 000 PROMIS at six decimals.
-pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 12;
-
 /// Fixed load bypassing the ladder. The harness seeds the day's mint cap at 500
 /// PROMIS, far under one laddered Intex, so a laddered e2e day would issue none.
 #[cfg(not(feature = "e2e-test"))]
@@ -64,6 +61,13 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_LIVE: u8 = 1;
 pub const DAY_STATE_CANCELLED: u8 = 2;
 
+/// `IDesis.IntexAuctionCanceled` reason codes. Priority at start is this order.
+pub const CANCELED_NO_LIMIT: u8 = 1;
+pub const CANCELED_UNPRICED: u8 = 2;
+pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;
+pub const CANCELED_LATE_START: u8 = 4;
+pub const CANCELED_LIMIT_OVERFLOW: u8 = 5;
+
 /// Entries one cross-chain payload array carries: bids per PROCESS_BIDS_BATCH and winners per
 /// REFUND_INSTRUCTIONS; clearing sizes its gas in chunks of the same length. Mirrors
 /// `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
@@ -79,7 +83,7 @@ pub const MAX_BID_BATCHES: u16 = 256;
 // and a refund chunk share one array cap, so the batch count bounds the chunk count.
 const _: () = assert!(MAX_BID_BATCHES as usize <= MAX_REFUND_CHUNKS);
 
-/// `IDesis.InboundIgnored` reason codes; mirrors the routers' `InboundReason` library.
+/// `IDesis.BidsIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;
 pub const IGNORED_CONFLICT: u8 = 3;
 pub const IGNORED_NOT_FOUND: u8 = 4;

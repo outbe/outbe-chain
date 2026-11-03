@@ -27,11 +27,14 @@ use outbe_primitives::{
     },
 };
 
-use crate::errors::CycleError;
+use crate::{errors::CycleError, schema::Cycle, ICycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
 /// and catches up (one oldest unsettled day per block, OIP-00343).
 pub const MAX_REWARD_CATCHUP_DAYS: u32 = 64;
+
+/// `ICycle.DayEmissionLimitAllocationFailed.reason`: the daily emission limit allocation step reverted.
+pub const ALLOCATION_FAILED_STEP_REVERTED: u8 = 1;
 
 fn latest_settled_day_through(
     storage: StorageHandle<'_>,
@@ -487,7 +490,14 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;
         }
         outbe_emission::api::record_failed_day_allocation(ctx.storage.clone(), day, cap)?;
-        Ok(())
+        ctx.storage
+            .contract::<Cycle<'_>>()
+            .emit(ICycle::DayEmissionLimitAllocationFailed {
+                emissionDay: day,
+                emissionLimitMinor: cap,
+                reason: ALLOCATION_FAILED_STEP_REVERTED,
+            })?;
+        outbe_metadosis::commands::emit_canceled_after_failed_allocation(ctx, day)
     })
 }
 
@@ -512,22 +522,8 @@ fn run_metadosis_step(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 fn record_failed_metadosis_fallback(ctx: &BlockRuntimeContext) -> Result<()> {
-    let Some(due_day) = outbe_metadosis::commands::find_due_emission_day(ctx)? else {
-        return Ok(());
-    };
-    ctx.storage.with_checkpoint(|| {
-        let (record, returned) =
-            outbe_emission::api::record_metadosis_failed(ctx.storage.clone(), due_day.day)?;
-        if !returned.is_zero() {
-            outbe_promislimit::PromisLimitContract::new(ctx.storage.clone())
-                .checked_credit(returned)?;
-        }
-        if !outbe_agentreward::distribution::has_pending_accruals_for_day(&ctx.storage, record.day)?
-        {
-            outbe_emission::api::complete_emission_day(ctx.storage.clone(), record.day)?;
-        }
-        Ok(())
-    })
+    ctx.storage
+        .with_checkpoint(|| outbe_metadosis::commands::fail_due_emission_day(ctx))
 }
 
 /// Runs the single hourly protocol orchestration entry point (`OIP-00343`):

@@ -162,7 +162,7 @@ pub(crate) fn wait_for_native_lysis(world: &World) -> u64 {
         .expect("native Lysis completion finalized on every validator");
     let completed = world
         .rpc
-        .finalized_metadosis_lysis_completion_blocks_on(ports[0], day, head_height)
+        .finalized_metadosis_lysis_completion_blocks_on(ports[0], emission_day, head_height)
         .expect("canonical native Lysis completion events");
     assert_eq!(
         completed.len(),

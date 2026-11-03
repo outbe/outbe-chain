@@ -82,7 +82,7 @@ interface IOracle {
     event VwapCalculated(uint32 indexed utcDay, address indexed base, address indexed quote, uint256 vwap);
     /// @notice Emitted when the VWAP snapshot of a WorldwideDay is stored. `worldwideDay` is a
     ///         yyyymmdd key at UTC+14. `pairCount` is the number of pairs with a stored VWAP.
-    event WorldwideDayVwapStored(uint32 indexed worldwideDay, uint64 startTime, uint64 endTime, uint32 pairCount);
+    event WorldwideDayVwapSet(uint32 indexed worldwideDay, uint64 startTime, uint64 endTime, uint32 pairCount);
 
     /// @notice One quoted rate in an aggregate vote.
     /// @dev `base` and `quote` must match the direction the pair was registered

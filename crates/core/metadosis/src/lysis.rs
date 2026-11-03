@@ -16,7 +16,8 @@ use outbe_tee::{
 use outbe_tribute::TributeContract;
 
 use crate::{
-    lifecycle::complete_emission_day,
+    constants::METADOSIS_FAILED_STEP_REVERTED,
+    lifecycle::{complete_emission_day, fail_emission_day},
     limits::{apply_auction_brief, apply_lysis_limit, LysisLimitInput},
     precompile::IMetadosis,
     schema::{emission_day_state, EmissionDay, MetadosisContract},
@@ -89,7 +90,6 @@ fn finalize_lysis_settlement(
     completion: SettlementCompletion,
 ) -> Result<()> {
     let storage = ctx.storage.clone();
-    let wwd = emission_day.wwd;
     let split = apply_lysis_limit(
         storage.clone(),
         LysisLimitInput {
@@ -125,8 +125,8 @@ fn finalize_lysis_settlement(
         },
     )?;
     complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
-    metadosis.emit(IMetadosis::MetadosisExecuted {
-        worldwideDay: wwd.into(),
+    metadosis.emit(IMetadosis::MetadosisCompleted {
+        emissionDay: emission_day.day,
         tributeNominalTotalMinor: completion.total_nominal_minor,
         gratisDemandMinor: calculation.gratis_demand,
         dayGratisLimitMinor: calculation.day_gratis_limit_minor,
@@ -274,7 +274,7 @@ fn execute_legacy_enclave(
     let outcome = outbe_tee::lysis::execute(request)
         .map_err(|_| PrecompileError::EnclaveUnavailable("on-chain Lysis request failed".into()))?;
     let LysisOutcome::Completed(result) = outcome else {
-        return complete_emission_day(metadosis, emission_day, emission_day_state::FAILED);
+        return fail_emission_day(metadosis, emission_day.day, METADOSIS_FAILED_STEP_REVERTED);
     };
     if result.total_nominal_minor != totals.tribute_nominal_total_minor {
         return Err(mismatch());

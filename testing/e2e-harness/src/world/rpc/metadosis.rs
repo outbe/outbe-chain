@@ -87,7 +87,7 @@ impl Rpc {
         }
         let finalized = eth::finalized_number(&self.url(port)).unwrap_or(0);
         let block_number = self
-            .finalized_metadosis_lysis_completion_blocks_on(port, day, finalized)
+            .finalized_metadosis_lysis_completion_blocks_on(port, wwd.day, finalized)
             .and_then(|blocks| blocks.first().map(|(b, _)| *b))
             .unwrap_or(1);
         Some(MetadosisWorldwideDayTerminalReceiptV1 {
@@ -181,7 +181,7 @@ impl Rpc {
                 "fromBlock": "0x1",
                 "toBlock": format!("0x{height:x}"),
                 "topics": [
-                    format!("{:#x}", IMetadosis::MetadosisExecuted::SIGNATURE_HASH),
+                    format!("{:#x}", IMetadosis::MetadosisCompleted::SIGNATURE_HASH),
                     format!("0x{day:064x}")
                 ]
             }]),
@@ -300,9 +300,9 @@ fn decode_lysis_completion_block(log: &serde_json::Value, day: u32) -> Option<u6
         return None;
     }
     let data = hex::decode(log.get("data")?.as_str()?.strip_prefix("0x")?).ok()?;
-    let event = IMetadosis::MetadosisExecuted::decode_raw_log_validate(topics, &data).ok()?;
+    let event = IMetadosis::MetadosisCompleted::decode_raw_log_validate(topics, &data).ok()?;
     let block_number = rpc_log_block_number(log)?;
-    (event.worldwideDay == day
+    (event.emissionDay == day
         && event.status == "COMPLETED"
         && event.blockNumber == block_number
         && block_number > 0)
@@ -314,8 +314,8 @@ mod tests {
     use super::*;
 
     fn completion_log(day: u32, status: &str, block_number: u64) -> serde_json::Value {
-        let event = IMetadosis::MetadosisExecuted {
-            worldwideDay: day,
+        let event = IMetadosis::MetadosisCompleted {
+            emissionDay: day,
             tributeNominalTotalMinor: U256::ZERO,
             gratisDemandMinor: U256::ZERO,
             dayGratisLimitMinor: U256::ZERO,

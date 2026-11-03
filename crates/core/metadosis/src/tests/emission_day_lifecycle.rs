@@ -470,11 +470,85 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
         );
     });
 
-    let failed_skips = provider
+    let limit_set = provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| IMetadosis::MetadosisSkipped::decode_log(event).ok())
-        .filter(|event| event.data.status == "FAILED")
+        .filter_map(|event| IMetadosis::MetadosisLimitSet::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(limit_set.len(), 1);
+    assert_eq!(limit_set[0].emissionDay, 20261005);
+
+    let completed = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisCompleted::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].emissionDay, 20261005);
+    assert_eq!(completed[0].status, "COMPLETED");
+
+    let canceled_or_failed = provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| {
+            IMetadosis::MetadosisCanceled::decode_log(event).is_ok()
+                || IMetadosis::MetadosisFailed::decode_log(event).is_ok()
+        })
         .count();
-    assert_eq!(failed_skips, 0);
+    assert_eq!(canceled_or_failed, 0);
+}
+
+#[test]
+fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_state() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    install_test_enclaves();
+    StorageHandle::enter(&mut provider, |storage| {
+        let emission_day = 20261001u32;
+        outbe_emission::api::record_day_allocation(
+            storage.clone(),
+            emission_day,
+            outbe_emission::api::DayAllocationAmounts {
+                emission_limit: U256::from(100u64),
+                metadosis_limit: U256::ZERO,
+                validators: U256::from(25u64),
+                waa: U256::from(25u64),
+                sra: U256::from(25u64),
+                cca: U256::from(25u64),
+                promis_limit: U256::ZERO,
+            },
+        )
+        .unwrap();
+        let due_ts = date_key_to_utc_timestamp(20261002).unwrap() + 1;
+        storage.set_block_timestamp(U256::from(due_ts)).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), due_ts, CHAIN_ID),
+            storage.clone(),
+        );
+        crate::commands::start_metadosis(&ctx).unwrap();
+
+        let record = outbe_emission::api::get_emission_day_record(storage, emission_day)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record.metadosis_state,
+            outbe_emission::schema::metadosis_state::CANCELLED
+        );
+        assert_eq!(
+            record.state,
+            outbe_emission::schema::emission_day_state::COMPLETED
+        );
+    });
+
+    let canceled = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisCanceled::decode_log(event).ok())
+        .map(|event| event.data)
+        .collect::<Vec<_>>();
+    assert_eq!(canceled.len(), 1);
+    assert_eq!(canceled[0].emissionDay, 20261001);
+    assert_eq!(canceled[0].reason, 1);
 }

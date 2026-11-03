@@ -161,15 +161,11 @@ fn ledger_selling(p: &mut HashMapStorageProvider, sold: u32, terminal: bool) {
     let records = p
         .get_events(DESIS_ADDRESS)
         .iter()
-        .filter_map(|e| IDesis::DesisAllocationRecorded::decode_log_data(e).ok())
+        .filter_map(|e| IDesis::DesisLimitAllocated::decode_log_data(e).ok())
         .collect::<Vec<_>>();
     assert_eq!(records.len(), usize::from(terminal));
     if terminal {
-        assert_eq!(
-            records[0].desisAllocationMinor,
-            U256::from(u128::from(sold) * LOAD)
-        );
-        assert_eq!(records[0].desisLimitMinor, U256::from(LIMIT));
+        assert_eq!(records[0].amountMinor, U256::from(u128::from(sold) * LOAD));
     }
 }
 
@@ -202,15 +198,15 @@ fn full_sale_returns_only_the_dust_once() {
     let unused = p
         .get_events(DESIS_ADDRESS)
         .iter()
-        .filter_map(|e| IDesis::UnusedDesisLimitReported::decode_log_data(e).ok())
-        .map(|e| e.unusedDesisLimitMinor)
+        .filter_map(|e| IDesis::DesisLimitReturned::decode_log_data(e).ok())
+        .map(|e| e.amountMinor)
         .collect::<Vec<_>>();
     assert_eq!(unused, vec![U256::from(7u64)]);
     let cleared = p
         .get_events(DESIS_ADDRESS)
         .iter()
-        .filter_map(|e| IDesis::AuctionCleared::decode_log_data(e).ok())
-        .map(|e| e.issuedUnits)
+        .filter_map(|e| IDesis::IntexAuctionCompleted::decode_log_data(e).ok())
+        .map(|e| e.units)
         .collect::<Vec<_>>();
     assert_eq!(cleared, vec![3]);
     StorageHandle::enter(&mut p, |s| {

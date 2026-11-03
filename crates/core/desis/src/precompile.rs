@@ -4,7 +4,7 @@
 //! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
@@ -23,10 +23,15 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 /// (XOR of its 4 function selectors).
 pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0x8c, 0xcd, 0x62, 0xc9];
 
-sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/IDesis.sol"
-);
+// Generated ABI methods follow the Solidity argument lists.
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!(
+        #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+        "../../../contracts/precompiles/src/IDesis.sol"
+    );
+}
+pub use abi::IDesis;
 
 pub fn dispatch(
     storage: StorageHandle<'_>,

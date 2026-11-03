@@ -28,6 +28,8 @@ pub struct IntexParams {
     pub call_rate: u16,
     /// Commit-entry bond on the target-chain auction in protocol units.
     pub commit_bond_minor: u128,
+    /// Launch rung of the Promis load ladder (`10^promis_load_launch_exponent` minor units).
+    pub promis_load_launch_exponent: u32,
 }
 
 impl IntexParams {
@@ -39,6 +41,7 @@ impl IntexParams {
         transit_margin_seconds: TRANSIT_MARGIN,
         call_rate: CALL_RATE_PCT,
         commit_bond_minor: COMMIT_BOND_MINOR,
+        promis_load_launch_exponent: 12,
     };
 
     /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
@@ -57,6 +60,7 @@ impl IntexParams {
         transit_margin_seconds: 60,
         call_rate: 4,
         commit_bond_minor: 100 * SCALE_1E6_U128,
+        promis_load_launch_exponent: 12,
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
