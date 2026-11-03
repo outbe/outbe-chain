@@ -6,8 +6,8 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
 use crate::{
-    constants::SYMBOLIC_RATE,
-    lifecycle::{complete_emission_day, fail_emission_day},
+    constants::{METADOSIS_CANCELED_NO_LIMIT, SYMBOLIC_RATE},
+    lifecycle::{cancel_emission_day, complete_emission_day},
     precompile::IMetadosis,
     schema::{emission_day_state, EmissionDay, MetadosisContract},
 };
@@ -81,13 +81,7 @@ pub(crate) fn process_ready_candidate(
     let wwd = emission_day.wwd;
     let limit_amount = emission_day.metadosis_limit_minor();
     if limit_amount.is_zero() {
-        return fail_emission_day(
-            metadosis,
-            ctx,
-            emission_day.day,
-            wwd,
-            "emission limit is zero",
-        );
+        return cancel_emission_day(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
     }
 
     if wwd.value() == 0 {
@@ -139,12 +133,17 @@ fn settle_empty_day(
     if wwd.value() != 0 {
         TributeContract::new(metadosis.storage.clone()).retire_completed_partition(wwd)?;
     }
-    metadosis.emit(IMetadosis::MetadosisWorldwideDayProcessed {
-        worldwideDay: wwd.into(),
-        metadosisLimitMinor: day_limit,
+    metadosis.emit(IMetadosis::MetadosisCompleted {
+        emissionDay: emission_day.day,
+        tributeNominalTotalMinor: U256::ZERO,
+        gratisDemandMinor: U256::ZERO,
+        dayGratisLimitMinor: U256::ZERO,
+        lysisLimitMinor: U256::ZERO,
+        unusedLysisLimitMinor: U256::ZERO,
+        lysisAllocationMinor: U256::ZERO,
         promisLimitReturnedMinor: returned,
         status: "COMPLETED".into(),
-        action: "no tributes".into(),
+        blockNumber: ctx.block.block_number,
     })?;
     promis_limit.checked_credit(returned).map(|_| ())
 }
@@ -185,8 +184,8 @@ fn settle_zero_allocation(
     )?;
     complete_emission_day(metadosis, &updated, emission_day_state::SUCCEEDED)?;
     TributeContract::new(metadosis.storage.clone()).forfeit_sealed_partition(wwd)?;
-    metadosis.emit(IMetadosis::MetadosisExecuted {
-        worldwideDay: wwd.into(),
+    metadosis.emit(IMetadosis::MetadosisCompleted {
+        emissionDay: emission_day.day,
         tributeNominalTotalMinor: tribute_nominal_total,
         gratisDemandMinor: calculation.gratis_demand,
         dayGratisLimitMinor: calculation.day_gratis_limit_minor,

@@ -6,19 +6,20 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::EmissionDate;
-use outbe_primitives::units::{PROTOCOL_AMOUNT_DECIMALS, SCALE_1E6_U64};
+use outbe_primitives::units::SCALE_1E6_U64;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
 use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
-    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CLEARING_BID_GAS, CLEARING_CHUNK_GAS,
-    CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS,
-    DAY_STATE_CANCELLED, DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
+    BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START,
+    CANCELED_NO_LIMIT, CANCELED_UNPRICED, CLEARING_BID_GAS, CLEARING_CHUNK_GAS, CLEARING_FIXED_GAS,
+    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, COMMIT_WINDOW_SECONDS, DAY_STATE_CANCELLED,
+    DAY_STATE_LIVE, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
     INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_BATCHES, MAX_PAYLOAD_ARRAY_LEN, MAX_REFUND_CHUNKS,
-    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_LAUNCH_EXPONENT,
-    PROMIS_LOAD_OVERRIDE, RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_OVERRIDE,
+    RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -92,12 +93,6 @@ const POW10: [u128; PROMIS_LOAD_MAX_EXPONENT as usize + 1] = {
     }
     table
 };
-
-const _: () = assert!(
-    POW10[PROMIS_LOAD_LAUNCH_EXPONENT as usize]
-        == 1_000_000 * 10u128.pow(PROTOCOL_AMOUNT_DECIMALS as u32),
-    "the launch rung must carry 1 000 000 PROMIS"
-);
 
 pub(crate) fn promis_load_minor(exponent: u32) -> u128 {
     POW10[exponent.min(PROMIS_LOAD_MAX_EXPONENT) as usize]
@@ -189,7 +184,8 @@ fn capture_reference(
 }
 
 /// Every priced currency is checked. A currency without a valid capture takes
-/// one and sits the day out.
+/// one and sits the day out. The launch rung comes from the Intex profile the
+/// first time the ladder has no stored position.
 pub(crate) fn step_promis_load(
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
@@ -198,9 +194,25 @@ pub(crate) fn step_promis_load(
     if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
         return Ok(fixed);
     }
+    let launch_exponent = if contract.promis_load_exponent.read()? == 0 {
+        outbe_intex::config::read(&contract.storage)?.promis_load_launch_exponent
+    } else {
+        0
+    };
+    step_promis_load_with_launch(contract, emission_day, reference_prices, launch_exponent)
+}
+
+/// Same ladder as [`step_promis_load`], with the launch rung supplied by the caller.
+/// A stored position ignores `launch_exponent`.
+pub(crate) fn step_promis_load_with_launch(
+    contract: &mut DesisContract<'_>,
+    emission_day: EmissionDate,
+    reference_prices: &[ReferenceCurrencyPrice],
+    launch_exponent: u32,
+) -> Result<u128> {
     let stored = contract.promis_load_exponent.read()?;
     let current = match stored {
-        0 => PROMIS_LOAD_LAUNCH_EXPONENT,
+        0 => launch_exponent,
         k => k.min(PROMIS_LOAD_MAX_EXPONENT),
     };
     // A day nobody priced captures nothing: the chain has not taken a position yet.
@@ -210,6 +222,13 @@ pub(crate) fn step_promis_load(
     // Taking the first position is not a step. The config and START message carry it.
     if stored == 0 {
         contract.promis_load_exponent.write(current)?;
+        contract.emit(IDesis::IntexPromisLoadSet {
+            emissionDay: emission_day.into(),
+            loadMinor: promis_load_minor(current),
+            referenceCurrency: 0,
+            rateMinor: U256::ZERO,
+            referenceMinor: U256::ZERO,
+        })?;
     }
     let mut moves = Vec::with_capacity(reference_prices.len());
     let mut uncaptured = Vec::new();
@@ -228,11 +247,10 @@ pub(crate) fn step_promis_load(
         }
         return Ok(promis_load_minor(current));
     };
-    contract.emit(IDesis::PromisLoadStepped {
+    contract.emit(IDesis::IntexPromisLoadSet {
         emissionDay: emission_day.into(),
-        previousLoadMinor: promis_load_minor(current),
-        newLoadMinor: promis_load_minor(exponent),
-        isoCode: trigger.iso_code,
+        loadMinor: promis_load_minor(exponent),
+        referenceCurrency: trigger.iso_code,
         rateMinor: trigger.rate,
         referenceMinor: trigger.reference,
     })?;
@@ -363,11 +381,12 @@ mod schedule;
 
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
+#[cfg(all(test, not(feature = "e2e-test")))]
+pub(crate) use clearing::force_clear;
 pub use clearing::tick_gate;
 #[cfg(test)]
 pub(crate) use clearing::{
-    clearing_round_gas, force_clear, issuance_groups, refund_chunk_count, refund_chunks,
-    RefundChunk,
+    clearing_round_gas, issuance_groups, refund_chunk_count, refund_chunks, RefundChunk,
 };
 pub use intake::{process_bids_batch, process_bids_done, Inbound};
 #[cfg(test)]

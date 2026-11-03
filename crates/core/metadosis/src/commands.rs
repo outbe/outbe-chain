@@ -79,3 +79,30 @@ pub fn find_due_emission_day(
     let metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
     crate::lifecycle::find_due_emission_day(&metadosis, ctx)
 }
+
+/// Marks the currently due `EmissionDay` as `Failed` (returning its Metadosis limit
+/// to `PromisLimit` once and emitting `IMetadosis.MetadosisFailed(E, 1)`).
+pub fn fail_due_emission_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    let mut metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
+    if let Some(due_day) = crate::lifecycle::find_due_emission_day(&metadosis, ctx)? {
+        crate::lifecycle::fail_emission_day(
+            &mut metadosis,
+            due_day.day,
+            crate::constants::METADOSIS_FAILED_STEP_REVERTED,
+        )?;
+    }
+    Ok(())
+}
+
+/// Emits `IMetadosis.MetadosisCanceled(day, 1)` after daily emission limit allocation reverts.
+pub fn emit_canceled_after_failed_allocation(
+    ctx: &BlockRuntimeContext<'_>,
+    day: u32,
+) -> Result<()> {
+    crate::schema::MetadosisContract::new(ctx.storage.clone()).emit(
+        crate::precompile::IMetadosis::MetadosisCanceled {
+            emissionDay: day,
+            reason: crate::constants::METADOSIS_CANCELED_NO_LIMIT,
+        },
+    )
+}

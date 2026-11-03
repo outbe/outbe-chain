@@ -107,8 +107,9 @@ fn cancel_unstarted(
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
 ) -> Result<()> {
-    contract.emit(IDesis::AuctionCancelledLateStart {
+    contract.emit(IDesis::IntexAuctionCanceled {
         emissionDay: emission_day.into(),
+        reason: CANCELED_LATE_START,
     })?;
     refund_unused_desis_limit(storage, contract, emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Cancelled)?;
@@ -124,7 +125,7 @@ fn fail_auction(
     emission_day: EmissionDate,
     stage: AuctionStage,
 ) -> Result<()> {
-    contract.emit(IDesis::AuctionFailed {
+    contract.emit(IDesis::IntexAuctionFailed {
         emissionDay: emission_day.into(),
         stage: stage as u8,
     })?;
@@ -260,64 +261,60 @@ fn start_auction(
     if unpriced || no_limit || below_one_unit || late {
         send_stage_start(storage, start, DAY_STATE_CANCELLED)?;
         contract.write_stage(emission_day, AuctionStage::Cancelled)?;
-        if no_limit {
-            contract.emit(IDesis::AuctionCancelledNoLimit {
-                emissionDay: emission_day.into(),
-            })?;
+        let reason = if no_limit {
+            CANCELED_NO_LIMIT
         } else if unpriced {
-            contract.emit(IDesis::AuctionCancelledUnpriced {
-                emissionDay: emission_day.into(),
-            })?;
-            refund_unused_desis_limit(storage, contract, emission_day)?;
+            CANCELED_UNPRICED
         } else if below_one_unit {
-            contract.emit(IDesis::AuctionCancelledBelowOneUnit {
-                emissionDay: emission_day.into(),
-                desisLimitMinor: desis_limit_minor,
-                promisLoadMinor: config.promis_load_minor,
-            })?;
-            refund_unused_desis_limit(storage, contract, emission_day)?;
+            CANCELED_BELOW_ONE_UNIT
         } else {
-            contract.emit(IDesis::AuctionCancelledLateStart {
-                emissionDay: emission_day.into(),
-            })?;
-            refund_unused_desis_limit(storage, contract, emission_day)?;
-        }
+            CANCELED_LATE_START
+        };
+        contract.emit(IDesis::IntexAuctionCanceled {
+            emissionDay: emission_day.into(),
+            reason,
+        })?;
+        refund_unused_desis_limit(storage, contract, emission_day)?;
         contract.remove_sched_active(emission_day)?;
         return Ok(StartOutcome::Retired);
     }
     send_stage_start(storage, start, DAY_STATE_LIVE)?;
     contract.write_stage(emission_day, AuctionStage::CommittingBids)?;
-    contract.emit(IDesis::AuctionCreated {
+    contract.emit(IDesis::IntexAuctionCreated {
         emissionDay: emission_day.into(),
+        commitEnd: commit_end,
+        revealEnd: reveal_end,
+        issuanceEnd: issuance_end,
+        promisLoadMinor: config.promis_load_minor,
+        minBidRate: config.min_intex_bid_rate,
+        minUnits: u32::from(config.min_intex_bid_quantity),
+        bidBondMinor: config.commit_bond_minor,
     })?;
     Ok(StartOutcome::Started)
 }
 
-/// Return a retiring day's unused Desis Limit to PromisLimit, recording its
-/// Desis Allocation as zero. No-op once the limit was consumed at clearing (or
-/// for a day with no limit, which briefs zero).
+/// Return a retiring day's unused Desis Limit to PromisLimit and record a zero
+/// allocation. A zero remainder is still reported, and is not credited.
 fn refund_unused_desis_limit(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
     emission_day: EmissionDate,
 ) -> Result<()> {
     let unused = contract.pending_desis_limit_minor.read(&emission_day)?;
-    if unused.is_zero() {
-        return Ok(());
-    }
     contract
         .pending_desis_limit_minor
         .write(&emission_day, U256::ZERO)?;
-    contract.emit(IDesis::DesisAllocationRecorded {
+    contract.emit(IDesis::DesisLimitAllocated {
         emissionDay: emission_day.into(),
-        desisLimitMinor: unused,
-        desisAllocationMinor: U256::ZERO,
+        amountMinor: U256::ZERO,
     })?;
-    contract.emit(IDesis::UnusedDesisLimitReported {
+    contract.emit(IDesis::DesisLimitReturned {
         emissionDay: emission_day.into(),
-        unusedDesisLimitMinor: unused,
+        amountMinor: unused,
     })?;
-    PromisLimitContract::new(storage.clone()).checked_credit(unused)?;
+    if !unused.is_zero() {
+        PromisLimitContract::new(storage.clone()).checked_credit(unused)?;
+    }
     Ok(())
 }
 

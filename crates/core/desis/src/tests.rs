@@ -1,19 +1,20 @@
 #![cfg(test)]
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolCall;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
+#[cfg(not(feature = "e2e-test"))]
 use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
-use crate::constants::{
-    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
-};
+#[cfg(not(feature = "e2e-test"))]
+use crate::constants::{IGNORED_CONFLICT, IGNORED_OBSOLETE};
+use crate::constants::{IGNORED_NOT_FOUND, ORIGIN_ROUTER_ADDRESS};
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
@@ -22,6 +23,7 @@ const CHAIN_ID: u64 = 1;
 const REFERENCE_ISO: u16 = 840;
 /// The emission day whose auction starts at `ANCHOR`, the midnight after it.
 const EMISSION_DAY: EmissionDate = EmissionDate::new(20231113);
+#[cfg(not(feature = "e2e-test"))]
 const NEXT_EMISSION_DAY: EmissionDate = EmissionDate::new(20231114);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// Registry indices of the seeded oracle pairs: the reference currency, and one
@@ -347,6 +349,7 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
 }
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
+#[cfg(not(feature = "e2e-test"))]
 fn clear(s: &StorageHandle) -> crate::schema::ClearingResult {
     runtime::force_clear(s.clone(), EMISSION_DAY, NOW)
         .unwrap()
@@ -367,6 +370,7 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 }
 
 /// One bid at `rate` from `who`. The other bid fields stay at the fixture defaults.
+#[cfg(not(feature = "e2e-test"))]
 fn one_bid(who: Address, rate: u32) -> Vec<BidData> {
     vec![BidData {
         bidder_address: who,
@@ -379,6 +383,7 @@ fn one_bid(who: Address, rate: u32) -> Vec<BidData> {
 }
 
 /// Bids at distinct rates. Bidder `i` gets `rates[i]`.
+#[cfg(not(feature = "e2e-test"))]
 fn priced_bids(rates: &[u32]) -> Vec<BidData> {
     rates
         .iter()
@@ -794,16 +799,13 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
     });
 
-    assert!(storage
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
-        .is_empty());
+    let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    assert_eq!(logs.len(), 1, "the rejected duplicate emits nothing");
+    assert!(is_desis_limit_set(&logs[0]));
 }
 
 #[test]
 fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
-    use crate::precompile::IDesis;
-    use alloy_sol_types::SolEvent;
-
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |s| {
         assert_eq!(
@@ -826,21 +828,27 @@ fn dispatch_auction_brief_oversized_limit_returns_typed_rejection() {
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
-            AuctionStage::None
+            AuctionStage::Cancelled
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 0);
-        assert_no_request_brief_state(&s);
+        assert_eq!(
+            contract
+                .pending_desis_limit_minor
+                .read(&EMISSION_DAY)
+                .unwrap(),
+            U256::ZERO
+        );
     });
 
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    assert_eq!(logs.len(), 1);
-    let event = IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
-    assert_eq!(event.emissionDay, EMISSION_DAY.value());
-    assert_eq!(event.desisLimitMinor, U256::MAX);
-    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
-        event.reasonCode,
-        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
+        overflow_limit_events(logs),
+        vec![
+            U256::MAX,
+            U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
+            U256::ZERO,
+            U256::MAX,
+        ]
     );
 }
 
@@ -882,18 +890,23 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 max_accepted: U256::from(u128::MAX),
             }
         );
-        assert_no_request_brief_state(&storage);
+        assert_eq!(
+            storage
+                .contract::<DesisContract>()
+                .read_stage(EMISSION_DAY)
+                .unwrap(),
+            AuctionStage::Cancelled
+        );
     });
-    use alloy_sol_types::SolEvent;
     let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    assert_eq!(logs.len(), 1);
-    let event = crate::precompile::IDesis::AuctionBriefRejected::decode_log_data(&logs[0]).unwrap();
-    assert_eq!(event.emissionDay, EMISSION_DAY.value());
-    assert_eq!(event.desisLimitMinor, supply);
-    assert_eq!(event.maxAcceptedMinor, U256::from(u128::MAX));
     assert_eq!(
-        event.reasonCode,
-        AuctionBriefRejectionReason::DesisLimitExceedsAuctionDomain.code()
+        overflow_limit_events(logs),
+        vec![
+            supply,
+            U256::from(crate::constants::CANCELED_LIMIT_OVERFLOW),
+            U256::ZERO,
+            supply,
+        ]
     );
 }
 
@@ -936,9 +949,9 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
         )
         .is_err());
     });
-    assert!(provider
-        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
-        .is_empty());
+    let logs = provider.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    assert_eq!(logs.len(), 1, "only the accepted brief emits");
+    assert!(is_desis_limit_set(&logs[0]));
 }
 
 #[test]
@@ -1121,11 +1134,14 @@ fn start_at(
                 .unwrap(),
         )
     });
-    let late_sig = IDesis::AuctionCancelledLateStart::SIGNATURE_HASH;
     let cancelled_late = storage
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
         .iter()
-        .any(|log| log.topics().first() == Some(&late_sig));
+        .any(|log| {
+            IDesis::IntexAuctionCanceled::decode_log_data(log)
+                .map(|event| event.reason == crate::constants::CANCELED_LATE_START)
+                .unwrap_or(false)
+        });
     (stage, pool, cancelled_late)
 }
 
@@ -1252,6 +1268,7 @@ fn a_price_lost_between_brief_and_start_cancels_the_day_and_returns_its_limit() 
 /// Terms are fixed at the start and copied into the series: the oracle moving
 /// during the auction changes neither.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn the_price_chosen_at_start_is_the_one_the_series_carries() {
     use outbe_intexfactory::SeriesId;
 
@@ -1288,6 +1305,7 @@ fn schedule_starts_a_brief_with_a_limit() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn schedule_flips_to_revealing_at_commit_end() {
     with_storage(|s| {
         brief(&s, true);
@@ -1303,6 +1321,7 @@ fn schedule_flips_to_revealing_at_commit_end() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn schedule_arms_the_clearing_gate_at_reveal_end() {
     with_storage(|s| {
         brief(&s, true);
@@ -1331,6 +1350,7 @@ fn schedule_arms_the_clearing_gate_at_reveal_end() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn schedule_catches_up_over_missed_ticks() {
     with_storage(|s| {
         brief(&s, true);
@@ -1360,6 +1380,7 @@ fn schedule_cancels_a_brief_with_no_limit() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn schedule_cancels_a_missed_start() {
     use outbe_promislimit::PromisLimitContract;
     with_storage(|s| {
@@ -1387,6 +1408,7 @@ const LAST_CLEARING: u64 = ANCHOR
     - crate::constants::RESULT_DELIVERY_MARGIN_SECONDS;
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_message() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -1442,8 +1464,8 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
     let failed = storage
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
         .iter()
-        .find_map(|log| IDesis::AuctionFailed::decode_log_data(log).ok())
-        .expect("AuctionFailed");
+        .find_map(|log| IDesis::IntexAuctionFailed::decode_log_data(log).ok())
+        .expect("IntexAuctionFailed");
     assert_eq!(failed.emissionDay, EMISSION_DAY.value());
     assert_eq!(failed.stage, AuctionStage::CollectingBids as u8);
 }
@@ -1459,6 +1481,7 @@ fn holds_bids(s: &StorageHandle, chain: u32, n: u32) -> bool {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_completed_day_deletes_its_bids() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1486,6 +1509,7 @@ fn a_failed_day_deletes_its_bids() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
     use crate::sol_ext::IOriginRouter::targetsOfCall;
     use alloy_sol_types::SolCall;
@@ -1516,6 +1540,7 @@ fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn the_gate_does_not_clear_past_the_last_clearing_time() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1540,6 +1565,7 @@ fn the_gate_does_not_clear_past_the_last_clearing_time() {
 /// One decade up the rate ladder, the same PROMIS buys ten times the Intexes. The
 /// bid floor has to be restated with it, or it sits above the whole tirage.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1598,6 +1624,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         open_clearing(&s, 100);
@@ -1685,6 +1712,7 @@ fn process_bids_rejects_an_oversized_batch() {
 // --- Bid ingestion ---
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn process_bids_accumulate_across_batches() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1734,6 +1762,7 @@ fn process_bids_accumulate_across_batches() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn marker_finalizes_chain_once_batches_and_totals_match() {
     with_storage(|s| {
         // Marker with matching totals opens the gate for this chain.
@@ -1742,6 +1771,7 @@ fn marker_finalizes_chain_once_batches_and_totals_match() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn marker_arriving_before_batches_still_finalizes() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1776,6 +1806,7 @@ fn marker_total_mismatch_keeps_chain_not_done() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_redelivered_batch_counts_once() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1804,6 +1835,7 @@ fn a_redelivered_batch_counts_once() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_batch_declaring_another_total_is_refused() {
     with_storage(|s| {
         open_revealing(&s);
@@ -1840,6 +1872,7 @@ fn a_batch_declaring_another_total_is_refused() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn no_bids_clears_as_no_sale() {
     with_storage(|s| {
         open_clearing(&s, 10);
@@ -1875,6 +1908,7 @@ fn no_bids_clears_as_no_sale() {
 // --- Clearing algorithm ---
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_allocates_up_to_the_limit() {
     with_storage(|s| {
         let supply = 3u32;
@@ -1900,6 +1934,7 @@ fn clearing_allocates_up_to_the_limit() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_transitions_to_cleared() {
     with_storage(|s| {
         open_clearing(&s, 1);
@@ -1954,13 +1989,15 @@ fn start_day(
 
 fn below_one_unit(
     events: &[alloy_primitives::LogData],
-) -> Option<crate::precompile::IDesis::AuctionCancelledBelowOneUnit> {
-    use crate::precompile::IDesis::AuctionCancelledBelowOneUnit;
+) -> Option<crate::precompile::IDesis::IntexAuctionCanceled> {
+    use crate::constants::CANCELED_BELOW_ONE_UNIT;
+    use crate::precompile::IDesis::IntexAuctionCanceled;
     use alloy_sol_types::SolEvent;
-    events
-        .iter()
-        .filter(|log| log.topics().first() == Some(&AuctionCancelledBelowOneUnit::SIGNATURE_HASH))
-        .find_map(|log| AuctionCancelledBelowOneUnit::decode_log_data(log).ok())
+    events.iter().find_map(|log| {
+        IntexAuctionCanceled::decode_log_data(log)
+            .ok()
+            .filter(|event| event.reason == CANCELED_BELOW_ONE_UNIT)
+    })
 }
 
 /// A day whose start steps the load still keeps the step when the new load cancels it, and its
@@ -1993,34 +2030,97 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
         assert_eq!(contract.promis_load_exponent.read().unwrap(), 13);
     });
     let events = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
-    let cancelled = below_one_unit(events).expect("AuctionCancelledBelowOneUnit");
+    let cancelled = below_one_unit(events).expect("IntexAuctionCanceled below one unit");
     assert_eq!(cancelled.emissionDay, NEXT_EMISSION_DAY.value());
-    assert_eq!(cancelled.promisLoadMinor, 10 * LOAD_MINOR);
+    assert_eq!(cancelled.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
+    let stepped = events.iter().find_map(|log| {
+        use alloy_sol_types::SolEvent;
+        crate::precompile::IDesis::IntexPromisLoadSet::decode_log_data(log)
+            .ok()
+            .filter(|event| event.emissionDay == NEXT_EMISSION_DAY.value())
+    });
+    assert_eq!(stepped.expect("stepped load").loadMinor, 10 * LOAD_MINOR);
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_limit_short_of_one_unit_is_cancelled_at_start() {
     let (stage, unallocated, events) = start_day(LOAD_MINOR - 1, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
     assert_eq!(unallocated, U256::from(LOAD_MINOR - 1));
-    let event = below_one_unit(&events).expect("AuctionCancelledBelowOneUnit");
-    assert_eq!(event.desisLimitMinor, U256::from(LOAD_MINOR - 1));
-    assert_eq!(event.promisLoadMinor, LOAD_MINOR);
+    let event = below_one_unit(&events).expect("IntexAuctionCanceled below one unit");
+    assert_eq!(event.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
+    assert_eq!(
+        limit_amounts(
+            &events,
+            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
+        ),
+        vec![U256::from(LOAD_MINOR - 1)]
+    );
 }
 
 fn allocation_records(
     events: &[alloy_primitives::LogData],
-) -> Vec<crate::precompile::IDesis::DesisAllocationRecorded> {
-    use crate::precompile::IDesis::DesisAllocationRecorded;
+) -> Vec<crate::precompile::IDesis::DesisLimitAllocated> {
+    use crate::precompile::IDesis::DesisLimitAllocated;
     use alloy_sol_types::SolEvent;
     events
         .iter()
-        .filter_map(|log| DesisAllocationRecorded::decode_log_data(log).ok())
+        .filter_map(|log| DesisLimitAllocated::decode_log_data(log).ok())
+        .collect()
+}
+
+fn is_desis_limit_set(log: &alloy_primitives::LogData) -> bool {
+    use alloy_sol_types::SolEvent;
+    crate::precompile::IDesis::DesisLimitSet::decode_log_data(log).is_ok()
+}
+
+/// `DesisLimitSet.amount`, cancel reason, `DesisLimitAllocated.amount`, `DesisLimitReturned.amount`.
+fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
+    use crate::precompile::IDesis;
+    use alloy_sol_types::SolEvent;
+    assert_eq!(logs.len(), 4);
+    let set = IDesis::DesisLimitSet::decode_log_data(&logs[0]).unwrap();
+    let canceled = IDesis::IntexAuctionCanceled::decode_log_data(&logs[1]).unwrap();
+    let allocated = IDesis::DesisLimitAllocated::decode_log_data(&logs[2]).unwrap();
+    let returned = IDesis::DesisLimitReturned::decode_log_data(&logs[3]).unwrap();
+    vec![
+        set.amountMinor,
+        U256::from(canceled.reason),
+        allocated.amountMinor,
+        returned.amountMinor,
+    ]
+}
+
+fn limit_amounts(
+    events: &[alloy_primitives::LogData],
+    signature: alloy_primitives::B256,
+) -> Vec<U256> {
+    use alloy_sol_types::SolEvent;
+    events
+        .iter()
+        .filter(|log| log.topics().first() == Some(&signature))
+        .map(|log| {
+            if signature == crate::precompile::IDesis::DesisLimitSet::SIGNATURE_HASH {
+                crate::precompile::IDesis::DesisLimitSet::decode_log_data(log)
+                    .unwrap()
+                    .amountMinor
+            } else if signature == crate::precompile::IDesis::DesisLimitAllocated::SIGNATURE_HASH {
+                crate::precompile::IDesis::DesisLimitAllocated::decode_log_data(log)
+                    .unwrap()
+                    .amountMinor
+            } else {
+                crate::precompile::IDesis::DesisLimitReturned::decode_log_data(log)
+                    .unwrap()
+                    .amountMinor
+            }
+        })
         .collect()
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
     let (stage, _, events) = start_day(LOAD_MINOR - 1, true);
 
@@ -2028,8 +2128,14 @@ fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
     let records = allocation_records(&events);
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].emissionDay, EMISSION_DAY.value());
-    assert_eq!(records[0].desisLimitMinor, U256::from(LOAD_MINOR - 1));
-    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+    assert_eq!(records[0].amountMinor, U256::ZERO);
+    assert_eq!(
+        limit_amounts(
+            &events,
+            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
+        ),
+        vec![U256::from(LOAD_MINOR - 1)]
+    );
 }
 
 #[test]
@@ -2047,11 +2153,17 @@ fn a_failed_day_records_a_zero_desis_allocation() {
         runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
     });
 
-    let records =
-        allocation_records(storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS));
+    let events = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
+    let records = allocation_records(events);
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].desisLimitMinor, U256::from(10 * LOAD_MINOR));
-    assert_eq!(records[0].desisAllocationMinor, U256::ZERO);
+    assert_eq!(records[0].amountMinor, U256::ZERO);
+    assert_eq!(
+        limit_amounts(
+            events,
+            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
+        ),
+        vec![U256::from(10 * LOAD_MINOR)]
+    );
 }
 
 #[test]
@@ -2059,8 +2171,15 @@ fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
     let (stage, _, events) = start_day(0, true);
 
     assert_eq!(stage, AuctionStage::Cancelled);
-    let event = below_one_unit(&events).expect("AuctionCancelledBelowOneUnit");
-    assert_eq!(event.desisLimitMinor, U256::ZERO);
+    let event = below_one_unit(&events).expect("IntexAuctionCanceled below one unit");
+    assert_eq!(event.reason, crate::constants::CANCELED_BELOW_ONE_UNIT);
+    assert_eq!(
+        limit_amounts(
+            &events,
+            crate::precompile::IDesis::DesisLimitReturned::SIGNATURE_HASH
+        ),
+        vec![U256::ZERO]
+    );
 }
 
 /// The `dayState` of every AUCTION_STAGE_START message the provider sent.
@@ -2078,7 +2197,6 @@ fn sent_day_states(storage: &HashMapStorageProvider) -> Vec<u8> {
 #[test]
 fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
     use crate::constants::DAY_STATE_CANCELLED;
-    use alloy_sol_types::SolEvent;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
     storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
@@ -2101,12 +2219,15 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
     assert_eq!(sent_day_states(&storage), vec![DAY_STATE_CANCELLED]);
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {
-        log.topics().first()
-            == Some(&crate::precompile::IDesis::AuctionCancelledNoLimit::SIGNATURE_HASH)
+        use alloy_sol_types::SolEvent;
+        crate::precompile::IDesis::IntexAuctionCanceled::decode_log_data(log)
+            .map(|event| event.reason == crate::constants::CANCELED_NO_LIMIT)
+            .unwrap_or(false)
     }));
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_uniform_price_is_last_allocated_bid() {
     with_storage(|s| {
         open_clearing(&s, 2);
@@ -2121,6 +2242,7 @@ fn clearing_uniform_price_is_last_allocated_bid() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clear_bids_below_min_price_skipped() {
     with_storage(|s| {
         open_clearing(&s, 3);
@@ -2166,6 +2288,7 @@ fn clear_bids_below_min_price_skipped() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clear_refunds_equal_locked_minus_paid() {
     with_storage(|s| {
         let supply = 1u32;
@@ -2229,6 +2352,7 @@ fn clear_refunds_equal_locked_minus_paid() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clear_rate_escrow_scales_by_basis() {
     // escrow basis != 1_000_000, so this exercises the scaled division.
     with_storage(|s| {
@@ -2262,6 +2386,7 @@ fn clear_rate_escrow_scales_by_basis() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_returns_the_unused_limit_and_dust_to_promis() {
     use outbe_promislimit::PromisLimitContract;
 
@@ -2307,6 +2432,7 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
 /// Auction clearing over two target chains: bids merge into one clearing, and each
 /// winner/bidder is tagged with its source chain for per-chain result/refund routing.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn two_chain_bids_merge_and_carry_source_chain() {
     let chain_a = 10u32;
     let chain_b = 20u32;
@@ -2333,6 +2459,7 @@ fn two_chain_bids_merge_and_carry_source_chain() {
 /// Manual clearing must wait until every snapshot chain has finalized.
 /// The tick clears only once the gate is satisfied; before then `force_clear` yields `None`.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn force_clear_waits_then_fires_when_all_done() {
     let chain_a = 10u32;
     let chain_b = 20u32;
@@ -2389,6 +2516,7 @@ fn force_clear_waits_then_fires_when_all_done() {
 
 /// A clearing names its Desis Allocation and returns the unused Desis Limit.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -2415,17 +2543,21 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
     );
     let allocation = &records[0];
     assert_eq!(allocation.emissionDay, EMISSION_DAY.value());
-    assert_eq!(allocation.desisLimitMinor, U256::from(3 * LOAD_MINOR));
-    assert_eq!(allocation.desisAllocationMinor, U256::from(LOAD_MINOR));
+    assert_eq!(allocation.amountMinor, U256::from(LOAD_MINOR));
     let unused = logs
         .iter()
-        .find_map(|log| IDesis::UnusedDesisLimitReported::decode_log_data(log).ok())
+        .find_map(|log| IDesis::DesisLimitReturned::decode_log_data(log).ok())
         .expect("the clearing returns its unused Desis Limit");
-    assert_eq!(unused.unusedDesisLimitMinor, U256::from(2 * LOAD_MINOR));
+    assert_eq!(unused.amountMinor, U256::from(2 * LOAD_MINOR));
+    assert_eq!(
+        limit_amounts(logs, IDesis::DesisLimitSet::SIGNATURE_HASH),
+        vec![U256::from(3 * LOAD_MINOR)]
+    );
 }
 
 /// After the deadline, clearing proceeds without the missing chain and reports it skipped.
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn force_clear_skips_missing_chain_after_deadline() {
     use crate::precompile::IDesis;
     use alloy_sol_types::SolEvent;
@@ -2472,14 +2604,14 @@ fn force_clear_skips_missing_chain_after_deadline() {
 
     // The missing chain is reported skipped.
     let desis_addr = outbe_primitives::addresses::DESIS_ADDRESS;
-    let skip_sig = IDesis::ChainSkipped::SIGNATURE_HASH;
+    let skip_sig = IDesis::BidsExpired::SIGNATURE_HASH;
     let found = storage.get_events(desis_addr).iter().any(|log| {
         log.topics().first() == Some(&skip_sig)
-            && IDesis::ChainSkipped::decode_log_data(log)
+            && IDesis::BidsExpired::decode_log_data(log)
                 .map(|ev| ev.emissionDay == EMISSION_DAY.value() && ev.srcChainId == chain_b)
                 .unwrap_or(false)
     });
-    assert!(found, "expected ChainSkipped for the missing chain");
+    assert!(found, "expected BidsExpired for the missing chain");
 }
 
 #[test]
@@ -2493,6 +2625,7 @@ fn tick_gate_no_active_days_is_noop() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn tick_gate_clears_ready_day() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
@@ -2587,6 +2720,7 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_issues_one_series_per_winning_currency_pair() {
     use outbe_intexfactory::SeriesId;
 
@@ -2755,6 +2889,7 @@ fn a_chain_whose_bids_all_lost_gets_one_empty_chunk() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn clearing_marks_the_bid_supply_ran_out_in() {
     with_storage(|s| {
         open_clearing(&s, 3);
@@ -2914,13 +3049,13 @@ fn inbound_storage() -> HashMapStorageProvider {
 
 fn ignored_reasons(storage: &HashMapStorageProvider) -> Vec<u8> {
     use alloy_sol_types::SolEvent;
-    let sig = crate::precompile::IDesis::InboundIgnored::SIGNATURE_HASH;
+    let sig = crate::precompile::IDesis::BidsIgnored::SIGNATURE_HASH;
     storage
         .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
         .iter()
         .filter(|log| log.topics().first() == Some(&sig))
         .map(|log| {
-            crate::precompile::IDesis::InboundIgnored::decode_log_data(log)
+            crate::precompile::IDesis::BidsIgnored::decode_log_data(log)
                 .unwrap()
                 .reason
         })
@@ -2951,6 +3086,7 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -2996,6 +3132,7 @@ fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn an_early_marker_stands_against_a_conflicting_one() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -3035,6 +3172,7 @@ fn an_early_marker_stands_against_a_conflicting_one() {
 }
 
 #[test]
+#[cfg(not(feature = "e2e-test"))]
 fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
     let mut storage = inbound_storage();
     StorageHandle::enter(&mut storage, |s| {
@@ -3144,5 +3282,7 @@ mod capacity_conservation;
 
 mod fixed_conditions;
 
+#[cfg(not(feature = "e2e-test"))]
+mod emission_day_events;
 #[cfg(not(feature = "e2e-test"))]
 mod promis_load;

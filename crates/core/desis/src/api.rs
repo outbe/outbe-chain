@@ -11,9 +11,10 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::EmissionDate;
 
+use crate::constants::CANCELED_LIMIT_OVERFLOW;
 use crate::precompile::IDesis;
 use crate::runtime;
-use crate::schema::DesisContract;
+use crate::schema::{AuctionStage, DesisContract};
 
 /// Stable consensus reason for the only business-level auction-brief rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,11 +80,22 @@ pub fn dispatch_auction_brief(
                 return Err(crate::errors::DesisError::AuctionBriefLimitExceedsDomain.into());
             }
             let mut contract = storage.contract::<DesisContract>();
-            contract.emit(IDesis::AuctionBriefRejected {
+            contract.write_stage(emission_day, AuctionStage::Cancelled)?;
+            contract.emit(IDesis::DesisLimitSet {
                 emissionDay: emission_day.into(),
-                desisLimitMinor: desis_limit_minor,
-                maxAcceptedMinor: max_accepted,
-                reasonCode: reason.code(),
+                amountMinor: desis_limit_minor,
+            })?;
+            contract.emit(IDesis::IntexAuctionCanceled {
+                emissionDay: emission_day.into(),
+                reason: CANCELED_LIMIT_OVERFLOW,
+            })?;
+            contract.emit(IDesis::DesisLimitAllocated {
+                emissionDay: emission_day.into(),
+                amountMinor: U256::ZERO,
+            })?;
+            contract.emit(IDesis::DesisLimitReturned {
+                emissionDay: emission_day.into(),
+                amountMinor: desis_limit_minor,
             })?;
             return Ok(AuctionBriefReceipt::ReturnedToPromisLimit {
                 reason,
@@ -92,6 +104,12 @@ pub fn dispatch_auction_brief(
             });
         };
         runtime::record_preflighted_brief(storage.clone(), brief, desis_limit_u128, anchor)?;
+        storage
+            .contract::<DesisContract>()
+            .emit(IDesis::DesisLimitSet {
+                emissionDay: emission_day.into(),
+                amountMinor: desis_limit_minor,
+            })?;
         Ok(AuctionBriefReceipt::Accepted)
     })
 }

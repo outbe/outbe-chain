@@ -883,10 +883,21 @@ fn export_genesis_omits_a_zero_initial_rate() {
 }
 #[test]
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
-    with_bare_oracle(|storage, oracle| {
-        let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
-        let start_time = worldwide_day.start_timestamp().unwrap();
-        let end_time = start_time + 50 * 60 * 60;
+    use crate::precompile::IOracle;
+    use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    let worldwide_day = outbe_primitives::time::WorldwideDay::new(20260302);
+    let start_time = worldwide_day.start_timestamp().unwrap();
+    let end_time = start_time + 50 * 60 * 60;
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle
+            .config_lookback_duration
+            .write(SECONDS_PER_DAY)
+            .unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
         oracle
             .register_pair(AddressPair::from_addresses(usd(), ETH))
@@ -940,9 +951,6 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
             None
         );
 
-        use crate::precompile::IOracle;
-        use alloy_sol_types::SolCall;
-
         let call = IOracle::getWorldwideDayVwapSnapshotCall {
             worldwideDay: 20260302,
         }
@@ -961,6 +969,18 @@ fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
         assert_eq!(decoded.quotes, vec![usd(), ETH]);
         assert_eq!(decoded.vwaps, vec![coen_iso(110), fixed18(2_200)]);
     });
+
+    let wwd_events: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IOracle::WorldwideDayVwapSet::decode_log(log).ok())
+        .map(|ev| ev.data)
+        .collect();
+    assert_eq!(wwd_events.len(), 1);
+    assert_eq!(wwd_events[0].worldwideDay, 20260302);
+    assert_eq!(wwd_events[0].startTime, start_time);
+    assert_eq!(wwd_events[0].endTime, end_time);
+    assert_eq!(wwd_events[0].pairCount, 2);
 }
 
 #[test]

@@ -306,7 +306,7 @@ pub(crate) fn ignored_by_desis(url: &str, emission_day: u32) -> String {
     let desis: Address = origin_venue::DESIS
         .parse()
         .expect("desis precompile address");
-    let topic0 = alloy_primitives::keccak256(b"InboundIgnored(uint32,uint32,uint8)".as_slice());
+    let topic0 = alloy_primitives::keccak256(b"BidsIgnored(uint32,uint32,uint8)".as_slice());
     let day_topic = format!("0x{:064x}", emission_day);
     let logs = logs_of(
         url,
@@ -649,10 +649,10 @@ pub(crate) fn cleared_empty(url: &str, emission_day: u32) -> Option<bool> {
         )
         .is_some_and(|entries| !entries.is_empty())
     };
-    if seen(b"AuctionClearedEmpty(uint32,uint64)".as_slice()) {
+    if seen(b"IntexAuctionCompletedEmpty(uint32,uint64)".as_slice()) {
         return Some(true);
     }
-    if seen(b"AuctionCleared(uint32,uint32,uint32,uint64)".as_slice()) {
+    if seen(b"IntexAuctionCompleted(uint32,uint32,uint64,uint64)".as_slice()) {
         return Some(false);
     }
     None

@@ -125,6 +125,7 @@ mod event_abi {
 
     alloy_sol_types::sol!("../../contracts/precompiles/src/IIntex.sol");
     alloy_sol_types::sol!("../../contracts/precompiles/src/IIntexFactory.sol");
+    alloy_sol_types::sol!("../../contracts/precompiles/src/IDesis.sol");
     alloy_sol_types::sol!("../../contracts/precompiles/src/IMetadosis.sol");
     alloy_sol_types::sol!(
         #![sol(extra_derives(Debug, PartialEq))]
@@ -132,7 +133,7 @@ mod event_abi {
     );
 }
 
-pub use event_abi::{IGemFactory, IIntex, IIntexFactory, INodFactory};
+pub use event_abi::{IDesis, IGemFactory, IIntex, IIntexFactory, INodFactory};
 pub use event_abi::{IMetadosis, IStablecoinFactory, ITribute};
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical
@@ -160,7 +161,6 @@ sol!("../../contracts/precompiles/src/IVaultRouter.sol");
 
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
 sol!("../../contracts/precompiles/src/IEmission.sol");
-sol!("../../contracts/precompiles/src/IDesis.sol");
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IZeroFee.sol");
 sol!("../../contracts/precompiles/src/IAgentReward.sol");

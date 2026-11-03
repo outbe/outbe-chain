@@ -1,90 +1,29 @@
 [
   {
     "type": "event",
-    "name": "DayLimitFormed",
+    "name": "MetadosisCanceled",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "baseLimitMinor",
-        "type": "uint256",
+        "name": "reason",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitBeforeMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitTakenMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitAfterMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "metadosisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "MetadosisAccumulation",
+    "name": "MetadosisCompleted",
     "inputs": [
       {
-        "name": "date",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "metadosisLimitMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalAccumulatedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MetadosisExecuted",
-    "inputs": [
-      {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -148,41 +87,29 @@
   },
   {
     "type": "event",
-    "name": "MetadosisSkipped",
+    "name": "MetadosisFailed",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
       },
       {
         "name": "reason",
-        "type": "string",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "status",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "blockNumber",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "MetadosisWorldwideDayProcessed",
+    "name": "MetadosisLimitSet",
     "inputs": [
       {
-        "name": "worldwideDay",
+        "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
@@ -192,24 +119,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "promisLimitReturnedMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "status",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      },
-      {
-        "name": "action",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
       }
     ],
     "anonymous": false

@@ -33,3 +33,9 @@ pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
 
 /// Seconds per hour.
 pub const SECONDS_PER_HOUR: u64 = 3600;
+
+/// `IMetadosis.MetadosisCanceled.reason`: the emission day has no Metadosis limit.
+pub const METADOSIS_CANCELED_NO_LIMIT: u8 = 1;
+
+/// `IMetadosis.MetadosisFailed.reason`: the Metadosis step reverted.
+pub const METADOSIS_FAILED_STEP_REVERTED: u8 = 1;

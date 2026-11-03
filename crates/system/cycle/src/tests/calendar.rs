@@ -141,4 +141,93 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             promis_before + expected_cap
         );
     });
+
+    use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
+    use outbe_metadosis::precompile::IMetadosis;
+
+    let expected_cap = outbe_emission::day_emission::day_emission_limit(0);
+    let alloc_failed: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::ICycle::DayEmissionLimitAllocationFailed::decode_log(log).ok())
+        .map(|ev| ev.data)
+        .collect();
+    assert_eq!(alloc_failed.len(), 1);
+    assert_eq!(alloc_failed[0].emissionDay, 20_240_101);
+    assert_eq!(alloc_failed[0].emissionLimitMinor, expected_cap);
+    assert_eq!(alloc_failed[0].reason, 1);
+
+    let metadosis_canceled: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisCanceled::decode_log(log).ok())
+        .map(|ev| ev.data)
+        .collect();
+    assert_eq!(metadosis_canceled.len(), 1);
+    assert_eq!(metadosis_canceled[0].emissionDay, 20_240_101);
+    assert_eq!(metadosis_canceled[0].reason, 1);
+
+    assert!(storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisLimitSet::decode_log(log).ok())
+        .all(|ev| ev.data.emissionDay != 20_240_101));
+    assert!(storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IDesis::DesisLimitSet::decode_log(log).ok())
+        .all(|ev| ev.data.emissionDay != 20_240_101));
+
+    // Now test Step 3 (`start_metadosis`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
+    // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage
+    // for 20240102 so `start_metadosis` reverts with `InvalidStageTransition`.
+    storage.set_block_number(3);
+    storage.enter(|handle| {
+        let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        ar.pending_total_minor
+            .write(
+                &(outbe_agentreward::schema::RewardPool::Waa as u8),
+                U256::ZERO,
+            )
+            .unwrap();
+        outbe_desis::schema::DesisContract::new(handle.clone())
+            .auction_stage
+            .write(
+                &outbe_primitives::time::EmissionDate::new(20_240_102),
+                outbe_desis::schema::AuctionStage::Briefed as u8,
+            )
+            .unwrap();
+        let promis_before_day2 = outbe_promislimit::PromisLimitContract::new(handle.clone())
+            .promis_limit()
+            .unwrap();
+        let fire_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 3_600;
+        let ctx = runtime_context(block_ctx(3, fire_ts), handle.clone());
+        account_parent(&ctx, 3);
+        dispatch_triggers(&ctx).unwrap();
+
+        let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_102)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            rec.metadosis_state,
+            outbe_emission::schema::metadosis_state::FAILED
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(handle)
+                .promis_limit()
+                .unwrap(),
+            promis_before_day2 + U256::from(rec.metadosis_limit)
+        );
+    });
+
+    let metadosis_failed: Vec<_> = storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisFailed::decode_log(log).ok())
+        .map(|ev| ev.data)
+        .collect();
+    assert_eq!(metadosis_failed.len(), 1);
+    assert_eq!(metadosis_failed[0].emissionDay, 20_240_102);
+    assert_eq!(metadosis_failed[0].reason, 1);
 }

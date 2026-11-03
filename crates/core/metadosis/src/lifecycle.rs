@@ -193,12 +193,31 @@ pub(crate) fn complete_emission_day(
     Ok(())
 }
 
+pub(crate) fn cancel_emission_day(
+    metadosis: &mut MetadosisContract<'_>,
+    day: u32,
+    reason: u8,
+) -> Result<()> {
+    if metadosis.emission_days().get(day)?.is_some() {
+        let record =
+            outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
+        if !outbe_agentreward::distribution::has_pending_accruals_for_day(
+            &metadosis.storage,
+            record.day,
+        )? {
+            outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
+        }
+    }
+    metadosis.emit(IMetadosis::MetadosisCanceled {
+        emissionDay: day,
+        reason,
+    })
+}
+
 pub(crate) fn fail_emission_day(
     metadosis: &mut MetadosisContract<'_>,
-    ctx: &BlockRuntimeContext<'_>,
     day: u32,
-    wwd: WorldwideDay,
-    reason: &str,
+    reason: u8,
 ) -> Result<()> {
     if metadosis.emission_days().get(day)?.is_some() {
         let (record, limit_minor) =
@@ -213,10 +232,8 @@ pub(crate) fn fail_emission_day(
             outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
         }
     }
-    metadosis.emit(IMetadosis::MetadosisSkipped {
-        worldwideDay: wwd.into(),
-        reason: reason.into(),
-        status: "FAILED".into(),
-        blockNumber: ctx.block.block_number,
+    metadosis.emit(IMetadosis::MetadosisFailed {
+        emissionDay: day,
+        reason,
     })
 }
