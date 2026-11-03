@@ -1,4 +1,4 @@
-name: CI intent
+name: 05. intent
 
 on:
   push:
