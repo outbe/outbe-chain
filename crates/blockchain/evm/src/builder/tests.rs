@@ -450,13 +450,15 @@ fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
 }
 
 fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {
-    let ctx = BlockContext::new(
-        0,
-        0,
-        MAINNET.chain().id(),
-        GENESIS_OWNER,
-        validators.to_vec(),
-    );
+    let ctx = BlockContext {
+        block_number: 0,
+        timestamp: 0,
+        chain_id: MAINNET.chain().id(),
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer: GENESIS_OWNER,
+        validators: validators.to_vec(),
+    };
     let mut provider = DirectStorageProvider::new(db, ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);

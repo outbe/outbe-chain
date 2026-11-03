@@ -546,7 +546,9 @@ mod liveness {
             root: b256!("0xb8f3591fc1f80eaecba71902c5a172bb89783f96eb34dacf4fec14ef5d8e4765"),
             index: 0,
             message_id: b256!("0x6cf30153c1583380a6bab73348f2f33f7aa36a249f3ffe3868d4d0a8694c8c1f"),
-            signature: signature("1d728977b83ac16088ea0db249f9c4eac6b58818b42676964b238ac37228e48520858022b5e514ea711b3b2bd55be4381efeb8d7bb907c75525bd760decad2781b"),
+            signature: signature(
+                "1d728977b83ac16088ea0db249f9c4eac6b58818b42676964b238ac37228e48520858022b5e514ea711b3b2bd55be4381efeb8d7bb907c75525bd760decad2781b",
+            ),
         }
     }
 
@@ -555,7 +557,9 @@ mod liveness {
             root: b256!("0x5cd1ceeff6f033960677157f13b472fcfb1617638dbdfb0ab0cde36cd94bf050"),
             index: 2,
             message_id: b256!("0x3eae2775d2a39169fd82693c9883351a72761c9cdf4cddedaf95bf62e454250e"),
-            signature: signature("82079df9c6de4d2ab039216e3275cf803d245819150512e50dde105e2802f98976b8041d134256ef7df29fa8a8613a5c042af46c3468ab011410e19e6e1cb4931c"),
+            signature: signature(
+                "82079df9c6de4d2ab039216e3275cf803d245819150512e50dde105e2802f98976b8041d134256ef7df29fa8a8613a5c042af46c3468ab011410e19e6e1cb4931c",
+            ),
         }
     }
 
@@ -954,7 +958,15 @@ mod vote_target {
     fn approve(p: &mut HashMapStorageProvider, payload: &str) {
         StorageHandle::enter(p, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(APPROVED_AT, 1_700_000_000, CHAIN_ID),
+                BlockContext {
+                    block_number: APPROVED_AT,
+                    timestamp: 1_700_000_000,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage,
             );
             assert_eq!(

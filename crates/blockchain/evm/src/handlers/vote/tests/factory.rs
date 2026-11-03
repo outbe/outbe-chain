@@ -391,7 +391,15 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         )
         .unwrap();
     let approved_ctx = BlockRuntimeContext::new(
-        BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]),
+        BlockContext {
+            block_number: 7,
+            timestamp: 1_700_000_000,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_700_000_000,
+            proposer: issuer,
+            validators: vec![issuer],
+        },
         approved_storage.clone(),
     );
     assert_eq!(
@@ -424,7 +432,15 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         )
         .unwrap();
     let expired_ctx = BlockRuntimeContext::new(
-        BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]),
+        BlockContext {
+            block_number: 7,
+            timestamp: 1_700_000_000,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_700_000_000,
+            proposer: issuer,
+            validators: vec![issuer],
+        },
         expired_storage.clone(),
     );
     assert_eq!(
@@ -455,7 +471,15 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         )
         .unwrap();
     let error_ctx = BlockRuntimeContext::new(
-        BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]),
+        BlockContext {
+            block_number: 7,
+            timestamp: 1_700_000_000,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_700_000_000,
+            proposer: issuer,
+            validators: vec![issuer],
+        },
         error_storage.clone(),
     );
     assert!(matches!(
@@ -496,7 +520,15 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .clear(&corrupted_reservation.token)
         .unwrap();
     let corrupted_ctx = BlockRuntimeContext::new(
-        BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]),
+        BlockContext {
+            block_number: 7,
+            timestamp: 1_700_000_000,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_700_000_000,
+            proposer: issuer,
+            validators: vec![issuer],
+        },
         corrupted_storage,
     );
     assert!(matches!(

@@ -219,8 +219,18 @@ fn day_count_total_and_cleanup_queue_overflow_roll_back() {
         assert_eq!(api::reward_weight(&storage, BOB, DAY).unwrap(), U256::ZERO);
         api::seal_reward_day(&storage, DAY).unwrap();
         contract.day_cleanup_tail.write(u64::MAX).unwrap();
-        let ctx =
-            outbe_primitives::block::BlockRuntimeContext::new(Default::default(), storage.clone());
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext {
+                block_number: 0,
+                timestamp: 0,
+                chain_id: 0,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 0,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
         assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
         assert!(!contract.day_cleanup_scheduled.read(&DAY).unwrap());
     });
@@ -687,8 +697,18 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
             }
         }
         let contract = CcaContract::new(storage.clone());
-        let mut ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(0, NOW, 1), storage.clone());
+        let mut ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 0,
+                timestamp: NOW,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
         assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
         api::seal_reward_day(&storage, DAY).unwrap();
         api::enqueue_day_cleanup(&ctx, DAY).unwrap();
@@ -765,8 +785,18 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
 fn cleanup_empty_headers_are_bounded_and_sealing_can_skip_days() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     run(|storage| {
-        let mut ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(0, NOW, 1), storage.clone());
+        let mut ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 0,
+                timestamp: NOW,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
         api::seal_reward_day(&storage, DAY + 10).unwrap();
         for day in DAY..DAY + 6 {
             api::enqueue_day_cleanup(&ctx, day).unwrap();

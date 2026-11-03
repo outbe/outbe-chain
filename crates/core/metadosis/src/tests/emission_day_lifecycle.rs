@@ -5,9 +5,15 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key, Worldwide
 
 fn advance_at(storage: &StorageHandle<'_>, timestamp: u64, genesis_timestamp: u64) {
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
-    let mut block =
-        BlockContext::empty_for_tests(storage.block_number().unwrap(), timestamp, CHAIN_ID);
-    block.genesis_timestamp = genesis_timestamp;
+    let block = BlockContext {
+        block_number: storage.block_number().unwrap(),
+        timestamp,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp,
+        proposer: alloy_primitives::Address::ZERO,
+        validators: Vec::new(),
+    };
     let ctx = BlockRuntimeContext::new(block, storage.clone());
     outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 }
@@ -98,8 +104,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let genesis_ts = date_key_to_utc_timestamp(20260901).unwrap() + 12 * 3_600;
         advance_at(&storage, genesis_ts, genesis_ts);
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID)
-                .with_genesis_timestamp(genesis_ts),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: genesis_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: genesis_ts,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
 
@@ -141,7 +154,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
         let metadosis = MetadosisContract::new(storage.clone());
         let before_start = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, expected_metadosis_start - 1, CHAIN_ID),
+            BlockContext {
+                block_number: 2,
+                timestamp: expected_metadosis_start - 1,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(expected_metadosis_start - 1, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         assert!(
@@ -151,12 +172,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         );
 
         let at_start = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                storage.block_number().unwrap(),
-                expected_metadosis_start,
-                CHAIN_ID,
-            )
-            .with_genesis_timestamp(genesis_ts),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: expected_metadosis_start,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: genesis_ts,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         storage
@@ -174,7 +198,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let restart_ts = date_key_to_utc_timestamp(20260908).unwrap() + 3_600;
         arm_reference_price(&storage, restart_ts);
         let restart_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(4, restart_ts, CHAIN_ID),
+            BlockContext {
+                block_number: 4,
+                timestamp: restart_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(restart_ts, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         let due_after_halt = crate::lifecycle::find_due_emission_day(&metadosis, &restart_ctx)
@@ -185,7 +217,15 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
         storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
         let aligned = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), restart_ts, CHAIN_ID),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: restart_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(restart_ts, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::commands::start_metadosis(&aligned).unwrap();
@@ -226,11 +266,15 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .set_block_timestamp(U256::from(genesis_before_noon))
             .unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                storage.block_number().unwrap(),
-                genesis_before_noon,
-                CHAIN_ID,
-            ),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: genesis_before_noon,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(genesis_before_noon, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
@@ -261,7 +305,15 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .set_block_timestamp(U256::from(empty_due_ts))
             .unwrap();
         let empty_due_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), empty_due_ts, CHAIN_ID),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: empty_due_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(empty_due_ts, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::commands::start_metadosis(&empty_due_ctx).unwrap();
@@ -282,11 +334,15 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .set_block_timestamp(U256::from(genesis_after_noon))
             .unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                storage.block_number().unwrap(),
-                genesis_after_noon,
-                CHAIN_ID,
-            ),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: genesis_after_noon,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(genesis_after_noon, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
@@ -310,9 +366,15 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
         // 2026-10-11 00:00 UTC: 20261007..=20261012.
         let catchup_ts = date_key_to_utc_timestamp(20261011).unwrap() + 12 * 3_600;
         storage.set_block_timestamp(U256::from(catchup_ts)).unwrap();
-        let mut catchup_block =
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), catchup_ts, CHAIN_ID);
-        catchup_block.genesis_timestamp = genesis_after_noon;
+        let catchup_block = BlockContext {
+            block_number: storage.block_number().unwrap(),
+            timestamp: catchup_ts,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: genesis_after_noon,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        };
         let catchup_ctx = BlockRuntimeContext::new(catchup_block, storage.clone());
         outbe_tributefactory::worldwideday::advance_worldwide_days_command(&catchup_ctx).unwrap();
         for wwd_key in 20261007..=20261012 {
@@ -434,8 +496,15 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
         let settle_ts = date_key_to_utc_timestamp(20261006).unwrap() + 1;
         storage.set_block_timestamp(U256::from(settle_ts)).unwrap();
         let ctx_06 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), settle_ts, CHAIN_ID)
-                .with_genesis_timestamp(genesis_ts),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: settle_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: genesis_ts,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::commands::dispatch_terminal_remainder_at(
@@ -524,7 +593,15 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
         let due_ts = date_key_to_utc_timestamp(20261002).unwrap() + 1;
         storage.set_block_timestamp(U256::from(due_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), due_ts, CHAIN_ID),
+            BlockContext {
+                block_number: storage.block_number().unwrap(),
+                timestamp: due_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(due_ts, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         crate::commands::start_metadosis(&ctx).unwrap();

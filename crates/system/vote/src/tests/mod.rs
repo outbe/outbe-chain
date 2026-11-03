@@ -338,7 +338,18 @@ pub(super) fn test_provider() -> HashMapStorageProvider {
 }
 
 fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
-    BlockRuntimeContext::new(BlockContext::empty_for_tests(block_number, 0, 1), storage)
+    BlockRuntimeContext::new(
+        BlockContext {
+            block_number,
+            timestamp: 0,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+        storage,
+    )
 }
 
 pub(super) trait VoteTestExt {

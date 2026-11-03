@@ -194,8 +194,15 @@ pub(crate) fn block_ctx_at<'s>(
     timestamp: u64,
 ) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(timestamp, timestamp, 1)
-            .with_genesis_timestamp(T_NOW - SECONDS_PER_DAY),
+        BlockContext {
+            block_number: timestamp,
+            timestamp,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: T_NOW - SECONDS_PER_DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     )
 }

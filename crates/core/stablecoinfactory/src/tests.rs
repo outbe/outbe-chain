@@ -471,7 +471,15 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
             ..Default::default()
         },
     );
-    let context = BlockContext::new(7, 1_700_000_000, 1, issuer, vec![issuer]);
+    let context = BlockContext {
+        block_number: 7,
+        timestamp: 1_700_000_000,
+        chain_id: 1,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
+        proposer: issuer,
+        validators: vec![issuer],
+    };
     let mut provider = DirectStorageProvider::new(&mut db, context);
 
     StorageHandle::enter(&mut provider, |storage| {

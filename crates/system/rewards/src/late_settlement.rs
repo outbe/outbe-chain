@@ -477,7 +477,15 @@ mod tests {
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(156, 100, CHAIN_ID, Address::ZERO, Vec::new()),
+                BlockContext {
+                    block_number: 156,
+                    timestamp: 100,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 100,
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
                 handle,
             );
             // Fee-only fixtures bypass CPA. Supply the canonical day that CPA binds.
@@ -654,7 +662,15 @@ mod tests {
             seed,
             |handle| {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::new(156, 100, CHAIN_ID, Address::ZERO, Vec::new()),
+                    BlockContext {
+                        block_number: 156,
+                        timestamp: 100,
+                        chain_id: CHAIN_ID,
+                        genesis_hash: alloy_primitives::B256::ZERO,
+                        genesis_timestamp: 100,
+                        proposer: Address::ZERO,
+                        validators: Vec::new(),
+                    },
                     handle,
                 );
                 ctx.storage.with_checkpoint(|| settle_matured(&ctx, 13, 3))
@@ -834,7 +850,15 @@ mod tests {
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(156, timestamp, CHAIN_ID, Address::ZERO, Vec::new()),
+                BlockContext {
+                    block_number: 156,
+                    timestamp,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: timestamp.max(1),
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
                 handle,
             );
             let pending = U256::from(4_000) * unit;
@@ -861,7 +885,15 @@ mod tests {
         storage.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CycleLifecycle);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(156, timestamp, CHAIN_ID, Address::ZERO, Vec::new()),
+                BlockContext {
+                    block_number: 156,
+                    timestamp,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: timestamp.max(1),
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
                 handle,
             );
             let daily_base = U256::from(10_000);

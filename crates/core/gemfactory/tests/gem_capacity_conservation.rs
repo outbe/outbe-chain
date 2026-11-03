@@ -86,7 +86,15 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, CALLED, 1).with_genesis_timestamp(CALLED - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: CALLED,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: CALLED - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
@@ -121,8 +129,15 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             // Prices no longer affect called groups, but day readiness still matters.
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(at * 32 + block, at, 1)
-                        .with_genesis_timestamp(CALLED - DAY),
+                    BlockContext {
+                        block_number: at * 32 + block,
+                        timestamp: at,
+                        chain_id: 1,
+                        genesis_hash: alloy_primitives::B256::ZERO,
+                        genesis_timestamp: CALLED - DAY,
+                        proposer: alloy_primitives::Address::ZERO,
+                        validators: Vec::new(),
+                    },
                     s.clone(),
                 );
                 called::process_call_pass(&ctx)?;
@@ -131,8 +146,15 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 }
             }
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(at * 32 + 16, at, 1)
-                    .with_genesis_timestamp(CALLED - DAY),
+                BlockContext {
+                    block_number: at * 32 + 16,
+                    timestamp: at,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: CALLED - DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 s.clone(),
             );
             hooks::cleanup(&ctx)?;

@@ -37,7 +37,15 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             outbe_nod::test_support::add(&storage, &body).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, midnight, 1).with_genesis_timestamp(midnight - 86_400),
+            BlockContext {
+                block_number: 1,
+                timestamp: midnight,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: midnight - 86_400,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         called::schedule_call_pass(&ctx).unwrap();
@@ -52,7 +60,15 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, midnight, 1).with_genesis_timestamp(midnight - 86_400),
+            BlockContext {
+                block_number: 2,
+                timestamp: midnight,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: midnight - 86_400,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         called::process_call_pass(&ctx).unwrap();
@@ -74,7 +90,15 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     let before = provider.storage.clone();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, midnight, 1).with_genesis_timestamp(midnight - 86_400),
+            BlockContext {
+                block_number: 2,
+                timestamp: midnight,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: midnight - 86_400,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage,
         );
         called::process_call_pass(&ctx).unwrap();

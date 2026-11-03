@@ -855,7 +855,15 @@ mod tests {
                 )
                 .unwrap();
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(4, 11 * DAY, 1),
+                BlockContext {
+                    block_number: 4,
+                    timestamp: 11 * DAY,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 11 * DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             let mut handler = recorder();
@@ -877,7 +885,15 @@ mod tests {
             let cursor = queue.sweep_cursor().read().unwrap();
 
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(5, 11 * DAY, 1),
+                BlockContext {
+                    block_number: 5,
+                    timestamp: 11 * DAY,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 11 * DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             let mut handler = CheckpointHandler {

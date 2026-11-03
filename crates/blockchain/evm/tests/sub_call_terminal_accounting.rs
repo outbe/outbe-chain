@@ -215,7 +215,15 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
         // a normal command reaches the real writing child and bubbles 0x42.
         let mut seed = DirectStorageProvider::new(
             &mut db,
-            BlockContext::new(1, 1_700_000_000, 1, sender, vec![sender]),
+            BlockContext {
+                block_number: 1,
+                timestamp: 1_700_000_000,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: sender,
+                validators: vec![sender],
+            },
         );
         StorageHandle::enter(&mut seed, |storage| {
             outbe_intex::api::create_series(

@@ -554,8 +554,18 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     let pending = snapshot(&storage);
     storage.set_block_number(4);
     storage.enter(|s| {
-        let context =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(4, 1004, 2026), s.clone());
+        let context = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 4,
+                timestamp: 1004,
+                chain_id: 2026,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1004,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            s.clone(),
+        );
         Vote::new(s)
             .process_begin_block(&context, &targets)
             .unwrap();
@@ -785,7 +795,18 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
     let before = snapshot(&storage);
     storage.set_block_number(3);
     storage.enter(|s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(3, 1003, 1), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 3,
+                timestamp: 1003,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1003,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            s.clone(),
+        );
         Vote::new(s).process_begin_block(&ctx, &registry).unwrap();
     });
     let accepted = snapshot(&storage);
@@ -1051,8 +1072,18 @@ fn finalized_vote_pages_select_only_the_network_repository() {
         });
         storage.set_block_number(3);
         storage.enter(|s| {
-            let ctx =
-                BlockRuntimeContext::new(BlockContext::empty_for_tests(3, 1003, 1), s.clone());
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_number: 3,
+                    timestamp: 1003,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1003,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                s.clone(),
+            );
             Vote::new(s).process_begin_block(&ctx, &handlers).unwrap();
         });
         let state = snapshot(&storage);

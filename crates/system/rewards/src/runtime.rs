@@ -365,14 +365,15 @@ mod tests {
     fn day_number_since_genesis_rejects_a_zero_genesis_timestamp() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let uninit_ctx = BlockRuntimeContext::new(
-                outbe_primitives::block::BlockContext::new(
-                    0,
-                    GENESIS_TS_2024_01_01,
-                    1,
-                    Address::ZERO,
-                    Vec::new(),
-                )
-                .with_genesis_timestamp(0),
+                outbe_primitives::block::BlockContext {
+                    block_number: 0,
+                    timestamp: GENESIS_TS_2024_01_01,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 0,
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
                 ctx.storage,
             );
             let err = day_number_since_genesis(&uninit_ctx, 20240101).unwrap_err();

@@ -554,7 +554,18 @@ mod metadosis_frame_tests {
     const ACCOUNT: Address = address!("0x00000000000000000000000000000000000000d1");
 
     fn provider(db: &mut CacheDB<EmptyDB>) -> DirectStorageProvider<'_, CacheDB<EmptyDB>> {
-        DirectStorageProvider::new(db, BlockContext::empty_for_tests(9, 1_700_000_000, 42))
+        DirectStorageProvider::new(
+            db,
+            BlockContext {
+                block_number: 9,
+                timestamp: 1_700_000_000,
+                chain_id: 42,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+        )
     }
 
     fn denial(result: Result<()>) -> String {

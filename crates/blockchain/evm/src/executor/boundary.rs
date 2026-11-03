@@ -299,17 +299,8 @@ where
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
-        let chain_id = self.inner.evm.chain_id();
+        let ctx = self.block_context(block_number, timestamp, proposer);
         let db = self.inner.evm.db_mut();
-        let ctx = BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash: self.genesis_hash,
-            genesis_timestamp: self.genesis_timestamp,
-            proposer,
-            validators: Vec::new(),
-        });
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);

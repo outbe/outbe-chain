@@ -85,12 +85,15 @@ mod group_scans {
             let deadline = scan_ts + u64::from(super::super::CALL_NOTICE_PERIOD);
             let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-                outbe_primitives::block::BlockContext::empty_for_tests(
-                    2,
-                    due,
-                    super::super::CHAIN_ID,
-                )
-                .with_genesis_timestamp(scan_ts - super::super::DAY),
+                outbe_primitives::block::BlockContext {
+                    block_number: 2,
+                    timestamp: due,
+                    chain_id: super::super::CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: scan_ts - super::super::DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 s.clone(),
             );
             super::super::called::daily_pass(&ctx).unwrap();
@@ -156,11 +159,15 @@ mod group_scans {
             let close_at = outbe_intex::api::call_stamp(&s, &record).unwrap().close_at;
             let due = IntexContract::day_end(IntexContract::deadline_day(close_at));
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-                outbe_primitives::block::BlockContext::empty_for_tests(
-                    2,
-                    due,
-                    super::super::CHAIN_ID,
-                ),
+                outbe_primitives::block::BlockContext {
+                    block_number: 2,
+                    timestamp: due,
+                    chain_id: super::super::CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(due, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 s.clone(),
             );
             let mut budget = PassBudget::new(100, 100);

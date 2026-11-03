@@ -39,7 +39,15 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     storage.set_block_number(1);
     storage.enter(|handle| {
         let ctx = runtime_context(
-            BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
+            BlockContext {
+                block_number: 1,
+                timestamp: GENESIS_TS,
+                chain_id,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: GENESIS_TS.max(1),
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
             handle,
         );
         let owner = Address::repeat_byte(0xA0);
@@ -71,8 +79,15 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
 }
 
 pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-    BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
-        .with_genesis_timestamp(GENESIS_TS)
+    BlockContext {
+        block_number,
+        timestamp,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: GENESIS_TS,
+        proposer: Address::ZERO,
+        validators: Vec::new(),
+    }
 }
 
 /// Synchronizes provider time; callers set provider height before entering each block.

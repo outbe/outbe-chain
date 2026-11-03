@@ -120,7 +120,15 @@ fn approved_vote_proposal_schedules_update_and_activates() {
         assert_eq!(scheduled.activation_height, activation);
 
         let ctx = BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(activation, 0, TEST_CHAIN_ID),
+            outbe_primitives::block::BlockContext {
+                block_number: activation,
+                timestamp: 0,
+                chain_id: TEST_CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         update
@@ -166,7 +174,15 @@ fn every_network_requires_notice_at_update_admission_and_vote_approval() {
             let payload = encode_schedule_update_json(PV, activation, "");
             let proposal_id = create_approved_update(&mut vote, &payload, current);
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(approval_height, 0, chain_id),
+                BlockContext {
+                    block_number: approval_height,
+                    timestamp: 0,
+                    chain_id,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             vote.process_begin_block(&ctx, &VOTE_TARGET_REGISTRY)
@@ -191,7 +207,15 @@ fn every_network_requires_notice_at_update_admission_and_vote_approval() {
             if short_by == 0 {
                 assert_eq!(scheduled.unwrap().activation_height, activation);
                 let activation_ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(activation, 0, chain_id),
+                    BlockContext {
+                        block_number: activation,
+                        timestamp: 0,
+                        chain_id,
+                        genesis_hash: alloy_primitives::B256::ZERO,
+                        genesis_timestamp: 1,
+                        proposer: alloy_primitives::Address::ZERO,
+                        validators: Vec::new(),
+                    },
                     storage.clone(),
                 );
                 update

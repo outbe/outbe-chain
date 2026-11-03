@@ -17,7 +17,15 @@ pub fn create_worldwide_day(
     worldwide_day: WorldwideDay,
 ) -> Result<()> {
     let context = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(block_number, timestamp, chain_id),
+        BlockContext {
+            block_number,
+            timestamp,
+            chain_id,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(timestamp, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     );
     let binding = outbe_primitives::storage::metadosis_process_ready_binding(

@@ -69,7 +69,15 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
 }
 
 fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
-    BlockContext::new(block_number, timestamp, CHAIN_ID, Address::ZERO, Vec::new())
+    BlockContext {
+        block_number,
+        timestamp,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: timestamp.max(1),
+        proposer: Address::ZERO,
+        validators: Vec::new(),
+    }
 }
 
 /// Stub `AccountingProgressView` for tests that don't need EVM storage.
@@ -253,7 +261,15 @@ fn genesis_bootstrap_resolves_to_no_window_for_gated_trigger() {
 fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle: StorageHandle| {
-        let block = BlockContext::empty_for_tests(0, 0, CHAIN_ID);
+        let block = BlockContext {
+            block_number: 0,
+            timestamp: 0,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         let ctx = BlockRuntimeContext::new(block, handle);
 
         let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
@@ -292,7 +308,15 @@ fn with_progress_ctx(
     body: impl FnOnce(&BlockRuntimeContext),
 ) {
     storage.enter(|handle: StorageHandle| {
-        let block = BlockContext::empty_for_tests(2, 0, CHAIN_ID);
+        let block = BlockContext {
+            block_number: 2,
+            timestamp: 0,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         let ctx = BlockRuntimeContext::new(block, handle);
         body(&ctx);
     });
@@ -414,7 +438,15 @@ fn phase1_recorder_rejects_zero_and_non_successors_and_replays_positive_progress
 fn genesis_progress_reads_zero_before_first_phase1_write() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle: StorageHandle| {
-        let block = BlockContext::empty_for_tests(0, 0, CHAIN_ID);
+        let block = BlockContext {
+            block_number: 0,
+            timestamp: 0,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         let ctx = BlockRuntimeContext::new(block, handle);
 
         let initial = read_last_accounted_block_number(&ctx).expect("read genesis slot 0");
@@ -454,13 +486,15 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
     let read_progress = |p: &mut HashMapStorageProvider| -> u64 {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(
-                    storage.block_number().expect("block number"),
-                    storage.now_secs().expect("timestamp"),
-                    storage.chain_id().expect("chain id"),
-                    VALIDATOR,
-                    vec![VALIDATOR],
-                ),
+                BlockContext {
+                    block_number: storage.block_number().expect("block number"),
+                    timestamp: storage.now_secs().expect("timestamp"),
+                    chain_id: storage.chain_id().expect("chain id"),
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: storage.now_secs().expect("timestamp").max(1),
+                    proposer: VALIDATOR,
+                    validators: vec![VALIDATOR],
+                },
                 storage,
             );
             read_last_accounted_block_number(&ctx).expect("read progress")
@@ -469,13 +503,15 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
     let seed_progress = |p: &mut HashMapStorageProvider, block_number: u64| {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(
-                    storage.block_number().expect("block number"),
-                    storage.now_secs().expect("timestamp"),
-                    storage.chain_id().expect("chain id"),
-                    VALIDATOR,
-                    vec![VALIDATOR],
-                ),
+                BlockContext {
+                    block_number: storage.block_number().expect("block number"),
+                    timestamp: storage.now_secs().expect("timestamp"),
+                    chain_id: storage.chain_id().expect("chain id"),
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: storage.now_secs().expect("timestamp").max(1),
+                    proposer: VALIDATOR,
+                    validators: vec![VALIDATOR],
+                },
                 storage,
             );
             ctx.storage
@@ -488,13 +524,15 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
     let record_progress = |p: &mut HashMapStorageProvider, block_number: u64| {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(
-                    storage.block_number().expect("block number"),
-                    storage.now_secs().expect("timestamp"),
-                    storage.chain_id().expect("chain id"),
-                    VALIDATOR,
-                    vec![VALIDATOR],
-                ),
+                BlockContext {
+                    block_number: storage.block_number().expect("block number"),
+                    timestamp: storage.now_secs().expect("timestamp"),
+                    chain_id: storage.chain_id().expect("chain id"),
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: storage.now_secs().expect("timestamp").max(1),
+                    proposer: VALIDATOR,
+                    validators: vec![VALIDATOR],
+                },
                 storage,
             );
             record_phase1_progress(&ctx, block_number).expect("record progress");

@@ -238,7 +238,15 @@ fn apply_uses_live_metadata_not_informational_proposal_declarations() {
             receiver(),
         );
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(0, 1_700_000_000, CHAIN_ID),
+            BlockContext {
+                block_number: 0,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         assert_eq!(

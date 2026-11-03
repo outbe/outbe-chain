@@ -18,8 +18,15 @@ fn scan_and_call_force_calls_breached_series() {
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -43,8 +50,15 @@ fn a_called_series_reports_its_settlement_deadline() {
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -102,8 +116,15 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
             .unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -127,8 +148,15 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         // Must not halt: returns Ok(0) and leaves the series Issued.
@@ -164,8 +192,15 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
-                .with_genesis_timestamp(scan_ts - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: scan_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: scan_ts - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s,
         );
         called::process_call_pass(&ctx)
@@ -417,7 +452,15 @@ fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 
 fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(ISSUED_AT - DAY),
+        BlockContext {
+            block_number: 1,
+            timestamp: at,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: ISSUED_AT - DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         s.clone(),
     );
     called::daily_pass(&ctx).unwrap();
@@ -503,7 +546,15 @@ fn every_failed_pass_write_rolls_back(
             select_prod_profile(&s);
             let member = arm(&s);
             called::prepare_daily_pass(&BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(at - DAY),
+                BlockContext {
+                    block_number: 1,
+                    timestamp: at,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: at - DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 s,
             ))
             .unwrap();
@@ -514,7 +565,15 @@ fn every_failed_pass_write_rolls_back(
     let pass = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |s| {
             called::daily_pass(&BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(at - DAY),
+                BlockContext {
+                    block_number: 1,
+                    timestamp: at,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: at - DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 s,
             ))
             .map(|_| ())
@@ -759,7 +818,15 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
 
         let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, due, CHAIN_ID).with_genesis_timestamp(ISSUED_AT - DAY),
+            BlockContext {
+                block_number: 1,
+                timestamp: due,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: ISSUED_AT - DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         let block = called::daily_pass(&ctx).unwrap();
@@ -782,7 +849,15 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
 
 fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(number, ts, CHAIN_ID).with_genesis_timestamp(MATURE_TS - DAY),
+        BlockContext {
+            block_number: number,
+            timestamp: ts,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: MATURE_TS - DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         s.clone(),
     )
 }

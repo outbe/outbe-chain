@@ -350,7 +350,15 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             )
             .unwrap();
             let ctx = BlockRuntimeContext::new(
-                BlockContext::new(5, parent_timestamp, 1, proposer, vec![proposer]),
+                BlockContext {
+                    block_number: 5,
+                    timestamp: parent_timestamp,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: parent_timestamp.max(1),
+                    proposer,
+                    validators: vec![proposer],
+                },
                 storage,
             );
             ctx.storage
@@ -465,7 +473,15 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         assert!(executor.receipts()[0].success);
     }
 
-    let read_ctx = BlockContext::new(6, 1_700_001_006, 1, proposer, vec![proposer]);
+    let read_ctx = BlockContext {
+        block_number: 6,
+        timestamp: 1_700_001_006,
+        chain_id: 1,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_001_006,
+        proposer,
+        validators: vec![proposer],
+    };
     let mut direct_provider = DirectStorageProvider::new(&mut state, read_ctx.clone());
     StorageHandle::enter(&mut direct_provider, |storage| {
         let runtime_ctx = BlockRuntimeContext::new(read_ctx, storage.clone());

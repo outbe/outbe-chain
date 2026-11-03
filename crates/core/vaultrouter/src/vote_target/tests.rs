@@ -99,8 +99,18 @@ fn rejects_invalid_shapes_fields_addresses_and_numeric_bounds() {
 fn corrupt_stored_payloads_propagate_instead_of_becoming_proposal_error() {
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(30, 1_700_000_000, 1), storage);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 30,
+                timestamp: 1_700_000_000,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        );
         for payload in [
             "{",
             "{}",
@@ -120,8 +130,18 @@ fn provider_failure_propagates_and_rolls_back_partial_route_writes() {
     let payload = &valid_payloads()[2];
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(30, 1_700_000_000, 1), storage);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 30,
+                timestamp: 1_700_000_000,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        );
         assert_eq!(
             VaultRouterVoteTarget
                 .handle_approved(&ctx, U256::ONE, payload.as_bytes(), context())
@@ -137,7 +157,15 @@ fn provider_failure_propagates_and_rolls_back_partial_route_writes() {
         provider.fail_after_mutation_at(operation);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+                BlockContext {
+                    block_number: 30,
+                    timestamp: 1_700_000_000,
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             assert!(
@@ -177,7 +205,15 @@ fn failed_supersession_restores_previous_approval_and_index() {
     provider.fail_after_mutation_at(1);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(30, 1_700_000_000, 1),
+            BlockContext {
+                block_number: 30,
+                timestamp: 1_700_000_000,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         assert!(matches!(

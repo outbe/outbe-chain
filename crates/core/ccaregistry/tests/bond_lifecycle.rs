@@ -107,7 +107,18 @@ fn with_storage_at<R>(
     now: u64,
     f: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
-    let mut provider = DirectStorageProvider::new(db, BlockContext::empty_for_tests(1, now, 1));
+    let mut provider = DirectStorageProvider::new(
+        db,
+        BlockContext {
+            block_number: 1,
+            timestamp: now,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(now, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+    );
     let result = StorageHandle::enter(&mut provider, f);
     provider.flush().unwrap();
     result
@@ -130,7 +141,18 @@ fn claim_reward_in_block(
     now: u64,
     block: u64,
 ) -> Result<(Bytes, Vec<alloy_primitives::Log>), String> {
-    let mut provider = DirectStorageProvider::new(db, BlockContext::empty_for_tests(block, now, 1));
+    let mut provider = DirectStorageProvider::new(
+        db,
+        BlockContext {
+            block_number: block,
+            timestamp: now,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(now, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+    );
     let result = StorageHandle::enter(&mut provider, |storage| {
         outbe_agentreward::precompile::dispatch(storage, &data, CCA, U256::ZERO)
             .map_err(|error| error.to_string())
@@ -239,7 +261,15 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     with_storage(&mut db, |s| {
         api::credis_issued(&s, CCA, 20231115, U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, NOW + 2 * SECONDS_PER_DAY, 1),
+            BlockContext {
+                block_number: 2,
+                timestamp: NOW + 2 * SECONDS_PER_DAY,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW + 2 * SECONDS_PER_DAY, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         outbe_rewards::api::close_day_participation(&ctx, 20231115).unwrap();

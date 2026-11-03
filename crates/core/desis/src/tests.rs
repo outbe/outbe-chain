@@ -2618,8 +2618,18 @@ fn force_clear_skips_missing_chain_after_deadline() {
 fn tick_gate_no_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     with_storage(|s| {
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, CHAIN_ID), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 1,
+                timestamp: NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            s.clone(),
+        );
         runtime::tick_gate(&ctx).unwrap();
     });
 }
@@ -2644,8 +2654,18 @@ fn tick_gate_clears_ready_day() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1);
 
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, NOW, CHAIN_ID), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_number: 1,
+                timestamp: NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            s.clone(),
+        );
         runtime::tick_gate(&ctx).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(

@@ -28,8 +28,15 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
 
     storage.enter(|handle| {
-        let block = BlockContext::new(1, genesis_oct_1, CHAIN_ID, Address::ZERO, Vec::new())
-            .with_genesis_timestamp(genesis_oct_1);
+        let block = BlockContext {
+            block_number: 1,
+            timestamp: genesis_oct_1,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: genesis_oct_1,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         let ctx = runtime_context(block, handle);
         run_cycle_lifecycle(&ctx).unwrap();
     });
@@ -44,8 +51,15 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
         storage.set_block_number(block_number);
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
-            let block = BlockContext::new(block_number, ts, CHAIN_ID, Address::ZERO, Vec::new())
-                .with_genesis_timestamp(genesis_oct_1);
+            let block = BlockContext {
+                block_number,
+                timestamp: ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: genesis_oct_1,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            };
             let ctx = runtime_context(block, handle);
             account_parent(&ctx, block_number);
             dispatch_triggers(&ctx).unwrap();
@@ -153,8 +167,15 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
             crate::handler::derive_active_utc_day(handle.clone(), 0, block_ts).unwrap();
         assert_eq!(uninitialized, 0);
         let ctx_zero_genesis = runtime_context(
-            BlockContext::new(2, block_ts, CHAIN_ID, Address::ZERO, Vec::new())
-                .with_genesis_timestamp(0),
+            BlockContext {
+                block_number: 2,
+                timestamp: block_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 0,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
             handle.clone(),
         );
         let err = crate::handler::run_protocol_cycle(&ctx_zero_genesis)
@@ -483,8 +504,15 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
     storage.set_block_number(block_no);
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
     storage.enter(|handle| {
-        let block = BlockContext::new(block_no, ts_day7_00h, CHAIN_ID, Address::ZERO, Vec::new())
-            .with_genesis_timestamp(GENESIS_TS + 60);
+        let block = BlockContext {
+            block_number: block_no,
+            timestamp: ts_day7_00h,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: GENESIS_TS + 60,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         let ctx = runtime_context(block, handle);
         account_parent(&ctx, block_no);
         // Settle previous day (A4) consumes the 1 frame; A6 reverts with `PrecompileError::Revert(String)`.
