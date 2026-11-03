@@ -5,7 +5,7 @@
 //! Hyperlane core contract (Mailbox, ProxyAdmin, IGP, gas oracle, ProtocolFee,
 //! InterchainAccountRouter, StorageMessageIdMultisigIsm) is `crosschainbridge`
 //! (`0x...EE15`), on Outbe directly and on remote chains through its
-//! Interchain Account (OIP-00369).
+//! Interchain Account.
 //!
 //! - It holds no validator set of its own. The ISMs are the source of truth.
 //! - `sync` rotates validators through `set_validators_and_threshold`.

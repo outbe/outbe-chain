@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 ///      crates/blockchain/primitives/src/addresses.rs.
 address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
 
-/// HyperlaneController precompile at `HYPERLANE_CONTROLLER` (OIP-00369).
+/// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
 ///
 /// The Hyperlane infrastructure of the owner: the local InterchainAccountRouter
 /// address, a `domain -> StorageMessageIdMultisigIsm` table (the Outbe chain

@@ -3,7 +3,7 @@
 //! The precompile at the owner address is in this crate. It owns the ERC-7786
 //! hub, the gateway adapters, the token bridges and the Hyperlane core
 //! contracts: on Outbe directly, on every other chain through its Interchain
-//! Account (OIP-00369).
+//! Account.
 //!
 //! - `runtime` runs the owner calls (`call_local`, `call_remote`) and pays
 //!   remote dispatch fees from the address balance. `fund` adds value

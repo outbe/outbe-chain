@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The Update precompile. Matches `UPDATE_ADDRESS` in
+///      crates/blockchain/primitives/src/addresses.rs.
+address constant UPDATE = 0x000000000000000000000000000000000000ee0b;
+
 /// @title IUpdate
 /// @notice Protocol update / hardfork precompile at 0x000000000000000000000000000000000000EE0B
 /// @dev Vote manages this precompile. After approval, the inner cross-module API
 /// handles the proposal. (see: /crates/system/update/)
 /// An approved `upgradeContracts` proposal upgrades our UUPS contracts on the listed
 /// chains. Their owner CrosschainBridge (`0x…EE15`) makes the calls when anyone calls
-/// `applyApproved` (OIP-00369).
+/// `applyApproved`.
 interface IUpdate {
     /// Caller-facing domain revert.
     error ScheduledUpdateNotFound();

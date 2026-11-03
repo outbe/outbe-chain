@@ -4,7 +4,7 @@
 //! - `protocol_update`: schedules a protocol update (`scheduleUpdate`);
 //! - `enclave`: revokes the enclave binding of one node;
 //! - `contract_upgrade`: upgrades our UUPS contracts on the listed chains
-//!   (`upgradeContracts`, OIP-00369). It is not part of the protocol update.
+//!   (`upgradeContracts`). It is not part of the protocol update.
 
 pub(crate) mod contract_upgrade;
 pub(crate) mod enclave;

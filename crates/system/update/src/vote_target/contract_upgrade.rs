@@ -1,4 +1,4 @@
-//! The upgrade of our UUPS contracts on the listed chains (OIP-00369). It is
+//! The upgrade of our UUPS contracts on the listed chains. It is
 //! not part of the protocol update.
 //!
 //! The vote tally runs where sub-calls are not available. So an approved

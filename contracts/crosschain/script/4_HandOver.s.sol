@@ -14,7 +14,7 @@ interface IEndpointDelegates {
     function delegates(address oapp) external view returns (address);
 }
 
-/// @dev Gives the hub and every deployed adapter to governance (OIP-00353). The deployer owns them
+/// @dev Gives the hub and every deployed adapter to governance. The deployer owns them
 ///      while it deploys and wires them. This last step transfers each owner role, and the
 ///      LayerZero OApp delegate, then reads them back.
 ///      Governance is the CrosschainBridge precompile on Outbe, and its Interchain Account on

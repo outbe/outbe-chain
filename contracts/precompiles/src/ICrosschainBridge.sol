@@ -5,7 +5,7 @@ pragma solidity ^0.8.30;
 ///      crates/blockchain/primitives/src/addresses.rs.
 address constant CROSSCHAIN_BRIDGE = 0x000000000000000000000000000000000000EE15;
 
-/// CrosschainBridge precompile at `CROSSCHAIN_BRIDGE` (OIP-00369).
+/// CrosschainBridge precompile at `CROSSCHAIN_BRIDGE`.
 ///
 /// The owner of every multi-chain contract: on Outbe directly, on another chain
 /// through its Interchain Account. It has no vote of its own. An upgrade or a configuration
