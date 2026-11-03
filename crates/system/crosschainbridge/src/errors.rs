@@ -1,16 +1,16 @@
-//! Typed error definitions for the CrosschainGov system precompile.
+//! Typed error definitions for the CrosschainBridge system precompile.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-use crate::precompile::ICrosschainGov;
+use crate::precompile::ICrosschainBridge;
 
-/// Represents errors returned by the CrosschainGov runtime.
+/// Represents errors returned by the CrosschainBridge runtime.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum CrosschainGovError {
+pub enum CrosschainBridgeError {
     #[error("caller {caller} may not make owner calls")]
     NotOwnerCaller { caller: Address },
 
@@ -45,40 +45,48 @@ pub enum CrosschainGovError {
     ApprovedPayloadMismatch { proposal_id: U256 },
 }
 
-impl From<CrosschainGovError> for PrecompileError {
-    fn from(error: CrosschainGovError) -> Self {
+impl From<CrosschainBridgeError> for PrecompileError {
+    fn from(error: CrosschainBridgeError) -> Self {
         let bytes = match error {
-            CrosschainGovError::NotOwnerCaller { caller } => {
-                ICrosschainGov::NotOwnerCaller { caller }.abi_encode()
+            CrosschainBridgeError::NotOwnerCaller { caller } => {
+                ICrosschainBridge::NotOwnerCaller { caller }.abi_encode()
             }
-            CrosschainGovError::NotInitialized => ICrosschainGov::NotInitialized {}.abi_encode(),
-            CrosschainGovError::InvalidAddress => ICrosschainGov::InvalidAddress {}.abi_encode(),
-            CrosschainGovError::InvalidDomain => ICrosschainGov::InvalidDomain {}.abi_encode(),
-            CrosschainGovError::LocalDomainNotAllowed { domain } => {
-                ICrosschainGov::LocalDomainNotAllowed { domain }.abi_encode()
+            CrosschainBridgeError::NotInitialized => {
+                ICrosschainBridge::NotInitialized {}.abi_encode()
             }
-            CrosschainGovError::EmptyCalls => ICrosschainGov::EmptyCalls {}.abi_encode(),
-            CrosschainGovError::ZeroFund => ICrosschainGov::ZeroFund {}.abi_encode(),
-            CrosschainGovError::InsufficientBalance {
+            CrosschainBridgeError::InvalidAddress => {
+                ICrosschainBridge::InvalidAddress {}.abi_encode()
+            }
+            CrosschainBridgeError::InvalidDomain => {
+                ICrosschainBridge::InvalidDomain {}.abi_encode()
+            }
+            CrosschainBridgeError::LocalDomainNotAllowed { domain } => {
+                ICrosschainBridge::LocalDomainNotAllowed { domain }.abi_encode()
+            }
+            CrosschainBridgeError::EmptyCalls => ICrosschainBridge::EmptyCalls {}.abi_encode(),
+            CrosschainBridgeError::ZeroFund => ICrosschainBridge::ZeroFund {}.abi_encode(),
+            CrosschainBridgeError::InsufficientBalance {
                 required,
                 available,
-            } => ICrosschainGov::InsufficientBalance {
+            } => ICrosschainBridge::InsufficientBalance {
                 required,
                 available,
             }
             .abi_encode(),
-            CrosschainGovError::UndecodableReturn(value) => ICrosschainGov::UndecodableReturn {
-                value: value.to_string(),
+            CrosschainBridgeError::UndecodableReturn(value) => {
+                ICrosschainBridge::UndecodableReturn {
+                    value: value.to_string(),
+                }
+                .abi_encode()
             }
-            .abi_encode(),
-            CrosschainGovError::UnknownApprovedAction { proposal_id } => {
-                ICrosschainGov::UnknownApprovedAction {
+            CrosschainBridgeError::UnknownApprovedAction { proposal_id } => {
+                ICrosschainBridge::UnknownApprovedAction {
                     proposalId: proposal_id,
                 }
                 .abi_encode()
             }
-            CrosschainGovError::ApprovedPayloadMismatch { proposal_id } => {
-                ICrosschainGov::ApprovedPayloadMismatch {
+            CrosschainBridgeError::ApprovedPayloadMismatch { proposal_id } => {
+                ICrosschainBridge::ApprovedPayloadMismatch {
                     proposalId: proposal_id,
                 }
                 .abi_encode()

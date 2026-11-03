@@ -16,7 +16,7 @@ pub(crate) mod tokens;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
-use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_vote::errors::VoteError;
@@ -26,9 +26,9 @@ use outbe_vote::handlers::{
 };
 use serde::Deserialize;
 
-use crate::errors::CrosschainGovError;
-use crate::precompile::ICrosschainGov::{self, Call};
-use crate::schema::CrosschainGovContract;
+use crate::errors::CrosschainBridgeError;
+use crate::precompile::ICrosschainBridge::{self, Call};
+use crate::schema::CrosschainBridgeContract;
 
 /// One action, as strict JSON with an `operation` field.
 #[derive(Debug, Deserialize)]
@@ -186,7 +186,7 @@ impl Action {
     fn apply(
         &self,
         controller: &mut HyperlaneControllerContract<'_>,
-        gov: &mut CrosschainGovContract<'_>,
+        gov: &mut CrosschainBridgeContract<'_>,
     ) -> Result<()> {
         match self {
             Self::AddHyperlaneChain {
@@ -305,15 +305,15 @@ fn call(to: Address, data: Vec<u8>) -> Call {
     }
 }
 
-impl CrosschainGovContract<'_> {
+impl CrosschainBridgeContract<'_> {
     /// Runs an approved action once, inside one checkpoint.
     pub fn apply_approved(&mut self, proposal_id: U256, payload: &[u8]) -> Result<()> {
         let approved = self.approved_payload.read(&proposal_id)?;
         if approved == B256::ZERO {
-            return Err(CrosschainGovError::UnknownApprovedAction { proposal_id }.into());
+            return Err(CrosschainBridgeError::UnknownApprovedAction { proposal_id }.into());
         }
         if keccak256(payload) != approved {
-            return Err(CrosschainGovError::ApprovedPayloadMismatch { proposal_id }.into());
+            return Err(CrosschainBridgeError::ApprovedPayloadMismatch { proposal_id }.into());
         }
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
@@ -324,15 +324,15 @@ impl CrosschainGovContract<'_> {
                 .read(&proposal_id)?
                 .saturating_add(outbe_chain_constants::get_governance_voting_window_blocks());
             if self.storage.block_number()? > deadline {
-                return self.emit(ICrosschainGov::ApprovedActionExpired {
+                return self.emit(ICrosschainBridge::ApprovedActionExpired {
                     proposalId: proposal_id,
                 });
             }
             let action = Action::decode(payload, self.storage.chain_id()?)
-                .map_err(|_| VoteError::stored_payload_invalid("CrosschainGov"))?;
+                .map_err(|_| VoteError::stored_payload_invalid("CrosschainBridge"))?;
             let mut controller = HyperlaneControllerContract::new(self.storage.clone());
             action.apply(&mut controller, self)?;
-            self.emit(ICrosschainGov::ApprovedActionApplied {
+            self.emit(ICrosschainBridge::ApprovedActionApplied {
                 proposalId: proposal_id,
             })
         })
@@ -345,7 +345,7 @@ pub struct CrosschainVoteTarget;
 
 impl VoteTarget for CrosschainVoteTarget {
     fn target_module(&self) -> Address {
-        CROSSCHAIN_GOV_ADDRESS
+        CROSSCHAIN_BRIDGE_ADDRESS
     }
 
     fn validate(&self, payload: &[u8], context: VoteTargetContext) -> Result<()> {
@@ -361,10 +361,10 @@ impl VoteTarget for CrosschainVoteTarget {
         context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         // Stored-payload corruption is an invariant failure, never proposal Error.
-        decode_stored_proposal_payload(payload, "CrosschainGov")?;
+        decode_stored_proposal_payload(payload, "CrosschainBridge")?;
         Action::decode(payload, context.chain_id)
-            .map_err(|_| VoteError::stored_payload_invalid("CrosschainGov"))?;
-        let gov = CrosschainGovContract::new(ctx.storage.clone());
+            .map_err(|_| VoteError::stored_payload_invalid("CrosschainBridge"))?;
+        let gov = CrosschainBridgeContract::new(ctx.storage.clone());
         gov.approved_payload
             .write(&proposal_id, keccak256(payload))?;
         gov.approved_at

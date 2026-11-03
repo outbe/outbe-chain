@@ -227,12 +227,12 @@ pub const CODE_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000
 ///
 /// The Hyperlane infrastructure of the owner (OIP-00369): the validator set in
 /// the ISMs, liveness, and the domain table. It owns no contract. It asks
-/// `CROSSCHAIN_GOV_ADDRESS` to run its owner calls through `execute`. See
-/// `outbe-hyperlanecontroller`.
+/// `CROSSCHAIN_BRIDGE_ADDRESS` to run its owner calls through `callLocal` and
+/// `callRemote`. See `outbe-hyperlanecontroller`.
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE14");
 
-/// CrosschainGov precompile address (stateful).
+/// CrosschainBridge precompile address (stateful).
 ///
 /// The owner of every multi-chain contract (OIP-00369): the ERC-7786 hub, its
 /// gateway adapters, the token bridges and the Hyperlane core contracts
@@ -240,8 +240,9 @@ pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
 /// multisig ISM). Through its Interchain Account, it also owns the same
 /// contracts on remote chains. `fund` is the only payable selector (float that
 /// pays ICA fees). The validator vote target applies every owner action. See
-/// `outbe-crosschaingov`.
-pub const CROSSCHAIN_GOV_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE15");
+/// `outbe-crosschainbridge`.
+pub const CROSSCHAIN_BRIDGE_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE15");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];

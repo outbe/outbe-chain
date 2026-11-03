@@ -8042,7 +8042,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-crosschaingov"
+name = "outbe-crosschainbridge"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
@@ -8275,7 +8275,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
- "outbe-crosschaingov",
+ "outbe-crosschainbridge",
  "outbe-cycle",
  "outbe-desis",
  "outbe-emission",

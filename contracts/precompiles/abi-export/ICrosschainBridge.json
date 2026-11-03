@@ -24,7 +24,7 @@
       {
         "name": "call",
         "type": "tuple",
-        "internalType": "struct ICrosschainGov.Call",
+        "internalType": "struct ICrosschainBridge.Call",
         "components": [
           {
             "name": "to",
@@ -65,7 +65,7 @@
       {
         "name": "calls",
         "type": "tuple[]",
-        "internalType": "struct ICrosschainGov.Call[]",
+        "internalType": "struct ICrosschainBridge.Call[]",
         "components": [
           {
             "name": "to",

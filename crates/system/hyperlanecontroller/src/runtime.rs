@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::CROSSCHAIN_GOV_ADDRESS;
+use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -8,7 +8,7 @@ use crate::errors::HyperlaneControllerError;
 use crate::ism::accept_remote_ism;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{ICrosschainGov, IOwnable, IStorageMultisigIsm};
+use crate::sol_ext::{ICrosschainBridge, IOwnable, IStorageMultisigIsm};
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -78,7 +78,7 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::InvalidAddress.into());
         }
         let owner = self.owner_of(contract)?;
-        if owner != CROSSCHAIN_GOV_ADDRESS {
+        if owner != CROSSCHAIN_BRIDGE_ADDRESS {
             return Err(HyperlaneControllerError::NotOwnedByOwner { contract, owner }.into());
         }
         Ok(())
@@ -102,7 +102,7 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// One-shot bootstrap:
-    /// 1. Verifies that the owner (`CROSSCHAIN_GOV_ADDRESS`) already owns the
+    /// 1. Verifies that the owner (`CROSSCHAIN_BRIDGE_ADDRESS`) already owns the
     ///    ICA router.
     /// 2. The owner accepts the pending ownership of the local ISM.
     /// 3. Stores the router plus the whole `domain -> ISM` table.
@@ -147,7 +147,7 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::NotIsmOwner { caller, owner }.into());
         }
         let pending = self.pending_owner_of(local_ism)?;
-        if pending != CROSSCHAIN_GOV_ADDRESS {
+        if pending != CROSSCHAIN_BRIDGE_ADDRESS {
             return Err(HyperlaneControllerError::IsmNotPendingToOwner { pending }.into());
         }
         Ok(())
@@ -250,13 +250,13 @@ pub fn validate_validators(
 }
 
 // Owner calls. The controller owns no contract: it calls the owner
-// (`CROSSCHAIN_GOV_ADDRESS`) like a contract, `callLocal` for a call on Outbe
+// (`CROSSCHAIN_BRIDGE_ADDRESS`) like a contract, `callLocal` for a call on Outbe
 // and `callRemote` for a call on another chain. The owner checks that the
 // caller is in its owner-caller list.
 
 /// A zero-value call of `to`.
-pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainGov::Call {
-    ICrosschainGov::Call {
+pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainBridge::Call {
+    ICrosschainBridge::Call {
         to,
         value: U256::ZERO,
         data: data.into(),
@@ -264,10 +264,10 @@ pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainGov::Call 
 }
 
 /// The owner calls `call.to` on Outbe.
-pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainGov::Call) -> Result<()> {
-    let data = ICrosschainGov::callLocalCall { call }.abi_encode();
+pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainBridge::Call) -> Result<()> {
+    let data = ICrosschainBridge::callLocalCall { call }.abi_encode();
     storage
-        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .call(CROSSCHAIN_BRIDGE_ADDRESS, U256::ZERO, data.into())
         .map(|_| ())
 }
 
@@ -275,10 +275,10 @@ pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainGov::Call) ->
 pub(crate) fn call_remote(
     storage: &StorageHandle,
     domain: u32,
-    calls: Vec<ICrosschainGov::Call>,
+    calls: Vec<ICrosschainBridge::Call>,
 ) -> Result<()> {
-    let data = ICrosschainGov::callRemoteCall { domain, calls }.abi_encode();
+    let data = ICrosschainBridge::callRemoteCall { domain, calls }.abi_encode();
     storage
-        .call(CROSSCHAIN_GOV_ADDRESS, U256::ZERO, data.into())
+        .call(CROSSCHAIN_BRIDGE_ADDRESS, U256::ZERO, data.into())
         .map(|_| ())
 }

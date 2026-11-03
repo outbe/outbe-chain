@@ -1,6 +1,6 @@
 //! Dispatch for the HyperlaneController precompile.
 //!
-//! `initialize` and `sync` make owner calls through `CROSSCHAIN_GOV_ADDRESS`
+//! `initialize` and `sync` make owner calls through `CROSSCHAIN_BRIDGE_ADDRESS`
 //! (`callLocal`, `callRemote`). The owner then is the `msg.sender` of every
 //! ISM and router call.
 

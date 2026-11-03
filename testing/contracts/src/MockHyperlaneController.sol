@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 /// Test-only ISM and ICA router for the live HyperlaneController precompile. Their
-/// owner is the CrosschainGov precompile.
+/// owner is the CrosschainBridge precompile.
 contract MockHyperlaneIsm {
     address public owner;
     address public pendingOwner;

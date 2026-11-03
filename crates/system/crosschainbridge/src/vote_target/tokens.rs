@@ -1,6 +1,6 @@
 //! Owner calls on the token bridge (`ERC7786TokenBridge`).
 
-use crate::precompile::ICrosschainGov::Call;
+use crate::precompile::ICrosschainBridge::Call;
 use alloy_primitives::Address;
 use alloy_sol_types::{sol, SolCall};
 

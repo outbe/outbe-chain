@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @dev The CrosschainGov precompile. Matches `CROSSCHAIN_GOV_ADDRESS` in
+/// @dev The CrosschainBridge precompile. Matches `CROSSCHAIN_BRIDGE_ADDRESS` in
 ///      crates/blockchain/primitives/src/addresses.rs.
-address constant CROSSCHAIN_GOV = 0x000000000000000000000000000000000000EE15;
+address constant CROSSCHAIN_BRIDGE = 0x000000000000000000000000000000000000EE15;
 
-/// CrosschainGov precompile at `CROSSCHAIN_GOV` (OIP-00369).
+/// CrosschainBridge precompile at `CROSSCHAIN_BRIDGE` (OIP-00369).
 ///
 /// The owner of every multi-chain contract: on Outbe directly, on another chain
 /// through its Interchain Account. The crosschain vote target approves owner
-/// actions, and `applyApproved` runs them (see `crates/system/crosschaingov` for
+/// actions, and `applyApproved` runs them (see `crates/system/crosschainbridge` for
 /// the JSON payloads).
-interface ICrosschainGov {
+interface ICrosschainBridge {
     /// One owner call.
     struct Call {
         address to;

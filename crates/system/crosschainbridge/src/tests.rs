@@ -1,4 +1,4 @@
-//! Unit tests for the CrosschainGov precompile.
+//! Unit tests for the CrosschainBridge precompile.
 //!
 //! Cross-contract interaction goes through `HashMapStorageProvider`'s
 //! sub-call stubs. `stub_sub_call_at_selector` pins a target's reply per
@@ -12,14 +12,14 @@ use outbe_hyperlanecontroller::precompile::{dispatch as hub_dispatch, IHyperlane
 use outbe_hyperlanecontroller::sol_ext::{IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 use outbe_hyperlanecontroller::HyperlaneControllerContract;
 
-use crate::precompile::ICrosschainGov::Call;
-use outbe_primitives::addresses::{CROSSCHAIN_GOV_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
+use crate::precompile::ICrosschainBridge::Call;
+use outbe_primitives::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::precompile::{dispatch, ICrosschainGov};
-use crate::schema::CrosschainGovContract;
+use crate::precompile::{dispatch, ICrosschainBridge};
+use crate::schema::CrosschainBridgeContract;
 
 const CHAIN_ID: u64 = 54_322_345;
 const LOCAL: u32 = CHAIN_ID as u32;
@@ -88,12 +88,12 @@ fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
     p.stub_sub_call_at_selector(
         local_ism(),
         IStorageMultisigIsm::pendingOwnerCall::SELECTOR,
-        word_addr(CROSSCHAIN_GOV_ADDRESS),
+        word_addr(CROSSCHAIN_BRIDGE_ADDRESS),
     );
     p.stub_sub_call_at_selector(
         ica_router(),
         IOwnable::ownerCall::SELECTOR,
-        word_addr(CROSSCHAIN_GOV_ADDRESS),
+        word_addr(CROSSCHAIN_BRIDGE_ADDRESS),
     );
     p.enable_sub_call_stub();
 }
@@ -157,7 +157,7 @@ fn stub_router_and_ism(
 }
 
 fn topics(p: &HashMapStorageProvider) -> Vec<B256> {
-    p.get_events(CROSSCHAIN_GOV_ADDRESS)
+    p.get_events(CROSSCHAIN_BRIDGE_ADDRESS)
         .iter()
         .map(|log| log.topics()[0])
         .collect()
@@ -176,17 +176,17 @@ fn revert_selector(err: outbe_primitives::error::PrecompileError) -> [u8; 4] {
 fn fund_is_the_only_payable_selector() {
     let mut p = initialized_provider();
     StorageHandle::enter(&mut p, |storage| {
-        let fund: Bytes = ICrosschainGov::fundCall {}.abi_encode().into();
+        let fund: Bytes = ICrosschainBridge::fundCall {}.abi_encode().into();
         dispatch(storage.clone(), &fund, stranger(), U256::from(5)).unwrap();
         assert!(dispatch(storage.clone(), &fund, stranger(), U256::ZERO).is_err());
-        let view: Bytes = ICrosschainGov::remoteAccountCall { domain: SEPOLIA }
+        let view: Bytes = ICrosschainBridge::remoteAccountCall { domain: SEPOLIA }
             .abi_encode()
             .into();
         assert!(dispatch(storage, &view, stranger(), U256::from(1)).is_err());
     });
     assert_eq!(
         *topics(&p).last().unwrap(),
-        ICrosschainGov::Funded::SIGNATURE_HASH
+        ICrosschainBridge::Funded::SIGNATURE_HASH
     );
 }
 
@@ -194,9 +194,9 @@ fn fund_is_the_only_payable_selector() {
 fn a_remote_call_without_fee_balance_changes_nothing() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::from(7), &[v(1)], 1);
-    p.clear_events(CROSSCHAIN_GOV_ADDRESS);
+    p.clear_events(CROSSCHAIN_BRIDGE_ADDRESS);
     StorageHandle::enter(&mut p, |storage| {
-        let err = CrosschainGovContract::new(storage)
+        let err = CrosschainBridgeContract::new(storage)
             .call_remote(
                 SEPOLIA,
                 &[Call {
@@ -208,7 +208,7 @@ fn a_remote_call_without_fee_balance_changes_nothing() {
             .unwrap_err();
         assert_eq!(
             revert_selector(err),
-            ICrosschainGov::InsufficientBalance::SELECTOR
+            ICrosschainBridge::InsufficientBalance::SELECTOR
         );
     });
     assert!(topics(&p).is_empty());
@@ -219,7 +219,7 @@ fn remote_and_local_generic_calls() {
     let mut p = initialized_provider();
     stub_router_and_ism(&mut p, U256::ZERO, &[v(1)], 1);
     StorageHandle::enter(&mut p, |storage| {
-        let mut gov = CrosschainGovContract::new(storage);
+        let mut gov = CrosschainBridgeContract::new(storage);
         let calls = [Call {
             to: sepolia_ism(),
             value: U256::ZERO,
@@ -246,8 +246,8 @@ fn remote_and_local_generic_calls() {
 fn only_an_owner_caller_may_make_owner_calls() {
     let mut p = initialized_provider();
     let start = p.sub_call_inputs().len();
-    let call: Bytes = ICrosschainGov::callLocalCall {
-        call: ICrosschainGov::Call {
+    let call: Bytes = ICrosschainBridge::callLocalCall {
+        call: ICrosschainBridge::Call {
             to: local_ism(),
             value: U256::ZERO,
             data: Bytes::from_static(&[1, 2, 3, 4]),
@@ -259,7 +259,7 @@ fn only_an_owner_caller_may_make_owner_calls() {
         let err = dispatch(storage.clone(), &call, stranger(), U256::ZERO).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            ICrosschainGov::NotOwnerCaller::SELECTOR
+            ICrosschainBridge::NotOwnerCaller::SELECTOR
         );
         dispatch(storage, &call, HYPERLANE_CONTROLLER_ADDRESS, U256::ZERO).unwrap();
     });
@@ -280,9 +280,9 @@ fn remote_account_is_the_router_derived_account() {
         word_addr(v(0x1c)),
     );
     StorageHandle::enter(&mut p, |storage| {
-        let call = ICrosschainGov::remoteAccountCall { domain: SEPOLIA };
+        let call = ICrosschainBridge::remoteAccountCall { domain: SEPOLIA };
         let ret = dispatch(storage, &call.abi_encode(), stranger(), U256::ZERO).unwrap();
-        let account = ICrosschainGov::remoteAccountCall::abi_decode_returns(&ret).unwrap();
+        let account = ICrosschainBridge::remoteAccountCall::abi_decode_returns(&ret).unwrap();
         assert_eq!(account, v(0x1c));
     });
 }
@@ -352,7 +352,7 @@ mod vote_target {
     }
 
     fn apply(p: &mut HashMapStorageProvider, payload: &str) -> Result<Bytes, PrecompileError> {
-        let call = ICrosschainGov::applyApprovedCall {
+        let call = ICrosschainBridge::applyApprovedCall {
             proposalId: U256::ONE,
             payload: payload.as_bytes().to_vec().into(),
         };
@@ -495,7 +495,7 @@ mod vote_target {
         let err = apply(&mut p, &payload).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            ICrosschainGov::UnknownApprovedAction::SELECTOR
+            ICrosschainBridge::UnknownApprovedAction::SELECTOR
         );
     }
 
@@ -576,11 +576,11 @@ mod vote_target {
         apply(&mut p, &add).unwrap();
         // The hub methods call back into this precompile for each owner call.
         let sent = sub_calls_from(&p, start);
-        assert_eq!(sent[0].0, CROSSCHAIN_GOV_ADDRESS);
-        let local = ICrosschainGov::callLocalCall::abi_decode(&sent[0].1).unwrap();
+        assert_eq!(sent[0].0, CROSSCHAIN_BRIDGE_ADDRESS);
+        let local = ICrosschainBridge::callLocalCall::abi_decode(&sent[0].1).unwrap();
         assert_eq!((local.call.to, local.call.data), (ica_router(), enroll));
-        assert_eq!(sent[1].0, CROSSCHAIN_GOV_ADDRESS);
-        let remote = ICrosschainGov::callRemoteCall::abi_decode(&sent[1].1).unwrap();
+        assert_eq!(sent[1].0, CROSSCHAIN_BRIDGE_ADDRESS);
+        let remote = ICrosschainBridge::callRemoteCall::abi_decode(&sent[1].1).unwrap();
         assert_eq!(remote.domain, ARBITRUM);
         StorageHandle::enter(&mut p, |storage| {
             let c = HyperlaneControllerContract::new(storage);
@@ -615,7 +615,7 @@ mod vote_target {
         let err = apply(&mut p, &pause_on(SEPOLIA)).unwrap_err();
         assert_eq!(
             revert_selector(err),
-            ICrosschainGov::ApprovedPayloadMismatch::SELECTOR
+            ICrosschainBridge::ApprovedPayloadMismatch::SELECTOR
         );
 
         p.set_block_number(

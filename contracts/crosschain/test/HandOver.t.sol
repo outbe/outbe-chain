@@ -8,12 +8,12 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 import {HandOver} from "script/4_HandOver.s.sol";
-import {CROSSCHAIN_GOV} from "@precompiles/ICrosschainGov.sol";
+import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
 import {MockHyperlaneMailbox} from "./mocks/MockHyperlaneMailbox.sol";
 import {Proxies} from "./utils/Proxies.sol";
 
-/// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainGov.
+/// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainBridge.
 contract HandOverHarness is HandOver {
     address internal constant GOVERNANCE_ICA = address(uint160(0x1CA));
 
@@ -49,9 +49,9 @@ contract HandOverTest is Test {
         assertEq(lb.owner(), GOVERNANCE, "loopback adapter");
     }
 
-    function test_GovernanceOwner_IsCrosschainGovOnOutbeAndItsAccountElsewhere() public {
+    function test_GovernanceOwner_IsCrosschainBridgeOnOutbeAndItsAccountElsewhere() public {
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
-        assertEq(script.governanceOwner(), CROSSCHAIN_GOV, "Outbe");
+        assertEq(script.governanceOwner(), CROSSCHAIN_BRIDGE, "Outbe");
 
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");

@@ -1,4 +1,4 @@
-//! `crosschaingov` - the owner of every multi-chain contract (`0x...EE15`).
+//! `crosschainbridge` - the owner of every multi-chain contract (`0x...EE15`).
 //!
 //! The precompile at the owner address is in this crate. It owns the ERC-7786
 //! hub, the gateway adapters, the token bridges and the Hyperlane core

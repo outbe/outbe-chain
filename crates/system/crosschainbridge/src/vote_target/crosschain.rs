@@ -1,6 +1,6 @@
 //! Owner calls on the ERC-7786 hub (`ERC7786Bridge`) and its Hyperlane adapter.
 
-use crate::precompile::ICrosschainGov::Call;
+use crate::precompile::ICrosschainBridge::Call;
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
 

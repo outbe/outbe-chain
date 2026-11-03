@@ -3,12 +3,12 @@
 //! Cross-contract interaction goes through `HashMapStorageProvider`'s
 //! sub-call stubs. `stub_sub_call_at_selector` pins a target's reply per
 //! selector. `enable_sub_call_stub()` makes every other sub-call succeed
-//! with empty returndata. The owner calls go to `CROSSCHAIN_GOV_ADDRESS`
+//! with empty returndata. The owner calls go to `CROSSCHAIN_BRIDGE_ADDRESS`
 //! through `execute`, so the tests read them from that sub-call.
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolValue};
-use outbe_primitives::addresses::{CROSSCHAIN_GOV_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
+use outbe_primitives::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -17,7 +17,7 @@ use outbe_validatorset::contract::ValidatorSet;
 use crate::errors::HyperlaneControllerError;
 use crate::precompile::{dispatch, IHyperlaneController};
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::{ICrosschainGov, IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
+use crate::sol_ext::{ICrosschainBridge, IInterchainAccountRouter, IOwnable, IStorageMultisigIsm};
 use crate::validate_validators;
 
 const CHAIN_ID: u64 = 54_322_345;
@@ -87,12 +87,12 @@ fn stub_pre_initialize(p: &mut HashMapStorageProvider) {
     p.stub_sub_call_at_selector(
         local_ism(),
         IStorageMultisigIsm::pendingOwnerCall::SELECTOR,
-        word_addr(CROSSCHAIN_GOV_ADDRESS),
+        word_addr(CROSSCHAIN_BRIDGE_ADDRESS),
     );
     p.stub_sub_call_at_selector(
         ica_router(),
         IOwnable::ownerCall::SELECTOR,
-        word_addr(CROSSCHAIN_GOV_ADDRESS),
+        word_addr(CROSSCHAIN_BRIDGE_ADDRESS),
     );
     p.enable_sub_call_stub();
 }
@@ -171,18 +171,18 @@ fn revert_selector(err: outbe_primitives::error::PrecompileError) -> [u8; 4] {
     }
 }
 
-/// The owner calls that the controller made through `CROSSCHAIN_GOV_ADDRESS`
+/// The owner calls that the controller made through `CROSSCHAIN_BRIDGE_ADDRESS`
 /// since sub-call `start`, as `(domain, to, data)`. `None` is a call on Outbe.
 fn owner_calls(p: &HashMapStorageProvider, start: usize) -> Vec<(Option<u32>, Address, Bytes)> {
     let mut out = Vec::new();
     for input in &p.sub_call_inputs()[start..] {
-        if input.target != CROSSCHAIN_GOV_ADDRESS {
+        if input.target != CROSSCHAIN_BRIDGE_ADDRESS {
             continue;
         }
-        if let Ok(local) = ICrosschainGov::callLocalCall::abi_decode(&input.calldata) {
+        if let Ok(local) = ICrosschainBridge::callLocalCall::abi_decode(&input.calldata) {
             out.push((None, local.call.to, local.call.data));
         } else {
-            let remote = ICrosschainGov::callRemoteCall::abi_decode(&input.calldata).unwrap();
+            let remote = ICrosschainBridge::callRemoteCall::abi_decode(&input.calldata).unwrap();
             for call in remote.calls {
                 out.push((Some(remote.domain), call.to, call.data));
             }

@@ -1,4 +1,4 @@
-//! Dispatch for the CrosschainGov precompile, the owner of every multi-chain
+//! Dispatch for the CrosschainBridge precompile, the owner of every multi-chain
 //! contract.
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -10,19 +10,19 @@ use outbe_primitives::dispatch::{
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::schema::CrosschainGovContract;
+use crate::schema::CrosschainBridgeContract;
 
 /// Selectors that accept native value: only `fund`, the top-up of the balance
 /// that pays Interchain Account dispatch fees. The route table binds this list
 /// to the address's `ValuePolicy` at compile time.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICrosschainGov::fundCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[ICrosschainBridge::fundCall::SELECTOR];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/ICrosschainGov.sol"
+    "../../../contracts/precompiles/src/ICrosschainBridge.sol"
 );
 
-/// Dispatch for the CrosschainGov precompile.
+/// Dispatch for the CrosschainBridge precompile.
 pub fn dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -32,10 +32,10 @@ pub fn dispatch(
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     dispatch_call(
         data,
-        ICrosschainGov::ICrosschainGovCalls::abi_decode,
+        ICrosschainBridge::ICrosschainBridgeCalls::abi_decode,
         |call| {
-            use ICrosschainGov::ICrosschainGovCalls::*;
-            let mut gov = CrosschainGovContract::new(storage.clone());
+            use ICrosschainBridge::ICrosschainBridgeCalls::*;
+            let mut gov = CrosschainBridgeContract::new(storage.clone());
             match call {
                 fund(c) => mutate_void_payable(
                     &storage,
@@ -51,11 +51,11 @@ pub fn dispatch(
                     gov.apply_approved(c.proposalId, &c.payload)
                 }),
                 callLocal(c) => mutate(&storage, c, caller, |sender, c| {
-                    CrosschainGovContract::require_owner_caller(sender)?;
+                    CrosschainBridgeContract::require_owner_caller(sender)?;
                     gov.call_local(c.call.to, c.call.value, c.call.data)
                 }),
                 callRemote(c) => mutate(&storage, c, caller, |sender, c| {
-                    CrosschainGovContract::require_owner_caller(sender)?;
+                    CrosschainBridgeContract::require_owner_caller(sender)?;
                     gov.call_remote(c.domain, &c.calls)
                 }),
                 remoteAccount(c) => view(c, |c| gov.remote_account(c.domain)),

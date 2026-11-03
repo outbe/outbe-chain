@@ -6,7 +6,7 @@ import {console2} from "forge-std/console2.sol";
 
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Proxy} from "@shared/Create3Proxy.sol";
-import {CROSSCHAIN_GOV, ICrosschainGov} from "@precompiles/ICrosschainGov.sol";
+import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBridge.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 enum SyntheticSource {
@@ -65,21 +65,21 @@ abstract contract BaseRoute is Script {
     }
 
     /// @dev The deployer can temporarily retain ownership until governance is initialized. Otherwise,
-    ///      the owner is CrosschainGov on Outbe and its Interchain Account elsewhere.
+    ///      the owner is CrosschainBridge on Outbe and its Interchain Account elsewhere.
     function _bridgeOwner() internal returns (address) {
         if (vm.envOr("KEEP_DEPLOYER_AS_OWNER", false)) return _deployer();
-        return _isOutbe() ? CROSSCHAIN_GOV : _governanceAccount(_toDomain(block.chainid));
+        return _isOutbe() ? CROSSCHAIN_BRIDGE : _governanceAccount(_toDomain(block.chainid));
     }
 
-    /// @dev Asks CrosschainGov on Outbe for its Interchain Account on `domain`. A fork cannot run
+    /// @dev Asks CrosschainBridge on Outbe for its Interchain Account on `domain`. A fork cannot run
     ///      the precompile, so this is a raw `eth_call` to the Outbe node. `virtual` so a test
     ///      harness, which has no Outbe node, can supply the account.
     function _governanceAccount(uint32 domain) internal virtual returns (address) {
         string memory params = string.concat(
             '[{"to":"',
-            vm.toString(CROSSCHAIN_GOV),
+            vm.toString(CROSSCHAIN_BRIDGE),
             '","data":"',
-            vm.toString(abi.encodeCall(ICrosschainGov.remoteAccount, (domain))),
+            vm.toString(abi.encodeCall(ICrosschainBridge.remoteAccount, (domain))),
             '"},"latest"]'
         );
         string memory outbe = vm.envOr("OUTBE_RPC", string("outbe-testnet"));

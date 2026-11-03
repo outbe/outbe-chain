@@ -1,6 +1,6 @@
 //! The upgrade of any of our UUPS contracts.
 
-use crate::precompile::ICrosschainGov::Call;
+use crate::precompile::ICrosschainBridge::Call;
 use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{sol, SolCall};
 

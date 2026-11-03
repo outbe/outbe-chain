@@ -1,5 +1,5 @@
 [package]
-name = "outbe-crosschaingov"
+name = "outbe-crosschainbridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
