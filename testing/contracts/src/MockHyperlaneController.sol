@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.30;
 
-/// Test-only owner surface used to exercise the live HyperlaneController precompile.
+/// Test-only ISM and ICA router for the live HyperlaneController precompile. Their
+/// owner is the CrosschainBridge precompile.
 contract MockHyperlaneIsm {
     address public owner;
     address public pendingOwner;
@@ -42,7 +43,7 @@ contract MockHyperlaneIsm {
 contract MockHyperlaneIcaRouter {
     address public immutable owner;
 
-    constructor(address controller) {
-        owner = controller;
+    constructor(address owner_) {
+        owner = owner_;
     }
 }

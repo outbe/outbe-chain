@@ -1,11 +1,14 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
+use outbe_primitives::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
+use crate::ism::accept_remote_ism;
 use crate::precompile::IHyperlaneController;
 use crate::schema::HyperlaneControllerContract;
-use crate::sol_ext::IStorageMultisigIsm;
+use crate::sol_ext::{ICrosschainBridge, IOwnable, IStorageMultisigIsm};
 
 /// Hyperlane's multisig threshold is a `uint8`.
 const MAX_VALIDATORS: usize = u8::MAX as usize;
@@ -53,6 +56,41 @@ impl ControllerBootstrap<'_> {
 }
 
 impl HyperlaneControllerContract<'_> {
+    pub(crate) fn owner_of(&self, target: Address) -> Result<Address> {
+        let ret = self
+            .storage
+            .staticcall(target, IOwnable::ownerCall {}.abi_encode().into())?;
+        IOwnable::ownerCall::abi_decode_returns(&ret)
+            .map_err(|_| HyperlaneControllerError::UndecodableReturn("owner").into())
+    }
+
+    pub(crate) fn pending_owner_of(&self, target: Address) -> Result<Address> {
+        let ret = self.storage.staticcall(
+            target,
+            IStorageMultisigIsm::pendingOwnerCall {}.abi_encode().into(),
+        )?;
+        IStorageMultisigIsm::pendingOwnerCall::abi_decode_returns(&ret)
+            .map_err(|_| HyperlaneControllerError::UndecodableReturn("pendingOwner").into())
+    }
+
+    pub(crate) fn require_owned(&self, contract: Address) -> Result<()> {
+        if contract == Address::ZERO {
+            return Err(HyperlaneControllerError::InvalidAddress.into());
+        }
+        let owner = self.owner_of(contract)?;
+        if owner != CROSSCHAIN_BRIDGE_ADDRESS {
+            return Err(HyperlaneControllerError::NotOwnedByOwner { contract, owner }.into());
+        }
+        Ok(())
+    }
+
+    pub fn require_initialized(&self) -> Result<()> {
+        if !self.is_initialized()? {
+            return Err(HyperlaneControllerError::NotInitialized.into());
+        }
+        Ok(())
+    }
+
     /// Hyperlane domain of this chain (= chain id).
     pub fn local_domain(&self) -> Result<u32> {
         u32::try_from(self.storage.chain_id()?)
@@ -64,19 +102,20 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// One-shot bootstrap:
-    /// 1. Accepts the pending ownership of the local ISM.
-    /// 2. Verifies that the controller already owns the ICA router.
+    /// 1. Verifies that the owner (`CROSSCHAIN_BRIDGE_ADDRESS`) already owns the
+    ///    ICA router.
+    /// 2. The owner accepts the pending ownership of the local ISM.
     /// 3. Stores the router plus the whole `domain -> ISM` table.
-    /// 4. Dispatches `acceptOwnership()` to every remote ISM through the
+    /// 4. The owner sends `acceptOwnership()` to every remote ISM through its
     ///    Interchain Account.
     ///
-    /// The controller must have funds first, because each dispatch pays the
-    /// IGP quote.
+    /// The owner must have funds first, because each remote call pays the IGP
+    /// quote.
     ///
     /// Only the genesis-seeded bootstrap admin may call it. The admin must
     /// also be the current owner of the local ISM (the deployer that staged
-    /// `transferOwnership` to this precompile). The ISM address comes from
-    /// calldata, so the ISM owner check alone does not restrict the caller.
+    /// `transferOwnership` to the owner). The ISM address comes from calldata,
+    /// so the ISM owner check alone does not restrict the caller.
     pub fn initialize(
         &mut self,
         caller: Address,
@@ -108,26 +147,27 @@ impl HyperlaneControllerContract<'_> {
             return Err(HyperlaneControllerError::NotIsmOwner { caller, owner }.into());
         }
         let pending = self.pending_owner_of(local_ism)?;
-        if pending != self.address {
-            return Err(HyperlaneControllerError::IsmNotPendingToController { pending }.into());
+        if pending != CROSSCHAIN_BRIDGE_ADDRESS {
+            return Err(HyperlaneControllerError::IsmNotPendingToOwner { pending }.into());
         }
         Ok(())
     }
 
-    /// Takes ownership of the local ISM, then stores the bootstrap table and
-    /// takes ownership of every remote ISM.
+    /// The owner takes the ownership of the local ISM. Then the controller
+    /// stores the bootstrap table, and the owner takes the ownership of every
+    /// remote ISM.
     fn install(
         &mut self,
         bootstrap: &ControllerBootstrap<'_>,
         local: u32,
         local_ism: Address,
     ) -> Result<()> {
-        self.storage.call(
-            local_ism,
-            U256::ZERO,
-            IStorageMultisigIsm::acceptOwnershipCall {}
-                .abi_encode()
-                .into(),
+        call_local(
+            &self.storage,
+            call(
+                local_ism,
+                IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
+            ),
         )?;
         self.ica_router.write(bootstrap.ica_router)?;
         self.validator_announce
@@ -140,20 +180,12 @@ impl HyperlaneControllerContract<'_> {
         for ((domain, ism), hook) in table {
             self.write_domain(*domain, *ism, *hook)?;
             if *domain != local {
-                self.accept_remote_ism(*domain, *ism)?;
+                accept_remote_ism(&self.storage, *domain, *ism)?;
             }
         }
         self.emit(IHyperlaneController::Initialized {
             icaRouter: bootstrap.ica_router,
         })
-    }
-
-    /// Records a top-up. The payable route credits the value itself.
-    pub fn fund(&mut self, from: Address, amount: U256) -> Result<()> {
-        if amount.is_zero() {
-            return Err(HyperlaneControllerError::ZeroFund.into());
-        }
-        self.emit(IHyperlaneController::Funded { from, amount })
     }
 
     /// Mirrors the active Outbe validator set into every ISM (validators =
@@ -215,4 +247,38 @@ pub fn validate_validators(
         }
     }
     Ok(())
+}
+
+// Owner calls. The controller owns no contract: it calls the owner
+// (`CROSSCHAIN_BRIDGE_ADDRESS`) like a contract, `callLocal` for a call on Outbe
+// and `callRemote` for a call on another chain. The owner checks that the
+// caller is in its allowed-caller list.
+
+/// A zero-value call of `to`.
+pub(crate) fn call(to: Address, data: impl Into<Bytes>) -> ICrosschainBridge::Call {
+    ICrosschainBridge::Call {
+        to,
+        value: U256::ZERO,
+        data: data.into(),
+    }
+}
+
+/// The owner calls `call.to` on Outbe.
+pub(crate) fn call_local(storage: &StorageHandle, call: ICrosschainBridge::Call) -> Result<()> {
+    let data = ICrosschainBridge::callLocalCall { call }.abi_encode();
+    storage
+        .call(CROSSCHAIN_BRIDGE_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
+}
+
+/// The owner runs `calls` on `domain` through its Interchain Account.
+pub(crate) fn call_remote(
+    storage: &StorageHandle,
+    domain: u32,
+    calls: Vec<ICrosschainBridge::Call>,
+) -> Result<()> {
+    let data = ICrosschainBridge::callRemoteCall { domain, calls }.abi_encode();
+    storage
+        .call(CROSSCHAIN_BRIDGE_ADDRESS, U256::ZERO, data.into())
+        .map(|_| ())
 }

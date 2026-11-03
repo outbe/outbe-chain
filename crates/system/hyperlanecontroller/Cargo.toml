@@ -18,8 +18,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-[dev-dependencies]
-outbe-validatorset = { workspace = true, features = ["test-utils"] }
-
 [lints]
 workspace = true
+
+[dev-dependencies]
+outbe-validatorset = { workspace = true, features = ["test-utils"] }

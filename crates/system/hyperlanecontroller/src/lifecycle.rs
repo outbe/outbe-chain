@@ -13,8 +13,8 @@ use crate::schema::HyperlaneControllerContract;
 
 /// Mirrors the active validator set into the Hyperlane ISMs by sub-calling
 /// the controller's `sync()`. The sub-call uses a child frame, so the
-/// controller, not the system tx, is the router's `msg.sender`. The
-/// controller's Interchain Account derives from that sender.
+/// controller, not the system tx, is the `msg.sender` of its `callLocal` and
+/// `callRemote` calls to the owner (`CROSSCHAIN_BRIDGE_ADDRESS`).
 pub fn sync_validators(ctx: &BlockRuntimeContext) {
     let call = IHyperlaneController::syncCall {}.abi_encode().into();
     if let Err(error) = ctx

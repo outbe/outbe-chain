@@ -8,7 +8,7 @@ use alloy_signer::SignerSync;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::sol;
 use cucumber::{given, then, when};
-use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
+use outbe_primitives::addresses::{CROSSCHAIN_BRIDGE_ADDRESS, HYPERLANE_CONTROLLER_ADDRESS};
 
 use crate::internal::eth;
 use crate::world::forge::{self, DEPLOYER_KEY};
@@ -133,7 +133,7 @@ fn live_controller_fixture(world: &mut World) {
             "create",
             "src/MockHyperlaneController.sol:MockHyperlaneIcaRouter",
         ],
-        &[&format!("{HYPERLANE_CONTROLLER_ADDRESS:#x}")],
+        &[&format!("{CROSSCHAIN_BRIDGE_ADDRESS:#x}")],
         &[],
         &url,
     )
@@ -144,7 +144,7 @@ fn live_controller_fixture(world: &mut World) {
         ism,
         DEPLOYER_KEY,
         &IFixtureIsm::transferOwnershipCall {
-            next: HYPERLANE_CONTROLLER_ADDRESS,
+            next: CROSSCHAIN_BRIDGE_ADDRESS,
         },
     );
     let chain_id = world
@@ -212,7 +212,7 @@ fn initial_ism(world: &mut World) {
     assert_ism(world, fixture.ism, &fixture.validators, 3, 4);
     assert_eq!(
         eth::read_call(&url(world), fixture.ism, &IFixtureIsm::ownerCall {}).expect("ISM owner"),
-        HYPERLANE_CONTROLLER_ADDRESS
+        CROSSCHAIN_BRIDGE_ADDRESS
     );
 }
 
@@ -365,6 +365,51 @@ fn bridge_agent_outage(world: &mut World) {
     assert!(fixture.next_window > head + 30);
 }
 
+/// After liveness window `miss`, the silent signer (`validators[3]`) has
+/// `miss` misses, or 0 once the third miss jails it. The active signers have 0.
+fn assert_miss_counts(world: &World, validators: &[Address], miss: u32) {
+    let misses = |validator: Address| {
+        eth::read_call(
+            &url(world),
+            HYPERLANE_CONTROLLER_ADDRESS,
+            &IHyperlaneController::missCountCall { validator },
+        )
+        .expect("bridge signer miss count")
+    };
+    assert_eq!(
+        misses(validators[3]),
+        if miss == 3 { 0 } else { miss },
+        "silent bridge signer window {miss}"
+    );
+    for validator in &validators[..3] {
+        assert_eq!(misses(*validator), 0, "active bridge signer window {miss}");
+    }
+}
+
+/// Waits up to 60 s for the jailed validator process `pid` to stop cleanly.
+fn wait_for_clean_exit(world: &mut World, pid: u32) {
+    let exit_deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (owned, status) = world
+            .localnet
+            .owned_validator_process(3)
+            .expect("observe silent validator's owned process after jail");
+        assert_eq!(owned, pid, "silent validator was replaced");
+        if let Some(status) = status {
+            assert!(
+                status.success(),
+                "jailed validator did not stop cleanly: {status}"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < exit_deadline,
+            "jailed validator did not stop"
+        );
+        sleep(Duration::from_millis(100));
+    }
+}
+
 #[then("three liveness windows jail only the silent validator and resync the ISM")]
 fn jailed_and_resynced(world: &mut World) {
     let (ism, validators, rotated, first_window, silent_validator_pid) = {
@@ -421,32 +466,7 @@ fn jailed_and_resynced(world: &mut World) {
             }
             sleep(Duration::from_secs(2));
         }
-        let observed = eth::read_call(
-            &url(world),
-            HYPERLANE_CONTROLLER_ADDRESS,
-            &IHyperlaneController::missCountCall {
-                validator: validators[3],
-            },
-        )
-        .expect("silent bridge signer miss count");
-        assert_eq!(
-            observed,
-            if miss == 3 { 0 } else { miss },
-            "silent bridge signer window {miss}"
-        );
-        for validator in &validators[..3] {
-            assert_eq!(
-                eth::read_call(
-                    &url(world),
-                    HYPERLANE_CONTROLLER_ADDRESS,
-                    &IHyperlaneController::missCountCall {
-                        validator: *validator,
-                    },
-                )
-                .expect("active bridge signer miss count"),
-                0
-            );
-        }
+        assert_miss_counts(world, &validators, miss);
     }
     let mut expected = validators[..3].to_vec();
     expected[0] = rotated;
@@ -477,26 +497,7 @@ fn jailed_and_resynced(world: &mut World) {
             .wait_finalized_at_least(primary, progress_target, finality_retries),
         "committee did not finalize five blocks after liveness jail within {finality_budget:?}"
     );
-    let exit_deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let (pid, status) = world
-            .localnet
-            .owned_validator_process(3)
-            .expect("observe silent validator's owned process after jail");
-        assert_eq!(pid, silent_validator_pid, "silent validator was replaced");
-        if let Some(status) = status {
-            assert!(
-                status.success(),
-                "jailed validator did not stop cleanly: {status}"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < exit_deadline,
-            "jailed validator did not stop"
-        );
-        sleep(Duration::from_millis(100));
-    }
+    wait_for_clean_exit(world, silent_validator_pid);
     let log = world
         .localnet
         .node_launch_log(3, silent_validator_pid)

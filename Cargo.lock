@@ -8042,6 +8042,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-crosschainbridge"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-hyperlanecontroller",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-validatorset",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-cycle"
 version = "0.1.0"
 dependencies = [
@@ -8258,6 +8271,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
+ "outbe-crosschainbridge",
  "outbe-cycle",
  "outbe-desis",
  "outbe-emission",
@@ -9426,6 +9440,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",

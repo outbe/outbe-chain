@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
 
-use outbe_primitives::dispatch::{dispatch_call, metadata, reject_value, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -31,17 +31,21 @@ pub const UPDATE_ABI_PATH: &str = "contracts/precompiles/src/IUpdate.sol";
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
-    _caller: Address,
+    caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     reject_value(&value)?;
     dispatch_call(data, IUpdate::IUpdateCalls::abi_decode, |call| {
-        dispatch_update_call(storage, call)
+        dispatch_update_call(storage, call, caller)
     })
 }
 
-fn dispatch_update_call(storage: StorageHandle<'_>, call: IUpdate::IUpdateCalls) -> Result<Bytes> {
-    let update = Update::new(storage.clone());
+fn dispatch_update_call(
+    storage: StorageHandle<'_>,
+    call: IUpdate::IUpdateCalls,
+    caller: Address,
+) -> Result<Bytes> {
+    let mut update = Update::new(storage.clone());
     use IUpdate::IUpdateCalls::*;
     match call {
         getActiveVersion(_) => {
@@ -61,6 +65,9 @@ fn dispatch_update_call(storage: StorageHandle<'_>, call: IUpdate::IUpdateCalls)
         }),
         listWaitingForActivation(_) => metadata::<IUpdate::listWaitingForActivationCall>(|| {
             update.list_waiting_for_activation_proposal_ids()
+        }),
+        applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
+            update.apply_approved(c.proposalId, &c.payload)
         }),
     }
 }
