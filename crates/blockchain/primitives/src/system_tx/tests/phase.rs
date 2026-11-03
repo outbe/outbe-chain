@@ -69,11 +69,12 @@ fn initial_for_block_block_2_is_phase1_preexecuted() {
 }
 
 #[test]
-fn initial_for_block_block_0_is_cycletick_placeholder() {
-    // Block 0 is genesis. It has no begin-zone txs at all, but the cursor
-    // initialisation must not panic and must not pick the Phase 1 branch.
+fn initial_for_block_block_0_has_no_begin_phase() {
+    // Genesis has no begin witnesses to consume before end-block completion.
     let cursor = SystemTxPhase::initial_for_block(0, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
+    assert_eq!(cursor, SystemTxPhase::UserTxs);
+    assert_eq!(cursor.expected_selector(), None);
+    assert_eq!(cursor.body_index(), None);
 }
 
 #[test]

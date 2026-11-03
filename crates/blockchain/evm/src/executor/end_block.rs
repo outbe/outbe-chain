@@ -6,11 +6,8 @@ use outbe_primitives::system_tx::{BlockGasBudget, SystemTxPhase};
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
     fn block_gas_budget(&self) -> Result<BlockGasBudget, BlockExecutionError> {
-        BlockGasBudget::new(
-            self.inner.evm.block().number().saturating_to::<u64>(),
-            self.inner.evm.block().gas_limit(),
-        )
-        .map_err(|error| ExecutorValidationError::from(error).into())
+        BlockGasBudget::new(self.inner.evm.block().gas_limit())
+            .map_err(|error| ExecutorValidationError::from(error).into())
     }
 
     fn accounted_block_gas(&self) -> u64 {
@@ -38,9 +35,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             return Err(ExecutorValidationError::TransactionAfterEndBlock.into());
         }
         let budget = self.block_gas_budget()?;
-        if budget.reserved_gas() == 0 {
-            return Ok(());
-        }
         budget
             .remaining_pre_end_gas(self.accounted_block_gas())
             .map_err(ExecutorValidationError::from)?;
@@ -92,9 +86,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         use revm::context_interface::Cfg;
         self.ensure_before_end_block()?;
         let budget = self.block_gas_budget()?;
-        if budget.reserved_gas() == 0 {
-            return Ok(());
-        }
         self.check_begin_phase_complete()?;
         let amsterdam = self.inner.evm.cfg_env().enable_amsterdam_eip8037;
         let regular_used = if amsterdam {

@@ -1,8 +1,31 @@
-//! Active-height reservation and terminal-phase regression tests.
+//! Unconditional reservation and terminal-phase regression tests.
 
 use super::*;
 use outbe_primitives::system_tx::{BlockGasBudget, SystemTxPhase};
 use revm::context_interface::Cfg;
+
+#[test]
+fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let mut state = state_with_active_proposer(OWNER);
+    let evm = config.evm_with_env(&mut state, test_evm_env(0, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = true;
+    let mut executor = config.create_executor(evm, ctx);
+    executor.apply_pre_execution_changes().unwrap();
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    executor.complete_end_block_phase().unwrap();
+    assert_eq!(
+        executor.system_tx_phase_cursor,
+        SystemTxPhase::EndBlockComplete {
+            gas_capacity: executor.inner.evm.block().gas_limit(),
+        }
+    );
+    assert!(executor.receipts().is_empty());
+    let (_, result) = executor.finish().unwrap();
+    assert_eq!(result.gas_used, 0);
+    assert!(result.receipts.is_empty());
+}
 
 #[test]
 fn raw_commit_after_end_is_refused_and_poisoned_for_final_validation() {
@@ -38,46 +61,48 @@ fn raw_commit_after_end_is_refused_and_poisoned_for_final_validation() {
 
 #[test]
 fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
-    for tx in [test_regular_tx(), test_oracle_submit_vote_tx()] {
-        let tx = tx.try_into_recovered().unwrap();
-        let config = OutbeEvmConfig::new(test_chain_spec());
-        let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
-        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-        let budget = BlockGasBudget::new(2, executor.inner.evm.block().gas_limit()).unwrap();
-        let used = budget.pre_end_capacity() - tx.gas_limit() + 1;
-        executor.inner.cumulative_tx_gas_used = used;
-        let err = executor.execute_transaction(tx.clone()).unwrap_err();
-        assert!(matches!(
-            err,
-            BlockExecutionError::Validation(
-                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. }
-            )
-        ));
-        assert!(executor.receipts().is_empty());
-        assert_eq!(executor.inner.cumulative_tx_gas_used, used);
-        assert_eq!(executor.inner.block_regular_gas_used, 0);
-        assert_eq!(executor.inner.block_state_gas_used, 0);
-        assert_eq!(executor.zero_fee_soft_failures, 0);
-        assert_eq!(executor.sponsored_gas_used, 0);
-        assert_eq!(executor.current_block_validator_fees, U256::ZERO);
-        assert_eq!(executor.current_block_burned_fees, U256::ZERO);
-        assert_eq!(executor.body_tx_index, 0);
-        assert!(executor.witness_state.is_none());
-        assert_eq!(
-            executor
-                .inner
-                .evm
-                .db_mut()
-                .basic(tx.signer())
-                .unwrap()
-                .unwrap()
-                .nonce,
-            0
-        );
-        // The noncommitting adapter must reject before running the EVM, too.
-        assert!(executor.execute_transaction_without_commit(tx).is_err());
-        assert!(executor.receipts().is_empty());
+    for block_number in [0, 1, 2] {
+        for tx in [test_regular_tx(), test_oracle_submit_vote_tx()] {
+            let tx = tx.try_into_recovered().unwrap();
+            let config = OutbeEvmConfig::new(test_chain_spec());
+            let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
+            let evm = config.evm_with_env(&mut state, test_evm_env(block_number, REWARDS_ADDRESS));
+            let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+            let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
+            let used = budget.pre_end_capacity() - tx.gas_limit() + 1;
+            executor.inner.cumulative_tx_gas_used = used;
+            let err = executor.execute_transaction(tx.clone()).unwrap_err();
+            assert!(matches!(
+                err,
+                BlockExecutionError::Validation(
+                    BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. }
+                )
+            ));
+            assert!(executor.receipts().is_empty());
+            assert_eq!(executor.inner.cumulative_tx_gas_used, used);
+            assert_eq!(executor.inner.block_regular_gas_used, 0);
+            assert_eq!(executor.inner.block_state_gas_used, 0);
+            assert_eq!(executor.zero_fee_soft_failures, 0);
+            assert_eq!(executor.sponsored_gas_used, 0);
+            assert_eq!(executor.current_block_validator_fees, U256::ZERO);
+            assert_eq!(executor.current_block_burned_fees, U256::ZERO);
+            assert_eq!(executor.body_tx_index, 0);
+            assert!(executor.witness_state.is_none());
+            assert_eq!(
+                executor
+                    .inner
+                    .evm
+                    .db_mut()
+                    .basic(tx.signer())
+                    .unwrap()
+                    .unwrap()
+                    .nonce,
+                0
+            );
+            // The noncommitting adapter must reject before running the EVM, too.
+            assert!(executor.execute_transaction_without_commit(tx).is_err());
+            assert!(executor.receipts().is_empty());
+        }
     }
 }
 
@@ -102,7 +127,7 @@ fn exact_capacity_commits_actual_gas_then_empty_end_phase_is_terminal() {
         let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
         let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-        let budget = BlockGasBudget::new(2, executor.inner.evm.block().gas_limit()).unwrap();
+        let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         let used = budget.pre_end_capacity() - tx.gas_limit();
         executor.inner.cumulative_tx_gas_used = used;
         executor.execute_transaction(tx.clone()).unwrap();
@@ -150,7 +175,7 @@ fn end_phase_checks_begin_completion_pending_context_and_authoritative_counters(
                 .contains("begin witnesses"));
             executor.system_tx_phase_cursor = SystemTxPhase::UserTxs;
         }
-        let budget = BlockGasBudget::new(2, executor.inner.evm.block().gas_limit()).unwrap();
+        let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         executor.inner.cumulative_tx_gas_used = 18_000_000;
         executor.complete_end_block_phase().unwrap();
         assert_eq!(
@@ -178,7 +203,7 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     env.cfg_env.tx_gas_limit_cap = Some(16_000_000);
     let evm = config.evm_with_env(&mut state, env);
     let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    let budget = BlockGasBudget::new(2, executor.inner.evm.block().gas_limit()).unwrap();
+    let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
     let cap = executor.inner.evm.cfg_env().tx_gas_limit_cap();
     let declared = cap + 1;
     executor.inner.block_regular_gas_used = budget.pre_end_capacity() - cap;
@@ -237,7 +262,7 @@ fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
     };
     let logs = vec![Log::default()];
     executor.whitelisted_hook_event_logs = logs.clone();
-    let budget = BlockGasBudget::new(2, executor.inner.evm.block().gas_limit()).unwrap();
+    let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
     executor.inner.cumulative_tx_gas_used = budget.pre_end_capacity();
     assert!(executor.execute_transaction(hook).is_err());
     assert_eq!(executor.whitelisted_hook_event_logs, logs);

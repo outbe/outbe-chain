@@ -8,7 +8,7 @@ use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{execute::BlockBuilder, Evm};
 use reth_payload_builder::BlobSidecars;
 use reth_payload_primitives::PayloadBuilderError;
-use reth_primitives_traits::{AlloyBlockHeader as _, Recovered};
+use reth_primitives_traits::Recovered;
 use reth_tasks::CancelOnDrop;
 use revm::context_interface::Cfg as _;
 use tracing::{trace, warn};
@@ -87,11 +87,8 @@ impl PayloadBuildState {
             .unwrap_or(0);
 
         let size_budget = BlockSizeBudget::new(withdrawals_rlp_length, is_osaka);
-        let gas_budget = outbe_primitives::system_tx::BlockGasBudget::new(
-            context.parent.number().saturating_add(1),
-            block_gas_limit,
-        )
-        .map_err(PayloadBuilderError::other)?;
+        let gas_budget = outbe_primitives::system_tx::BlockGasBudget::new(block_gas_limit)
+            .map_err(PayloadBuilderError::other)?;
         Ok(Self {
             cumulative_gas_used: 0,
             total_fees: U256::ZERO,

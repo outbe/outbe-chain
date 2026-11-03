@@ -8,6 +8,7 @@ use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
+    protocol_schedule::OutbeProtocolSchedule,
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
         SystemTx, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT,
@@ -351,11 +352,12 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
     let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
     let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
     let cycle_remainder = 77_777;
+    let reserve = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
     let block_gas_limit =
-        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder;
+        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder + reserve;
 
     let inputs = [cycle, bootstrap];
-    let plan = SystemTxVisibleGasPlan::new(1, block_gas_limit, &inputs).unwrap();
+    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &inputs).unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
     assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
@@ -365,33 +367,8 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
         plan.gas_limit(1),
         Some(bootstrap_intrinsic + protocol_precharge)
     );
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit);
-
-    // Pin the pre-reservation bootstrap allocation through the signed wire bytes.
-    let original_limits = [
-        block_gas_limit - bootstrap_intrinsic - protocol_precharge,
-        bootstrap_intrinsic + protocol_precharge,
-    ];
-    for (ordinal, calldata) in inputs.into_iter().enumerate() {
-        let envelope = |gas_limit| {
-            build_unsigned_system_tx_with_gas_limit(
-                outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                    ordinal: u8::try_from(ordinal).unwrap(),
-                    block_number: 1,
-                    chain_id: 1,
-                    calldata: calldata.clone(),
-                    gas_limit,
-                },
-            )
-            .unwrap()
-            .into_signed(Signature::test_signature())
-            .encoded_2718()
-        };
-        assert_eq!(
-            envelope(plan.gas_limit(ordinal).unwrap()),
-            envelope(original_limits[ordinal])
-        );
-    }
+    assert_eq!(plan.total_envelope_gas(), block_gas_limit - reserve);
+    assert_eq!(plan.gas_limit(0), Some(cycle_intrinsic + cycle_remainder));
 }
 
 #[test]
@@ -508,7 +485,11 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .collect::<Vec<_>>();
     let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
-    let gas_plan = SystemTxVisibleGasPlan::new(1, BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    assert_eq!(
+        gas_plan.total_envelope_gas(),
+        BOOTSTRAP_BLOCK_GAS_LIMIT - OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
+    );
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()

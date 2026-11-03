@@ -13,6 +13,7 @@ use super::{
 /// `apply_pre_execution_changes` (pre-execution) and not in the main tx loop.
 ///
 /// Invariants:
+/// - Genesis has no begin-zone witnesses and starts at `UserTxs`.
 /// - On block `1` (genesis bootstrap), cursor starts at
 ///   `CycleTick { body_index: 0 }`.
 /// - On block `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`, cursor starts at
@@ -75,7 +76,9 @@ pub enum SystemTxPhase {
 
 impl SystemTxPhase {
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
-        if block_number > genesis_bootstrap_block_number
+        if block_number == 0 {
+            Self::UserTxs
+        } else if block_number > genesis_bootstrap_block_number
             && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
         {
             Self::Phase1Preexecuted {

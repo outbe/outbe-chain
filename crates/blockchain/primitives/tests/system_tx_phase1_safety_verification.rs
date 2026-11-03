@@ -87,11 +87,11 @@ fn completed_end_phase_has_no_envelope_and_cannot_advance_to_users() {
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
-/// remain at the placeholder CycleTick state without ever entering Phase 1.
+/// start after the empty begin zone without ever entering Phase 1.
 #[test]
 fn cross_version_genesis_block_cursor_initialisation() {
     let cursor = SystemTxPhase::initial_for_block(0, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
+    assert_eq!(cursor, SystemTxPhase::UserTxs);
     assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
 }
 

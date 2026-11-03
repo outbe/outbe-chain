@@ -22,10 +22,10 @@ pub enum BlockGasBudgetError {
     },
 }
 
-/// Height-aware gas capacity without changing the header or EVM gas limit.
+/// Gas capacity with a fixed reservation at every height, including genesis.
 ///
 /// All values use `u64`, bounded by the header gas limit and matching executor
-/// counters. Genesis and the block-1 bootstrap do not reserve end-block gas.
+/// counters. The header and EVM gas limit remain unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockGasBudget {
     block_gas_limit: u64,
@@ -34,12 +34,8 @@ pub struct BlockGasBudget {
 }
 
 impl BlockGasBudget {
-    pub fn new(block_number: u64, block_gas_limit: u64) -> Result<Self, BlockGasBudgetError> {
-        let reserved_gas = if block_number >= 2 {
-            OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
-        } else {
-            0
-        };
+    pub fn new(block_gas_limit: u64) -> Result<Self, BlockGasBudgetError> {
+        let reserved_gas = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
         let pre_end_capacity = block_gas_limit.checked_sub(reserved_gas).ok_or(
             BlockGasBudgetError::BlockGasLimitBelowReserve {
                 block_gas_limit,
@@ -131,12 +127,8 @@ pub struct SystemTxVisibleGasPlan {
 }
 
 impl SystemTxVisibleGasPlan {
-    pub fn new(
-        block_number: u64,
-        block_gas_limit: u64,
-        system_txs: &[Bytes],
-    ) -> Result<Self, SystemTxError> {
-        let budget = BlockGasBudget::new(block_number, block_gas_limit)?;
+    pub fn new(block_gas_limit: u64, system_txs: &[Bytes]) -> Result<Self, SystemTxError> {
+        let budget = BlockGasBudget::new(block_gas_limit)?;
         let mut entries = Vec::with_capacity(system_txs.len());
         let mut required_total = 0u64;
         let mut cycle_ordinal = None;
