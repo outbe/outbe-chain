@@ -2,10 +2,10 @@ use alloy_consensus::Transaction as _;
 use reth_ethereum::TransactionSigned;
 
 use super::{
-    is_reserved_system_tx, BodyZone, SystemTx, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, ORACLE_SLASH_WINDOW_SELECTOR,
-    RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    is_reserved_system_tx, BodyZone, SysTxSelector, SystemTx, SystemTxError,
+    BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
+    HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK,
+    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Structural split of block transactions into system begin-prefix, user middle,
@@ -26,7 +26,7 @@ impl<'a> SystemTxLayout<'a> {
         self.begin.len() + self.end.len()
     }
 
-    pub fn begin_block_selectors(&self) -> Result<Vec<[u8; 4]>, SystemTxError> {
+    pub fn begin_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
         self.begin
             .iter()
             .map(|tx| {
@@ -36,7 +36,7 @@ impl<'a> SystemTxLayout<'a> {
             .collect()
     }
 
-    pub fn end_block_selectors(&self) -> Result<Vec<[u8; 4]>, SystemTxError> {
+    pub fn end_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
         self.end
             .iter()
             .map(|tx| {
@@ -50,7 +50,7 @@ impl<'a> SystemTxLayout<'a> {
     /// derive the layout-signaled optional-phase flags (e.g. the one-time
     /// [`SystemTx::TeeBootstrap`]). A successful [`split_system_layout`]
     /// precludes a decode failure. This method treats a decode failure as absent.
-    pub fn has_begin_selector(&self, selector: [u8; 4]) -> bool {
+    pub fn has_begin_selector(&self, selector: SysTxSelector) -> bool {
         self.begin_block_selectors()
             .map(|selectors| selectors.contains(&selector))
             .unwrap_or(false)
@@ -116,7 +116,7 @@ pub fn expected_begin_block_selectors(
     block_number: u64,
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
-) -> Vec<[u8; 4]> {
+) -> Vec<SysTxSelector> {
     expected_begin_block_selectors_for_publication(
         block_number,
         has_boundary_outcome,
@@ -130,7 +130,7 @@ pub fn expected_begin_block_selectors_for_publication(
     has_boundary_outcome: bool,
     has_tee_bootstrap: bool,
     has_publication: bool,
-) -> Vec<[u8; 4]> {
+) -> Vec<SysTxSelector> {
     let mut expected = match block_number {
         0 => Vec::new(),
         1 => Vec::new(),
@@ -164,7 +164,7 @@ pub fn expected_begin_block_selectors_for_publication(
     expected
 }
 
-pub fn expected_end_block_selectors() -> Vec<[u8; 4]> {
+pub fn expected_end_block_selectors() -> Vec<SysTxSelector> {
     Vec::new()
 }
 

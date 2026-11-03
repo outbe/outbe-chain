@@ -63,21 +63,10 @@ impl BlockContext {
         })
     }
 
-    /// Creates an execution context bound to the immutable chain identity,
-    /// rejecting `genesis_timestamp == 0`.
-    pub fn try_new_with_genesis_hash(
-        input: BlockContextInput,
-    ) -> std::result::Result<Self, ZeroGenesisTimestamp> {
-        if input.genesis_timestamp == 0 {
-            return Err(ZeroGenesisTimestamp);
-        }
-        Ok(Self::new_with_genesis_hash(input))
-    }
-
     /// Creates an execution context bound to the immutable chain identity.
     ///
     /// Production execution must source `genesis_hash` and `genesis_timestamp`
-    /// from the canonical `ChainSpec` via [`Self::try_new_with_genesis_hash`].
+    /// from the canonical `ChainSpec`.
     pub fn new_with_genesis_hash(input: BlockContextInput) -> Self {
         let BlockContextInput {
             block_number,

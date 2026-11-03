@@ -8,7 +8,7 @@ use crate::reshare_artifact::LateFinalizeCreditsArtifact;
 use alloy_primitives::Bytes;
 
 use super::{
-    selector_from_input, BodyZone, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
+    selector_from_input, BodyZone, SysTxSelector, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
     CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
     LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
     SYSTEM_TX_INPUT_VERSION, TEE_BOOTSTRAP_SELECTOR,
@@ -58,7 +58,7 @@ impl SystemTx {
         }
     }
 
-    pub const fn selector(&self) -> [u8; 4] {
+    pub const fn selector(&self) -> SysTxSelector {
         match self {
             Self::CertifiedParentAccounting { .. } => CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
             Self::LateFinalizeCredits { .. } => LATE_FINALIZE_CREDITS_SELECTOR,

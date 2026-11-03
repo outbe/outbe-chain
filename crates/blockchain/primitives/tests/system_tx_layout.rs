@@ -80,13 +80,13 @@ fn active_selectors_have_expected_byte_sequence() {
 /// AC4 + INV1: V2 selectors must differ from V1 byte sequences.
 #[test]
 fn v2_selectors_differ_from_legacy_v1_selectors() {
-    let v1_selectors: [[u8; 4]; 4] = [
+    let v1_selectors: [SysTxSelector; 4] = [
         *b"OSF1", // legacy FinalizationAndSlashing
         *b"OSC1", // legacy CycleTick
         *b"OSB1", // legacy BoundaryOutcome
         *b"OSO1", // legacy OracleSlashWindow
     ];
-    let v2_selectors: [[u8; 4]; 4] = [
+    let v2_selectors: [SysTxSelector; 4] = [
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
         CYCLE_TICK_SELECTOR,
         BOUNDARY_OUTCOME_SELECTOR,
@@ -109,7 +109,7 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
 ///   decoder rejects it because `SYSTEM_TX_INPUT_VERSION == 2`.
 #[test]
 fn legacy_v1_system_tx_rejected_at_all_heights() {
-    let v1_selectors_and_bodies: [(&[u8; 4], &[u8]); 4] = [
+    let v1_selectors_and_bodies: [(&SysTxSelector, &[u8]); 4] = [
         (b"OSF1", b""), // FinalizationAndSlashing carried metadata; selector alone suffices for rejection.
         (b"OSC1", b""),
         (b"OSB1", b""),

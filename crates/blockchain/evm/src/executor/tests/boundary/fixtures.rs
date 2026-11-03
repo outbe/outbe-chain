@@ -1,4 +1,5 @@
 use super::super::*;
+use outbe_primitives::system_tx::SysTxSelector;
 pub(super) fn state_with_active_and_registered_candidate(
     active: Address,
     candidate: Address,
@@ -91,7 +92,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
 
 pub(super) fn begin_system_tx_selectors(
     txs: &[reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>],
-) -> Vec<[u8; 4]> {
+) -> Vec<SysTxSelector> {
     txs.iter()
         .map(|tx| {
             SystemTx::decode(tx.tx().input().as_ref())

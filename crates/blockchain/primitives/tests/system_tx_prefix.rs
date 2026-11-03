@@ -2,7 +2,7 @@ use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx, split_system_layout, system_tx_visible_gas_limit,
-    validate_active_system_tx_set, SystemTx, MAX_SYSTEM_TXS_PER_BLOCK,
+    validate_active_system_tx_set, SysTxSelector, SystemTx, MAX_SYSTEM_TXS_PER_BLOCK,
     SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_primitives::{
@@ -180,7 +180,7 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
         })
     );
 
-    let canonical_without_boundary: Vec<[u8; 4]> = canonical_with_boundary
+    let canonical_without_boundary: Vec<SysTxSelector> = canonical_with_boundary
         .iter()
         .filter(|input| !matches!(input, SystemTx::BoundaryOutcome { .. }))
         .map(SystemTx::selector)
