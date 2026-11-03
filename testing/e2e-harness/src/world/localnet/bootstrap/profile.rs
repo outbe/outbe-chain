@@ -10,6 +10,7 @@ use super::*;
 #[derive(Debug, Clone)]
 pub struct BootstrapProfile {
     pub(super) chain_id: Option<NonZeroU64>,
+    pub(super) genesis_timestamp: Option<NonZeroU64>,
     pub(super) validator_set_owner_index: Option<usize>,
     pub(super) max_validators: Option<u32>,
     pub(super) reregistration_cooldown_blocks: Option<u32>,
@@ -31,6 +32,7 @@ impl Default for BootstrapProfile {
     fn default() -> Self {
         Self {
             chain_id: None,
+            genesis_timestamp: None,
             validator_set_owner_index: None,
             max_validators: None,
             reregistration_cooldown_blocks: None,
@@ -125,6 +127,12 @@ impl BootstrapProfile {
     pub fn with_chain_id(mut self, chain_id: u64) -> Result<Self> {
         self.chain_id =
             Some(NonZeroU64::new(chain_id).ok_or_else(|| eyre!("chain id must be > 0"))?);
+        Ok(self)
+    }
+
+    /// Select the header timestamp before genesis storage is seeded.
+    pub(crate) fn with_genesis_timestamp(mut self, timestamp: u64) -> Result<Self> {
+        self.genesis_timestamp = Some(checked_genesis_timestamp(timestamp)?);
         Ok(self)
     }
 
@@ -249,6 +257,9 @@ impl BootstrapProfile {
     }
 
     pub(super) fn validate_timing(&self) -> Result<()> {
+        if let Some(timestamp) = self.genesis_timestamp {
+            checked_genesis_timestamp(timestamp.get())?;
+        }
         if self.governments {
             outbe_primitives::radicle_genesis::validate_publication_window(
                 self.epoch_length_blocks.get(),
@@ -299,4 +310,17 @@ impl BootstrapProfile {
 
 fn positive(value: u64, label: &str) -> Result<NonZeroU64> {
     NonZeroU64::new(value).ok_or_else(|| eyre!("{label} must be > 0"))
+}
+
+fn checked_genesis_timestamp(value: u64) -> Result<NonZeroU64> {
+    let origin = value
+        .checked_sub(SECONDS_PER_DAY)
+        .ok_or_else(|| eyre!("genesis timestamp must allow its one-day economic origin"))?;
+    for timestamp in [value, origin] {
+        OffsetDateTime::from_unix_timestamp(i64::try_from(timestamp)?)
+            .wrap_err("genesis timestamp")?
+            .format(&Rfc3339)
+            .wrap_err("format genesis timestamp")?;
+    }
+    positive(value, "genesis timestamp")
 }

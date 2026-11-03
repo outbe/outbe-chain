@@ -9,15 +9,7 @@ use crate::features::common::boot_localnet_with_opts;
 use crate::world::localnet::StartOpts;
 use crate::world::World;
 
-const ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
 const ZEROFEE_BOUNDARY_LEAD_SECONDS: u64 = 10 * 60;
-
-fn boundary_protocol_tuning() -> [(&'static str, String); 1] {
-    [(
-        "TESTNET_METADOSIS_FORMING_SECONDS",
-        ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS.to_string(),
-    )]
-}
 
 fn boundary_start_opts(now_secs: u64) -> StartOpts {
     StartOpts::near_next_utc_day_with_lead(20, now_secs, ZEROFEE_BOUNDARY_LEAD_SECONDS)
@@ -29,8 +21,7 @@ fn near_day_boundary(world: &mut World) {
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")
         .as_secs();
-    let tuning = boundary_protocol_tuning();
-    boot_localnet_with_opts(world, 20, &tuning, boundary_start_opts(now));
+    boot_localnet_with_opts(world, 20, &[], boundary_start_opts(now));
     let timestamp = world
         .rpc
         .latest_block_timestamp(world.validators.primary_port())
@@ -52,13 +43,11 @@ mod tests {
         let shifted_genesis =
             outbe_primitives::time::date_key_to_utc_timestamp(20260812).unwrap() - 2 * 60;
 
+        let parameters = outbe_chain_constants::GenesisProtocolParametersV1::resolve(None).unwrap();
+        assert_eq!(parameters.metadosis_forming_period_seconds, 180_000);
         assert!(
-            wwd_start + ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS > shifted_genesis,
+            wwd_start + parameters.metadosis_forming_period_seconds > shifted_genesis,
             "the ZeroFee day-boundary clock must not start after FORMING expired"
-        );
-        assert_eq!(
-            boundary_protocol_tuning(),
-            [("TESTNET_METADOSIS_FORMING_SECONDS", "180000".to_owned())]
         );
     }
 

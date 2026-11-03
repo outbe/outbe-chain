@@ -63,10 +63,22 @@ fn verify_encrypted_nod(world: &mut World) {
         assert_eq!(*expected_body.get_or_insert(body.clone()), body);
     }
     super::oracle_expectations::assert_native_entry_price(world, &encrypted.terms, completed_at);
+    let offering_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("originating Tribute day")
+        .parse()
+        .expect("numeric Tribute day");
+    let tribute_id = outbe_primitives::wwd_entity_id::derive_poseidon_entity_id(
+        encrypted.terms.owner,
+        outbe_primitives::time::WorldwideDay::new(offering_day),
+    )
+    .to_u256();
     let issued_in = world
         .state
         .nod_creation_blocks
-        .get(&encrypted.terms.nod_id)
+        .get(&tribute_id)
         .copied()
         .expect("creator issueNod block");
     let (item, _) = world

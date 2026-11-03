@@ -232,6 +232,125 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
     let mut unrelated = witness_logs;
     unrelated[0].1.push_str("\nERROR unrelated fatal failure");
     assert!(!audit(&unrelated).findings.is_empty());
+
+    let fail_fast = format!(
+        "ERROR outbe_consensus::executor::actor::finalization: finalized block failed local execution; \
+         finalized state diverged - failing fast height={height} digest={block_hash:#x} \
+         error=failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+         execution stopped on a node-local dependency failure: witness fault during transaction execution"
+    );
+    let exit = "INFO outbe_chain::launch::shutdown: consensus node exited";
+    let typed_logs = [
+        PathBuf::from("validator-3/node.log"),
+        PathBuf::from("validator-3/logs/54322345/reth.log"),
+    ]
+    .map(|path| {
+        (
+            path,
+            [start, &witness_proof, &fail_fast, exit, start].join("\n"),
+        )
+    })
+    .to_vec();
+    let result = audit(&typed_logs);
+    assert!(result.findings.is_empty(), "{:?}", result.findings);
+    assert_eq!(result.counts.fatal, 0);
+    let replace_typed = |needle: &str, replacement: &str| {
+        typed_logs
+            .iter()
+            .map(|(path, text)| (path.clone(), text.replace(needle, replacement)))
+            .collect::<Vec<_>>()
+    };
+    for (case, logs) in [
+        (
+            "wrong witness reason",
+            replace_typed("LocalUnavailable", "TapeInvalid"),
+        ),
+        (
+            "wrong block height",
+            replace_typed("height=11", "height=12"),
+        ),
+        (
+            "wrong block hash",
+            replace_typed(&format!("{block_hash:#x}"), &other_tx),
+        ),
+        (
+            "wrong fail-fast detail",
+            replace_typed("error=failed to send", "error=unrelated failure to send"),
+        ),
+        (
+            "missing witness",
+            replace_typed(&witness_proof, "INFO no witness"),
+        ),
+        (
+            "missing fail-fast",
+            replace_typed(&fail_fast, "INFO no fail-fast"),
+        ),
+        (
+            "missing exit",
+            replace_typed(exit, "INFO process still running"),
+        ),
+        (
+            "exit before fail-fast",
+            replace_typed(
+                &format!("{fail_fast}\n{exit}"),
+                &format!("{exit}\n{fail_fast}"),
+            ),
+        ),
+        (
+            "restart before fail-fast",
+            replace_typed(&fail_fast, &format!("{start}\n{fail_fast}")),
+        ),
+        (
+            "restart before exit",
+            replace_typed(exit, &format!("{start}\n{exit}")),
+        ),
+        (
+            "duplicate witness",
+            replace_typed(&witness_proof, &format!("{witness_proof}\n{witness_proof}")),
+        ),
+        (
+            "conflicting witness",
+            replace_typed(
+                &witness_proof,
+                &format!(
+                    "{witness_proof}\n{}",
+                    witness_proof.replace("LocalUnavailable", "TapeInvalid")
+                ),
+            ),
+        ),
+        (
+            "duplicate fail-fast",
+            replace_typed(&fail_fast, &format!("{fail_fast}\n{fail_fast}")),
+        ),
+        (
+            "duplicate exit",
+            replace_typed(exit, &format!("{exit}\n{exit}")),
+        ),
+        (
+            "unmatched outer fatal",
+            replace_typed(exit, &format!("{fatal}\n{exit}")),
+        ),
+        ("missing sink", typed_logs[..1].to_vec()),
+    ] {
+        assert!(
+            super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash)
+                .is_err(),
+            "accepted typed {case}"
+        );
+    }
+    for sink in 0..2 {
+        let mut missing = typed_logs.clone();
+        missing[sink].1 = missing[sink].1.replace(exit, "INFO no exit");
+        assert!(super::expected_tee_sidecar_outage_records(
+            &missing, 4, 3, &tx, height, block_hash
+        )
+        .is_err());
+        for alarm in ["ERROR unrelated fatal failure", "thread worker panicked"] {
+            let mut unrelated = typed_logs.clone();
+            unrelated[sink].1.push_str(&format!("\n{alarm}"));
+            assert!(!audit(&unrelated).findings.is_empty());
+        }
+    }
 }
 
 fn event(fields: &str, human_message: &str) -> String {
