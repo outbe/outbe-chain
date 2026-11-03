@@ -1,12 +1,6 @@
 use outbe_macros::storage_record;
 use outbe_primitives::time::WorldwideDay as WorldwideDayKey;
 
-pub mod wwd_state {
-    pub const PENDING: u8 = 0;
-    pub const ACTIVE: u8 = 1;
-    pub const CLOSED: u8 = 2;
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[storage_record(packed, exists_field = offering_start)]
 pub struct WorldwideDay {
@@ -21,9 +15,6 @@ pub struct WorldwideDay {
 
     #[attribute(order = 2)]
     pub offering_end: u64,
-
-    #[attribute(order = 3)]
-    pub state: u8,
 }
 
 impl WorldwideDay {

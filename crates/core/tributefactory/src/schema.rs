@@ -27,23 +27,23 @@ pub struct TributeFactoryContract {
     #[attribute(order = 1)]
     pub worldwide_days: Map<WorldwideDay, crate::worldwideday::schema::WorldwideDay>,
 
-    // slots 2..3: open offering WorldwideDays (state == Active)
+    // slots 2..3: unsealed pipeline WorldwideDays
     #[attribute(order = 2)]
-    pub active_wwd: Set<WorldwideDay>,
-
-    // slots 4..5: non-closed pipeline WorldwideDays (state == Pending || state == Active)
-    #[attribute(order = 3)]
     pub pipeline_wwd: Set<WorldwideDay>,
 
-    // slot 6: one-shot forming VWAP snapshot finalized guard (wwd -> bool)
-    #[attribute(order = 4)]
+    // slot 4: one-shot forming VWAP snapshot finalized guard (wwd -> bool)
+    #[attribute(order = 3)]
     pub forming_snapshot_finalized: Map<WorldwideDay, bool>,
 
-    // slot 7: bounded prune ring of recent SU hashes (seq % SU_HASH_RETAIN -> suHash)
-    #[attribute(order = 5)]
+    // slot 5: bounded prune ring of recent SU hashes (seq % SU_HASH_RETAIN -> suHash)
+    #[attribute(order = 4)]
     pub su_hash_ring: Mapping<u64, B256>,
 
-    // slot 8: monotonic write cursor for `su_hash_ring`
-    #[attribute(order = 6)]
+    // slot 6: monotonic write cursor for `su_hash_ring`
+    #[attribute(order = 5)]
     pub su_hash_ring_seq: Value<u64>,
+
+    // slot 7: last UTC calendar day (YYYYMMDD) on which the daily WWD step succeeded
+    #[attribute(order = 6)]
+    pub last_wwd_advance_day: Value<u32>,
 }

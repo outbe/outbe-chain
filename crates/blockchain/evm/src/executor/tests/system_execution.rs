@@ -375,12 +375,7 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let user_tx = test_regular_tx()
         .try_into_recovered()
         .expect("regular tx signer should recover");
-    let mut state =
-        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            let seed_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
-            let ctx = BlockRuntimeContext::new(seed_context, storage);
-            outbe_rewards::runtime::ensure_genesis_anchor(&ctx).unwrap();
-        });
+    let mut state = state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     state.database.insert_account_info(
         Address::from(*user_tx.signer()),
         AccountInfo {

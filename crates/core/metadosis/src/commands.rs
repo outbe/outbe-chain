@@ -2,24 +2,10 @@ use alloy_primitives::U256;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
-    storage::{
-        metadosis_advance_due_binding, metadosis_init_genesis_binding,
-        metadosis_process_ready_binding, MetadosisCycleLifecycle,
-    },
+    storage::{metadosis_process_ready_binding, MetadosisCycleLifecycle},
 };
 
 use crate::commit::commit_transition;
-
-pub fn init_genesis_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let binding = metadosis_init_genesis_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::runtime::init_genesis_day(ctx)
-    })
-}
 
 pub fn start_metadosis(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_process_ready_binding(
@@ -85,17 +71,6 @@ pub fn dispatch_late_settlement_residue_at(
         );
     }
     Ok(())
-}
-
-pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let binding = metadosis_advance_due_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
-    commit_transition::<MetadosisCycleLifecycle, _>(ctx.storage.clone(), binding, |_| {
-        crate::runtime::advance_active_worldwide_days(ctx)
-    })
 }
 
 pub fn find_due_emission_day(

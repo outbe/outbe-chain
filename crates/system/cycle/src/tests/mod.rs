@@ -86,10 +86,6 @@ pub(super) fn runtime_context(
     BlockRuntimeContext::new(block, storage)
 }
 
-pub(super) fn anchor_genesis(ctx: &BlockRuntimeContext) {
-    outbe_rewards::runtime::ensure_genesis_anchor(ctx).unwrap();
-}
-
 pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
     outbe_oracle::api::set_exchange_rate(
         ctx.storage.clone(),
@@ -180,6 +176,7 @@ pub(super) fn run_emission_limit_daily(
 
 mod calendar;
 mod dispatch;
+mod gap_oip00343;
 mod genesis_nod;
 mod hourly;
 mod schedule;
@@ -287,11 +284,9 @@ pub(super) fn is_day_settled(ctx: &BlockRuntimeContext<'_>, day: u32) -> bool {
         })
 }
 
-/// Block 1 at `timestamp` after the Rewards genesis anchor.
+/// Block 1 at `timestamp`.
 pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
-    let ctx = runtime_context(block_ctx(1, timestamp), handle);
-    anchor_genesis(&ctx);
-    ctx
+    runtime_context(block_ctx(1, timestamp), handle)
 }
 
 /// Runs `run` on `storage` and asserts that it writes no storage slot and

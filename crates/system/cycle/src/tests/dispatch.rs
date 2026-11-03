@@ -157,7 +157,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     with_anchored_cycle(|handle| {
         // Step 1: anchor at chain start.
 
-        // Step 2: block past first slot. prev_day = genesis_utc_day
+        // Step 2: block past first slot. prev_day = start_date
         // (20240101). day_number_since_genesis = 0. cap = INITIAL_DAY_EMISSION.
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
@@ -556,9 +556,7 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    let next_window = GENESIS_TS
-        + SECONDS_PER_DAY
-        + outbe_chain_constants::get_metadosis_advance_interval_seconds();
+    let next_window = GENESIS_TS + SECONDS_PER_DAY + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS;
     storage.set_block_number(4);
     storage.enter(|handle| {
         let retry = runtime_context(block_ctx(4, next_window), handle);

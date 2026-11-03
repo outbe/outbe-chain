@@ -13,10 +13,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
-use outbe_tributefactory::{
-    worldwideday::{remove_active_worldwide_day, ValidatedWwdAggregate},
-    TributeFactoryContract,
-};
+use outbe_tributefactory::TributeFactoryContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
@@ -37,25 +34,6 @@ pub(crate) fn date_step_error(
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
     outbe_tributefactory::worldwideday::validate_wwd_timestamp(timestamp)
-}
-
-pub(crate) fn init_genesis_day(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_tributefactory::worldwideday::init_genesis_day(ctx)
-}
-
-pub(crate) fn init_genesis_day_inner(
-    _metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-) -> Result<()> {
-    outbe_tributefactory::worldwideday::init_genesis_day(ctx)
-}
-
-pub(crate) fn create_lookahead_days(
-    _metadosis: &mut MetadosisContract,
-    ctx: &BlockRuntimeContext,
-    timestamp: u64,
-) -> Result<()> {
-    outbe_tributefactory::worldwideday::create_lookahead_days(ctx, timestamp)
 }
 
 pub(crate) fn ensure_emission_day_with_limit(
@@ -94,10 +72,6 @@ pub(crate) fn ensure_emission_day_with_limit(
     Ok(())
 }
 
-pub(crate) fn advance_active_worldwide_days(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_tributefactory::worldwideday::advance_active_worldwide_days(ctx)
-}
-
 pub(crate) fn find_due_emission_day(
     metadosis: &MetadosisContract<'_>,
     ctx: &BlockRuntimeContext<'_>,
@@ -115,6 +89,11 @@ pub(crate) fn find_due_emission_day(
             && record.metadosis_state == emission_day_state::NONE
             && now >= record.metadosis_start
         {
+            if record.wwd.value() != 0
+                && !TributeContract::new(ctx.storage.clone()).is_day_sealed(record.wwd)?
+            {
+                continue;
+            }
             return Ok(Some(record));
         }
     }
@@ -126,11 +105,14 @@ fn collect_due_candidate_days(
     ctx: &BlockRuntimeContext<'_>,
     now: u64,
 ) -> Result<BTreeSet<u32>> {
-    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
+    let factory = TributeFactoryContract::new(ctx.storage.clone());
     let mut candidate_days = BTreeSet::new();
-    for wwd_record in aggregate.active_records() {
-        verify_active_wwd_link(metadosis, wwd_record.day, wwd_record.worldwide_day)?;
-        candidate_days.insert(wwd_record.day);
+    for wwd in factory.pipeline_wwd.read_all()? {
+        let Some(wwd_record) = factory.worldwide_days.get(wwd)? else {
+            continue;
+        };
+        verify_active_wwd_link(metadosis, wwd_record.emission_day, wwd_record.wwd)?;
+        candidate_days.insert(wwd_record.emission_day);
     }
 
     let today = timestamp_to_date_key(now);
@@ -208,10 +190,6 @@ pub(crate) fn complete_emission_day(
         updated.metadosis_state = state;
         metadosis.emission_days().update(&updated)?;
     }
-    if emission_day.wwd.value() != 0 {
-        let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
-        remove_active_worldwide_day(&mut factory, emission_day.wwd)?;
-    }
     Ok(())
 }
 
@@ -222,12 +200,6 @@ pub(crate) fn fail_emission_day(
     wwd: WorldwideDay,
     reason: &str,
 ) -> Result<()> {
-    if wwd.value() != 0 {
-        let mut tribute = TributeContract::new(metadosis.storage.clone());
-        if !tribute.get_day_totals(wwd)?.is_sealed {
-            tribute.seal_day(wwd)?;
-        }
-    }
     if metadosis.emission_days().get(day)?.is_some() {
         let (record, limit_minor) =
             outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;
@@ -240,10 +212,6 @@ pub(crate) fn fail_emission_day(
         )? {
             outbe_emission::api::complete_emission_day(metadosis.storage.clone(), record.day)?;
         }
-    }
-    if wwd.value() != 0 {
-        let mut factory = TributeFactoryContract::new(metadosis.storage.clone());
-        remove_active_worldwide_day(&mut factory, wwd)?;
     }
     metadosis.emit(IMetadosis::MetadosisSkipped {
         worldwideDay: wwd.into(),

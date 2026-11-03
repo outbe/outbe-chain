@@ -191,7 +191,7 @@ fn optional_seed_profile_is_copied_to_genesis_config_and_rejects_conflicts() {
     let mut genesis = json!({"config": {"chainId": 1}, "alloc": {}});
     let profile = json!({
         "schemaVersion": 1,
-        "metadosis": {"lookbackDelaySeconds": 22 * 3600, "advanceIntervalSeconds": 3600},
+        "metadosis": {"lookbackDelaySeconds": 22 * 3600},
         "governance": {"votingWindowBlocks": 120}
     });
     seed_protocol_constants(&mut genesis, &json!({"protocol_constants": profile}))
