@@ -9,7 +9,6 @@ use outbe_primitives::consensus_metadata::{
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
 use crate::finalized_metadata_hook::on_finalized_metadata;
-use crate::runtime;
 
 pub(crate) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
@@ -49,10 +48,9 @@ pub(crate) fn meta_with_hash(fb_hash: B256, fb_number: u64) -> CertifiedParentAc
     }
 }
 
-/// Locks in `genesis_utc_day` so that `day_number_since_genesis` works.
-pub(crate) fn bootstrap_genesis(ctx: &BlockRuntimeContext) {
-    runtime::ensure_genesis_anchor(ctx).unwrap();
-}
+/// Day numbers come from `ctx.block.genesis_timestamp`. Kept so existing
+/// fixtures can call it without writing Rewards state.
+pub(crate) fn bootstrap_genesis(_ctx: &BlockRuntimeContext) {}
 
 /// Credits `amount` to `REWARDS_ADDRESS` so that transfers from it succeed.
 pub(crate) fn fund_rewards(ctx: &BlockRuntimeContext, amount: U256) {
@@ -76,8 +74,7 @@ pub(crate) fn with_block(
     });
 }
 
-/// Runs `f` on fresh storage in block 1, one minute after genesis, after the
-/// genesis anchor.
+/// Runs `f` on fresh storage in block 1, one minute after genesis.
 pub(crate) fn with_genesis_block(f: impl FnOnce(BlockRuntimeContext<'_>)) {
     with_block(1, GENESIS_TS + 60, |ctx| {
         bootstrap_genesis(&ctx);

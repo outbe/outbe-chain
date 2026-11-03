@@ -1,7 +1,6 @@
 //! Runtime helpers for the Rewards module.
 //!
-//! Houses the genesis-anchor lazy initialization and UTC-day helpers used
-//! by `RewardsLifecycle::begin_block` and the per-block fee/participation
+//! Houses UTC-day helpers used by the per-block fee and participation
 //! hook. These functions take a `BlockRuntimeContext` and access state
 //! through `ctx.storage`, so they are thin wrappers over the schema in
 //! [`crate::schema::Rewards`].
@@ -179,46 +178,24 @@ pub enum MetadataFingerprintOutcome {
 // entries that pre-genesis test runs may have written.
 const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 
-/// Reads the genesis UTC day from `Rewards::genesis_utc_day`, lazily
-/// initializing the slot from `ctx.block.timestamp` on the first call
-/// (which must be block 0). Returns the locked-in day on every
-/// subsequent call.
-///
-/// `RewardsLifecycle::begin_block` calls this function as its very first
-/// step, before any other lifecycle work. After block 0 the slot is
-/// immutable. On a healthy chain the lazy init branch fires exactly once in
-/// the chain's lifetime.
-///
-/// Tamper-resistance: a node booting with a different `genesis.json`
-/// timestamp will record a different value here. Then:
-/// - Subsequent `day_emission_limit` calculations (in
-///   `outbe_emissionlimit::day_emission`) diverge from quorum.
-/// - The post-exec state root mismatches at the first day-settle.
-/// - The node leaves consensus.
-///
-/// Derives the genesis UTC day directly from `ctx.block.genesis_timestamp` (OIP-00343).
-pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
-    genesis_utc_day(ctx)
-}
-
-/// Derives the genesis UTC day from `ctx.block.genesis_timestamp`. Returns `Revert`
-/// if `genesis_timestamp` is zero (uninitialized).
-pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
-    if ctx.block.genesis_timestamp == 0 {
-        return Err(RewardsError::GenesisUtcDayNotInitialized.into());
-    }
-    Ok(timestamp_to_date_key(ctx.block.genesis_timestamp))
-}
-
 /// Computes the integer day number of `utc_day` relative to the chain's
-/// genesis day. Returns:
-/// - `Ok(0)` for the genesis day itself.
-/// - `Ok(n)` for `n` days after genesis.
-/// - `Revert` for a `utc_day` strictly before genesis. A finalized block
-///   that predates genesis is a protocol violation.
+/// start date. The start date is the UTC date of `ctx.block.genesis_timestamp`.
+/// Returns:
+/// - `Ok(0)` for the start date itself.
+/// - `Ok(n)` for `n` days after the start date.
+/// - `Revert` when `genesis_timestamp` is zero, or when `utc_day` is strictly
+///   before the start date. A finalized block that predates the start date is
+///   a protocol violation.
 pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<u32> {
-    let genesis = genesis_utc_day(ctx)?;
-    day_number_between(genesis, utc_day).map_err(|e| RewardsError::from(e).into())
+    if ctx.block.genesis_timestamp == 0 {
+        return Err(RewardsError::FinalizedBlockPredatesGenesis {
+            utc_day,
+            start_date: 0,
+        }
+        .into());
+    }
+    let start_date = timestamp_to_date_key(ctx.block.genesis_timestamp);
+    day_number_between(start_date, utc_day).map_err(RewardsError::map_time_err)
 }
 
 /// V3 fingerprint guard. Computes the canonical V3 metadata
@@ -364,41 +341,28 @@ pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofK
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
+    use crate::test_support::{with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]
-    fn ensure_genesis_anchor_initializes_on_first_call_and_is_idempotent() {
+    fn day_number_since_genesis_walks_forward() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let day = ensure_genesis_anchor(&ctx).unwrap();
-            assert_eq!(day, 20240101);
-            let day_again = ensure_genesis_anchor(&ctx).unwrap();
-            assert_eq!(day_again, 20240101);
+            assert_eq!(day_number_since_genesis(&ctx, 20240101).unwrap(), 0);
+            assert_eq!(day_number_since_genesis(&ctx, 20240131).unwrap(), 30);
+            assert_eq!(day_number_since_genesis(&ctx, 20250101).unwrap(), 366); // leap
         });
     }
 
     #[test]
-    fn ensure_genesis_anchor_does_not_advance_after_lock() {
-        // Lock anchor at block 0.
-        with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
-            let _ = ensure_genesis_anchor(&ctx0).unwrap();
-
-            // Re-call with a later-block context (same storage). Anchor stays.
-            let ctx_later = BlockRuntimeContext::new(
-                block_ctx(
-                    100,
-                    GENESIS_TS_2024_01_01 + 30 * outbe_primitives::time::SECONDS_PER_DAY,
-                ),
-                ctx0.storage.clone(),
-            );
-            let day = ensure_genesis_anchor(&ctx_later).unwrap();
-            assert_eq!(day, 20240101);
-            let read_back = genesis_utc_day(&ctx_later).unwrap();
-            assert_eq!(read_back, 20240101);
+    fn day_number_since_genesis_pre_genesis_is_fatal() {
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
+            let err = day_number_since_genesis(&ctx, 20231231).unwrap_err();
+            assert!(format!("{err}").contains("predates genesis"));
+            assert!(format!("{err}").contains("start_date=20240101"));
         });
     }
 
     #[test]
-    fn genesis_utc_day_uninitialized_is_fatal() {
+    fn day_number_since_genesis_rejects_a_zero_genesis_timestamp() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let uninit_ctx = BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext::new(
@@ -411,29 +375,8 @@ mod tests {
                 .with_genesis_timestamp(0),
                 ctx.storage,
             );
-            let err = genesis_utc_day(&uninit_ctx).unwrap_err();
-            assert!(format!("{err}").contains("not initialized"));
-        });
-    }
-
-    #[test]
-    fn day_number_since_genesis_walks_forward() {
-        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let _ = ensure_genesis_anchor(&ctx).unwrap();
-
-            assert_eq!(day_number_since_genesis(&ctx, 20240101).unwrap(), 0);
-            assert_eq!(day_number_since_genesis(&ctx, 20240131).unwrap(), 30);
-            assert_eq!(day_number_since_genesis(&ctx, 20250101).unwrap(), 366); // leap
-        });
-    }
-
-    #[test]
-    fn day_number_since_genesis_pre_genesis_is_fatal() {
-        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let _ = ensure_genesis_anchor(&ctx).unwrap();
-
-            let err = day_number_since_genesis(&ctx, 20231231).unwrap_err();
-            assert!(format!("{err}").contains("predates genesis"));
+            let err = day_number_since_genesis(&uninit_ctx, 20240101).unwrap_err();
+            assert!(format!("{err}").contains("start_date=0"));
         });
     }
 

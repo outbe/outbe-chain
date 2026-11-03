@@ -6,7 +6,7 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::runtime::advance_active_worldwide_days;
+//! use outbe_metadosis::runtime::start_metadosis;
 //! ```
 //!
 //! ```compile_fail

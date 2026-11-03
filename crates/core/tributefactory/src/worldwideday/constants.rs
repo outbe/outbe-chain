@@ -18,10 +18,6 @@ pub const METADOSIS_DELAY_AFTER_OFFERING_HOURS: u64 = 12;
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
 
-/// Production ProtocolCycle advances the outer WWD reducer on every aligned
-/// UTC-hour boundary.
-pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 1;
-
 const NORMAL_PIPELINE_HOURS: u64 = FORMING_PERIOD_HOURS
     + LOOKBACK_DELAY_HOURS
     + OFFERING_PERIOD_HOURS
@@ -41,12 +37,6 @@ pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
 
 /// Exact bound for every scan of the active WorldwideDay aggregate.
 pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
-
-/// Under continuing hourly ticks, an already-active candidate can have
-/// at most this many older protocol-order admissions ahead of it.
-pub const MAX_ADMISSION_WAIT_TICKS: usize = MAX_PIPELINE_WWDS;
-pub const MAX_ADMISSION_WAIT_HOURS: u64 =
-    MAX_ADMISSION_WAIT_TICKS as u64 * WWD_ADVANCE_TICK_CADENCE_HOURS;
 
 /// Seconds per hour.
 pub const SECONDS_PER_HOUR: u64 = 3600;

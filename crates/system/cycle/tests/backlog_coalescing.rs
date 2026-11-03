@@ -116,8 +116,8 @@ fn the_clearing_poll_runs_after_the_stage_schedule() {
 
 #[test]
 fn the_genesis_interval_leaves_the_clearing_poll_alone() {
-    for interval in [10_u64, 600, SECONDS_PER_DAY] {
-        let configured = active_triggers(interval).expect("nonzero interval");
+    for _interval in [10_u64, 600, SECONDS_PER_DAY] {
+        let configured = active_triggers().expect("nonzero interval");
         let clearing = configured
             .iter()
             .find(|spec| spec.id == TriggerId::AuctionClearing.as_u32())
@@ -152,7 +152,7 @@ fn registry_schedule_matches_a_reference_scheduler() {
         candidate
     }
 
-    for spec in active_triggers(3_600).expect("interval 3600") {
+    for spec in active_triggers().expect("interval 3600") {
         for last in [0, 1, 599, 600, 3_599, 3_600, 43_200, 86_400, 172_801] {
             assert_eq!(
                 next_fire_at(spec.period_seconds(), spec.start_offset_seconds, last)

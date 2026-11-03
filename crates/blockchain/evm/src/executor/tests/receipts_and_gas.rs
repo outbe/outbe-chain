@@ -385,11 +385,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 U256::ZERO,
                 "GAS-05 fixture must start with zero carry-over"
             );
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
             cycle
                 .last_executed_at

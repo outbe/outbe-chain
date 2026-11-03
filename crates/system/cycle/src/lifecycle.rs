@@ -50,7 +50,9 @@ impl BlockLifecycle for CycleLifecycle {
 
     fn begin_block(ctx: &Self::Context<'_, '_>) -> Result<()> {
         if ctx.runtime.block.block_number == ctx.metadosis_genesis_activation_height {
-            outbe_metadosis::commands::init_genesis_day(&ctx.runtime)?;
+            outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(
+                &ctx.runtime,
+            )?;
             outbe_nodfactory::called::initialize_daily(&ctx.runtime)?;
             outbe_gemfactory::called::initialize_daily(&ctx.runtime)?;
             outbe_intexfactory::called::initialize_daily(&ctx.runtime)?;

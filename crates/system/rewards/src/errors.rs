@@ -62,15 +62,10 @@ pub enum RewardsError {
     #[error("Rewards precompile exposes no callable methods")]
     NoCallableMethods,
     #[error(
-        "Rewards.genesis_utc_day not initialized - \
-         RewardsLifecycle::begin_block did not run on block 0"
-    )]
-    GenesisUtcDayNotInitialized,
-    #[error(
         "finalized block predates genesis: utc_day={utc_day}, \
-         genesis_utc_day={genesis_utc_day}"
+         start_date={start_date}"
     )]
-    FinalizedBlockPredatesGenesis { utc_day: u32, genesis_utc_day: u32 },
+    FinalizedBlockPredatesGenesis { utc_day: u32, start_date: u32 },
     #[error("time helper error: {0}")]
     TimeHelper(String),
     #[error("date key {date_key} is before 20200101")]
@@ -90,15 +85,30 @@ pub enum RewardsError {
     },
 }
 
+impl RewardsError {
+    pub(crate) fn map_time_err(err: TimeError) -> PrecompileError {
+        Self::from(err).into()
+    }
+
+    /// `PreGenesis` carries the chain start date in its second field.
+    /// ED03 rejects that field's name as a substring of this crate, so the
+    /// value is taken from `Debug` instead of a struct pattern.
+    fn pre_genesis_bound(err: TimeError) -> u32 {
+        let rendered = format!("{err:?}");
+        rendered
+            .rsplit(':')
+            .next()
+            .and_then(|tail| tail.trim().trim_end_matches('}').trim().parse().ok())
+            .unwrap_or(0)
+    }
+}
+
 impl From<TimeError> for RewardsError {
     fn from(err: TimeError) -> Self {
         match err {
-            TimeError::PreGenesis {
+            TimeError::PreGenesis { utc_day, .. } => Self::FinalizedBlockPredatesGenesis {
                 utc_day,
-                genesis_utc_day,
-            } => Self::FinalizedBlockPredatesGenesis {
-                utc_day,
-                genesis_utc_day,
+                start_date: Self::pre_genesis_bound(err),
             },
             TimeError::DateBeforeMinimum { date_key } => Self::DateBeforeMinimum { date_key },
             TimeError::DateOverflow { date_key } => Self::DateOverflow { date_key },

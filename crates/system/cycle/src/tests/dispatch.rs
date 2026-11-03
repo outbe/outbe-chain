@@ -556,9 +556,7 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    let next_window = GENESIS_TS
-        + SECONDS_PER_DAY
-        + outbe_chain_constants::get_metadosis_advance_interval_seconds();
+    let next_window = GENESIS_TS + SECONDS_PER_DAY + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS;
     storage.set_block_number(4);
     storage.enter(|handle| {
         let retry = runtime_context(block_ctx(4, next_window), handle);

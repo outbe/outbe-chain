@@ -1,5 +1,6 @@
 use outbe_primitives::time::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_tribute::TributeContract;
 
 use crate::schema::TributeFactoryContract;
 
@@ -29,27 +30,40 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
         .collect())
 }
 
-/// Returns true when `wwd` exists and the current block timestamp is within
-/// `[offerings_start, offering_end)`.
+/// Returns true when `wwd` exists, has a stored forming VWAP snapshot, is not
+/// sealed, and the current block timestamp is within `[offerings_start, offering_end)`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
-    Ok(worldwide_day(storage, wwd)?.is_some_and(|projection| projection.is_offering_at(now)))
+    let Some(projection) = worldwide_day(storage.clone(), wwd)? else {
+        return Ok(false);
+    };
+    if !projection.is_offering_at(now) {
+        return Ok(false);
+    }
+    if !outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd)? {
+        return Ok(false);
+    }
+    let tribute = TributeContract::new(storage);
+    Ok(!tribute.is_day_sealed(wwd)?)
 }
 
-/// Returns indexed active WWDs whose offering window `[offerings_start, offering_end)`
-/// contains the current block timestamp.
+/// Returns indexed pipeline WWDs whose offering window `[offerings_start, offering_end)`
+/// contains the current block timestamp, whose forming price is stored, and which
+/// are not yet sealed.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
-    let contract = TributeFactoryContract::new(storage);
+    let contract = TributeFactoryContract::new(storage.clone());
+    let tribute = TributeContract::new(storage.clone());
     let mut result = Vec::new();
-    for wwd in contract.active_wwd.read_all()? {
+    for wwd in contract.pipeline_wwd.read_all()? {
         let record = contract
             .worldwide_days
             .get(wwd)?
             .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd })?;
-        if record.state == super::schema::wwd_state::ACTIVE
-            && now >= record.offering_start
+        if now >= record.offering_start
             && now < record.offering_end
+            && outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd)?
+            && !tribute.is_day_sealed(wwd)?
         {
             result.push(wwd);
         }

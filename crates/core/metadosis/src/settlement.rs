@@ -94,11 +94,10 @@ pub(crate) fn process_ready_candidate(
         return settle_empty_day(metadosis, ctx, emission_day);
     }
 
-    let mut tribute = TributeContract::new(metadosis.storage.clone());
-    let mut tribute_totals = tribute.get_day_totals(wwd)?;
+    let tribute = TributeContract::new(metadosis.storage.clone());
+    let tribute_totals = tribute.get_day_totals(wwd)?;
     if !tribute_totals.is_sealed {
-        tribute.seal_day(wwd)?;
-        tribute_totals = tribute.get_day_totals(wwd)?;
+        return Ok(());
     }
 
     if tribute_totals.tribute_count == 0 {

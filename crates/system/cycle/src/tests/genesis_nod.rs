@@ -47,8 +47,9 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             "the first UTC midnight must retain the canonical genesis WWD"
         );
 
-        let genesis_day = outbe_rewards::runtime::genesis_utc_day(&ctx_fire).unwrap();
-        assert_eq!(genesis_day, 20_240_101, "genesis_utc_day = day D");
+        let genesis_day =
+            outbe_primitives::time::timestamp_to_date_key(ctx_fire.block.genesis_timestamp);
+        assert_eq!(genesis_day, 20_240_101, "start_date = day D");
         assert!(
             is_day_settled(&ctx_fire, genesis_day),
             "CycleTick must settle genesis day (day_number=0)"

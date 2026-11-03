@@ -2,13 +2,13 @@
 
 use outbe_primitives::time::{timestamp_to_date_key, WorldwideDay};
 use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_tribute::TributeContract;
 
 use crate::schema::TributeFactoryContract;
 
 use super::{
-    aggregate::ValidatedWwdAggregate,
-    errors::WwdStorageCorruptionError,
-    schema::{wwd_state, WorldwideDay as WorldwideDayRecord},
+    aggregate::ValidatedWwdAggregate, errors::WwdStorageCorruptionError,
+    schema::WorldwideDay as WorldwideDayRecord,
 };
 
 /// One invariant-valid active WWD included in a fresh-devnet genesis artifact.
@@ -143,10 +143,12 @@ impl GenesisOperation {
             emission_day: day.day,
             offering_start: day.offerings_start,
             offering_end: day.offering_end,
-            state: wwd_state::ACTIVE,
         })?;
-        contract.active_wwd.insert(day.worldwide_day)?;
         contract.pipeline_wwd.insert(day.worldwide_day)?;
+        let tribute = TributeContract::new(contract.storage.clone());
+        tribute
+            .day_emission_day
+            .write(&day.worldwide_day, day.day)?;
         Ok(Some(true))
     }
 
@@ -173,9 +175,9 @@ impl GenesisOperation {
         contract: &TributeFactoryContract<'_>,
         expected_worldwide_day: WorldwideDay,
     ) -> Result<Option<bool>> {
-        let active = contract.active_wwd.read_all()?;
-        if active.len() > 1
-            || active
+        let pipeline = contract.pipeline_wwd.read_all()?;
+        if pipeline.len() > 1
+            || pipeline
                 .first()
                 .is_some_and(|day| *day != expected_worldwide_day)
         {
@@ -186,13 +188,10 @@ impl GenesisOperation {
             .get(expected_worldwide_day)?
             .is_none()
         {
-            if active.is_empty() {
+            if pipeline.is_empty() {
                 return Ok(None);
             }
             return Err(WwdStorageCorruptionError::GenesisActiveWwdRecordMissing.into());
-        }
-        if !active.is_empty() {
-            contract.active_wwd.remove(&expected_worldwide_day)?;
         }
         contract.pipeline_wwd.remove(&expected_worldwide_day)?;
         contract.worldwide_days.delete(expected_worldwide_day)?;
