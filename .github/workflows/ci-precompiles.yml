@@ -1,4 +1,4 @@
-name: CI precompiles
+name: 07. precompiles
 
 on:
   push:

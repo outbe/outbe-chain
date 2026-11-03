@@ -1,4 +1,4 @@
-name: Contract CI
+name: 03. contracts (reusable)
 
 on:
   workflow_call:

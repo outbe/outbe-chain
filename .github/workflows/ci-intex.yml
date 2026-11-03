@@ -1,4 +1,4 @@
-name: CI intex
+name: 06. intex
 
 on:
   push:

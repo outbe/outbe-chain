@@ -1,4 +1,4 @@
-name: CI crosschain
+name: 04. crosschain
 
 on:
   push:
