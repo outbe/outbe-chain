@@ -1,19 +1,62 @@
-//! Vote target-module handler for scheduling protocol updates.
+//! Vote target of the Update precompile. Each action is in its own file, with
+//! its payload, its checks, its execution and their tests:
+//!
+//! - `protocol_update`: schedules a protocol update (`scheduleUpdate`);
+//! - `enclave`: revokes the enclave binding of one node;
+//! - `contract_upgrade`: upgrades our UUPS contracts on the listed chains
+//!   (`upgradeContracts`, OIP-00369). It is not part of the protocol update.
+
+pub(crate) mod contract_upgrade;
+pub(crate) mod enclave;
+pub(crate) mod protocol_update;
 
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_teeregistry::TeeRegistry;
 use outbe_vote::handlers::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
     VoteTargetContext,
 };
+
 use serde_json::Value;
 
 use crate::errors::UpdateError;
-use crate::payload::{RevokeEnclaveBindingPayloadV1, ScheduleUpdatePayload, UpdateVotePayload};
 use crate::schema::Update;
+use contract_upgrade::UpgradeContractsPayload;
+use enclave::RevokeEnclaveBindingPayloadV1;
+use protocol_update::ScheduleUpdatePayload;
+
+/// Vote payload accepted by [`UpdateVoteTarget`]. The field that names the
+/// action selects the variant: `operation`, `action`, or none for a protocol
+/// update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateVotePayload {
+    ScheduleUpdate(ScheduleUpdatePayload),
+    RevokeEnclaveBindingV1(RevokeEnclaveBindingPayloadV1),
+    UpgradeContracts(UpgradeContractsPayload),
+}
+
+impl UpdateVotePayload {
+    pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
+        let has = |key| payload.as_object().is_some_and(|obj| obj.contains_key(key));
+        if has("operation") {
+            UpgradeContractsPayload::from_value(payload).map(Self::UpgradeContracts)
+        } else if has("action") {
+            RevokeEnclaveBindingPayloadV1::from_value(payload).map(Self::RevokeEnclaveBindingV1)
+        } else {
+            ScheduleUpdatePayload::from_value(payload).map(Self::ScheduleUpdate)
+        }
+    }
+
+    pub fn validate(&self, current_height: u64) -> std::result::Result<(), UpdateError> {
+        match self {
+            Self::ScheduleUpdate(payload) => payload.validate(current_height),
+            Self::RevokeEnclaveBindingV1(payload) => payload.validate(),
+            Self::UpgradeContracts(payload) => payload.validate(),
+        }
+    }
+}
 
 /// Vote target handler wired to the Update precompile address.
 pub struct UpdateVoteTarget;
@@ -34,104 +77,34 @@ impl VoteTarget for UpdateVoteTarget {
         &self,
         ctx: &BlockRuntimeContext,
         proposal_id: U256,
-        payload: &[u8],
+        raw_payload: &[u8],
         _context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
-        let payload = decode_stored_proposal_payload(payload, "Update")?;
+        let payload = decode_stored_proposal_payload(raw_payload, "Update")?;
         let decoded = UpdateVotePayload::from_value(&payload)
             .map_err(UpdateError::stored_proposal_payload_invalid)?;
         match decoded {
             UpdateVotePayload::ScheduleUpdate(decoded) => {
                 let outcome = ctx.with_checkpoint(|| {
-                    stage_approved_update(ctx, proposal_id, &payload, &decoded)
+                    protocol_update::stage_approved_update(ctx, proposal_id, &payload, &decoded)
                 });
                 UpdateError::into_execution_outcome(outcome)
             }
             UpdateVotePayload::RevokeEnclaveBindingV1(decoded) => {
-                execute_approved_revocation(ctx, proposal_id, &decoded)
+                enclave::execute_approved_revocation(ctx, proposal_id, &decoded)
+            }
+            UpdateVotePayload::UpgradeContracts(_) => {
+                // The tally has no sub-calls: store the payload hash for
+                // `applyApproved`.
+                Update::new(ctx.storage.clone()).approve_contract_upgrade(
+                    proposal_id,
+                    raw_payload,
+                    ctx.block.block_number,
+                )?;
+                Ok(TargetExecutionOutcome::Applied)
             }
         }
     }
-}
-
-fn execute_approved_revocation(
-    ctx: &BlockRuntimeContext,
-    proposal_id: U256,
-    decoded: &RevokeEnclaveBindingPayloadV1,
-) -> Result<TargetExecutionOutcome> {
-    let mut conflict = None;
-    let outcome = ctx.with_checkpoint(|| {
-        let mut tee_registry = TeeRegistry::new(ctx.storage.clone());
-        match tee_registry.revoke_enclave_binding_classified_v1(
-            decoded.node_id_hash,
-            decoded.binding_id,
-            proposal_id,
-        )? {
-            Ok(_binding) => Ok(()),
-            Err(err) => {
-                conflict = Some(err);
-                Err(err.into_error().into())
-            }
-        }
-    });
-    if let Some(conflict) = conflict {
-        return Ok(TargetExecutionOutcome::Error {
-            reason: alloy_primitives::hex::encode_prefixed(conflict.abi_encode_revert()),
-        });
-    }
-    outcome.map(|()| TargetExecutionOutcome::Applied)
-}
-
-fn stage_approved_update(
-    ctx: &BlockRuntimeContext,
-    proposal_id: U256,
-    payload: &Value,
-    decoded: &ScheduleUpdatePayload,
-) -> Result<()> {
-    decoded
-        .validate_measurement_upgrade()
-        .map_err(PrecompileError::from)?;
-    let mut tee_registry = TeeRegistry::new(ctx.storage.clone());
-    if tee_registry.strict_upgrade_pending_v1()?
-        || (decoded.mrenclave.is_some()
-            && !Update::new(ctx.storage.clone())
-                .list_waiting_for_activation_proposal_ids()?
-                .is_empty())
-    {
-        return Err(UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade.into());
-    }
-    match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
-        proposal_id,
-        payload,
-        ctx.block.block_number,
-    )? {
-        Ok(()) => {}
-        Err(err) => return Err(classify_domain_error_as_precompile(err)),
-    }
-    stage_measurement_upgrade(&mut tee_registry, proposal_id, decoded)?;
-    Ok(())
-}
-
-fn stage_measurement_upgrade(
-    tee_registry: &mut TeeRegistry<'_>,
-    proposal_id: U256,
-    decoded: &ScheduleUpdatePayload,
-) -> Result<()> {
-    if let Some(mrenclave) = decoded.mrenclave {
-        // Bind the rollout to the policy active when the vote is approved.
-        // Callers supply only the successor measurement.
-        let predecessor = tee_registry
-            .active_policy_v1()?
-            .policy_hash()
-            .map_err(UpdateError::invalid_active_tee_policy)?;
-        tee_registry.stage_measurement_upgrade_v1(
-            proposal_id,
-            mrenclave,
-            predecessor,
-            decoded.activation_height,
-        )?;
-    }
-    Ok(())
 }
 
 fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
@@ -159,19 +132,29 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::EnclaveRolloutRequiresExclusiveScheduledUpgrade
         | UpdateError::InvalidActiveTeePolicy(_)
         | UpdateError::VoteTargetInvariantFailure(_)
-        | UpdateError::UnexpectedAppliedClassification => {
+        | UpdateError::UnexpectedAppliedClassification
+        | UpdateError::UnknownApprovedUpgrade { .. }
+        | UpdateError::ApprovedPayloadMismatch { .. } => {
             Err(UpdateError::VoteTargetInvariantFailure(err.to_string()).into())
         }
     }
 }
 
-fn classify_domain_error_as_precompile(err: UpdateError) -> PrecompileError {
+pub(super) fn classify_domain_error_as_precompile(err: UpdateError) -> PrecompileError {
     UpdateError::outcome_into_precompile_error(classify_domain_error(err))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_vote_payload_keeps_schedule_updates_without_action() {
+        let value = serde_json::json!({"version":"1.2","activationHeight":1000,"info":""});
+        let decoded = UpdateVotePayload::from_value(&value).unwrap();
+        assert!(matches!(decoded, UpdateVotePayload::ScheduleUpdate(_)));
+        decoded.validate(0).unwrap();
+    }
 
     #[test]
     fn only_expected_execution_conflicts_become_proposal_error() {

@@ -5,6 +5,9 @@ pragma solidity ^0.8.30;
 /// @notice Protocol update / hardfork precompile at 0x000000000000000000000000000000000000EE0B
 /// @dev Vote manages this precompile. After approval, the inner cross-module API
 /// handles the proposal. (see: /crates/system/update/)
+/// An approved `upgradeContracts` proposal upgrades our UUPS contracts on the listed
+/// chains. Their owner CrosschainBridge (`0x…EE15`) makes the calls when anyone calls
+/// `applyApproved` (OIP-00369).
 interface IUpdate {
     /// Caller-facing domain revert.
     error ScheduledUpdateNotFound();
@@ -28,6 +31,8 @@ interface IUpdate {
     error InvalidActiveTeePolicy(string value);
     error VoteTargetInvariantFailure(string value);
     error UnexpectedAppliedClassification();
+    error UnknownApprovedUpgrade(uint256 proposalId);
+    error ApprovedPayloadMismatch(uint256 proposalId);
 
     enum ScheduledUpdateStatus {
         Scheduled,
@@ -51,6 +56,16 @@ interface IUpdate {
 
     /// @notice Emitted when vote accepts a new update.
     event ScheduledUpdateCreated(uint256 indexed proposalId, uint32 version, uint64 activationHeight, bytes info);
+
+    /// @notice Emitted when `applyApproved` runs an approved contract upgrade.
+    event ContractUpgradeApplied(uint256 indexed proposalId);
+
+    /// @notice Emitted when `applyApproved` drops an approved contract upgrade after the voting window.
+    event ContractUpgradeExpired(uint256 indexed proposalId);
+
+    /// @notice Runs the approved `upgradeContracts` proposal `proposalId` once. Anyone can call it.
+    /// `payload` must be the approved JSON payload.
+    function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// @notice Returns the active protocol version.
     function getActiveVersion() external view returns (uint32);
