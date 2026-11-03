@@ -16,6 +16,9 @@ use crate::world::price_oracle::{
 };
 use crate::world::World;
 
+mod native;
+pub(crate) use native::{assert_native_quotes_ready, finish_native_quotes, start_native_quote};
+
 const USD_ISO: u16 = 840;
 const MOCK_PRICE: &str = "1.000000";
 pub(crate) const MOCK_VOLUME: &str = "1000.000000";
@@ -602,6 +605,16 @@ fn start_feeder_with_cohort(
     cohort: OracleCohortV1,
 ) {
     let (price, volume) = feeder_start_quote(world.price_oracle.read_controlled_quote());
+    start_feeder_with_cohort_quote(world, phase, cohort, &price, &volume);
+}
+
+fn start_feeder_with_cohort_quote(
+    world: &mut World,
+    phase: OracleEvidencePhaseV1,
+    cohort: OracleCohortV1,
+    price: &str,
+    volume: &str,
+) {
     world.price_oracle.install_cohort(phase, cohort.clone());
     let chain_id = world
         .rpc
@@ -654,10 +667,7 @@ fn start_feeder_with_cohort(
                     vote_period,
                     phase,
                 },
-                crate::world::price_oracle::PriceQuote {
-                    price: &price,
-                    volume: &volume,
-                },
+                crate::world::price_oracle::PriceQuote { price, volume },
             )
             .unwrap_or_else(|error| {
                 panic!("start validator-{validator_index} production price feeder: {error:#}")
@@ -1230,6 +1240,16 @@ fn observe_cohort_publication(
     expected: ExpectedPublication,
     require_live_feeder: bool,
 ) -> Result<bool> {
+    observe_cohort_publication_inner(world, phase, expected, require_live_feeder, false)
+}
+
+fn observe_cohort_publication_inner(
+    world: &mut World,
+    phase: OracleEvidencePhaseV1,
+    expected: ExpectedPublication,
+    require_live_feeder: bool,
+    reuse_recorded_identity: bool,
+) -> Result<bool> {
     let ExpectedPublication {
         base,
         quote,
@@ -1307,24 +1327,44 @@ fn observe_cohort_publication(
     for &port in &ports {
         validate_membership(&cohort, &active_at(world, port, first.oracle_block)?)?;
     }
-    world
-        .price_oracle
-        .record_canonical_publication(CanonicalPublicationObservation {
-            phase,
-            validator_count: ports.len(),
-            base,
-            quote,
-            rate: first.rate,
-            volume: first.volume.expect("publication evaluator required volume"),
-            oracle_block: first.oracle_block,
-            oracle_timestamp: first.oracle_timestamp,
-            finalized_height: checkpoint.height,
-            finalized_timestamp: first.finalized_timestamp,
+    let recorded = reuse_recorded_identity
+        .then(|| world.price_oracle.evidence_snapshot())
+        .and_then(|evidence| {
+            evidence.canonical_publications.into_iter().find(|p| {
+                p.phase == phase
+                    && p.base == format!("{base:#x}")
+                    && p.quote == format!("{quote:#x}")
+                    && p.oracle_block == first.oracle_block
+            })
         });
+    let rechecked = recorded.is_some();
+    if let Some(recorded) = recorded {
+        ensure!(
+            recorded.rate == first.rate.to_string()
+                && recorded.volume == first.volume.expect("verified volume").to_string()
+                && recorded.oracle_timestamp == first.oracle_timestamp,
+            "native publication identity changed"
+        );
+    } else {
+        world
+            .price_oracle
+            .record_canonical_publication(CanonicalPublicationObservation {
+                phase,
+                validator_count: ports.len(),
+                base,
+                quote,
+                rate: first.rate,
+                volume: first.volume.expect("publication evaluator required volume"),
+                oracle_block: first.oracle_block,
+                oracle_timestamp: first.oracle_timestamp,
+                finalized_height: checkpoint.height,
+                finalized_timestamp: first.finalized_timestamp,
+            });
+    }
     world
         .price_oracle
         .record_cohort_observation(serde_json::json!({
-            "kind": "publication_verified", "phase": phase, "base": base, "quote": quote,
+            "kind": if rechecked { "native_publication_rechecked" } else { "publication_verified" }, "phase": phase, "base": base, "quote": quote,
             "strictly_after_block": strictly_after_block, "checkpoint": checkpoint,
             "oracle_block": first.oracle_block,
             "reads": reads,

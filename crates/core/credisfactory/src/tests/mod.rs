@@ -345,18 +345,13 @@ fn block_at<'storage>(
     timestamp: u64,
 ) -> BlockRuntimeContext<'storage> {
     let credis = CredisContract::new(storage.clone());
-    if credis.daily_genesis_day.read().unwrap() == 0 {
-        credis
-            .daily_genesis_day
-            .write(last_closed_day(timestamp))
-            .unwrap();
-    }
     let height =
         outbe_primitives::pass_budget::BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
             .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID),
+        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID)
+            .with_genesis_timestamp(CREATED_AT - DAY),
         storage.clone(),
     )
 }
@@ -367,7 +362,21 @@ pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap()
+    let credis = CredisContract::new(storage.clone());
+    let mut called = 0;
+    loop {
+        called += crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap();
+        let selected = outbe_primitives::pass_budget::BlockAllowance::unpack(
+            credis.daily_budget.read().unwrap(),
+        )
+        .unwrap()
+        .unwrap()
+        .day;
+        let next = credis.call_sweep_day.read().unwrap();
+        if next == 0 || next == selected {
+            return called;
+        }
+    }
 }
 
 /// One later block's slice of the call sweep in flight.
@@ -395,7 +404,7 @@ pub fn queued_for_forfeit(
     Ok(live)
 }
 
-/// Finalizes the UTC day before `timestamp` and, on a fresh fixture, starts the pass there.
+/// Finalizes the UTC day before `timestamp`.
 pub fn prepare_daily_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -404,10 +413,6 @@ pub fn prepare_daily_pass(
     let oracle = OracleContract::new(storage.clone());
     if oracle.utc_day_vwap_last_finalized.read()? < closed {
         oracle.utc_day_vwap_last_finalized.write(closed)?;
-    }
-    let credis = CredisContract::new(storage.clone());
-    if credis.daily_genesis_day.read()? == 0 {
-        credis.daily_genesis_day.write(closed)?;
     }
     Ok(())
 }

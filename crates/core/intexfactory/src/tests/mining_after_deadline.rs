@@ -188,7 +188,8 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
 
     StorageHandle::enter(&mut storage, |s| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID),
+            outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID)
+                .with_genesis_timestamp(ISSUED_AT - DAY),
             s.clone(),
         );
         let block = super::called::daily_pass(&ctx).unwrap();
@@ -237,7 +238,8 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert_eq!(decrypt_balance(&vk, owner(), &blob).unwrap(), mined);
 
         let later = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID),
+            outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID)
+                .with_genesis_timestamp(ISSUED_AT - DAY),
             s.clone(),
         );
         let block = super::called::daily_pass(&later).unwrap();

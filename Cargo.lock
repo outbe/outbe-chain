@@ -8042,19 +8042,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-crosschaingov"
+name = "outbe-crosschainbridge"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-chain-constants",
  "outbe-hyperlanecontroller",
  "outbe-macros",
  "outbe-primitives",
  "outbe-validatorset",
- "outbe-vote",
- "serde",
- "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -8066,7 +8062,6 @@ dependencies = [
  "alloy-sol-types",
  "outbe-agentreward",
  "outbe-ccaregistry",
- "outbe-chain-constants",
  "outbe-credisfactory",
  "outbe-desis",
  "outbe-emission",
@@ -8081,6 +8076,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
+ "outbe-tribute",
  "outbe-tributefactory",
  "outbe-validatorset",
  "proptest",
@@ -8275,7 +8271,7 @@ dependencies = [
  "outbe-consensus",
  "outbe-credis",
  "outbe-credisfactory",
- "outbe-crosschaingov",
+ "outbe-crosschainbridge",
  "outbe-cycle",
  "outbe-desis",
  "outbe-emission",
@@ -8515,9 +8511,13 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-macros",
  "outbe-primitives",
  "outbe-validatorset",
+ "outbe-vote",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
 ]
@@ -9344,7 +9344,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-chain-constants",
  "outbe-emission",
  "outbe-fidelity",
  "outbe-lysis",
@@ -9441,6 +9440,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-chain-constants",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",

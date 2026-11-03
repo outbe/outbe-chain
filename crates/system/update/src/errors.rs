@@ -62,6 +62,10 @@ pub enum UpdateError {
     VoteTargetInvariantFailure(String),
     #[error("unexpected applied Update classification")]
     UnexpectedAppliedClassification,
+    #[error("no approved contract upgrade waits for proposal {proposal_id}")]
+    UnknownApprovedUpgrade { proposal_id: U256 },
+    #[error("payload is not the approved payload of proposal {proposal_id}")]
+    ApprovedPayloadMismatch { proposal_id: U256 },
 }
 
 impl From<UpdateError> for PrecompileError {
@@ -166,6 +170,22 @@ impl From<UpdateError> for PrecompileError {
             UpdateError::UnexpectedAppliedClassification => PrecompileError::RevertBytes(
                 Bytes::from(IUpdate::UnexpectedAppliedClassification {}.abi_encode()),
             ),
+            UpdateError::UnknownApprovedUpgrade { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::UnknownApprovedUpgrade {
+                        proposalId: proposal_id,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            UpdateError::ApprovedPayloadMismatch { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IUpdate::ApprovedPayloadMismatch {
+                        proposalId: proposal_id,
+                    }
+                    .abi_encode(),
+                ))
+            }
         }
     }
 }

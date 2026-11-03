@@ -16,7 +16,6 @@ interface ICycle {
     error ValidatorTopupExceedsAllocation();
     error AllocationWithoutMetadosisReceipt();
     error AllocationDisagreesWithMetadosisReceipt();
-    error ActiveUtcDayNotInitialized();
     error BlockNumberRegression(uint64 current, uint64 attempted);
     error ZeroAccountingProgress();
     error AccountingProgressGap(uint64 current, uint64 attempted);

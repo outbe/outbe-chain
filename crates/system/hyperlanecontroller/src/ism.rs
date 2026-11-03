@@ -1,10 +1,10 @@
 //! The ISMs and the domain table: reads of the ISMs, the validator rotation,
 //! and adding or removing a chain. Every write to an ISM or the ICA router is
-//! an owner call through the CrosschainGov precompile (`runtime::call_local`,
+//! an owner call through the CrosschainBridge precompile (`runtime::call_local`,
 //! `runtime::call_remote`).
 //!
 //! `sync` and begin-block liveness call `set_validators_and_threshold`. The
-//! vote actions in `crosschaingov` call `enroll_ica_router`, `add_domain` and
+//! vote actions in `crosschainbridge` call `enroll_ica_router`, `add_domain` and
 //! `remove_domain`.
 
 use alloy_primitives::{Address, Bytes, B256, U256};

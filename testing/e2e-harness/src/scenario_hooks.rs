@@ -27,16 +27,19 @@ impl BeforeScenario {
     pub(crate) fn begin(
         &self,
         feature: &Feature,
+        rule: Option<&Rule>,
         scenario: &Scenario,
         world: &mut World,
     ) -> Option<String> {
+        let tags = inherited_tags(feature, rule, scenario);
+        world.state.historical_factory_lifecycle = historical_factory_lifecycle(&tags);
         let deadline = self.watchdog.arm(
             format!("{} :: {}", feature.name, scenario.name),
-            Duration::from_secs(env::scenario_timeout_secs(&self.env)),
+            scenario_budget(&self.env, world.state.historical_factory_lifecycle),
         );
         world.localnet.set_scenario_deadline(deadline);
 
-        crate::features::entity_lifecycle::markets::configure(world, &scenario.tags);
+        crate::features::entity_lifecycle::markets::configure(world, &tags);
         // Only reachable for unmet scenarios in `--all` mode (the filter
         // excludes them otherwise). Panic so they count as failures.
         let reason = if self.env.all {
@@ -53,6 +56,34 @@ impl BeforeScenario {
         }
         reason
     }
+}
+
+fn historical_factory_lifecycle(tags: &[String]) -> bool {
+    tags.iter().any(|tag| {
+        matches!(
+            tag.as_str(),
+            "nod-lifecycle" | "gem-lifecycle" | "intex-lifecycle" | "credis-lifecycle"
+        )
+    })
+}
+
+fn inherited_tags(feature: &Feature, rule: Option<&Rule>, scenario: &Scenario) -> Vec<String> {
+    feature
+        .tags
+        .iter()
+        .chain(rule.iter().flat_map(|rule| &rule.tags))
+        .chain(&scenario.tags)
+        .cloned()
+        .collect()
+}
+
+fn scenario_budget(env: &Environment, historical: bool) -> Duration {
+    let extra = if historical && env.scenario_timeout_secs.is_none() {
+        crate::features::common::LIFECYCLE_CATCHUP_TIMEOUT
+    } else {
+        Duration::ZERO
+    };
+    Duration::from_secs(env::scenario_timeout_secs(env)) + extra
 }
 
 /// Whether cucumber's own `--name`/`--tags` selection keeps this scenario.
@@ -163,4 +194,55 @@ fn audit_scenario_logs(world: &World) -> eyre::Result<LogAudit> {
                 .as_ref(),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn historical_selection_inherits_feature_rule_and_scenario_tags() {
+        for (feature_tag, rule_tag, scenario_tag, expected) in [
+            ("@credis-lifecycle", "", "", true),
+            ("", "@nod-lifecycle", "", true),
+            ("", "", "@gem-lifecycle", true),
+            ("", "", "@intex-lifecycle", true),
+            ("@tee", "@myr-issuance", "@validator-lifecycle", false),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("inherited.feature");
+            std::fs::write(&path, format!(
+                "{feature_tag}\nFeature: history\n  {rule_tag}\n  Rule: inherited\n    {scenario_tag}\n    Scenario: selected\n      Given a fixture\n"
+            )).unwrap();
+            let feature =
+                Feature::parse_path(path, cucumber::gherkin::GherkinEnv::default()).unwrap();
+            let rule = &feature.rules[0];
+            assert_eq!(
+                historical_factory_lifecycle(&inherited_tags(
+                    &feature,
+                    Some(rule),
+                    &rule.scenarios[0],
+                )),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn catchup_extends_only_selected_default_timeout() {
+        let mut env = Environment::default();
+        assert_eq!(scenario_budget(&env, false), Duration::from_secs(3_600));
+        assert_eq!(scenario_budget(&env, true), Duration::from_secs(21_600));
+        env.scenario_timeout_secs = Some(123);
+        assert_eq!(scenario_budget(&env, true), Duration::from_secs(123));
+        assert_eq!(scenario_budget(&env, false), Duration::from_secs(123));
+        let days = u64::from(crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS) + 2;
+        let max_step = outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS / 1_000;
+        let blocks = (days * outbe_primitives::time::SECONDS_PER_DAY).div_ceil(max_step) + 2;
+        let sgx_budget = crate::features::common::consensus_block_wait_budget(
+            &serde_json::json!({"config": {"leaderTimeoutMs": 15_000, "certificationTimeoutMs": 30_000}}),
+            blocks,
+        ).unwrap();
+        assert!(crate::features::common::LIFECYCLE_CATCHUP_TIMEOUT >= sgx_budget);
+    }
 }

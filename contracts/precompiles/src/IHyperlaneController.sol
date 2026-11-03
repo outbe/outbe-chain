@@ -5,14 +5,15 @@ pragma solidity ^0.8.30;
 ///      crates/blockchain/primitives/src/addresses.rs.
 address constant HYPERLANE_CONTROLLER = 0x000000000000000000000000000000000000EE14;
 
-/// HyperlaneController precompile at `HYPERLANE_CONTROLLER` (OIP-00369).
+/// HyperlaneController precompile at `HYPERLANE_CONTROLLER`.
 ///
 /// The Hyperlane infrastructure of the owner: the local InterchainAccountRouter
 /// address, a `domain -> StorageMessageIdMultisigIsm` table (the Outbe chain
 /// included under its own domain), and the liveness of the validator agents.
 /// Validator sets live in the ISMs themselves. It owns no contract: the owner
-/// is `CROSSCHAIN_GOV`. This precompile makes every ISM and router call through
-/// `CROSSCHAIN_GOV.callLocal` and `CROSSCHAIN_GOV.callRemote`.
+/// is `CROSSCHAIN_BRIDGE`. This precompile makes every ISM and router call through
+/// `CROSSCHAIN_BRIDGE.callLocal` and `CROSSCHAIN_BRIDGE.callRemote`. Its vote target adds and
+/// removes the Hyperlane chains (`addHyperlaneChain`, `removeHyperlaneChain`).
 interface IHyperlaneController {
     /// Caller-facing domain revert.
     error AlreadyInitialized();
@@ -39,6 +40,8 @@ interface IHyperlaneController {
     error InvalidValidator(address validator);
     error UndecodableReturn(string value);
     error RemoteRouterMismatch(uint32 domain, bytes32 enrolled);
+    error UnknownApprovedAction(uint256 proposalId);
+    error ApprovedPayloadMismatch(uint256 proposalId);
 
     event Initialized(address indexed icaRouter);
     event DomainAdded(uint32 indexed domain, address indexed ism);
@@ -48,14 +51,16 @@ interface IHyperlaneController {
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event LivenessMiss(address indexed validator, uint32 misses);
     event LivenessJailed(address indexed validator);
+    event ApprovedActionApplied(uint256 indexed proposalId);
+    event ApprovedActionExpired(uint256 indexed proposalId);
 
     /// One-shot bootstrap. `domains[i] -> (isms[i], hooks[i])` must include the
     /// Outbe domain (= chain id). `hooks` are the MerkleTreeHook addresses whose
     /// checkpoints the validators sign. `validatorAnnounce` is the Outbe
     /// ValidatorAnnounce where validators publish their checkpoint bucket.
     /// Caller must be the bootstrap admin and the current owner of the Outbe
-    /// ISM (the deployer that staged `transferOwnership` to `CROSSCHAIN_GOV`).
-    /// `CROSSCHAIN_GOV` accepts that pending ownership, and must already own
+    /// ISM (the deployer that staged `transferOwnership` to `CROSSCHAIN_BRIDGE`).
+    /// `CROSSCHAIN_BRIDGE` accepts that pending ownership, and must already own
     /// `icaRouter`.
     function initialize(
         address icaRouter,
@@ -70,6 +75,13 @@ interface IHyperlaneController {
     /// oracle delegate.
     function setHyperlaneSigner(address signer) external;
 
+    /// Runs a Hyperlane chain action that a governance vote approved. Permissionless: the vote
+    /// decided, and `payload` must be the approved JSON (its keccak256 is stored). An action older
+    /// than the governance voting window is dropped with `ApprovedActionExpired`, so a stale
+    /// approval cannot undo a newer one. A remote action pays the Hyperlane fee from the
+    /// `CROSSCHAIN_BRIDGE` balance.
+    function applyApproved(uint256 proposalId, bytes calldata payload) external;
+
     /// Liveness proof: an active validator (or its oracle delegate, the feeder
     /// key) submits its latest signed checkpoint for `domain`. The signature is
     /// recovered over the Hyperlane digest and must match the validator's
@@ -80,7 +92,7 @@ interface IHyperlaneController {
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
     /// already matches. Permissionless: it only applies what consensus decided.
-    /// `CROSSCHAIN_GOV` runs the ISM calls. Returns whether a rotation was
+    /// `CROSSCHAIN_BRIDGE` runs the ISM calls. Returns whether a rotation was
     /// dispatched.
     function sync() external returns (bool changed);
 

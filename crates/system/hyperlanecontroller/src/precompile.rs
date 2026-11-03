@@ -1,6 +1,6 @@
 //! Dispatch for the HyperlaneController precompile.
 //!
-//! `initialize` and `sync` make owner calls through `CROSSCHAIN_GOV_ADDRESS`
+//! `initialize` and `sync` make owner calls through `CROSSCHAIN_BRIDGE_ADDRESS`
 //! (`callLocal`, `callRemote`). The owner then is the `msg.sender` of every
 //! ISM and router call.
 
@@ -50,6 +50,9 @@ pub fn dispatch(
                 sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),
                 setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
+                }),
+                applyApproved(c) => mutate_void(&storage, c, caller, |_, c| {
+                    controller.apply_approved(c.proposalId, &c.payload)
                 }),
                 submitCheckpoint(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.submit_checkpoint(

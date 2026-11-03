@@ -28,7 +28,7 @@ fn schedule_math_pinned_values() {
 #[test]
 fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     use crate::errors::CycleError;
-    use crate::triggers::{active_triggers, TriggerHandler, TriggerSpec};
+    use crate::triggers::{TriggerHandler, TriggerSpec};
 
     assert!(matches!(
         TriggerSpec::new(1, "zero", 0, 0, TriggerHandler::IntexCallDaily),
@@ -46,10 +46,6 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     ));
     assert!(matches!(
         last_fire_at(0, 5_000, 4_999),
-        Err(CycleError::ZeroTriggerPeriod)
-    ));
-    assert!(matches!(
-        active_triggers(0),
         Err(CycleError::ZeroTriggerPeriod)
     ));
     // Offset 5000 with period 600 is the first anchor, not an invalid setting.
@@ -112,7 +108,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             .expect("overflow payload");
         assert_eq!(
             decoded.period,
-            outbe_chain_constants::get_metadosis_advance_interval_seconds()
+            crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS
         );
         assert_eq!(decoded.offset, 0);
         assert_eq!(decoded.timestamp, u64::MAX);
@@ -131,7 +127,7 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
 fn only_the_two_auction_edges_declare_a_dependency() {
     use crate::triggers::{active_triggers, TriggerId};
 
-    let specs = active_triggers(3_600).expect("nonzero interval");
+    let specs = active_triggers().expect("nonzero interval");
     assert!(specs[0].depends_on.is_empty());
     assert!(specs[1].depends_on.is_empty());
     assert_eq!(specs[2].depends_on, &[TriggerId::ProtocolCycle]);

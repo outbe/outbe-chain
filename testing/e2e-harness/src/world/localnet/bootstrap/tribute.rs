@@ -1,4 +1,5 @@
 use super::*;
+use crate::world::localnet::StartOpts;
 use alloy_primitives::{Address, U256};
 use outbe_primitives::{
     addresses::{
@@ -20,11 +21,41 @@ struct OfferingPairs {
 }
 
 impl Localnet {
-    pub(crate) fn prepare_native_lysis_fixture(&self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn native_lysis_genesis_timestamp(host_timestamp: u64) -> Result<u64> {
+        let midnight = host_timestamp - host_timestamp % SECONDS_PER_DAY;
+        midnight
+            .checked_add(SECONDS_PER_DAY)
+            .and_then(|next_day| next_day.checked_add(300))
+            .ok_or_else(|| eyre!("native fixture genesis timestamp overflow"))
+    }
+
+    pub(crate) fn prepare_native_lysis_fixture(
+        &self,
+        voting_window: u64,
+    ) -> Result<(u32, StartOpts)> {
+        let worldwide_day = self.prepare_offering_fixture_with_schedule(
+            OfferingPairs {
+                issuance_iso: 949,
+                reference_iso: 978,
+                issuance_vwap: U256::from(10_250_000_u64),
+                reference_vwap: U256::from(250_000_u64),
+                reference_scurve: U256::from(320_000_u64),
+            },
+            true,
+        )?;
         self.prepare_native_lysis_prices(
             worldwide_day,
             &[(840, U256::from(1_000_000)), (978, U256::from(250_000))],
-        )
+        )?;
+        Ok((worldwide_day, self.native_start_options(voting_window)?))
+    }
+
+    fn native_start_options(&self, voting_window: u64) -> Result<StartOpts> {
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(self.cfg.dir.join("genesis.json"))?)?;
+        let timestamp = read_genesis_timestamp(&genesis)?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        native_start_options(timestamp, now, voting_window)
     }
 
     /// Same allocation as [`prepare_native_lysis_fixture`], with the entry prices
@@ -58,17 +89,24 @@ impl Localnet {
 
     /// Offering day plus a native Lysis allocation for MYR issuance against a USD
     /// reference. `usd_entry_price_minor` is the USD UTC-day VWAP Lysis seals.
-    pub(crate) fn prepare_nod_lifecycle_fixture(&self, usd_entry_price_minor: u64) -> Result<u32> {
+    pub(crate) fn prepare_nod_lifecycle_fixture(
+        &self,
+        usd_entry_price_minor: u64,
+        voting_window: u64,
+    ) -> Result<(u32, StartOpts)> {
         let entry = U256::from(usd_entry_price_minor);
-        let day = self.prepare_offering_fixture(OfferingPairs {
-            issuance_iso: 458,
-            reference_iso: 840,
-            issuance_vwap: U256::from(10_250_000_u64),
-            reference_vwap: entry,
-            reference_scurve: entry,
-        })?;
+        let day = self.prepare_offering_fixture_with_schedule(
+            OfferingPairs {
+                issuance_iso: 458,
+                reference_iso: 840,
+                issuance_vwap: U256::from(10_250_000_u64),
+                reference_vwap: entry,
+                reference_scurve: entry,
+            },
+            true,
+        )?;
         self.prepare_native_lysis_prices(day, &[(840, entry), (458, U256::from(10_250_000_u64))])?;
-        Ok(day)
+        Ok((day, self.native_start_options(voting_window)?))
     }
 
     pub(crate) fn fund_tribute_owners(&self, count: usize) -> Result<Vec<String>> {
@@ -96,19 +134,31 @@ impl Localnet {
     }
 
     fn prepare_offering_fixture(&self, pairs: OfferingPairs) -> Result<u32> {
+        self.prepare_offering_fixture_with_schedule(pairs, false)
+    }
+
+    fn prepare_offering_fixture_with_schedule(
+        &self,
+        pairs: OfferingPairs,
+        native: bool,
+    ) -> Result<u32> {
         {
             let genesis_path = self.cfg.dir.join("genesis.json");
             let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
             let chain_id = genesis_chain_id(&genesis)?;
             let parameters =
                 outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)?;
-            let (_, day) = schedule_public_measurement_day(
-                &mut genesis,
-                chain_id,
-                parameters.metadosis_forming_period_seconds,
-                PUBLIC_OFFERING_AFTER_GENESIS_SECS
-                    .max(parameters.metadosis_offering_period_seconds),
-            )?;
+            let (_, day) = if native {
+                schedule_native_measurement_day(&mut genesis, chain_id, &parameters)?
+            } else {
+                schedule_public_measurement_day(
+                    &mut genesis,
+                    chain_id,
+                    parameters.metadosis_forming_period_seconds,
+                    PUBLIC_OFFERING_AFTER_GENESIS_SECS
+                        .max(parameters.metadosis_offering_period_seconds),
+                )?
+            };
             let worldwide_day = day.worldwide_day;
             let oracle_key = {
                 let alloc = genesis
@@ -203,6 +253,28 @@ impl Localnet {
 }
 
 const PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 600;
+
+fn native_start_options(
+    genesis_timestamp: u64,
+    host_timestamp: u64,
+    voting_window: u64,
+) -> Result<StartOpts> {
+    let offset = i64::try_from(i128::from(genesis_timestamp) - i128::from(host_timestamp))
+        .wrap_err("native fixture clock offset leaves i64 range")?;
+    let mut opts = StartOpts::with_voting_window(voting_window);
+    opts.unix_time_offset_secs = Some(offset);
+    opts.genesis_timestamp_pre_shifted = true;
+    Ok(opts)
+}
+
+fn read_genesis_timestamp(genesis: &serde_json::Value) -> Result<u64> {
+    genesis
+        .get("timestamp")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre!("generated genesis has no timestamp"))
+        .and_then(|encoded| u64::try_from(parse_hex_word(encoded)?).map_err(Into::into))
+}
+
 fn genesis_chain_id(genesis: &serde_json::Value) -> Result<u64> {
     let value = genesis
         .get("config")
@@ -238,11 +310,27 @@ fn schedule_public_measurement_day(
         forming_period_seconds,
         offering_after_genesis_secs,
     )?;
+    install_measurement_day(genesis, chain_id, day)
+}
 
+fn schedule_native_measurement_day(
+    genesis: &mut serde_json::Value,
+    chain_id: u64,
+    parameters: &outbe_chain_constants::GenesisProtocolParametersV1,
+) -> Result<(bool, MeasurementDay)> {
+    let day = MeasurementDay::native(read_genesis_timestamp(genesis)?, parameters)?;
+    install_measurement_day(genesis, chain_id, day)
+}
+
+fn install_measurement_day(
+    genesis: &mut serde_json::Value,
+    chain_id: u64,
+    day: MeasurementDay,
+) -> Result<(bool, MeasurementDay)> {
     let mut provider = HashMapStorageProvider::new(chain_id);
     let account_keys = load_measurement_accounts(genesis, &mut provider)?;
     provider.set_block_number(1);
-    provider.set_timestamp(U256::from(genesis_timestamp));
+    provider.set_timestamp(U256::from(day.genesis_timestamp));
     provider.enable_metadosis_mutation_frames(
         outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
         1,
@@ -254,12 +342,13 @@ fn schedule_public_measurement_day(
     Ok((changed, day))
 }
 
-/// The public measurement WorldwideDay, offering from genesis until its end.
+/// The public measurement WorldwideDay and its execution genesis timestamp.
 struct MeasurementDay {
     worldwide_day: WorldwideDay,
     forming_start: u64,
     forming_end: u64,
     genesis_timestamp: u64,
+    offering_start: u64,
     offering_end: u64,
 }
 
@@ -304,8 +393,59 @@ impl MeasurementDay {
             forming_start,
             forming_end,
             genesis_timestamp,
+            offering_start: genesis_timestamp,
             offering_end,
         })
+    }
+
+    fn native(
+        genesis_timestamp: u64,
+        parameters: &outbe_chain_constants::GenesisProtocolParametersV1,
+    ) -> Result<Self> {
+        eyre::ensure!(
+            genesis_timestamp % SECONDS_PER_DAY == 300,
+            "native fixture genesis must be at 00:05 UTC"
+        );
+        let last_closed_day = outbe_nod::openings::entry_price_day(genesis_timestamp)
+            .map_err(|error| eyre!("native fixture closed price day: {error}"))?;
+        let mut worldwide_day = WorldwideDay::new(outbe_primitives::time::timestamp_to_date_key(
+            genesis_timestamp,
+        ))
+        .previous_date_key()
+        .map_err(|error| eyre!("native fixture date: {error}"))?;
+        loop {
+            let forming_start = worldwide_day
+                .start_timestamp()
+                .map_err(|error| eyre!("native fixture date: {error}"))?;
+            let forming_end = forming_start
+                .checked_add(parameters.metadosis_forming_period_seconds)
+                .ok_or_else(|| eyre!("native fixture forming end overflow"))?;
+            let offering_start = forming_end
+                .checked_add(parameters.metadosis_lookback_delay_seconds)
+                .ok_or_else(|| eyre!("native fixture Offering start overflow"))?;
+            let offering_end = offering_start
+                .checked_add(parameters.metadosis_offering_period_seconds)
+                .ok_or_else(|| eyre!("native fixture Offering end overflow"))?;
+            eyre::ensure!(
+                offering_end > genesis_timestamp,
+                "native fixture has no active canonical Offering"
+            );
+            let price_day = outbe_nod::openings::entry_price_day(offering_end)
+                .map_err(|error| eyre!("native fixture entry price day: {error}"))?;
+            if offering_start <= genesis_timestamp && price_day <= last_closed_day {
+                return Ok(Self {
+                    worldwide_day,
+                    forming_start,
+                    forming_end,
+                    genesis_timestamp,
+                    offering_start,
+                    offering_end,
+                });
+            }
+            worldwide_day = worldwide_day
+                .previous_date_key()
+                .map_err(|error| eyre!("native fixture date: {error}"))?;
+        }
     }
 }
 
@@ -402,7 +542,7 @@ fn seed_public_measurement_day(
             day: outbe_primitives::time::timestamp_to_date_key(day.offering_end),
             forming_start: day.forming_start,
             forming_end: day.forming_end,
-            offerings_start: day.genesis_timestamp,
+            offerings_start: day.offering_start,
             offering_end: day.offering_end,
         })
         .apply(storage)?;
@@ -472,7 +612,7 @@ fn seed_native_lysis_fixture(
     let record = outbe_metadosis::EmissionDay {
         day: projection.day,
         wwd: worldwide_day,
-        metadosis_start: projection.offering_end,
+        metadosis_start: outbe_emission::api::compute_metadosis_start(projection.day)?,
         state: outbe_emission::schema::emission_day_state::PROCESSING,
         metadosis_state: outbe_metadosis::emission_day_state::NONE,
         emission_limit: metadosis_limit,
@@ -697,182 +837,4 @@ pub(super) fn fund_capacity_tribute_accounts(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn synthetic_measurement_day_precedes_cycle_utc_day_at_date_boundaries() {
-        for (utc_day, seconds, forming, expected) in [
-            (20260101, 0, 180_000, 20251230),
-            (20261017, 35_999, 180_000, 20261015),
-            (20261017, 36_000, 180_000, 20261015),
-            (20261017, 43_199, 180_000, 20261015),
-            (20261017, 43_200, 180_000, 20261016),
-            (20261017, 86_399, 180_000, 20261016),
-            (20260301, 0, 180_000, 20260227),
-            (20240301, 36_000, 180_000, 20240228),
-            (20240301, 43_200, 180_000, 20240229),
-            (20260101, 0, 60, 20251231),
-            (20240301, 36_000, 60, 20240229),
-        ] {
-            let execution_day = WorldwideDay::new(utc_day);
-            let timestamp = execution_day.to_timestamp_utc().unwrap() + seconds;
-            let day = MeasurementDay::new(timestamp, forming, 600).unwrap();
-            assert_eq!(day.worldwide_day.value(), expected);
-            assert!(day.worldwide_day < execution_day);
-            assert_eq!(
-                day.forming_start,
-                day.worldwide_day.start_timestamp().unwrap()
-            );
-            assert_eq!(day.forming_end - day.forming_start, forming);
-            assert!(day.forming_end <= timestamp);
-            assert_eq!(day.genesis_timestamp, timestamp);
-            assert_eq!(day.offering_end, timestamp + 600);
-        }
-        let parameters = outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(
-            &serde_json::json!({"config": {"outbeProtocol": {
-                "schemaVersion": 1,
-                "metadosis": {"lookbackDelaySeconds": 79_200}
-            }}}),
-        )
-        .unwrap();
-        let timestamp = WorldwideDay::new(20260101).to_timestamp_utc().unwrap();
-        let day = MeasurementDay::new(timestamp, parameters.metadosis_forming_period_seconds, 600)
-            .unwrap();
-        assert_eq!(day.worldwide_day.value(), 20251230);
-        assert_eq!(day.forming_end - day.forming_start, 180_000);
-    }
-
-    #[test]
-    fn native_lysis_fixture_roundtrip_has_canonical_window_and_linked_allocation() {
-        use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-
-        const CHAIN_ID: u64 = 54_322_345;
-        const TIMESTAMP: u64 = 1_792_926_350;
-        let mut genesis = serde_json::json!({
-            "config": {"chainId": CHAIN_ID},
-            "timestamp": format!("0x{TIMESTAMP:x}"),
-            "alloc": {}
-        });
-        for address in [
-            EMISSION_ADDRESS,
-            METADOSIS_ADDRESS,
-            ORACLE_ADDRESS,
-            TRIBUTE_ADDRESS,
-            TRIBUTE_FACTORY_ADDRESS,
-        ] {
-            genesis["alloc"][format!("{address:#x}")] =
-                serde_json::json!({"storage": {}, "balance": "0x0"});
-        }
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let keys = load_measurement_accounts(&genesis, &mut provider).unwrap();
-        StorageHandle::enter(&mut provider, |storage| -> PrecompileResult<()> {
-            for iso in [840, 978] {
-                outbe_oracle::api::register_pair(
-                    storage.clone(),
-                    outbe_oracle::types::AddressPair::new_coen_to(iso),
-                )?;
-            }
-            outbe_oracle::api::set_exchange_rate(
-                storage,
-                Address::ZERO,
-                outbe_oracle::api::DAY_TYPE_PAIR,
-                outbe_oracle::api::RateObservation {
-                    rate: U256::from(1_000_000),
-                    block_number: 0,
-                    timestamp: TIMESTAMP,
-                },
-            )
-        })
-        .unwrap();
-        write_measurement_accounts(&mut genesis, &provider, keys).unwrap();
-        let parameters =
-            outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis).unwrap();
-        let (_, day) = schedule_public_measurement_day(
-            &mut genesis,
-            CHAIN_ID,
-            parameters.metadosis_forming_period_seconds,
-            3_600,
-        )
-        .unwrap();
-        assert_eq!(day.worldwide_day.value(), 20261023);
-        assert_eq!(day.forming_start, 1_792_663_200);
-        assert_eq!(day.forming_end, 1_792_843_200);
-
-        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-        let keys = load_measurement_accounts(&genesis, &mut provider).unwrap();
-        provider.set_block_number(1);
-        provider.set_timestamp(U256::from(TIMESTAMP));
-        provider.enable_metadosis_mutation_frames(
-            outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
-            1,
-        );
-        StorageHandle::enter(&mut provider, |storage| -> Result<()> {
-            eyre::ensure!(
-                outbe_metadosis::api::emission_day(storage.clone(), 20261025)?.is_none(),
-                "ordinary Tribute fixture must stay unallocated"
-            );
-            seed_native_lysis_fixture(
-                storage,
-                day.worldwide_day,
-                TIMESTAMP,
-                &[(840, U256::from(1_000_000)), (978, U256::from(250_000))],
-            )
-        })
-        .unwrap();
-        write_measurement_accounts(&mut genesis, &provider, keys).unwrap();
-
-        let expected = outbe_metadosis::EmissionDayProjection {
-            day: 20261025,
-            emission_limit_minor: U256::from(225_485_783_040_000_u64),
-            wwd: WorldwideDay::new(20261023),
-            metadosis_start: 1_792_929_950,
-            state: outbe_metadosis::emission_day_state::NONE,
-        };
-        for timestamp in [TIMESTAMP, day.offering_end] {
-            let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-            load_measurement_accounts(&genesis, &mut provider).unwrap();
-            provider.set_block_number(1);
-            provider.set_timestamp(U256::from(timestamp));
-            provider.enable_metadosis_mutation_frames(
-                outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
-                1,
-            );
-            StorageHandle::enter(&mut provider, |storage| {
-                assert_eq!(
-                    outbe_metadosis::api::emission_day(storage.clone(), 20261025).unwrap(),
-                    Some(expected)
-                );
-                let context = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
-                    storage.clone(),
-                );
-                outbe_metadosis::commands::advance_active_worldwide_days(&context).unwrap();
-                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-                assert_eq!(
-                    oracle
-                        .worldwide_day_vwap_start
-                        .read(&day.worldwide_day)
-                        .unwrap(),
-                    1_792_663_200
-                );
-                assert_eq!(
-                    oracle
-                        .worldwide_day_vwap_end
-                        .read(&day.worldwide_day)
-                        .unwrap(),
-                    1_792_843_200
-                );
-                assert_eq!(
-                    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), 20261024, 840)
-                        .unwrap(),
-                    Some(U256::from(1_000_000))
-                );
-                assert_eq!(
-                    outbe_metadosis::api::emission_day(storage, 20261025).unwrap(),
-                    Some(expected)
-                );
-            });
-        }
-    }
-}
+mod tests;

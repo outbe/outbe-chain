@@ -2,7 +2,7 @@
 
 use crate::precompile::IHyperlaneController;
 use alloy_primitives::Bytes;
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -88,6 +88,12 @@ pub enum HyperlaneControllerError {
 
     #[error("domain {domain} already has the ICA router {enrolled}")]
     RemoteRouterMismatch { domain: u32, enrolled: B256 },
+
+    #[error("no approved action for proposal {proposal_id}")]
+    UnknownApprovedAction { proposal_id: U256 },
+
+    #[error("payload does not match the approved action of proposal {proposal_id}")]
+    ApprovedPayloadMismatch { proposal_id: U256 },
 }
 
 impl From<HyperlaneControllerError> for PrecompileError {
@@ -220,6 +226,22 @@ impl From<HyperlaneControllerError> for PrecompileError {
             HyperlaneControllerError::RemoteRouterMismatch { domain, enrolled } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     IHyperlaneController::RemoteRouterMismatch { domain, enrolled }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::UnknownApprovedAction { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::UnknownApprovedAction {
+                        proposalId: proposal_id,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::ApprovedPayloadMismatch { proposal_id } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::ApprovedPayloadMismatch {
+                        proposalId: proposal_id,
+                    }
+                    .abi_encode(),
                 ))
             }
         }

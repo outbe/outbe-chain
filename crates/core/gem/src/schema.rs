@@ -338,8 +338,6 @@ pub struct GemContract {
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 54)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
-    #[attribute(order = 55)]
-    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 56)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 

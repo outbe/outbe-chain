@@ -14,7 +14,9 @@ use outbe_primitives::time::SECONDS_PER_DAY_U32;
 use crate::features::entity_lifecycle::chain::{
     assert_single_event, finalized_checkpoint, head_time, poll_until,
 };
-use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
+use crate::features::entity_lifecycle::phases::{
+    backdated_timestamp, seed_closed_days, CALL_WINDOW_SEED_DAYS,
+};
 use crate::features::settlement::assert_receipt_event;
 use crate::internal::{addresses, eth};
 use crate::world::credis::{
@@ -55,12 +57,11 @@ fn rate_above_call_price(world: &mut World) {
         DEPLOYER_KEY,
         &ICredisFactoryTestArming::backdateCredisForTestCall {
             credisId: f.credis_id,
-            issuedAt: head_time(world) - (u64::from(CALL_WINDOW_SEED_DAYS) + 1) * DAY,
+            issuedAt: backdated_timestamp(world, (u64::from(CALL_WINDOW_SEED_DAYS) + 1) * DAY),
         },
         None,
     );
-    test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD, CALL_WINDOW_SEED_DAYS, BREACH_RATE)
-        .expect("seed the breaching closed days");
+    seed_closed_days(world, CALL_WINDOW_SEED_DAYS, BREACH_RATE);
     test_issuance::rescan_closed_day(&url, DEPLOYER_KEY, CREDIS_FACTORY_ADDRESS)
         .expect("arm the Credis call pass after seeding prices");
 }
@@ -268,7 +269,7 @@ fn sweep_reaches(world: &mut World) {
         DEPLOYER_KEY,
         &ICredisFactoryTestArming::closeCallNoticeForTestCall {
             credisId: credis_id,
-            deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+            deadline: backdated_timestamp(world, EXPIRY_DAY_SECS),
         },
         None,
     );

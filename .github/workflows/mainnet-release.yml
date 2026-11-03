@@ -1,4 +1,4 @@
-name: mainnet SGX release
+name: 21. mainnet SGX
 
 on:
   # Pushing an immutable mainnet tag triggers this release, but indirectly: the

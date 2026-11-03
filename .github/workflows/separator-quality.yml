@@ -1,0 +1,13 @@
+name: 11. _____ Quality & Security _____
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  separator:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

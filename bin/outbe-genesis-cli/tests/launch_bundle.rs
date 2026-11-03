@@ -1,6 +1,5 @@
 //! Launch bundle rendering, systemd units, Caddyfile, feeder configs, and `.tgz` archive tests.
 
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -203,25 +202,42 @@ fn feeder_pairs_and_config_templates() {
 fn distribution_archives_and_signed_enclave_staging() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let signed_dir = tmp.path().join("signed");
-    fs::create_dir_all(&signed_dir).expect("mkdir signed");
+    let signed_sgx = signed_dir.join("rootfs/opt/outbe/sgx");
+    fs::create_dir_all(&signed_sgx).expect("mkdir signed");
     for &name in SIGNED_ENCLAVE_FILES {
-        fs::write(signed_dir.join(name), b"x").expect("write enclave file");
+        let path = signed_sgx.join(name);
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir enclave parent");
+        fs::write(path, b"x").expect("write enclave file");
     }
-    fs::write(signed_dir.join("enclave-key.pem"), b"PRIVATE").expect("write pem");
+    let runtime_file = signed_sgx.join("gramine/runtime/glibc/libc.so.6");
+    fs::create_dir_all(runtime_file.parent().expect("runtime parent")).expect("mkdir runtime");
+    fs::write(&runtime_file, b"runtime").expect("write runtime file");
+    fs::write(signed_sgx.join("enclave-key.pem"), b"PRIVATE").expect("write pem");
 
     let (_, output_dir) = render_fixture(
         tmp.path(),
         Some(json!({"signed_enclave_dir": signed_dir.display().to_string()})),
     );
 
-    let staged: BTreeSet<String> = fs::read_dir(output_dir.join("enclave"))
-        .expect("read enclave dir")
-        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
-        .collect();
-    let expected_staged: BTreeSet<String> =
-        SIGNED_ENCLAVE_FILES.iter().map(|&s| s.to_owned()).collect();
-    assert_eq!(staged, expected_staged);
-    assert!(!staged.contains("enclave-key.pem"));
+    let staged = output_dir.join("sgx");
+    for &name in SIGNED_ENCLAVE_FILES {
+        assert!(staged.join(name).is_file(), "missing staged {name}");
+    }
+    assert_eq!(
+        fs::read(staged.join("gramine/runtime/glibc/libc.so.6")).expect("read runtime"),
+        b"runtime"
+    );
+    assert!(!staged.join("enclave-key.pem").exists());
+
+    let enclave_script =
+        fs::read_to_string(output_dir.join("validator-0/run-enclave.sh")).expect("enclave");
+    assert!(enclave_script.contains("sgx/bin/outbe-tee-enclave-launch"));
+    assert!(enclave_script.contains("--tee-dir /var/lib/outbe/tee"));
+    assert!(!enclave_script.contains("gramine-sgx outbe-tee-enclave"));
+    let preflight =
+        fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
+    assert!(preflight.contains("sgx/outbe-tee-enclave.manifest.sgx"));
+    assert!(preflight.contains("sgx/outbe-tee-enclave.sig"));
 
     let dist = output_dir.join("dist");
     assert!(dist.join("SHA256SUMS").is_file());
@@ -262,6 +278,8 @@ fn distribution_archives_and_signed_enclave_staging() {
             );
         }
         assert!(joined.contains(&format!("keys/validator-{index}")));
+        assert!(joined.contains("sgx/bin/outbe-tee-enclave-launch"));
+        assert!(joined.contains("sgx/gramine/runtime/glibc/libc.so.6"));
         for other in 0..4 {
             if other != index {
                 assert!(!joined.contains(&format!("keys/validator-{other}")));
@@ -308,6 +326,9 @@ fn caddy_systemd_units_tee_renewal_and_enclave_modes() {
         } else {
             assert!(unit.contains("Wants=network-online.target"));
             assert!(unit.contains("User=root"));
+            assert!(unit.contains("BindReadOnlyPaths=-"));
+            assert!(unit.contains("/sgx:/opt/outbe/sgx"));
+            assert!(unit.contains("/tee:/var/lib/outbe/tee"));
         }
     }
 

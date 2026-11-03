@@ -57,7 +57,6 @@ fn reopen_day(storage: &StorageHandle<'_>, deadline: u64) -> Result<()> {
     intex
         .call_latest_day
         .write(intex.call_latest_day.read()?.max(day))?;
-    intex.daily_genesis_day.write(day)?;
     intex.daily_phase.write(0)?;
     for currency in outbe_oracle::api::REFERENCE_CURRENCIES {
         intex.call_bin_cursor.clear(&currency)?;

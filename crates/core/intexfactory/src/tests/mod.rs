@@ -16,52 +16,26 @@ mod called {
     use super::*;
     pub(crate) use crate::called::{call_if_breached, GroupCall};
 
-    fn prepare(ctx: &BlockRuntimeContext) {
-        if IntexContract::new(ctx.storage.clone())
-            .daily_genesis_day
-            .read()
-            .unwrap()
-            == 0
-        {
-            // These call-index fixtures begin with yesterday, not with history before the fixture.
-            let genesis = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
-                ctx.storage.clone(),
-            );
-            crate::called::initialize_daily(&genesis).unwrap();
-        }
-    }
-
     pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
-        prepare(ctx);
         crate::called::scan_and_call(ctx)
     }
 
     pub(super) fn process_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<u32> {
-        prepare(ctx);
         crate::called::process_call_pass(ctx)
     }
 
     pub(super) fn schedule_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<()> {
-        prepare(ctx);
         crate::called::schedule_call_pass(ctx)
     }
 
-    /// Starts the pass and finalizes the Oracle through the UTC day before `ctx`.
+    /// Finalizes the Oracle through the UTC day before `ctx`.
     pub(super) fn prepare_daily_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<()> {
-        let intex = IntexContract::new(ctx.storage.clone());
-        if intex.daily_genesis_day.read()? == 0 {
-            crate::called::initialize_daily(&BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(0, ctx.block.timestamp - DAY, CHAIN_ID),
-                ctx.storage.clone(),
-            ))?;
-        }
         let closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
         let oracle = OracleContract::new(ctx.storage.clone());
@@ -89,7 +63,10 @@ mod called {
                 }
             }
             let block = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
+                BlockContext {
+                    block_number: height,
+                    ..ctx.block.clone()
+                },
                 ctx.storage.clone(),
             );
             crate::called::process_call_pass(&block)?;
@@ -134,7 +111,10 @@ const TRANSIT_MARGIN: u32 = 3_600;
 
 fn at_height<'s>(ctx: &BlockRuntimeContext<'s>, height: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, ctx.block.timestamp, CHAIN_ID),
+        BlockContext {
+            block_number: height,
+            ..ctx.block.clone()
+        },
         ctx.storage.clone(),
     )
 }

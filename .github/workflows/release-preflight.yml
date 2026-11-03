@@ -1,4 +1,4 @@
-name: release preflight
+name: 17. preflight
 
 on:
   workflow_dispatch:

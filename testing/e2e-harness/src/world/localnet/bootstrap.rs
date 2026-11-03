@@ -39,7 +39,6 @@ const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 =
     outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS;
-const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
@@ -53,6 +52,25 @@ mod tribute;
 pub use profile::BootstrapProfile;
 
 impl Localnet {
+    /// Called after Offering/Lysis fixture preparation and before manifest binding.
+    /// Only the header changes: protocol genesisTime and seeded allocations stay intact.
+    pub(crate) fn prepare_lifecycle_history(&self, seed_days: u32) -> Result<u64> {
+        let path = self.cfg.dir.join("genesis.json");
+        let genesis: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+        eyre::ensure!(
+            genesis.pointer("/config/teeAttestationV1").is_none(),
+            "historical lifecycle header must precede TEE manifest binding"
+        );
+        let original = genesis
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("genesis timestamp is not a string"))?;
+        let original = u64::from_str_radix(original.trim_start_matches("0x"), 16)?;
+        let offset = (i64::from(seed_days) + 2) * i64::try_from(SECONDS_PER_DAY)?;
+        self.shift_genesis_timestamp(-offset)?;
+        Ok(original)
+    }
+
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
     /// Without this, the testnet max-drift validator correctly rejects block 1
@@ -116,7 +134,12 @@ impl Localnet {
         self.write_genesis(profile)?;
 
         // Step 2b: seed precompile storage (validator set/staking/etc.).
-        self.seed_genesis(&worldwide_day(), profile)?;
+        let seed_day = profile
+            .genesis_timestamp
+            .map_or_else(worldwide_day, |timestamp| {
+                outbe_primitives::time::timestamp_to_date_key(timestamp.get()).to_string()
+            });
+        self.seed_genesis(&seed_day, profile)?;
 
         // Step 2c: dev felony thresholds for observable localnet slashing.
         self.patch_felony(profile)?;
@@ -244,12 +267,20 @@ impl Localnet {
             alloc.insert(key, json!({ "balance": validator_balance.clone() }));
         }
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = profile.genesis_timestamp.map_or_else(
+            || {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            },
+            NonZeroU64::get,
+        );
         // genesisTime is one day in the past so the chain can produce immediately.
-        let genesis_time = OffsetDateTime::from_unix_timestamp((now - SECONDS_PER_DAY) as i64)
+        let origin = now
+            .checked_sub(SECONDS_PER_DAY)
+            .ok_or_else(|| eyre!("genesis timestamp has no one-day economic origin"))?;
+        let genesis_time = OffsetDateTime::from_unix_timestamp(i64::try_from(origin)?)
             .wrap_err("genesis time")?
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
@@ -287,7 +318,6 @@ impl Localnet {
                     },
                     "metadosis": {
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-                        "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                     // A localnet day starts mid-day and runs few hours, so the
                     // production day coverage rule would leave it without a VWAP.
@@ -698,10 +728,21 @@ mod tests {
         env.ports.start_scenario(env.validators).unwrap();
         let mut cfg = crate::internal::config::Config::for_scenario(&env, 1);
         cfg.dir = directory.path().to_owned();
+        cfg.seed = directory.path().join("input-seed.json");
+        fs::write(
+            &cfg.seed,
+            serde_json::to_vec(&json!({"code_registry": {"max_repositories": 8}})).unwrap(),
+        )
+        .unwrap();
         let localnet = Localnet::new(cfg);
         fs::write(
             localnet.cfg.dir.join("validators.json"),
-            r#"[{"address":"0x1111111111111111111111111111111111111111"}]"#,
+            serde_json::to_vec(&json!([{
+                "address": "0x1111111111111111111111111111111111111111",
+                "public_key": format!("0x{}", "11".repeat(48)),
+                "radicle_node_id": format!("0x{}", "22".repeat(32))
+            }]))
+            .unwrap(),
         )
         .unwrap();
         for blocks in [6, 8, 20, 86_400] {
@@ -715,6 +756,39 @@ mod tests {
             let parameters =
                 outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis).unwrap();
             assert_eq!(parameters.governance_voting_window_blocks, blocks);
+        }
+        assert!(BootstrapProfile::default().genesis_timestamp.is_none());
+        let profile = BootstrapProfile::default()
+            .with_genesis_timestamp(1_767_225_900)
+            .unwrap();
+        localnet.write_genesis(&profile).unwrap();
+        localnet.seed_genesis("20260101", &profile).unwrap();
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(localnet.cfg.dir.join("genesis.json")).unwrap())
+                .unwrap();
+        assert_eq!(genesis["timestamp"], format!("0x{:x}", 1_767_225_900_u64));
+        let economic_origin =
+            OffsetDateTime::parse(genesis["config"]["genesisTime"].as_str().unwrap(), &Rfc3339)
+                .unwrap()
+                .unix_timestamp();
+        assert_eq!(economic_origin, 1_767_139_500);
+        let alloc = genesis["alloc"].as_object().unwrap();
+        let validator_set = alloc
+            .iter()
+            .find(|(key, _)| address_has_suffix(key, "ee00"))
+            .unwrap()
+            .1;
+        let epoch = validator_set["storage"][format!("0x{:064x}", 22_u64)]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            u64::from_str_radix(epoch.trim_start_matches("0x"), 16).unwrap(),
+            1_767_139_500
+        );
+        for timestamp in [0, SECONDS_PER_DAY - 1, u64::MAX] {
+            assert!(BootstrapProfile::default()
+                .with_genesis_timestamp(timestamp)
+                .is_err());
         }
         assert!(BootstrapProfile::default()
             .with_governance_voting_window(0)

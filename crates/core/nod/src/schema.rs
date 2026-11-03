@@ -294,8 +294,6 @@ pub struct NodContract {
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 101)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
-    #[attribute(order = 102)]
-    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 103)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 

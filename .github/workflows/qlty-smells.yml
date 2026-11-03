@@ -1,4 +1,4 @@
-name: qlty smells
+name: 13. qlty smells
 
 # Report code smells (complexity, duplication, many parameters, deep nesting)
 # for the files that a pull request changes. The job fails when it finds at

@@ -11,6 +11,7 @@ use crate::{encode_protocol_version, ProtocolVersion};
 use outbe_primitives::error::{PrecompileError, Result};
 use serde_json::Value;
 
+mod contract_upgrade;
 mod events;
 mod handlers;
 mod lifecycle;

@@ -5,15 +5,13 @@ use super::*;
 #[test]
 fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     // Genesis at 10:00 UTC on day D. First CycleTick fires at 00:00:01 UTC
-    // on day D+1. prev_day = D = genesis_utc_day -> day_number = 0 -> Ok.
-    // This scenario failed in production when the node derived genesis_utc_day
-    // from the block 0 timestamp at 10:00 instead of genesisTime.
+    // on day D+1. prev_day = D = start_date -> day_number = 0 -> Ok.
     const DAY_D_MIDNIGHT: u64 = GENESIS_TS; // 2024-01-01 00:00:00
     const DAY_D_10AM: u64 = DAY_D_MIDNIGHT + 10 * 3600; // 10:00 UTC
 
     let mut storage = cycle_storage();
     storage.enter(|handle| {
-        // Block 1 at 10:00 - genesis anchor records genesis_utc_day = day D.
+        // Block 1 at 10:00 - genesis block establishes start_date = day D.
         let ctx_anchor = genesis_block(handle.clone(), DAY_D_10AM);
         run_cycle_lifecycle(&ctx_anchor).unwrap();
         let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
@@ -28,7 +26,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     storage.enter(|handle| {
         let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
         // Block at 00:00:01 UTC day D+1 - CycleTick fires.
-        // prev_day = D = genesis_utc_day -> day_number_since_genesis = 0.
+        // prev_day = D = start_date -> day_number_since_genesis = 0.
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = runtime_context(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
@@ -47,8 +45,9 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
             "the first UTC midnight must retain the canonical genesis WWD"
         );
 
-        let genesis_day = outbe_rewards::runtime::genesis_utc_day(&ctx_fire).unwrap();
-        assert_eq!(genesis_day, 20_240_101, "genesis_utc_day = day D");
+        let genesis_day =
+            outbe_primitives::time::timestamp_to_date_key(ctx_fire.block.genesis_timestamp);
+        assert_eq!(genesis_day, 20_240_101, "start_date = day D");
         assert!(
             is_day_settled(&ctx_fire, genesis_day),
             "CycleTick must settle genesis day (day_number=0)"
@@ -220,8 +219,6 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
                 .unwrap();
         }
         let (oracle, _) = seed_closed_day_prices(&storage, day_start).unwrap();
-        let init = BlockRuntimeContext::new(block_ctx(2, deadline), storage.clone());
-        outbe_nodfactory::called::initialize_daily(&init).unwrap();
         let mut nod = outbe_nod::NodContract::new(storage.clone());
         for (owner, entry, due) in [(0x61, 13, deadline), (0x62, 14, deadline + SECONDS_PER_DAY)] {
             let group = issue_nod(&storage, Address::repeat_byte(owner), entry).unwrap();
@@ -304,10 +301,12 @@ fn seed_closed_day_prices<'s>(
 ) -> outbe_primitives::error::Result<(outbe_oracle::schema::OracleContract<'s>, u32)> {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
-    initialize_daily_passes(&BlockRuntimeContext::new(
-        block_ctx(1, midnight - SECONDS_PER_DAY),
-        storage.clone(),
-    ));
+    // This fixture resumes an established parent whose earlier daily passes completed.
+    let completed =
+        previous_date_key(timestamp_to_date_key(midnight - SECONDS_PER_DAY)).expect("date step");
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)?;
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let index = outbe_oracle::api::register_pair(
         storage.clone(),

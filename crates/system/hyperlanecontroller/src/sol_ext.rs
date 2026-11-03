@@ -1,7 +1,7 @@
 //! Outbound sub-call ABI surfaces.
 //!
 //! The Hyperlane contract interfaces that the controller reads through
-//! `StorageHandle::staticcall`, and the owner precompile (`ICrosschainGov`)
+//! `StorageHandle::staticcall`, and the owner precompile (`ICrosschainBridge`)
 //! that runs its owner calls. This is NOT the precompile's own inbound ABI
 //! (`precompile::IHyperlaneController`).
 
@@ -11,7 +11,7 @@ sol!("../../../contracts/crosschain/src/interfaces/IHyperlaneCore.sol");
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    "../../../contracts/precompiles/src/ICrosschainGov.sol"
+    "../../../contracts/precompiles/src/ICrosschainBridge.sol"
 );
 
 sol! {

@@ -1,4 +1,4 @@
-name: CI toolchain image
+name: 10. toolchain-image
 
 # Builds and publishes the `ci` stage of Dockerfile.project-toolchain - the
 # environment every containerised CI job runs in.

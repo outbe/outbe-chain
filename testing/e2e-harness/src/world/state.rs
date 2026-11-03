@@ -412,6 +412,10 @@ pub struct FixtureState {
         std::collections::BTreeMap<u16, crate::world::settlement_currency::SettlementCurrency>,
     /// The issuance currency a lifecycle scenario prices besides USD, chosen by its tag.
     pub issuance_market: Option<u16>,
+    /// Selected factory lifecycle scenarios need closed days inside chain history.
+    pub historical_factory_lifecycle: bool,
+    /// Original bootstrap header time, retained to prevent a second historical shift.
+    pub lifecycle_catchup_timestamp: Option<u64>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 
     // ---- Consensus resilience scenarios (B8, R7, R11, R13, S14) ----
@@ -461,6 +465,8 @@ impl Default for FixtureState {
 
             currencies: std::collections::BTreeMap::new(),
             issuance_market: None,
+            historical_factory_lifecycle: false,
+            lifecycle_catchup_timestamp: None,
             gem_source_series: None,
             gem_position: None,
             lifecycle_gems: Vec::new(),

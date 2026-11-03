@@ -9,11 +9,9 @@ use super::LogRecords;
 pub(super) fn expected_tee_sidecar_outage_records(
     logs: &[(PathBuf, String)],
     validators: usize,
-    expected_validator: usize,
-    tx_hash: &str,
-    height: u64,
-    block_hash: alloy_primitives::B256,
+    expectation: (usize, &str, u64, alloy_primitives::B256),
 ) -> Result<LogRecords, String> {
+    let (expected_validator, tx_hash, height, block_hash) = expectation;
     if expected_validator >= validators || !tx_hash.starts_with("0x") || tx_hash.len() != 66 {
         return Err("invalid expected TEE sidecar outage identity".into());
     }
@@ -111,7 +109,7 @@ fn sidecar_fail_stop(
         .collect::<Vec<_>>();
     let [index] = fatal.as_slice() else {
         if fatal.is_empty() {
-            return Ok(None);
+            return typed_sidecar_fail_stop(lines, sink, height, block_hash);
         }
         return Err(());
     };
@@ -137,18 +135,22 @@ fn sidecar_fail_stop(
         if line.trim() == "0: executor actor returned fatal error" {
             actor_error = Some(trailer_index);
         }
-        if line.trim() == format!(
-            "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+        if line.trim()
+            == format!(
+                "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
              execution stopped on a node-local dependency failure: \
              tee_sidecar_unavailable: io error: Connection refused (os error 111)"
-        ) {
+            )
+        {
             sidecar_error = Some(trailer_index);
         }
-        if line.trim() == format!(
-            "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+        if line.trim()
+            == format!(
+                "2: failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
              execution stopped on a node-local dependency failure: \
              witness fault during transaction execution"
-        ) {
+            )
+        {
             witness_error = Some(trailer_index);
         }
     }
@@ -163,6 +165,72 @@ fn sidecar_fail_stop(
         proof: legacy_proof.or(witness_proof),
         has_witness_proof,
         requires_witness_proof: legacy_proof.is_none() && witness_proof.is_some(),
+    }))
+}
+
+fn typed_sidecar_fail_stop(
+    lines: &[&str],
+    sink: &str,
+    height: u64,
+    block_hash: alloy_primitives::B256,
+) -> Result<Option<SidecarFailStop>, ()> {
+    const MARKER: &str = "ERROR outbe_consensus::executor::actor::finalization: finalized block failed local execution; finalized state diverged - failing fast";
+    const EXIT: &str = "INFO outbe_chain::launch::shutdown: consensus node exited";
+    let failures = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.contains(MARKER))
+        .collect::<Vec<_>>();
+    let [(index, line)] = failures.as_slice() else {
+        return if failures.is_empty() {
+            Ok(None)
+        } else {
+            Err(())
+        };
+    };
+    let expected = format!(
+        "{MARKER} height={height} digest={block_hash:#x} \
+         error=failed to send finalized block to execution layer at height {height} digest {block_hash:#x}: \
+         execution stopped on a node-local dependency failure: witness fault during transaction execution"
+    );
+    if !exact_runtime_record(line, &expected)
+        || !local_witness_failure_before(lines, *index, height, block_hash)
+    {
+        return Err(());
+    }
+    let start = lines[..*index]
+        .iter()
+        .rposition(|line| process_start_boundary(line))
+        .unwrap_or(0);
+    let end = lines[index + 1..]
+        .iter()
+        .position(|line| process_start_boundary(line))
+        .map_or(lines.len(), |offset| index + 1 + offset);
+    let exits = lines
+        .iter()
+        .enumerate()
+        .take(end)
+        .skip(start)
+        .filter(|(_, line)| exact_runtime_record(line, EXIT))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let [exit] = exits.as_slice() else {
+        return Err(());
+    };
+    if exit <= index {
+        return Err(());
+    }
+    let witness = lines[..*index]
+        .iter()
+        .rposition(|line| {
+            line.contains("CRITICAL: certified finalized block failed enclave witness verification")
+        })
+        .ok_or(())?;
+    Ok(Some(SidecarFailStop {
+        fatal: *index,
+        proof: (sink == "node.log").then_some((witness, *exit)),
+        has_witness_proof: true,
+        requires_witness_proof: true,
     }))
 }
 
@@ -194,13 +262,16 @@ fn local_witness_failure_before(
         "{MARKER} height={height} digest={block_hash:#x} \
          witness_reason=LocalUnavailable reason=witness fault during transaction execution"
     );
-    let Some(prefix) = line.strip_suffix(&expected) else {
+    index < fatal && exact_runtime_record(line, &expected) && proofs.next().is_none()
+}
+
+fn exact_runtime_record(line: &str, expected: &str) -> bool {
+    let Some(prefix) = line.strip_suffix(expected) else {
         return false;
     };
     let timestamp = prefix.trim_end();
-    let exact_prefix = timestamp.is_empty()
+    timestamp.is_empty()
         || (timestamp.contains('T')
             && timestamp.contains(':')
-            && !timestamp.bytes().any(|byte| byte.is_ascii_whitespace()));
-    index < fatal && exact_prefix && proofs.next().is_none()
+            && !timestamp.bytes().any(|byte| byte.is_ascii_whitespace()))
 }
