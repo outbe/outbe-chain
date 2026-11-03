@@ -62,15 +62,10 @@ pub enum RewardsError {
     #[error("Rewards precompile exposes no callable methods")]
     NoCallableMethods,
     #[error(
-        "Rewards.genesis_utc_day not initialized - \
-         RewardsLifecycle::begin_block did not run on block 0"
-    )]
-    GenesisUtcDayNotInitialized,
-    #[error(
         "finalized block predates genesis: utc_day={utc_day}, \
-         genesis_utc_day={genesis_utc_day}"
+         start_date={start_date}"
     )]
-    FinalizedBlockPredatesGenesis { utc_day: u32, genesis_utc_day: u32 },
+    FinalizedBlockPredatesGenesis { utc_day: u32, start_date: u32 },
     #[error("time helper error: {0}")]
     TimeHelper(String),
     #[error("date key {date_key} is before 20200101")]
@@ -90,15 +85,21 @@ pub enum RewardsError {
     },
 }
 
+impl RewardsError {
+    pub(crate) fn map_time_err(err: TimeError) -> PrecompileError {
+        Self::from(err).into()
+    }
+}
+
 impl From<TimeError> for RewardsError {
     fn from(err: TimeError) -> Self {
         match err {
             TimeError::PreGenesis {
                 utc_day,
-                genesis_utc_day,
+                start_date,
             } => Self::FinalizedBlockPredatesGenesis {
                 utc_day,
-                genesis_utc_day,
+                start_date,
             },
             TimeError::DateBeforeMinimum { date_key } => Self::DateBeforeMinimum { date_key },
             TimeError::DateOverflow { date_key } => Self::DateOverflow { date_key },

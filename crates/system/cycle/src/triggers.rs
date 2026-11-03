@@ -164,6 +164,9 @@ macro_rules! const_spec {
     };
 }
 
+/// Hourly cadence of the canonical protocol cycle.
+pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
+
 /// Active trigger table in permanent numeric-id order.
 /// The dispatcher walks this array in order inside one block.
 /// A handler revert records the slot and continues the walk.
@@ -172,9 +175,7 @@ macro_rules! const_spec {
 /// and does not run.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
-pub const fn active_triggers(
-    metadosis_advance_interval_seconds: u64,
-) -> core::result::Result<[TriggerSpec; 8], CycleError> {
+pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
@@ -186,7 +187,7 @@ pub const fn active_triggers(
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::ProtocolCycle.as_u32(),
                 "protocol_cycle",
-                metadosis_advance_interval_seconds,
+                PROTOCOL_CYCLE_PERIOD_SECONDS,
                 0,
                 TriggerHandler::ProtocolCycle,
             ));
@@ -312,11 +313,10 @@ pub const fn active_triggers(
     ])
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
-    match active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS) {
-        Ok(specs) => specs,
-        Err(_) => panic!("default metadosis interval is nonzero"),
-    };
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] = match active_triggers() {
+    Ok(specs) => specs,
+    Err(_) => panic!("protocol cycle period is nonzero"),
+};
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
 /// Returns the next slot strictly greater than `last_executed_at`.
@@ -387,12 +387,12 @@ mod protocol_parameter_tests {
     use outbe_primitives::time::SECONDS_PER_DAY;
 
     #[test]
-    fn protocol_cycle_uses_the_genesis_interval() {
+    fn protocol_cycle_uses_the_hourly_interval() {
         // The call sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
         assert_eq!(CALL_SWEEP_PERIOD_SECONDS, SECONDS_PER_DAY);
-        let configured = active_triggers(10).expect("interval 10");
-        assert_eq!(configured[0].period_seconds(), 10);
+        let configured = active_triggers().expect("default triggers");
+        assert_eq!(configured[0].period_seconds(), 3_600);
         assert_eq!(configured[0].start_offset_seconds, 0);
         assert_eq!(configured[1].period_seconds(), SECONDS_PER_DAY);
         assert_eq!(configured[2].period_seconds(), 3_600);
@@ -425,11 +425,5 @@ mod protocol_parameter_tests {
             configured[7].handler,
             TriggerHandler::IntexDrainParked
         ));
-
-        let defaults =
-            active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS)
-                .expect("default interval");
-        assert_eq!(defaults[0].period_seconds(), 3_600);
-        assert_eq!(defaults[0].start_offset_seconds, 0);
     }
 }

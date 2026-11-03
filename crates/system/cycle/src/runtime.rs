@@ -28,8 +28,7 @@ use crate::ICycle;
 /// fires ProtocolCycle only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
 pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
-    let triggers =
-        active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds())?;
+    let triggers = active_triggers()?;
     // Ids are 0..=6 and 8. Id 7 is unused.
     let mut failed = [false; 9];
 

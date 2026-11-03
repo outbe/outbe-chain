@@ -919,17 +919,12 @@ pub(in crate::executor) fn post_state_root(state: &revm::database::BundleState) 
     state_root_prehashed(accounts)
 }
 
-/// Establish the genesis reward anchor and UTC boundary baseline for cycle-tick tests.
+/// Establish the UTC boundary baseline for cycle-tick tests.
 pub(super) fn seed_cycle_tick_genesis(
     storage: StorageHandle<'_>,
     genesis_ts: u64,
-    proposer: Address,
+    _proposer: Address,
 ) -> outbe_primitives::error::Result<()> {
-    let genesis_ctx = BlockRuntimeContext::new(
-        BlockContext::new(0, genesis_ts, CHAIN_ID, proposer, vec![proposer]),
-        storage.clone(),
-    );
-    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
     let cycle = outbe_cycle::schema::Cycle::new(storage);
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;

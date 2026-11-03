@@ -128,15 +128,14 @@ pub fn seed_tribute_day_totals(storage: &mut StorageBuilder, days: &[u32]) {
     }
 }
 
-/// Seed TributeFactory worldwide-day records (slot 1), `active_wwd` set (slots 2..3),
-/// and `pipeline_wwd` set (slots 4..5).
+/// Seed TributeFactory worldwide-day records (slot 1) and the `pipeline_wwd`
+/// set (slots 2..3). Every seeded day is unsealed.
 pub fn seed_tribute_worldwide_days(
     storage: &mut StorageBuilder,
     wwds: &[Value],
 ) -> Result<(), GenesisError> {
     const WWD_BASE: u64 = 1;
-    const ACTIVE_WWD_BASE: u64 = 2;
-    const PIPELINE_WWD_BASE: u64 = 4;
+    const PIPELINE_WWD_BASE: u64 = 2;
 
     for (idx, entry) in wwds.iter().enumerate() {
         let wwd = entry
@@ -160,20 +159,15 @@ pub fn seed_tribute_worldwide_days(
             .map(parse_u64)
             .transpose()?
             .unwrap_or(0);
-        let state = 1u8;
 
         let packed_word = U256::from(day)
             | (U256::from(offerings_start) << 32)
-            | (U256::from(offering_end) << 96)
-            | (U256::from(state) << 160);
+            | (U256::from(offering_end) << 96);
         storage.set_mapping(WWD_BASE, &wwd_key, packed_word);
 
-        storage.set_slot(data_slot(ACTIVE_WWD_BASE) + U256::from(idx), wwd);
-        storage.set_mapping(ACTIVE_WWD_BASE + 1, &wwd_key, idx + 1);
         storage.set_slot(data_slot(PIPELINE_WWD_BASE) + U256::from(idx), wwd);
         storage.set_mapping(PIPELINE_WWD_BASE + 1, &wwd_key, idx + 1);
     }
-    storage.set_slot(ACTIVE_WWD_BASE, wwds.len());
     storage.set_slot(PIPELINE_WWD_BASE, wwds.len());
     Ok(())
 }

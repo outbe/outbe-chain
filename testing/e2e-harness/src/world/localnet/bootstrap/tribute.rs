@@ -847,7 +847,8 @@ mod tests {
                     BlockContext::empty_for_tests(1, timestamp, CHAIN_ID),
                     storage.clone(),
                 );
-                outbe_metadosis::commands::advance_active_worldwide_days(&context).unwrap();
+                outbe_tributefactory::worldwideday::advance_worldwide_days_command(&context)
+                    .unwrap();
                 let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 assert_eq!(
                     oracle
