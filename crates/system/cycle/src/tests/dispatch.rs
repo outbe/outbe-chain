@@ -8,15 +8,15 @@ use outbe_primitives::error::PrecompileError;
 use super::*;
 
 #[test]
-fn cycle_lifecycle_begin_block_runs_dispatcher() {
+fn cycle_tick_runs_dispatcher() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let block_ts = GENESIS_TS + 60;
         let ctx = genesis_block(handle, block_ts);
 
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
 
-        // Same as `first_encounter_anchors_without_firing`: begin_block
+        // Same as `first_encounter_anchors_without_firing`: handle_cycle_tick
         // delegates to dispatch_triggers.
         assert_eq!(last_executed_at(&ctx), block_ts);
     });
@@ -241,7 +241,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
             },
         )
         .unwrap();
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
         let (failed, returned) =
@@ -253,7 +253,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         );
 
         let ctx = runtime_context(block_ctx(3, ANCHOR_TS + 20), handle.clone());
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
         assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
         let settled = outbe_emission::api::get_emission_day_record(handle.clone(), day.value())
             .unwrap()
@@ -269,7 +269,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
             recipients as u32
         );
         let ctx = runtime_context(block_ctx(4, ANCHOR_TS + 30), handle.clone());
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
         assert_eq!(agent_reward.waa_address_count.read(&day).unwrap(), 0);
         assert_eq!(
             last_executed_at(&ctx),

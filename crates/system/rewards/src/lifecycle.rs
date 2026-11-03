@@ -7,7 +7,7 @@
 //!
 //! Day-boundary settle moved out of Rewards as part of the Cycle
 //! refactor. The daily orchestration runs on
-//! `CycleLifecycle::begin_block` and dispatches into EmissionLimit ->
+//! `outbe_cycle::runtime::handle_cycle_tick` and dispatches into EmissionLimit ->
 //! AgentReward exactly once per UTC day.
 
 use outbe_primitives::{block::BlockLifecycle, block::BlockRuntimeContext, error::Result};

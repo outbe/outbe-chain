@@ -37,7 +37,7 @@ pub(crate) use finalization::run_finalization_and_slashing;
 pub(crate) use late_credits::authenticate_late_credit;
 pub(crate) use late_credits::run_late_finalize_credits;
 
-use cycle::run_cycle_tick_at_activation;
+use cycle::run_cycle_tick;
 pub(crate) use cycle::{run_hook_events, run_hyperlane_liveness_window, run_oracle_slash_window};
 
 pub(crate) use boundary::run_boundary_outcome;
@@ -139,7 +139,7 @@ fn dispatch_inner(
         }
         SystemTx::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick_at_activation(&ctx, 1)?;
+            run_cycle_tick(&ctx, 1)?;
         }
         SystemTx::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;

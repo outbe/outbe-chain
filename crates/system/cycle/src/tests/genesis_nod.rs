@@ -13,7 +13,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
     storage.enter(|handle| {
         // Block 1 at 10:00 - genesis block establishes start_date = day D.
         let ctx_anchor = genesis_block(handle.clone(), DAY_D_10AM);
-        run_cycle_lifecycle(&ctx_anchor).unwrap();
+        run_cycle_tick(&ctx_anchor).unwrap();
         let canonical_wwd = outbe_primitives::time::WorldwideDay::new(20_240_102);
         assert!(
             outbe_metadosis::api::worldwide_day(ctx_anchor.storage.clone(), canonical_wwd)
@@ -30,7 +30,7 @@ fn genesis_midday_first_cycle_at_next_midnight_settles_genesis_day() {
         let fire_ts = DAY_D_MIDNIGHT + SECONDS_PER_DAY + 1;
         let ctx_fire = runtime_context(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
-        run_cycle_lifecycle(&ctx_fire).unwrap();
+        run_cycle_tick(&ctx_fire).unwrap();
 
         assert!(
             outbe_metadosis::api::emission_day(ctx_fire.storage.clone(), 20_240_101)
@@ -228,7 +228,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
         let reserve = outbe_promislimit::PromisLimitContract::new(storage.clone());
         let before = reserve.promis_limit().unwrap();
 
-        run_cycle_lifecycle(&BlockRuntimeContext::new(
+        run_cycle_tick(&BlockRuntimeContext::new(
             block_ctx(3, day_start + 11 * 3_600),
             storage.clone(),
         ))
@@ -240,7 +240,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
         );
 
         let closed_at = day_start + SECONDS_PER_DAY;
-        run_cycle_lifecycle(&BlockRuntimeContext::new(
+        run_cycle_tick(&BlockRuntimeContext::new(
             block_ctx(4, closed_at),
             storage.clone(),
         ))
@@ -256,10 +256,10 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .write(timestamp_to_date_key(day_start))
             .unwrap();
         let ready = BlockRuntimeContext::new(block_ctx(5, closed_at + 1), storage.clone());
-        run_cycle_lifecycle(&ready).unwrap();
+        run_cycle_tick(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
-        run_cycle_lifecycle(&ready).unwrap();
+        run_cycle_tick(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
 
         // The queue retains the next day's deadline even though calls have no work.
@@ -267,7 +267,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .utc_day_vwap_last_finalized
             .write(timestamp_to_date_key(closed_at))
             .unwrap();
-        run_cycle_lifecycle(&BlockRuntimeContext::new(
+        run_cycle_tick(&BlockRuntimeContext::new(
             block_ctx(6, closed_at + SECONDS_PER_DAY),
             storage.clone(),
         ))

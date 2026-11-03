@@ -72,6 +72,14 @@ fn dispatch_cycle_tick_records_preloaded_proposer() {
     });
 
     provider.enter(|storage| {
+        let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
+        assert_eq!(
+            cycle
+                .last_executed_at
+                .read(&outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32())
+                .unwrap(),
+            1_700_000_000
+        );
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         let record = vs.get_validator(VALIDATOR).unwrap().unwrap();
         assert_eq!(record.blocks_proposed, 1);

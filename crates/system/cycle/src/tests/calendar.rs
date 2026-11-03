@@ -10,7 +10,7 @@ fn protocol_cycle_catches_up_one_oldest_day_per_block_after_a_multi_day_halt() {
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
         let anchor = genesis_block(handle.clone(), anchor_ts);
-        run_cycle_lifecycle(&anchor).unwrap();
+        run_cycle_tick(&anchor).unwrap();
     });
 
     // Block 2 after a 3-day halt settles only the oldest unallocated day (20240101).
@@ -61,7 +61,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
     storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
+        run_cycle_tick(&anchor).unwrap();
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
@@ -87,7 +87,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 32);
     storage.enter(|handle| {
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
+        run_cycle_tick(&anchor).unwrap();
     });
 
     // Forcing `DistributionOverflow` (`RevertBytes`) inside reward allocation
