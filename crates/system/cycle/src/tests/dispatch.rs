@@ -654,7 +654,15 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
     storage.enter(|handle| {
         anchor_at(handle.clone(), GENESIS_TS + 60);
         let fire = runtime_context(
-            block_ctx(2, TOPUP_FIRE_TS).with_genesis_timestamp(0),
+            outbe_primitives::block::BlockContext {
+                block_number: 2,
+                timestamp: TOPUP_FIRE_TS,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 0,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             handle,
         );
         account_parent(&fire, 2);

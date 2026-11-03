@@ -101,8 +101,18 @@ fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Ve
     }
 
     {
-        let mut provider =
-            DirectStorageProvider::new(&mut db, BlockContext::empty_for_tests(1, 1, CHAIN_ID));
+        let mut provider = DirectStorageProvider::new(
+            &mut db,
+            BlockContext {
+                block_number: 1,
+                timestamp: 1,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+        );
         StorageHandle::enter(&mut provider, |storage| {
             for (reservation, initialization) in &initializations {
                 RegistryApi::reserve(storage.clone(), reservation).unwrap();

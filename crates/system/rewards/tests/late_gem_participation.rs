@@ -18,7 +18,15 @@ const VOTERS: [Address; 4] = [
 ];
 
 fn block(height: u64) -> BlockContext {
-    BlockContext::new(height, MIDNIGHT + height - 11, 1, Address::ZERO, vec![])
+    BlockContext {
+        block_number: height,
+        timestamp: MIDNIGHT + height - 11,
+        chain_id: 1,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: (MIDNIGHT + height - 11).max(1),
+        proposer: Address::ZERO,
+        validators: vec![],
+    }
 }
 
 fn seed(ctx: &BlockRuntimeContext) {

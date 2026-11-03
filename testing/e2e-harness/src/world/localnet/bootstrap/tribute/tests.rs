@@ -397,8 +397,15 @@ fn assert_native_processing(
     } = *case;
     let processing_time = case.processing_time();
     let context = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(26, execution_time, NATIVE_CHAIN_ID)
-            .with_genesis_timestamp(timestamp),
+        BlockContext {
+            block_number: 26,
+            timestamp: execution_time,
+            chain_id: NATIVE_CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: timestamp,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     );
     outbe_tributefactory::worldwideday::advance_worldwide_days_command(&context).unwrap();

@@ -16,11 +16,9 @@ impl From<ZeroGenesisTimestamp> for PrecompileError {
     }
 }
 
-/// Runtime context shared by begin-block/end-block handlers.
-///
 /// The lifecycle executor builds this context from canonical block/header,
 /// chain, and validator-set state before calling runtime modules.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct BlockContext {
     pub block_number: u64,
     pub timestamp: u64,
@@ -29,74 +27,6 @@ pub struct BlockContext {
     pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
-}
-
-/// Canonical block, chain and validator state used to construct a runtime context.
-#[derive(Debug)]
-pub struct BlockContextInput {
-    pub block_number: u64,
-    pub timestamp: u64,
-    pub chain_id: u64,
-    pub genesis_hash: B256,
-    pub genesis_timestamp: u64,
-    pub proposer: Address,
-    pub validators: Vec<Address>,
-}
-
-impl BlockContext {
-    /// Test-only helper that mirrors `timestamp` into `genesis_timestamp`.
-    pub fn new(
-        block_number: u64,
-        timestamp: u64,
-        chain_id: u64,
-        proposer: Address,
-        validators: Vec<Address>,
-    ) -> Self {
-        Self::new_with_genesis_hash(BlockContextInput {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash: B256::ZERO,
-            genesis_timestamp: timestamp.max(1),
-            proposer,
-            validators,
-        })
-    }
-
-    /// Creates an execution context bound to the immutable chain identity.
-    ///
-    /// Production execution must source `genesis_hash` and `genesis_timestamp`
-    /// from the canonical `ChainSpec`.
-    pub fn new_with_genesis_hash(input: BlockContextInput) -> Self {
-        let BlockContextInput {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash,
-            genesis_timestamp,
-            proposer,
-            validators,
-        } = input;
-
-        Self {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash,
-            genesis_timestamp,
-            proposer,
-            validators,
-        }
-    }
-
-    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
-        self.genesis_timestamp = genesis_timestamp;
-        self
-    }
-
-    pub fn empty_for_tests(block_number: u64, timestamp: u64, chain_id: u64) -> Self {
-        Self::new(block_number, timestamp, chain_id, Address::ZERO, Vec::new())
-    }
 }
 
 #[derive(Clone)]
@@ -167,7 +97,18 @@ mod tests {
     fn lifecycle_end_block_can_return_an_associated_output() {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
-            let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(7, 11, 1), storage);
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_number: 7,
+                    timestamp: 11,
+                    chain_id: 1,
+                    genesis_hash: B256::ZERO,
+                    genesis_timestamp: 11,
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage,
+            );
 
             assert_eq!(OutputLifecycle::end_block(&ctx).unwrap(), 7);
         });

@@ -450,8 +450,15 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(0, date_key_to_utc_timestamp(20260101).unwrap(), 1)
-                    .with_genesis_timestamp(date_key_to_utc_timestamp(20260101).unwrap()),
+                BlockContext {
+                    block_number: 0,
+                    timestamp: date_key_to_utc_timestamp(20260101).unwrap(),
+                    chain_id: 1,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: date_key_to_utc_timestamp(20260101).unwrap(),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
                 storage.clone(),
             );
             let mut sweep = TestSweep::new(storage, Address::with_last_byte(99));

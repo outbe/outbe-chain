@@ -115,7 +115,15 @@ fn finalize_context(
     issuer: Address,
 ) -> BlockRuntimeContext<'_> {
     BlockRuntimeContext::new(
-        BlockContext::new(block_number, 1_700_000_000, 1, issuer, vec![issuer]),
+        BlockContext {
+            block_number,
+            timestamp: 1_700_000_000,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: 1_700_000_000,
+            proposer: issuer,
+            validators: vec![issuer],
+        },
         storage,
     )
 }

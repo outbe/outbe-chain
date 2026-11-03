@@ -12,13 +12,15 @@ const GENESIS_TS: u64 = 1_704_067_200;
 pub fn with_block(block_number: u64, f: impl FnOnce(BlockRuntimeContext<'_>)) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle| {
-        let block = BlockContext::new(
+        let block = BlockContext {
             block_number,
-            GENESIS_TS + 60,
-            CHAIN_ID,
-            Address::ZERO,
-            Vec::new(),
-        );
+            timestamp: GENESIS_TS + 60,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: GENESIS_TS + 60,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        };
         f(BlockRuntimeContext::new(block, handle));
     });
 }

@@ -179,7 +179,15 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     ));
     drop(executor);
 
-    let read_ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![proposer],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -448,7 +456,15 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         "GAS-05: CycleTick receipt gas exceeded signed gas limit"
     );
     drop(executor);
-    let read_ctx = BlockContext::new(1, block_ts, CHAIN_ID, proposer, vec![proposer]);
+    let read_ctx = BlockContext {
+        block_number: 1,
+        timestamp: block_ts,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: block_ts.max(1),
+        proposer,
+        validators: vec![proposer],
+    };
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {

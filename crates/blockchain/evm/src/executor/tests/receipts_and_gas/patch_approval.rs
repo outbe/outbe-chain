@@ -213,13 +213,15 @@ fn run_patch_vote_case(approve_second: bool, change_to_no: bool) {
             .approved
     );
 
-    let block_context = BlockContext::new(
-        10,
-        1_700_000_010,
-        CHAIN_ID,
-        validators[0].0,
-        validators.iter().map(|v| v.0).collect(),
-    );
+    let block_context = BlockContext {
+        block_number: 10,
+        timestamp: 1_700_000_010,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_010,
+        proposer: validators[0].0,
+        validators: validators.iter().map(|v| v.0).collect(),
+    };
     run_atomic_storage_hooks(&mut state, block_context, |ctx| {
         run_outbe_pre_execution_hooks(ctx, None)
     })
@@ -296,5 +298,8 @@ fn run_patch_vote_case(approve_second: bool, change_to_no: bool) {
         late.output().unwrap().as_ref(),
         IVote::NotPending {}.abi_encode()
     );
-    println!("EVM patch Vote proposal=1 yes={} no={} voters=2 electorate=3 deadline=9 terminal_height=10 approved={} subject={payload}", proposal.state.yes, proposal.state.no, approval.approved);
+    println!(
+        "EVM patch Vote proposal=1 yes={} no={} voters=2 electorate=3 deadline=9 terminal_height=10 approved={} subject={payload}",
+        proposal.state.yes, proposal.state.no, approval.approved
+    );
 }

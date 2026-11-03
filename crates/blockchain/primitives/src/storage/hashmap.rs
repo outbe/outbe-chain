@@ -835,8 +835,18 @@ mod metadosis_mutation_frame_tests {
 
         let mut test_provider = HashMapStorageProvider::new(1);
         let mut db = CacheDB::new(EmptyDB::default());
-        let mut prod_provider =
-            DirectStorageProvider::new(&mut db, BlockContext::empty_for_tests(1, 1_700_000_000, 1));
+        let mut prod_provider = DirectStorageProvider::new(
+            &mut db,
+            BlockContext {
+                block_number: 1,
+                timestamp: 1_700_000_000,
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+        );
 
         // Seed both providers to U256::MAX - 5 on recipient and 10 on sender.
         test_provider

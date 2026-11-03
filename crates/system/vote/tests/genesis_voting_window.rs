@@ -154,11 +154,15 @@ fn governance_deadline_replay_child() {
         }
         // Close the legacy proposal so the same author can create another.
         let ctx = BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(
-                101 + expected_window,
-                0,
-                outbe_primitives::chain::TESTNET_CHAIN_ID,
-            ),
+            outbe_primitives::block::BlockContext {
+                block_number: 101 + expected_window,
+                timestamp: 0,
+                chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         vote.process_begin_block(&ctx, &REGISTRY).unwrap();

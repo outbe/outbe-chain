@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256};
 use outbe_primitives::{
-    block::{BlockContext, ZeroGenesisTimestamp},
+    block::ZeroGenesisTimestamp,
     error::Result,
     storage::{
         hashmap::HashMapStorageProvider,
@@ -15,18 +15,6 @@ impl StorageReader for EmptyReader {
     fn read_storage(&self, _address: Address, _key: B256) -> Result<alloy_primitives::U256> {
         Ok(alloy_primitives::U256::ZERO)
     }
-}
-
-#[test]
-fn block_context_new_copies_timestamp_into_genesis_timestamp() {
-    let context = BlockContext::new(7, 1_700_000_000, 1, Address::ZERO, Vec::new());
-    assert_eq!(context.genesis_timestamp, 1_700_000_000);
-    assert_eq!(
-        context
-            .with_genesis_timestamp(1_600_000_000)
-            .genesis_timestamp,
-        1_600_000_000
-    );
 }
 
 #[test]

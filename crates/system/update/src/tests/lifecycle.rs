@@ -74,7 +74,15 @@ fn historical_testnet_schedule_keeps_its_recorded_activation_height() {
         .unwrap();
     for height in [activation - 1, activation] {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(height, 0, TESTNET_CHAIN_ID),
+            BlockContext {
+                block_number: height,
+                timestamp: 0,
+                chain_id: TESTNET_CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         update

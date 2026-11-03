@@ -79,7 +79,15 @@ pub fn seed_storage<R>(
     beneficiary: Address,
     seed: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
-    let block = BlockContext::new(1, timestamp, CHAIN_ID, beneficiary, vec![beneficiary]);
+    let block = BlockContext {
+        block_number: 1,
+        timestamp,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: timestamp.max(1),
+        proposer: beneficiary,
+        validators: vec![beneficiary],
+    };
     let mut provider = DirectStorageProvider::new(db, block);
     let seeded = StorageHandle::enter(&mut provider, seed);
     provider.flush().expect("flush seeded storage");

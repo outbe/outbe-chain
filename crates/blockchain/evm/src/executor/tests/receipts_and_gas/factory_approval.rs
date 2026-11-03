@@ -166,13 +166,15 @@ pub(super) fn run() {
     } = prepare_approved_proposal();
     let expected_token = expected.token;
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
-    let block_context = BlockContext::new(
-        finalization_block,
-        1_700_000_000,
-        CHAIN_ID,
-        issuer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
+    let block_context = BlockContext {
+        block_number: finalization_block,
+        timestamp: 1_700_000_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
+        proposer: issuer,
+        validators: validators.iter().map(|(address, _)| *address).collect(),
+    };
     let (_, hook_events) =
         super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
             super::run_outbe_pre_execution_hooks(hook_ctx, None)

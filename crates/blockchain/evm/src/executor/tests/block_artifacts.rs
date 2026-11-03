@@ -165,7 +165,15 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         assert_eq!(gem.from, Address::ZERO);
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
             &mut state,
-            BlockContext::empty_for_tests(1, block_ts, CHAIN_ID),
+            BlockContext {
+                block_number: 1,
+                timestamp: block_ts,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: block_ts.max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
         );
         StorageHandle::enter(&mut provider, |storage| {
             let view = outbe_gem::api::get_view(&storage, gem.tokenId)

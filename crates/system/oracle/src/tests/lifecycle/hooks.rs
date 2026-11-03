@@ -26,7 +26,15 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         let day = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap();
         // Block 1: not a vote period boundary (period=2), no tally
         let runtime_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, day + 12, 1),
+            BlockContext {
+                block_number: 1,
+                timestamp: day + 12,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (day + 12).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
@@ -34,7 +42,15 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
 
         // Block 2: vote period boundary, tally runs
         let runtime_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, day + 24, 1),
+            BlockContext {
+                block_number: 2,
+                timestamp: day + 24,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (day + 24).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
@@ -328,7 +344,15 @@ fn begin_block_finalizes_the_closed_utc_day() {
         // Odd block number avoids the vote-period tally path (period == 2).
         assert_eq!(block % 2, 1);
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(block, d1_start + 5, 1),
+            BlockContext {
+                block_number: block,
+                timestamp: d1_start + 5,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (d1_start + 5).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
@@ -351,7 +375,15 @@ fn begin_block_finalizes_the_closed_utc_day() {
         // Idempotent: a later block on the same UTC day neither advances the
         // watermark nor re-finalizes.
         let ctx2 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(block + 2, d1_start + 50, 1),
+            BlockContext {
+                block_number: block + 2,
+                timestamp: d1_start + 50,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (d1_start + 50).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx2).unwrap();
@@ -367,7 +399,15 @@ fn begin_block_finalizes_the_closed_utc_day() {
             )
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(block + 4, d2_start + 5, 1),
+            BlockContext {
+                block_number: block + 4,
+                timestamp: d2_start + 5,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: (d2_start + 5).max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();

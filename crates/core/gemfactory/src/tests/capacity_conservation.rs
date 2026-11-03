@@ -109,7 +109,15 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             gem.push_called(group, EXPIRES).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, DAY_CLOSED, 1).with_genesis_timestamp(EXPIRES),
+            BlockContext {
+                block_number: 1,
+                timestamp: DAY_CLOSED,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: EXPIRES,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         crate::called::process_call_pass(&ctx).unwrap();
@@ -124,7 +132,15 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             U256::from(SWEEP_WRITES_PER_BLOCK)
         );
         let next = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, DAY_CLOSED + 1, 1).with_genesis_timestamp(EXPIRES),
+            BlockContext {
+                block_number: 2,
+                timestamp: DAY_CLOSED + 1,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: EXPIRES,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         );
         crate::called::process_call_pass(&next).unwrap();
@@ -181,8 +197,15 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     let before = expired_hours(p);
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(at, at, 1)
-                .with_genesis_timestamp(EXPIRES - SECONDS_PER_DAY),
+            BlockContext {
+                block_number: at,
+                timestamp: at,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: EXPIRES - SECONDS_PER_DAY,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s,
         );
         let block = super::daily_pass(&ctx)?;

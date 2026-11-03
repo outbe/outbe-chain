@@ -127,13 +127,15 @@ fn prepare_boundary(boundary: Boundary) -> eyre::Result<PreparedBoundary> {
 
     let mut state =
         state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
-    let seed_context = BlockContext::new(
-        CREATION_BLOCK,
-        1_700_000_000,
-        CHAIN_ID,
+    let seed_context = BlockContext {
+        block_number: CREATION_BLOCK,
+        timestamp: 1_700_000_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
         proposer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
+        validators: validators.iter().map(|(address, _)| *address).collect(),
+    };
     let (expected_token_id, expected_token) = seed_factory_boundary(
         &mut state,
         seed_context,
@@ -460,13 +462,15 @@ fn observe_contracts(
         expected_token,
         expected_token_id,
     } = *fixture;
-    let read_context = BlockContext::new(
-        finalization_block,
-        1_700_000_000,
-        CHAIN_ID,
+    let read_context = BlockContext {
+        block_number: finalization_block,
+        timestamp: 1_700_000_000,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1_700_000_000,
         proposer,
-        validators.iter().map(|(address, _)| *address).collect(),
-    );
+        validators: validators.iter().map(|(address, _)| *address).collect(),
+    };
     let mut provider = super::DirectStorageProvider::new(state, read_context);
     let storage = StorageHandle::new(&mut provider);
     let vote = Vote::new(storage.clone());

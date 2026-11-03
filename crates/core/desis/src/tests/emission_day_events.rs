@@ -124,7 +124,15 @@ fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
     StorageHandle::enter(storage, |s| {
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::tick_gate(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(3, NOW, CHAIN_ID),
+            BlockContext {
+                block_number: 3,
+                timestamp: NOW,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(NOW, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             s.clone(),
         ))
         .unwrap();

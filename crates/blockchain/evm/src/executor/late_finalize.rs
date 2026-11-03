@@ -1,5 +1,4 @@
 use super::*;
-use outbe_primitives::block::BlockContextInput;
 
 #[allow(private_bounds)]
 impl<DB, E> OutbeBlockExecutor<'_, E>
@@ -92,7 +91,7 @@ where
             let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
             let snapshot = {
                 let db = self.inner.evm.db_mut();
-                let ctx = BlockContext::new_with_genesis_hash(BlockContextInput {
+                let ctx = BlockContext {
                     block_number,
                     timestamp,
                     chain_id,
@@ -100,7 +99,7 @@ where
                     genesis_timestamp: self.genesis_timestamp,
                     proposer,
                     validators: Vec::new(),
-                });
+                };
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
                 read_committee_snapshot(storage, snapshot_key).map_err(|error| {

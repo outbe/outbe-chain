@@ -233,7 +233,15 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
 fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result<()> {
     StorageHandle::enter(provider, |storage| {
         crate::commands::start_metadosis(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(10, CLOCK, CHAIN_ID),
+            BlockContext {
+                block_number: 10,
+                timestamp: CLOCK,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: u64::max(CLOCK, 1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage,
         ))
     })

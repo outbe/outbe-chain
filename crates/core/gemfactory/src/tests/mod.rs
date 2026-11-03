@@ -368,7 +368,15 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
 
 fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'a> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, now, 1).with_genesis_timestamp(T_NOW - SECONDS_PER_DAY),
+        BlockContext {
+            block_number: 1,
+            timestamp: now,
+            chain_id: 1,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: T_NOW - SECONDS_PER_DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     )
 }

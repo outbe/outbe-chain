@@ -420,7 +420,15 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         let mut ctx = context(code);
         let mut seed = DirectStorageProvider::new(
             &mut ctx.journaled_state.database,
-            BlockContext::new(1, 1, 1, CALLER, vec![CALLER]),
+            BlockContext {
+                block_number: 1,
+                timestamp: 1,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: CALLER,
+                validators: vec![CALLER],
+            },
         );
         StorageHandle::enter(&mut seed, |storage| {
             outbe_l2registry::schema::L2RegistryContract::new(storage)

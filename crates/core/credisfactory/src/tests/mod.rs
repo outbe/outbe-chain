@@ -350,8 +350,15 @@ fn block_at<'storage>(
             .unwrap()
             .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID)
-            .with_genesis_timestamp(CREATED_AT - DAY),
+        BlockContext {
+            block_number: height,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: CREATED_AT - DAY,
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         storage.clone(),
     )
 }

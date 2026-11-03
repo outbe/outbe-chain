@@ -91,7 +91,7 @@ pub(super) fn block_runtime_context_from_storage(
     };
 
     Ok(BlockRuntimeContext::new(
-        BlockContext::new_with_genesis_hash(outbe_primitives::block::BlockContextInput {
+        BlockContext {
             block_number,
             timestamp,
             chain_id,
@@ -99,7 +99,7 @@ pub(super) fn block_runtime_context_from_storage(
             genesis_timestamp: storage.genesis_timestamp()?,
             proposer,
             validators,
-        }),
+        },
         storage,
     ))
 }

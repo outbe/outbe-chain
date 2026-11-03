@@ -73,7 +73,15 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
         // A timestamp on 2020-01-01 makes the zero watermark step 2019-12-31.
         let timestamp = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap() + 24;
         let runtime_ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, timestamp, 1),
+            BlockContext {
+                block_number: 2,
+                timestamp,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: timestamp.max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
             storage.clone(),
         );
         <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();

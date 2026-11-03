@@ -97,7 +97,15 @@ fn drain(handle: &StorageHandle<'_>) {
 
 fn drain_at(handle: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(1, now, CHAIN_ID),
+        BlockContext {
+            block_number: 1,
+            timestamp: now,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(now, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
         handle.clone(),
     );
     send_call_notices(&ctx).expect("a refused notice never fails the send");
