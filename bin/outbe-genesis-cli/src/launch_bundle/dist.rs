@@ -146,11 +146,6 @@ pub fn deploy_markdown(
         .get("remote_base_dir")
         .and_then(Value::as_str)
         .unwrap_or(&default_base);
-    let default_keys = keys_dir.display().to_string();
-    let remote_keys_dir = config
-        .get("remote_keys_dir")
-        .and_then(Value::as_str)
-        .unwrap_or(&default_keys);
     let chain_id = parse_u64(
         config
             .get("chain_id")
@@ -206,8 +201,6 @@ SGX hardware, and the exact release measurements.\n"
     let radicle_status_port = port_of(config, "radicle_status_port")?;
     let tee_enclave_port = port_of(config, "tee_enclave_port")?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
-    let keys_dir_display = keys_dir.display();
-
     Ok(format!(
         "# Deploying this network\n\
 \n\
@@ -220,20 +213,23 @@ Chain id `{chain_id}`, four founding validators, TEE mode `{mode}`.\n\
 Everything below was generated from your `network.yaml`. Ports are identical on\n\
 every machine, because each founder runs on its own host.\n\
 \n\
-## 1. Copy files to each machine\n\
+## 1. Copy the per-validator archive to each machine\n\
 \n\
-Every machine gets the shared files plus **only its own** key directory:\n\
+The generator writes one self-contained archive per machine under `dist/`. Each\n\
+archive contains the shared genesis and bootnodes, the bundled SGX runtime,\n\
+systemd units and installer, launch scripts, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
-# from this directory on the operator workstation, for machine N (0..3):\n\
-ssh <machine-N> \"mkdir -p {base_dir} {remote_keys_dir}\"\n\
-scp genesis.json reth-bootnodes.txt <machine-N>:{base_dir}/\n\
-scp -r validator-N <machine-N>:{base_dir}/\n\
-scp -r {keys_dir_display}/validator-N <machine-N>:{remote_keys_dir}/\n\
+# From the generated output directory, for machine N (0..3):\n\
+scp dist/validator-N.tgz dist/SHA256SUMS dist/unpack.sh <machine-N>:~/\n\
+ssh <machine-N>\n\
+cd ~\n\
+chmod +x unpack.sh\n\
+./unpack.sh N\n\
 ```\n\
 \n\
-`validator-N/` holds the run scripts; the key directory holds the secrets.\n\
-Never copy one validator's key directory to another machine.\n\
+`unpack.sh` verifies the archive checksum and extracts it into `{base_dir}`.\n\
+Never copy one validator's archive or key directory to another machine.\n\
 \n\
 ## 2. Open the ports\n\
 \n\
@@ -256,13 +252,16 @@ metrics `{metrics_port}`, Radicle status\n\
 ## 3. Prerequisites on every machine\n\
 \n\
 - Python 3.11+ - reads the shared storage TOML at launch\n\
-- Docker - the TEE enclave runs as a container\n\
+- no system Gramine installation is required on SGX hosts: `sgx/` contains the\n\
+  pinned enclave launcher and runtime from the signed release bundle\n\
 - `outbe-cli` on every SGX validator host for automatic TEE renewal\n\
 - the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`\n\
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to\n\
   absolute paths and regenerate)\n\
 - for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and\n\
-  `/dev/sgx_provision`\n\
+  `/dev/sgx_provision`, with `aesmd.service` running\n\
+- Docker is required only for the `gramine-direct-dev` fallback on a host\n\
+  without usable SGX hardware\n\
 \n\
 ## 4. Start each machine\n\
 \n\
@@ -313,7 +312,7 @@ number and `validator list` shows four active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE enclave | Docker container | the node refuses to start without it |\n\
+| TEE enclave | bundled `sgx/bin/outbe-tee-enclave-launch` | uses the shipped Gramine runtime on SGX; Docker is only the non-SGX development fallback |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 \n\
