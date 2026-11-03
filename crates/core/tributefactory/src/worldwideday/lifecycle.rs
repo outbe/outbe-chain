@@ -194,7 +194,7 @@ pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<(
     )
 }
 
-/// Command-bound entry point used by `CycleLifecycle::begin_block` at activation height.
+/// Command-bound entry point used by `handle_cycle_tick` at activation height.
 pub fn bootstrap_genesis_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     run_with_wwd_mutation_binding(
         ctx,

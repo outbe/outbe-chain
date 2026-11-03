@@ -38,7 +38,7 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
             validators: Vec::new(),
         };
         let ctx = runtime_context(block, handle);
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
     });
 
     // Advance hour by hour across 4 full UTC days (20261001..=20261004) into 20261005 02:00 UTC
@@ -187,7 +187,7 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
     //    pre-seeded Rewards start_date slot.
     storage.enter(|handle| {
         let block_1 = runtime_context(block_ctx(1, GENESIS_TS + 60), handle);
-        run_cycle_lifecycle(&block_1).unwrap();
+        run_cycle_tick(&block_1).unwrap();
     });
     storage.set_block_number(2);
     storage.enter(|handle| {
@@ -222,7 +222,7 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             .unwrap();
 
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle(&anchor).unwrap();
+        run_cycle_tick(&anchor).unwrap();
         let factory = TributeFactoryContract::new(handle);
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_101);
         assert_eq!(

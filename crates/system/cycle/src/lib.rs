@@ -48,7 +48,6 @@ sol!(
 
 pub mod errors;
 pub mod handler;
-pub mod lifecycle;
 pub mod runtime;
 pub mod schema;
 pub mod state;

@@ -185,9 +185,9 @@ fn first_encounter_anchors_without_firing() {
 }
 
 #[test]
-fn block_1_begin_block_creates_genesis_worldwide_day() {
+fn block_1_cycle_tick_creates_genesis_worldwide_day() {
     // Production regression: at block 1 the daily Cycle trigger only anchors.
-    // It never invokes `start_metadosis`. So `CycleLifecycle::begin_block`
+    // It never invokes `start_metadosis`. So `handle_cycle_tick`
     // must itself create the genesis metadosis worldwide day. Before the fix
     // the active-WWD set was empty until the first block past the next UTC
     // midnight.
@@ -196,21 +196,21 @@ fn block_1_begin_block_creates_genesis_worldwide_day() {
         let block_ts = GENESIS_TS + 60;
         let ctx = genesis_block(handle, block_ts);
 
-        // Sanity: no worldwide day exists before begin_block.
+        // Sanity: no worldwide day exists before CycleTick.
         assert!(
             outbe_metadosis::api::worldwide_days(ctx.storage.clone())
                 .unwrap()
                 .is_empty(),
-            "no worldwide day should exist before block-1 begin_block"
+            "no worldwide day should exist before block-1 CycleTick"
         );
 
-        run_cycle_lifecycle(&ctx).unwrap();
+        run_cycle_tick(&ctx).unwrap();
 
         assert!(
             !outbe_metadosis::api::worldwide_days(ctx.storage.clone())
                 .unwrap()
                 .is_empty(),
-            "block-1 begin_block must create the genesis worldwide day"
+            "block-1 CycleTick must create the genesis worldwide day"
         );
 
         // The daily trigger must only have anchored - no settlement fired.
@@ -237,7 +237,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
 
     storage.enter(|handle| {
         let block_1 = genesis_block(handle.clone(), GENESIS_TS + 60);
-        run_cycle_lifecycle_at_activation(&block_1, 32).unwrap();
+        run_cycle_tick_at_activation(&block_1, 32).unwrap();
 
         assert!(
             outbe_metadosis::api::worldwide_days(block_1.storage.clone())
@@ -250,7 +250,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
     storage.enter(|handle| {
         let activation =
             runtime_context(block_ctx(32, GENESIS_TS + 31 * 60), handle.clone());
-        run_cycle_lifecycle_at_activation(&activation, 32).unwrap();
+        run_cycle_tick_at_activation(&activation, 32).unwrap();
 
         assert!(
             !outbe_metadosis::api::worldwide_days(activation.storage.clone())

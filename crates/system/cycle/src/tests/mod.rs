@@ -14,12 +14,11 @@
 //! `block_ts >> 86_400` is always true on a real chain.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
-use crate::lifecycle::{CycleLifecycle, CycleLifecycleContext};
 use crate::schema::Cycle;
 use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
@@ -168,19 +167,15 @@ pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::
     crate::runtime::dispatch_triggers(ctx)
 }
 
-pub(super) fn run_cycle_lifecycle(
-    ctx: &BlockRuntimeContext,
-) -> outbe_primitives::error::Result<()> {
-    run_cycle_lifecycle_at_activation(ctx, 1)
+pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    run_cycle_tick_at_activation(ctx, 1)
 }
 
-pub(super) fn run_cycle_lifecycle_at_activation(
+pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    let lifecycle = CycleLifecycleContext::new(ctx.clone())
-        .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
-    <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
+    crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
 pub(super) fn run_emission_limit_daily(
