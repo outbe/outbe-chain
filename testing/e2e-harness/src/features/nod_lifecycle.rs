@@ -55,20 +55,13 @@ pub(crate) struct NodLifecycle;
 
 #[given(expr = "a fresh Nod lifecycle localnet with a {int}-block voting window")]
 fn fresh_nod_lifecycle_localnet(world: &mut World, window: u64) {
-    super::common::bootstrap_localnet(
-        world,
-        window,
-        &[("TESTNET_METADOSIS_OFFERING_SECONDS", "3600".to_owned())],
-    );
-    let day = world
+    super::common::bootstrap_native_lysis_localnet(world, window);
+    let (day, opts) = world
         .localnet
-        .prepare_nod_lifecycle_fixture(ENTRY_PRICE_MINOR)
+        .prepare_nod_lifecycle_fixture(ENTRY_PRICE_MINOR, window)
         .expect("Nod lifecycle Offering and Lysis fixture");
     world.state.wwd = Some(day.to_string());
-    super::common::start_bootstrapped_localnet(
-        world,
-        &crate::world::localnet::StartOpts::with_voting_window(window),
-    );
+    super::common::start_bootstrapped_localnet(world, &opts);
 }
 
 #[when("five owners are issued Nods in one group")]
@@ -78,6 +71,7 @@ fn issue_five_nods(world: &mut World) {
         .issuance_market
         .expect("the Nod scenario prices an issuance market");
     assert_eq!(issuance_currency, MYR_ISO);
+    super::price_oracle::start_native_quote(world, U256::from(ENTRY_PRICE_MINOR));
     holders::fund(world, HOLDER_SEED);
     let keys: Vec<String> = (0..HOLDERS).map(owner_key).collect();
     super::l2_registration::ensure_tribute_offer_operators(world, &keys);
@@ -102,7 +96,7 @@ fn issue_five_nods(world: &mut World) {
         );
     }
     super::lysis::reach_native_lysis_processing_time(world);
-    super::lysis::wait_for_native_lysis(world);
+    let lysis_height = super::lysis::wait_for_native_lysis(world);
 
     let url = world.rpc.url(world.validators.primary_port());
     let day = wwd.parse::<u32>().expect("numeric offering day");
@@ -132,6 +126,15 @@ fn issue_five_nods(world: &mut World) {
         .expect("submit ITribute::issueNod");
         assert_mined_success(&outcome, "ITribute::issueNod");
         let nod_id = nod_of(&url, owner);
+        if index == 0 {
+            super::oracle_expectations::assert_closed_entry_price(
+                world,
+                USD_ISO,
+                read_nod(world, nod_id).entryPriceMinor,
+                U256::from(ENTRY_PRICE_MINOR),
+                lysis_height,
+            );
+        }
         let load = sealed_load(world, nod_id);
         match shared_load {
             None => shared_load = Some(load),
@@ -153,6 +156,7 @@ fn issue_five_nods(world: &mut World) {
         nods.push(nod_id);
     }
     world.state.lifecycle_nods = nods;
+    super::price_oracle::finish_native_quotes(world);
 }
 
 impl Lifecycle for NodLifecycle {

@@ -262,7 +262,7 @@ fn auction_opened_on(world: &World, venue: &VenueSide) {
 fn committee_clock_settles(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
-    let mut calm_samples = 0;
+    let mut calm_samples = 0u8;
     let mut previous: Option<(u64, u64)> = None;
     loop {
         sleep(Duration::from_secs(6));
@@ -271,15 +271,10 @@ fn committee_clock_settles(world: &mut World) {
         if let (Some(height), Some(stamp), Some((last_height, last_stamp))) =
             (height, stamp, previous)
         {
-            let blocks = height.saturating_sub(last_height);
-            let seconds = stamp.saturating_sub(last_stamp);
-            if blocks > 0 && seconds / blocks < 120 {
-                calm_samples += 1;
-                if calm_samples >= 2 {
-                    return;
-                }
-            } else {
-                calm_samples = 0;
+            calm_samples =
+                calm_samples_after((last_height, last_stamp), (height, stamp), calm_samples);
+            if calm_samples >= 2 {
+                return;
             }
         }
         previous = height.zip(stamp);
@@ -287,6 +282,23 @@ fn committee_clock_settles(world: &mut World) {
             Instant::now() < deadline,
             "the committee clock never settled after the jump"
         );
+    }
+}
+
+fn calm_samples_after(previous: (u64, u64), current: (u64, u64), count: u8) -> u8 {
+    if current == previous {
+        return count;
+    }
+    let (Some(blocks), Some(seconds)) = (
+        current.0.checked_sub(previous.0),
+        current.1.checked_sub(previous.1),
+    ) else {
+        return 0;
+    };
+    if blocks > 0 && seconds / blocks < 120 {
+        count.saturating_add(1)
+    } else {
+        0
     }
 }
 
@@ -360,4 +372,62 @@ pub(crate) fn settled_day(world: &World) -> u32 {
         .metadosis_wwd_state_on(port, wwd)
         .expect("native WWD state")
         .day
+}
+
+#[cfg(test)]
+mod clock_settling_tests {
+    use super::calm_samples_after;
+
+    type ClockCase<'a> = (&'a str, &'a [(u64, u64)], Option<usize>);
+
+    #[test]
+    fn clock_settling_requires_two_real_calm_advances_despite_idle_polls() {
+        let cases: &[ClockCase<'_>] = &[
+            (
+                "eighteen-second blocks sampled every six seconds",
+                &[
+                    (10, 1000),
+                    (10, 1000),
+                    (10, 1000),
+                    (11, 1018),
+                    (11, 1018),
+                    (11, 1018),
+                    (12, 1036),
+                ],
+                Some(6),
+            ),
+            ("stalled chain", &[(10, 1000); 8], None),
+            (
+                "only one advance",
+                &[(10, 1000), (11, 1018), (11, 1018), (11, 1018)],
+                None,
+            ),
+            (
+                "ratchet resets calm progress",
+                &[(10, 1000), (11, 1018), (12, 1138), (13, 1156), (14, 1174)],
+                Some(4),
+            ),
+            (
+                "height regression resets calm progress",
+                &[(10, 1000), (11, 1018), (10, 1018), (11, 1036), (12, 1054)],
+                Some(4),
+            ),
+            (
+                "timestamp regression resets calm progress",
+                &[(10, 1000), (11, 1018), (12, 1000), (13, 1018), (14, 1036)],
+                Some(4),
+            ),
+        ];
+        for &(name, samples, expected) in cases {
+            let mut count = 0;
+            let settled_at = samples
+                .windows(2)
+                .position(|pair| {
+                    count = calm_samples_after(pair[0], pair[1], count);
+                    count >= 2
+                })
+                .map(|index| index + 1);
+            assert_eq!(settled_at, expected, "{name}");
+        }
+    }
 }

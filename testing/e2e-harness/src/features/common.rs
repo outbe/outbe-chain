@@ -114,7 +114,6 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
         window,
         &[
             ("TESTNET_UNBONDING_PERIOD_SECS", "8".to_string()),
-            ("TESTNET_METADOSIS_OFFERING_SECONDS", "1800".to_string()),
             ("TESTNET_EPOCH_LENGTH_BLOCKS", "120".to_string()),
             ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "60".to_string()),
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
@@ -162,14 +161,38 @@ pub(crate) fn boot_localnet_with_opts(
 
 /// Prepare one fresh scenario network without starting its node processes.
 pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
+    bootstrap_localnet_at(world, window, tuning, None);
+}
+
+pub(crate) fn bootstrap_native_lysis_localnet(world: &mut World, window: u64) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("native fixture host clock")
+        .as_secs();
+    let timestamp = crate::world::localnet::Localnet::native_lysis_genesis_timestamp(now)
+        .expect("native fixture genesis timestamp");
+    bootstrap_localnet_at(world, window, &[], Some(timestamp));
+}
+
+fn bootstrap_localnet_at(
+    world: &mut World,
+    window: u64,
+    tuning: &[(&str, String)],
+    genesis_timestamp: Option<u64>,
+) {
     let committee_size = world.validators.size();
     world.state.voting_window = window;
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
     // No pre-bootstrap reset: the scenario owns a fresh `scenario-<n>` dir and a
     // fresh block of ports, so there is nothing of its own to reclaim.
-    let profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
+    let mut profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
         .and_then(|profile| profile.with_governance_voting_window(window))
         .expect("valid genesis governance voting window");
+    if let Some(timestamp) = genesis_timestamp {
+        profile = profile
+            .with_genesis_timestamp(timestamp)
+            .expect("valid native fixture genesis timestamp");
+    }
 
     let profile = match crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world) {
         Some(pairs) => profile
