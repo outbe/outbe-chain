@@ -36,6 +36,7 @@ contract DeployOrigin is BaseScript {
             address(new OriginRouter(bridge)),
             abi.encodeCall(OriginRouter.initialize, (delegate))
         );
+        requireDeployerAdmin(router, deployer);
 
         // Register every auction target. The TargetRouter sits at the same CREATE3 address on
         // every chain, so its peer is predictable before that chain exists. addTarget requires the
