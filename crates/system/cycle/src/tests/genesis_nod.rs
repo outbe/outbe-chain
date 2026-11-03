@@ -219,8 +219,6 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
                 .unwrap();
         }
         let (oracle, _) = seed_closed_day_prices(&storage, day_start).unwrap();
-        let init = BlockRuntimeContext::new(block_ctx(2, deadline), storage.clone());
-        outbe_nodfactory::called::initialize_daily(&init).unwrap();
         let mut nod = outbe_nod::NodContract::new(storage.clone());
         for (owner, entry, due) in [(0x61, 13, deadline), (0x62, 14, deadline + SECONDS_PER_DAY)] {
             let group = issue_nod(&storage, Address::repeat_byte(owner), entry).unwrap();
@@ -303,10 +301,12 @@ fn seed_closed_day_prices<'s>(
 ) -> outbe_primitives::error::Result<(outbe_oracle::schema::OracleContract<'s>, u32)> {
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
-    initialize_daily_passes(&BlockRuntimeContext::new(
-        block_ctx(1, midnight - SECONDS_PER_DAY),
-        storage.clone(),
-    ));
+    // This fixture resumes an established parent whose earlier daily passes completed.
+    let completed =
+        previous_date_key(timestamp_to_date_key(midnight - SECONDS_PER_DAY)).expect("date step");
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)?;
     let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
     let index = outbe_oracle::api::register_pair(
         storage.clone(),

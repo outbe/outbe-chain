@@ -53,10 +53,6 @@ impl BlockLifecycle for CycleLifecycle {
             outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(
                 &ctx.runtime,
             )?;
-            outbe_nodfactory::called::initialize_daily(&ctx.runtime)?;
-            outbe_gemfactory::called::initialize_daily(&ctx.runtime)?;
-            outbe_intexfactory::called::initialize_daily(&ctx.runtime)?;
-            outbe_credisfactory::called::initialize_daily(&ctx.runtime)?;
         }
         // ProtocolCycle does not wait for multi-block factory passes.
         // Factories return capacity below. Subsequent reserve consumers can use this capacity.

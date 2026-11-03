@@ -58,7 +58,8 @@ fn a_slice_resumes_at_the_currency_it_gave_out_on() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
@@ -94,7 +95,8 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         let factory = IntexContract::new(s.clone());
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();
@@ -105,7 +107,8 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         let next_day = previous_date_key(timestamp_to_date_key(next_ts)).expect("date step");
         fill_window(&oracle, next_day, pair, U256::from(TRIGGER + 1));
         let next = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, next_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(2, next_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         called::schedule_call_pass(&next).unwrap();
@@ -141,7 +144,8 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             let day = previous_date_key(timestamp_to_date_key(ts)).expect("date step");
             fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID),
+                BlockContext::empty_for_tests(1 + offset, ts, CHAIN_ID)
+                    .with_genesis_timestamp(ISSUED_AT + 59 * DAY),
                 s.clone(),
             );
             // Only the first trigger's block walks: the later days arrive meanwhile.
@@ -157,7 +161,8 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
         assert_eq!(factory.call_latest_day.read().unwrap(), closed[2]);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(4, ISSUED_AT + 62 * DAY, CHAIN_ID),
+            BlockContext::empty_for_tests(4, ISSUED_AT + 62 * DAY, CHAIN_ID)
+                .with_genesis_timestamp(ISSUED_AT + 59 * DAY),
             s.clone(),
         );
         let mut walked = vec![closed[0]];
@@ -197,7 +202,8 @@ fn a_sweep_over_several_currencies_always_ends() {
         }
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         called::scan_and_call(&ctx).unwrap();

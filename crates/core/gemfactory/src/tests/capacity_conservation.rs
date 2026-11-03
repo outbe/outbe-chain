@@ -96,9 +96,6 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
     use outbe_primitives::{pass_budget::SWEEP_WRITES_PER_BLOCK, time::timestamp_to_date_key};
     let mut p = world();
     StorageHandle::enter(&mut p, |s| {
-        let genesis =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(0, EXPIRES, 1), s.clone());
-        crate::called::initialize_daily(&genesis).unwrap();
         outbe_oracle::schema::OracleContract::new(s.clone())
             .utc_day_vwap_last_finalized
             .write(timestamp_to_date_key(EXPIRES))
@@ -111,8 +108,10 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             gem.group_unpaid_load.write(&group, U256::from(1)).unwrap();
             gem.push_called(group, EXPIRES).unwrap();
         }
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, DAY_CLOSED, 1), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, DAY_CLOSED, 1).with_genesis_timestamp(EXPIRES),
+            s.clone(),
+        );
         crate::called::process_call_pass(&ctx).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
@@ -125,7 +124,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             U256::from(SWEEP_WRITES_PER_BLOCK)
         );
         let next = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, DAY_CLOSED + 1, 1),
+            BlockContext::empty_for_tests(2, DAY_CLOSED + 1, 1).with_genesis_timestamp(EXPIRES),
             s.clone(),
         );
         crate::called::process_call_pass(&next).unwrap();
@@ -181,7 +180,11 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     };
     let before = expired_hours(p);
     StorageHandle::enter(p, |s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(at, at, 1), s);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(at, at, 1)
+                .with_genesis_timestamp(EXPIRES - SECONDS_PER_DAY),
+            s,
+        );
         let block = super::daily_pass(&ctx)?;
         positions_expired::cleanup_positions(&block)
     })?;

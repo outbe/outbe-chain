@@ -367,7 +367,10 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
 }
 
 fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'a> {
-    BlockRuntimeContext::new(BlockContext::empty_for_tests(1, now, 1), storage.clone())
+    BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(1, now, 1).with_genesis_timestamp(T_NOW - SECONDS_PER_DAY),
+        storage.clone(),
+    )
 }
 
 fn unallocated(storage: &StorageHandle) -> U256 {
@@ -411,22 +414,8 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
     gem_view(storage, gem_id).item.entry_price_minor
 }
 
-/// Starts the pass the day before `ctx` and finalizes the Oracle through the UTC day before it.
+/// Finalizes the Oracle through the UTC day before `ctx`.
 pub(crate) fn prepare_daily_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    if GemContract::new(ctx.storage.clone())
-        .daily_genesis_day
-        .read()?
-        == 0
-    {
-        crate::called::initialize_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(
-                0,
-                ctx.block.timestamp.saturating_sub(SECONDS_PER_DAY),
-                ctx.block.chain_id,
-            ),
-            ctx.storage.clone(),
-        ))?;
-    }
     let closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp))
         .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))?;
     let oracle = OracleContract::new(ctx.storage.clone());
@@ -452,7 +441,10 @@ pub(crate) fn daily_pass<'s>(
             }
         }
         let block = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(height, ctx.block.timestamp, ctx.block.chain_id),
+            BlockContext {
+                block_number: height,
+                ..ctx.block.clone()
+            },
             ctx.storage.clone(),
         );
         crate::called::process_call_pass(&block)?;

@@ -2532,7 +2532,13 @@ fn test_arming_backdates_and_requeues_only_a_called_credis() {
         }
         .abi_encode();
         let err = arm(requeue.clone()).unwrap_err();
-        assert!(err.to_string().contains("not called"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::NotCalled
+            )
+            .to_string()
+        );
 
         arm(ICredisFactoryTestArming::backdateCredisForTestCall {
             credisId: id,

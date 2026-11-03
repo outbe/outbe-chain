@@ -10,6 +10,9 @@ use outbe_primitives::storage::{
     metadosis_process_ready_binding, MetadosisCycleLifecycle, MetadosisMutationPurposeTag,
 };
 
+// These fixtures share a chain that predates their December 2024 WorldwideDays.
+const GENESIS_TIMESTAMP: u64 = 1_733_011_200; // 2024-12-01 00:00 UTC
+
 /// The id `issueNod` gives the Tribute's Nod: the owner in the series of its price day.
 fn nod_id_of(tc: &TributeContract<'_>, tribute: &crate::schema::TributeData) -> U256 {
     let completed_at = tc
@@ -639,13 +642,18 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
             .utc_day_vwap_last_finalized
             .write(latest_closed)
             .unwrap();
-        nod_contract.daily_genesis_day.write(latest_closed).unwrap();
+        // Earlier daily passes completed in the established parent state.
+        nod_contract
+            .call_latest_day
+            .write(previous_date_key(latest_closed).unwrap())
+            .unwrap();
 
         // Run automatic call scan (`schedule_call_pass` + `scan_and_call`) with 0 minted Nods!
         let call_ts = date_key_to_utc_timestamp(cursor_day).unwrap() + 3_600;
         storage.set_block_timestamp(U256::from(call_ts)).unwrap();
         let call_ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(20, call_ts, 1),
+            outbe_primitives::block::BlockContext::empty_for_tests(20, call_ts, 1)
+                .with_genesis_timestamp(GENESIS_TIMESTAMP),
             storage.clone(),
         );
         outbe_nodfactory::called::schedule_call_pass(&call_ctx).unwrap();
@@ -1148,12 +1156,16 @@ fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u
         oracle.utc_day_vwap_last_finalized.write(closed).unwrap();
     }
     let nod = outbe_nod::NodContract::new(storage.clone());
-    if nod.daily_genesis_day.read().unwrap() == 0 {
-        nod.daily_genesis_day.write(closed).unwrap();
+    if nod.call_latest_day.read().unwrap() == 0 {
+        // This fixture starts from an established parent with only the newest day pending.
+        nod.call_latest_day
+            .write(previous_date_key(closed).unwrap())
+            .unwrap();
     }
     loop {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(height, timestamp, 1),
+            outbe_primitives::block::BlockContext::empty_for_tests(height, timestamp, 1)
+                .with_genesis_timestamp(GENESIS_TIMESTAMP),
             storage.clone(),
         );
         outbe_nodfactory::called::process_call_pass(&ctx).unwrap();

@@ -117,7 +117,10 @@ fn issue_four_series(world: &mut World) {
         sender_key: DEPLOYER_KEY,
         emission_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
-        issued_at: head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
+        issued_at: super::entity_lifecycle::phases::backdated_timestamp(
+            world,
+            u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY,
+        ),
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
@@ -468,7 +471,7 @@ impl Lifecycle for IntexLifecycle {
             &url,
             DEPLOYER_KEY,
             series,
-            head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+            super::entity_lifecycle::phases::backdated_timestamp(world, EXPIRY_DAY_SECS),
         )
         .expect("arm the group's closed deadline day");
     }
