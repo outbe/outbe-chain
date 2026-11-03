@@ -302,62 +302,6 @@ fn calm_samples_after(previous: (u64, u64), current: (u64, u64), count: u8) -> u
     }
 }
 
-#[cfg(test)]
-mod clock_settling_tests {
-    use super::calm_samples_after;
-
-    #[test]
-    fn clock_settling_requires_two_real_calm_advances_despite_idle_polls() {
-        let cases: &[(&str, &[(u64, u64)], Option<usize>)] = &[
-            (
-                "eighteen-second blocks sampled every six seconds",
-                &[
-                    (10, 1000),
-                    (10, 1000),
-                    (10, 1000),
-                    (11, 1018),
-                    (11, 1018),
-                    (11, 1018),
-                    (12, 1036),
-                ],
-                Some(6),
-            ),
-            ("stalled chain", &[(10, 1000); 8], None),
-            (
-                "only one advance",
-                &[(10, 1000), (11, 1018), (11, 1018), (11, 1018)],
-                None,
-            ),
-            (
-                "ratchet resets calm progress",
-                &[(10, 1000), (11, 1018), (12, 1138), (13, 1156), (14, 1174)],
-                Some(4),
-            ),
-            (
-                "height regression resets calm progress",
-                &[(10, 1000), (11, 1018), (10, 1018), (11, 1036), (12, 1054)],
-                Some(4),
-            ),
-            (
-                "timestamp regression resets calm progress",
-                &[(10, 1000), (11, 1018), (12, 1000), (13, 1018), (14, 1036)],
-                Some(4),
-            ),
-        ];
-        for &(name, samples, expected) in cases {
-            let mut count = 0;
-            let settled_at = samples
-                .windows(2)
-                .position(|pair| {
-                    count = calm_samples_after(pair[0], pair[1], count);
-                    count >= 2
-                })
-                .map(|index| index + 1);
-            assert_eq!(settled_at, expected, "{name}");
-        }
-    }
-}
-
 /// A loopback delivery runs inside the sending transaction on the gas its message type budgets
 /// for it. So a park means a wrong budget or a reverting handler. The run must report it, not
 /// retry it.
@@ -428,4 +372,62 @@ pub(crate) fn settled_day(world: &World) -> u32 {
         .metadosis_wwd_state_on(port, wwd)
         .expect("native WWD state")
         .day
+}
+
+#[cfg(test)]
+mod clock_settling_tests {
+    use super::calm_samples_after;
+
+    type ClockCase<'a> = (&'a str, &'a [(u64, u64)], Option<usize>);
+
+    #[test]
+    fn clock_settling_requires_two_real_calm_advances_despite_idle_polls() {
+        let cases: &[ClockCase<'_>] = &[
+            (
+                "eighteen-second blocks sampled every six seconds",
+                &[
+                    (10, 1000),
+                    (10, 1000),
+                    (10, 1000),
+                    (11, 1018),
+                    (11, 1018),
+                    (11, 1018),
+                    (12, 1036),
+                ],
+                Some(6),
+            ),
+            ("stalled chain", &[(10, 1000); 8], None),
+            (
+                "only one advance",
+                &[(10, 1000), (11, 1018), (11, 1018), (11, 1018)],
+                None,
+            ),
+            (
+                "ratchet resets calm progress",
+                &[(10, 1000), (11, 1018), (12, 1138), (13, 1156), (14, 1174)],
+                Some(4),
+            ),
+            (
+                "height regression resets calm progress",
+                &[(10, 1000), (11, 1018), (10, 1018), (11, 1036), (12, 1054)],
+                Some(4),
+            ),
+            (
+                "timestamp regression resets calm progress",
+                &[(10, 1000), (11, 1018), (12, 1000), (13, 1018), (14, 1036)],
+                Some(4),
+            ),
+        ];
+        for &(name, samples, expected) in cases {
+            let mut count = 0;
+            let settled_at = samples
+                .windows(2)
+                .position(|pair| {
+                    count = calm_samples_after(pair[0], pair[1], count);
+                    count >= 2
+                })
+                .map(|index| index + 1);
+            assert_eq!(settled_at, expected, "{name}");
+        }
+    }
 }

@@ -302,11 +302,7 @@ impl ExpectedRecords {
         let tee_sidecar_outage = records_or_finding(
             expectations
                 .expected_tee_sidecar_outage
-                .map(|(validator, tx, height, hash)| {
-                    expected_tee_sidecar_outage_records(
-                        logs, validators, validator, tx, height, hash,
-                    )
-                }),
+                .map(|identity| expected_tee_sidecar_outage_records(logs, validators, identity)),
             findings,
         );
         tee_lease_shutdown.extend(records_or_finding(

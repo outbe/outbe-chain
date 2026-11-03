@@ -46,7 +46,7 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         (other.clone(), lines.join("\n")),
     ];
     let accepted =
-        super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash).unwrap();
+        super::expected_tee_sidecar_outage_records(&logs, 4, (3, &tx, height, block_hash)).unwrap();
     for path in [&node, &reth] {
         assert!(accepted.contains(&(path.clone(), 2)));
         for rejected in [0, 3, 4, 9] {
@@ -60,19 +60,16 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         logs.iter().map(|(path, text)| (path.clone(), text.replace("Connection refused", "Connection reset"))).collect(),
         logs.iter().map(|(path, text)| (path.clone(), text.replace("0: executor actor returned fatal error", "INFO reth::cli: Starting Reth version=example\n0: executor actor returned fatal error"))).collect(),
     ] {
-        assert!(super::expected_tee_sidecar_outage_records(&invalid, 4, 3, &tx, height, block_hash).is_err());
+        assert!(super::expected_tee_sidecar_outage_records(&invalid, 4, (3, &tx, height, block_hash)).is_err());
     }
     assert!(
-        super::expected_tee_sidecar_outage_records(&logs, 4, 2, &tx, height, block_hash).is_err()
+        super::expected_tee_sidecar_outage_records(&logs, 4, (2, &tx, height, block_hash)).is_err()
     );
     let without_fail_stop = vec![(node, warning(&tx)), (reth, warning(&tx))];
     assert!(super::expected_tee_sidecar_outage_records(
         &without_fail_stop,
         4,
-        3,
-        &tx,
-        height,
-        block_hash
+        (3, &tx, height, block_hash)
     )
     .is_err());
 
@@ -99,7 +96,7 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         ),
     ];
     let accepted =
-        super::expected_tee_sidecar_outage_records(&witness_logs, 4, 3, &tx, height, block_hash)
+        super::expected_tee_sidecar_outage_records(&witness_logs, 4, (3, &tx, height, block_hash))
             .expect("the observed typed local-unavailability outage must match");
     assert_eq!(accepted.len(), 4);
     let audit = |logs: &[(PathBuf, String)]| {
@@ -224,7 +221,7 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
     }
     for (case, logs) in invalid {
         assert!(
-            super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash)
+            super::expected_tee_sidecar_outage_records(&logs, 4, (3, &tx, height, block_hash))
                 .is_err(),
             "accepted {case}"
         );
@@ -333,7 +330,7 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         ("missing sink", typed_logs[..1].to_vec()),
     ] {
         assert!(
-            super::expected_tee_sidecar_outage_records(&logs, 4, 3, &tx, height, block_hash)
+            super::expected_tee_sidecar_outage_records(&logs, 4, (3, &tx, height, block_hash))
                 .is_err(),
             "accepted typed {case}"
         );
@@ -342,7 +339,9 @@ fn expected_sidecar_payload_warning_requires_exact_outage_and_process() {
         let mut missing = typed_logs.clone();
         missing[sink].1 = missing[sink].1.replace(exit, "INFO no exit");
         assert!(super::expected_tee_sidecar_outage_records(
-            &missing, 4, 3, &tx, height, block_hash
+            &missing,
+            4,
+            (3, &tx, height, block_hash)
         )
         .is_err());
         for alarm in ["ERROR unrelated fatal failure", "thread worker panicked"] {

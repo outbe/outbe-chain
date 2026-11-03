@@ -9,11 +9,9 @@ use super::LogRecords;
 pub(super) fn expected_tee_sidecar_outage_records(
     logs: &[(PathBuf, String)],
     validators: usize,
-    expected_validator: usize,
-    tx_hash: &str,
-    height: u64,
-    block_hash: alloy_primitives::B256,
+    expectation: (usize, &str, u64, alloy_primitives::B256),
 ) -> Result<LogRecords, String> {
+    let (expected_validator, tx_hash, height, block_hash) = expectation;
     if expected_validator >= validators || !tx_hash.starts_with("0x") || tx_hash.len() != 66 {
         return Err("invalid expected TEE sidecar outage identity".into());
     }
