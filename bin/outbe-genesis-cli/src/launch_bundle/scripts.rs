@@ -23,15 +23,16 @@ pub fn enclave_script(
         .and_then(|t| t.get("mode"))
         .and_then(Value::as_str)
         .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
-    let default_enclave_dir = format!("{base_dir}/enclave");
+    let default_enclave_dir = format!("{base_dir}/sgx");
     let enclave_dir = config
         .get("enclave_dir")
         .and_then(Value::as_str)
         .unwrap_or(&default_enclave_dir);
+    let default_enclave_runner = format!("{enclave_dir}/bin/outbe-tee-enclave-launch");
     let enclave_runner = config
         .get("enclave_runner")
         .and_then(Value::as_str)
-        .unwrap_or("./run-enclave.sh");
+        .unwrap_or(&default_enclave_runner);
     let chain_id = parse_u64(
         config
             .get("chain_id")
@@ -64,7 +65,7 @@ systemctl is-active --quiet aesmd.service \\\n\
 cd {q_enclave_dir}\n\
 exec {q_runner} \\\n\
   --socket {q_endpoint} \\\n\
-  --tee-dir {q_val_tee} \\\n\
+  --tee-dir /var/lib/outbe/tee \\\n\
   --chain-id {chain_id_hex}\n",
             q_val_tee = quote(&validator_tee),
             q_enclave_dir = quote(enclave_dir),
@@ -74,7 +75,6 @@ exec {q_runner} \\\n\
     }
 
     let manifest = format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx");
-    let enclave_tee = format!("{enclave_dir}/tee");
     let signing_key = format!("{base_dir}/test-sgx-signing-key.pem");
     let dkg_seed = format!("{:064x}", index + 1);
     Ok(format!(
@@ -82,20 +82,15 @@ exec {q_runner} \\\n\
 # until this answers on {endpoint}.\n\
 mkdir -p {q_val_tee}\n\
 \n\
-if [ -e /dev/sgx_enclave ] && [ -f {q_manifest} ]; then\n\
-  # Real SGX hardware with a signed manifest: run it natively.\n\
-  #\n\
-  # The sealing directory is the one baked into the signed manifest, not a\n\
-  # per-validator path: Gramine only lets the enclave touch files the manifest\n\
-  # declares, so passing anything else fails with a bare \"Permission denied\".\n\
-  # One signed manifest per host therefore means one sealing directory per\n\
-  # host, which is what a real deployment has anyway.\n\
+if [ -e /dev/sgx_enclave ] && [ -x {q_runner} ] && [ -f {q_manifest} ]; then\n\
+  # Real SGX hardware: use the immutable loader and runtime shipped in the\n\
+  # signed release bundle. The systemd unit binds this tree at /opt/outbe/sgx\n\
+  # and the per-validator sealing directory at /var/lib/outbe/tee, matching the\n\
+  # paths covered by the signed manifest.\n\
   cd {q_enclave_dir}\n\
-  # `sudo` only when not already root: under systemd the unit runs as root and\n\
-  # sudo may not even be present in the service environment.\n\
-  exec ${{SUDO:-$([ \"$(id -u)\" = 0 ] || echo sudo)}} gramine-sgx outbe-tee-enclave \\\n\
+  exec {q_runner} \\\n\
     --socket {q_endpoint} \\\n\
-    --tee-dir {q_enclave_tee} \\\n\
+    --tee-dir /var/lib/outbe/tee \\\n\
     --chain-id {chain_id_hex}\n\
 fi\n\
 \n\
@@ -116,8 +111,8 @@ exec docker run --rm --name {q_name} \\\n\
         q_val_tee = quote(&validator_tee),
         q_manifest = quote(&manifest),
         q_enclave_dir = quote(enclave_dir),
+        q_runner = quote(enclave_runner),
         q_endpoint = quote(&endpoint),
-        q_enclave_tee = quote(&enclave_tee),
         q_name = quote(&name),
         q_signing_key = quote(&signing_key),
         q_image = quote(image),

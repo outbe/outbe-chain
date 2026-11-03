@@ -31,7 +31,6 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
         let block = BlockContext::new(1, genesis_oct_1, CHAIN_ID, Address::ZERO, Vec::new())
             .with_genesis_timestamp(genesis_oct_1);
         let ctx = runtime_context(block, handle);
-        initialize_daily_passes(&ctx);
         run_cycle_lifecycle(&ctx).unwrap();
     });
 
@@ -167,7 +166,6 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
     //    pre-seeded Rewards start_date slot.
     storage.enter(|handle| {
         let block_1 = runtime_context(block_ctx(1, GENESIS_TS + 60), handle);
-        initialize_daily_passes(&block_1);
         run_cycle_lifecycle(&block_1).unwrap();
     });
     storage.set_block_number(2);

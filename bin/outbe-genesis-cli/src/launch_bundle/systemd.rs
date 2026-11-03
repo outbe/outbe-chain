@@ -139,6 +139,14 @@ exec {q_cli} tee renew \\\n\
 pub fn systemd_unit(role: &str, description: &str, after: Option<&str>, base_dir: &str) -> String {
     let dependency_suffix = after.map(|a| format!(" {a}")).unwrap_or_default();
     let user = if role == "enclave" { "root" } else { "ubuntu" };
+    let enclave_mounts = if role == "enclave" {
+        format!(
+            "BindReadOnlyPaths=-{base_dir}/sgx:/opt/outbe/sgx\n\
+BindPaths={base_dir}/validator-%i/tee:/var/lib/outbe/tee\n"
+        )
+    } else {
+        String::new()
+    };
     format!(
         "[Unit]\n\
 Description=Outbe {description} (validator %i)\n\
@@ -155,6 +163,7 @@ Restart=always\n\
 RestartSec=5\n\
 StandardOutput=journal\n\
 StandardError=journal\n\
+{enclave_mounts}\
 \n\
 [Install]\n\
 WantedBy=multi-user.target\n"
@@ -221,6 +230,8 @@ WantedBy=timers.target\n",
         "\n# Install and start every Outbe service for validator $1 on this machine.\n\
 INDEX=\"${{1:?usage: install-systemd.sh <validator-index>}}\"\n\
 \n\
+sudo install -d -m 0700 {q_base}/validator-$INDEX/tee /var/lib/outbe/tee\n\
+\n\
 sudo install -m 644 {q_base}/systemd/outbe-*@.service /etc/systemd/system/\n\
 sudo install -m 644 {q_base}/systemd/outbe-*@.timer /etc/systemd/system/\n\
 sudo systemctl daemon-reload\n\
@@ -247,6 +258,13 @@ pub fn preflight_script(
 ) -> Result<String, GenesisError> {
     let tee_port = port_of(config, "tee_enclave_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
+    let default_enclave_dir = format!("{base_dir}/sgx");
+    let enclave_dir = config
+        .get("enclave_dir")
+        .and_then(Value::as_str)
+        .unwrap_or(&default_enclave_dir);
+    let manifest = quote(&format!("{enclave_dir}/outbe-tee-enclave.manifest.sgx"));
+    let signature = quote(&format!("{enclave_dir}/outbe-tee-enclave.sig"));
     Ok(format!(
         "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
 # that would make the network fail after start rather than before.\n\
@@ -257,12 +275,18 @@ note() {{ printf '  %-42s %s\\n' \"$1\" \"$2\"; }}\n\
 note \"genesis sha256\" \"$(sha256sum genesis.json | cut -c1-16)\"\n\
 echo \"  ^ genesis must be identical on every machine\"\n\
 \n\
-if [ -f outbe-tee-enclave.sig ]; then\n\
-  note \"enclave mr_enclave\" \"$(gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null | grep -oE 'mr_enclave: [0-9a-f]+' | cut -c13-28)\"\n\
-  note \"enclave mr_signer\" \"$(gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null | grep -oE 'mr_signer: [0-9a-f]+' | cut -c12-27)\"\n\
-  echo \"  ^ mr_signer must match across machines; a per-host key breaks dcap-required\"\n\
+manifest={manifest}\n\
+signature={signature}\n\
+if [ -f \"$manifest\" ] && [ -f \"$signature\" ]; then\n\
+  note \"enclave manifest sha256\" \"$(sha256sum \"$manifest\" | cut -c1-16)\"\n\
+  note \"enclave signature sha256\" \"$(sha256sum \"$signature\" | cut -c1-16)\"\n\
+  if command -v gramine-sgx-sigstruct-view >/dev/null; then\n\
+    note \"enclave mr_enclave\" \"$(gramine-sgx-sigstruct-view \"$signature\" 2>/dev/null | grep -oE 'mr_enclave: [0-9a-f]+' | cut -c13-28)\"\n\
+    note \"enclave mr_signer\" \"$(gramine-sgx-sigstruct-view \"$signature\" 2>/dev/null | grep -oE 'mr_signer: [0-9a-f]+' | cut -c12-27)\"\n\
+  fi\n\
+  echo \"  ^ enclave artifacts must match across machines\"\n\
 else\n\
-  note \"enclave signature\" \"MISSING\"; fail=1\n\
+  note \"enclave artifacts\" \"MISSING manifest or signature\"; fail=1\n\
 fi\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\

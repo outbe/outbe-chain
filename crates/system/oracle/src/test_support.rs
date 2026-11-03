@@ -111,9 +111,6 @@ macro_rules! reopen_daily_call_sweep {
     ($contract:expr, $storage:expr, $day:expr) => {{
         let contract = $contract;
         let day = $day;
-        if contract.daily_genesis_day.read()? == 0 || day < contract.daily_genesis_day.read()? {
-            contract.daily_genesis_day.write(day)?;
-        }
         if day > contract.call_latest_day.read()? {
             contract.call_latest_day.write(day)?;
         }

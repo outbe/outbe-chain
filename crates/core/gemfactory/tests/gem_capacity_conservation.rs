@@ -85,12 +85,10 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
             day = previous_date_key(day).expect("date step");
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
-        called::initialize_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(0, CALLED - DAY, 1),
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, CALLED, 1).with_genesis_timestamp(CALLED - DAY),
             s.clone(),
-        ))
-        .unwrap();
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
+        );
         called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
             assert_eq!(
@@ -123,7 +121,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             // Prices no longer affect called groups, but day readiness still matters.
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(at * 32 + block, at, 1),
+                    BlockContext::empty_for_tests(at * 32 + block, at, 1)
+                        .with_genesis_timestamp(CALLED - DAY),
                     s.clone(),
                 );
                 called::process_call_pass(&ctx)?;
@@ -132,7 +131,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 }
             }
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(at * 32 + 16, at, 1),
+                BlockContext::empty_for_tests(at * 32 + 16, at, 1)
+                    .with_genesis_timestamp(CALLED - DAY),
                 s.clone(),
             );
             hooks::cleanup(&ctx)?;

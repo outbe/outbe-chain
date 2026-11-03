@@ -1,4 +1,4 @@
-name: testnet SGX release
+name: 20. testnet SGX
 
 on:
   # Pushing an immutable testnet tag triggers this release, but indirectly: the

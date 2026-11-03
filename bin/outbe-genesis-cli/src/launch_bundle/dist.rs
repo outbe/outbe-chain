@@ -7,36 +7,11 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use walkdir::WalkDir;
 
 use crate::error::GenesisError;
 use crate::seed_codec::parse_u64;
 
-use super::{port_of, quote, write_script};
-
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisError> {
-    fs::create_dir_all(dst).map_err(|err| GenesisError::io(dst, err))?;
-    for entry_res in WalkDir::new(src) {
-        let entry = entry_res.map_err(|e| GenesisError::io(src, std::io::Error::other(e)))?;
-        let rel = entry
-            .path()
-            .strip_prefix(src)
-            .map_err(|e| GenesisError::io(src, std::io::Error::other(e)))?;
-        if rel.as_os_str().is_empty() {
-            continue;
-        }
-        let target = dst.join(rel);
-        if entry.file_type().is_dir() {
-            fs::create_dir_all(&target).map_err(|err| GenesisError::io(&target, err))?;
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|err| GenesisError::io(parent, err))?;
-            }
-            fs::copy(entry.path(), &target).map_err(|err| GenesisError::io(&target, err))?;
-        }
-    }
-    Ok(())
-}
+use super::{copy_dir_recursive, port_of, quote, write_script};
 
 fn pack_validator_archive(
     output_dir: &Path,
@@ -59,7 +34,7 @@ fn pack_validator_archive(
             fs::copy(&item, &dst).map_err(|err| GenesisError::io(&dst, err))?;
         }
     }
-    for folder in ["systemd", "enclave"] {
+    for folder in ["systemd", "sgx"] {
         let src = output_dir.join(folder);
         if src.is_dir() {
             copy_dir_recursive(&src, &staging.join(folder))?;
@@ -152,13 +127,6 @@ sudo mkdir -p {q_base}\n\
 sudo chown \"$USER\" {q_base}\n\
 tar xzf \"$ARCHIVE\" -C {q_base}\n\
 chmod -R go-rwx {q_base}/keys\n\
-\n\
-# The signed enclave, when the bundle carries one, belongs next to the binaries.\n\
-if [ -d {q_base}/enclave ]; then\n\
-  sudo install -m 755 {q_base}/enclave/outbe-tee-enclave {q_base}/\n\
-  sudo install -m 644 {q_base}/enclave/outbe-tee-enclave.manifest* {q_base}/\n\
-  sudo install -m 644 {q_base}/enclave/outbe-tee-enclave.sig {q_base}/\n\
-fi\n\
 \n\
 echo \"unpacked into {base_dir}; next: ./install-systemd.sh $INDEX\"\n"
     );

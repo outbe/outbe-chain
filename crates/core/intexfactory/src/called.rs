@@ -33,10 +33,6 @@ pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut IntexCallPass::new(ctx))
 }
 
-pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_pass::initialize(ctx, &mut IntexCallPass::new(ctx))
-}
-
 /// This function runs the coupled daily pass, including series forfeits after calls.
 /// It returns the number of called series, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
@@ -71,10 +67,6 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
 
     fn block_budget(&self) -> &Value<'storage, U256> {
         &self.intex.daily_budget
-    }
-
-    fn genesis_day(&self) -> &Value<'storage, u32> {
-        &self.intex.daily_genesis_day
     }
 
     fn forfeit(

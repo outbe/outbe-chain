@@ -42,7 +42,6 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
-        initialize_daily_passes(&ctx);
         let owner = Address::repeat_byte(0xA0);
         let founder = Address::repeat_byte(0xB0);
         let consensus_key = [0x30; 48];
@@ -285,18 +284,9 @@ pub(super) fn is_day_settled(ctx: &BlockRuntimeContext<'_>, day: u32) -> bool {
         })
 }
 
-/// Block 1 at `timestamp` after daily pass initialization.
+/// Block 1 at `timestamp`.
 pub(super) fn genesis_block(handle: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
-    let ctx = runtime_context(block_ctx(1, timestamp), handle);
-    initialize_daily_passes(&ctx);
-    ctx
-}
-
-pub(super) fn initialize_daily_passes(ctx: &BlockRuntimeContext<'_>) {
-    outbe_nodfactory::called::initialize_daily(ctx).unwrap();
-    outbe_gemfactory::called::initialize_daily(ctx).unwrap();
-    outbe_intexfactory::called::initialize_daily(ctx).unwrap();
-    outbe_credisfactory::called::initialize_daily(ctx).unwrap();
+    runtime_context(block_ctx(1, timestamp), handle)
 }
 
 /// Runs `run` on `storage` and asserts that it writes no storage slot and

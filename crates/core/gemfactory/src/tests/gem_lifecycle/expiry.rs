@@ -374,26 +374,33 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         let gems = gems_with_loads(storage, &loads);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
+        // Catch up before the deadline closes so the budget assertions refer to one block.
+        let mut ctx = super::super::daily_pass(&block_ctx_at(storage, now - 1)).unwrap();
+        // Catch-up can consume several heights at one timestamp. Resume from its actual height.
+        ctx.block.block_number += 1;
+        ctx.block.timestamp = now;
         let live = || {
             gems.iter()
                 .filter(|id| item(storage, **id).is_some())
                 .count()
         };
 
-        begin_block_at(storage, now);
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
         assert_eq!(
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "one block deletes its write budget"
         );
-        begin_block_at(storage, now);
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "same-height cleanup cannot replenish its independent allowance"
         );
-        begin_block_at(storage, now + 1);
+        ctx.block.block_number += 1;
+        ctx.block.timestamp += 1;
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(live(), 0);
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.first_expiry_day().unwrap(), None);

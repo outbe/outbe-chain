@@ -1,9 +1,8 @@
-//! Check Oracle history and compare entry prices with genesis.
+//! Check native entry prices against closed emission-day Oracle observations.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, U256};
-use outbe_nod::openings::entry_price_day;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use serde::Serialize;
 
@@ -20,7 +19,7 @@ struct Quote {
     volume: U256,
 }
 
-fn history(world: &World, port: u16, height: u64) -> Vec<Quote> {
+fn history(world: &World, port: u16, height: u64, iso: u16) -> Vec<Quote> {
     let history = eth::read_call_at(
         &world.rpc.url(port),
         ORACLE_ADDRESS,
@@ -57,10 +56,10 @@ fn history(world: &World, port: u16, height: u64) -> Vec<Quote> {
             "missing raw snapshot in fresh fixture"
         );
     }
-    let usd = outbe_primitives::asset_type::currency_address(840);
+    let currency = outbe_primitives::asset_type::currency_address(iso);
     let mut quotes = BTreeMap::new();
     for i in 0..count {
-        if history.bases[i] != Address::ZERO || history.quotes[i] != usd {
+        if history.bases[i] != Address::ZERO || history.quotes[i] != currency {
             continue;
         }
         let quote = Quote {
@@ -71,7 +70,7 @@ fn history(world: &World, port: u16, height: u64) -> Vec<Quote> {
         };
         assert!(
             quotes.insert(quote.snapshot_id, quote).is_none(),
-            "one COEN/840 observation per raw snapshot"
+            "one reference-currency observation per raw snapshot"
         );
     }
     quotes.into_values().collect()
@@ -91,7 +90,6 @@ fn scale6(value: &str) -> U256 {
         .expect("controlled scale6 input fits U256")
 }
 
-#[cfg(test)]
 fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
     assert!(start < end, "nonempty FORMING interval");
     let mut numerator = U256::ZERO;
@@ -124,15 +122,12 @@ fn weighted_price(quotes: &[Quote], start: u64, end: u64) -> U256 {
     numerator / denominator
 }
 
-#[cfg(test)]
-fn previous_day_entry_price(quotes: &[Quote], requested_at: u64) -> U256 {
-    let end = requested_at / 86_400 * 86_400;
-    let price = weighted_price(quotes, end.saturating_sub(86_400), end);
-    assert!(
-        !price.is_zero(),
-        "entry price requires a positive previous-day VWAP"
-    );
-    price
+fn emission_day_entry_price(quotes: &[Quote], day: u32) -> U256 {
+    let start = outbe_primitives::time::WorldwideDay::new(day)
+        .to_timestamp_utc()
+        .expect("valid emission day");
+    let end = start.checked_add(86_400).expect("entry-price day end");
+    weighted_price(quotes, start, end)
 }
 
 fn oracle_price_at(world: &World, port: u16, day: u32, iso: u16, height: u64) -> U256 {
@@ -149,12 +144,37 @@ fn oracle_price_at(world: &World, port: u16, day: u32, iso: u16, height: u64) ->
     .expect("historical reference-currency day VWAP")
 }
 
-/// The Nod entry price is the VWAP of the UTC day before the Lysis completion block.
+/// Compare native terms with their linked emission day's closed price.
 pub(super) fn assert_native_entry_price(
     world: &World,
     terms: &outbe_primitives::nod_encryption::NodTermsV1,
     height: u64,
 ) {
+    let declared = match terms.reference_currency {
+        840 => U256::from(1_000_000),
+        978 => U256::from(250_000),
+        iso => panic!("unsupported native fixture reference currency: {iso}"),
+    };
+    let day = assert_closed_entry_price(
+        world,
+        terms.reference_currency,
+        terms.entry_price_minor,
+        declared,
+        height,
+    );
+    assert_eq!(
+        terms.emission_day, day,
+        "Nod terms match the linked emission day"
+    );
+}
+
+pub(super) fn assert_closed_entry_price(
+    world: &World,
+    iso: u16,
+    actual: U256,
+    declared: U256,
+    height: u64,
+) -> u32 {
     let ports = world.validators.committee_ports();
     world
         .rpc
@@ -164,34 +184,44 @@ pub(super) fn assert_native_entry_price(
         .rpc
         .checkpoint_at(ports[0], height)
         .expect("exact native entry-price checkpoint");
+    let wwd = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("native WWD")
+        .parse()
+        .expect("numeric WWD");
+    let day = world
+        .rpc
+        .metadosis_wwd_state_at(ports[0], wwd, height)
+        .expect("native emission-day link")
+        .day;
     let timestamp = world
         .rpc
         .block_timestamp(ports[0], height)
         .expect("native evaluation time");
-    let day = entry_price_day(timestamp).expect("date step");
-    let quotes = history(world, ports[0], height);
-    let iso = terms.reference_currency;
-    let expected = oracle_price_at(world, ports[0], day, iso, 0);
+    let end = outbe_primitives::time::WorldwideDay::new(day)
+        .to_timestamp_utc()
+        .expect("valid emission day")
+        .checked_add(86_400)
+        .expect("entry-price day end");
+    assert!(timestamp >= end, "Lysis entry-price day must be closed");
+    let quotes = history(world, ports[0], height, iso);
+    let expected = emission_day_entry_price(&quotes, day);
     assert!(
         !expected.is_zero(),
-        "genesis contains a positive entry price"
+        "closed entry-price day has priced observations"
     );
-    let declared = match iso {
-        840 => U256::from(1_000_000),
-        978 => U256::from(250_000),
-        _ => panic!("unsupported native fixture reference currency: {iso}"),
-    };
     assert_eq!(
         expected, declared,
-        "genesis entry price matches the fixture"
+        "real native feeder observations preserve the fixture price"
     );
     assert_eq!(
-        terms.entry_price_minor, expected,
-        "entry price matches the closed day in genesis"
+        actual, expected,
+        "Nod entry price matches its closed emission day"
     );
     for port in ports {
-        assert_eq!(history(world, port, height), quotes);
-        assert_eq!(oracle_price_at(world, port, day, iso, 0), expected);
+        assert_eq!(history(world, port, height, iso), quotes);
         assert_eq!(oracle_price_at(world, port, day, iso, height), expected);
         assert_eq!(
             world
@@ -201,6 +231,7 @@ pub(super) fn assert_native_entry_price(
             checkpoint
         );
     }
+    day
 }
 
 #[cfg(test)]
@@ -239,24 +270,22 @@ mod tests {
     }
 
     #[test]
-    fn entry_price_uses_previous_utc_day_and_exact_midnight_boundaries() {
+    fn entry_price_uses_linked_emission_day_and_exact_midnight_boundaries() {
         let quotes = [
             quote(86_399, 999_000_000, 100),
             quote(86_400, 100_000_000, 1),
             quote(172_799, 200_000_000, 3),
             quote(172_800, 999_000_000, 100),
         ];
-        for requested_at in [172_800, 200_000, 259_199] {
-            assert_eq!(
-                previous_day_entry_price(&quotes, requested_at),
-                U256::from(175_000_000)
-            );
-        }
+        assert_eq!(
+            emission_day_entry_price(&quotes, 19700102),
+            U256::from(175_000_000)
+        );
     }
 
     #[test]
     #[should_panic(expected = "FORMING interval contains priced observations")]
-    fn current_day_quotes_cannot_supply_an_empty_previous_day() {
-        previous_day_entry_price(&[quote(172_800, 100_000_000, 1)], 200_000);
+    fn another_day_cannot_supply_an_empty_emission_day() {
+        emission_day_entry_price(&[quote(172_800, 100_000_000, 1)], 19700102);
     }
 }

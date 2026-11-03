@@ -165,9 +165,9 @@ pub async fn run() {
         // partial scenario. Environment-ineligible scenarios are filtered out
         // before execution and therefore never reach this writer policy.
         .fail_on_skipped()
-        .before(move |feature, _rule, scenario, world| {
+        .before(move |feature, rule, scenario, world| {
             hook_counters.started.fetch_add(1, Ordering::Relaxed);
-            let reason = before.begin(feature, scenario, world);
+            let reason = before.begin(feature, rule, scenario, world);
             async move {
                 if let Some(reason) = reason {
                     panic!("environment cannot satisfy this scenario: {reason}");

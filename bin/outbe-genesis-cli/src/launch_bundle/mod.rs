@@ -9,6 +9,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use walkdir::WalkDir;
 
 use crate::error::GenesisError;
 pub use crate::keys::ensure_reth_p2p_secret;
@@ -43,9 +44,13 @@ pub const DEFAULT_PORTS: &[(&str, u16)] = &[
 /// Protocol ceiling on the validator set, mirroring the ValidatorSet precompile default.
 pub const DEFAULT_MAX_VALIDATORS: u64 = 128;
 
-/// Files required in a signed Gramine SGX enclave directory.
+/// Files required below the install root of a signed SGX release bundle.
 pub const SIGNED_ENCLAVE_FILES: &[&str] = &[
-    "outbe-tee-enclave",
+    "bin/outbe-tee-enclave",
+    "bin/outbe-tee-enclave-launch",
+    "gramine/loader",
+    "gramine/libpal.so",
+    "network-descriptor-v1.bin",
     "outbe-tee-enclave.manifest",
     "outbe-tee-enclave.manifest.sgx",
     "outbe-tee-enclave.sig",
@@ -131,7 +136,31 @@ pub fn uses_production_tee_session(config: &Value) -> bool {
     enclave_sgx || is_dcap
 }
 
-/// Copy the signed enclave into the bundle and strip any `.pem` files.
+pub(super) fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), GenesisError> {
+    fs::create_dir_all(dst).map_err(|err| GenesisError::io(dst, err))?;
+    for entry_res in WalkDir::new(src) {
+        let entry = entry_res.map_err(|e| GenesisError::io(src, std::io::Error::other(e)))?;
+        let rel = entry
+            .path()
+            .strip_prefix(src)
+            .map_err(|e| GenesisError::io(src, std::io::Error::other(e)))?;
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            fs::create_dir_all(&target).map_err(|err| GenesisError::io(&target, err))?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|err| GenesisError::io(parent, err))?;
+            }
+            fs::copy(entry.path(), &target).map_err(|err| GenesisError::io(&target, err))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy the complete signed SGX release runtime into the bundle and strip signing keys.
 pub fn stage_signed_enclave(
     config: &Value,
     output_dir: &Path,
@@ -143,26 +172,36 @@ pub fn stage_signed_enclave(
         return Ok(None);
     }
     let source_dir = Path::new(source);
-    let staged = output_dir.join("enclave");
-    fs::create_dir_all(&staged).map_err(|err| GenesisError::io(&staged, err))?;
+    let nested_install_root = source_dir.join("rootfs/opt/outbe/sgx");
+    let source_dir = if nested_install_root.is_dir() {
+        nested_install_root.as_path()
+    } else {
+        source_dir
+    };
     for &name in SIGNED_ENCLAVE_FILES {
         let origin = source_dir.join(name);
         if !origin.is_file() {
             return Err(GenesisError::validation(format!(
-                "`signed_enclave_dir` is missing {name}. Sign the enclave on the \
-                 build host first (gramine-manifest + gramine-sgx-sign) and point \
-                 this at the directory holding the result."
+                "`signed_enclave_dir` is missing {name}. Point it at either an \
+                 extracted signed release bundle or its rootfs/opt/outbe/sgx directory."
             )));
         }
-        let dst = staged.join(name);
-        fs::copy(&origin, &dst).map_err(|err| GenesisError::io(&dst, err))?;
     }
-    let dir_iter = fs::read_dir(&staged).map_err(|err| GenesisError::io(&staged, err))?;
-    for entry_res in dir_iter {
-        let entry = entry_res.map_err(|err| GenesisError::io(&staged, err))?;
+
+    let staged = output_dir.join("sgx");
+    if staged.exists() {
+        fs::remove_dir_all(&staged).map_err(|err| GenesisError::io(&staged, err))?;
+    }
+    copy_dir_recursive(source_dir, &staged)?;
+
+    let entries = WalkDir::new(&staged)
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| GenesisError::io(&staged, std::io::Error::other(err)))?;
+    for entry in entries {
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("pem") {
-            fs::remove_file(&path).map_err(|err| GenesisError::io(&path, err))?;
+            fs::remove_file(path).map_err(|err| GenesisError::io(path, err))?;
         }
     }
     Ok(Some(staged))

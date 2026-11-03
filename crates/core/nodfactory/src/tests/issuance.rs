@@ -426,7 +426,8 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         let forfeit_ts = deadline + 86_400;
         let through_day = outbe_primitives::deadline_queue::deadline_day(forfeit_ts).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(10, forfeit_ts, CHAIN_ID),
+            outbe_primitives::block::BlockContext::empty_for_tests(10, forfeit_ts, CHAIN_ID)
+                .with_genesis_timestamp(deadline - outbe_primitives::time::SECONDS_PER_DAY),
             storage.clone(),
         );
         let mut budget = outbe_primitives::pass_budget::PassBudget::new(100, 100);

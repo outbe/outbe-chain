@@ -13,28 +13,22 @@ const EMISSION_DAY_FAILED: u8 = 2;
 #[given("a fresh four-validator native Lysis localnet")]
 fn fresh_native_lysis(world: &mut World) {
     assert_eq!(world.validators.size(), 4);
-    super::common::bootstrap_localnet(
-        world,
-        6,
-        &[("TESTNET_METADOSIS_OFFERING_SECONDS", "3600".to_owned())],
+    world.price_oracle.add_fixed_pair(
+        978,
+        alloy_primitives::U256::from(250_000_u64),
+        super::price_oracle::MOCK_VOLUME,
     );
-    let day = world
+    super::common::bootstrap_native_lysis_localnet(world, 6);
+    let (day, opts) = world
         .localnet
-        .prepare_cross_currency_tribute_fixture()
-        .expect("native Offering fixture");
-    world
-        .localnet
-        .prepare_native_lysis_fixture(day)
+        .prepare_native_lysis_fixture(6)
         .expect("linked native Lysis allocation and entry price");
     world.state.wwd = Some(day.to_string());
     world.state.tribute_owner_keys = world
         .localnet
         .fund_tribute_owners(40)
         .expect("fund native Tribute owners");
-    super::common::start_bootstrapped_localnet(
-        world,
-        &crate::world::localnet::StartOpts::with_voting_window(6),
-    );
+    super::common::start_bootstrapped_localnet(world, &opts);
 }
 
 #[when("the committee logical clock reaches the native Lysis processing time")]
@@ -43,6 +37,7 @@ fn reach_processing_time(world: &mut World) {
 }
 
 pub(crate) fn reach_native_lysis_processing_time(world: &mut World) {
+    super::price_oracle::assert_native_quotes_ready(world);
     let day = world
         .state
         .wwd

@@ -14,6 +14,8 @@ use crate::world::localnet::StartOpts;
 use crate::world::World;
 
 pub(crate) const HOURLY_PRICING_ORACLE_PERIOD: u64 = 8;
+/// Covers 552 one-hour timestamp steps, including co-located SGX consensus timing.
+pub(crate) const LIFECYCLE_CATCHUP_TIMEOUT: Duration = Duration::from_secs(18_000);
 
 /// Budget a bounded test wait from the executed consensus settings.
 pub(crate) fn consensus_block_wait_budget(
@@ -112,7 +114,6 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
         window,
         &[
             ("TESTNET_UNBONDING_PERIOD_SECS", "8".to_string()),
-            ("TESTNET_METADOSIS_OFFERING_SECONDS", "1800".to_string()),
             ("TESTNET_EPOCH_LENGTH_BLOCKS", "120".to_string()),
             ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "60".to_string()),
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
@@ -160,14 +161,38 @@ pub(crate) fn boot_localnet_with_opts(
 
 /// Prepare one fresh scenario network without starting its node processes.
 pub(crate) fn bootstrap_localnet(world: &mut World, window: u64, tuning: &[(&str, String)]) {
+    bootstrap_localnet_at(world, window, tuning, None);
+}
+
+pub(crate) fn bootstrap_native_lysis_localnet(world: &mut World, window: u64) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("native fixture host clock")
+        .as_secs();
+    let timestamp = crate::world::localnet::Localnet::native_lysis_genesis_timestamp(now)
+        .expect("native fixture genesis timestamp");
+    bootstrap_localnet_at(world, window, &[], Some(timestamp));
+}
+
+fn bootstrap_localnet_at(
+    world: &mut World,
+    window: u64,
+    tuning: &[(&str, String)],
+    genesis_timestamp: Option<u64>,
+) {
     let committee_size = world.validators.size();
     world.state.voting_window = window;
     world.state.wwd = Some(crate::world::localnet::worldwide_day());
     // No pre-bootstrap reset: the scenario owns a fresh `scenario-<n>` dir and a
     // fresh block of ports, so there is nothing of its own to reclaim.
-    let profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
+    let mut profile = crate::world::localnet::BootstrapProfile::from_tuning(tuning)
         .and_then(|profile| profile.with_governance_voting_window(window))
         .expect("valid genesis governance voting window");
+    if let Some(timestamp) = genesis_timestamp {
+        profile = profile
+            .with_genesis_timestamp(timestamp)
+            .expect("valid native fixture genesis timestamp");
+    }
 
     let profile = match crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world) {
         Some(pairs) => profile
@@ -193,6 +218,14 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .shift_genesis_timestamp(offset)
             .expect("shift debug genesis timestamp with node clock");
     }
+    if world.state.historical_factory_lifecycle && world.state.lifecycle_catchup_timestamp.is_none()
+    {
+        world.state.lifecycle_catchup_timestamp = Some(
+            world.localnet.prepare_lifecycle_history(
+                crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS,
+            ).expect("prepare historical factory lifecycle header after fixtures and before TEE binding"),
+        );
+    }
     world
         .localnet
         .bind_tee_genesis()
@@ -209,8 +242,44 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .expect("observe mandatory TeeRegistry bootstrap state"),
         "mandatory TEE chain did not bootstrap"
     );
+    if let Some(target) = world.state.lifecycle_catchup_timestamp {
+        wait_for_lifecycle_history(world, target);
+    }
     if crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world).is_some() {
         assert_hourly_pricing_period(world);
+    }
+}
+
+fn wait_for_lifecycle_history(world: &mut World, target: u64) {
+    let deadline = std::time::Instant::now() + LIFECYCLE_CATCHUP_TIMEOUT;
+    let ports = world.validators.committee_ports();
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("committee must stay alive during historical lifecycle timestamp catch-up");
+        let observed: Vec<_> = ports
+            .iter()
+            .map(|&port| {
+                let clock = world.rpc.finalized(port).and_then(|height| {
+                    world
+                        .rpc
+                        .block_timestamp(port, height)
+                        .map(|timestamp| (height, timestamp))
+                });
+                (port, clock)
+            })
+            .collect();
+        if observed
+            .iter()
+            .all(|(_, clock)| clock.is_some_and(|(_, timestamp)| timestamp >= target))
+        {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline,
+            "historical lifecycle finalized timestamp catch-up timed out after {:?}: target={target}, finalized (port, height/time)={observed:?}; height-only readiness is insufficient",
+            LIFECYCLE_CATCHUP_TIMEOUT);
+        sleep(Duration::from_secs(1));
     }
 }
 

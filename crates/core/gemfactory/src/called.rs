@@ -26,10 +26,6 @@ pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut GemCallPass::new(ctx))
 }
 
-pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_pass::initialize(ctx, &mut GemCallPass::new(ctx))
-}
-
 /// This function runs the coupled daily pass, including forfeits and position expiry after calls.
 /// It returns the number of called groups, not the pass completion state.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
@@ -64,10 +60,6 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
 
     fn block_budget(&self) -> &Value<'storage, U256> {
         &self.gem.daily_budget
-    }
-
-    fn genesis_day(&self) -> &Value<'storage, u32> {
-        &self.gem.daily_genesis_day
     }
 
     fn forfeit(
