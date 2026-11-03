@@ -7,6 +7,7 @@
 //! `outbe-rewards -> outbe-emissionlimit` re-export.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolError;
 
 use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
 use outbe_emission::{
@@ -409,9 +410,19 @@ fn is_recoverable_step_error(err: &PrecompileError) -> bool {
     matches!(err, PrecompileError::RevertBytes(_))
 }
 
+fn is_recoverable_wwd_advance_error(err: &PrecompileError) -> bool {
+    matches!(
+        err,
+        PrecompileError::RevertBytes(_) | PrecompileError::Revert(_)
+    )
+}
+
 fn encode_recoverable_step_reason(err: &PrecompileError) -> alloy_primitives::Bytes {
     match err {
         PrecompileError::RevertBytes(bytes) => bytes.clone(),
+        PrecompileError::Revert(msg) => {
+            alloy_primitives::Bytes::from(alloy_sol_types::Revert::from(msg.as_str()).abi_encode())
+        }
         _ => alloy_primitives::Bytes::new(),
     }
 }
@@ -422,7 +433,7 @@ fn run_advance_worldwide_days_step(ctx: &BlockRuntimeContext, block_utc_day: u32
         .with_checkpoint(|| outbe_tributefactory::worldwideday::advance_worldwide_days_command(ctx))
     {
         Ok(()) => Ok(()),
-        Err(err) if is_recoverable_step_error(&err) => {
+        Err(err) if is_recoverable_wwd_advance_error(&err) => {
             let reason = encode_recoverable_step_reason(&err);
             tracing::warn!(
                 target: "outbe::cycle",

@@ -157,7 +157,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     with_anchored_cycle(|handle| {
         // Step 1: anchor at chain start.
 
-        // Step 2: block past first slot. prev_day = genesis_utc_day
+        // Step 2: block past first slot. prev_day = start_date
         // (20240101). day_number_since_genesis = 0. cap = INITIAL_DAY_EMISSION.
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);

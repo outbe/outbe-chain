@@ -42,10 +42,10 @@ pub const MIN_PROTOCOL_DATE_KEY: u32 = 20_200_101;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TimeError {
-    /// `utc_day` is strictly before `genesis_utc_day`. The caller should
+    /// `utc_day` is strictly before `start_date`. The caller should
     /// translate this into a fatal protocol error. The node must not process
     /// a finalized block that predates genesis.
-    PreGenesis { utc_day: u32, genesis_utc_day: u32 },
+    PreGenesis { utc_day: u32, start_date: u32 },
     /// The input date key is before [`MIN_PROTOCOL_DATE_KEY`].
     DateBeforeMinimum { date_key: u32 },
     /// The stepped YYYYMMDD value does not fit in `u32`.
@@ -73,11 +73,8 @@ impl core::fmt::Display for TimeError {
         match self {
             TimeError::PreGenesis {
                 utc_day,
-                genesis_utc_day,
-            } => write!(
-                f,
-                "utc_day {utc_day} predates genesis_utc_day {genesis_utc_day}"
-            ),
+                start_date,
+            } => write!(f, "utc_day {utc_day} predates start_date {start_date}"),
             TimeError::DateBeforeMinimum { date_key } => {
                 write!(f, "date key {date_key} is before 20200101")
             }
@@ -143,7 +140,7 @@ pub fn date_key_to_utc_timestamp(date_key: u32) -> Result<u64, TimeError> {
     let days = days_from_civil(year, month, day);
     let days = u64::try_from(days).map_err(|_| TimeError::PreGenesis {
         utc_day: date_key,
-        genesis_utc_day: 19_700_101,
+        start_date: 19_700_101,
     })?;
     Ok(days.saturating_mul(SECONDS_PER_DAY))
 }
@@ -204,20 +201,20 @@ fn checked_civil_date_from_days(days_since_epoch: i64) -> Option<u32> {
 
 /// Computes the integer number of UTC days between two date keys.
 ///
-/// Returns `Ok(0)` when `utc_day == genesis_utc_day`,
-/// `Ok(n)` when `utc_day > genesis_utc_day`, and
-/// `Err(TimeError::PreGenesis)` when `utc_day < genesis_utc_day`.
+/// Returns `Ok(0)` when `utc_day == start_date`,
+/// `Ok(n)` when `utc_day > start_date`, and
+/// `Err(TimeError::PreGenesis)` when `utc_day < start_date`.
 ///
 /// The function computes `(date_key_to_utc_timestamp(utc_day) -
-/// date_key_to_utc_timestamp(genesis_utc_day)) / SECONDS_PER_DAY`. Direct
+/// date_key_to_utc_timestamp(start_date)) / SECONDS_PER_DAY`. Direct
 /// `u32` subtraction of `yyyymmdd` keys is wrong across month/year
 /// boundaries. Do not use it.
-pub fn day_number_between(genesis_utc_day: u32, utc_day: u32) -> Result<u32, TimeError> {
-    let g_ts = date_key_to_utc_timestamp(genesis_utc_day)?;
+pub fn day_number_between(start_date: u32, utc_day: u32) -> Result<u32, TimeError> {
+    let g_ts = date_key_to_utc_timestamp(start_date)?;
     let u_ts = date_key_to_utc_timestamp(utc_day)?;
     let delta = u_ts.checked_sub(g_ts).ok_or(TimeError::PreGenesis {
         utc_day,
-        genesis_utc_day,
+        start_date,
     })?;
     // Day count since genesis. `u32` covers ~11.7M years of days. Saturating
     // `try_from` (not `as`) keeps it non-narrowing and deterministic. An
@@ -534,7 +531,7 @@ mod tests {
             date_key_to_utc_timestamp(19691231),
             Err(TimeError::PreGenesis {
                 utc_day: 19691231,
-                genesis_utc_day: 19_700_101,
+                start_date: 19_700_101,
             })
         );
         let saturated = u64::MAX.saturating_add(UTC_PLUS_14_OFFSET);
@@ -568,7 +565,7 @@ mod tests {
                 date_key_to_utc_timestamp(utc_day),
                 Err(TimeError::PreGenesis {
                     utc_day,
-                    genesis_utc_day: 19_700_101,
+                    start_date: 19_700_101,
                 })
             );
         }
@@ -654,7 +651,7 @@ mod tests {
             day_number_between(20240101, 20231231),
             Err(TimeError::PreGenesis {
                 utc_day: 20231231,
-                genesis_utc_day: 20240101,
+                start_date: 20240101,
             })
         );
     }
@@ -679,7 +676,7 @@ mod tests {
     fn default_day_key_does_not_convert() {
         let expected = Err(TimeError::PreGenesis {
             utc_day: 0,
-            genesis_utc_day: 19_700_101,
+            start_date: 19_700_101,
         });
         assert_eq!(WorldwideDay::default().to_timestamp_utc(), expected);
         assert_eq!(WorldwideDay::default().start_timestamp(), expected);

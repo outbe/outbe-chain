@@ -5,10 +5,8 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Rewards precompile.
 ///
-/// The layout tracks:
-/// - the genesis UTC-day anchor of the chain.
-/// - the per-finalized-block and per-day accumulators for the idempotent fee-distribution path
-///   and the day-boundary settle formula.
+/// The layout tracks the per-finalized-block and per-day accumulators for the
+/// idempotent fee-distribution path and the day-boundary settle formula.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
 /// inclusion-window voter set. The daily emission top-up is credited to the

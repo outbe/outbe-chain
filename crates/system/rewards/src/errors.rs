@@ -89,26 +89,17 @@ impl RewardsError {
     pub(crate) fn map_time_err(err: TimeError) -> PrecompileError {
         Self::from(err).into()
     }
-
-    /// `PreGenesis` carries the chain start date in its second field.
-    /// ED03 rejects that field's name as a substring of this crate, so the
-    /// value is taken from `Debug` instead of a struct pattern.
-    fn pre_genesis_bound(err: TimeError) -> u32 {
-        let rendered = format!("{err:?}");
-        rendered
-            .rsplit(':')
-            .next()
-            .and_then(|tail| tail.trim().trim_end_matches('}').trim().parse().ok())
-            .unwrap_or(0)
-    }
 }
 
 impl From<TimeError> for RewardsError {
     fn from(err: TimeError) -> Self {
         match err {
-            TimeError::PreGenesis { utc_day, .. } => Self::FinalizedBlockPredatesGenesis {
+            TimeError::PreGenesis {
                 utc_day,
-                start_date: Self::pre_genesis_bound(err),
+                start_date,
+            } => Self::FinalizedBlockPredatesGenesis {
+                utc_day,
+                start_date,
             },
             TimeError::DateBeforeMinimum { date_key } => Self::DateBeforeMinimum { date_key },
             TimeError::DateOverflow { date_key } => Self::DateOverflow { date_key },

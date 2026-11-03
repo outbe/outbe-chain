@@ -414,7 +414,23 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
+        let offer_err =
+            outbe_tributefactory::worldwideday::genesis::submit_signed_test_offer_for_day(
+                storage.clone(),
+                wwd,
+            )
+            .expect_err("offer_tribute must revert when forming VWAP snapshot is absent");
+        assert_eq!(
+            offer_err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_tributefactory::errors::TributeFactoryError::WorldwideDayNotOffering {
+                    worldwide_day: wwd,
+                }
+            )
+            .to_string()
+        );
 
+        let expected_limit = outbe_emission::day_emission::day_emission_limit(4);
         let settle_ts = date_key_to_utc_timestamp(20261006).unwrap() + 1;
         storage.set_block_timestamp(U256::from(settle_ts)).unwrap();
         let ctx_06 = BlockRuntimeContext::new(
@@ -424,7 +440,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
         );
         crate::commands::dispatch_terminal_remainder_at(
             &ctx_06,
-            U256::from(1_000_000u64),
+            expected_limit,
             date_key_to_utc_timestamp(emission_day).unwrap(),
         )
         .unwrap();
@@ -450,7 +466,7 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
             outbe_promislimit::PromisLimitContract::new(storage)
                 .promis_limit()
                 .unwrap(),
-            U256::from(1_000_000u64)
+            expected_limit
         );
     });
 

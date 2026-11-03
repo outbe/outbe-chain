@@ -1,3 +1,4 @@
+pub use outbe_chain_constants::MAX_PIPELINE_WWDS;
 use outbe_chain_constants::{
     DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS, DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
     DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
@@ -17,17 +18,6 @@ pub const METADOSIS_DELAY_AFTER_OFFERING_HOURS: u64 = 12;
 
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
-
-const NORMAL_PIPELINE_HOURS: u64 = FORMING_PERIOD_HOURS
-    + LOOKBACK_DELAY_HOURS
-    + OFFERING_PERIOD_HOURS
-    + METADOSIS_DELAY_AFTER_OFFERING_HOURS;
-const NORMAL_PIPELINE_WWDS: usize =
-    NORMAL_PIPELINE_HOURS.div_ceil(WWD_CREATION_CADENCE_HOURS) as usize;
-
-/// Maximum pre-admission population implied by the production cadence and
-/// phase durations: `ceil((50 + 22 + 50 + 12) / 24) + 1 = 7`.
-pub const MAX_PIPELINE_WWDS: usize = NORMAL_PIPELINE_WWDS + 1;
 
 /// Maximum WWD records kept in the canonical historical retention queue.
 pub const MAX_RECORDS_KEPT: usize = 365;

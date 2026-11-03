@@ -101,10 +101,14 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let cutoff_ts =
         date_key_to_utc_timestamp(block_utc_day).map_err(super::errors::date_step_error)?;
 
-    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X.
+    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X,
+    //    ensuring its forming VWAP snapshot is finalized first if the chain skipped past both boundaries.
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for current in aggregate.active_records() {
         verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
+        if current.forming_end <= cutoff_ts {
+            let _ = snapshot_forming_vwap(ctx, current)?;
+        }
         if current.offering_end <= cutoff_ts {
             let mut factory_mut = TributeFactoryContract::new(ctx.storage.clone());
             close_worldwide_day(&mut factory_mut, current.worldwide_day)?;
