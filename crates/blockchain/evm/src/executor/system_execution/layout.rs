@@ -238,10 +238,14 @@ where
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
-            .map_err(|error| -> BlockExecutionError {
-                ExecutorValidationError::plan_visible_system_tx_gas(error).into()
-            })?;
+        let gas_plan = SystemTxVisibleGasPlan::new(
+            block_number,
+            self.inner.evm.block().gas_limit(),
+            &gas_inputs,
+        )
+        .map_err(|error| -> BlockExecutionError {
+            ExecutorValidationError::plan_visible_system_tx_gas(error).into()
+        })?;
         let intrinsic_gas = gas_plan
             .intrinsic_gas(body_index)
             .ok_or(ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index })?;

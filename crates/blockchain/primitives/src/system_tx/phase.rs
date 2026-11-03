@@ -66,6 +66,11 @@ pub enum SystemTxPhase {
     },
     /// All begin-zone system txs are consumed. User transactions may execute.
     UserTxs,
+    /// Terminal, empty end-block phase. Capacity is captured once from actual
+    /// visible accounting; it is not consumed gas or a signed transaction.
+    EndBlockComplete {
+        gas_capacity: u64,
+    },
 }
 
 impl SystemTxPhase {
@@ -95,7 +100,7 @@ impl SystemTxPhase {
             Self::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
             Self::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
             Self::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-            Self::UserTxs => None,
+            Self::UserTxs | Self::EndBlockComplete { .. } => None,
         }
     }
 
@@ -115,7 +120,7 @@ impl SystemTxPhase {
             | Self::OracleSlashWindow { body_index }
             | Self::HookEvents { body_index }
             | Self::RadiclePublication { body_index } => Some(*body_index),
-            Self::UserTxs => None,
+            Self::UserTxs | Self::EndBlockComplete { .. } => None,
         }
     }
 
@@ -178,6 +183,7 @@ impl SystemTxPhase {
             Self::HookEvents { .. } | Self::RadiclePublication { .. } | Self::UserTxs => {
                 Self::UserTxs
             }
+            Self::EndBlockComplete { .. } => self,
         }
     }
 }

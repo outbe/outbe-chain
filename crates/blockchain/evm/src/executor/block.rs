@@ -63,6 +63,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// initial value when it enters `apply_pre_execution_changes`. The executor
     /// advances it once per consumed begin-zone system tx.
     pub(super) system_tx_phase_cursor: crate::system_tx::SystemTxPhase,
+    /// Latches a rejected call to the upstream infallible raw-commit adapter.
+    pub(super) post_end_commit_attempted: bool,
     /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
     /// before `apply_pre_execution_changes`. `apply_phase1_commit_in_preexec`
     /// consumes it as the canonical witness whose `signature_hash` is cached in
@@ -175,6 +177,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             // initial value once `block_number` is known and the Phase 1
             // preflight ran (or did not run).
             system_tx_phase_cursor: crate::system_tx::SystemTxPhase::UserTxs,
+            post_end_commit_attempted: false,
             prebuilt_phase1_tx,
             parent_artifact_hint,
             // `verify_phase1_in_preexec` populates this on a real
@@ -230,6 +233,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Evm: reth_ethereum::evm::primitives::Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
         Evm::Error: std::fmt::Display,
     {
+        self.complete_end_block_phase()?;
         self.settle_block_burned_fees()?;
         let enclave_witness = self.final_enclave_witness_bytes()?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
@@ -287,6 +291,7 @@ where
                 crate::errors::ExecutorValidationError::ReservedSystemTxWithoutCommit.into(),
             );
         }
+        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if self.has_active_consensus_witness_scope() {
             return Err(
                 crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
@@ -316,6 +321,7 @@ where
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
         let is_system_tx = is_reserved_system_tx(recovered.tx());
+        self.check_candidate_pre_end_gas(is_system_tx, recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
             if outcome.is_ok() {
@@ -360,6 +366,12 @@ where
     }
 
     fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
+        if self.ensure_before_end_block().is_err() {
+            // The upstream adapter cannot return an error. Refuse the commit and
+            // make finalization reject this block, including zero-gas writes.
+            self.post_end_commit_attempted = true;
+            return GasOutput::new(0);
+        }
         self.inner.commit_transaction(output)
     }
 
@@ -381,6 +393,7 @@ where
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
+        self.complete_end_block_phase()?;
         let block_timestamp =
             outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
                 .map_err(crate::errors::ExecutorValidationError::from)?;

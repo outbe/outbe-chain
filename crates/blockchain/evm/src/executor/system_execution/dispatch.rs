@@ -173,6 +173,7 @@ where
             Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
         );
         let has_tee_bootstrap = self.block_has_tee_bootstrap();
+        self.check_visible_pre_end_gas(visible_base_gas)?;
         let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
         let commit_outcome = self
             .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)

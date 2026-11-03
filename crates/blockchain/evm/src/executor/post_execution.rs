@@ -17,6 +17,7 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
+        self.complete_end_block_phase()?;
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
         if self.ethereum_post_execution_requests.is_some() {

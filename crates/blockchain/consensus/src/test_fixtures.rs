@@ -393,7 +393,7 @@ pub(crate) fn block_with_gas_planned_system_inputs(
         .into_iter()
         .map(|input| input.encode().expect("input encodes"))
         .collect::<Vec<_>>();
-    let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
+    let gas_plan = SystemTxVisibleGasPlan::new(block_number, block_gas_limit, &encoded_inputs)
         .expect("visible gas plan builds");
 
     let mut block = Block::default();

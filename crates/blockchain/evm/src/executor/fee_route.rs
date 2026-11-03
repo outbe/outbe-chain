@@ -81,6 +81,7 @@ where
         tx: &TransactionSigned,
         error: outbe_zerofee::ZeroFeePolicyError,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        self.check_visible_pre_end_gas(Self::SOFT_FAILURE_GAS)?;
         self.record_zero_fee_soft_failure(*tx.tx_hash())?;
         self.push_failure_receipt(
             tx.tx_type(),

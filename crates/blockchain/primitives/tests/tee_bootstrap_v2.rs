@@ -354,7 +354,8 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
     let block_gas_limit =
         cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder;
 
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &[cycle, bootstrap]).unwrap();
+    let inputs = [cycle, bootstrap];
+    let plan = SystemTxVisibleGasPlan::new(1, block_gas_limit, &inputs).unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
     assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
@@ -365,6 +366,32 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
         Some(bootstrap_intrinsic + protocol_precharge)
     );
     assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+
+    // Pin the pre-reservation bootstrap allocation through the signed wire bytes.
+    let original_limits = [
+        block_gas_limit - bootstrap_intrinsic - protocol_precharge,
+        bootstrap_intrinsic + protocol_precharge,
+    ];
+    for (ordinal, calldata) in inputs.into_iter().enumerate() {
+        let envelope = |gas_limit| {
+            build_unsigned_system_tx_with_gas_limit(
+                outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                    ordinal: u8::try_from(ordinal).unwrap(),
+                    block_number: 1,
+                    chain_id: 1,
+                    calldata: calldata.clone(),
+                    gas_limit,
+                },
+            )
+            .unwrap()
+            .into_signed(Signature::test_signature())
+            .encoded_2718()
+        };
+        assert_eq!(
+            envelope(plan.gas_limit(ordinal).unwrap()),
+            envelope(original_limits[ordinal])
+        );
+    }
 }
 
 #[test]
@@ -481,7 +508,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .collect::<Vec<_>>();
     let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
-    let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    let gas_plan = SystemTxVisibleGasPlan::new(1, BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()

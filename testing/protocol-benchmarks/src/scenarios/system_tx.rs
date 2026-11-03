@@ -118,6 +118,7 @@ impl BenchmarkScenario for SystemTxScenario {
 
         let gas_plan_started = Instant::now();
         let plan = SystemTxVisibleGasPlan::new(
+            prepared.block_number,
             protocol_block_gas_limit(prepared.block_number),
             std::slice::from_ref(&calldata),
         )

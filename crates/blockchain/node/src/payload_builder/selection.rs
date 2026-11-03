@@ -22,7 +22,7 @@ use reth_transaction_pool::{
 use tracing::{debug, trace};
 
 use super::{
-    execution::{PayloadBuildState, StageOutcome},
+    execution::{PayloadBuildState, PayloadGasAccounting, StageOutcome},
     payload_execution_failure_kind,
     size_budget::SizeRejection,
     transaction_error::PreservedInvalidUserTx,
@@ -60,7 +60,9 @@ where
     ) -> Result<StageOutcome, PayloadBuilderError>
     where
         B: BlockBuilder<Primitives = OutbePrimitives>,
+        B::Executor: PayloadGasAccounting,
     {
+        self.state.sync_gas(builder);
         while let Some(pool_tx) = self.best_txs.next() {
             // Preserve gas-before-cancel ordering: a gas-rejected candidate
             // is skipped even if the cancellation signal has already fired.
@@ -88,6 +90,7 @@ where
                 continue;
             };
             self.record_included(accounting, gas_used, sidecar);
+            self.state.sync_gas(builder);
         }
         Ok(StageOutcome::Completed)
     }
@@ -114,17 +117,29 @@ where
     }
 
     fn admit_gas(&mut self, pool_tx: &Arc<ValidPoolTransaction<Pool::Transaction>>) -> bool {
-        if self
+        let regular_used = if self.state.eip8037 {
+            self.state.regular_gas_used
+        } else {
+            self.state.cumulative_gas_used
+        };
+        let regular_limit = pool_tx.gas_limit().min(self.state.tx_gas_limit_cap);
+        let regular_fits = self
             .state
-            .cumulative_gas_used
-            .saturating_add(pool_tx.gas_limit())
-            > self.state.block_gas_limit
-        {
+            .pre_end_gas_limit
+            .checked_sub(regular_used)
+            .is_some_and(|remaining| regular_limit <= remaining);
+        let state_fits = !self.state.eip8037
+            || self
+                .state
+                .pre_end_gas_limit
+                .checked_sub(self.state.state_gas_used)
+                .is_some_and(|remaining| pool_tx.gas_limit() <= remaining);
+        if !regular_fits || !state_fits {
             self.best_txs.mark_invalid(
                 pool_tx,
                 InvalidPoolTransactionError::ExceedsGasLimit(
                     pool_tx.gas_limit(),
-                    self.state.block_gas_limit,
+                    self.state.pre_end_gas_limit,
                 ),
             );
             return false;
@@ -221,6 +236,12 @@ where
         let tx_hash = *tx.tx_hash();
         match builder.execute_transaction(tx) {
             Ok(gas_used) => Ok(Some(gas_used.tx_gas_used())),
+            Err(BlockExecutionError::Validation(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas { .. },
+            )) => {
+                trace!(target: "payload_builder", ?tx_hash, "deferring transaction beyond pre-end gas capacity");
+                Ok(None)
+            }
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {

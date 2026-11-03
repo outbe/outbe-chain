@@ -197,6 +197,12 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 #[non_exhaustive]
 pub enum ExecutorValidationError {
     #[error(transparent)]
+    BlockGasBudget(#[from] outbe_primitives::system_tx::BlockGasBudgetError),
+    #[error("end-block phase requires all begin witnesses to be consumed")]
+    IncompleteBeginPhase,
+    #[error("transaction execution is not allowed after the end-block phase")]
+    TransactionAfterEndBlock,
+    #[error(transparent)]
     TimestampOverflow(#[from] outbe_primitives::errors::TimestampOverflow),
     #[error("{0}")]
     BlockArtifacts(String),

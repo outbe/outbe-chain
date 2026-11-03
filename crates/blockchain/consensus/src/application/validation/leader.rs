@@ -90,6 +90,7 @@ pub(super) fn validate_envelopes(
         canonical_inputs.push(calldata);
     }
     let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
+        header.number(),
         header.gas_limit(),
         &canonical_inputs,
     )

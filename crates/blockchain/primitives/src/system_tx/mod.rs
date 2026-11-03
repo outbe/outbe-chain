@@ -57,7 +57,10 @@ pub use layout::{
     validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
-pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit, SystemTxVisibleGasPlan};
+pub use gas::{
+    system_tx_intrinsic_gas, system_tx_visible_gas_limit, BlockGasBudget, BlockGasBudgetError,
+    SystemTxVisibleGasPlan,
+};
 
 pub use envelope::{
     build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_nonce,
@@ -156,17 +159,14 @@ pub enum SystemTxError {
     NonceOverflow { block_number: u64, ordinal: u8 },
     #[error("system tx visible gas overflow for calldata length {len}")]
     VisibleGasOverflow { len: usize },
+    #[error(transparent)]
+    BlockGasBudget(#[from] BlockGasBudgetError),
+    #[error("system tx visible gas plan arithmetic overflow")]
+    VisibleGasPlanOverflow,
     #[error(
         "system tx gas limit below intrinsic gas: gas_limit={gas_limit}, intrinsic={intrinsic_gas}"
     )]
     GasLimitBelowIntrinsic { gas_limit: u64, intrinsic_gas: u64 },
-    #[error(
-        "system tx required gas exceeds block gas limit: required={required_gas}, block_limit={block_gas_limit}"
-    )]
-    VisibleGasPlanExceedsBlock {
-        required_gas: u64,
-        block_gas_limit: u64,
-    },
     #[error("system tx visible gas plan contains more than one CycleTick")]
     DuplicateCycleTickGasBudget,
     #[error("system tx kind {kind} is in {actual:?} zone, expected {expected:?}")]

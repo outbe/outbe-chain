@@ -206,7 +206,7 @@ impl OutbeEvmConfig {
                 Ok(calldata)
             })
             .collect::<Result<Vec<_>, BlockExecutionError>>()?;
-        let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
+        let gas_plan = SystemTxVisibleGasPlan::new(block_number, block_gas_limit, &encoded_inputs)
             .map_err(SystemTxBuildError::plan_visible_system_tx_gas)?;
 
         encoded_inputs

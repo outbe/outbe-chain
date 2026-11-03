@@ -1,9 +1,89 @@
 use alloy_primitives::Bytes;
 
+use crate::protocol_schedule::OutbeProtocolSchedule;
+
 use super::{
     SystemTx, SystemTxError, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
     SYSTEM_TX_ZERO_BYTE_GAS,
 };
+
+/// Invalid header capacity or accounted gas under the end-block reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum BlockGasBudgetError {
+    #[error("block gas limit {block_gas_limit} is below end-block reservation {reserved_gas}")]
+    BlockGasLimitBelowReserve {
+        block_gas_limit: u64,
+        reserved_gas: u64,
+    },
+    #[error("accounted pre-end gas {consumed_gas} exceeds capacity {pre_end_capacity}")]
+    PreEndGasExceeded {
+        consumed_gas: u64,
+        pre_end_capacity: u64,
+    },
+}
+
+/// Height-aware gas capacity without changing the header or EVM gas limit.
+///
+/// All values use `u64`, bounded by the header gas limit and matching executor
+/// counters. Genesis and the block-1 bootstrap do not reserve end-block gas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BlockGasBudget {
+    block_gas_limit: u64,
+    reserved_gas: u64,
+    pre_end_capacity: u64,
+}
+
+impl BlockGasBudget {
+    pub fn new(block_number: u64, block_gas_limit: u64) -> Result<Self, BlockGasBudgetError> {
+        let reserved_gas = if block_number >= 2 {
+            OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
+        } else {
+            0
+        };
+        let pre_end_capacity = block_gas_limit.checked_sub(reserved_gas).ok_or(
+            BlockGasBudgetError::BlockGasLimitBelowReserve {
+                block_gas_limit,
+                reserved_gas,
+            },
+        )?;
+        Ok(Self {
+            block_gas_limit,
+            reserved_gas,
+            pre_end_capacity,
+        })
+    }
+
+    #[must_use]
+    pub const fn reserved_gas(&self) -> u64 {
+        self.reserved_gas
+    }
+
+    #[must_use]
+    pub const fn pre_end_capacity(&self) -> u64 {
+        self.pre_end_capacity
+    }
+
+    /// Remaining admission capacity after authoritative committed accounting.
+    pub fn remaining_pre_end_gas(&self, consumed_gas: u64) -> Result<u64, BlockGasBudgetError> {
+        self.pre_end_capacity.checked_sub(consumed_gas).ok_or(
+            BlockGasBudgetError::PreEndGasExceeded {
+                consumed_gas,
+                pre_end_capacity: self.pre_end_capacity,
+            },
+        )
+    }
+
+    /// Reserved minimum plus all unused earlier capacity, not consumed gas.
+    pub fn end_capacity(&self, consumed_gas: u64) -> Result<u64, BlockGasBudgetError> {
+        self.remaining_pre_end_gas(consumed_gas)?;
+        self.block_gas_limit.checked_sub(consumed_gas).ok_or(
+            BlockGasBudgetError::PreEndGasExceeded {
+                consumed_gas,
+                pre_end_capacity: self.pre_end_capacity,
+            },
+        )
+    }
+}
 
 /// Ethereum-compatible visible gas limit for a system tx envelope.
 ///
@@ -43,7 +123,7 @@ struct SystemTxVisibleGasEntry {
 /// Deterministic visible-gas allocation for the complete begin-system zone.
 ///
 /// System envelopes reserve intrinsic gas plus any schedule-hashed protocol
-/// precharge. `CycleTick` receives the remaining block gas.
+/// precharge. `CycleTick` receives the remaining pre-end capacity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SystemTxVisibleGasPlan {
     entries: Vec<SystemTxVisibleGasEntry>,
@@ -51,7 +131,12 @@ pub struct SystemTxVisibleGasPlan {
 }
 
 impl SystemTxVisibleGasPlan {
-    pub fn new(block_gas_limit: u64, system_txs: &[Bytes]) -> Result<Self, SystemTxError> {
+    pub fn new(
+        block_number: u64,
+        block_gas_limit: u64,
+        system_txs: &[Bytes],
+    ) -> Result<Self, SystemTxError> {
+        let budget = BlockGasBudget::new(block_number, block_gas_limit)?;
         let mut entries = Vec::with_capacity(system_txs.len());
         let mut required_total = 0u64;
         let mut cycle_ordinal = None;
@@ -63,18 +148,12 @@ impl SystemTxVisibleGasPlan {
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
             let protocol_precharge = system_tx_protocol_precharge(&decoded)?;
-            let gas_limit = intrinsic_gas.checked_add(protocol_precharge).ok_or(
-                SystemTxError::VisibleGasPlanExceedsBlock {
-                    required_gas: u64::MAX,
-                    block_gas_limit,
-                },
-            )?;
-            required_total = required_total.checked_add(gas_limit).ok_or(
-                SystemTxError::VisibleGasPlanExceedsBlock {
-                    required_gas: u64::MAX,
-                    block_gas_limit,
-                },
-            )?;
+            let gas_limit = intrinsic_gas
+                .checked_add(protocol_precharge)
+                .ok_or(SystemTxError::VisibleGasPlanOverflow)?;
+            required_total = required_total
+                .checked_add(gas_limit)
+                .ok_or(SystemTxError::VisibleGasPlanOverflow)?;
             entries.push(SystemTxVisibleGasEntry {
                 intrinsic_gas,
                 protocol_precharge,
@@ -82,23 +161,16 @@ impl SystemTxVisibleGasPlan {
             });
         }
 
-        let remainder = block_gas_limit.checked_sub(required_total).ok_or(
-            SystemTxError::VisibleGasPlanExceedsBlock {
-                required_gas: required_total,
-                block_gas_limit,
-            },
-        )?;
+        let remainder = budget.remaining_pre_end_gas(required_total)?;
         let total_envelope_gas = if let Some(ordinal) = cycle_ordinal {
             let entry = entries
                 .get_mut(ordinal)
                 .ok_or(SystemTxError::DuplicateCycleTickGasBudget)?;
-            entry.gas_limit = entry.gas_limit.checked_add(remainder).ok_or(
-                SystemTxError::VisibleGasPlanExceedsBlock {
-                    required_gas: required_total,
-                    block_gas_limit,
-                },
-            )?;
-            block_gas_limit
+            entry.gas_limit = entry
+                .gas_limit
+                .checked_add(remainder)
+                .ok_or(SystemTxError::VisibleGasPlanOverflow)?;
+            budget.pre_end_capacity()
         } else {
             required_total
         };
