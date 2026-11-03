@@ -1,7 +1,6 @@
 //! Runtime helpers for the Rewards module.
 //!
-//! Houses the genesis-anchor lazy initialization and UTC-day helpers used
-//! by `RewardsLifecycle::begin_block` and the per-block fee/participation
+//! Houses UTC-day helpers used by the per-block fee and participation
 //! hook. These functions take a `BlockRuntimeContext` and access state
 //! through `ctx.storage`, so they are thin wrappers over the schema in
 //! [`crate::schema::Rewards`].
@@ -18,6 +17,127 @@ use outbe_primitives::{
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
+
+pub(crate) fn require_sealed_day(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let rewards = ctx.storage.contract::<Rewards>();
+    if day == 0
+        || day >= timestamp_to_date_key(ctx.block.timestamp)
+        || !rewards.daily_participation_closed.read(&day)?
+        || !crate::api::day_participation_complete(ctx, day)?
+    {
+        return Err(RewardsError::DayNotSealed.into());
+    }
+    Ok(())
+}
+
+pub(crate) fn allocate_day_validator_rewards(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    validator_share: U256,
+) -> Result<crate::api::ValidatorRewardAllocation> {
+    use outbe_primitives::units::{checked_protocol_to_native, units_to_protocol_minor_floor};
+    require_sealed_day(ctx, day)?;
+    let topup = if validator_share.is_zero() {
+        U256::ZERO
+    } else {
+        let native_budget = checked_protocol_to_native(validator_share)
+            .ok_or(RewardsError::NativeValidatorBudgetOverflow)?;
+        let fees = ctx
+            .storage
+            .contract::<Rewards>()
+            .daily_fee_sum_raw
+            .read(&day)?;
+        units_to_protocol_minor_floor(native_budget.saturating_sub(fees))
+    };
+    Ok(crate::api::ValidatorRewardAllocation {
+        topup,
+        // Native subtraction followed by flooring cannot exceed the original share.
+        fee_covered: validator_share - topup,
+    })
+}
+
+pub(crate) fn enqueue_day_cleanup(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let rewards = ctx.storage.contract::<Rewards>();
+    if rewards.cleanup_scheduled.read(&day)? {
+        return Ok(());
+    }
+    require_sealed_day(ctx, day)?;
+    ctx.storage.with_checkpoint(|| {
+        let tail = rewards.cleanup_tail.read()?;
+        let next = tail
+            .checked_add(1)
+            .ok_or(RewardsError::CleanupQueueOverflow)?;
+        rewards.cleanup_day_at.write(&tail, day)?;
+        rewards.cleanup_tail.write(next)?;
+        rewards.cleanup_scheduled.write(&day, true)
+    })
+}
+
+pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.with_checkpoint(|| {
+        let rewards = ctx.storage.contract::<Rewards>();
+        if rewards.cleanup_processed_initialized.read()?
+            && rewards.cleanup_processed_height.read()? == ctx.block.block_number
+        {
+            return Ok(());
+        }
+        let mut head = rewards.cleanup_head.read()?;
+        let tail = rewards.cleanup_tail.read()?;
+        if head > tail {
+            return Err(RewardsError::CleanupQueueCorrupt.into());
+        }
+        let mut remaining = 256u32;
+        for _ in 0..4 {
+            if head == tail {
+                break;
+            }
+            if !cleanup_day(&rewards, head, &mut remaining)? {
+                break;
+            }
+            // head < tail <= u64::MAX, so increment cannot overflow.
+            head += 1;
+            rewards.cleanup_head.write(head)?;
+        }
+        rewards
+            .cleanup_processed_height
+            .write(ctx.block.block_number)?;
+        rewards.cleanup_processed_initialized.write(true)
+    })
+}
+
+/// Returns whether this queued day is fully cleared within the remaining entry budget.
+fn cleanup_day(rewards: &Rewards<'_>, head: u64, remaining: &mut u32) -> Result<bool> {
+    let day = rewards.cleanup_day_at.read(&head)?;
+    if day == 0 || !rewards.daily_participation_closed.read(&day)? {
+        return Err(RewardsError::CleanupQueueCorrupt.into());
+    }
+    let count = rewards.daily_voter_count.read(&day)?;
+    let mut index = rewards.cleanup_next_index.read(&day)?;
+    if index > count {
+        return Err(RewardsError::CleanupQueueCorrupt.into());
+    }
+    let voters = rewards.daily_voter_at.get_nested(&day);
+    let participation = rewards.daily_participation.get_nested(&day);
+    while index < count && *remaining > 0 {
+        let voter = voters.read(&index)?;
+        participation.write(&voter, 0)?;
+        voters.write(&index, Address::ZERO)?;
+        // index < count <= u32::MAX, so increment cannot overflow.
+        index += 1;
+        *remaining -= 1;
+    }
+    if index < count {
+        rewards.cleanup_next_index.write(&day, index)?;
+        return Ok(false);
+    }
+    rewards.daily_voter_count.write(&day, 0)?;
+    rewards.daily_total_participation.write(&day, U256::ZERO)?;
+    rewards.daily_fee_sum_raw.write(&day, U256::ZERO)?;
+    rewards.daily_last_window_close.write(&day, 0)?;
+    rewards.cleanup_next_index.write(&day, 0)?;
+    rewards.cleanup_day_at.write(&head, 0)?;
+    Ok(true)
+}
 
 /// Outcome of [`check_and_record_metadata_fingerprint`]. The caller MUST
 /// branch on this and skip all per-block module work when
@@ -58,46 +178,24 @@ pub enum MetadataFingerprintOutcome {
 // entries that pre-genesis test runs may have written.
 const FINGERPRINT_DOMAIN: &[u8] = b"OUTBE_METADATA_FINGERPRINT_V3";
 
-/// Reads the genesis UTC day from `Rewards::genesis_utc_day`, lazily
-/// initializing the slot from `ctx.block.timestamp` on the first call
-/// (which must be block 0). Returns the locked-in day on every
-/// subsequent call.
-///
-/// `RewardsLifecycle::begin_block` calls this function as its very first
-/// step, before any other lifecycle work. After block 0 the slot is
-/// immutable. On a healthy chain the lazy init branch fires exactly once in
-/// the chain's lifetime.
-///
-/// Tamper-resistance: a node booting with a different `genesis.json`
-/// timestamp will record a different value here. Then:
-/// - Subsequent `day_emission_limit` calculations (in
-///   `outbe_emissionlimit::day_emission`) diverge from quorum.
-/// - The post-exec state root mismatches at the first day-settle.
-/// - The node leaves consensus.
-///
-/// Derives the genesis UTC day directly from `ctx.block.genesis_timestamp` (OIP-00343).
-pub fn ensure_genesis_anchor(ctx: &BlockRuntimeContext) -> Result<u32> {
-    genesis_utc_day(ctx)
-}
-
-/// Derives the genesis UTC day from `ctx.block.genesis_timestamp`. Returns `Revert`
-/// if `genesis_timestamp` is zero (uninitialized).
-pub fn genesis_utc_day(ctx: &BlockRuntimeContext) -> Result<u32> {
-    if ctx.block.genesis_timestamp == 0 {
-        return Err(RewardsError::GenesisUtcDayNotInitialized.into());
-    }
-    Ok(timestamp_to_date_key(ctx.block.genesis_timestamp))
-}
-
 /// Computes the integer day number of `utc_day` relative to the chain's
-/// genesis day. Returns:
-/// - `Ok(0)` for the genesis day itself.
-/// - `Ok(n)` for `n` days after genesis.
-/// - `Revert` for a `utc_day` strictly before genesis. A finalized block
-///   that predates genesis is a protocol violation.
+/// start date. The start date is the UTC date of `ctx.block.genesis_timestamp`.
+/// Returns:
+/// - `Ok(0)` for the start date itself.
+/// - `Ok(n)` for `n` days after the start date.
+/// - `Revert` when `genesis_timestamp` is zero, or when `utc_day` is strictly
+///   before the start date. A finalized block that predates the start date is
+///   a protocol violation.
 pub fn day_number_since_genesis(ctx: &BlockRuntimeContext, utc_day: u32) -> Result<u32> {
-    let genesis = genesis_utc_day(ctx)?;
-    day_number_between(genesis, utc_day).map_err(|e| RewardsError::from(e).into())
+    if ctx.block.genesis_timestamp == 0 {
+        return Err(RewardsError::FinalizedBlockPredatesGenesis {
+            utc_day,
+            start_date: 0,
+        }
+        .into());
+    }
+    let start_date = timestamp_to_date_key(ctx.block.genesis_timestamp);
+    day_number_between(start_date, utc_day).map_err(RewardsError::map_time_err)
 }
 
 /// V3 fingerprint guard. Computes the canonical V3 metadata
@@ -243,41 +341,28 @@ pub use outbe_primitives::consensus_metadata::ParentParticipationProof as ProofK
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
+    use crate::test_support::{with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]
-    fn ensure_genesis_anchor_initializes_on_first_call_and_is_idempotent() {
+    fn day_number_since_genesis_walks_forward() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let day = ensure_genesis_anchor(&ctx).unwrap();
-            assert_eq!(day, 20240101);
-            let day_again = ensure_genesis_anchor(&ctx).unwrap();
-            assert_eq!(day_again, 20240101);
+            assert_eq!(day_number_since_genesis(&ctx, 20240101).unwrap(), 0);
+            assert_eq!(day_number_since_genesis(&ctx, 20240131).unwrap(), 30);
+            assert_eq!(day_number_since_genesis(&ctx, 20250101).unwrap(), 366); // leap
         });
     }
 
     #[test]
-    fn ensure_genesis_anchor_does_not_advance_after_lock() {
-        // Lock anchor at block 0.
-        with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
-            let _ = ensure_genesis_anchor(&ctx0).unwrap();
-
-            // Re-call with a later-block context (same storage). Anchor stays.
-            let ctx_later = BlockRuntimeContext::new(
-                block_ctx(
-                    100,
-                    GENESIS_TS_2024_01_01 + 30 * outbe_primitives::time::SECONDS_PER_DAY,
-                ),
-                ctx0.storage.clone(),
-            );
-            let day = ensure_genesis_anchor(&ctx_later).unwrap();
-            assert_eq!(day, 20240101);
-            let read_back = genesis_utc_day(&ctx_later).unwrap();
-            assert_eq!(read_back, 20240101);
+    fn day_number_since_genesis_pre_genesis_is_fatal() {
+        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
+            let err = day_number_since_genesis(&ctx, 20231231).unwrap_err();
+            assert!(format!("{err}").contains("predates genesis"));
+            assert!(format!("{err}").contains("start_date=20240101"));
         });
     }
 
     #[test]
-    fn genesis_utc_day_uninitialized_is_fatal() {
+    fn day_number_since_genesis_rejects_a_zero_genesis_timestamp() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let uninit_ctx = BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext::new(
@@ -290,29 +375,8 @@ mod tests {
                 .with_genesis_timestamp(0),
                 ctx.storage,
             );
-            let err = genesis_utc_day(&uninit_ctx).unwrap_err();
-            assert!(format!("{err}").contains("not initialized"));
-        });
-    }
-
-    #[test]
-    fn day_number_since_genesis_walks_forward() {
-        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let _ = ensure_genesis_anchor(&ctx).unwrap();
-
-            assert_eq!(day_number_since_genesis(&ctx, 20240101).unwrap(), 0);
-            assert_eq!(day_number_since_genesis(&ctx, 20240131).unwrap(), 30);
-            assert_eq!(day_number_since_genesis(&ctx, 20250101).unwrap(), 366); // leap
-        });
-    }
-
-    #[test]
-    fn day_number_since_genesis_pre_genesis_is_fatal() {
-        with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            let _ = ensure_genesis_anchor(&ctx).unwrap();
-
-            let err = day_number_since_genesis(&ctx, 20231231).unwrap_err();
-            assert!(format!("{err}").contains("predates genesis"));
+            let err = day_number_since_genesis(&uninit_ctx, 20240101).unwrap_err();
+            assert!(format!("{err}").contains("start_date=0"));
         });
     }
 

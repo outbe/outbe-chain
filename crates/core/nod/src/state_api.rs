@@ -194,12 +194,20 @@ impl NodContract<'_> {
             }
         };
 
+        self.register_group_series(
+            item.group_key,
+            item.series_id,
+            item.issuance_currency,
+            item.reference_currency,
+        )?;
         if let Some(series_id) = series_id {
             self.consume_unclaimed_tribute_from_series(series_id, item.group_key)?;
         } else {
             let _ = gratis_load_minor;
             self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
+            self.add_nod_to_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
         }
+        self.increment_series_nod_count(item.group_key, item.series_id)?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
         if let Some(group) = new_group {
@@ -228,7 +236,9 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.nod_id)?;
+        self.decrement_series_nod_count(item.group_key, item.series_id)?;
         self.sub_nod_from_open_load(item.group_key, &item.encrypted)?;
+        self.sub_nod_from_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
         self.groups.update(&group)?;
@@ -255,11 +265,13 @@ impl NodContract<'_> {
         } else {
             // An unpaid Nod leaves only through its forfeited group's cleanup, after the
             // group's whole unpaid load was returned. So its load stays on the total.
+            self.decrement_series_nod_count(item.group_key, item.series_id)?;
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
         let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        if remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0 {
+        let empty = remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0;
+        if empty && !self.waiting_for_forfeit(item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;

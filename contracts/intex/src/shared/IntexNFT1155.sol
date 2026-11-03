@@ -30,6 +30,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
     /// @notice Burner role: the IntexFactory and GemFactory precompiles on Outbe. It can call `burnIntex`.
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    /// @dev Outbe IntexFactory precompile. It holds `BURNER_ROLE` only on the origin chain,
+    ///      where `IIntex` already emitted `IntexSeriesCalled`.
+    address private constant _OUTBE_INTEX_FACTORY = 0x0000000000000000000000000000000000001008;
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155
     struct IntexNFT1155Storage {
@@ -182,7 +185,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         data.totalSupply = uint32(newTotal);
         _mint(to, tokenId, units, "");
 
-        emit IntexIssued(msg.sender, tokenId, to, units);
+        bytes memory payload = abi.encode(uint256(data.promisLoadMinor) * units);
+        // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint16 check above
+        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, payload, uint32(units));
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -206,7 +211,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         // forge-lint: disable-next-line(unsafe-typecast) -- saturated to the event's uint64
         uint64 derivedDeadline = deadline > type(uint64).max ? type(uint64).max : uint64(deadline);
 
-        emit IntexSeriesCalled(seriesId, calledAt, derivedDeadline);
+        // On Outbe, 0x1008 holds BURNER_ROLE and the precompile already emitted the call.
+        if (!hasRole(BURNER_ROLE, _OUTBE_INTEX_FACTORY)) {
+            emit IntexSeriesCalled(seriesId, data.issuanceCurrency, data.referenceCurrency, calledAt, derivedDeadline);
+        }
         emit MetadataUpdate(tokenId);
     }
 

@@ -7,8 +7,6 @@ pub const BOND_REQUIREMENT: U256 = ONE_COEN.strict_mul(uint!(1_000_000_000_U256)
 
 pub const UNBOND_COOLDOWN_SECONDS: u64 = 128 * SECONDS_PER_DAY;
 
-/// Active CCA population scanned once when a UTC day settles.
-///
-/// A full positive-weight distribution of this set stays within 5_000_000 gas
-/// under production storage metering, inside the 30_000_000 steady block gas limit.
-pub const MAX_ACTIVE_CCAS: u32 = 128;
+/// Cleanup has its own budget, separate from reward accrual.
+pub const DAY_CLEANUP_ENTRIES_PER_BLOCK: u32 = 256;
+pub const DAY_CLEANUP_HEADERS_PER_BLOCK: u32 = 4;

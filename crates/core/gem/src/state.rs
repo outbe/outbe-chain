@@ -8,7 +8,7 @@ use outbe_primitives::series_id::SeriesId;
 use crate::{
     constants::{TOKEN_NAME, TOKEN_SYMBOL},
     errors::{GemError, GemFatalError},
-    schema::{CallTerms, GemContract},
+    schema::{CallTerms, GemContract, GemItemState, GroupSubSeriesSummary},
 };
 
 impl GemContract<'_> {
@@ -37,6 +37,99 @@ impl GemContract<'_> {
         buf[0..14].copy_from_slice(series_id.as_bytes());
         buf[14..46].copy_from_slice(&call_price_minor.to_be_bytes::<32>());
         keccak256(buf)
+    }
+
+    pub fn sub_series_id_key(series_id: SeriesId, sub_series_id: u16) -> B256 {
+        let mut buf = [0u8; 16];
+        buf[0..14].copy_from_slice(series_id.as_bytes());
+        buf[14..16].copy_from_slice(&sub_series_id.to_be_bytes());
+        keccak256(buf)
+    }
+
+    pub fn group_sub_series_key(group: B256, series_id: SeriesId, sub_series_id: u16) -> B256 {
+        let mut buf = [0u8; 48];
+        buf[0..32].copy_from_slice(group.as_slice());
+        buf[32..46].copy_from_slice(series_id.as_bytes());
+        buf[46..48].copy_from_slice(&sub_series_id.to_be_bytes());
+        keccak256(buf)
+    }
+
+    pub fn group_sub_series(&self, group: B256) -> Result<Vec<GroupSubSeriesSummary>> {
+        let keys = self.group_sub_series_keys.list(&group).read_all()?;
+        let mut out = Vec::with_capacity(keys.len());
+        for gss_key in keys {
+            out.push(GroupSubSeriesSummary {
+                series_id: self.group_sub_series_series_id.read(&gss_key)?,
+                sub_series_id: self.group_sub_series_sub_id.read(&gss_key)?,
+                issuance_currency: self.group_sub_series_issuance_currency.read(&gss_key)?,
+                reference_currency: self.group_sub_series_reference_currency.read(&gss_key)?,
+                unpaid_count: self.group_sub_series_unpaid_count.read(&gss_key)?,
+                unpaid_load: self.group_sub_series_unpaid_load.read(&gss_key)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub(crate) fn add_sub_series_unpaid(&mut self, item: &GemItemState) -> Result<bool> {
+        let sub_key = Self::sub_series_id_key(item.series_id, item.sub_series_id);
+        let opened_new_sub_series = !self.sub_series_opened.read(&sub_key)?;
+        if opened_new_sub_series {
+            self.sub_series_opened.write(&sub_key, true)?;
+        }
+        let gss_key =
+            Self::group_sub_series_key(item.group_key, item.series_id, item.sub_series_id);
+        if !self.group_sub_series_present.read(&gss_key)? {
+            self.group_sub_series_present.write(&gss_key, true)?;
+            self.group_sub_series_keys
+                .list(&item.group_key)
+                .push(gss_key)?;
+            self.group_sub_series_series_id
+                .write(&gss_key, item.series_id)?;
+            self.group_sub_series_sub_id
+                .write(&gss_key, item.sub_series_id)?;
+            self.group_sub_series_issuance_currency
+                .write(&gss_key, item.issuance_currency)?;
+            self.group_sub_series_reference_currency
+                .write(&gss_key, item.reference_currency)?;
+        }
+        let count = self
+            .group_sub_series_unpaid_count
+            .read(&gss_key)?
+            .checked_add(1)
+            .ok_or(GemFatalError::GroupMemberIndexOverflow {
+                group: item.group_key,
+            })?;
+        self.group_sub_series_unpaid_count.write(&gss_key, count)?;
+        let load = self
+            .group_sub_series_unpaid_load
+            .read(&gss_key)?
+            .checked_add(item.promis_load_minor)
+            .ok_or(GemFatalError::UnpaidLoadOverflow {
+                group: item.group_key,
+            })?;
+        self.group_sub_series_unpaid_load.write(&gss_key, load)?;
+        Ok(opened_new_sub_series)
+    }
+
+    pub(crate) fn take_sub_series_unpaid(&mut self, item: &GemItemState) -> Result<()> {
+        let gss_key =
+            Self::group_sub_series_key(item.group_key, item.series_id, item.sub_series_id);
+        let count = self
+            .group_sub_series_unpaid_count
+            .read(&gss_key)?
+            .checked_sub(1)
+            .ok_or(GemError::EmptyGroup {
+                group: item.group_key,
+            })?;
+        self.group_sub_series_unpaid_count.write(&gss_key, count)?;
+        let load = self
+            .group_sub_series_unpaid_load
+            .read(&gss_key)?
+            .checked_sub(item.promis_load_minor)
+            .ok_or(GemFatalError::UnpaidLoadUnderflow {
+                group: item.group_key,
+            })?;
+        self.group_sub_series_unpaid_load.write(&gss_key, load)
     }
 
     /// The sub-series of `call_price_minor` in `series_id`, numbering a new price on first use.
@@ -183,8 +276,30 @@ impl GemContract<'_> {
         self.group_call_notice_period_seconds.clear(&group)?;
         self.group_called_at.clear(&group)?;
         self.group_unpaid_load.clear(&group)?;
+        for gss_key in self.group_sub_series_keys.list(&group).read_all()? {
+            self.group_sub_series_present.clear(&gss_key)?;
+            self.group_sub_series_series_id.clear(&gss_key)?;
+            self.group_sub_series_sub_id.clear(&gss_key)?;
+            self.group_sub_series_issuance_currency.clear(&gss_key)?;
+            self.group_sub_series_reference_currency.clear(&gss_key)?;
+            self.group_sub_series_unpaid_count.clear(&gss_key)?;
+            self.group_sub_series_unpaid_load.clear(&gss_key)?;
+        }
+        self.group_sub_series_keys.list(&group).clear()?;
         deadline_queue::remove(&CleanupQueue(self), group)?;
         self.group_gem_count.clear(&group)
+    }
+
+    /// Closes a called group after `GemSeriesClosed` once no settled gem remains.
+    pub fn close_group_if_empty_after_forfeit(&mut self, group: B256) -> Result<()> {
+        let Some(body) = self.groups.get(group)? else {
+            return Ok(());
+        };
+        if body.settled_gems != 0 || self.group_gem_count.read(&group)? != 0 {
+            return Ok(());
+        }
+        self.close_group(group)?;
+        self.groups.delete(group)
     }
 
     // --- Unpaid load ----------------------------------------------------------------

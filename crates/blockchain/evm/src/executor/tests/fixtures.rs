@@ -7,20 +7,26 @@ pub(super) const TEST_BLOCK_TIMESTAMP_BASE: u64 = 1_700_000_000;
 pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 
 pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
-    // These fixtures use an established parent state. This state includes the factory watermark.
-    // The lifecycle needs this watermark to resume processing for the first closed day of that parent state.
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(
-            1,
-            TEST_BLOCK_TIMESTAMP_BASE - outbe_primitives::time::SECONDS_PER_DAY,
-            CHAIN_ID,
-        ),
-        storage,
+    // Established-parent fixtures completed every day before the most recent closed day.
+    let completed = outbe_primitives::time::timestamp_to_date_key(
+        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_primitives::time::SECONDS_PER_DAY,
     );
-    outbe_nodfactory::called::initialize_daily(&ctx).unwrap();
-    outbe_gemfactory::called::initialize_daily(&ctx).unwrap();
-    outbe_intexfactory::called::initialize_daily(&ctx).unwrap();
-    outbe_credisfactory::called::initialize_daily(&ctx).unwrap();
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)
+        .unwrap();
+    outbe_gem::GemContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)
+        .unwrap();
+    outbe_intex::IntexContract::new(storage.clone())
+        .call_latest_day
+        .write(completed)
+        .unwrap();
+    outbe_credis::CredisContract::new(storage)
+        .call_latest_day
+        .write(completed)
+        .unwrap();
 }
 
 pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
@@ -31,7 +37,9 @@ pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
 }
 
 pub(in crate::executor) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    test_chain_spec_with_genesis_timestamp(1)
+    test_chain_spec_with_genesis_timestamp(
+        TEST_BLOCK_TIMESTAMP_BASE - 2 * outbe_primitives::time::SECONDS_PER_DAY,
+    )
 }
 
 pub(in crate::executor) fn test_chain_spec_with_genesis_timestamp(
@@ -919,17 +927,25 @@ pub(in crate::executor) fn post_state_root(state: &revm::database::BundleState) 
     state_root_prehashed(accounts)
 }
 
-/// Establish the genesis reward anchor and UTC boundary baseline for cycle-tick tests.
+/// Establish the UTC boundary baseline for cycle-tick tests.
 pub(super) fn seed_cycle_tick_genesis(
     storage: StorageHandle<'_>,
     genesis_ts: u64,
-    proposer: Address,
+    _proposer: Address,
 ) -> outbe_primitives::error::Result<()> {
-    let genesis_ctx = BlockRuntimeContext::new(
-        BlockContext::new(0, genesis_ts, CHAIN_ID, proposer, vec![proposer]),
-        storage.clone(),
-    );
-    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx)?;
+    // These tests supply their own genesis, not the default established-parent history.
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_gem::GemContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_intex::IntexContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_credis::CredisContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
     let cycle = outbe_cycle::schema::Cycle::new(storage);
     let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
@@ -949,11 +965,9 @@ pub(super) fn observe_cycle_tick(
     mut execute: impl FnMut(Recovered<TransactionSigned>) -> CycleObservation,
 ) -> Option<CycleObservation> {
     for tx in system_txs {
-        let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
-            .expect(decode_message)
-            .kind();
+        let input = SystemTx::decode(tx.tx().input().as_ref()).expect(decode_message);
         let observation = execute(tx);
-        if kind == SystemTxKind::CycleTick {
+        if matches!(input, SystemTx::CycleTick) {
             return Some(observation);
         }
     }

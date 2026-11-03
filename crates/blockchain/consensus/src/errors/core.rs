@@ -6,7 +6,7 @@ use outbe_primitives::{
     error::PrecompileError,
     system_tx::{
         binding::{BoundaryBindingError, LayoutBindingError, ParentAccountingBindingError},
-        SystemTxError, SystemTxKind,
+        SystemTxError,
     },
 };
 use std::time::Duration;
@@ -227,8 +227,8 @@ pub enum BlockValidationError {
     MissingVisibleGasOrdinal(u8),
     #[error("build unsigned system transaction: {0}")]
     BuildUnsignedSystemTx(SystemTxError),
-    #[error("system tx signature_hash mismatch for {kind:?} at ordinal {ordinal}")]
-    SignatureHashMismatch { kind: SystemTxKind, ordinal: u8 },
+    #[error("system tx signature_hash mismatch for {kind} at ordinal {ordinal}")]
+    SignatureHashMismatch { kind: &'static str, ordinal: u8 },
     #[error("recover system tx signer for leader binding: {0}")]
     RecoverSigner(String),
     #[error("system tx signer {signer} does not match consensus leader EVM address {expected}")]

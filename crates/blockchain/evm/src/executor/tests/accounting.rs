@@ -78,23 +78,16 @@ fn verifier_rejects_finalization_parent_hash_mismatch() {
     metadata.finalized_block_hash = wrong_parent_hash;
 
     let phase1_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
         0,
         2,
         CHAIN_ID,
-        SystemTxInputV2::CertifiedParentAccounting { metadata }
+        SystemTx::CertifiedParentAccounting { metadata }
             .encode()
             .unwrap(),
     )
     .unwrap();
-    let cycle_unsigned = build_unsigned_system_tx(
-        SystemTxKind::CycleTick,
-        1,
-        2,
-        CHAIN_ID,
-        SystemTxInputV2::CycleTick.encode().unwrap(),
-    )
-    .unwrap();
+    let cycle_unsigned =
+        build_unsigned_system_tx(1, 2, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
     let phase1_signed = signer.sign_unsigned(phase1_unsigned).unwrap();
     let cycle_signed = signer.sign_unsigned(cycle_unsigned).unwrap();
     let phase1_recovered =

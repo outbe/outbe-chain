@@ -2,8 +2,8 @@
 //!
 //! `RewardsLifecycle` is the zero-sized marker type that implements
 //! [`BlockLifecycle`] and is registered in the executor's pre-execution
-//! ordering. It runs at the start of every block and currently performs
-//! only the genesis-anchor lazy initialization.
+//! ordering. `begin_block` and `end_block` are no-ops. The start date is
+//! the UTC date of the genesis timestamp on the block context.
 //!
 //! Day-boundary settle moved out of Rewards as part of the Cycle
 //! refactor. The daily orchestration runs on
@@ -38,11 +38,28 @@ mod tests {
     use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
 
     #[test]
-    fn begin_block_locks_in_genesis_utc_day_on_block_zero() {
+    fn day_number_since_genesis_follows_the_genesis_timestamp() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
-            <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
+            assert_eq!(
+                runtime::day_number_since_genesis(&ctx, 20240101).unwrap(),
+                0
+            );
 
-            assert_eq!(runtime::genesis_utc_day(&ctx).unwrap(), 20240101);
+            let ctx_later = BlockRuntimeContext::new(
+                block_ctx(
+                    100,
+                    GENESIS_TS_2024_01_01 + 30 * outbe_primitives::time::SECONDS_PER_DAY,
+                ),
+                ctx.storage.clone(),
+            );
+            assert_eq!(
+                runtime::day_number_since_genesis(&ctx_later, 20240101).unwrap(),
+                0
+            );
+            assert_eq!(
+                runtime::day_number_since_genesis(&ctx_later, 20240131).unwrap(),
+                30
+            );
         });
     }
 
@@ -51,15 +68,12 @@ mod tests {
         with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx0).unwrap();
 
-            // Block 1, slightly later - must not move the locked-in day.
             let ctx1 = BlockRuntimeContext::new(
                 block_ctx(1, GENESIS_TS_2024_01_01 + 60),
                 ctx0.storage.clone(),
             );
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
-            assert_eq!(runtime::genesis_utc_day(&ctx1).unwrap(), 20240101);
 
-            // Block 100, 30 days later - still 20240101.
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(
                     100,
@@ -68,7 +82,6 @@ mod tests {
                 ctx0.storage.clone(),
             );
             <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx_later).unwrap();
-            assert_eq!(runtime::genesis_utc_day(&ctx_later).unwrap(), 20240101);
         });
     }
 }

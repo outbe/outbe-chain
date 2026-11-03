@@ -6,7 +6,7 @@ use outbe_primitives::{
     pass_budget::PassBudget,
 };
 
-use outbe_gem::precompile::IGem::GemGroupForfeited;
+use outbe_gem::precompile::IGem::GemSeriesClosed;
 use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
@@ -45,13 +45,10 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     type Member = B256;
 
     fn due(&mut self, group: B256) -> Result<Due> {
-        let called = self.gem.group_called_at.read(&group)? != 0;
-        Ok(
-            match called && self.gem.group_gem_count.read(&group)? != 0 {
-                true => Due::Process,
-                false => Due::Drop,
-            },
-        )
+        Ok(match self.gem.group_called_at.read(&group)? != 0 {
+            true => Due::Process,
+            false => Due::Drop,
+        })
     }
 
     fn member_count(&self, _group: B256) -> Result<u32> {
@@ -69,18 +66,28 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
     /// Returns the load of the group's unpaid gems in one credit and hands the gems to
     /// the cleanup. Nobody realized the load, so it goes back to the Promis reserve.
     fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let gems = self.gem.group_gem_count.read(&group)?;
         let load = self.gem.group_unpaid_load.read(&group)?;
+        let sub_series = self.gem.group_sub_series(group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .checked_credit(load)?;
         }
-        self.gem.hand_to_cleanup(group)?;
-        self.gem.emit(GemGroupForfeited {
-            groupKey: group,
-            gems,
-            promisLoadMinor: load,
-        })?;
+        if self.gem.group_gem_count.read(&group)? == 0 {
+            self.gem.remove_called(group)?;
+            self.gem.close_group_if_empty_after_forfeit(group)?;
+        } else {
+            self.gem.hand_to_cleanup(group)?;
+        }
+        for sub in sub_series {
+            self.gem.emit(GemSeriesClosed {
+                seriesId: sub.series_id.into(),
+                subSeriesId: sub.sub_series_id,
+                issuanceCurrency: sub.issuance_currency,
+                referenceCurrency: sub.reference_currency,
+                forfeitedCount: sub.unpaid_count,
+                forfeitedAmountMinor: sub.unpaid_load,
+            })?;
+        }
         Ok(())
     }
 

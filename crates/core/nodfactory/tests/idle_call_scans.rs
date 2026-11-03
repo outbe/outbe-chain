@@ -37,14 +37,9 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             outbe_nod::test_support::add(&storage, &body).unwrap();
         }
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, midnight, 1),
+            BlockContext::empty_for_tests(1, midnight, 1).with_genesis_timestamp(midnight - 86_400),
             storage.clone(),
         );
-        called::initialize_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(0, midnight - 86_400, 1),
-            storage.clone(),
-        ))
-        .unwrap();
         called::schedule_call_pass(&ctx).unwrap();
         called::process_call_pass(&ctx).unwrap();
         assert_eq!(
@@ -57,7 +52,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     provider.enable_production_storage_gas_metering();
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(2, midnight, 1),
+            BlockContext::empty_for_tests(2, midnight, 1).with_genesis_timestamp(midnight - 86_400),
             storage.clone(),
         );
         called::process_call_pass(&ctx).unwrap();
@@ -78,7 +73,10 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     });
     let before = provider.storage.clone();
     StorageHandle::enter(&mut provider, |storage| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, midnight, 1), storage);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, midnight, 1).with_genesis_timestamp(midnight - 86_400),
+            storage,
+        );
         called::process_call_pass(&ctx).unwrap();
         hooks::cleanup(&ctx).unwrap();
     });

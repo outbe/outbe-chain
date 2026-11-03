@@ -15,7 +15,7 @@ use crate::features::entity_lifecycle::chain::{
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
 use crate::features::entity_lifecycle::markets::MYR_ISO;
-use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
+use crate::features::entity_lifecycle::phases::{backdated_timestamp, CALL_WINDOW_SEED_DAYS};
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
@@ -290,8 +290,10 @@ fn issue_five_gems(world: &mut World) {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::backdateGemForTestCall {
                 gemId: gem_id,
-                issuedAt: head_time(world)
-                    .saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY),
+                issuedAt: backdated_timestamp(
+                    world,
+                    (u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY,
+                ),
             },
             None,
         )
@@ -477,7 +479,7 @@ impl Lifecycle for GemLifecycle {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closeCallNoticeForTestCall {
                 gemId: id,
-                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+                deadline: backdated_timestamp(world, EXPIRY_DAY_SECS),
             },
             None,
         )
@@ -600,7 +602,7 @@ fn position_returns_capacity(world: &mut World) {
             DEPLOYER_KEY,
             &IGemFactoryTestArming::closePositionHourForTestCall {
                 positionId: position_id,
-                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+                deadline: backdated_timestamp(world, EXPIRY_DAY_SECS),
             },
             None,
         )
@@ -648,7 +650,7 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
     if require_position_expiry {
         assert!(position_expired, "position retained unissued capacity");
     }
-    let group = eth::read_call_at(
+    let gem_before = eth::read_call_at(
         &url,
         addresses::GEM_ADDR,
         &eth::IGem::getGemCall {
@@ -656,17 +658,19 @@ fn assert_expiry_returns(world: &World, height: u64, require_position_expiry: bo
         },
         from,
     )
-    .expect("the forfeited gem was live before its group was forfeited")
-    .groupKey;
+    .expect("the forfeited gem was live before its group was forfeited");
     assert_single_event(
         &url,
         addresses::GEM_ADDR,
         from,
         height,
-        eth::IGem::GemGroupForfeited {
-            groupKey: group,
-            gems: 1,
-            promisLoadMinor: U256::from(GEM_LOAD_MINOR),
+        eth::IGem::GemSeriesClosed {
+            seriesId: gem_before.seriesId,
+            subSeriesId: gem_before.subSeriesId,
+            issuanceCurrency: gem_before.issuanceCurrency,
+            referenceCurrency: gem_before.referenceCurrency,
+            forfeitedCount: 1,
+            forfeitedAmountMinor: U256::from(GEM_LOAD_MINOR),
         },
     );
     let returned = if position_expired {

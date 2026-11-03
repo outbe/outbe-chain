@@ -29,6 +29,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+outbe-rewards.workspace = true
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-lysis.workspace = true
 outbe-tee-enclave.workspace = true

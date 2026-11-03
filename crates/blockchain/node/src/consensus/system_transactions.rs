@@ -62,7 +62,7 @@ pub(super) fn validate_late_credits(
     let mut found = false;
     for input in system_inputs(layout) {
         let input = input?;
-        if let outbe_evm::system_tx::SystemTxInputV2::LateFinalizeCredits { artifact } = input {
+        if let outbe_evm::system_tx::SystemTx::LateFinalizeCredits { artifact } = input {
             if artifact != header_credits {
                 return Err(consensus_other(
                     "LateFinalizeCredits system tx artifact does not match header late_finalize_credits",
@@ -83,14 +83,14 @@ pub(super) fn validate_late_credits(
 
 fn decode_system_input(
     tx: &reth_ethereum::TransactionSigned,
-) -> Result<outbe_evm::system_tx::SystemTxInputV2, ConsensusError> {
-    outbe_evm::system_tx::SystemTxInputV2::decode(tx.input().as_ref())
+) -> Result<outbe_evm::system_tx::SystemTx, ConsensusError> {
+    outbe_evm::system_tx::SystemTx::decode(tx.input().as_ref())
         .map_err(|error| crate::errors::ConsensusPolicyError::decode_system_tx_input(error).into())
 }
 
 fn system_inputs<'a>(
     layout: &'a SystemTxLayout<'_>,
-) -> impl Iterator<Item = Result<outbe_evm::system_tx::SystemTxInputV2, ConsensusError>> + 'a {
+) -> impl Iterator<Item = Result<outbe_evm::system_tx::SystemTx, ConsensusError>> + 'a {
     layout
         .begin
         .iter()

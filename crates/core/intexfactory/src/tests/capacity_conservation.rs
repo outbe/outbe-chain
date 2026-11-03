@@ -60,7 +60,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             .unwrap();
         // The pass starts the day before the deadline, and the Oracle is final past its close.
         super::called::prepare_daily_pass(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, DEADLINE, 1),
+            BlockContext::empty_for_tests(1, DEADLINE, 1).with_genesis_timestamp(DEADLINE - DAY),
             s.clone(),
         ))
         .unwrap();
@@ -82,7 +82,10 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     p.set_timestamp(U256::from(at));
     StorageHandle::enter(p, |s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(2, at, 1), s);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, at, 1).with_genesis_timestamp(DEADLINE - DAY),
+            s,
+        );
         super::called::daily_pass(&ctx)?;
         crate::notify::send_call_notices(&ctx)
     })
@@ -142,13 +145,14 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     let events = p
         .get_events(INTEX_ADDRESS)
         .iter()
-        .filter_map(|e| {
-            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).ok()
-        })
+        .filter_map(|e| outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).ok())
         .collect::<Vec<_>>();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].forfeitedUnits, 5);
-    assert_eq!(events[0].returnedPromisMinor, U256::from(5 * LOAD));
+    assert_eq!(SeriesId::from(events[0].seriesId), id);
+    assert_eq!(events[0].issuanceCurrency, 840);
+    assert_eq!(events[0].referenceCurrency, 840);
+    assert_eq!(events[0].forfeitedCount, 5);
+    assert_eq!(events[0].forfeitedAmountMinor, U256::from(5 * LOAD));
 }
 
 #[test]
@@ -176,7 +180,7 @@ fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_on
                 .get_events(INTEX_ADDRESS)
                 .iter()
                 .filter_map(|e| {
-                    outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(e).ok()
+                    outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).ok()
                 })
                 .count();
             assert_eq!(closed, 1);

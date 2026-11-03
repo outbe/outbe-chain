@@ -327,13 +327,12 @@ fn successor_block_contains_empty_v2_missed_proposers(world: &mut World) {
     let input_bytes = hex::decode(input_hex.trim_start_matches("0x"))
         .expect("transaction input must be valid hex");
 
-    let decoded = outbe_primitives::system_tx::SystemTxInputV2::decode(&input_bytes)
-        .expect("first transaction input must decode as SystemTxInputV2");
+    let decoded = outbe_primitives::system_tx::SystemTx::decode(&input_bytes)
+        .expect("first transaction input must decode as SystemTx");
 
-    let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
-        decoded
+    let outbe_primitives::system_tx::SystemTx::CertifiedParentAccounting { metadata } = decoded
     else {
-        panic!("first transaction input must be CertifiedParentAccounting, got different SystemTxInputV2 variant");
+        panic!("first transaction input must be CertifiedParentAccounting, got different SystemTx variant");
     };
 
     assert!(
@@ -432,15 +431,13 @@ fn parent_proof_randao(block: &serde_json::Value) -> alloy_primitives::B256 {
     use commonware_codec::{Encode as _, Read as _};
     use commonware_cryptography::{bls12381::primitives::variant::MinSig, Hasher as _, Sha256};
     use outbe_consensus::{digest::Digest, hybrid::HybridScheme};
-    use outbe_primitives::{
-        consensus_metadata::ParentParticipationProof, system_tx::SystemTxInputV2,
-    };
+    use outbe_primitives::{consensus_metadata::ParentParticipationProof, system_tx::SystemTx};
     let input = block["transactions"][0]["input"]
         .as_str()
         .expect("Phase 1 input");
     let bytes = hex::decode(input.trim_start_matches("0x")).expect("Phase 1 input hex");
-    let SystemTxInputV2::CertifiedParentAccounting { metadata } =
-        SystemTxInputV2::decode(&bytes).expect("Phase 1 metadata")
+    let SystemTx::CertifiedParentAccounting { metadata } =
+        SystemTx::decode(&bytes).expect("Phase 1 metadata")
     else {
         panic!("first transaction must account the parent");
     };

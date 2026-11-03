@@ -318,7 +318,7 @@ impl World {
             .logs()
             .iter()
             .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
-            .map(|event| (event.owner, event.units.to::<u64>()))
+            .map(|event| (event.owner, u64::from(event.units)))
             .collect()
     }
 }

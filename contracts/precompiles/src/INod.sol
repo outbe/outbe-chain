@@ -43,16 +43,30 @@ interface INod {
     /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Group force-called by the daily Call scan: the reference price
-    /// exceeded the group's call price on enough of the trailing window. Every
-    /// Nod in the group must be settled by `settlementDeadline`. Otherwise it is
-    /// forfeited with its group.
-    event NodGroupCalled(bytes32 indexed groupKey, uint64 calledAt, uint64 settlementDeadline);
+    /// Series force-called by the daily Call scan: the reference price
+    /// exceeded the series' call price on enough of the trailing window. Every
+    /// Nod in the series must be settled by `settlementDeadline`. Otherwise it is
+    /// forfeited when the series closes.
+    event NodSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
 
-    /// The group's settlement deadline lapsed: its `nods` unpaid Nods are forfeited and
-    /// their `gratisLoadMinor` returned to the Promis reserve at once. No Gratis is
+    /// The series' settlement deadline lapsed: its `forfeitedCount` unpaid Nods and
+    /// `forfeitedTributeCount` unclaimed Tributes are forfeited and their
+    /// `forfeitedAmountMinor` returned to the Promis reserve at once. No Gratis is
     /// minted. The cleanup deletes them after.
-    event NodGroupForfeited(bytes32 indexed groupKey, uint32 nods, uint256 gratisLoadMinor);
+    event NodSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint32 forfeitedTributeCount,
+        uint256 forfeitedAmountMinor
+    );
 
     struct NodData {
         // keccak256(seriesId || owner).

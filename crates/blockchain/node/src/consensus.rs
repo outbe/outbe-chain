@@ -371,10 +371,9 @@ mod tests {
         signer: &outbe_evm::OutbeEvmSigner,
         ordinal: u8,
         block_number: u64,
-        input: outbe_evm::system_tx::SystemTxInputV2,
+        input: outbe_evm::system_tx::SystemTx,
     ) -> reth_ethereum::TransactionSigned {
         let unsigned = outbe_evm::system_tx::build_unsigned_system_tx(
-            input.kind(),
             ordinal,
             block_number,
             MAINNET.chain().id(),
@@ -404,7 +403,7 @@ mod tests {
                 &outbe_evm::OutbeEvmSigner::from_secret_bytes([4u8; 32]).unwrap(),
                 0,
                 1,
-                outbe_evm::system_tx::SystemTxInputV2::CycleTick,
+                outbe_evm::system_tx::SystemTx::CycleTick,
             )],
             ommers: Vec::new(),
             withdrawals: None,
@@ -489,7 +488,7 @@ mod tests {
             &signer,
             0,
             2,
-            outbe_evm::system_tx::SystemTxInputV2::CertifiedParentAccounting {
+            outbe_evm::system_tx::SystemTx::CertifiedParentAccounting {
                 metadata: phase1_metadata(1, wrong_parent_hash),
             },
         );
@@ -497,28 +496,19 @@ mod tests {
             &signer,
             1,
             2,
-            outbe_evm::system_tx::SystemTxInputV2::LateFinalizeCredits {
+            outbe_evm::system_tx::SystemTx::LateFinalizeCredits {
                 artifact: Default::default(),
             },
         );
-        let cycle = signed_system_tx(
-            &signer,
-            2,
-            2,
-            outbe_evm::system_tx::SystemTxInputV2::CycleTick,
-        );
+        let cycle = signed_system_tx(&signer, 2, 2, outbe_evm::system_tx::SystemTx::CycleTick);
         let oracle = signed_system_tx(
             &signer,
             3,
             2,
-            outbe_evm::system_tx::SystemTxInputV2::OracleSlashWindow,
+            outbe_evm::system_tx::SystemTx::OracleSlashWindow,
         );
-        let hook_events = signed_system_tx(
-            &signer,
-            4,
-            2,
-            outbe_evm::system_tx::SystemTxInputV2::HookEvents,
-        );
+        let hook_events =
+            signed_system_tx(&signer, 4, 2, outbe_evm::system_tx::SystemTx::HookEvents);
         let body = OutbeBlockBody {
             transactions: vec![phase1, late, cycle, oracle, hook_events],
             ommers: Vec::new(),

@@ -3,7 +3,7 @@
 //! and every CycleTick walks a slice of it.
 
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemGroupCalled};
+use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemSeriesCalled};
 
 use crate::errors::GemFactoryError;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
@@ -24,10 +24,6 @@ use outbe_primitives::{
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut GemCallPass::new(ctx))
-}
-
-pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_pass::initialize(ctx, &mut GemCallPass::new(ctx))
 }
 
 /// This function runs the coupled daily pass, including forfeits and position expiry after calls.
@@ -64,10 +60,6 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
 
     fn block_budget(&self) -> &Value<'storage, U256> {
         &self.gem.daily_budget
-    }
-
-    fn genesis_day(&self) -> &Value<'storage, u32> {
-        &self.gem.daily_genesis_day
     }
 
     fn forfeit(
@@ -261,9 +253,15 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
     gem.record_group_called(group, now, deadline)?;
-    gem.emit(GemGroupCalled {
-        groupKey: group,
-        calledAt: now,
-        settlementDeadline: deadline,
-    })
+    for sub in gem.group_sub_series(group)? {
+        gem.emit(GemSeriesCalled {
+            seriesId: sub.series_id.into(),
+            subSeriesId: sub.sub_series_id,
+            issuanceCurrency: sub.issuance_currency,
+            referenceCurrency: sub.reference_currency,
+            calledAt: now,
+            settlementDeadline: deadline,
+        })?;
+    }
+    Ok(())
 }

@@ -215,3 +215,40 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
         "static command must never enter its handler: {result:?}"
     );
 }
+
+#[test]
+fn a_discounted_reward_gem_opens_its_series_at_the_undiscounted_anchor() {
+    let anchor = U256::from(2u64) * six_decimal_unit();
+    let discount_rate: u16 = 4;
+    assert!(discount_rate > 0);
+    let entry = outbe_primitives::markup::marked_down(anchor, discount_rate).unwrap();
+    assert!(entry < anchor);
+    let mut provider = test_storage(Some(anchor));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        runtime::issue_gem(
+            &storage,
+            GemIssueParams {
+                owner: ALICE,
+                promis_load_minor: six_decimal_unit(),
+                issuance_currency: 840,
+                reference_currency: 840,
+                entry_price_minor: entry,
+                call_anchor_price_minor: anchor,
+            },
+        )
+        .unwrap()
+    });
+    let opened: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
+        .map(|log| log.data)
+        .collect();
+    assert_eq!(opened.len(), 1);
+    assert_eq!(opened[0].entryPriceMinor, anchor);
+    let record_entry = StorageHandle::enter(&mut provider, |storage| {
+        gem_item(&storage, gem_id).entry_price_minor
+    });
+    assert_eq!(record_entry, entry);
+    assert!(opened[0].entryPriceMinor > record_entry);
+}

@@ -452,7 +452,9 @@ impl<'storage> Vote<'storage> {
         Ok(proposal_id)
     }
 
-    pub fn write_vote(
+    /// Records a first ballot or changes Yes to No in its original slot.
+    /// Runtime admission checks and a checkpoint must surround this write.
+    pub(crate) fn write_vote(
         &mut self,
         proposal_id: U256,
         voter: Address,
@@ -460,18 +462,27 @@ impl<'storage> Vote<'storage> {
         block_number: u64,
     ) -> Result<()> {
         let key = vote_key(proposal_id, voter);
-        self.proposals
-            .get(proposal_id)?
-            .ok_or(VoteError::ProposalNotFound)?;
         let votes = self.proposal_voters.list(&proposal_id);
-        let index = votes.len()?;
-        votes.push(VoteRecord {
+        let position = self.votes_map.read(&key)?;
+        let new_record = VoteRecord {
             voter,
             vote_kind: kind.to_u8(),
             block_number,
-        })?;
-        self.votes_map.write(&key, index + 1)?;
-        Ok(())
+        };
+        if let Some(index) = position.checked_sub(1) {
+            let previous = votes
+                .get(index)?
+                .filter(|record| record.voter == voter)
+                .ok_or(VoteError::CorruptVoteIndex)?;
+            if VoteKind::from_u8(previous.vote_kind)? != VoteKind::Yes || kind != VoteKind::No {
+                return Err(VoteError::AlreadyVoted.into());
+            }
+            votes.set(index, new_record)
+        } else {
+            let index = votes.len()?;
+            votes.push(new_record)?;
+            self.votes_map.write(&key, index + 1)
+        }
     }
 
     pub fn set_proposal_status(

@@ -327,6 +327,165 @@ fn dispatch_cast_vote_emits_event() {
 }
 
 #[test]
+fn recast_yes_to_no_preserves_voters_and_emits_the_latest_ballot() {
+    let mut provider = with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage);
+        let id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
+        for (voter, approve) in [(PROPOSER, true), (VOTER_A, true), (VOTER_B, false)] {
+            vote.cast_vote_approve(id, voter, approve, 100).unwrap();
+        }
+    });
+    provider.set_block_number(101);
+    provider.enter(|storage| {
+        let id = U256::ONE;
+        dispatch(
+            storage.clone(),
+            &IVote::castVoteCall {
+                proposalId: id,
+                approve: false,
+            }
+            .abi_encode(),
+            VOTER_A,
+            U256::ZERO,
+        )
+        .unwrap();
+        let vote = Vote::new(storage.clone());
+        assert_eq!(
+            vote.read_proposal_voters(id).unwrap(),
+            vec![PROPOSER, VOTER_A, VOTER_B]
+        );
+        let ballot = vote.read_vote(id, VOTER_A).unwrap().unwrap();
+        assert_eq!(ballot.vote_kind, super::VoteKind::No);
+        assert_eq!(ballot.block_number, 101);
+        super::assert_proposal_view(storage, id, super::VoteTally { yes: 1, no: 2 }, 3);
+    });
+    let ballots: Vec<_> = provider
+        .get_events(VOTE_ADDRESS)
+        .iter()
+        .filter_map(|log| IVote::VoteCast::decode_log_data(log).ok())
+        .map(|event| (event.proposalId, event.validator, event.approve))
+        .collect();
+    assert_eq!(
+        ballots,
+        [
+            (U256::ONE, PROPOSER, true),
+            (U256::ONE, VOTER_A, true),
+            (U256::ONE, VOTER_B, false),
+            (U256::ONE, VOTER_A, false),
+        ]
+    );
+}
+
+#[test]
+fn recast_rejects_closed_voting_and_finalized_proposals_without_changing_yes() {
+    let mut provider = with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage);
+        let id = vote
+            .create_proposal_with_voting_window(
+                crate::ProposalSubmission::new(PROPOSER, UPDATE_ADDRESS, "{}", 100),
+                1,
+                test_vote_registry(),
+            )
+            .unwrap();
+        vote.cast_vote_approve(id, VOTER_A, true, 100).unwrap();
+    });
+    provider.set_block_number(102);
+    provider.enter(|storage| {
+        let id = U256::ONE;
+        let call = IVote::castVoteCall {
+            proposalId: id,
+            approve: false,
+        }
+        .abi_encode();
+        assert_reverts_with(
+            dispatch(storage.clone(), &call, VOTER_A, U256::ZERO),
+            "voting window is closed",
+        );
+        let mut vote = Vote::new(storage.clone());
+        vote.process_begin_block(
+            &super::block_ctx(storage.clone(), 102),
+            test_vote_registry(),
+        )
+        .unwrap();
+        assert_reverts_with(
+            dispatch(storage.clone(), &call, VOTER_A, U256::ZERO),
+            "not pending",
+        );
+        assert_eq!(
+            vote.read_vote(id, VOTER_A).unwrap().unwrap().vote_kind,
+            super::VoteKind::Yes
+        );
+        super::assert_proposal_view(storage, id, super::VoteTally { yes: 1, no: 0 }, 1);
+    });
+}
+
+#[test]
+fn recast_requires_current_eligibility_without_removing_the_old_ballot() {
+    with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
+        vote.cast_vote_approve(id, VOTER_A, true, 100).unwrap();
+        outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+            .deactivate_validator(super::VALIDATOR_OWNER, VOTER_A)
+            .unwrap();
+        assert_reverts_with(
+            dispatch(
+                storage.clone(),
+                &IVote::castVoteCall {
+                    proposalId: id,
+                    approve: false,
+                }
+                .abi_encode(),
+                VOTER_A,
+                U256::ZERO,
+            ),
+            "not an active validator",
+        );
+        assert_eq!(
+            vote.read_vote(id, VOTER_A).unwrap().unwrap().vote_kind,
+            super::VoteKind::Yes
+        );
+        assert_eq!(vote.read_proposal_voters(id).unwrap(), vec![VOTER_A]);
+        super::assert_proposal_view(storage, id, super::VoteTally { yes: 0, no: 0 }, 1);
+    });
+}
+
+#[test]
+fn recast_cannot_overwrite_another_voters_ballot_through_a_corrupt_index() {
+    let provider = with_vote_provider(100, |storage| {
+        let mut vote = Vote::new(storage.clone());
+        let id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
+        for voter in [VOTER_A, VOTER_B] {
+            vote.cast_vote_approve(id, voter, true, 100).unwrap();
+        }
+        vote.votes_map
+            .write(&super::vote_key(id, VOTER_A), 2)
+            .unwrap();
+        let error = dispatch(
+            storage.clone(),
+            &IVote::castVoteCall {
+                proposalId: id,
+                approve: false,
+            }
+            .abi_encode(),
+            VOTER_A,
+            U256::ZERO,
+        )
+        .unwrap_err();
+        assert!(matches!(error, PrecompileError::Fatal(_)), "{error:?}");
+        assert_eq!(
+            vote.read_vote(id, VOTER_B).unwrap().unwrap().vote_kind,
+            super::VoteKind::Yes
+        );
+        super::assert_proposal_view(storage, id, super::VoteTally { yes: 2, no: 0 }, 2);
+    });
+    assert_eq!(
+        super::count_events(&provider, IVote::VoteCast::SIGNATURE_HASH),
+        2
+    );
+}
+
+#[test]
 fn dispatch_rejects_non_zero_value() {
     with_vote_provider(100, |storage| {
         let data = IVote::getProposalCall {

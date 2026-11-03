@@ -483,27 +483,22 @@ fn claim_gem_and_assert_gas_only_cost(
         );
         let expected_load = claimable;
         assert!(!expected_load.is_zero());
-        assert!(!issued.groupKey.is_zero());
+        assert!(!gem.groupKey.is_zero());
+        let expected_entry_price = outbe_primitives::markup::marked_down(
+            terms,
+            outbe_agentreward::constants::AGENT_DISCOUNT_PCT,
+        )
+        .expect("discounted entry price");
         let expected = eth::IGemFactory::GemIssued {
             gemId: added[0],
-            owner: beneficiary,
-            promisLoadMinor: expected_load,
-            entryPriceMinor: outbe_primitives::markup::marked_down(
-                terms,
-                outbe_agentreward::constants::AGENT_DISCOUNT_PCT,
-            )
-            .expect("discounted entry price"),
+            seriesId: gem.seriesId,
+            subSeriesId: gem.subSeriesId,
             issuanceCurrency: issuance_currency,
             referenceCurrency: reference_currency,
-            issuedAt: timestamp,
-            callPriceMinor: gem.callPriceMinor,
-            callWindow: issued.callWindow,
-            callThreshold: issued.callThreshold,
-            callNoticePeriod: gem.callNoticePeriod,
-            positionId: U256::ZERO,
-            groupKey: issued.groupKey,
+            owner: beneficiary,
+            payload: expected_load.to_be_bytes::<32>().into(),
         };
-        assert_claimed_gem(&gem, &expected);
+        assert_claimed_gem(&gem, &expected, expected_entry_price, timestamp);
         assert_eq!(gem.gemId, added[0]);
         let encoded = gem.abi_encode();
         assert_eq!(
@@ -619,14 +614,22 @@ fn claim_gem_terms_at(url: &str, height: u64, reference_currency: u16) -> U256 {
     price
 }
 
-fn assert_claimed_gem(gem: &eth::IGem::GemData, expected: &eth::IGemFactory::GemIssued) {
+fn assert_claimed_gem(
+    gem: &eth::IGem::GemData,
+    expected: &eth::IGemFactory::GemIssued,
+    expected_entry_price: U256,
+    issued_at: u64,
+) {
     assert_eq!(gem.owner, expected.owner);
     assert_eq!(gem.state, 0, "agent reward Gem must be born Issued");
-    assert_eq!(gem.promisLoadMinor, expected.promisLoadMinor);
-    assert_eq!(gem.entryPriceMinor, expected.entryPriceMinor);
+    assert_eq!(
+        expected.payload.as_ref(),
+        &gem.promisLoadMinor.to_be_bytes::<32>()
+    );
+    assert_eq!(gem.entryPriceMinor, expected_entry_price);
     assert_eq!(gem.issuanceCurrency, expected.issuanceCurrency);
     assert_eq!(gem.referenceCurrency, expected.referenceCurrency);
-    assert_eq!(gem.issuedAt, expected.issuedAt);
+    assert_eq!(gem.issuedAt, issued_at);
 }
 
 fn wait_for_offering(world: &World, wwd: &str) {
@@ -778,25 +781,21 @@ mod claim_tests {
     fn issued_gem() -> eth::IGemFactory::GemIssued {
         eth::IGemFactory::GemIssued {
             gemId: U256::from(7),
-            owner: Address::repeat_byte(1),
-            promisLoadMinor: U256::from(123),
-            entryPriceMinor: U256::from(1_000_001),
+            seriesId: Default::default(),
+            subSeriesId: 0,
             issuanceCurrency: 840,
             referenceCurrency: 840,
-            issuedAt: 100,
-            callPriceMinor: U256::from(1_100_001),
-            callWindow: 0,
-            callThreshold: 0,
-            callNoticePeriod: 0,
-            positionId: U256::ZERO,
-            groupKey: Default::default(),
+            owner: Address::repeat_byte(1),
+            payload: U256::from(123).to_be_bytes::<32>().into(),
         }
     }
 
     #[test]
     fn agent_claim_oracle_rejects_wrong_recipient_load_pool_and_price() {
         let expected = issued_gem();
-        let check = |gem: &eth::IGem::GemData| assert_claimed_gem(gem, &expected);
+        let check = |gem: &eth::IGem::GemData| {
+            assert_claimed_gem(gem, &expected, U256::from(1_000_001), 100)
+        };
         check(&wallet_gem());
         for mutation in 0..5 {
             let mut gem = wallet_gem();

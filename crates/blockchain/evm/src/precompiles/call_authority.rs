@@ -33,17 +33,17 @@ pub(super) fn metadosis_mutation_entitlements(
     {
         return MetadosisMutationEntitlements::NONE;
     }
-    let Ok(input) = crate::system_tx::SystemTxInputV2::decode(call.data) else {
+    let Ok(input) = crate::system_tx::SystemTx::decode(call.data) else {
         return MetadosisMutationEntitlements::NONE;
     };
     match input {
-        crate::system_tx::SystemTxInputV2::LateFinalizeCredits { .. } => {
+        crate::system_tx::SystemTx::LateFinalizeCredits { .. } => {
             MetadosisMutationEntitlements::exact(
                 Purpose::CertifiedFinality,
                 metadosis_late_settlement_binding(call.chain_id, call.block_number, call.timestamp),
             )
         }
-        crate::system_tx::SystemTxInputV2::CycleTick => cycle_tick_entitlements(&call),
+        crate::system_tx::SystemTx::CycleTick => cycle_tick_entitlements(&call),
         _ => MetadosisMutationEntitlements::NONE,
     }
 }
@@ -97,7 +97,7 @@ pub(super) fn is_protocol_cycle_call(address: Address, caller: Address, data: &[
     address == OUTBE_SYSTEM_TX_ADDRESS
         && caller == SYSTEM_ADDRESS
         && matches!(
-            crate::system_tx::SystemTxInputV2::decode(data),
-            Ok(crate::system_tx::SystemTxInputV2::CycleTick)
+            crate::system_tx::SystemTx::decode(data),
+            Ok(crate::system_tx::SystemTx::CycleTick)
         )
 }

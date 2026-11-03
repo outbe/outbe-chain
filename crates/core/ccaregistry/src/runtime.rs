@@ -143,19 +143,16 @@ pub fn credis_issued(
     storage.with_checkpoint(|| {
         crate::api::require_active_cca(storage, cca)?;
         let contract = CcaContract::new(storage.clone());
+        contract.require_unsealed_day(day)?;
         let key = address_day_key(cca, day);
         let deficit = contract.gratis_deficit_minor_per_utc_day.read(&key)?;
         let offset = gratis.min(deficit);
-        let weight = contract
-            .gratis_minor_per_utc_day
-            .read(&key)?
+        let old = contract.gratis_minor_per_utc_day.read(&key)?;
+        let weight = old
             .checked_add(gratis - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis and deficit, so both subtractions are exact.
-        contract
-            .gratis_deficit_minor_per_utc_day
-            .write(&key, deficit - offset)?;
-        contract.gratis_minor_per_utc_day.write(&key, weight)
+        contract.update_day_weight(cca, day, old, weight, deficit - offset)
     })
 }
 
@@ -170,6 +167,7 @@ pub fn credis_forfeited(
     storage.with_checkpoint(|| {
         let contract = CcaContract::new(storage.clone());
         contract.load(cca)?;
+        contract.require_unsealed_day(day)?;
         let key = address_day_key(cca, day);
         let weight = contract.gratis_minor_per_utc_day.read(&key)?;
         let offset = gratis_burned.min(weight);
@@ -179,10 +177,6 @@ pub fn credis_forfeited(
             .checked_add(gratis_burned - offset)
             .ok_or(CcaError::Arithmetic)?;
         // offset <= both gratis_burned and weight. Keep any excess as a deficit.
-        let weight = weight - offset;
-        contract
-            .gratis_deficit_minor_per_utc_day
-            .write(&key, deficit)?;
-        contract.gratis_minor_per_utc_day.write(&key, weight)
+        contract.update_day_weight(cca, day, weight, weight - offset, deficit)
     })
 }

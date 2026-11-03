@@ -50,13 +50,12 @@ pub fn dispatch(
                     worldwide_day(&factory, c)
                 }),
                 getActiveWorldwideDays(c) => view(c, |_c| {
-                    let factory = TributeFactoryContract::new(storage.clone());
-                    Ok(factory
-                        .active_wwd
-                        .read_all()?
-                        .into_iter()
-                        .map(u32::from)
-                        .collect::<Vec<_>>())
+                    Ok(
+                        crate::worldwideday::api::offering_worldwide_days(storage.clone())?
+                            .into_iter()
+                            .map(u32::from)
+                            .collect::<Vec<_>>(),
+                    )
                 }),
                 offerTribute(c) => mutate(&storage, c, caller, |sender, c| {
                     let mut factory = TributeFactoryContract::new(storage.clone());

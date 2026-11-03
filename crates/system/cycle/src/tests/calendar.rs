@@ -90,7 +90,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         run_cycle_lifecycle(&anchor).unwrap();
     });
 
-    // Forcing `DistributionOverflow` (`RevertBytes`) inside `distribute_reward_pools`
+    // Forcing `DistributionOverflow` (`RevertBytes`) inside reward allocation
     // triggers the Step 2 inner checkpoint rollback and `record_failed_day_allocation` fallback.
     storage.set_block_number(2);
     storage.enter(|handle| {
@@ -100,8 +100,9 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(2, fire_ts), handle.clone());
         account_parent(&ctx, 2);
-        let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
-        ar.waa_total_count.write(&20_240_101u32.into(), 1).unwrap();
+        let mut ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        ar.increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x44))
+            .unwrap();
         ar.pending_total_minor
             .write(
                 &(outbe_agentreward::schema::RewardPool::Waa as u8),
@@ -124,6 +125,15 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             outbe_emission::schema::metadosis_state::CANCELLED
         );
         assert_eq!(U256::from(rec.promis_limit), expected_cap);
+        assert!(
+            !outbe_agentreward::distribution::has_pending_accruals_for_day(&handle, 20_240_101,)
+                .unwrap()
+        );
+        assert!(ar
+            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
+            .is_err());
+        crate::handler::credit_reward_slice(&ctx).unwrap();
+        assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
                 .promis_limit()

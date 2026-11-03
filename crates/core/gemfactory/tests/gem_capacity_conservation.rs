@@ -85,12 +85,10 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
             day = previous_date_key(day).expect("date step");
         }
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
-        called::initialize_daily(&BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(0, CALLED - DAY, 1),
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, CALLED, 1).with_genesis_timestamp(CALLED - DAY),
             s.clone(),
-        ))
-        .unwrap();
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, CALLED, 1), s.clone());
+        );
         called::scan_and_call(&ctx).unwrap();
         for (id, _) in &rights {
             assert_eq!(
@@ -123,7 +121,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             // Prices no longer affect called groups, but day readiness still matters.
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
-                    BlockContext::empty_for_tests(at * 32 + block, at, 1),
+                    BlockContext::empty_for_tests(at * 32 + block, at, 1)
+                        .with_genesis_timestamp(CALLED - DAY),
                     s.clone(),
                 );
                 called::process_call_pass(&ctx)?;
@@ -132,7 +131,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
                 }
             }
             let ctx = BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(at * 32 + 16, at, 1),
+                BlockContext::empty_for_tests(at * 32 + 16, at, 1)
+                    .with_genesis_timestamp(CALLED - DAY),
                 s.clone(),
             );
             hooks::cleanup(&ctx)?;
@@ -167,13 +167,13 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
         .get_events(GEM_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
         })
         .collect::<Vec<_>>();
     assert_eq!(
         expired
             .iter()
-            .map(|event| u64::from(event.gems))
+            .map(|event| u64::from(event.forfeitedCount))
             .sum::<u64>()
             + live_count,
         rights.len() as u64
@@ -181,7 +181,7 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
     assert_eq!(
         expired
             .iter()
-            .map(|event| event.promisLoadMinor)
+            .map(|event| event.forfeitedAmountMinor)
             .sum::<U256>(),
         returned
     );
@@ -297,9 +297,9 @@ fn a_paid_gem_stays_live_beside_its_forfeited_siblings() {
         .get_events(GEM_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemGroupForfeited::decode_log_data(event).ok()
+            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
         })
-        .map(|event| (event.gems, event.promisLoadMinor))
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect::<Vec<_>>();
     assert_eq!(forfeited, vec![(4, total - paid_load)]);
 

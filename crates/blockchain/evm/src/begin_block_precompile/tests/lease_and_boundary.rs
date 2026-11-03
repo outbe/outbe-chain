@@ -233,9 +233,7 @@ fn boundary_outcome_survives_unavailable_hyperlane_sync() {
         let vs_before = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         assert_eq!(vs_before.epoch_snapshot().unwrap().number, U256::ZERO);
 
-        let input = SystemTxInputV2::BoundaryOutcome { artifact }
-            .encode()
-            .unwrap();
+        let input = SystemTx::BoundaryOutcome { artifact }.encode().unwrap();
         dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
     });
 

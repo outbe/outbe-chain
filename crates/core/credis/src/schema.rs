@@ -1,8 +1,11 @@
 //! Storage schema for the Credis contract.
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::CREDIS_ADDRESS;
+use outbe_primitives::series_id::SeriesId;
+#[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
+use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::errors::CredisError;
 
@@ -38,13 +41,13 @@ impl CredisState {
     }
 }
 
-/// Credis record. Keyed by `keccak256(cca || owner || asset || block_number)`.
+/// Credis record. Keyed by `keccak256(series_id || owner || block_number)`.
 ///
 /// Every term, both currency codes included, is sealed at issuance and never
 /// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
-/// `interest_paid_minor`, `last_settled_at`, `called_at` and `state` move over the
-/// Credis's life. A live Credis is called with its group: loading it reads the call and
-/// its terms from the group, and settling it copies them onto the record.
+/// `interest_settled_minor`, `last_settled_at` and `called_at` move over the
+/// Credis's life. A live Credis is called with its series: loading it reads the call and
+/// its terms from the series, and settling it copies them onto the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(packed, exists_field = owner)]
 pub struct Credis {
@@ -97,20 +100,20 @@ pub struct Credis {
     /// successful settlement interest deltas. Unpaid interest is left out,
     /// including when the remainder is forfeited.
     #[attribute(order = 8)]
-    pub interest_paid_minor: U256,
+    pub interest_settled_minor: U256,
 
     /// The address the Credis was issued to.
     #[attribute(order = 9)]
     pub owner: Address,
 
-    /// Issuance timestamp. The interest anchor starts here, and its first full day
-    /// keys the Credis's call group.
+    /// Issuance timestamp. The interest anchor starts here. The series id is the one
+    /// the reservation fixed, not a day derived from this timestamp.
     #[attribute(order = 10)]
     pub issued_at: u64,
 
     /// Call Notice Period in seconds: a called Credis whose remainder is
     /// still outstanding at `called_at + call_notice_period_seconds` is forfeited.
-    /// Snapshotted from the profile at issuance; a live Credis reads its group's.
+    /// Snapshotted from the profile at issuance; a live Credis reads its series's.
     #[attribute(order = 11, default = 0)]
     pub call_notice_period_seconds: u32,
 
@@ -127,7 +130,7 @@ pub struct Credis {
     pub last_settled_at: u64,
 
     /// Call-trigger evaluation window in seconds, snapshotted from the profile at
-    /// issuance; a live Credis reads its group's. This is the trailing span the daily
+    /// issuance; a live Credis reads its series's. This is the trailing span the daily
     /// scan reads for Call Price breaches. Divided by 86400 to get the day count.
     #[attribute(order = 14, default = 0)]
     pub call_window_seconds: u32,
@@ -136,12 +139,12 @@ pub struct Credis {
     #[attribute(order = 15)]
     pub asset: Address,
 
-    /// When the Credis's group was called, 0 while it is not.
+    /// When the Credis's series was called, 0 while it is not.
     #[attribute(order = 16, default = 0)]
     pub called_at: u64,
 
     /// Breach threshold in seconds, snapshotted from the profile at issuance; a live
-    /// Credis reads its group's. Divided by 86400 to get the required breach-day count.
+    /// Credis reads its series's. Divided by 86400 to get the required breach-day count.
     #[attribute(order = 17, default = 0)]
     pub call_threshold_seconds: u32,
 
@@ -168,24 +171,15 @@ pub struct Credis {
     #[attribute(order = 21, default = 0)]
     pub call_rate: u16,
 
-    /// Lifecycle state as `u8`. Decode it via [`CredisState::from_u8`].
+    /// Series id copied from the reservation
+    /// (`SeriesId::for_pair(reservation day, issuance_currency, reference_currency)`).
     #[attribute(order = 22)]
-    pub state: u8,
+    pub series_id: SeriesId,
 }
 
 impl Credis {
-    pub fn lifecycle_state(&self) -> Result<CredisState, CredisError> {
-        CredisState::from_u8(self.state)
-    }
-
-    /// The call group: the Credis's first full day, its call price and the currency
-    /// that price is quoted in.
-    pub fn group_key(&self) -> Result<B256, outbe_primitives::time::TimeError> {
-        Ok(outbe_primitives::call_breach::group_key(
-            outbe_primitives::time::first_full_day(self.issued_at)?,
-            self.call_price_minor,
-            self.reference_currency,
-        ))
+    pub fn is_settled(&self) -> bool {
+        self.outstanding_principal_minor.is_zero()
     }
 }
 
@@ -196,8 +190,8 @@ impl Credis {
 /// `V::SLOTS` top-level slots, so the Credis map alone spans as many slots as `Credis`
 /// has attributes.
 ///
-/// Credis are called and forfeited in groups keyed by
-/// `call_breach::group_key(first full day, call price, reference currency)`. A group
+/// Credis are called and forfeited in series keyed by
+/// `SeriesId::for_pair(last_closed_day, issuance_currency, reference_currency)`. A series
 /// seals its first member's call terms and lists its unsettled members.
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
@@ -219,7 +213,7 @@ pub struct CredisContract {
     #[attribute(order = 8)]
     pub max_call_window_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // The queue orders called groups by the UTC day that contains their settlement deadline.
+    // The queue orders called series by the UTC day that contains their settlement deadline.
     #[attribute(order = 9)]
     pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
@@ -231,11 +225,11 @@ pub struct CredisContract {
     #[attribute(order = 13)]
     pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 14)]
-    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, SeriesId>,
     #[attribute(order = 15)]
-    pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub called_series_slot: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
     #[attribute(order = 16)]
-    pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub called_deadline: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
     #[attribute(order = 17)]
     pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 18)]
@@ -246,8 +240,8 @@ pub struct CredisContract {
     #[attribute(order = 19)]
     pub min_call_threshold_seconds: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Uncalled groups by call price, one trie per reference currency. A call takes
-    // the group out, so the daily scan visits only what can still be called.
+    // Uncalled series by call price, one trie per reference currency. A call takes
+    // the series out, so the daily scan visits only what can still be called.
     #[attribute(order = 20)]
     pub call_bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
     #[attribute(order = 21)]
@@ -257,10 +251,10 @@ pub struct CredisContract {
     #[attribute(order = 23)]
     pub call_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     #[attribute(order = 24)]
-    pub call_bin_groups: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub call_bin_series: outbe_primitives::storage::dsl::Map<B256, SeriesId>,
     #[attribute(order = 25)]
-    pub call_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
-    /// `(bin << 32) | groups of that bin still to visit`. 0 = start from the lowest bin.
+    pub call_series_slot: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
+    /// `(bin << 32) | series of that bin still to visit`. 0 = start from the lowest bin.
     #[attribute(order = 26)]
     pub call_bin_cursor: outbe_primitives::storage::dsl::Map<u16, u64>,
     /// UTC day the call pass could not price a reference currency on. The rest of that
@@ -282,28 +276,28 @@ pub struct CredisContract {
     #[attribute(order = 31)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
-    /// Each group's unsettled Credis.
+    /// Each series's unsettled Credis.
     #[attribute(order = 32)]
-    pub group_members:
-        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<U256>>,
+    pub series_members:
+        outbe_primitives::storage::dsl::Map<SeriesId, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 33)]
-    pub group_member_position: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub series_member_position: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 34)]
-    pub group_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    pub series_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
     /// The first full day every member counts call days from.
     #[attribute(order = 35)]
-    pub group_full_day: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub series_full_day: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
     #[attribute(order = 36)]
-    pub group_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub series_call_price_minor: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
     #[attribute(order = 37)]
-    pub group_call_window_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub series_call_window_seconds: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
     #[attribute(order = 38)]
-    pub group_call_threshold_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub series_call_threshold_seconds: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
     #[attribute(order = 39)]
-    pub group_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub series_call_notice_period_seconds: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
     #[attribute(order = 40)]
-    pub group_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
-    // The queue orders forfeited groups by deadline day while their Credis await deletion.
+    pub series_called_at: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
+    // The queue orders forfeited series by deadline day while their Credis await deletion.
     #[attribute(order = 42)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 43)]
@@ -315,11 +309,11 @@ pub struct CredisContract {
     #[attribute(order = 46)]
     pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, SeriesId>,
     #[attribute(order = 48)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub cleanup_series_slot: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
     #[attribute(order = 49)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
     #[attribute(order = 50)]
     pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 51)]
@@ -334,19 +328,40 @@ pub struct CredisContract {
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 55)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
-    #[attribute(order = 56)]
-    pub daily_genesis_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 57)]
+    pub series_opened: outbe_primitives::storage::dsl::Map<SeriesId, bool>,
+    #[attribute(order = 58)]
+    pub series_issuance_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
+    #[attribute(order = 59)]
+    pub series_call_anchor_price_minor: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
+    #[attribute(order = 60)]
+    pub series_policy_rate: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
+    #[attribute(order = 61)]
+    pub series_unpaid_gratis_minor: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
+    #[attribute(order = 62)]
+    pub series_settlement_deadline: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
 }
 
 impl CredisContract<'_> {
-    /// `keccak256(cca || owner || asset || block_number)` with packed
-    /// 20-byte addresses and the execution block number as a big-endian u64.
-    pub fn credis_id(cca: Address, owner: Address, asset: Address, block_number: u64) -> U256 {
-        let mut buf = [0u8; 68];
-        buf[..20].copy_from_slice(cca.as_slice());
-        buf[20..40].copy_from_slice(owner.as_slice());
-        buf[40..60].copy_from_slice(asset.as_slice());
-        buf[60..].copy_from_slice(&block_number.to_be_bytes());
-        U256::from_be_bytes(keccak256(buf).0)
+    /// `keccak256(series_id || owner || block_number)` with the 14-byte series id,
+    /// the 20-byte owner address and the execution block number as a big-endian u64.
+    pub fn generate_credis_id(series_id: SeriesId, owner: Address, block_number: u64) -> U256 {
+        series_id.right_id(&[owner.as_slice(), &block_number.to_be_bytes()])
+    }
+
+    /// The series a Credis issued at `issued_at` for `(issuance_currency, reference_currency)`
+    /// belongs to: `SeriesId::for_pair(last_closed_day(issued_at), issuance_currency, reference_currency)`.
+    ///
+    /// Test and e2e arming only. Production copies `series_id` from the reservation.
+    #[cfg(any(test, feature = "e2e-test", feature = "test-utils"))]
+    pub fn series_of(
+        issued_at: u64,
+        issuance_currency: u16,
+        reference_currency: u16,
+    ) -> outbe_primitives::error::Result<SeriesId> {
+        let last_closed_day = previous_date_key(timestamp_to_date_key(issued_at))
+            .map_err(crate::errors::date_step_error)?;
+        SeriesId::for_pair(last_closed_day, issuance_currency, reference_currency)
+            .map_err(|err| outbe_primitives::error::PrecompileError::Fatal(err.to_string()))
     }
 }

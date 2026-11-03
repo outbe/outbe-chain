@@ -1,53 +1,77 @@
 use super::*;
 use crate::api;
+use alloy_sol_types::SolEvent;
 use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key, WorldwideDay};
+
+fn advance_at(storage: &StorageHandle<'_>, timestamp: u64, genesis_timestamp: u64) {
+    storage.set_block_timestamp(U256::from(timestamp)).unwrap();
+    let mut block =
+        BlockContext::empty_for_tests(storage.block_number().unwrap(), timestamp, CHAIN_ID);
+    block.genesis_timestamp = genesis_timestamp;
+    let ctx = BlockRuntimeContext::new(block, storage.clone());
+    outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
+}
 
 #[test]
 fn init_genesis_day_creates_7_day_lookahead_with_bidirectional_links_and_closed_form_limits() {
     with_storage(|storage| {
         let genesis_ts = date_key_to_utc_timestamp(20260920).unwrap() + 12 * 3_600;
-        storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::commands::init_genesis_day(&ctx).unwrap();
+        advance_at(&storage, genesis_ts, genesis_ts);
 
-        let active_wwds = TributeFactoryContract::new(storage.clone())
+        let opened = TributeFactoryContract::new(storage.clone())
             .pipeline_wwd
             .read_all()
             .unwrap();
-        assert_eq!(active_wwds.len(), 7);
+        assert_eq!(opened.len(), 2);
+        assert!(opened.contains(&WorldwideDay::new(20260920)));
+        assert!(opened.contains(&WorldwideDay::new(20260921)));
 
-        // Verify wwd = 20260920 -> day = 20261011 (and wwd = 20260925 -> day = 20261016)
+        for day in [20260921, 20260922, 20260923, 20260924, 20260925] {
+            advance_at(
+                &storage,
+                date_key_to_utc_timestamp(day).unwrap(),
+                genesis_ts,
+            );
+        }
+
+        let pipeline = TributeFactoryContract::new(storage.clone())
+            .pipeline_wwd
+            .read_all()
+            .unwrap();
+        assert_eq!(pipeline.len(), 6);
+        assert!(!pipeline.contains(&WorldwideDay::new(20260920)));
+        assert!(pipeline.contains(&WorldwideDay::new(20260926)));
+
+        // Verify wwd = 20260920 -> day = 20260924 (and wwd = 20260925 -> day = 20260929)
         let wwd_20 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260920))
             .unwrap()
             .unwrap();
-        assert_eq!(wwd_20.day, 20261011);
+        assert_eq!(wwd_20.day, 20260924);
 
-        let ed_11 = api::emission_day(storage.clone(), 20261011)
+        let ed_24 = api::emission_day(storage.clone(), 20260924)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_11.day, 20261011);
-        assert_eq!(ed_11.wwd, WorldwideDay::new(20260920));
+        assert_eq!(ed_24.day, 20260924);
+        assert_eq!(ed_24.wwd, WorldwideDay::new(20260920));
         assert_eq!(
-            ed_11.metadosis_start,
-            date_key_to_utc_timestamp(next_date_key(20261011).expect("date step")).unwrap() + 1
+            ed_24.metadosis_start,
+            date_key_to_utc_timestamp(next_date_key(20260924).expect("date step")).unwrap() + 1
         );
-        assert_eq!(ed_11.state, emission_day_state::NONE);
-        assert_eq!(ed_11.emission_limit_minor, U256::ZERO);
+        assert_eq!(ed_24.state, emission_day_state::NONE);
+        assert_eq!(ed_24.emission_limit_minor, U256::ZERO);
 
         let wwd_25 = api::worldwide_day(storage.clone(), WorldwideDay::new(20260925))
             .unwrap()
             .unwrap();
-        assert_eq!(wwd_25.day, 20261016);
-        let ed_16 = api::emission_day(storage.clone(), 20261016)
+        assert_eq!(wwd_25.day, 20260929);
+        let ed_29 = api::emission_day(storage.clone(), 20260929)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_16.wwd, WorldwideDay::new(20260925));
-        assert_eq!(ed_16.emission_limit_minor, U256::ZERO);
+        assert_eq!(ed_29.wwd, WorldwideDay::new(20260925));
+        assert_eq!(ed_29.emission_limit_minor, U256::ZERO);
 
-        // Verify all 7 pairs have symmetric bi-directional links
+        // 20260920..=20260926 stay linked after the daily steps. 20260920 is sealed
+        // on 20260925 and leaves the pipeline; the record and its emission day remain.
         let mut wwd_key = 20260920;
         for _ in 0..7u32 {
             let wwd = WorldwideDay::new(wwd_key);
@@ -72,46 +96,46 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
     with_storage(|storage| {
         let wwd_sep_01 = WorldwideDay::new(20260901);
         let genesis_ts = date_key_to_utc_timestamp(20260901).unwrap() + 12 * 3_600;
-        storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
+        advance_at(&storage, genesis_ts, genesis_ts);
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), genesis_ts, CHAIN_ID)
+                .with_genesis_timestamp(genesis_ts),
             storage.clone(),
         );
-        crate::commands::init_genesis_day(&ctx).unwrap();
 
         let wwd_proj = api::worldwide_day(storage.clone(), wwd_sep_01)
             .unwrap()
             .unwrap();
         assert_eq!(
             WorldwideDay::from_timestamp(wwd_proj.offerings_start),
-            WorldwideDay::new(20260921)
+            WorldwideDay::new(20260904)
         );
         assert_eq!(
             wwd_proj.offering_end,
-            date_key_to_utc_timestamp(20260922).unwrap() + 12 * 3_600
+            date_key_to_utc_timestamp(20260905).unwrap() + 12 * 3_600
         );
-        assert_eq!(wwd_proj.day, 20260922);
+        assert_eq!(wwd_proj.day, 20260905);
 
-        let expected_metadosis_start = date_key_to_utc_timestamp(20260923).unwrap() + 1;
+        let expected_metadosis_start = date_key_to_utc_timestamp(20260906).unwrap() + 1;
         assert_eq!(
             expected_metadosis_start,
             wwd_proj.offering_end + 12 * 3_600 + 1
         );
 
-        let ed_22 = api::emission_day(storage.clone(), 20260922)
+        let ed_05 = api::emission_day(storage.clone(), 20260905)
             .unwrap()
             .unwrap();
-        assert_eq!(ed_22.day, 20260922);
-        assert_eq!(ed_22.wwd, wwd_sep_01);
-        assert_eq!(ed_22.metadosis_start, expected_metadosis_start);
-        assert_eq!(ed_22.emission_limit_minor, U256::ZERO);
+        assert_eq!(ed_05.day, 20260905);
+        assert_eq!(ed_05.wwd, wwd_sep_01);
+        assert_eq!(ed_05.metadosis_start, expected_metadosis_start);
+        assert_eq!(ed_05.emission_limit_minor, U256::ZERO);
 
         // Nested process-ready checks recompute the lease from the provider clock
-        // and block. Allocate day 20260922 into Processing so find_due_emission_day selects it.
+        // and block. Allocate day 20260905 into Processing so find_due_emission_day selects it.
         crate::commands::dispatch_terminal_remainder_at(
             &ctx,
             U256::from(1_000_000u64),
-            date_key_to_utc_timestamp(20260922).unwrap(),
+            date_key_to_utc_timestamp(20260905).unwrap(),
         )
         .unwrap();
 
@@ -127,18 +151,27 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         );
 
         let at_start = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(3, expected_metadosis_start, CHAIN_ID),
+            BlockContext::empty_for_tests(
+                storage.block_number().unwrap(),
+                expected_metadosis_start,
+                CHAIN_ID,
+            )
+            .with_genesis_timestamp(genesis_ts),
             storage.clone(),
         );
+        storage
+            .set_block_timestamp(U256::from(at_start.block.timestamp))
+            .unwrap();
+        outbe_tributefactory::worldwideday::advance_worldwide_days_command(&at_start).unwrap();
         let due_at_start = crate::lifecycle::find_due_emission_day(&metadosis, &at_start)
             .unwrap()
             .unwrap();
-        assert_eq!(due_at_start.day, 20260922);
+        assert_eq!(due_at_start.day, 20260905);
         assert_eq!(due_at_start.wwd, wwd_sep_01);
 
-        // Simulate a halt from 22 Sep to 25 Sep 2026: the first block after restart
-        // must still select and execute the oldest due emission day (20260922).
-        let restart_ts = date_key_to_utc_timestamp(20260925).unwrap() + 3_600;
+        // Simulate a halt from 5 Sep to 8 Sep 2026: the first block after restart
+        // must still select and execute the oldest due emission day (20260905).
+        let restart_ts = date_key_to_utc_timestamp(20260908).unwrap() + 3_600;
         arm_reference_price(&storage, restart_ts);
         let restart_ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(4, restart_ts, CHAIN_ID),
@@ -147,7 +180,7 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let due_after_halt = crate::lifecycle::find_due_emission_day(&metadosis, &restart_ctx)
             .unwrap()
             .unwrap();
-        assert_eq!(due_after_halt.day, 20260922);
+        assert_eq!(due_after_halt.day, 20260905);
         assert_eq!(due_after_halt.wwd, wwd_sep_01);
 
         storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
@@ -156,14 +189,14 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
             storage.clone(),
         );
         crate::commands::start_metadosis(&aligned).unwrap();
-        let completed = api::emission_day(storage.clone(), 20260922)
+        let completed = api::emission_day(storage.clone(), 20260905)
             .unwrap()
             .unwrap();
-        assert_eq!(completed.day, 20260922);
+        assert_eq!(completed.day, 20260905);
         assert_eq!(completed.wwd, wwd_sep_01);
         assert_eq!(completed.state, emission_day_state::SUCCEEDED);
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let briefed = outbe_primitives::time::EmissionDate::new(20260922);
+        let briefed = outbe_primitives::time::EmissionDate::new(20260905);
         assert_eq!(
             desis.auction_stage.read(&briefed).unwrap(),
             outbe_desis::schema::AuctionStage::Briefed as u8
@@ -173,11 +206,18 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 }
 
 #[test]
-fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
-    // Genesis on 2026-10-01 before 12:00 UTC -> first_wwd = 20260930 (G - 1),
-    // offering_end on 20261021 (G + 20) -> 20 empty EmissionDays (20261001..=20261020).
+fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
+    assert_eq!(outbe_chain_constants::MAX_PIPELINE_WWDS, 7);
+    assert_eq!(
+        outbe_tributefactory::worldwideday::constants::MAX_PIPELINE_WWDS,
+        7
+    );
+    assert_eq!(crate::constants::MAX_PIPELINE_WWDS, 7);
+    // Genesis on 2026-10-01 at 11:59 UTC -> first_wwd = 20260930 (G - 1),
+    // offering_end on 20261004 (G + 3) -> 3 empty EmissionDays (20261001..=20261003).
     with_storage(|storage| {
-        let genesis_before_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600 - 1;
+        let genesis_before_noon =
+            date_key_to_utc_timestamp(20261001).unwrap() + 11 * 3_600 + 59 * 60;
         assert_eq!(
             outbe_tributefactory::worldwideday::first_wwd_for_genesis(genesis_before_noon),
             WorldwideDay::new(20260930)
@@ -193,12 +233,12 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
             ),
             storage.clone(),
         );
-        crate::commands::init_genesis_day(&ctx).unwrap();
+        outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
         let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20260930))
             .unwrap()
             .unwrap();
-        assert_eq!(first_proj.day, 20261021);
+        assert_eq!(first_proj.day, 20261004);
         let mut day = 20261001;
         let mut empty_count = 0u32;
         while day < first_proj.day {
@@ -208,7 +248,7 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
             empty_count += 1;
             day = next_date_key(day).unwrap();
         }
-        assert_eq!(empty_count, 20);
+        assert_eq!(empty_count, 3);
 
         crate::commands::dispatch_terminal_remainder_at(
             &ctx,
@@ -230,31 +270,31 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
         assert_eq!(settled_empty.state, emission_day_state::SUCCEEDED);
     });
 
-    // Genesis on 2026-10-01 at 12:00 UTC -> first_wwd = 20261001 (G),
-    // offering_end on 20261022 (G + 21) -> 21 empty EmissionDays (20261001..=20261021).
+    // Genesis on 2026-10-01 at 12:01 UTC -> first_wwd = 20261001 (G),
+    // offering_end on 20261005 (G + 4) -> 4 empty EmissionDays (20261001..=20261004).
     with_storage(|storage| {
-        let genesis_at_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
+        let genesis_after_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600 + 60;
         assert_eq!(
-            outbe_tributefactory::worldwideday::first_wwd_for_genesis(genesis_at_noon),
+            outbe_tributefactory::worldwideday::first_wwd_for_genesis(genesis_after_noon),
             WorldwideDay::new(20261001)
         );
         storage
-            .set_block_timestamp(U256::from(genesis_at_noon))
+            .set_block_timestamp(U256::from(genesis_after_noon))
             .unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext::empty_for_tests(
                 storage.block_number().unwrap(),
-                genesis_at_noon,
+                genesis_after_noon,
                 CHAIN_ID,
             ),
             storage.clone(),
         );
-        crate::commands::init_genesis_day(&ctx).unwrap();
+        outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
         let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20261001))
             .unwrap()
             .unwrap();
-        assert_eq!(first_proj.day, 20261022);
+        assert_eq!(first_proj.day, 20261005);
         let mut day = 20261001;
         let mut empty_count = 0u32;
         while day < first_proj.day {
@@ -264,7 +304,26 @@ fn first_wwd_for_genesis_splits_20_or_21_empty_emission_days_across_noon_utc() {
             empty_count += 1;
             day = next_date_key(day).unwrap();
         }
-        assert_eq!(empty_count, 21);
+        assert_eq!(empty_count, 4);
+
+        // Catch-up on 2026-10-11 opens every WWD whose offering_end is still after
+        // 2026-10-11 00:00 UTC: 20261007..=20261012.
+        let catchup_ts = date_key_to_utc_timestamp(20261011).unwrap() + 12 * 3_600;
+        storage.set_block_timestamp(U256::from(catchup_ts)).unwrap();
+        let mut catchup_block =
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), catchup_ts, CHAIN_ID);
+        catchup_block.genesis_timestamp = genesis_after_noon;
+        let catchup_ctx = BlockRuntimeContext::new(catchup_block, storage.clone());
+        outbe_tributefactory::worldwideday::advance_worldwide_days_command(&catchup_ctx).unwrap();
+        for wwd_key in 20261007..=20261012 {
+            let proj = api::worldwide_day(storage.clone(), WorldwideDay::new(wwd_key))
+                .unwrap()
+                .expect("catch-up and lookahead WWD must exist");
+            let ed = api::emission_day(storage.clone(), proj.day)
+                .unwrap()
+                .expect("linked emission day must exist");
+            assert_eq!(ed.wwd, WorldwideDay::new(wwd_key));
+        }
     });
 }
 
@@ -273,76 +332,149 @@ fn wwd_lifecycle_gates_activation_on_forming_vwap_and_seals_on_close() {
     with_storage(|storage| {
         let wwd = WorldwideDay::new(20261001);
         let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
-        storage.set_block_timestamp(U256::from(genesis_ts)).unwrap();
-        let bn = storage.block_number().unwrap();
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(bn, genesis_ts, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::commands::init_genesis_day(&ctx).unwrap();
+        advance_at(&storage, genesis_ts, genesis_ts);
 
         let tribute = TributeContract::new(storage.clone());
         let factory = TributeFactoryContract::new(storage.clone());
         let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
         assert_eq!(
-            proj.state,
-            outbe_tributefactory::worldwideday::wwd_state::PENDING
+            proj.forming_end,
+            date_key_to_utc_timestamp(20261002).unwrap() + 12 * 3_600
         );
-        // Pending WWD is NOT sealed at creation time (P2.3d) and is not offering (P2.3c).
+        assert_eq!(
+            proj.offerings_start,
+            date_key_to_utc_timestamp(20261003).unwrap() + 10 * 3_600
+        );
+        assert_eq!(
+            proj.offering_end,
+            date_key_to_utc_timestamp(20261005).unwrap() + 12 * 3_600
+        );
         assert!(!tribute.is_day_sealed(wwd).unwrap());
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
+        assert!(!factory.forming_snapshot_finalized.read(&wwd).unwrap());
 
-        // Advance to forming_end with NO oracle data: forming_snapshot_finalized is set,
-        // WWD stays Pending (not closed early, P2.2g).
-        storage
-            .set_block_timestamp(U256::from(proj.forming_end))
-            .unwrap();
-        let at_forming_end = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(bn, proj.forming_end, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::commands::advance_active_worldwide_days(&at_forming_end).unwrap();
+        // The daily step on 2026-10-03 00:00 UTC snapshots forming. No oracle
+        // prices are present, so the snapshot is finalized empty.
+        let snapshot_ts = proj.forming_end + 12 * 3_600;
+        advance_at(&storage, snapshot_ts, genesis_ts);
         assert!(factory.forming_snapshot_finalized.read(&wwd).unwrap());
-        let after_forming = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-        assert_eq!(
-            after_forming.state,
-            outbe_tributefactory::worldwideday::wwd_state::PENDING
-        );
+        assert!(!outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd).unwrap());
 
-        // Advance to offerings_start: without forming VWAP, WWD stays Pending and is_offering_day is false (P2.2h, Q8.1).
+        // Same UTC day, at offerings_start: no stored forming price, so the day
+        // takes no offers.
         storage
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
-        let at_offering_start = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(bn, proj.offerings_start, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::commands::advance_active_worldwide_days(&at_offering_start).unwrap();
-        let at_offering = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-        assert_eq!(
-            at_offering.state,
-            outbe_tributefactory::worldwideday::wwd_state::PENDING
-        );
         assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
-        assert!(!factory.active_wwd.read_all().unwrap().contains(&wwd));
+        assert!(!api::offering_worldwide_days(storage.clone())
+            .unwrap()
+            .contains(&wwd));
 
-        // Advance to offering_end: WWD transitions to Closed, is removed from pipeline_wwd & active_wwd (P2.2c),
-        // and is sealed in outbe-tribute (P2.3d).
-        storage
-            .set_block_timestamp(U256::from(proj.offering_end))
-            .unwrap();
-        let at_offering_end = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(bn, proj.offering_end, CHAIN_ID),
-            storage.clone(),
-        );
-        crate::commands::advance_active_worldwide_days(&at_offering_end).unwrap();
-        let closed = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
-        assert_eq!(
-            closed.state,
-            outbe_tributefactory::worldwideday::wwd_state::CLOSED
-        );
+        // The daily step on 2026-10-06 00:00 UTC seals the offering window.
+        let seal_ts = proj.offering_end + 12 * 3_600;
+        advance_at(&storage, seal_ts, genesis_ts);
         assert!(!factory.pipeline_wwd.read_all().unwrap().contains(&wwd));
-        assert!(!factory.active_wwd.read_all().unwrap().contains(&wwd));
         assert!(tribute.is_day_sealed(wwd).unwrap());
     });
+}
+
+#[test]
+fn gap_ed05_wwd_without_price_runs_as_empty_day() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 64);
+    install_test_enclaves();
+    StorageHandle::enter(&mut provider, |storage| {
+        let wwd = WorldwideDay::new(20261001);
+        let emission_day = 20261005u32;
+        let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
+        advance_at(&storage, genesis_ts, genesis_ts);
+
+        let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
+        assert_eq!(proj.day, emission_day);
+        let linked = api::emission_day(storage.clone(), emission_day)
+            .unwrap()
+            .unwrap();
+        assert_eq!(linked.wwd, wwd);
+        assert_eq!(linked.state, emission_day_state::NONE);
+
+        let snapshot_ts = proj.forming_end + 12 * 3_600;
+        advance_at(&storage, snapshot_ts, genesis_ts);
+        let factory = TributeFactoryContract::new(storage.clone());
+        assert!(factory.forming_snapshot_finalized.read(&wwd).unwrap());
+        assert!(!outbe_oracle::api::has_worldwide_day_vwap_snapshot(storage.clone(), wwd).unwrap());
+        assert_eq!(
+            api::emission_day(storage.clone(), emission_day)
+                .unwrap()
+                .unwrap()
+                .state,
+            emission_day_state::NONE
+        );
+
+        storage
+            .set_block_timestamp(U256::from(proj.offerings_start))
+            .unwrap();
+        assert!(!api::is_offering_day(storage.clone(), wwd).unwrap());
+        let offer_err =
+            outbe_tributefactory::worldwideday::genesis::submit_signed_test_offer_for_day(
+                storage.clone(),
+                wwd,
+            )
+            .expect_err("offer_tribute must revert when forming VWAP snapshot is absent");
+        assert_eq!(
+            offer_err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_tributefactory::errors::TributeFactoryError::WorldwideDayNotOffering {
+                    worldwide_day: wwd,
+                }
+            )
+            .to_string()
+        );
+
+        let expected_limit = outbe_emission::day_emission::day_emission_limit(4);
+        let settle_ts = date_key_to_utc_timestamp(20261006).unwrap() + 1;
+        storage.set_block_timestamp(U256::from(settle_ts)).unwrap();
+        let ctx_06 = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(storage.block_number().unwrap(), settle_ts, CHAIN_ID)
+                .with_genesis_timestamp(genesis_ts),
+            storage.clone(),
+        );
+        crate::commands::dispatch_terminal_remainder_at(
+            &ctx_06,
+            expected_limit,
+            date_key_to_utc_timestamp(emission_day).unwrap(),
+        )
+        .unwrap();
+        outbe_tributefactory::worldwideday::advance_worldwide_days_command(&ctx_06).unwrap();
+        assert!(TributeContract::new(storage.clone())
+            .is_day_sealed(wwd)
+            .unwrap());
+
+        crate::commands::start_metadosis(&ctx_06).unwrap();
+        let settled = api::emission_day(storage.clone(), emission_day)
+            .unwrap()
+            .unwrap();
+        assert_eq!(settled.state, emission_day_state::SUCCEEDED);
+        assert_eq!(settled.wwd, wwd);
+        assert_eq!(
+            TributeContract::new(storage.clone())
+                .get_day_totals(wwd)
+                .unwrap()
+                .tribute_count,
+            0
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage)
+                .promis_limit()
+                .unwrap(),
+            expected_limit
+        );
+    });
+
+    let failed_skips = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisSkipped::decode_log(event).ok())
+        .filter(|event| event.data.status == "FAILED")
+        .count();
+    assert_eq!(failed_skips, 0);
 }

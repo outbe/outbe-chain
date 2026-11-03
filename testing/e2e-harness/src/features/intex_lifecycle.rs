@@ -117,7 +117,10 @@ fn issue_four_series(world: &mut World) {
         sender_key: DEPLOYER_KEY,
         emission_day: day,
         // Issuance is stamped where the seeded days already lie behind it.
-        issued_at: head_time(world).saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY),
+        issued_at: super::entity_lifecycle::phases::backdated_timestamp(
+            world,
+            u64::from(CALL_LOOKBACK_DAYS) * SECONDS_PER_DAY,
+        ),
         reference_currency: USD_ISO,
         reference_byte: REFERENCE_BYTE,
         entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
@@ -468,7 +471,7 @@ impl Lifecycle for IntexLifecycle {
             &url,
             DEPLOYER_KEY,
             series,
-            head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+            super::entity_lifecycle::phases::backdated_timestamp(world, EXPIRY_DAY_SECS),
         )
         .expect("arm the group's closed deadline day");
     }
@@ -543,31 +546,23 @@ impl Lifecycle for IntexLifecycle {
         );
         let height = finalized_checkpoint(world).height;
         // Both series were issued into one call group, which is forfeited as one.
-        let [series, _] = expiring_series(world);
-        let group = eth::read_call_at(
-            &url,
-            addresses::INTEX_ADDR,
-            &eth::IIntex::getIntexSeriesCall {
-                intexId: venue_probes::intex_id(series),
-            },
-            from,
-        )
-        .expect("the expiring series was live before the notice lapsed")
-        .groupKey;
-        assert_single_event(
-            &url,
-            addresses::INTEX_ADDR,
-            from,
-            height,
-            eth::IIntex::IntexGroupForfeited {
-                groupKey: group,
-                forfeitedUnits: forfeited
-                    .iter()
-                    .map(|(_, units, _)| u64::from(*units))
-                    .sum(),
-                returnedPromisMinor: want - before,
-            },
-        );
+        for ((series, units, returned), issuance_currency) in
+            forfeited.iter().zip([GBP_ISO, JPY_ISO])
+        {
+            assert_single_event(
+                &url,
+                addresses::INTEX_ADDR,
+                from,
+                height,
+                eth::IIntex::IntexSeriesClosed {
+                    seriesId: *series,
+                    issuanceCurrency: issuance_currency,
+                    referenceCurrency: USD_ISO,
+                    forfeitedCount: *units,
+                    forfeitedAmountMinor: *returned,
+                },
+            );
+        }
         assert_eq!(
             eth::read_call_at(
                 &url,

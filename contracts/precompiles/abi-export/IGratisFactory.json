@@ -140,7 +140,7 @@
   },
   {
     "type": "event",
-    "name": "CoenMined",
+    "name": "CoenMinedFromGratis",
     "inputs": [
       {
         "name": "account",
@@ -149,7 +149,7 @@
         "internalType": "address"
       },
       {
-        "name": "coenMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -159,7 +159,32 @@
   },
   {
     "type": "event",
-    "name": "GratisPledged",
+    "name": "GratisPledgeBurned",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GratisPledgeCanceled",
     "inputs": [
       {
         "name": "reservationId",
@@ -184,7 +209,7 @@
   },
   {
     "type": "event",
-    "name": "PledgeCancelled",
+    "name": "GratisPledgeCreated",
     "inputs": [
       {
         "name": "reservationId",
@@ -209,7 +234,32 @@
   },
   {
     "type": "event",
-    "name": "PledgeSentToCredis",
+    "name": "GratisPledgeReleased",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GratisPledgeSentToCredis",
     "inputs": [
       {
         "name": "reservationId",

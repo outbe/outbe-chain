@@ -46,7 +46,7 @@ pub(super) fn resolve_price_day(
 
 type SeriesMetaMap = std::collections::BTreeMap<
     alloy_primitives::B256,
-    (outbe_primitives::series_id::SeriesId, u16, U256),
+    (outbe_primitives::series_id::SeriesId, u16, u16, U256),
 >;
 
 fn collect_active_leagues(
@@ -132,9 +132,12 @@ fn resolve_tribute_series_scope(
         record.reference_currency,
     )?;
     let scope = alloy_primitives::B256::right_padding_from(series_id.as_bytes());
-    series_meta
-        .entry(scope)
-        .or_insert((series_id, record.reference_currency, vwap));
+    series_meta.entry(scope).or_insert((
+        series_id,
+        record.issuance_currency,
+        record.reference_currency,
+        vwap,
+    ));
     Ok(Some(scope))
 }
 
@@ -175,7 +178,8 @@ pub(super) fn compute_and_record_metadosis_fractions(
         contract.tribute_lysis_zero_load.write(zero_id, true)?;
     }
     for series_output in result.series_loads {
-        let Some(&(series_id, reference_currency, vwap)) = series_meta.get(&series_output.scope)
+        let Some(&(series_id, issuance_currency, reference_currency, vwap)) =
+            series_meta.get(&series_output.scope)
         else {
             return Err(TributeError::DayResponseScopeMismatch.into());
         };
@@ -184,6 +188,7 @@ pub(super) fn compute_and_record_metadosis_fractions(
             outbe_nodfactory::api::LysisSeriesInput {
                 series_id,
                 sealed_at: completed_at,
+                issuance_currency,
                 reference_currency,
                 entry_price_minor: vwap,
                 unclaimed_tribute_count: series_output.unclaimed_tribute_count,
@@ -404,12 +409,10 @@ fn check_tribute_forfeited(
     let completed_at = contract.day_metadosis_completed_at.read(&day)?;
     if completed_at == 0 {
         let recorded = contract.day_emission_day.read(&day)?;
-        let candidate = if recorded != 0 {
-            recorded
-        } else {
-            derive_wwd_emission_day(day)?
-        };
-        let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), candidate)?
+        if recorded == 0 {
+            return Ok((false, None));
+        }
+        let is_aborted = outbe_emission::api::get_emission_day_record(storage.clone(), recorded)?
             .is_some_and(|e| {
                 matches!(
                     e.metadosis_state,
@@ -436,14 +439,4 @@ fn check_tribute_forfeited(
         )),
         None => Ok((true, None)),
     }
-}
-
-fn derive_wwd_emission_day(day: WorldwideDay) -> Result<u32> {
-    let offering_end = day
-        .start_timestamp()
-        .map_err(crate::errors::date_step_error)?
-        .saturating_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
-        .saturating_add(outbe_chain_constants::get_metadosis_lookback_delay_seconds())
-        .saturating_add(outbe_chain_constants::get_metadosis_offering_period_seconds());
-    Ok(outbe_primitives::time::timestamp_to_date_key(offering_end))
 }

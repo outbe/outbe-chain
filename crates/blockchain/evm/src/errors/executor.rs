@@ -4,9 +4,7 @@ use super::TeeAttestationActivationError;
 use alloy_evm::block::{BlockExecutionError, BlockValidationError};
 use alloy_primitives::{Address, B256};
 use core::fmt::{Debug, Display};
-use outbe_primitives::{
-    error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact, system_tx::SystemTxKind,
-};
+use outbe_primitives::{error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact};
 
 /// Node-local storage and body-read errors in the block executor and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -140,7 +138,7 @@ pub enum SystemTxBuildError {
         "Phase 1 prebuild: metadata hash must match block parent: expected {expected}, got {actual}"
     )]
     Phase1PrebuildMetadataHashMismatch { expected: B256, actual: B256 },
-    #[error("Phase 1 prebuild: encode SystemTxInputV2: {0}")]
+    #[error("Phase 1 prebuild: encode SystemTx: {0}")]
     Phase1PrebuildEncodeInput(String),
     #[error("Phase 1 prebuild: build unsigned tx: {0}")]
     Phase1PrebuildBuildUnsignedTx(String),
@@ -308,6 +306,8 @@ pub enum ExecutorValidationError {
     TransactionGasLimitBelowFloor { gas_limit: u64, floor: u64 },
     #[error("validator fee accumulator overflow")]
     ValidatorFeeAccumulatorOverflow,
+    #[error("burned fee accumulator overflow")]
+    BurnedFeeAccumulatorOverflow,
     #[error("sponsored quota write failed after inclusion: {0}")]
     SponsoredQuotaWriteValidation(String),
     #[error("free-tx signer account read failed: {0}")]
@@ -348,9 +348,9 @@ pub enum ExecutorValidationError {
     },
     #[error("Phase 1 commit pre-exec: missing Phase 1 system tx for block {block_number}")]
     Phase1CommitMissingSystemTx { block_number: u64 },
-    #[error("Phase 1 commit pre-exec: expected CertifiedParentAccounting, got {kind:?}")]
-    Phase1CommitUnexpectedKind { kind: SystemTxKind },
-    #[error("Phase 1 commit pre-exec: encode SystemTxInputV2: {0}")]
+    #[error("Phase 1 commit pre-exec: expected CertifiedParentAccounting, got {kind}")]
+    Phase1CommitUnexpectedKind { kind: &'static str },
+    #[error("Phase 1 commit pre-exec: encode SystemTx: {0}")]
     Phase1CommitEncodeInput(String),
     #[error(
         "critical system tx CertifiedParentAccounting did not succeed (revert/halt) in Phase 1 pre-exec commit: {result}"
@@ -358,8 +358,8 @@ pub enum ExecutorValidationError {
     Phase1CommitDidNotSucceed { result: String },
     #[error("missing Phase 1 system tx for block {block_number} in pre-exec verifier")]
     Phase1VerifierMissingSystemTx { block_number: u64 },
-    #[error("Phase 1 pre-exec verifier expected CertifiedParentAccounting, got {kind:?}")]
-    Phase1VerifierUnexpectedKind { kind: SystemTxKind },
+    #[error("Phase 1 pre-exec verifier expected CertifiedParentAccounting, got {kind}")]
+    Phase1VerifierUnexpectedKind { kind: &'static str },
     #[error("Phase 1 commit pre-exec: invalid {witness_source} witness: {reason}")]
     Phase1CommitInvalidWitness {
         witness_source: &'static str,
@@ -378,12 +378,7 @@ pub enum ExecutorValidationError {
     #[error("unexpected system tx at body_index={body_index}; expected begin_block system txs {expected:?}")]
     UnexpectedBeginSystemTx {
         body_index: usize,
-        expected: Vec<SystemTxKind>,
-    },
-    #[error("expected {expected_kind:?} system tx at ordinal {ordinal}")]
-    ExpectedSystemTxAtOrdinal {
-        expected_kind: SystemTxKind,
-        ordinal: usize,
+        expected: Vec<[u8; 4]>,
     },
     #[error("missing parent consensus metadata for CertifiedParentAccounting")]
     MissingParentConsensusMetadata,
@@ -420,14 +415,14 @@ pub enum ExecutorValidationError {
     )]
     SystemTxCursorBodyMismatch {
         body_index: usize,
-        expected_kind: SystemTxKind,
-        resolved_kind: SystemTxKind,
+        expected_kind: [u8; 4],
+        resolved_kind: [u8; 4],
     },
     #[error(
-        "critical system tx {expected_phase:?} did not succeed (revert/halt) at body_index={body_index}, block_number={block_number}, failure_code={code}: {result}"
+        "critical system tx {expected_phase} did not succeed (revert/halt) at body_index={body_index}, block_number={block_number}, failure_code={code}: {result}"
     )]
     CriticalSystemTxDidNotSucceed {
-        expected_phase: SystemTxKind,
+        expected_phase: &'static str,
         body_index: usize,
         block_number: u64,
         code: u16,
@@ -436,11 +431,11 @@ pub enum ExecutorValidationError {
     #[error("Phase 1 body[0] witness signature_hash mismatch: expected {expected}, got {actual}")]
     Phase1WitnessSignatureHashMismatch { expected: B256, actual: B256 },
     #[error(
-        "system tx signer mismatch at body_index={body_index} for {expected_phase:?}: expected proposer {proposer}, got {signer}"
+        "system tx signer mismatch at body_index={body_index} for {expected_phase}: expected proposer {proposer}, got {signer}"
     )]
     SystemTxSignerMismatch {
         body_index: usize,
-        expected_phase: SystemTxKind,
+        expected_phase: &'static str,
         proposer: Address,
         signer: Address,
     },
@@ -448,25 +443,25 @@ pub enum ExecutorValidationError {
     SystemTxBodyIndexExceedsU8 { body_index: usize },
     #[error("build expected system tx at body_index={body_index}: {reason}")]
     BuildExpectedSystemTx { body_index: usize, reason: String },
-    #[error("system tx signature_hash mismatch at body_index={body_index} for {expected_phase:?}")]
+    #[error("system tx signature_hash mismatch at body_index={body_index} for {expected_phase}")]
     SystemTxSignatureHashMismatch {
         body_index: usize,
-        expected_phase: SystemTxKind,
+        expected_phase: &'static str,
     },
     #[error("decode system tx at body_index={body_index}: {reason}")]
     DecodeSystemTxAtBodyIndex { body_index: usize, reason: String },
     #[error(
-        "system tx phase mismatch at body_index={body_index}: expected {expected_phase:?}, got {actual_phase:?}"
+        "system tx phase mismatch at body_index={body_index}: expected {expected_phase}, got {actual_phase}"
     )]
     SystemTxPhaseMismatch {
         body_index: usize,
-        expected_phase: SystemTxKind,
-        actual_phase: SystemTxKind,
+        expected_phase: &'static str,
+        actual_phase: &'static str,
     },
-    #[error("system tx calldata mismatch at body_index={body_index} for {expected_phase:?}")]
+    #[error("system tx calldata mismatch at body_index={body_index} for {expected_phase}")]
     SystemTxCalldataMismatch {
         body_index: usize,
-        expected_phase: SystemTxKind,
+        expected_phase: &'static str,
     },
     #[error(
         "system tx signed gas below visible base at body_index={body_index}: signed={signed}, visible_base={visible_base}"
@@ -595,7 +590,7 @@ impl ExecutorValidationError {
     }
 
     pub(crate) fn critical_system_tx_did_not_succeed(
-        expected_phase: SystemTxKind,
+        expected_phase: &'static str,
         body_index: usize,
         block_number: u64,
         code: u16,
@@ -634,5 +629,33 @@ impl From<ExecutorValidationError> for BlockValidationError {
 impl From<ExecutorValidationError> for BlockExecutionError {
     fn from(error: ExecutorValidationError) -> Self {
         Self::Validation(BlockValidationError::msg(error.to_string()))
+    }
+}
+
+/// Typed error returned when settling accumulated block burned fees to `PromisLimitContract`.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BurnedFeeSettlementError {
+    /// Deterministic validation failure during burned-fee settlement (e.g. `PromisLimitError::Overflow`).
+    #[error("burned fee promis limit validation failed: {0}")]
+    Validation(#[source] PrecompileError),
+    /// Node-local storage or fatal precompile error during burned-fee settlement.
+    #[error("burned fee promis limit internal failure: {0}")]
+    Internal(#[source] PrecompileError),
+    /// Storage flush failure after burned-fee settlement.
+    #[error("burned fee promis limit flush failed: {0}")]
+    Flush(#[source] PrecompileError),
+}
+
+impl From<BurnedFeeSettlementError> for BlockExecutionError {
+    fn from(error: BurnedFeeSettlementError) -> Self {
+        match error {
+            BurnedFeeSettlementError::Validation(_) => {
+                Self::Validation(BlockValidationError::other(error))
+            }
+            BurnedFeeSettlementError::Internal(_) | BurnedFeeSettlementError::Flush(_) => {
+                Self::other(error)
+            }
+        }
     }
 }

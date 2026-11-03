@@ -69,7 +69,7 @@ pub struct AgentRewardContract {
     #[attribute(order = 11)]
     pub sra_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
-    // slot 12: queued WAA and SRA day pools, by sequence number
+    // slot 12: four-pool FIFO jobs, by checked sequence number
     #[attribute(order = 12)]
     pub accrual_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
 
@@ -92,9 +92,30 @@ pub struct AgentRewardContract {
     // slot 17: deadline per pool+address, key = keccak(pool byte, address bytes)
     #[attribute(order = 17)]
     pub reward_balance_deadlines: outbe_primitives::storage::dsl::Map<B256, u64>,
+    #[attribute(order = 18)]
+    pub sealed_through_day: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 19)]
+    pub pending_jobs_by_day: outbe_primitives::storage::dsl::Map<u32, u8>,
+    #[attribute(order = 20)]
+    pub worker_initialized: outbe_primitives::storage::dsl::Value<bool>,
+    #[attribute(order = 21)]
+    pub worker_height: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 22)]
+    pub cleanup_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
+    #[attribute(order = 23)]
+    pub cleanup_head: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 24)]
+    pub cleanup_tail: outbe_primitives::storage::dsl::Value<u64>,
+    #[attribute(order = 25)]
+    pub cleanup_scheduled: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// Index plus one proves membership even when the indexed address is zero.
+    #[attribute(order = 26)]
+    pub waa_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 27)]
+    pub sra_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
-/// One settled WAA or SRA day pool. Blocks credit its addresses in list order,
+/// One immutable day pool. Blocks credit its addresses in list order,
 /// a bounded slice at a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = day)]
@@ -104,7 +125,7 @@ pub struct AccrualJob {
     /// UTC day key (YYYYMMDD) whose tribute counts weight the pool.
     #[attribute(order = 0)]
     pub day: u32,
-    /// `RewardPool::Waa` or `RewardPool::Sra`.
+    /// Existing ABI discriminant; FIFO order is Validator, WAA, SRA, CCA.
     #[attribute(order = 1)]
     pub pool: u8,
     #[attribute(order = 2)]
@@ -113,6 +134,11 @@ pub struct AccrualJob {
     pub next_index: u32,
     #[attribute(order = 4)]
     pub credited_minor: U256,
+    /// Immutable source population; u32 matches each owner's checked index capacity.
+    #[attribute(order = 5)]
+    pub recipient_count: u32,
+    #[attribute(order = 6)]
+    pub total_weight: U256,
 }
 
 /// Pool a claimable balance belongs to. Each pool keeps its own balances.
@@ -143,6 +169,7 @@ pub(crate) struct DayIndex<'a, 's> {
     pub(crate) addresses: &'a Map<'s, B256, Address>,
     pub(crate) counts: &'a Map<'s, B256, u64>,
     pub(crate) total: &'a Map<'s, WorldwideDay, u64>,
+    pub(crate) member_index: &'a Map<'s, B256, u32>,
 }
 
 impl<'s> AgentRewardContract<'s> {
@@ -153,12 +180,14 @@ impl<'s> AgentRewardContract<'s> {
                 addresses: &self.waa_addresses,
                 counts: &self.waa_tribute_counts,
                 total: &self.waa_total_count,
+                member_index: &self.waa_member_index,
             }),
             RewardPool::Sra => Ok(DayIndex {
                 address_count: &self.sra_address_count,
                 addresses: &self.sra_addresses,
                 counts: &self.sra_tribute_counts,
                 total: &self.sra_total_count,
+                member_index: &self.sra_member_index,
             }),
             RewardPool::Cca | RewardPool::Validator => {
                 Err(AgentRewardError::UnknownRewardPool(pool as u8).into())

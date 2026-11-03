@@ -38,8 +38,7 @@ const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 =
-    outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS;
-const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
+    outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
@@ -53,6 +52,25 @@ mod tribute;
 pub use profile::BootstrapProfile;
 
 impl Localnet {
+    /// Called after Offering/Lysis fixture preparation and before manifest binding.
+    /// Only the header changes: protocol genesisTime and seeded allocations stay intact.
+    pub(crate) fn prepare_lifecycle_history(&self, seed_days: u32) -> Result<u64> {
+        let path = self.cfg.dir.join("genesis.json");
+        let genesis: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+        eyre::ensure!(
+            genesis.pointer("/config/teeAttestationV1").is_none(),
+            "historical lifecycle header must precede TEE manifest binding"
+        );
+        let original = genesis
+            .get("timestamp")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("genesis timestamp is not a string"))?;
+        let original = u64::from_str_radix(original.trim_start_matches("0x"), 16)?;
+        let offset = (i64::from(seed_days) + 2) * i64::try_from(SECONDS_PER_DAY)?;
+        self.shift_genesis_timestamp(-offset)?;
+        Ok(original)
+    }
+
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
     /// Without this, the testnet max-drift validator correctly rejects block 1
@@ -300,7 +318,6 @@ impl Localnet {
                     },
                     "metadosis": {
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-                        "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
                     },
                     // A localnet day starts mid-day and runs few hours, so the
                     // production day coverage rule would leave it without a VWAP.
@@ -358,7 +375,6 @@ impl Localnet {
                 worldwide_day: Some(worldwide_day_num),
                 fresh_metadosis: true,
                 contracts_dir: Some(self.cfg.repo.join("contracts/predeploys")),
-                canon_dir: Some(self.cfg.repo.join("bin/outbe-genesis-cli/canon")),
             },
         )?;
 
@@ -944,7 +960,7 @@ mod tests {
     fn metadosis_window_lengths_are_not_localnet_tuning_keys() {
         assert_eq!(
             LOCALNET_METADOSIS_LOOKBACK_SECONDS,
-            outbe_chain_constants::TESTNET_METADOSIS_LOOKBACK_DELAY_SECONDS
+            outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
         );
         for key in [
             "TESTNET_METADOSIS_FORMING_SECONDS",
@@ -1036,7 +1052,6 @@ mod tests {
                 worldwide_day: None,
                 fresh_metadosis: false,
                 contracts_dir: Some(localnet.cfg.repo.join("contracts/predeploys")),
-                canon_dir: Some(localnet.cfg.repo.join("bin/outbe-genesis-cli/canon")),
             },
         )
         .expect("production genesis seeder failed");

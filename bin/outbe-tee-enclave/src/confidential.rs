@@ -297,3 +297,154 @@ impl ModifyDomain {
         hmac::verify(&key, &self.modify_preimage(request), mac).is_ok()
     }
 }
+
+const ENVELOPE_HEADER_LEN: usize = 8 + 4 + 32;
+const ENVELOPE_TAG_LEN: usize = 16;
+const BALANCE_BLOB_LEN: usize = ENVELOPE_HEADER_LEN + 32 + ENVELOPE_TAG_LEN;
+
+/// Domain constants for a rollback-safe V2 bound envelope (`GRA2`, `PRO2`, `FID2`).
+pub struct EnvelopeCipherSpec {
+    pub marker: &'static [u8; 4],
+    pub binding_tag: &'static [u8],
+    pub key_info: &'static [u8],
+    pub nonce_info: &'static [u8],
+}
+
+/// Inputs for a 92-byte V2 balance/event transition (`GRA2` / `PRO2`).
+pub struct BalanceTransition {
+    pub account: Address,
+    pub field: u8,
+    pub previous_version: u64,
+    pub amount: U256,
+    pub input_hash: B256,
+}
+
+/// Domain-separated `input_hash` for sealing event-only `GRA2`/`PRO2` amount
+/// envelopes (`previous_version: 0`), ensuring the event envelope never shares
+/// a binding, key, or nonce with the version-1 balance transition on first mint.
+pub fn event_amount_input_hash(canonical_hash: B256) -> B256 {
+    let mut preimage = b"outbe/tee/event-amount/v1".to_vec();
+    preimage.extend_from_slice(canonical_hash.as_slice());
+    alloy_primitives::keccak256(preimage)
+}
+
+impl EnvelopeCipherSpec {
+    pub(crate) fn read_amount(
+        &self,
+        key: &[u8; 32],
+        account: Address,
+        field: u8,
+        blob: &[u8],
+    ) -> Result<(u64, U256)> {
+        if blob.is_empty() {
+            return Ok((0, U256::ZERO));
+        }
+        if blob.len() != BALANCE_BLOB_LEN {
+            return Err(TeeError::DecryptFailed);
+        }
+        let (version, bytes) = self.read_envelope(key, account, &[field], blob)?;
+        let bytes = Zeroizing::new(bytes);
+        let amount: &[u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| TeeError::DecryptFailed)?;
+        Ok((version, U256::from_be_bytes(*amount)))
+    }
+
+    pub(crate) fn write_amount(
+        &self,
+        key: &[u8; 32],
+        transition: BalanceTransition,
+    ) -> Result<Vec<u8>> {
+        let BalanceTransition {
+            account,
+            field,
+            previous_version,
+            amount,
+            input_hash,
+        } = transition;
+        let plaintext = Zeroizing::new(amount.to_be_bytes::<32>());
+        let mut binding_payload = Zeroizing::new([0u8; 64]);
+        binding_payload[..32].copy_from_slice(input_hash.as_slice());
+        binding_payload[32..].copy_from_slice(plaintext.as_ref());
+        self.write_envelope(
+            key,
+            (account, &[field]),
+            (previous_version, binding_payload.as_ref()),
+            plaintext.as_ref(),
+        )
+    }
+
+    pub(crate) fn read_envelope(
+        &self,
+        key: &[u8; 32],
+        account: Address,
+        scope: &[u8],
+        blob: &[u8],
+    ) -> Result<(u64, Vec<u8>)> {
+        if blob.is_empty() {
+            return Ok((0, Vec::new()));
+        }
+        if blob.len() < ENVELOPE_HEADER_LEN + ENVELOPE_TAG_LEN || &blob[8..12] != self.marker {
+            return Err(TeeError::DecryptFailed);
+        }
+        let version =
+            u64::from_be_bytes(blob[..8].try_into().map_err(|_| TeeError::DecryptFailed)?);
+        if version == 0 {
+            return Err(TeeError::DecryptFailed);
+        }
+        let (opening, nonce) = self.opening_material(
+            key,
+            account,
+            scope,
+            (version, &blob[12..ENVELOPE_HEADER_LEN]),
+        )?;
+        let plaintext = chacha20poly1305_decrypt(&opening, &nonce, &blob[ENVELOPE_HEADER_LEN..])?;
+        Ok((version, plaintext))
+    }
+
+    pub(crate) fn write_envelope(
+        &self,
+        key: &[u8; 32],
+        (account, scope): (Address, &[u8]),
+        (previous_version, binding_payload): (u64, &[u8]),
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        let version = previous_version
+            .checked_add(1)
+            .ok_or(TeeError::EncryptFailed)?;
+        let mut context = self.binding_tag.to_vec();
+        context.extend_from_slice(account.as_slice());
+        context.extend_from_slice(scope);
+        context.extend_from_slice(&version.to_be_bytes());
+        context.extend_from_slice(binding_payload);
+        let context = Zeroizing::new(context);
+        let binding = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), &context);
+        let (sealing, nonce) =
+            self.opening_material(key, account, scope, (version, binding.as_ref()))?;
+        let ciphertext = chacha20poly1305_encrypt(&sealing, &nonce, plaintext)?;
+        let mut blob = version.to_be_bytes().to_vec();
+        blob.extend_from_slice(self.marker);
+        blob.extend_from_slice(binding.as_ref());
+        blob.extend_from_slice(&ciphertext);
+        Ok(blob)
+    }
+
+    pub(crate) fn opening_material(
+        &self,
+        key: &[u8; 32],
+        account: Address,
+        scope: &[u8],
+        (version, binding): (u64, &[u8]),
+    ) -> Result<(Zeroizing<[u8; 32]>, [u8; 12])> {
+        let mut context = account.as_slice().to_vec();
+        context.extend_from_slice(scope);
+        context.extend_from_slice(&version.to_be_bytes());
+        context.extend_from_slice(binding);
+        let derived = Zeroizing::new(hkdf_sha256(key, &context, self.key_info)?);
+        let nonce_bytes = hkdf_sha256(&*derived, &context, self.nonce_info)?;
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&nonce_bytes[..12]);
+        Ok((derived, nonce))
+    }
+}

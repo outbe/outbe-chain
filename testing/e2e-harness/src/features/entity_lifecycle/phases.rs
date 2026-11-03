@@ -155,10 +155,38 @@ fn native_coen_grows(world: &mut World) {
 }
 
 /// Seed the last `days` closed UTC days of COEN/USD, the reference every entity prices by.
-fn seed_closed_days(world: &World, days: u32, rate: U256) {
+pub(crate) fn seed_closed_days(world: &World, days: u32, rate: U256) {
+    backdated_timestamp(
+        world,
+        u64::from(days) * outbe_primitives::time::SECONDS_PER_DAY,
+    );
     let url = world.rpc.url(world.validators.primary_port());
     test_issuance::seed_day_vwaps(&url, DEPLOYER_KEY, USD_ISO, days, rate)
         .expect("seed the closed days' VWAP");
+}
+
+/// Validate against block zero, not a fixture's activation time or genesisTime.
+pub(crate) fn backdated_timestamp(world: &World, seconds: u64) -> u64 {
+    let timestamp = super::chain::head_time(world)
+        .checked_sub(seconds)
+        .expect("lifecycle backdate must not underflow Unix time");
+    let genesis = world
+        .rpc
+        .block_timestamp(world.validators.primary_port(), 0)
+        .expect("canonical genesis header timestamp for lifecycle date bound");
+    ensure_date_in_history(genesis, timestamp).expect(
+        "seeded, issued, or reopened lifecycle date must be inside canonical chain history",
+    );
+    timestamp
+}
+
+fn ensure_date_in_history(genesis_timestamp: u64, timestamp: u64) -> eyre::Result<()> {
+    use outbe_primitives::time::timestamp_to_date_key;
+    let genesis_day = timestamp_to_date_key(genesis_timestamp);
+    let oldest_day = timestamp_to_date_key(timestamp);
+    eyre::ensure!(oldest_day >= genesis_day,
+        "lifecycle date {oldest_day} precedes canonical genesis date {genesis_day} (timestamp={timestamp}, genesis_timestamp={genesis_timestamp})");
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, Parameter)]
@@ -182,5 +210,46 @@ impl std::str::FromStr for PaymentParty {
             currency: currency.parse()?,
             payer: payer.parse()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+    fn timestamp(date: &str) -> u64 {
+        u64::try_from(
+            OffsetDateTime::parse(date, &Rfc3339)
+                .unwrap()
+                .unix_timestamp(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn lifecycle_dates_are_bounded_by_the_genesis_utc_day() {
+        let genesis = timestamp("2026-01-01T23:59:59Z");
+        // The lower bound is a UTC day, not an intra-day timestamp.
+        ensure_date_in_history(genesis, timestamp("2026-01-01T00:00:00Z")).unwrap();
+        ensure_date_in_history(genesis, timestamp("2026-02-01T00:00:00Z")).unwrap();
+        let error = ensure_date_in_history(genesis, timestamp("2025-12-31T23:59:59Z")).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("20251231 precedes canonical genesis date 20260101"));
+    }
+
+    #[test]
+    fn historical_header_covers_oldest_issuance_and_seeded_day_across_month_boundary() {
+        let bootstrap = timestamp("2026-03-01T00:00:00Z");
+        let day = outbe_primitives::time::SECONDS_PER_DAY;
+        let seed_days = u64::from(CALL_WINDOW_SEED_DAYS);
+        let genesis = bootstrap - (seed_days + 2) * day;
+        for lookback in [1, 3, seed_days, seed_days + 1] {
+            let oldest = bootstrap - lookback * day;
+            ensure_date_in_history(genesis, oldest).unwrap();
+            assert!(ensure_date_in_history(bootstrap, oldest).is_err());
+        }
+        assert!(ensure_date_in_history(genesis, genesis - day).is_err());
     }
 }

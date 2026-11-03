@@ -18,7 +18,8 @@ fn scan_and_call_force_calls_breached_series() {
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -42,7 +43,8 @@ fn a_called_series_reports_its_settlement_deadline() {
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -55,10 +57,13 @@ fn a_called_series_reports_its_settlement_deadline() {
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupCalled::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(events.len(), 1);
+    assert_eq!(SeriesId::from(events[0].seriesId), sid(7));
+    assert_eq!(events[0].issuanceCurrency, 840);
+    assert_eq!(events[0].referenceCurrency, 840);
     assert_eq!(events[0].calledAt, scan_ts);
     assert_eq!(events[0].settlementDeadline, scan_ts + u64::from(notice));
 }
@@ -97,7 +102,8 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
             .unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
@@ -121,7 +127,8 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
         fill_days(&oracle, last_closed_day, pair, 1, U256::MAX);
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
             s.clone(),
         );
         // Must not halt: returns Ok(0) and leaves the series Issued.
@@ -148,7 +155,6 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
         let factory = IntexContract::new(s.clone());
-        factory.daily_genesis_day.write(last_closed_day).unwrap();
         factory.call_latest_day.write(last_closed_day).unwrap();
         IntexContract::new(s)
             .call_sweep_day
@@ -157,7 +163,11 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |s| {
-        let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID), s);
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID)
+                .with_genesis_timestamp(scan_ts - DAY),
+            s,
+        );
         called::process_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
@@ -214,8 +224,8 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
 
-    // A second past midnight loses the day and falls one breach short.
-    for (issued_at, expected) in [(midnight, 1), (midnight + 1, 0)] {
+    // Midnight and later on the same UTC day start counting on the next day and fall one breach short.
+    for (issued_at, expected) in [(midnight - 1, 1), (midnight, 0), (midnight + 1, 0)] {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.set_timestamp(U256::from(ISSUED_AT));
         storage.stub_sub_call_at(
@@ -406,7 +416,10 @@ fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 }
 
 fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
-    let ctx = BlockRuntimeContext::new(BlockContext::empty_for_tests(1, at, CHAIN_ID), s.clone());
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(ISSUED_AT - DAY),
+        s.clone(),
+    );
     called::daily_pass(&ctx).unwrap();
 }
 
@@ -490,7 +503,7 @@ fn every_failed_pass_write_rolls_back(
             select_prod_profile(&s);
             let member = arm(&s);
             called::prepare_daily_pass(&BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, at, CHAIN_ID),
+                BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(at - DAY),
                 s,
             ))
             .unwrap();
@@ -501,7 +514,7 @@ fn every_failed_pass_write_rolls_back(
     let pass = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |s| {
             called::daily_pass(&BlockRuntimeContext::new(
-                BlockContext::empty_for_tests(1, at, CHAIN_ID),
+                BlockContext::empty_for_tests(1, at, CHAIN_ID).with_genesis_timestamp(at - DAY),
                 s,
             ))
             .map(|_| ())
@@ -649,7 +662,7 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()
         })
         .count();
     assert_eq!(forfeited, 1);
@@ -745,8 +758,10 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         assert_eq!(group, group_of(&s, kept));
 
         let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
-        let ctx =
-            BlockRuntimeContext::new(BlockContext::empty_for_tests(1, due, CHAIN_ID), s.clone());
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, due, CHAIN_ID).with_genesis_timestamp(ISSUED_AT - DAY),
+            s.clone(),
+        );
         let block = called::daily_pass(&ctx).unwrap();
         crate::hooks::cleanup(&block).unwrap();
 
@@ -767,7 +782,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
 
 fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(number, ts, CHAIN_ID),
+        BlockContext::empty_for_tests(number, ts, CHAIN_ID).with_genesis_timestamp(MATURE_TS - DAY),
         s.clone(),
     )
 }

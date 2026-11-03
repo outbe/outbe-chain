@@ -5,10 +5,8 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Rewards precompile.
 ///
-/// The layout tracks:
-/// - the genesis UTC-day anchor of the chain.
-/// - the per-finalized-block and per-day accumulators for the idempotent fee-distribution path
-///   and the day-boundary settle formula.
+/// The layout tracks the per-finalized-block and per-day accumulators for the
+/// idempotent fee-distribution path and the day-boundary settle formula.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
 /// inclusion-window voter set. The daily emission top-up is credited to the
@@ -39,6 +37,14 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  21:  daily_last_window_close            - mapping(uint32 => uint64)
 ///  22:  late_residue_dust_native           - uint256
 ///  23:  daily_participation_closed         - mapping(uint32 => bool)
+///  24:  daily_total_participation          - mapping(uint32 => uint256)
+///  25:  cleanup_day_at                     - mapping(uint64 => uint32)
+///  26:  cleanup_head                       - uint64
+///  27:  cleanup_tail                       - uint64
+///  28:  cleanup_scheduled                  - mapping(uint32 => bool)
+///  29:  cleanup_next_index                 - mapping(uint32 => uint32)
+///  30:  cleanup_processed_height           - uint64
+///  31:  cleanup_processed_initialized      - bool
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// Per-(finalized_block_hash, voter) guard: voter participation has
@@ -172,6 +178,19 @@ pub struct Rewards {
 
     /// The day's validator pool has been credited; its participation is final.
     pub daily_participation_closed: Mapping<u32, bool>,
+
+    /// Checked sum of accepted base and late participation for the day.
+    pub daily_total_participation: Mapping<u32, U256>,
+    /// Persistent FIFO of disposable day inputs; sequence numbers never wrap.
+    pub cleanup_day_at: Mapping<u64, u32>,
+    pub cleanup_head: Slot<u64>,
+    pub cleanup_tail: Slot<u64>,
+    /// Retained after completion to make duplicate scheduling harmless.
+    pub cleanup_scheduled: Mapping<u32, bool>,
+    pub cleanup_next_index: Mapping<u32, u32>,
+    pub cleanup_processed_height: Slot<u64>,
+    /// Distinguishes an unused worker from a worker run at block zero.
+    pub cleanup_processed_initialized: Slot<bool>,
 }
 
 #[cfg(test)]
@@ -208,5 +227,13 @@ mod tests {
         assert_eq!(c.daily_last_window_close.base_slot(), U256::from(21));
         assert_eq!(c.late_residue_dust_native.slot(), U256::from(22));
         assert_eq!(c.daily_participation_closed.base_slot(), U256::from(23));
+        assert_eq!(c.daily_total_participation.base_slot(), U256::from(24));
+        assert_eq!(c.cleanup_day_at.base_slot(), U256::from(25));
+        assert_eq!(c.cleanup_head.slot(), U256::from(26));
+        assert_eq!(c.cleanup_tail.slot(), U256::from(27));
+        assert_eq!(c.cleanup_scheduled.base_slot(), U256::from(28));
+        assert_eq!(c.cleanup_next_index.base_slot(), U256::from(29));
+        assert_eq!(c.cleanup_processed_height.slot(), U256::from(30));
+        assert_eq!(c.cleanup_processed_initialized.slot(), U256::from(31));
     }
 }

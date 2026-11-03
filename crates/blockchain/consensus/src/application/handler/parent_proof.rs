@@ -33,10 +33,9 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
         .begin
         .first()
         .ok_or_else(|| ParentProofError::MissingPhase1SystemTx(block.number()))?;
-    let input = outbe_primitives::system_tx::SystemTxInputV2::decode(phase1.input().as_ref())
+    let input = outbe_primitives::system_tx::SystemTx::decode(phase1.input().as_ref())
         .map_err(ParentProofError::DecodePhase1Input)?;
-    let outbe_primitives::system_tx::SystemTxInputV2::CertifiedParentAccounting { metadata } =
-        input
+    let outbe_primitives::system_tx::SystemTx::CertifiedParentAccounting { metadata } = input
     else {
         return Err(ParentProofError::UnexpectedBeginOrdinal0.into());
     };

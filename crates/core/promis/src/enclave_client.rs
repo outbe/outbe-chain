@@ -13,7 +13,8 @@
 
 use outbe_primitives::error::Result;
 use outbe_tee::protocol::{
-    promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, PromisOpRequest, PromisOpResult,
+    promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, MineGratisFromPromisRequestV1,
+    MineGratisFromPromisResultV1, PromisOpRequest, PromisOpResult,
 };
 use outbe_tee::TransportError;
 
@@ -89,6 +90,25 @@ pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     Ok(result)
 }
 
+/// Run the combined Promis->Gratis conversion inside the enclave and validate the response.
+pub(crate) fn mine_gratis_from_promis(
+    req: MineGratisFromPromisRequestV1,
+) -> Result<MineGratisFromPromisResultV1> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(res) = test_enclave::try_mine_gratis(&req) {
+        return Ok(res);
+    }
+
+    let request = EnclaveRequest::MineGratisFromPromisV1 {
+        request: Box::new(req),
+    };
+    let response = outbe_tee::balance_client::execute_confidential_balance_op(request)?;
+    let EnclaveResponse::GratisMinedFromPromisV1 { result } = response else {
+        return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(response)).into());
+    };
+    Ok(*result)
+}
+
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
 /// crate that enables the `test-enclave` feature). It runs the **real**
 /// `outbe_tee_enclave::promis::apply_op` engine against a fixed dev state key, so
@@ -150,6 +170,22 @@ pub mod test_enclave {
         }
     }
 
+    /// Encrypt a `mineGratis` amount to the test-enclave's dev TEE public key.
+    /// The test chain id is `1`, matching [`crate::runtime`]'s dev storage.
+    pub fn encrypt_mine_gratis_amount(
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+    ) -> Vec<u8> {
+        outbe_tee::offer_encrypt::encrypt_tee_amount(
+            &outbe_tee_enclave::dev::offer_public_key(),
+            B256::from(alloy_primitives::U256::from(1u64)),
+            account,
+            amount,
+        )
+        .expect("encrypt mine_gratis amount")
+        .to_vec()
+    }
+
     /// The dev state key, so tests can derive view/modify keys to build auth and
     /// decrypt balances exactly as a client would.
     pub fn state_key() -> [u8; 32] {
@@ -162,6 +198,34 @@ pub mod test_enclave {
         STATE_KEY.with(|k| {
             k.borrow()
                 .map(|key| outbe_tee_enclave::promis::apply_op(&key, req))
+        })
+    }
+
+    pub(crate) fn try_mine_gratis(
+        req: &MineGratisFromPromisRequestV1,
+    ) -> Option<MineGratisFromPromisResultV1> {
+        STATE_KEY.with(|k| {
+            k.borrow().map(|promis_state_key| {
+                let gratis_state_key = outbe_tee_enclave::gratis::derive_gratis_state_key(
+                    outbe_tee_enclave::dev::GRATIS_GROUP_SIG,
+                    outbe_tee_enclave::dev::GRATIS_CHAIN,
+                    DEV_EPOCH,
+                )
+                .expect("derive dev gratis state key");
+                let fidelity_state_key = outbe_tee_enclave::fidelity::derive_fidelity_state_key(
+                    outbe_tee_enclave::dev::FIDELITY_GROUP_SIG,
+                    outbe_tee_enclave::dev::fidelity_chain(),
+                    DEV_EPOCH,
+                )
+                .expect("derive dev fidelity state key");
+                let keys = outbe_tee_enclave::promis::MineGratisKeys {
+                    offer_secret: &outbe_tee_enclave::dev::OFFER_SECRET_KEY,
+                    promis_state_key: &promis_state_key,
+                    gratis_state_key: &gratis_state_key,
+                    fidelity_state_key: &fidelity_state_key,
+                };
+                outbe_tee_enclave::promis::apply_mine_gratis(keys, req)
+            })
         })
     }
 }

@@ -444,19 +444,25 @@
   },
   {
     "type": "event",
-    "name": "IntexGroupCalled",
+    "name": "IntexSeriesCalled",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
       },
       {
-        "name": "seriesIds",
-        "type": "bytes14[]",
+        "name": "issuanceCurrency",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "bytes14[]"
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "calledAt",
@@ -475,22 +481,34 @@
   },
   {
     "type": "event",
-    "name": "IntexGroupForfeited",
+    "name": "IntexSeriesClosed",
     "inputs": [
       {
-        "name": "groupKey",
-        "type": "bytes32",
+        "name": "seriesId",
+        "type": "bytes14",
         "indexed": true,
-        "internalType": "bytes32"
+        "internalType": "bytes14"
       },
       {
-        "name": "forfeitedUnits",
-        "type": "uint64",
+        "name": "issuanceCurrency",
+        "type": "uint16",
         "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint16"
       },
       {
-        "name": "returnedPromisMinor",
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

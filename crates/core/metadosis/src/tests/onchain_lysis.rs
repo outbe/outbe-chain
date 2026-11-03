@@ -219,6 +219,8 @@ fn fixture_with_amounts(limit: u64, amounts: &[u64]) -> HashMapStorageProvider {
                             offering_end,
                         },
                     )?;
+                    // A6 seals the WorldwideDay. Metadosis settles only a sealed day.
+                    tribute.seal_day(WWD)?;
                     Ok(())
                 },
             )

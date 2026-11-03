@@ -56,7 +56,7 @@ use outbe_primitives::consensus_metadata::{
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
+use outbe_primitives::system_tx::{build_unsigned_system_tx, SystemTx};
 use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 use outbe_promislimit::PromisLimitContract;
 use outbe_slashindicator::precompile::ISlashIndicator as Isi;
@@ -229,14 +229,7 @@ fn signer_with_address() -> (PrivateKeySigner, Address) {
 }
 
 fn sign_phase1_tx(signer: &PrivateKeySigner, input: Bytes) -> Vec<u8> {
-    let tx = build_unsigned_system_tx(
-        SystemTxKind::CertifiedParentAccounting,
-        0,
-        CHILD_BLOCK_NUMBER,
-        CHAIN_ID,
-        input,
-    )
-    .unwrap();
+    let tx = build_unsigned_system_tx(0, CHILD_BLOCK_NUMBER, CHAIN_ID, input).unwrap();
     let sighash = tx.signature_hash();
     let sig: Signature = signer.sign_hash_sync(&sighash).unwrap();
     let envelope: TxEnvelope = tx.into_signed(sig).into();
@@ -247,7 +240,7 @@ fn sign_phase1_metadata_tx(
     signer: &PrivateKeySigner,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> Vec<u8> {
-    let input = SystemTxInputV2::CertifiedParentAccounting {
+    let input = SystemTx::CertifiedParentAccounting {
         metadata: metadata.clone(),
     }
     .encode()
@@ -1252,9 +1245,8 @@ fn slashindicator_dedup_retains_invalid_vrf_evidence_seen_hash() {
 // The begin-zone path lives in a different crate (`outbe-evm`) that
 // `outbe-slashindicator` cannot depend on without cycle. So the type
 // system enforces the structural "begin-zone does NOT host this selector"
-// claim. `outbe_evm::system_tx::SystemTxInputV2` is a closed enum with
-// 4 named variants (CertifiedParentAccounting, CycleTick, BoundaryOutcome,
-// OracleSlashWindow). None of them reference `submitInvalidVrfProofEvidence`.
+// claim. `outbe_evm::system_tx::SystemTx` is a closed enum with
+// 8 named variants. None of them reference `submitInvalidVrfProofEvidence`.
 // ===========================================================================
 #[test]
 fn invalid_vrf_evidence_uses_txpool_precompile_path_not_begin_zone() {

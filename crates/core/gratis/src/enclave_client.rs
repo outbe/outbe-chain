@@ -54,7 +54,6 @@ pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
 pub mod test_enclave {
     use super::*;
     use crate::errors::map_test_enclave_error;
-    use alloy_primitives::B256;
     use std::cell::RefCell;
 
     thread_local! {
@@ -63,15 +62,16 @@ pub mod test_enclave {
 
     /// Fixed dev group signature + chain/epoch, so the derived state key (and thus
     /// every account's view/modify key) is deterministic across a test process.
-    const DEV_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
-    const DEV_CHAIN: B256 = B256::repeat_byte(0xC1);
     const DEV_EPOCH: u64 = 0;
 
     /// Install the in-process enclave for the current thread.
     pub fn install() {
-        let key =
-            outbe_tee_enclave::gratis::derive_gratis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
-                .expect("derive dev gratis state key");
+        let key = outbe_tee_enclave::gratis::derive_gratis_state_key(
+            outbe_tee_enclave::dev::GRATIS_GROUP_SIG,
+            outbe_tee_enclave::dev::GRATIS_CHAIN,
+            DEV_EPOCH,
+        )
+        .expect("derive dev gratis state key");
         STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
     }
 

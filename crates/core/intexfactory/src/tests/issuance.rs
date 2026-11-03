@@ -31,7 +31,11 @@ fn issue_keeps_a_timestamp_past_u32() {
 
 #[test]
 fn issue_creates_series_in_registry() {
-    with_factory(|s| {
+    use alloy_sol_types::SolEvent;
+
+    let mut storage = factory_provider();
+    StorageHandle::enter(&mut storage, |s| {
+        select_prod_profile(&s);
         runtime::issue_intex(&s, sample(7)).unwrap();
 
         // The series is captured in Intex with the issuance identity.
@@ -61,6 +65,26 @@ fn issue_creates_series_in_registry() {
         assert_eq!(r.issued_at, ISSUED_AT);
         assert_eq!(outbe_intex::api::call_stamp(&s, &r).unwrap().called_at, 0);
     });
+    let opened: Vec<_> = storage
+        .get_events(INTEX_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IIntexFactory::IntexSeriesOpened::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(
+        opened,
+        vec![IIntexFactory::IntexSeriesOpened {
+            seriesId: sid(7).into(),
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            entryPriceMinor: U256::from(ENTRY_PRICE),
+            callPriceMinor: U256::from(EXPECTED_TRIGGER),
+            callWindow: u64::from(28 * SECONDS_PER_DAY_U32),
+            callThreshold: u64::from(21 * SECONDS_PER_DAY_U32),
+            callNoticePeriod: u64::from(CALL_NOTICE_PERIOD),
+            units: 100,
+            unitPromisLoadMinor: U256::from(PROMIS_LOAD_MINOR),
+        }]
+    );
 }
 
 #[test]

@@ -10,7 +10,11 @@
 
 use alloy_primitives::{Address, B256, U256};
 
-use outbe_tee::protocol::{PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
+use outbe_tee::protocol::{
+    GratisOp, GratisOpRequest, GratisOpStatus, MineGratisFromPromisRequestV1,
+    MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, PromisOp, PromisOpRequest,
+    PromisOpResult, PromisOpStatus,
+};
 
 use crate::confidential::{FIELD_BALANCE, PROMIS};
 use crate::errors::{PromisRejectReason, Result};
@@ -59,7 +63,7 @@ fn verify_modify_auth(modify_key: &[u8; 32], operation: &ModifyOperation, mac: &
 /// (the key delivered by `DeriveAccountKeys`). Same primitive the enclave uses, so
 /// a client reproduces the plaintext without ever touching the state key.
 pub fn decrypt_balance(view_key: &[u8; 32], account: Address, blob: &[u8]) -> Result<U256> {
-    crate::gratis_cipher::read_promis_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
+    crate::promis_cipher::read_amount(view_key, account, FIELD_BALANCE, blob).map(|(_, v)| v)
 }
 
 fn base_result() -> PromisOpResult {
@@ -67,6 +71,7 @@ fn base_result() -> PromisOpResult {
         status: PromisOpStatus::Applied,
         new_balance: Vec::new(),
         event_amount: U256::ZERO,
+        encrypted_event_amount: Vec::new(),
         next_op_nonce: 0,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
@@ -89,14 +94,17 @@ pub fn apply_op(state_key: &[u8; 32], req: &PromisOpRequest) -> PromisOpResult {
     let inputs_canonical_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
     let mut result = match apply_op_inner(state_key, req) {
         Ok(r) => r,
-        Err(e) => rejected_promis_op(PromisRejectReason::from(e)),
+        Err(reason) => rejected_promis_op(reason),
     };
     result.inputs_canonical_hash = inputs_canonical_hash;
     result
 }
 
 /// Mint/Burn - modify-key gated and keyed by `req.account`.
-fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisOpResult> {
+fn apply_op_inner(
+    state_key: &[u8; 32],
+    req: &PromisOpRequest,
+) -> core::result::Result<PromisOpResult, PromisRejectReason> {
     if req.amount.is_zero() {
         return Ok(rejected_promis_op(PromisRejectReason::AmountMustBePositive));
     }
@@ -122,7 +130,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
     let view_key = PROMIS
         .account_keys
         .derive_view_key(state_key, req.account)?;
-    let (bver, balance) = crate::gratis_cipher::read_promis_amount(
+    let (bver, balance) = crate::promis_cipher::read_amount(
         &view_key,
         req.account,
         FIELD_BALANCE,
@@ -131,7 +139,11 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
 
     let mut r = base_result();
     r.event_amount = req.amount;
-    r.next_op_nonce = req.modify_auth.op_nonce.saturating_add(1);
+    r.next_op_nonce = req
+        .modify_auth
+        .op_nonce
+        .checked_add(1)
+        .ok_or(PromisRejectReason::ModifyNonceExhausted)?;
     let input_hash = outbe_tee::protocol::promis_op_canonical_hash(req);
 
     match req.op {
@@ -140,9 +152,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
                 Some(v) => v,
                 None => return Ok(rejected_promis_op(PromisRejectReason::BalanceOverflow)),
             };
-            r.new_balance = crate::gratis_cipher::write_promis_amount(
+            r.new_balance = crate::promis_cipher::write_amount(
                 &view_key,
-                crate::gratis_cipher::BalanceTransition {
+                crate::confidential::BalanceTransition {
                     account: req.account,
                     field: FIELD_BALANCE,
                     previous_version: bver,
@@ -155,9 +167,9 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
             if balance < req.amount {
                 return Ok(rejected_promis_op(PromisRejectReason::InsufficientBalance));
             }
-            r.new_balance = crate::gratis_cipher::write_promis_amount(
+            r.new_balance = crate::promis_cipher::write_amount(
                 &view_key,
-                crate::gratis_cipher::BalanceTransition {
+                crate::confidential::BalanceTransition {
                     account: req.account,
                     field: FIELD_BALANCE,
                     previous_version: bver,
@@ -167,7 +179,130 @@ fn apply_op_inner(state_key: &[u8; 32], req: &PromisOpRequest) -> Result<PromisO
             )?;
         }
     }
+    r.encrypted_event_amount = crate::promis_cipher::write_amount(
+        &view_key,
+        crate::confidential::BalanceTransition {
+            account: req.account,
+            field: FIELD_BALANCE,
+            previous_version: 0,
+            amount: req.amount,
+            input_hash: crate::confidential::event_amount_input_hash(input_hash),
+        },
+    )?;
     Ok(r)
+}
+
+/// Resident enclave keys needed for [`apply_mine_gratis`].
+#[derive(Clone, Copy)]
+pub struct MineGratisKeys<'a> {
+    pub offer_secret: &'a [u8; 32],
+    pub promis_state_key: &'a [u8; 32],
+    pub gratis_state_key: &'a [u8; 32],
+    pub fidelity_state_key: &'a [u8; 32],
+}
+
+fn rejected_mine_gratis(
+    status: MineGratisFromPromisStatusV1,
+    inputs_canonical_hash: B256,
+) -> MineGratisFromPromisResultV1 {
+    MineGratisFromPromisResultV1 {
+        status,
+        new_promis_balance: Vec::new(),
+        encrypted_promis_event_amount: Vec::new(),
+        next_promis_op_nonce: 0,
+        new_gratis_balance: Vec::new(),
+        encrypted_gratis_event_amount: Vec::new(),
+        next_gratis_op_nonce: 0,
+        fidelity: None,
+        inputs_canonical_hash,
+        attestation_tag: Vec::new(),
+    }
+}
+
+/// Execute `IPromisFactory.mineGratis` atomically inside the enclave:
+/// decrypt `encrypted_promis_amount` with the resident offer key, apply the
+/// Promis burn, apply the Gratis mint, and apply the Fidelity `In` cohort section.
+pub fn apply_mine_gratis(
+    keys: MineGratisKeys<'_>,
+    req: &MineGratisFromPromisRequestV1,
+) -> MineGratisFromPromisResultV1 {
+    let inputs_canonical_hash = outbe_tee::protocol::mine_gratis_from_promis_canonical_hash(req);
+    let amount = match crate::crypto::decrypt_tee_amount(
+        keys.offer_secret,
+        &req.encrypted_promis_amount,
+        req.chain_id,
+        req.account,
+    ) {
+        Ok(amount) => amount,
+        Err(err) => {
+            return rejected_mine_gratis(
+                MineGratisFromPromisStatusV1::PromisRejected {
+                    reason: PromisRejectReason::from(err).to_string(),
+                },
+                inputs_canonical_hash,
+            );
+        }
+    };
+    let promis_req = PromisOpRequest {
+        op: PromisOp::Burn,
+        chain_id: req.chain_id,
+        account: req.account,
+        amount,
+        current_balance: req.current_promis_balance.clone(),
+        modify_auth: req.promis_modify_auth.clone(),
+    };
+    let promis_res = apply_op(keys.promis_state_key, &promis_req);
+    if let PromisOpStatus::Rejected { reason } = promis_res.status {
+        return rejected_mine_gratis(
+            MineGratisFromPromisStatusV1::PromisRejected { reason },
+            inputs_canonical_hash,
+        );
+    }
+    let gratis_req = GratisOpRequest {
+        op: GratisOp::Mint,
+        chain_id: req.chain_id,
+        account: req.account,
+        amount,
+        current_balance: req.current_gratis_balance.clone(),
+        current_pledged: Vec::new(),
+        modify_auth: req.gratis_modify_auth.clone(),
+        fidelity: Some(req.fidelity.clone()),
+    };
+    let gratis_res = crate::gratis::apply_op(keys.gratis_state_key, &gratis_req);
+    if let GratisOpStatus::Rejected { reason } = gratis_res.status {
+        return rejected_mine_gratis(
+            MineGratisFromPromisStatusV1::GratisRejected { reason },
+            inputs_canonical_hash,
+        );
+    }
+    let fidelity = match crate::fidelity::apply_cohort_section(
+        keys.fidelity_state_key,
+        req.account,
+        amount,
+        &req.fidelity,
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            return rejected_mine_gratis(
+                MineGratisFromPromisStatusV1::GratisRejected {
+                    reason: format!("fidelity section failed: {err}"),
+                },
+                inputs_canonical_hash,
+            );
+        }
+    };
+    MineGratisFromPromisResultV1 {
+        status: MineGratisFromPromisStatusV1::Applied,
+        new_promis_balance: promis_res.new_balance,
+        encrypted_promis_event_amount: promis_res.encrypted_event_amount,
+        next_promis_op_nonce: promis_res.next_op_nonce,
+        new_gratis_balance: gratis_res.new_balance,
+        encrypted_gratis_event_amount: gratis_res.encrypted_event_amount,
+        next_gratis_op_nonce: gratis_res.next_op_nonce,
+        fidelity: Some(fidelity),
+        inputs_canonical_hash,
+        attestation_tag: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -234,6 +369,19 @@ mod tests {
         assert_eq!(
             decrypt_balance(&vk, alice(), &res.new_balance).unwrap(),
             U256::from(4242u64)
+        );
+    }
+
+    #[test]
+    fn modify_nonce_exhaustion_rejects() {
+        let sk = state_key();
+        let mut request = req(PromisOp::Mint, alice(), U256::from(1u64), u64::MAX);
+        request.modify_auth = auth(&sk, alice(), PromisOp::Mint, request.amount, u64::MAX);
+        assert_eq!(
+            apply_op(&sk, &request).status,
+            PromisOpStatus::Rejected {
+                reason: "modify nonce exhausted".into(),
+            }
         );
     }
 

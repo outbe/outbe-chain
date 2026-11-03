@@ -1,8 +1,8 @@
 use alloy_primitives::Bytes;
 
 use super::{
-    SystemTxError, SystemTxInputV2, SystemTxKind, SYSTEM_TX_NON_ZERO_BYTE_GAS,
-    SYSTEM_TX_VISIBLE_GAS_FLOOR, SYSTEM_TX_ZERO_BYTE_GAS,
+    SystemTx, SystemTxError, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    SYSTEM_TX_ZERO_BYTE_GAS,
 };
 
 /// Ethereum-compatible visible gas limit for a system tx envelope.
@@ -51,24 +51,14 @@ pub struct SystemTxVisibleGasPlan {
 }
 
 impl SystemTxVisibleGasPlan {
-    pub fn new(
-        block_gas_limit: u64,
-        system_txs: &[(SystemTxKind, Bytes)],
-    ) -> Result<Self, SystemTxError> {
+    pub fn new(block_gas_limit: u64, system_txs: &[Bytes]) -> Result<Self, SystemTxError> {
         let mut entries = Vec::with_capacity(system_txs.len());
         let mut required_total = 0u64;
         let mut cycle_ordinal = None;
 
-        for (ordinal, (kind, calldata)) in system_txs.iter().enumerate() {
-            let decoded = SystemTxInputV2::decode(calldata)?;
-            let actual = decoded.kind();
-            if actual != *kind {
-                return Err(SystemTxError::CalldataKindMismatch {
-                    expected: *kind,
-                    actual,
-                });
-            }
-            if *kind == SystemTxKind::CycleTick && cycle_ordinal.replace(ordinal).is_some() {
+        for (ordinal, calldata) in system_txs.iter().enumerate() {
+            let decoded = SystemTx::decode(calldata)?;
+            if matches!(decoded, SystemTx::CycleTick) && cycle_ordinal.replace(ordinal).is_some() {
                 return Err(SystemTxError::DuplicateCycleTickGasBudget);
             }
             let intrinsic_gas = system_tx_intrinsic_gas(calldata)?;
@@ -164,8 +154,8 @@ impl SystemTxVisibleGasPlan {
     }
 }
 
-fn system_tx_protocol_precharge(input: &SystemTxInputV2) -> Result<u64, SystemTxError> {
-    let SystemTxInputV2::TeeBootstrap { payload } = input else {
+fn system_tx_protocol_precharge(input: &SystemTx) -> Result<u64, SystemTxError> {
+    let SystemTx::TeeBootstrap { payload } = input else {
         return Ok(0);
     };
     payload

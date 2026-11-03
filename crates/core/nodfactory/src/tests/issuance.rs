@@ -264,7 +264,6 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
             (NOD_ADDRESS, INod::MetadataUpdate::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodSettled::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodMined::SIGNATURE_HASH),
         ]
     );
 }
@@ -343,10 +342,12 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodMined::decode_log_data(&event.data).ok())
+        .filter_map(|event| {
+            outbe_gratis::precompile::IGratis::GratisMinedFromNod::decode_log_data(&event.data).ok()
+        })
         .last()
-        .expect("NodMined event");
-    assert_eq!(mined.owner, input.owner);
+        .expect("GratisMinedFromNod event");
+    assert_eq!(mined.account, input.owner);
     assert_eq!(mined.nodId, nod_id);
 }
 
@@ -356,8 +357,8 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
     let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
-    world.enter(|storage| {
-        let seal = |series_id, count, load: u64| {
+    let (nod1, called_at, deadline) = world.enter(|storage| {
+        let seal = |series_id, issuance_currency, count, load: u64| {
             let sealed_load =
                 outbe_nod::api::seal_series_load(&storage, series_id, U256::from(load)).unwrap();
             crate::api::seal_lysis_series(
@@ -365,6 +366,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
                 crate::api::LysisSeriesInput {
                     series_id,
                     sealed_at,
+                    issuance_currency,
                     reference_currency: 840,
                     entry_price_minor: U256::from(500_000),
                     unclaimed_tribute_count: count,
@@ -374,8 +376,8 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         };
         let usd = SeriesId::for_pair(20_261_019, 840, 840).unwrap();
         let eur = SeriesId::for_pair(20_261_019, 978, 840).unwrap();
-        seal(usd, 2, 30).unwrap();
-        seal(eur, 1, 10).unwrap();
+        seal(usd, 840, 2, 30).unwrap();
+        seal(eur, 978, 1, 10).unwrap();
 
         let group = nod_api::series_group(&storage, usd).unwrap().unwrap();
         assert_eq!(nod_api::series_group(&storage, eur).unwrap(), Some(group));
@@ -390,6 +392,191 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
             WorldwideDay::new(20_261_021),
             "the call counts from the first full day after Lysis"
         );
-        assert!(seal(usd, 1, 5).is_err(), "a series seals once");
+        assert!(seal(usd, 840, 1, 5).is_err(), "a series seals once");
+
+        let mut p1 = params(Address::repeat_byte(0x71));
+        p1.emission_day = 20_261_019;
+        p1.entry_price_minor = U256::from(500_000);
+        p1.gratis_load_minor = U256::from(15);
+        let enc1 = outbe_nod::test_support::encrypted_fixture(&p1, CHAIN_ID);
+        let nod1 = crate::api::issue_tribute_nod_in_series(&storage, &enc1, usd).unwrap();
+
+        let mut p2 = p1.clone();
+        p2.owner = Address::repeat_byte(0x72);
+        let enc2 = outbe_nod::test_support::encrypted_fixture(&p2, CHAIN_ID);
+        let nod2 = crate::api::issue_tribute_nod_in_series(&storage, &enc2, usd).unwrap();
+        assert_eq!(nod_api::series_group(&storage, usd).unwrap(), Some(group));
+        assert_eq!(nod_api::series_group(&storage, eur).unwrap(), Some(group));
+
+        let loaded_item = nod_api::load_item(&storage, nod1).unwrap().unwrap();
+        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
+        nod_api::record_settled(&storage, loaded_item, loaded_group).unwrap();
+
+        let terms = nod.read_call_terms(group).unwrap();
+        let called_at = sealed_at + 86_400;
+        let deadline = nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
+        let mut mut_nod = outbe_nod::NodContract::new(storage.clone());
+        crate::called::mark_called(
+            &mut mut_nod,
+            group,
+            called_at,
+            terms.call_notice_period_seconds,
+        )
+        .unwrap();
+        let forfeit_ts = deadline + 86_400;
+        let through_day = outbe_primitives::deadline_queue::deadline_day(forfeit_ts).unwrap();
+        let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext::empty_for_tests(10, forfeit_ts, CHAIN_ID)
+                .with_genesis_timestamp(deadline - outbe_primitives::time::SECONDS_PER_DAY),
+            storage.clone(),
+        );
+        let mut budget = outbe_primitives::pass_budget::PassBudget::new(100, 100);
+        crate::forfeited::forfeit_through(&ctx, through_day, &mut budget).unwrap();
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::from(25)
+        );
+        let _ = nod2;
+        (nod1, called_at, deadline)
+    });
+    let opened: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesOpened::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(opened.len(), 2);
+    assert_eq!(opened[0].issuanceCurrency, 840);
+    assert_eq!(opened[0].referenceCurrency, 840);
+    assert_eq!(opened[0].entryPriceMinor, U256::from(500_000));
+    assert_eq!(opened[1].issuanceCurrency, 978);
+    assert_eq!(opened[1].referenceCurrency, 840);
+
+    let issued: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodIssued::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(issued.len(), 2);
+    assert_eq!(issued[0].issuanceCurrency, 840);
+    assert_eq!(issued[0].referenceCurrency, 840);
+    assert_eq!(
+        issued[0].payload.len(),
+        outbe_primitives::nod_encryption::NOD_BLOB_LEN
+    );
+    let opened_load = world.enter(|storage| {
+        let item = nod_api::get_item(&storage, nod1).unwrap().unwrap();
+        assert_eq!(
+            issued[0].payload.as_ref(),
+            item.encrypted.encrypted_gratis_amount.as_slice()
+        );
+        let view_key = outbe_tee_enclave::nod_encryption::derive_view_key(
+            &outbe_nod::test_support::NETWORK_SECRET,
+            item.owner,
+        )
+        .expect("owner view key");
+        outbe_tee::nod_decrypt::decrypt_nod_for_owner(&view_key, &item.encrypted)
+            .expect("open nod load")
+    });
+    assert_eq!(opened_load, U256::from(15));
+
+    let called_series: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodSeriesCalled::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(called_series.len(), 2);
+    assert_eq!(
+        (
+            called_series[0].issuanceCurrency,
+            called_series[0].referenceCurrency,
+            called_series[0].calledAt,
+            called_series[0].settlementDeadline
+        ),
+        (840, 840, called_at, deadline)
+    );
+    assert_eq!(
+        (
+            called_series[1].issuanceCurrency,
+            called_series[1].referenceCurrency,
+            called_series[1].calledAt,
+            called_series[1].settlementDeadline
+        ),
+        (978, 840, called_at, deadline)
+    );
+
+    let closed: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 2);
+    assert_eq!(
+        (
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency,
+            closed[0].forfeitedCount,
+            closed[0].forfeitedTributeCount,
+            closed[0].forfeitedAmountMinor
+        ),
+        (840, 840, 1, 0, U256::from(15))
+    );
+    assert_eq!(
+        (
+            closed[1].issuanceCurrency,
+            closed[1].referenceCurrency,
+            closed[1].forfeitedCount,
+            closed[1].forfeitedTributeCount,
+            closed[1].forfeitedAmountMinor
+        ),
+        (978, 840, 0, 1, U256::from(10))
+    );
+}
+
+#[test]
+fn series_group_stays_after_the_last_tribute_and_clears_on_close_group() {
+    use outbe_primitives::series_id::SeriesId;
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    let sealed_at = outbe_primitives::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
+    world.enter(|storage| {
+        let series_id = SeriesId::for_pair(20_261_019, 840, 840).unwrap();
+        let sealed_load =
+            outbe_nod::api::seal_series_load(&storage, series_id, U256::from(15)).unwrap();
+        crate::api::seal_lysis_series(
+            &storage,
+            crate::api::LysisSeriesInput {
+                series_id,
+                sealed_at,
+                issuance_currency: 840,
+                reference_currency: 840,
+                entry_price_minor: U256::from(500_000),
+                unclaimed_tribute_count: 1,
+                unclaimed_tribute_load: sealed_load,
+            },
+        )
+        .unwrap();
+        let group = nod_api::series_group(&storage, series_id).unwrap().unwrap();
+        let mut params = params(Address::repeat_byte(0x71));
+        params.emission_day = 20_261_019;
+        params.entry_price_minor = U256::from(500_000);
+        params.gratis_load_minor = U256::from(15);
+        let encrypted = outbe_nod::test_support::encrypted_fixture(&params, CHAIN_ID);
+        let nod_id =
+            crate::api::issue_tribute_nod_in_series(&storage, &encrypted, series_id).unwrap();
+        assert_eq!(
+            nod_api::series_group(&storage, series_id).unwrap(),
+            Some(group)
+        );
+
+        let item = nod_api::load_item(&storage, nod_id).unwrap().unwrap();
+        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
+        nod_api::remove_nod(&storage, item, loaded_group).unwrap();
+        assert_eq!(nod_api::series_group(&storage, series_id).unwrap(), None);
     });
 }

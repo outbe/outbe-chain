@@ -99,13 +99,12 @@ feeder_seeds: testnet/seeds.yaml
 # worldwide_day: 20260824             # default: derived from the timestamp
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: contracts/predeploys
-# canon_dir: bin/outbe-genesis-cli/canon
 
 # Protocol timings, copied verbatim into config.outbeProtocol.
 # ONLY a `test-protocol-overrides` build accepts this field; a production
 # binary rejects the genesis outright. Use it for localnet and E2E networks,
 # never for a production one, which runs the built-in schedule. Omit the
-# section to run on the built-in defaults (50h forming, 430h lookback delay,
+# section to run on the built-in defaults (50h forming, 22h lookback delay,
 # 50h offering). A short-window network must state them here.
 protocol_constants:
   schemaVersion: 1
@@ -134,6 +133,10 @@ rewards:
 validator_set:
   max_validators: 128
   reregistration_cooldown_blocks: 151200
+
+# One-shot administrator that initializes HyperlaneController after the core contracts are deployed.
+hyperlane_controller:
+  admin: "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
 
 # CodeRegistry: capacity of the Radicle repository list. -1 means unlimited.
 code_registry:

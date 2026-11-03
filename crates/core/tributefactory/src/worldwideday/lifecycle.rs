@@ -3,9 +3,12 @@
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    storage::{metadosis_advance_due_binding, MetadosisCycleLifecycle, StorageHandle},
+    storage::{
+        metadosis_advance_due_binding, metadosis_init_genesis_binding, MetadosisCycleLifecycle,
+        StorageHandle,
+    },
     time::{
-        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+        date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key, WorldwideDay,
         SECONDS_PER_DAY, UTC_PLUS_14_OFFSET,
     },
 };
@@ -14,15 +17,14 @@ use crate::schema::TributeFactoryContract;
 
 use super::{
     aggregate::{
-        activate_worldwide_day, close_worldwide_day, create_worldwide_day, NewWwdSchedule,
-        ValidatedWwdAggregate, WwdProjection,
+        close_worldwide_day, create_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
+        WwdProjection,
     },
-    constants::SECONDS_PER_HOUR,
+    constants::{MAX_PIPELINE_WWDS, SECONDS_PER_HOUR},
     errors::{WwdCallerError, WwdStorageCorruptionError},
 };
 
 const GENESIS_CALENDAR_FLOOR_DATE_KEY: u32 = 20200101;
-const MAX_WWD_CATCHUP_DAYS: u32 = 64;
 
 /// Computes the first `WorldwideDay` `D` whose `forming_end` is strictly after `genesis_timestamp`:
 /// `first_wwd = timestamp_to_date_key(genesis_timestamp - 12h)`.
@@ -78,94 +80,136 @@ pub fn create_worldwide_day_for_date(
     Ok(())
 }
 
-pub fn init_genesis_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    create_lookahead_days(ctx, ctx.block.timestamp)
-}
-
-pub fn create_lookahead_days(ctx: &BlockRuntimeContext<'_>, timestamp: u64) -> Result<()> {
-    validate_wwd_timestamp(timestamp)?;
-    let base_wwd = first_wwd_for_genesis(timestamp);
-    let base_ts = base_wwd
-        .to_timestamp_utc()
-        .map_err(super::errors::date_step_error)?;
-    let lookahead = outbe_chain_constants::get_metadosis_lookahead_days();
-    create_catchup_days(ctx, timestamp, base_wwd, base_ts, lookahead)?;
-
-    for offset in 0..lookahead {
-        let wwd_ts = base_ts.saturating_add(u64::from(offset) * SECONDS_PER_DAY);
-        let wwd = WorldwideDay::new(timestamp_to_date_key(wwd_ts));
-        create_worldwide_day_for_date(ctx, wwd)?;
+/// Runs the daily `WorldwideDay` lifecycle step (OIP-00343 item 25, step A6).
+///
+/// On UTC day `X` (evaluated against the daily cutoff `00:00:00 UTC` of `X`, or
+/// `ctx.block.timestamp` when `last_wwd_advance_day == 0` at genesis):
+/// 1. Seals every pipeline WWD whose `offering_end <= cutoff_ts`.
+/// 2. Creates every open WWD `D` up to `X + 1` (never earlier than `first_wwd_for_genesis`)
+///    whose `offering_end > cutoff_ts`.
+/// 3. Stores the forming VWAP snapshot for every pipeline WWD whose `forming_end <= cutoff_ts`.
+/// 4. Records `last_wwd_advance_day = X` so subsequent hourly ticks on day `X` are no-ops.
+pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    validate_wwd_timestamp(ctx.block.timestamp)?;
+    let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
+    let factory = TributeFactoryContract::new(ctx.storage.clone());
+    let last_day = factory.last_wwd_advance_day.read()?;
+    if last_day >= block_utc_day {
+        return Ok(());
     }
+
+    let cutoff_ts =
+        date_key_to_utc_timestamp(block_utc_day).map_err(super::errors::date_step_error)?;
+
+    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X,
+    //    ensuring its forming VWAP snapshot is finalized first if the chain skipped past both boundaries.
+    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
+    for current in aggregate.active_records() {
+        verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
+        if current.forming_end <= cutoff_ts {
+            let _ = snapshot_forming_vwap(ctx, current)?;
+        }
+        if current.offering_end <= cutoff_ts {
+            let mut factory_mut = TributeFactoryContract::new(ctx.storage.clone());
+            close_worldwide_day(&mut factory_mut, current.worldwide_day)?;
+        }
+    }
+
+    // 2. Create open WWDs up to X + 1 (whose forming window starts at 10:00 UTC on day X).
+    create_open_worldwide_days(ctx, block_utc_day, cutoff_ts, last_day == 0)?;
+
+    // 3. Snapshot forming VWAP for every open pipeline WWD whose forming window ended at or before 00:00 UTC of day X.
+    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
+    for current in aggregate.active_records() {
+        verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
+        if current.forming_end <= cutoff_ts {
+            let _ = snapshot_forming_vwap(ctx, current)?;
+        }
+    }
+
+    // 4. Record completion for UTC day X.
+    factory.last_wwd_advance_day.write(block_utc_day)?;
     Ok(())
 }
 
-fn create_catchup_days(
+fn create_open_worldwide_days(
     ctx: &BlockRuntimeContext<'_>,
-    timestamp: u64,
-    base_wwd: WorldwideDay,
-    base_ts: u64,
-    lookahead: u32,
+    block_utc_day: u32,
+    cutoff_ts: u64,
+    is_initial_run: bool,
 ) -> Result<()> {
+    let target_day = next_date_key(block_utc_day).map_err(super::errors::date_step_error)?;
+    let target_ts =
+        date_key_to_utc_timestamp(target_day).map_err(super::errors::date_step_error)?;
+    let window_span_days = (MAX_PIPELINE_WWDS as u64).saturating_sub(1);
+    let earliest_open_ts = target_ts.saturating_sub(window_span_days * SECONDS_PER_DAY);
+
     let calendar_floor_ts = date_key_to_utc_timestamp(GENESIS_CALENDAR_FLOOR_DATE_KEY)
         .map_err(super::errors::date_step_error)?
         + 12 * SECONDS_PER_HOUR;
-    if ctx.block.genesis_timestamp < calendar_floor_ts || ctx.block.genesis_timestamp > timestamp {
-        return Ok(());
-    }
-    let genesis_first_wwd = first_wwd_for_genesis(ctx.block.genesis_timestamp);
-    if genesis_first_wwd >= base_wwd {
-        return Ok(());
-    }
-    let Ok(gap_days) = day_number_between(genesis_first_wwd.value(), base_wwd.value()) else {
-        return Ok(());
+    let genesis_anchor_ts = if ctx.block.genesis_timestamp >= calendar_floor_ts
+        && ctx.block.genesis_timestamp <= ctx.block.timestamp
+    {
+        ctx.block.genesis_timestamp
+    } else if is_initial_run {
+        ctx.block.timestamp
+    } else {
+        0
     };
-    let catchup_days = gap_days.min(MAX_WWD_CATCHUP_DAYS);
-    let start_ts = base_ts.saturating_sub(u64::from(catchup_days) * SECONDS_PER_DAY);
+
+    let start_ts = if genesis_anchor_ts > 0 {
+        let genesis_first_wwd = first_wwd_for_genesis(genesis_anchor_ts);
+        let genesis_first_ts = genesis_first_wwd
+            .to_timestamp_utc()
+            .map_err(super::errors::date_step_error)?;
+        earliest_open_ts.max(genesis_first_ts)
+    } else {
+        earliest_open_ts
+    };
+
     let factory = TributeFactoryContract::new(ctx.storage.clone());
-    let max_catchup_pipeline =
-        super::constants::MAX_PIPELINE_WWDS.saturating_sub(lookahead as usize);
-    for offset in 0..catchup_days {
-        let wwd_ts = start_ts.saturating_add(u64::from(offset) * SECONDS_PER_DAY);
+    let mut wwd_ts = start_ts;
+    while wwd_ts <= target_ts {
         let wwd = WorldwideDay::new(timestamp_to_date_key(wwd_ts));
         if factory.worldwide_days.get(wwd)?.is_none() {
             let (schedule, _) = compute_wwd_schedule(wwd)?;
-            if schedule.offering_end > timestamp
-                && factory.pipeline_wwd.read_all()?.len() >= max_catchup_pipeline
-            {
-                continue;
+            if schedule.offering_end > cutoff_ts {
+                create_worldwide_day_for_date(ctx, wwd)?;
             }
-            create_worldwide_day_for_date(ctx, wwd)?;
         }
+        wwd_ts = wwd_ts.saturating_add(SECONDS_PER_DAY);
     }
     Ok(())
 }
 
-pub fn advance_active_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-    let now = ctx.block.timestamp;
-
-    for current in aggregate.active_records() {
-        advance_single_worldwide_day(ctx, current, now)?;
-    }
-    Ok(())
-}
-
-/// Runs the complete `WorldwideDay` lifecycle step (closing expired days, creating
-/// catch-up and lookahead `WorldwideDay`s, and advancing forming/offering transitions).
-pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    validate_wwd_timestamp(ctx.block.timestamp)?;
-    advance_active_worldwide_days(ctx)?;
-    create_lookahead_days(ctx, ctx.block.timestamp)?;
-    advance_active_worldwide_days(ctx)
-}
-
-/// Command-bound entry point for `advance_worldwide_days` used by `outbe-cycle`.
+/// Command-bound entry point for `advance_worldwide_days` used by `outbe-cycle` during `ProtocolCycle`.
 pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    let binding = metadosis_advance_due_binding(
-        ctx.block.chain_id,
-        ctx.block.block_number,
-        ctx.block.timestamp,
-    );
+    run_with_wwd_mutation_binding(
+        ctx,
+        metadosis_advance_due_binding(
+            ctx.block.chain_id,
+            ctx.block.block_number,
+            ctx.block.timestamp,
+        ),
+    )
+}
+
+/// Command-bound entry point used by `CycleLifecycle::begin_block` at activation height.
+pub fn bootstrap_genesis_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    run_with_wwd_mutation_binding(
+        ctx,
+        metadosis_init_genesis_binding(
+            ctx.block.chain_id,
+            ctx.block.block_number,
+            ctx.block.timestamp,
+        ),
+    )
+}
+
+fn run_with_wwd_mutation_binding(
+    ctx: &BlockRuntimeContext<'_>,
+    binding: alloy_primitives::B256,
+) -> Result<()> {
     let command_storage = ctx.storage.clone();
     ctx.storage
         .clone()
@@ -175,29 +219,6 @@ pub fn advance_worldwide_days_command(ctx: &BlockRuntimeContext<'_>) -> Result<(
             ValidatedWwdAggregate::load_and_validate(command_storage)?;
             Ok(())
         })
-}
-
-fn advance_single_worldwide_day(
-    ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
-    now: u64,
-) -> Result<()> {
-    let wwd = current.worldwide_day;
-    verify_emission_day_link(&ctx.storage, current.day, wwd)?;
-
-    let has_forming_vwap = if now >= current.forming_end {
-        snapshot_forming_vwap(ctx, current)?
-    } else {
-        false
-    };
-
-    let mut factory = TributeFactoryContract::new(ctx.storage.clone());
-    if now >= current.offering_end {
-        close_worldwide_day(&mut factory, wwd)?;
-    } else if now >= current.offerings_start && has_forming_vwap {
-        activate_worldwide_day(&mut factory, wwd)?;
-    }
-    Ok(())
 }
 
 fn verify_emission_day_link(
@@ -219,7 +240,10 @@ fn verify_emission_day_link(
     Ok(())
 }
 
-fn snapshot_forming_vwap(ctx: &BlockRuntimeContext<'_>, current: &WwdProjection) -> Result<bool> {
+pub fn snapshot_forming_vwap(
+    ctx: &BlockRuntimeContext<'_>,
+    current: &WwdProjection,
+) -> Result<bool> {
     let wwd = current.worldwide_day;
     let factory = TributeFactoryContract::new(ctx.storage.clone());
     if factory.forming_snapshot_finalized.read(&wwd)? {

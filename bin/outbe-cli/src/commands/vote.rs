@@ -29,7 +29,7 @@ pub enum VoteCmd {
         #[arg(long, value_name = "PATH", conflicts_with = "payload")]
         payload_file: Option<PathBuf>,
     },
-    /// Cast a vote on a pending proposal (active validator only).
+    /// Cast a ballot or change your Yes to No while voting is open (active validator only).
     Cast {
         /// Proposal id.
         #[arg(long)]
@@ -37,7 +37,7 @@ pub enum VoteCmd {
         /// Vote yes.
         #[arg(long, group = "vote")]
         yes: bool,
-        /// Vote no.
+        /// Vote no, including changing your previous yes to no.
         #[arg(long, group = "vote")]
         no: bool,
     },

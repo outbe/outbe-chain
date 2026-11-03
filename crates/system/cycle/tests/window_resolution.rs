@@ -92,7 +92,7 @@ impl AccountingProgressView for StubProgress {
 //     (`phase1_receipt_index_0_before_cycle_tick`,
 //     `phase1_reordering_preserves_body_receipt_order`) asserts that Phase 1
 //     owns body_index 0 and CycleTick owns body_index 1. It uses the real
-//     `expected_begin_block_kinds` / `SystemTxPhase` routing API that drives the
+//     `expected_begin_block_selectors` / `SystemTxPhase` routing API that drives the
 //     executor.
 //   * Gate DEPENDENCY - the behavioral tests below prove that the Cycle gate
 //     reads `last_accounted_block_number` and runs only after the parent is

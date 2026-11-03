@@ -7797,12 +7797,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "outbe-agentreward",
+ "outbe-emission",
  "outbe-evm",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-rewards",
  "reth-ethereum",
  "revm",
  "thiserror 2.0.18",
@@ -8047,7 +8049,6 @@ dependencies = [
  "alloy-sol-types",
  "outbe-agentreward",
  "outbe-ccaregistry",
- "outbe-chain-constants",
  "outbe-credisfactory",
  "outbe-desis",
  "outbe-emission",
@@ -8062,6 +8063,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-rewards",
+ "outbe-tribute",
  "outbe-tributefactory",
  "outbe-validatorset",
  "proptest",
@@ -8264,7 +8266,6 @@ dependencies = [
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-genesis-cli",
- "outbe-governance",
  "outbe-gratis",
  "outbe-gratisfactory",
  "outbe-hyperlanecontroller",
@@ -8436,23 +8437,6 @@ dependencies = [
  "toml 0.8.23",
  "walkdir",
  "yaml_serde",
-]
-
-[[package]]
-name = "outbe-governance"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "outbe-evm",
- "outbe-macros",
- "outbe-primitives",
- "outbe-validatorset",
- "outbe-vote",
- "serde",
- "serde_json",
- "similar",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -9346,7 +9330,6 @@ dependencies = [
  "alloy-consensus",
  "alloy-primitives",
  "alloy-sol-types",
- "outbe-chain-constants",
  "outbe-emission",
  "outbe-fidelity",
  "outbe-lysis",
@@ -9390,6 +9373,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-rewards",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-tribute",
@@ -9487,6 +9471,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-ccaregistry",
  "outbe-chain-constants",
+ "outbe-credis",
  "outbe-evm",
  "outbe-macros",
  "outbe-oracle",
@@ -15121,12 +15106,6 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
-
-[[package]]
-name = "similar"
-version = "2.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "simple_asn1"

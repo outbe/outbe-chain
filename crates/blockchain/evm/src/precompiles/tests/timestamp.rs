@@ -48,9 +48,7 @@ fn inputs(address: Address, value: U256, gas_limit: u64, data: Bytes) -> CallInp
 
 #[test]
 fn wide_timestamp_dispatch_reverts_before_value_admission_or_mutation_authority() {
-    let cycle_data = crate::system_tx::SystemTxInputV2::CycleTick
-        .encode()
-        .unwrap();
+    let cycle_data = crate::system_tx::SystemTx::CycleTick.encode().unwrap();
     for timestamp in [U256::from(u64::MAX) + U256::from(1), U256::MAX] {
         for (address, value, data) in [
             (GRATIS_ADDRESS, U256::from(7), Bytes::new()),

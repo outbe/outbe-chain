@@ -17,7 +17,7 @@ use crate::features::entity_lifecycle::chain::{
 use crate::features::entity_lifecycle::entity::{Item, Lifecycle, Phase, Target, Terms};
 use crate::features::entity_lifecycle::holders::{self, FORFEITED, HOLDERS, UNPAID_AT_CALL};
 use crate::features::entity_lifecycle::markets::MYR_ISO;
-use crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS;
+use crate::features::entity_lifecycle::phases::{backdated_timestamp, CALL_WINDOW_SEED_DAYS};
 use crate::features::entity_lifecycle::redeem::{self, mint_authorization, Ledger, Mined};
 use crate::features::settlement::{assert_mined_success, find_mining_pow_nonce};
 use crate::internal::{addresses, eth};
@@ -103,8 +103,10 @@ fn issue_five_nods(world: &mut World) {
     let worldwide_day = outbe_primitives::time::WorldwideDay::new(day);
     // The call counts only days after the group's stamp: stamp it behind every day
     // the scenario seeds.
-    let issued_at =
-        head_time(world).saturating_sub((u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY);
+    let issued_at = backdated_timestamp(
+        world,
+        (u64::from(CALL_WINDOW_SEED_DAYS) + 1) * SECONDS_PER_DAY,
+    );
     let mut nods = Vec::with_capacity(HOLDERS);
     let mut shared_load = None;
     for (index, key) in keys.iter().enumerate().take(HOLDERS) {
@@ -297,7 +299,7 @@ impl Lifecycle for NodLifecycle {
             DEPLOYER_KEY,
             &INodFactoryTestArming::closeCallNoticeForTestCall {
                 groupKey: called.groupKey,
-                deadline: head_time(world).saturating_sub(EXPIRY_DAY_SECS),
+                deadline: backdated_timestamp(world, EXPIRY_DAY_SECS),
             },
             None,
         )
@@ -316,21 +318,25 @@ impl Lifecycle for NodLifecycle {
             .pool_before_forfeit
             .expect("the pool was read before the notice lapsed");
         let height = finalized_checkpoint(world).height;
-        let (captured_height, captured_id, group) = world
+        let (captured_height, captured_id, _group) = world
             .state
             .entity_lifecycle
             .nod_before_forfeit
             .expect("the Nod group captured before the notice lapsed");
         assert_eq!((captured_height, captured_id), (from, id));
+        let surviving = read_nod(world, nod(world, 0));
         assert_single_event(
             &url,
             addresses::NOD_ADDR,
             from,
             height,
-            eth::INod::NodGroupForfeited {
-                groupKey: group,
-                nods: 1,
-                gratisLoadMinor: load,
+            eth::INod::NodSeriesClosed {
+                seriesId: surviving.seriesId,
+                issuanceCurrency: surviving.issuanceCurrency,
+                referenceCurrency: surviving.referenceCurrency,
+                forfeitedCount: 1,
+                forfeitedTributeCount: 0,
+                forfeitedAmountMinor: load,
             },
         );
         assert_eq!(

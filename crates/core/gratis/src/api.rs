@@ -5,7 +5,9 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_tee::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
+pub use outbe_tee::protocol::{
+    FidelityOpOutcome, FidelityOpSection, MineGratisFromPromisResultV1, ModifyAuth,
+};
 
 use crate::runtime;
 use crate::schema::Gratis;
@@ -36,6 +38,7 @@ pub fn pledged_total_supply(storage: StorageHandle<'_>) -> Result<U256> {
 // --- Owner-authorized mutations ---
 
 /// Mint `amount` gratis to `caller`.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -110,4 +113,20 @@ pub fn mint_encrypted_nod(
     fidelity: FidelityOpSection,
 ) -> Result<FidelityOpOutcome> {
     runtime::mint_encrypted_nod(storage, nod, auth, fidelity)
+}
+
+/// Validate that `provided` matches `account`'s current Gratis modify-auth replay counter.
+pub fn check_op_nonce(storage: &StorageHandle<'_>, account: Address, provided: u64) -> Result<()> {
+    runtime::check_account_op_nonce(storage, account, provided)
+}
+
+/// Persist the Gratis state transition and emit `GratisMinedFromPromis` from a combined
+/// Promis->Gratis enclave operation. Returns the fidelity outcome for the caller to persist.
+pub fn apply_mined_from_promis(
+    storage: &StorageHandle<'_>,
+    account: Address,
+    op_nonce: u64,
+    result: &MineGratisFromPromisResultV1,
+) -> Result<FidelityOpOutcome> {
+    runtime::apply_mined_from_promis(storage, account, op_nonce, result)
 }

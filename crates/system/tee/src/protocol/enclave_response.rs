@@ -6,8 +6,8 @@ use super::enclave_request::EnclaveRequest;
 use super::{
     EncryptedTributeOffer, FidelityCohortRequest, FidelityCohortResult, FidelityLeagueEntry,
     FidelityQueryRequest, FidelityQueryResult, FidelitySnapshotRequest, GratisOpRequest,
-    GratisOpResult, Ledger, ParticipantAnnounce, PromisOpRequest, PromisOpResult,
-    TributeOfferResult,
+    GratisOpResult, Ledger, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
+    ParticipantAnnounce, PromisOpRequest, PromisOpResult, TributeOfferResult,
 };
 
 /// Self-observed enclave health snapshot returned by [`EnclaveRequest::Health`].
@@ -525,6 +525,9 @@ pub enum EnclaveResponse {
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
     },
+    GratisMinedFromPromisV1 {
+        result: Box<MineGratisFromPromisResultV1>,
+    },
 }
 
 impl core::fmt::Debug for EnclaveResponse {
@@ -694,6 +697,46 @@ pub fn promis_op_attestation_preimage(
     let result_json = serde_json::to_vec(&probe)?;
     let mut buf = Vec::with_capacity(31 + 32 + 4 + result_json.len());
     buf.extend_from_slice(b"outbe/tee/promis-attestation/v1");
+    buf.extend_from_slice(inputs_canonical_hash.as_slice());
+    buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
+    buf.extend_from_slice(&result_json);
+    Ok(buf)
+}
+
+/// Deterministic hash over the canonical inputs of [`MineGratisFromPromisRequestV1`].
+pub fn mine_gratis_from_promis_canonical_hash(req: &MineGratisFromPromisRequestV1) -> B256 {
+    fn push_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+        buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+        buf.extend_from_slice(b);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    buf.extend_from_slice(req.chain_id.as_slice());
+    buf.extend_from_slice(req.account.as_slice());
+    push_bytes(&mut buf, &req.encrypted_promis_amount);
+    push_bytes(&mut buf, &req.current_promis_balance);
+    buf.extend_from_slice(&req.promis_modify_auth.mac);
+    buf.extend_from_slice(&req.promis_modify_auth.op_nonce.to_be_bytes());
+    push_bytes(&mut buf, &req.current_gratis_balance);
+    buf.extend_from_slice(&req.gratis_modify_auth.mac);
+    buf.extend_from_slice(&req.gratis_modify_auth.op_nonce.to_be_bytes());
+    buf.push(req.fidelity.op as u8);
+    buf.extend_from_slice(&req.fidelity.timestamp.to_be_bytes());
+    buf.extend_from_slice(&req.fidelity.first_qualified_start.to_be_bytes());
+    push_bytes(&mut buf, &req.fidelity.current_blob);
+    alloy_primitives::keccak256(buf)
+}
+
+/// Domain-separated attestation preimage for [`MineGratisFromPromisResultV1`].
+pub fn mine_gratis_from_promis_attestation_preimage(
+    inputs_canonical_hash: B256,
+    result: &MineGratisFromPromisResultV1,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let mut probe = result.clone();
+    probe.attestation_tag = Vec::new();
+    let result_json = serde_json::to_vec(&probe)?;
+    let tag = b"outbe/tee/mine-gratis-from-promis-attestation/v1";
+    let mut buf = Vec::with_capacity(tag.len() + 32 + 4 + result_json.len());
+    buf.extend_from_slice(tag);
     buf.extend_from_slice(inputs_canonical_hash.as_slice());
     buf.extend_from_slice(&(result_json.len() as u32).to_be_bytes());
     buf.extend_from_slice(&result_json);

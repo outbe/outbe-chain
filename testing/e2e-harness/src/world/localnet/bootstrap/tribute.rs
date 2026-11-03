@@ -1161,7 +1161,10 @@ mod tests {
                                 .with_genesis_timestamp(timestamp),
                             storage.clone(),
                         );
-                        outbe_metadosis::commands::advance_active_worldwide_days(&context).unwrap();
+                        outbe_tributefactory::worldwideday::advance_worldwide_days_command(
+                            &context,
+                        )
+                        .unwrap();
                         let due = outbe_metadosis::commands::find_due_emission_day(&context)
                             .unwrap()
                             .map(outbe_metadosis::EmissionDayProjection::from);

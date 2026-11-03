@@ -10,6 +10,9 @@ pub(super) fn dispatch(req: EnclaveRequest, context: RequestContext<'_>) -> Encl
         EnclaveRequest::SnapshotFidelityLeagues { request } => snapshot_fidelity(context, request),
         EnclaveRequest::QueryFidelityIndex { request } => query_fidelity(context, request),
         EnclaveRequest::ApplyPromisOp { request } => apply_promis(context, request),
+        EnclaveRequest::MineGratisFromPromisV1 { request } => {
+            mine_gratis_from_promis(context, request)
+        }
         EnclaveRequest::DeriveAccountKeys {
             ledger,
             account,
@@ -235,6 +238,70 @@ fn apply_promis(
     };
     result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
     EnclaveResponse::PromisOpApplied {
+        result: Box::new(result),
+    }
+}
+
+fn mine_gratis_from_promis(
+    context: RequestContext<'_>,
+    request: Box<outbe_tee::protocol::MineGratisFromPromisRequestV1>,
+) -> EnclaveResponse {
+    let RequestContext {
+        keys,
+        offer_key,
+        chain_id,
+        ..
+    } = context;
+    let Some(derived) = offer_key.get() else {
+        return EnclaveResponse::Error {
+            message: "MineGratisFromPromisV1: no resident group key (DKG not complete)".to_string(),
+        };
+    };
+    let promis_state_key =
+        match crate::promis::derive_promis_state_key(derived.group_sig(), chain_id, 0) {
+            Ok(k) => k,
+            Err(e) => {
+                return EnclaveResponse::Error {
+                    message: e.to_string(),
+                }
+            }
+        };
+    let gratis_state_key =
+        match crate::gratis::derive_gratis_state_key(derived.group_sig(), chain_id, 0) {
+            Ok(k) => k,
+            Err(e) => {
+                return EnclaveResponse::Error {
+                    message: e.to_string(),
+                }
+            }
+        };
+    let fidelity_state_key =
+        match crate::fidelity::derive_fidelity_state_key(derived.group_sig(), chain_id, 0) {
+            Ok(k) => k,
+            Err(e) => {
+                return EnclaveResponse::Error {
+                    message: e.to_string(),
+                }
+            }
+        };
+    let mut result = crate::promis::apply_mine_gratis(
+        crate::promis::MineGratisKeys {
+            offer_secret: derived.secret(),
+            promis_state_key: &promis_state_key,
+            gratis_state_key: &gratis_state_key,
+            fidelity_state_key: &fidelity_state_key,
+        },
+        &request,
+    );
+    let preimage = match outbe_tee::protocol::mine_gratis_from_promis_attestation_preimage(
+        result.inputs_canonical_hash,
+        &result,
+    ) {
+        Ok(preimage) => preimage,
+        Err(error) => return into_response(Err(crate::errors::TeeError::from(error))),
+    };
+    result.attestation_tag = keys.sign_attestation(&preimage).to_vec();
+    EnclaveResponse::GratisMinedFromPromisV1 {
         result: Box::new(result),
     }
 }

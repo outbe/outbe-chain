@@ -60,9 +60,6 @@ enum Commands {
         /// Directory containing contract code/state files referenced from `seed["contracts"]`.
         #[arg(long)]
         contracts_dir: Option<PathBuf>,
-        /// Directory holding `metacanon.md` and `canon.md` to seed into the Governance precompile.
-        #[arg(long)]
-        canon_dir: Option<PathBuf>,
         /// Override the seeded active worldwide-day (`YYYYMMDD`).
         #[arg(long)]
         worldwide_day: Option<u32>,
@@ -90,7 +87,6 @@ fn main() -> ExitCode {
             validators,
             output,
             contracts_dir,
-            canon_dir,
             worldwide_day,
             fresh_metadosis,
             min_stake,
@@ -101,7 +97,6 @@ fn main() -> ExitCode {
                 validators,
                 output,
                 contracts_dir,
-                canon_dir,
                 worldwide_day,
                 fresh_metadosis,
             },

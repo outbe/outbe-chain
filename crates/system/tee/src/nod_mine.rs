@@ -25,6 +25,7 @@ pub struct MineEncryptedNodResultV1 {
     pub fidelity: FidelityOpOutcome,
     pub inputs_canonical_hash: B256,
     pub attestation_tag: Vec<u8>,
+    pub encrypted_event_amount: Vec<u8>,
 }
 pub fn inputs_hash(request: &MineEncryptedNodRequestV1) -> Result<B256, serde_json::Error> {
     crate::response_auth::hash(b"outbe/nod/mine-inputs/v1", request)

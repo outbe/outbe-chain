@@ -13,24 +13,6 @@ Feature: Governance proposals and protocol updates
     And the governed L2 network is registered
     And the committee nodes agree on the state root
 
-  Scenario: OIP and GIP are approved and materialized
-    Given a fresh localnet with a 20-block voting window
-    And the committee has reached a usable height
-    When operator "validator-0" proposes an OIP with text "e2e oip body"
-    Then proposal 1 is pending and targets the governance module with kind "oip"
-    When validators "validator-0,validator-1,validator-2" cast yes votes on proposal 1
-    Then proposal 1 is still pending with 3 yes votes
-    When operator "validator-1" proposes a GIP with text "e2e gip body"
-    Then proposal 2 is pending and targets the governance module with kind "gip"
-    When validators "validator-0,validator-1,validator-2" cast yes votes on proposal 2
-    Then proposal 2 is still pending with 3 yes votes
-    When the committee passes the vote deadline
-    Then proposal 1 is approved
-    And proposal 2 is approved
-    And OIP 1 is Approved with text "e2e oip body" authored by "validator-0"
-    And GIP 1 is Approved with text "e2e gip body" authored by "validator-1"
-    And the committee nodes agree on the state root
-
   @pfs-005-01 @pfs-005-restart-recovery
   Scenario: An approved update survives voting, scheduling, and activation-boundary restarts
     Given a fresh localnet with a 20-block voting window

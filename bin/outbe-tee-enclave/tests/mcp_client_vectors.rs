@@ -126,8 +126,10 @@ fn mcp_modify_macs_match_the_enclave() {
 fn mcp_opens_the_balances_the_enclave_writes() {
     use outbe_tee::gratis_decrypt::decrypt_gratis_balance;
     use outbe_tee::promis_decrypt::decrypt_promis_balance;
-    use outbe_tee_enclave::gratis_cipher::{
-        read_amount, read_promis_amount, write_amount, write_promis_amount, BalanceTransition,
+    use outbe_tee_enclave::{
+        confidential::BalanceTransition,
+        gratis_cipher::{read_amount, write_amount},
+        promis_cipher::{read_amount as read_promis_amount, write_amount as write_promis_amount},
     };
 
     let all = vectors();

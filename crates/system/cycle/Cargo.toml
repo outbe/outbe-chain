@@ -9,7 +9,6 @@ publish.workspace = true
 e2e-test = []
 
 [dependencies]
-outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-emission.workspace = true
@@ -30,6 +29,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-gem.workspace = true
+outbe-tribute.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-ccaregistry.workspace = true
 proptest.workspace = true

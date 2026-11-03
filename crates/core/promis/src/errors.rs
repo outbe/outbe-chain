@@ -14,6 +14,8 @@ pub enum PromisError {
     InvalidOpNonce { expected: u64, provided: u64 },
     #[error("{0}")]
     Rejected(String),
+    #[error("promis is non-transferable")]
+    TransferNotAllowed,
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -28,6 +30,7 @@ impl From<PromisError> for PrecompileError {
                 revert_with(I::InvalidOpNonce { expected, provided })
             }
             PromisError::Rejected(value) => revert_with(I::Rejected { value }),
+            PromisError::TransferNotAllowed => revert_with(I::TransferNotAllowed {}),
         }
     }
 }
@@ -47,10 +50,6 @@ pub enum PromisFatalError {
     EnclaveNondeterminism,
     #[error("tee_promis_attestation_invalid: {0}")]
     AttestationInvalid(String),
-    #[error("promis total_supply overflow")]
-    TotalSupplyOverflow,
-    #[error("promis total_supply underflow")]
-    TotalSupplyUnderflow,
     #[error("owner movement result mismatch")]
     OwnerResultMismatch,
     #[error("enclave returned a wrong op nonce")]
@@ -79,10 +78,9 @@ impl From<PromisFatalError> for PrecompileError {
             | PromisFatalError::AttestationInvalid(_) => {
                 PrecompileError::EnclaveUnavailable(message)
             }
-            PromisFatalError::TotalSupplyOverflow
-            | PromisFatalError::TotalSupplyUnderflow
-            | PromisFatalError::OwnerResultMismatch
-            | PromisFatalError::WrongOpNonce => PrecompileError::Revert(message),
+            PromisFatalError::OwnerResultMismatch | PromisFatalError::WrongOpNonce => {
+                PrecompileError::Revert(message)
+            }
         }
     }
 }

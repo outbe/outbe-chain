@@ -9,6 +9,7 @@ publish.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
+outbe-credis.workspace = true
 outbe-oracle.workspace = true
 outbe-vote.workspace = true
 outbe-chain-constants.workspace = true

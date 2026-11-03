@@ -9,13 +9,12 @@ pub(crate) mod queries;
 pub mod schema;
 
 pub use aggregate::{
-    activate_worldwide_day, close_worldwide_day, create_worldwide_day, remove_active_worldwide_day,
-    NewWwdSchedule, ValidatedWwdAggregate, WwdProjection,
+    close_worldwide_day, create_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate, WwdProjection,
 };
 pub use api::{is_offering_day, offering_worldwide_days, worldwide_day, worldwide_days};
 pub use lifecycle::{
-    advance_active_worldwide_days, advance_worldwide_days, advance_worldwide_days_command,
-    compute_wwd_schedule, create_lookahead_days, create_worldwide_day_for_date,
-    first_wwd_for_genesis, init_genesis_day, validate_wwd_timestamp,
+    advance_worldwide_days, advance_worldwide_days_command,
+    bootstrap_genesis_worldwide_days_command, compute_wwd_schedule, create_worldwide_day_for_date,
+    first_wwd_for_genesis, snapshot_forming_vwap, validate_wwd_timestamp,
 };
-pub use schema::{wwd_state, WorldwideDay as WorldwideDayRecord, WorldwideDayEntryExt};
+pub use schema::{WorldwideDay as WorldwideDayRecord, WorldwideDayEntryExt};

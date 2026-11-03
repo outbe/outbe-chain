@@ -14,6 +14,8 @@ use crate::world::localnet::StartOpts;
 use crate::world::World;
 
 pub(crate) const HOURLY_PRICING_ORACLE_PERIOD: u64 = 8;
+/// Covers 552 one-hour timestamp steps, including co-located SGX consensus timing.
+pub(crate) const LIFECYCLE_CATCHUP_TIMEOUT: Duration = Duration::from_secs(18_000);
 
 /// Budget a bounded test wait from the executed consensus settings.
 pub(crate) fn consensus_block_wait_budget(
@@ -216,6 +218,14 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .shift_genesis_timestamp(offset)
             .expect("shift debug genesis timestamp with node clock");
     }
+    if world.state.historical_factory_lifecycle && world.state.lifecycle_catchup_timestamp.is_none()
+    {
+        world.state.lifecycle_catchup_timestamp = Some(
+            world.localnet.prepare_lifecycle_history(
+                crate::features::entity_lifecycle::phases::CALL_WINDOW_SEED_DAYS,
+            ).expect("prepare historical factory lifecycle header after fixtures and before TEE binding"),
+        );
+    }
     world
         .localnet
         .bind_tee_genesis()
@@ -232,8 +242,44 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
             .expect("observe mandatory TeeRegistry bootstrap state"),
         "mandatory TEE chain did not bootstrap"
     );
+    if let Some(target) = world.state.lifecycle_catchup_timestamp {
+        wait_for_lifecycle_history(world, target);
+    }
     if crate::features::entity_lifecycle::markets::genesis_oracle_pairs(world).is_some() {
         assert_hourly_pricing_period(world);
+    }
+}
+
+fn wait_for_lifecycle_history(world: &mut World, target: u64) {
+    let deadline = std::time::Instant::now() + LIFECYCLE_CATCHUP_TIMEOUT;
+    let ports = world.validators.committee_ports();
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("committee must stay alive during historical lifecycle timestamp catch-up");
+        let observed: Vec<_> = ports
+            .iter()
+            .map(|&port| {
+                let clock = world.rpc.finalized(port).and_then(|height| {
+                    world
+                        .rpc
+                        .block_timestamp(port, height)
+                        .map(|timestamp| (height, timestamp))
+                });
+                (port, clock)
+            })
+            .collect();
+        if observed
+            .iter()
+            .all(|(_, clock)| clock.is_some_and(|(_, timestamp)| timestamp >= target))
+        {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline,
+            "historical lifecycle finalized timestamp catch-up timed out after {:?}: target={target}, finalized (port, height/time)={observed:?}; height-only readiness is insufficient",
+            LIFECYCLE_CATCHUP_TIMEOUT);
+        sleep(Duration::from_secs(1));
     }
 }
 

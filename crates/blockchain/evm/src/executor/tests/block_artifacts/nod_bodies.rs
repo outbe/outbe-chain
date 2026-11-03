@@ -48,7 +48,7 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
             .iter()
             .any(|receipt| receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })),
         "fixture must forfeit a Nod during the block"
     );
@@ -100,8 +100,8 @@ fn execute_nod_block(
     let mut cycle_internal_gas = None;
     for tx in system_txs {
         let is_cycle = matches!(
-            SystemTxInputV2::decode(tx.tx().input().as_ref()).unwrap(),
-            SystemTxInputV2::CycleTick
+            SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
+            SystemTx::CycleTick
         );
         let internal_before = executor.system_tx_execution_gas;
         let result = executor.execute_transaction(tx);
@@ -115,8 +115,7 @@ fn execute_nod_block(
         if is_cycle {
             let internal_gas = executor.system_tx_execution_gas - internal_before;
             let intrinsic =
-                system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref())
-                    .unwrap();
+                system_tx_intrinsic_gas(SystemTx::CycleTick.encode().unwrap().as_ref()).unwrap();
             assert!(
                 internal_gas > intrinsic,
                 "CycleTick storage work must consume internal gas beyond intrinsic gas"
@@ -206,7 +205,7 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodGroupForfeited::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })
         })
         .expect("CycleTick body mutation receipt");
@@ -217,7 +216,7 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .cumulative_gas_used
         .saturating_sub(previous_cumulative);
     let cycle_intrinsic_gas =
-        system_tx_intrinsic_gas(SystemTxInputV2::CycleTick.encode().unwrap().as_ref()).unwrap();
+        system_tx_intrinsic_gas(SystemTx::CycleTick.encode().unwrap().as_ref()).unwrap();
     assert_eq!(
         body_receipt_gas, cycle_intrinsic_gas,
         "native storage work uses the internal budget"

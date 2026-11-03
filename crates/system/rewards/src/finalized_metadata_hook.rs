@@ -171,20 +171,28 @@ pub(crate) fn record_reward_participation(
             return Err(RewardsError::ParticipationAfterDayClosed.into());
         }
         let prev_count = day_participation.read(&voter)?;
+        let next_count = prev_count
+            .checked_add(1)
+            .ok_or(RewardsError::DailyParticipationOverflow)?;
+        let next_total = rewards
+            .daily_total_participation
+            .read(&fb_day)?
+            .checked_add(U256::from(1))
+            .ok_or(RewardsError::DailyTotalParticipationOverflow)?;
         if prev_count == 0 {
             // First time we see this voter for this day -> append to
             // the deterministic ordered voter list.
             let idx = rewards.daily_voter_count.read(&fb_day)?;
-            day_voter_at.write(&idx, voter)?;
             let next_idx = idx
                 .checked_add(1)
                 .ok_or(RewardsError::DailyVoterCountOverflow)?;
+            day_voter_at.write(&idx, voter)?;
             rewards.daily_voter_count.write(&fb_day, next_idx)?;
         }
-        let next_count = prev_count
-            .checked_add(1)
-            .ok_or(RewardsError::DailyParticipationOverflow)?;
         day_participation.write(&voter, next_count)?;
+        rewards
+            .daily_total_participation
+            .write(&fb_day, next_total)?;
 
         participation_guard.write(&voter, true)?;
     }
@@ -231,6 +239,14 @@ mod tests {
             crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_Y, 1).unwrap();
             crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_Y, 2).unwrap();
             crate::late_settlement::record_late_credit(&ctx, FB_HASH_A, VAL_X, 1).unwrap();
+            assert_eq!(
+                ctx.storage
+                    .contract::<Rewards>()
+                    .daily_total_participation
+                    .read(&20240101)
+                    .unwrap(),
+                U256::from(2)
+            );
             assert_eq!(
                 crate::api::read_voters_for_day(&ctx, 20240101).unwrap(),
                 vec![(VAL_X, 1), (VAL_Y, 1)]

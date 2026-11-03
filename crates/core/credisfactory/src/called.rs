@@ -2,10 +2,10 @@
 //! VWAPs. The Cycle daily trigger schedules the closed UTC day, and every CycleTick
 //! walks a slice of it.
 //!
-//! A group of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
+//! A series of Credis moves `Issued -> Called` when the COEN price in its REFERENCE
 //! currency sat strictly above its call price on `call_threshold_seconds` of the
-//! trailing `call_window_seconds`, counted from the group's first full day. Both terms
-//! are sealed onto the group by its first member. The issuance currency a Credis is
+//! trailing `call_window_seconds`, counted from the series's first full day. Both terms
+//! are sealed onto the series by its first member. The issuance currency a Credis is
 //! denominated in never enters the threshold.
 //!
 //! The breach rule needs no per-group streak state. The daily series is
@@ -13,7 +13,7 @@
 //! every group anchored to it. Every run recomputes the count from oracle
 //! history and does not carry it. Mirrors the Gem, Intex and Nod call sweeps.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use alloy_sol_types::SolEvent;
 
 use outbe_credis::config::CredisParams;
@@ -30,6 +30,7 @@ use outbe_primitives::{
     day_pass::{PinnedDay, Progress},
     error::Result,
     pass_budget::PassBudget,
+    series_id::SeriesId,
     storage::{dsl::Value, StorageHandle},
 };
 
@@ -38,19 +39,14 @@ pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
     call_pass::schedule(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function initializes the first eligible daily pass from the chain initialization day.
-pub fn initialize_daily(ctx: &BlockRuntimeContext) -> Result<()> {
-    call_pass::initialize(ctx, &mut CredisCallPass::new(ctx))
-}
-
 /// Schedules the closed day and walks a slice of the day in flight. Returns the
-/// groups called.
+/// series called.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
-/// The return value counts called groups, not forfeited groups or deleted members.
+/// This function runs calls, series forfeits, and cleanup that moves value in pinned-day order.
+/// The return value counts called series, not forfeited series or deleted members.
 pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
@@ -76,9 +72,6 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
     }
     fn block_budget(&self) -> &Value<'storage, U256> {
         &self.credis.daily_budget
-    }
-    fn genesis_day(&self) -> &Value<'storage, u32> {
-        &self.credis.daily_genesis_day
     }
 
     fn forfeit(
@@ -156,7 +149,7 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
                 )
             },
         )?;
-        // A group holds Credis of any id, so a call refreshes the whole range.
+        // A series holds Credis of any id, so a call refreshes the whole range.
         if called != 0 {
             self.credis.emit(ICredis::BatchMetadataUpdate {
                 _fromTokenId: U256::ZERO,
@@ -171,32 +164,36 @@ pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-/// Calls a group whose breach window filled. Returns whether it was called.
+/// Calls a series whose breach window filled. Returns whether it was called.
 fn call_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
-    group: B256,
+    series: SeriesId,
     now: u64,
 ) -> Result<bool> {
-    if !window.breached(&breach_terms(credis, group)?) {
+    if !window.breached(&breach_terms(credis, series)?) {
         return Ok(false);
     }
-    let deadline = credis.record_group_called(group, now)?;
-    credis.emit(ICredis::CredisGroupCalled {
-        groupKey: group,
+    let deadline = credis.record_series_called(series, now)?;
+    let issuance_currency = credis.series_issuance_currency.read(&series)?;
+    let reference_currency = credis.series_currency.read(&series)?;
+    credis.emit(ICredis::CredisSeriesCalled {
+        seriesId: series.into(),
+        issuanceCurrency: issuance_currency,
+        referenceCurrency: reference_currency,
         calledAt: now,
         settlementDeadline: deadline,
     })?;
     Ok(true)
 }
 
-/// The terms a group is decided on: the ones its first Credis sealed.
-pub(crate) fn breach_terms(credis: &CredisContract<'_>, group: B256) -> Result<BreachTerms> {
+/// The terms a series is decided on: the ones its first Credis sealed.
+pub(crate) fn breach_terms(credis: &CredisContract<'_>, series: SeriesId) -> Result<BreachTerms> {
     Ok(BreachTerms {
-        call_price: credis.group_call_price_minor.read(&group)?,
-        window_seconds: credis.group_call_window_seconds.read(&group)?,
-        threshold_seconds: credis.group_call_threshold_seconds.read(&group)?,
-        start_day: credis.group_full_day.read(&group)?,
+        call_price: credis.series_call_price_minor.read(&series)?,
+        window_seconds: credis.series_call_window_seconds.read(&series)?,
+        threshold_seconds: credis.series_call_threshold_seconds.read(&series)?,
+        start_day: credis.series_full_day.read(&series)?,
     })
 }
 

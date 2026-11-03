@@ -226,10 +226,10 @@ fn assert_native_issuance(
             eth::INodFactory::NodIssued::decode_raw_log(topics, &data).expect("native NodIssued");
         if issued.nodId == encrypted.terms.nod_id {
             assert_eq!(issued.owner, encrypted.terms.owner);
-            assert_eq!(
-                issued.encryptedGratisAmount.as_ref(),
-                encrypted.encrypted_gratis_amount
-            );
+            assert_eq!(issued.issuanceCurrency, encrypted.terms.issuance_currency);
+            assert_eq!(issued.referenceCurrency, encrypted.terms.reference_currency);
+            assert_eq!(issued.leagueId, encrypted.terms.league_id);
+            assert_eq!(issued.payload.as_ref(), encrypted.encrypted_gratis_amount);
             found += 1;
         }
     }

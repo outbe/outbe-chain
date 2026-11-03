@@ -51,7 +51,7 @@ pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &GemItemState,
     terms: Option<CallTerms>,
-) -> Result<()> {
+) -> Result<bool> {
     storage
         .with_checkpoint(|| GemContract::new(storage.clone()).record_gem_issued_state(item, terms))
 }
@@ -90,7 +90,7 @@ impl GemContract<'_> {
         &mut self,
         item: &GemItemState,
         call_terms: Option<CallTerms>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if item.owner.is_zero() {
             return Err(GemError::ZeroOwner.into());
         }
@@ -125,6 +125,7 @@ impl GemContract<'_> {
             }
         };
         self.add_unpaid_load(group_key, item.promis_load_minor)?;
+        let opened_new_sub_series = self.add_sub_series_unpaid(item)?;
 
         self.insert_group_member(group_key, item.gem_id)?;
         self.insert_state_record(item)?;
@@ -135,7 +136,8 @@ impl GemContract<'_> {
             from: Address::ZERO,
             to: item.owner,
             tokenId: item.gem_id,
-        })
+        })?;
+        Ok(opened_new_sub_series)
     }
 
     fn record_gem_settled_state(&mut self, item: LoadedGem, group: LoadedGemGroup) -> Result<()> {
@@ -151,6 +153,7 @@ impl GemContract<'_> {
             .ok_or(GemError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.gem_id)?;
         self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
+        self.take_sub_series_unpaid(&item)?;
         item.called_at = self.group_called_at.read(&item.group_key)?;
         item.settled_at = self.storage.now_secs()?;
         item.state = GemState::Settled as u8;
@@ -174,10 +177,12 @@ impl GemContract<'_> {
             self.group_gem_count.read(&item.group_key)?
         } else {
             self.take_unpaid_load(item.group_key, item.promis_load_minor)?;
+            self.take_sub_series_unpaid(&item)?;
             self.remove_group_member(item.group_key, item.gem_id)?
         };
         self.delete_state_record(item.gem_id)?;
-        if remaining == 0 && group.settled_gems == 0 {
+        let waiting = self.called_group_slot.read(&item.group_key)? != 0;
+        if remaining == 0 && group.settled_gems == 0 && !waiting {
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
         } else if item.is_settled() {

@@ -155,8 +155,7 @@ where
 
     fn begin_tx_bootstrap_attestation(&self, proposer: Address) -> Option<[u8; 32]> {
         for tx in &self.expected_begin_system_txs {
-            let Ok(SystemTxInputV2::TeeBootstrap { payload }) =
-                SystemTxInputV2::decode(tx.input().as_ref())
+            let Ok(SystemTx::TeeBootstrap { payload }) = SystemTx::decode(tx.input().as_ref())
             else {
                 continue;
             };

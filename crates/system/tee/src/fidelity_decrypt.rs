@@ -1,9 +1,7 @@
 //! Owner-local opening of the padded Fidelity cohort record with a view key.
 use crate::errors::LocalCryptoError;
-use crate::offer_encrypt::hkdf_sha256;
-use crate::owner_local_open::{open_local_ciphertext, LocalOpen};
+use crate::owner_local_open::{open_v2_envelope_blob, FIDELITY_V2_SPEC};
 use alloy_primitives::Address;
-use zeroize::Zeroizing;
 
 pub fn decrypt_fidelity_cohorts(
     view_key: &[u8; 32],
@@ -13,24 +11,9 @@ pub fn decrypt_fidelity_cohorts(
     if blob.is_empty() {
         return Ok(Vec::new());
     }
-    if blob.len() < 60 || &blob[8..12] != b"FID2" || blob[..8] == [0; 8] {
-        return Err(LocalCryptoError::InvalidFidelityCohortEnvelope);
-    }
-    let mut context = account.as_slice().to_vec();
-    context.extend_from_slice(&blob[..8]);
-    context.extend_from_slice(&blob[12..44]);
-    let key = Zeroizing::new(hkdf_sha256(
-        view_key,
-        &context,
-        b"outbe/fidelity/cohort-key/v2",
-    )?);
-    let opened = open_local_ciphertext(LocalOpen {
-        key: &key,
-        nonce_context: &context,
-        nonce_info: b"outbe/fidelity/cohort-nonce/v2",
-        ciphertext: &blob[44..],
-        invalid_key_error: LocalCryptoError::InvalidFidelityViewKey,
-        decryption_error: LocalCryptoError::FidelityCohortDecryptionFailed,
-    })?;
-    Ok(opened.as_slice().to_vec())
+    Ok(
+        open_v2_envelope_blob(view_key, account, &[], blob, FIDELITY_V2_SPEC)?
+            .as_slice()
+            .to_vec(),
+    )
 }

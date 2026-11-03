@@ -1,11 +1,10 @@
 //! Local record reads and active-index maintenance.
 use crate::{
-    constants::MAX_ACTIVE_CCAS,
     errors::CcaError,
     precompile::ICcaRegistry,
-    schema::{CcaContract, CcaRecord},
+    schema::{address_day_key, day_index_key, CcaContract, CcaRecord},
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 pub(crate) fn validate_state(state: ICcaRegistry::State) -> Result<ICcaRegistry::State> {
@@ -25,8 +24,8 @@ impl CcaContract<'_> {
     pub(crate) fn save(&mut self, record: &CcaRecord) -> Result<()> {
         if validate_state(record.state)? == ICcaRegistry::State::Active {
             // A top-up of an address already in the set does not take another slot.
-            if !self.active.contains(&record.cca)? && self.active.len()? >= MAX_ACTIVE_CCAS {
-                return Err(CcaError::ActiveSetFull.into());
+            if !self.active.contains(&record.cca)? && self.active.len()? == u32::MAX {
+                return Err(CcaError::Arithmetic.into());
             }
             self.active.insert(record.cca)?;
         } else {
@@ -37,5 +36,41 @@ impl CcaContract<'_> {
         } else {
             self.records.create(record)
         }
+    }
+
+    pub(crate) fn require_unsealed_day(&self, day: u32) -> Result<()> {
+        if self.has_sealed_day.read()? && day <= self.sealed_through_day.read()? {
+            return Err(CcaError::RewardDaySealed.into());
+        }
+        Ok(())
+    }
+
+    /// Called inside the issuance/forfeiture checkpoint, including first deficits.
+    pub(crate) fn update_day_weight(
+        &self,
+        cca: Address,
+        day: u32,
+        old: U256,
+        new: U256,
+        deficit: U256,
+    ) -> Result<()> {
+        let key = address_day_key(cca, day);
+        let total = self
+            .reward_day_total
+            .read(&day)?
+            .checked_sub(old)
+            .and_then(|value| value.checked_add(new))
+            .ok_or(CcaError::Arithmetic)?;
+        if (!new.is_zero() || !deficit.is_zero()) && !self.reward_day_members.read(&key)? {
+            let count = self.reward_day_count.read(&day)?;
+            let next = count.checked_add(1).ok_or(CcaError::Arithmetic)?;
+            self.reward_day_addresses
+                .write(&day_index_key(day, count), cca)?;
+            self.reward_day_members.write(&key, true)?;
+            self.reward_day_count.write(&day, next)?;
+        }
+        self.gratis_minor_per_utc_day.write(&key, new)?;
+        self.gratis_deficit_minor_per_utc_day.write(&key, deficit)?;
+        self.reward_day_total.write(&day, total)
     }
 }

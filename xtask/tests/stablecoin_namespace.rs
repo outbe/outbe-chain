@@ -112,7 +112,6 @@ fn complete_genesis_seeder_output_passes_xtask_validation() {
             worldwide_day: None,
             fresh_metadosis: false,
             contracts_dir: None,
-            canon_dir: None,
         },
     )
     .expect("outbe-genesis-cli seed failed");

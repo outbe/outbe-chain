@@ -254,8 +254,15 @@ fn report_output_preserves_existing_files_and_rejects_native_roots() {
     native_arguments(&mut command, &fixture);
     let output = run(&mut command);
     assert!(!output.status.success(), "{}", transcript(&output));
-    assert!(target.is_file());
-    let report: serde_json::Value = serde_json::from_slice(&fs::read(&target).unwrap()).unwrap();
+    let report_bytes = if cfg!(target_os = "linux") {
+        assert!(target.is_file(), "{}", transcript(&output));
+        fs::read(&target).unwrap()
+    } else {
+        assert!(!target.exists());
+        assert!(transcript(&output).contains("requires Linux openat2"));
+        output.stdout
+    };
+    let report: serde_json::Value = serde_json::from_slice(&report_bytes).unwrap();
     assert_eq!(status(&report, "provenance"), "incomplete");
     assert_eq!(fingerprint(&fixture.donor), before);
 }

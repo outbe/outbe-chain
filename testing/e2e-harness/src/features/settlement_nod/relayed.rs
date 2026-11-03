@@ -227,10 +227,12 @@ fn settle_nod(world: &mut World, scenario: &RelayedNod) -> PaidNod {
         &settled.receipt,
         addresses::NOD_FACTORY_ADDR,
         &eth::INodFactory::NodSettled {
-            owner: scenario.owner,
             nodId: scenario.id,
+            owner: scenario.owner,
             asset: scenario.asset,
-            paymentMinor: scenario.settlement_cost,
+            issuanceCurrency: scenario.body.issuanceCurrency,
+            referenceCurrency: scenario.body.referenceCurrency,
+            amountMinor: scenario.settlement_cost,
         },
     );
     for &peer in &scenario.ports {
@@ -651,14 +653,10 @@ fn assert_mining_receipt(
     mine: &eth::INodFactory::mineGratisCall,
 ) {
     assert_relay_transaction(world, minted, scenario.payer, &mine.abi_encode());
-    assert_receipt_event(
-        &minted.receipt,
-        addresses::NOD_FACTORY_ADDR,
-        &eth::INodFactory::NodMined {
-            owner: scenario.owner,
-            nodId: scenario.id,
-            encryptedGratisAmount: scenario.body.encryptedGratisAmount.clone(),
-        },
+    let burned = eth::receipt_event::<eth::INod::Transfer>(&minted.receipt, addresses::NOD_ADDR);
+    assert_eq!(
+        (burned.from, burned.to, burned.tokenId),
+        (scenario.owner, alloy_primitives::Address::ZERO, scenario.id)
     );
 }
 

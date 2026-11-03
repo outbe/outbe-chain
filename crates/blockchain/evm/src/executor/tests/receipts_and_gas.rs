@@ -162,20 +162,20 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         "legacy transaction body must RLP-encode as a list, not a typed envelope"
     );
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[0].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::CycleTick
+        SystemTx::decode(system_txs[0].tx().input().as_ref()).unwrap(),
+        SystemTx::CycleTick
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::TeeBootstrap { .. }
+        SystemTx::decode(system_txs[1].tx().input().as_ref()).unwrap(),
+        SystemTx::TeeBootstrap { .. }
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::OracleSlashWindow
+        SystemTx::decode(system_txs[2].tx().input().as_ref()).unwrap(),
+        SystemTx::OracleSlashWindow
     ));
     assert!(matches!(
-        SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
-        SystemTxInputV2::HookEvents
+        SystemTx::decode(system_txs[3].tx().input().as_ref()).unwrap(),
+        SystemTx::HookEvents
     ));
     drop(executor);
 
@@ -359,10 +359,14 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
-    // WAA and SRA recipients together fill one block's accrual slice.
+    // Validators fill the first shared slice; WAA and SRA await a later block.
     const DENSE_ADDRESS_COUNT: u64 =
         outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK as u64 / 2;
     const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
+    assert_eq!(
+        DENSE_VALIDATOR_COUNT,
+        outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK
+    );
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -371,7 +375,6 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
         outbe_primitives::time::timestamp_to_date_key(block_ts),
     )
     .expect("date step");
-    let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
     let mut state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
             assert_eq!(
@@ -381,16 +384,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 U256::ZERO,
                 "GAS-05 fixture must start with zero carry-over"
             );
-            let genesis_ctx = BlockRuntimeContext::new(
-                BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
-                storage.clone(),
-            );
-            outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
-            let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-            cycle
-                .last_executed_at
-                .write(&emission_trigger, GENESIS_TS + 60)
-                .unwrap();
+            seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
 
             outbe_oracle::api::set_exchange_rate(
                 storage.clone(),
@@ -458,7 +452,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
-        assert_dense_agent_settlement(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
+        assert_dense_agent_accrual_pending(storage.clone(), prev_day, DENSE_ADDRESS_COUNT)?;
         assert_dense_validator_settlement(storage.clone(), DENSE_VALIDATOR_COUNT)?;
         let day_record = outbe_emission::api::get_emission_day_record(storage.clone(), prev_day)?
             .expect("settled EmissionDay must exist");

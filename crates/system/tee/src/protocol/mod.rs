@@ -32,9 +32,10 @@ pub use enclave_response::{
     fidelity_query_attestation_preimage, fidelity_query_auth_message,
     fidelity_query_canonical_hash, fidelity_snapshot_attestation_preimage,
     fidelity_snapshot_canonical_hash, gratis_op_attestation_preimage, gratis_op_canonical_hash,
-    inputs_canonical_hash, promis_op_attestation_preimage, promis_op_canonical_hash,
-    tribute_offer_attestation_preimage, EnclaveHealthStatusV1, EnclaveHeapUsageV1,
-    EnclaveRequestClassCountsV1, EnclaveRequestCountsV1, EnclaveResponse,
+    inputs_canonical_hash, mine_gratis_from_promis_attestation_preimage,
+    mine_gratis_from_promis_canonical_hash, promis_op_attestation_preimage,
+    promis_op_canonical_hash, tribute_offer_attestation_preimage, EnclaveHealthStatusV1,
+    EnclaveHeapUsageV1, EnclaveRequestClassCountsV1, EnclaveRequestCountsV1, EnclaveResponse,
 };
 
 /// How a request participates in the block's enclave witness tape.
@@ -364,6 +365,7 @@ pub struct GratisOpResult {
     pub fidelity: Option<FidelityOpOutcome>,
     pub inputs_canonical_hash: B256,
     pub attestation_tag: Vec<u8>,
+    pub encrypted_event_amount: Vec<u8>,
 }
 
 /// The confidential ledger that a key-derivation / op request targets. It selects
@@ -440,6 +442,48 @@ pub struct PromisOpResult {
     pub inputs_canonical_hash: B256,
     /// Local-only attestation tag over `(inputs_canonical_hash || result)`. The host
     /// verifies it against the pinned enclave attestation key, then discards it.
+    pub attestation_tag: Vec<u8>,
+    /// Event amount sealed as a 92-byte `PRO2` envelope under the account's view key.
+    pub encrypted_event_amount: Vec<u8>,
+}
+
+/// Paired Promis-burn + Gratis-mint + Fidelity-cohort-in request for
+/// `IPromisFactory.mineGratis` (`OIP-00364`). `encrypted_promis_amount` is a
+/// 92-byte envelope encrypted to the enclave's resident `tribute_offer_public`
+/// X25519 key so no plaintext amount crosses the host-enclave boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MineGratisFromPromisRequestV1 {
+    pub chain_id: B256,
+    pub account: Address,
+    pub encrypted_promis_amount: Vec<u8>,
+    pub current_promis_balance: Vec<u8>,
+    pub promis_modify_auth: ModifyAuth,
+    pub current_gratis_balance: Vec<u8>,
+    pub gratis_modify_auth: ModifyAuth,
+    pub fidelity: FidelityOpSection,
+}
+
+/// Outcome of a [`MineGratisFromPromisRequestV1`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MineGratisFromPromisStatusV1 {
+    Applied,
+    PromisRejected { reason: String },
+    GratisRejected { reason: String },
+}
+
+/// Public result of [`MineGratisFromPromisRequestV1`]. No plaintext amount
+/// crosses the enclave boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MineGratisFromPromisResultV1 {
+    pub status: MineGratisFromPromisStatusV1,
+    pub new_promis_balance: Vec<u8>,
+    pub encrypted_promis_event_amount: Vec<u8>,
+    pub next_promis_op_nonce: u64,
+    pub new_gratis_balance: Vec<u8>,
+    pub encrypted_gratis_event_amount: Vec<u8>,
+    pub next_gratis_op_nonce: u64,
+    pub fidelity: Option<FidelityOpOutcome>,
+    pub inputs_canonical_hash: B256,
     pub attestation_tag: Vec<u8>,
 }
 

@@ -68,9 +68,12 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
     assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
     let forfeited = events
         .iter()
-        .find_map(|log| IGem::GemGroupForfeited::decode_log_data(log).ok())
+        .find_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
         .unwrap();
-    assert_eq!((forfeited.gems, forfeited.promisLoadMinor), (1, load));
+    assert_eq!(
+        (forfeited.forfeitedCount, forfeited.forfeitedAmountMinor),
+        (1, load)
+    );
 }
 
 #[test]
@@ -86,6 +89,65 @@ fn forfeiting_a_gem_returns_its_load_to_the_pool() {
         begin_block_at(storage, first_due_block(storage, gem_id));
         assert_eq!(unallocated(storage), load);
     });
+}
+
+/// Every gem settled before the deadline still closes its sub-series at `(0, 0)`.
+#[test]
+fn a_fully_settled_group_closes_with_zero_forfeit() {
+    let mut provider = provider_at(T_NOW);
+    let expected = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = mature_gem(&storage);
+        let gem = item(&storage, gem_id).unwrap();
+        let group = gem.group_key;
+        call_gem(&storage, gem_id, T_NOW);
+        settle(&storage, gem_id);
+
+        begin_block_at(&storage, first_due_block(&storage, gem_id));
+        assert_eq!(gem_state(&storage, gem_id), GemState::Settled as u8);
+        assert_eq!(unallocated(&storage), U256::ZERO);
+        let contract = GemContract::new(storage.clone());
+        assert_eq!(contract.called_group_slot.read(&group).unwrap(), 0);
+        assert!(api::get_group(&storage, group).unwrap().is_some());
+
+        burn_settled(&storage, gem_id);
+        assert!(api::get_group(&storage, group).unwrap().is_none());
+        assert!(item(&storage, gem_id).is_none());
+        gem
+    });
+
+    let closed: Vec<_> = provider
+        .get_events(GEM_ADDRESS)
+        .iter()
+        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        (
+            outbe_intex::SeriesId::from(closed[0].seriesId),
+            closed[0].subSeriesId,
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency,
+            closed[0].forfeitedCount,
+            closed[0].forfeitedAmountMinor
+        ),
+        (
+            expected.series_id,
+            expected.sub_series_id,
+            expected.issuance_currency,
+            expected.reference_currency,
+            0,
+            U256::ZERO
+        )
+    );
+    assert_eq!(
+        outbe_intex::SeriesId::for_pair(
+            expected.series_id.day(),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency
+        )
+        .unwrap(),
+        expected.series_id
+    );
 }
 
 /// Its owner paid the strike, so the load is theirs.
@@ -312,26 +374,33 @@ fn a_called_group_wider_than_the_budget_is_cleaned_up_over_several_blocks() {
         let gems = gems_with_loads(storage, &loads);
         call_gem(storage, gems[0], T_NOW);
         let now = first_due_block(storage, gems[0]);
+        // Catch up before the deadline closes so the budget assertions refer to one block.
+        let mut ctx = super::super::daily_pass(&block_ctx_at(storage, now - 1)).unwrap();
+        // Catch-up can consume several heights at one timestamp. Resume from its actual height.
+        ctx.block.block_number += 1;
+        ctx.block.timestamp = now;
         let live = || {
             gems.iter()
                 .filter(|id| item(storage, **id).is_some())
                 .count()
         };
 
-        begin_block_at(storage, now);
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(unallocated(storage), U256::from(loads.iter().sum::<u64>()));
         assert_eq!(
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "one block deletes its write budget"
         );
-        begin_block_at(storage, now);
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(
             live(),
             gems.len() - SWEEP_WRITES_PER_BLOCK as usize,
             "same-height cleanup cannot replenish its independent allowance"
         );
-        begin_block_at(storage, now + 1);
+        ctx.block.block_number += 1;
+        ctx.block.timestamp += 1;
+        continue_sweeps(&ctx).unwrap();
         assert_eq!(live(), 0);
         let gem = GemContract::new(storage.clone());
         assert_eq!(gem.first_expiry_day().unwrap(), None);

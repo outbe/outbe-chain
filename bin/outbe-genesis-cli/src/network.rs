@@ -29,7 +29,7 @@ pub const DEFAULT_PREFUND_COEN_UNITS: u128 = 100_000_000 * 1_000_000_000_000_000
 pub const FOUNDER_COUNT: usize = 4;
 pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
-pub const SEED_SECTIONS: [&str; 15] = [
+pub const SEED_SECTIONS: [&str; 16] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -45,6 +45,7 @@ pub const SEED_SECTIONS: [&str; 15] = [
     "credis_profile",
     "contracts",
     "tee_policy",
+    "hyperlane_controller",
 ];
 
 pub const TEE_KEYS: [&str; 6] = [
@@ -76,7 +77,6 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "worldwide_day",
     "fresh_metadosis",
     "contracts_dir",
-    "canon_dir",
     "enclave_image",
     "enclave_dir",
     "enclave_runner",
@@ -96,6 +96,7 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 39] = [
     "price_feed_websocket",
     "feeder_pairs",
     "feeder_seeds",
+    "hyperlane_controller",
 ];
 
 /// Return the repository root directory (`<repo>`).
@@ -110,11 +111,6 @@ pub fn repo_root() -> PathBuf {
 /// Return the `profiles` directory (`<repo>/bin/outbe-genesis-cli/profiles`).
 pub fn profiles_dir() -> PathBuf {
     repo_root().join("bin/outbe-genesis-cli/profiles")
-}
-
-/// Return the default `canon` directory (`<repo>/bin/outbe-genesis-cli/canon`).
-pub fn default_canon_dir() -> PathBuf {
-    repo_root().join("bin/outbe-genesis-cli/canon")
 }
 
 /// Return the default `contracts` predeploy directory (`<repo>/contracts/predeploys`).

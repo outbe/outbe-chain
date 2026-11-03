@@ -102,3 +102,27 @@ and `--consensus.dkg-output` no longer exist.
 
 `outbe-chain dkg bootstrap` writes a complete keys directory for each
 validator in `<output>/validator-<i>/dkg-keys/`.
+
+## Retired on-chain Governance tracker
+
+The normative-text Governance precompile at
+`0x0000000000000000000000000000000000001018` is retired and must not be reassigned.
+New genesis output does not install its marker or seed canon/meta-canon storage.
+Its OIP/GIP records, ABI and vote target are no longer served. Generic Vote,
+Update, CodeRegistry/Radicle and other committee-controlled targets remain.
+
+Use a new genesis, or complete every pending Vote proposal targeting the retired
+address with the old binary before the coordinated cutover. There is no legacy
+handler, automatic proposal migration/cancellation or historical execution
+compatibility. An old pending target cannot be resolved by the new Vote registry;
+simply waiting for its deadline on the new binary is not a migration strategy.
+Removing the module does not erase existing chain storage.
+
+Before an existing-state cutover, page through
+`IVote.listProposalsByStatus(Pending, index, count)` and inspect each
+`IVote.getProposal(id).targetModule`. None may point to the retired address.
+
+Remove the old `canon_dir` profile setting and `--canon-dir` seeder argument.
+Bundled canon/meta-canon seed assets are no longer used. These changes concern the
+on-chain text tracker, not external OIP tooling or the use of validator votes to
+authorize code and contract changes.

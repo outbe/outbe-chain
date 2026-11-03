@@ -2,7 +2,10 @@ use super::super::*;
 use super::fixtures::*;
 #[test]
 fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
-    use crate::system_tx::SystemTxKind;
+    use crate::system_tx::{
+        CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
+        TEE_BOOTSTRAP_SELECTOR,
+    };
     let signer = test_evm_signer();
     let proposer = signer.address();
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
@@ -22,12 +25,12 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
         },
     );
     assert_eq!(
-        begin_system_tx_kinds(&with_bootstrap),
+        begin_system_tx_selectors(&with_bootstrap),
         vec![
-            SystemTxKind::CycleTick,
-            SystemTxKind::TeeBootstrap,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CYCLE_TICK_SELECTOR,
+            TEE_BOOTSTRAP_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ],
         "proposer must inject TeeBootstrap before OracleSlashWindow",
     );

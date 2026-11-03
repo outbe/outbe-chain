@@ -49,7 +49,7 @@ use crate::{
     signer::SharedOutbeEvmSigner,
     system_tx::{
         build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, is_reserved_system_tx,
-        validate_phase1_witness_against, SystemTxInputV2, SystemTxKind, SystemTxVisibleGasPlan,
+        validate_phase1_witness_against, SystemTx, SystemTxVisibleGasPlan,
     },
 };
 use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
@@ -106,7 +106,7 @@ use context::{build_block_context, validate_genesis_state};
 #[cfg(test)]
 use hooks::run_atomic_storage_hooks;
 
-use receipts::{validator_fee_for_gas, SystemFailureReceiptInput};
+use receipts::{burned_fee_for_gas, validator_fee_for_gas, SystemFailureReceiptInput};
 
 use zero_fee::zero_fee_transaction;
 

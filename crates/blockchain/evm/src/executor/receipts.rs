@@ -24,6 +24,17 @@ pub(in crate::executor) fn validator_fee_for_gas(
     U256::from(validator_fee_per_gas) * U256::from(gas_used)
 }
 
+pub(in crate::executor) fn burned_fee_for_gas(
+    base_fee_per_gas: u128,
+    gas_used: u64,
+    blob_gas_price: u128,
+    blob_gas_used: u64,
+) -> Option<U256> {
+    let base_fee_minor = U256::from(base_fee_per_gas).checked_mul(U256::from(gas_used))?;
+    let blob_fee_minor = U256::from(blob_gas_price).checked_mul(U256::from(blob_gas_used))?;
+    base_fee_minor.checked_add(blob_fee_minor)
+}
+
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// Pushes a `status=0` synthetic receipt with exactly one
     /// `OutbeFailure(code, reason)` log, advances the user transaction gas

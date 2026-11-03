@@ -195,7 +195,7 @@ fn address_from_signing_key(signing_key: &SigningKey) -> Address {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system_tx::{build_unsigned_system_tx, SystemTxInputV2, SystemTxKind};
+    use crate::system_tx::{build_unsigned_system_tx, SystemTx};
     use alloy_consensus::Transaction as _;
     use alloy_primitives::{address, Bytes, TxKind, U256};
     use reth_primitives_traits::SignedTransaction as _;
@@ -262,9 +262,8 @@ mod tests {
     #[test]
     fn signs_and_recovers_expected_address() {
         let signer = OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("valid signer");
-        let input = SystemTxInputV2::CycleTick.encode().expect("input encodes");
-        let tx = build_unsigned_system_tx(SystemTxKind::CycleTick, 0, 1, CHAIN_ID, input)
-            .expect("system tx builds");
+        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let tx = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
 
         let signed = signer.sign_unsigned(tx).expect("signs");
         let recovered = signed.try_recover().expect("recovers");
@@ -274,11 +273,10 @@ mod tests {
     #[test]
     fn signatures_are_deterministic_for_same_unsigned_tx() {
         let signer = OutbeEvmSigner::from_secret_bytes([2u8; 32]).expect("valid signer");
-        let input = SystemTxInputV2::CycleTick.encode().expect("input encodes");
-        let tx_a = build_unsigned_system_tx(SystemTxKind::CycleTick, 0, 1, CHAIN_ID, input.clone())
-            .expect("system tx builds");
-        let tx_b = build_unsigned_system_tx(SystemTxKind::CycleTick, 0, 1, CHAIN_ID, input)
-            .expect("system tx builds");
+        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let tx_a =
+            build_unsigned_system_tx(0, 1, CHAIN_ID, input.clone()).expect("system tx builds");
+        let tx_b = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
 
         let signed_a = signer.sign_unsigned(tx_a).expect("signs");
         let signed_b = signer.sign_unsigned(tx_b).expect("signs");
@@ -301,9 +299,8 @@ mod tests {
     #[test]
     fn signed_system_tx_keeps_reserved_to_and_zero_value() {
         let signer = OutbeEvmSigner::from_secret_bytes([3u8; 32]).expect("valid signer");
-        let input = SystemTxInputV2::CycleTick.encode().expect("input encodes");
-        let tx = build_unsigned_system_tx(SystemTxKind::CycleTick, 0, 1, CHAIN_ID, input)
-            .expect("system tx builds");
+        let input = SystemTx::CycleTick.encode().expect("input encodes");
+        let tx = build_unsigned_system_tx(0, 1, CHAIN_ID, input).expect("system tx builds");
         let signed = signer.sign_unsigned(tx).expect("signs");
         assert_eq!(signed.to(), Some(crate::system_tx::OUTBE_SYSTEM_TX_ADDRESS));
         assert_eq!(signed.value(), U256::ZERO);

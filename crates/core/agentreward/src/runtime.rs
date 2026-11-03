@@ -38,6 +38,9 @@ impl AgentRewardContract<'_> {
         day: WorldwideDay,
         address: Address,
     ) -> Result<()> {
+        if day.value() <= self.sealed_through_day.read()? {
+            return Err(AgentRewardError::DaySealed(day.value()).into());
+        }
         let index = self.day_index(pool)?;
         let key = AgentRewardContract::tribute_count_key(day, address);
         let count = index.counts.read(&key)?;
@@ -58,6 +61,7 @@ impl AgentRewardContract<'_> {
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
             index.addresses.write(&idx_key, address)?;
             index.address_count.write(&day, next_addr_count)?;
+            index.member_index.write(&key, next_addr_count)?;
         }
         index.total.write(&day, next_total)?;
         index.counts.write(&key, next_count)
@@ -272,40 +276,6 @@ impl AgentRewardContract<'_> {
             &self.sra_addresses,
             &self.sra_tribute_counts,
         )
-    }
-
-    /// Clears WAA tribute counts and address list for a day. The distribution
-    /// path calls this function after it settles the day's WAA pool.
-    pub fn clear_waa_counts(&mut self, day: WorldwideDay) -> Result<()> {
-        let waa_count = self.waa_address_count.read(&day)?;
-        for i in 0..waa_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.waa_addresses.read(&idx_key)?;
-            if !addr.is_zero() {
-                let count_key = AgentRewardContract::tribute_count_key(day, addr);
-                self.waa_tribute_counts.write(&count_key, 0)?;
-                self.waa_addresses.write(&idx_key, Address::ZERO)?;
-            }
-        }
-        self.waa_address_count.write(&day, 0)?;
-        self.waa_total_count.write(&day, 0)
-    }
-
-    /// Clears SRA tribute counts and address list for a day. The distribution
-    /// path calls this function after it settles the day's SRA pool.
-    pub fn clear_sra_counts(&mut self, day: WorldwideDay) -> Result<()> {
-        let sra_count = self.sra_address_count.read(&day)?;
-        for i in 0..sra_count {
-            let idx_key = AgentRewardContract::address_index_key(day, i);
-            let addr = self.sra_addresses.read(&idx_key)?;
-            if !addr.is_zero() {
-                let count_key = AgentRewardContract::tribute_count_key(day, addr);
-                self.sra_tribute_counts.write(&count_key, 0)?;
-                self.sra_addresses.write(&idx_key, Address::ZERO)?;
-            }
-        }
-        self.sra_address_count.write(&day, 0)?;
-        self.sra_total_count.write(&day, 0)
     }
 }
 

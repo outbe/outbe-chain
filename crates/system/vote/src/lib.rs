@@ -21,6 +21,20 @@
 //! Proposal views recalculate the tally against the current group, even after
 //! finalization. The terminal status and finalization event record the decision
 //! made at finalization; a later view does not change that decision.
+//!
+//! # Changing Yes to No
+//!
+//! While voting is open, an eligible validator may use `castVote(id, false)` to
+//! replace their Yes with No in place. The voter remains in the same list position:
+//! voter count and the live-electorate denominator do not change. No-to-Yes changes
+//! and identical repeat ballots remain `AlreadyVoted` errors.
+//!
+//! Each accepted ballot emits `VoteCast`; consumers use the latest event for each
+//! proposal/voter pair. The stored ballot height tracks that latest accepted vote.
+//! Eligibility, the inclusive deadline and terminal-status guards apply to changes
+//! just as they do to initial votes. There is no withdrawal or proposal cancellation.
+//!
+//! CLI: `outbe-cli vote cast --proposal-id ID --no` with the normal RPC/signing options.
 
 mod abi;
 

@@ -194,7 +194,8 @@ pub(crate) fn block_ctx_at<'s>(
     timestamp: u64,
 ) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(timestamp, timestamp, 1),
+        BlockContext::empty_for_tests(timestamp, timestamp, 1)
+            .with_genesis_timestamp(T_NOW - SECONDS_PER_DAY),
         storage.clone(),
     )
 }
@@ -210,34 +211,15 @@ pub(crate) fn continue_sweeps(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// These call-index fixtures bootstrap the day before their first scan.
-fn prepare_daily(ctx: &BlockRuntimeContext) {
-    if GemContract::new(ctx.storage.clone())
-        .daily_genesis_day
-        .read()
-        .unwrap()
-        == 0
-    {
-        crate::called::initialize_daily(&block_ctx_at(
-            &ctx.storage,
-            ctx.block.timestamp - SECONDS_PER_DAY,
-        ))
-        .unwrap();
-    }
-}
-
 fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
-    prepare_daily(ctx);
     crate::called::scan_and_call(ctx)
 }
 
 fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
-    prepare_daily(ctx);
     crate::called::schedule_call_pass(ctx)
 }
 
 fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
-    prepare_daily(ctx);
     crate::called::process_call_pass(ctx)
 }
 

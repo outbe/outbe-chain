@@ -90,8 +90,12 @@ where
         );
         Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)))
     }
+}
 
-    fn fee_route_context(&self) -> Result<BlockContext, BlockExecutionError> {
+impl<E: Evm> OutbeBlockExecutor<'_, E> {
+    pub(in crate::executor) fn fee_route_context(
+        &self,
+    ) -> Result<BlockContext, BlockExecutionError> {
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         Ok(BlockContext::new_with_genesis_hash(

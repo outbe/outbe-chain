@@ -138,14 +138,21 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         );
     });
     let mined: Vec<_> = storage
-        .get_events(INTEX_FACTORY_ADDRESS)
+        .get_events(outbe_primitives::addresses::PROMIS_ADDRESS)
         .iter()
-        .filter_map(|log| IIntexFactory::IntexMined::decode_log_data(log).ok())
+        .filter_map(|log| {
+            outbe_promis::precompile::IPromis::PromisMinedFromIntex::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(mined.len(), 1);
-    assert_eq!(mined[0].owner, owner());
-    assert_eq!(mined[0].units, U256::ONE);
-    assert_eq!(mined[0].promisMinor, promis_minor);
+    assert_eq!(mined[0].intexId, outbe_intex::intex_id(sid(7)));
+    assert_eq!(mined[0].account, owner());
+    let sk = outbe_promis::enclave_client::test_enclave::state_key();
+    let vk = derive_view_key(&sk, owner()).unwrap();
+    assert_eq!(
+        decrypt_balance(&vk, owner(), &mined[0].encryptedAmountMinor).unwrap(),
+        promis_minor
+    );
     outbe_promis::enclave_client::test_enclave::uninstall();
 }
 
@@ -181,7 +188,8 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
 
     StorageHandle::enter(&mut storage, |s| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID),
+            outbe_primitives::block::BlockContext::empty_for_tests(2, due, CHAIN_ID)
+                .with_genesis_timestamp(ISSUED_AT - DAY),
             s.clone(),
         );
         let block = super::called::daily_pass(&ctx).unwrap();
@@ -230,24 +238,22 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert_eq!(decrypt_balance(&vk, owner(), &blob).unwrap(), mined);
 
         let later = outbe_primitives::block::BlockRuntimeContext::new(
-            outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID),
+            outbe_primitives::block::BlockContext::empty_for_tests(3, due + DAY, CHAIN_ID)
+                .with_genesis_timestamp(ISSUED_AT - DAY),
             s.clone(),
         );
         let block = super::called::daily_pass(&later).unwrap();
         crate::hooks::cleanup(&block).unwrap();
         assert_eq!(reserve(), forfeited);
     });
-    let forfeited_groups: Vec<_> = storage
+    let closed_series: Vec<_> = storage
         .get_events(outbe_primitives::addresses::INTEX_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexGroupForfeited::decode_log_data(log).ok()
+            outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()
         })
-        .map(|event| (event.forfeitedUnits, event.returnedPromisMinor))
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect();
-    assert_eq!(
-        forfeited_groups,
-        vec![(u64::from(100 - SETTLED), forfeited)]
-    );
+    assert_eq!(closed_series, vec![(100 - SETTLED, forfeited)]);
     outbe_promis::enclave_client::test_enclave::uninstall();
 }

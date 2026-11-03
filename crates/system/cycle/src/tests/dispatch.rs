@@ -127,6 +127,7 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
+        crate::handler::credit_reward_slice(&ctx).unwrap();
         assert!(is_day_settled(&ctx, 20240101));
         let cycle = ctx.storage.contract::<Cycle>();
         assert_eq!(active_utc_day(&ctx), 20240102);
@@ -156,7 +157,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     with_anchored_cycle(|handle| {
         // Step 1: anchor at chain start.
 
-        // Step 2: block past first slot. prev_day = genesis_utc_day
+        // Step 2: block past first slot. prev_day = start_date
         // (20240101). day_number_since_genesis = 0. cap = INITIAL_DAY_EMISSION.
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);
@@ -193,12 +194,12 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 
 #[test]
 fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
+    use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
     use outbe_agentreward::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
-    use outbe_agentreward::distribution::{distribute_daily, PoolKind};
     use outbe_agentreward::schema::RewardPool;
 
     with_anchored_cycle(|handle| {
-        let day = outbe_primitives::time::WorldwideDay::new(20_240_101);
+        let day = outbe_primitives::time::WorldwideDay::new(20_231_231);
         let slice = u64::from(ACCRUAL_RECIPIENTS_PER_BLOCK);
         let recipients = slice + 4;
         let recipient = |n: u64| Address::from_word(U256::from(n + 1).into());
@@ -215,19 +216,61 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         };
 
         let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
-        distribute_daily(
+        outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+        let amount = U256::from(recipients * 1_000);
+        allocate_day_agent_rewards(
             &ctx,
             day,
-            &[(PoolKind::Waa, U256::from(recipients * 1_000))],
+            DayAgentPools {
+                waa: amount,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        outbe_emission::api::record_day_allocation(
+            handle.clone(),
+            day.value(),
+            outbe_emission::api::DayAllocationAmounts {
+                emission_limit: amount,
+                metadosis_limit: U256::ZERO,
+                validators: U256::ZERO,
+                waa: amount,
+                sra: U256::ZERO,
+                cca: U256::ZERO,
+                promis_limit: U256::ZERO,
+            },
         )
         .unwrap();
         run_cycle_lifecycle(&ctx).unwrap();
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
+        let (failed, returned) =
+            outbe_emission::api::record_metadosis_failed(handle.clone(), day.value()).unwrap();
+        assert_eq!(returned, U256::ZERO);
+        assert_eq!(
+            failed.state,
+            outbe_emission::schema::emission_day_state::PROCESSING
+        );
 
         let ctx = runtime_context(block_ctx(3, ANCHOR_TS + 20), handle.clone());
         run_cycle_lifecycle(&ctx).unwrap();
         assert_eq!(claimable(recipients - 1), U256::from(1_000u64));
+        let settled = outbe_emission::api::get_emission_day_record(handle.clone(), day.value())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            settled.state,
+            outbe_emission::schema::emission_day_state::COMPLETED
+        );
+        assert_eq!(U256::from(settled.waa), amount);
+        assert_eq!(settled.promis_limit, 0);
+        assert_eq!(
+            agent_reward.waa_address_count.read(&day).unwrap(),
+            recipients as u32
+        );
+        let ctx = runtime_context(block_ctx(4, ANCHOR_TS + 30), handle.clone());
+        run_cycle_lifecycle(&ctx).unwrap();
+        assert_eq!(agent_reward.waa_address_count.read(&day).unwrap(), 0);
         assert_eq!(
             last_executed_at(&ctx),
             ANCHOR_TS,
@@ -306,6 +349,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
         seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 1)));
 
         run_emission_limit_daily(&ctx).unwrap();
+        crate::handler::credit_reward_slice(&ctx).unwrap();
 
         let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx.storage.clone());
@@ -512,14 +556,13 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         assert_eq!(last_executed_at(&same_window), GENESIS_TS + SECONDS_PER_DAY);
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    let next_window = GENESIS_TS
-        + SECONDS_PER_DAY
-        + outbe_chain_constants::get_metadosis_advance_interval_seconds();
+    let next_window = GENESIS_TS + SECONDS_PER_DAY + crate::triggers::PROTOCOL_CYCLE_PERIOD_SECONDS;
     storage.set_block_number(4);
     storage.enter(|handle| {
         let retry = runtime_context(block_ctx(4, next_window), handle);
         account_parent(&retry, 4);
         dispatch_triggers(&retry).unwrap();
+        crate::handler::credit_reward_slice(&retry).unwrap();
 
         assert!(is_day_settled(&retry, 20_240_101));
 
@@ -687,6 +730,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
 
         // First settlement of prev_day = 20240101: credits the pools + seals.
         run_emission_limit_daily(&ctx).unwrap();
+        crate::handler::credit_reward_slice(&ctx).unwrap();
         assert!(
             is_day_settled(&ctx, 20_240_101),
             "first fire must seal prev_day"

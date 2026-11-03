@@ -3,17 +3,14 @@
 use alloy_primitives::{Address, Log};
 use alloy_sol_types::SolEvent;
 
-use crate::addresses::{
-    GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS,
-};
+use crate::addresses::{STABLECOIN_FACTORY_ADDRESS, STAKING_ADDRESS, UPDATE_ADDRESS, VOTE_ADDRESS};
 
 /// Contract addresses whose pre-exec hook events are copied into the mandatory
-/// [`SystemTxKind::HookEvents`](crate::system_tx::SystemTxKind::HookEvents)
+/// [`SystemTx::HookEvents`](crate::system_tx::SystemTx::HookEvents)
 /// begin-zone system transaction receipt.
 pub const HOOK_EVENT_RECEIPT_ADDRESSES: &[Address] = &[
     VOTE_ADDRESS,
     UPDATE_ADDRESS,
-    GOVERNANCE_ADDRESS,
     STABLECOIN_FACTORY_ADDRESS,
     // Pre-exec retirement emits UnbondingStarted here. Rewards and NOD stay tracing-only.
     STAKING_ADDRESS,
@@ -89,7 +86,9 @@ mod tests {
             log_at(VOTE_ADDRESS),
             log_at(UPDATE_ADDRESS),
             log_at(NOD_ADDRESS),
-            log_at(GOVERNANCE_ADDRESS),
+            log_at(alloy_primitives::address!(
+                "0x0000000000000000000000000000000000001018"
+            )),
             log_at(STABLECOIN_FACTORY_ADDRESS),
             log_at(TEE_REGISTRY_ADDRESS),
             upgrade_missed_log.clone(),
@@ -103,19 +102,22 @@ mod tests {
                 .iter()
                 .any(|log| log.address == STAKING_ADDRESS)
         );
-        assert_eq!(whitelisted.len(), 7);
+        assert_eq!(whitelisted.len(), 6);
         assert_eq!(whitelisted[0].address, VOTE_ADDRESS);
         assert_eq!(whitelisted[1].address, UPDATE_ADDRESS);
-        assert_eq!(whitelisted[2].address, GOVERNANCE_ADDRESS);
-        assert_eq!(whitelisted[3].address, STABLECOIN_FACTORY_ADDRESS);
-        assert_eq!(whitelisted[4], upgrade_missed_log);
-        assert_eq!(whitelisted[5], binding_revoked_log);
-        assert_eq!(whitelisted[6].address, STAKING_ADDRESS);
+        assert_eq!(whitelisted[2].address, STABLECOIN_FACTORY_ADDRESS);
+        assert_eq!(whitelisted[3], upgrade_missed_log);
+        assert_eq!(whitelisted[4], binding_revoked_log);
+        assert_eq!(whitelisted[5].address, STAKING_ADDRESS);
         // The rights' sweeps run in CycleTick, so a hook never emits for them.
         // TeeRegistry logs other than the opt-in hook events stay tracing-only.
-        assert_eq!(tracing_only.len(), 3);
+        assert_eq!(tracing_only.len(), 4);
         assert_eq!(tracing_only[0].address, REWARDS_ADDRESS);
         assert_eq!(tracing_only[1].address, NOD_ADDRESS);
-        assert_eq!(tracing_only[2].address, TEE_REGISTRY_ADDRESS);
+        assert_eq!(
+            tracing_only[2].address,
+            alloy_primitives::address!("0x0000000000000000000000000000000000001018")
+        );
+        assert_eq!(tracing_only[3].address, TEE_REGISTRY_ADDRESS);
     }
 }

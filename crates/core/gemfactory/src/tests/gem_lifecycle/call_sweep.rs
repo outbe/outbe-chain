@@ -264,8 +264,12 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
 
-    // A second past midnight loses the day and falls one breach short.
-    for (issued_at, expected) in [(midnight, true), (midnight + 1, false)] {
+    // Midnight and later on the same UTC day start counting on the next day and fall one breach short.
+    for (issued_at, expected) in [
+        (midnight - 1, true),
+        (midnight, false),
+        (midnight + 1, false),
+    ] {
         with_storage(|storage| {
             set_profile(storage, outbe_gem::config::PROFILE_PROD);
             let mut p = sample_params(ALICE);
@@ -290,8 +294,8 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
     }
 }
 
-/// A gem issued at midnight counts that day, and one issued later that day does not:
-/// they sit in different groups, so the later one is never called a day early.
+/// A gem issued at midnight and one issued later that day share one group and start
+/// counting from the next day, while a gem issued before midnight counts the full day.
 #[test]
 fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     let threshold_days = (outbe_gem::constants::CALL_THRESHOLD / SECONDS_PER_DAY_U32) as usize;
@@ -302,27 +306,32 @@ fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
     with_storage(|storage| {
         set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        let mut prior = sample_params(ALICE);
+        prior.issued_at = midnight - 1;
+        let prior = add(storage, prior);
         let mut first = sample_params(ALICE);
         first.issued_at = midnight;
         let first = add(storage, first);
         let mut second = sample_params(BOB);
         second.issued_at = midnight + 3_600;
         let second = add(storage, second);
-        assert_ne!(group_of(storage, first), group_of(storage, second));
+        assert_ne!(group_of(storage, prior), group_of(storage, first));
+        assert_eq!(group_of(storage, first), group_of(storage, second));
 
         let threshold = view(storage, first).terms.call_price_minor;
         let window = breach_window(T_NOW, threshold + U256::from(1u64), threshold_days);
         let mut gem = GemContract::new(storage.clone());
         assert!(
-            crate::called::call_if_breached(&mut gem, &window, group_of(storage, first), T_NOW)
+            crate::called::call_if_breached(&mut gem, &window, group_of(storage, prior), T_NOW)
                 .unwrap(),
-            "the midnight gem counts its whole first day"
+            "the prior-day gem counts the whole day starting at midnight"
         );
         assert!(
             !crate::called::call_if_breached(&mut gem, &window, group_of(storage, second), T_NOW)
                 .unwrap(),
-            "the later gem counts from the next day, one short"
+            "the midnight and later gems count from the next day, one short"
         );
+        assert_eq!(gem_state(storage, first), GemState::Issued as u8);
         assert_eq!(gem_state(storage, second), GemState::Issued as u8);
     });
 }
@@ -475,7 +484,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
     assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
     let called = events
         .iter()
-        .filter(|log| IGem::GemGroupCalled::decode_log_data(log).is_ok())
+        .filter(|log| IGem::GemSeriesCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
 }

@@ -28,6 +28,7 @@ interface IEndpointDelegates {
 contract HandOver is Script {
     error DomainTooLarge(uint256 chainId);
     error NotHandedOver(address target, address holder);
+    error UnexpectedOwner(address target, address holder);
 
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
@@ -46,7 +47,7 @@ contract HandOver is Script {
         address governance = governanceOwner();
 
         vm.startBroadcast(deployerPk);
-        handOver(governance, _predict(factory, salt, deployer, "ERC7786Bridge"), lz, hl, lb);
+        handOver(deployer, governance, _predict(factory, salt, deployer, "ERC7786Bridge"), lz, hl, lb);
         vm.stopBroadcast();
     }
 
@@ -57,18 +58,31 @@ contract HandOver is Script {
         return _controllerAccount(uint32(block.chainid));
     }
 
-    /// @dev Requires an active broadcast whose sender owns every contract. A zero adapter address
-    ///      means the adapter is not deployed.
-    function handOver(address governance, address bridge, address lz, address hl, address lb) public {
+    /// @dev Requires an active broadcast. Each contract must still belong to the deployer or already
+    ///      belong to governance. A zero adapter address means the adapter is not deployed.
+    function handOver(address deployer, address governance, address bridge, address lz, address hl, address lb) public {
         if (lz != address(0)) {
-            // The endpoint accepts DVN and library changes from the delegate, so it moves first.
-            LayerZeroGatewayAdapter(lz).setDelegate(governance);
-            Ownable(lz).transferOwnership(governance);
+            address holder = Ownable(lz).owner();
+            if (holder == deployer) {
+                // The endpoint accepts DVN and library changes from the delegate, so it moves first.
+                if (IEndpointDelegates(address(LayerZeroGatewayAdapter(lz).endpoint())).delegates(lz) != governance) {
+                    LayerZeroGatewayAdapter(lz).setDelegate(governance);
+                }
+                Ownable(lz).transferOwnership(governance);
+            } else if (holder != governance) {
+                revert UnexpectedOwner(lz, holder);
+            }
             _require(lz, IEndpointDelegates(address(LayerZeroGatewayAdapter(lz).endpoint())).delegates(lz), governance);
         }
         address[3] memory owned = [bridge, hl, lb];
         for (uint256 i = 0; i < owned.length; i++) {
-            if (owned[i] != address(0)) Ownable(owned[i]).transferOwnership(governance);
+            if (owned[i] == address(0)) continue;
+            address holder = Ownable(owned[i]).owner();
+            if (holder == deployer) {
+                Ownable(owned[i]).transferOwnership(governance);
+            } else if (holder != governance) {
+                revert UnexpectedOwner(owned[i], holder);
+            }
         }
         address[4] memory all = [bridge, lz, hl, lb];
         for (uint256 i = 0; i < all.length; i++) {

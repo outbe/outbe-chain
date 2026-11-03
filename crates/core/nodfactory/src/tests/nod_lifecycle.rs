@@ -266,12 +266,6 @@ fn forfeit_pass(
 
 fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeContext<'s> {
     let nod = NodContract::new(storage.clone());
-    if nod.daily_genesis_day.read().unwrap() == 0 {
-        // This fixture starts its pass on the first observation day under test.
-        nod.daily_genesis_day
-            .write(last_closed_day(timestamp))
-            .unwrap();
-    }
     let height = [
         nod.daily_budget.read().unwrap(),
         nod.cleanup_budget.read().unwrap(),
@@ -282,7 +276,8 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     .max()
     .unwrap_or(BLOCK_NUMBER);
     BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID),
+        BlockContext::empty_for_tests(height, timestamp, CHAIN_ID)
+            .with_genesis_timestamp(START - DAY),
         storage.clone(),
     )
 }
@@ -358,13 +353,13 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
     (group_key, items)
 }
 
-/// Each `NodGroupForfeited` as (Nods forfeited, Gratis load returned).
+/// Each `NodSeriesClosed` as (Nods forfeited, Gratis load returned).
 fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
         .get_events(NOD_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodGroupForfeited::decode_log_data(log).ok())
-        .map(|event| (event.nods, event.gratisLoadMinor))
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
 
@@ -770,8 +765,8 @@ fn a_breach_run_that_predates_the_group_does_not_call_it() {
     });
 }
 
-/// Q027: the issuance UTC day counts only when the Nod was issued at midnight.
-/// A second later drops that day and a threshold-length breach falls short.
+/// Both midnight (`00:00:00`) and a second later (`00:00:01`) start counting on the
+/// next UTC day, while a Nod issued on the previous day counts the full day starting at midnight.
 #[test]
 fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     let scan_at = START + 30 * DAY;
@@ -782,7 +777,7 @@ fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
 
-    for (issued_at, expected) in [(midnight, 1u32), (midnight + 1, 0u32)] {
+    for (issued_at, expected) in [(midnight - 1, 1u32), (midnight, 0u32), (midnight + 1, 0u32)] {
         harness(|storage| {
             let wwd = WorldwideDay::from_timestamp(issued_at).value();
             let item = issue_item(
@@ -1159,7 +1154,8 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
             CALL_THRESHOLD_DAYS,
         );
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         let mut nod = NodContract::new(storage.clone());
@@ -1311,7 +1307,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         .unwrap()
         .unwrap();
         let same_height = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID),
+            BlockContext::empty_for_tests(allowance.height, past, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         assert_eq!(crate::cleanup::cleanup(&same_height).unwrap(), 0);
@@ -1599,6 +1596,90 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
     });
 }
 
+/// Every Nod settled before the deadline still closes the series at `(0, 0, 0)`.
+#[test]
+fn a_group_settled_in_full_closes_with_zero_forfeit() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (series_id, issuance, reference) = StorageHandle::enter(&mut provider, |storage| {
+        seed_production_nod_genesis(&storage);
+        register(&storage, ISO);
+        let at = START + 30 * DAY;
+        let item = call_group(&storage, Address::repeat_byte(0x41), at);
+        let id = item.group_key;
+        api::record_settled(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(&storage, id).unwrap().unwrap(),
+        )
+        .unwrap();
+        let past = at + NOTICE + CLOSED_DAY_DELAY;
+        finalize_through(&storage, past);
+        assert_eq!(scan(&storage, past), 1);
+        assert_eq!(reserve(&storage), U256::ZERO);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.called_group_slot.read(&id).unwrap(), 0);
+        assert!(
+            api::get_item(&storage, item.nod_id)
+                .unwrap()
+                .unwrap()
+                .is_settled
+        );
+        assert!(api::get_group(&storage, id).unwrap().is_some());
+        assert_ne!(
+            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            0
+        );
+
+        api::remove_nod(
+            &storage,
+            api::load_item(&storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(&storage, id).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(api::get_group(&storage, id).unwrap().is_none());
+        assert_eq!(
+            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            0
+        );
+        assert_eq!(
+            nod.series_reference_currency.read(&item.series_id).unwrap(),
+            0
+        );
+        (
+            item.series_id,
+            item.issuance_currency,
+            item.reference_currency,
+        )
+    });
+
+    let closed: Vec<_> = provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        (
+            outbe_primitives::series_id::SeriesId::from(closed[0].seriesId),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency,
+            closed[0].forfeitedCount,
+            closed[0].forfeitedTributeCount,
+            closed[0].forfeitedAmountMinor
+        ),
+        (series_id, issuance, reference, 0, 0, U256::ZERO)
+    );
+    assert_eq!(
+        outbe_primitives::series_id::SeriesId::for_pair(
+            series_id.day(),
+            closed[0].issuanceCurrency,
+            closed[0].referenceCurrency
+        )
+        .unwrap(),
+        series_id
+    );
+}
+
 /// A group paid in full leaves its bin once no Nod can join it, so later walks do not
 /// visit it again. Its paid Nod stays with the group until mined.
 #[test]
@@ -1646,10 +1727,10 @@ fn a_running_call_sweep_keeps_its_day() {
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(day).unwrap();
         nod.call_latest_day.write(day).unwrap();
-        nod.daily_genesis_day.write(day).unwrap();
 
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, later, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx).unwrap();
@@ -1703,14 +1784,14 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             .write(last_closed_day(at))
             .unwrap();
         let nod = NodContract::new(storage.clone());
-        nod.daily_genesis_day.write(last_closed_day(at)).unwrap();
         nod.call_latest_day.write(last_closed_day(at)).unwrap();
         item.group_key
     });
     provider.fail_after_mutation_at(0);
     let result = StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID),
+            BlockContext::empty_for_tests(BLOCK_NUMBER, at, CHAIN_ID)
+                .with_genesis_timestamp(START - DAY),
             storage.clone(),
         );
         crate::called::process_call_pass(&ctx)
@@ -1742,7 +1823,6 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
 
         let nod = NodContract::new(storage.clone());
         nod.call_sweep_day.write(closed[0]).unwrap();
-        nod.daily_genesis_day.write(closed[0]).unwrap();
         nod.call_latest_day.write(closed[0]).unwrap();
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 

@@ -8,32 +8,26 @@ use crate::{
 
 #[test]
 fn publication_calldata_is_bounded_and_canonical() {
-    let input = SystemTxInputV2::RadiclePublication { batch: batch(32) };
+    let input = SystemTx::RadiclePublication { batch: batch(32) };
     let encoded = input.encode().unwrap();
     assert_eq!(&encoded[..5], b"OSP2\x02");
     assert_eq!(encoded.len(), 3683);
-    assert_eq!(SystemTxInputV2::decode(&encoded).unwrap(), input);
+    assert_eq!(SystemTx::decode(&encoded).unwrap(), input);
     let mut trailing = encoded.to_vec();
     trailing.push(0);
-    assert!(SystemTxInputV2::decode(&trailing).is_err());
-    assert!(SystemTxInputV2::decode(&encoded[..encoded.len() - 1]).is_err());
+    assert!(SystemTx::decode(&trailing).is_err());
+    assert!(SystemTx::decode(&encoded[..encoded.len() - 1]).is_err());
     let mut old = encoded.to_vec();
     old[4] = 1;
-    assert!(SystemTxInputV2::decode(&old).is_err());
-    assert!(SystemTxKind::RadiclePublication.revert_fails_block());
+    assert!(SystemTx::decode(&old).is_err());
+    assert!(input.revert_fails_block());
 }
 
-fn transaction(input: SystemTxInputV2, index: usize) -> TransactionSigned {
-    build_unsigned_system_tx(
-        input.kind(),
-        index as u8,
-        2,
-        CHAIN_ID,
-        input.encode().unwrap(),
-    )
-    .unwrap()
-    .into_signed(Signature::test_signature())
-    .into()
+fn transaction(input: SystemTx, index: usize) -> TransactionSigned {
+    build_unsigned_system_tx(index as u8, 2, CHAIN_ID, input.encode().unwrap())
+        .unwrap()
+        .into_signed(Signature::test_signature())
+        .into()
 }
 
 #[test]
@@ -48,21 +42,19 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
         extra_data: encode_outbe_block_artifacts(&artifacts).unwrap(),
         ..Default::default()
     });
-    let kinds = expected_begin_block_kinds_for_publication(2, false, false, true);
+    let selectors = expected_begin_block_selectors_for_publication(2, false, false, true);
     assert_eq!(
-        &kinds[kinds.len() - 2..],
-        &[SystemTxKind::HookEvents, SystemTxKind::RadiclePublication]
+        &selectors[selectors.len() - 2..],
+        &[HOOK_EVENTS_SELECTOR, RADICLE_PUBLICATION_SELECTOR]
     );
-    let inputs: Vec<_> = kinds
-        .into_iter()
-        .map(|kind| {
-            if kind == SystemTxKind::RadiclePublication {
-                SystemTxInputV2::RadiclePublication { batch: batch(32) }
-            } else {
-                input_for(kind)
-            }
-        })
-        .collect();
+    let inputs = [
+        accounting(),
+        late_credits(),
+        SystemTx::CycleTick,
+        SystemTx::OracleSlashWindow,
+        SystemTx::HookEvents,
+        SystemTx::RadiclePublication { batch: batch(32) },
+    ];
     let mut body = OutbeBlockBody {
         transactions: inputs
             .into_iter()
@@ -77,7 +69,7 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
     let mut different = batch(32);
     different.body.package_manifest_hash = B256::repeat_byte(99);
     body.transactions.push(transaction(
-        SystemTxInputV2::RadiclePublication { batch: different },
+        SystemTx::RadiclePublication { batch: different },
         body.transactions.len(),
     ));
     assert!(validate_system_layout(&body, &header).is_err());
@@ -108,8 +100,8 @@ fn publication_cursor_advances_only_after_hooks_when_a_batch_is_present() {
         SystemTxPhase::RadiclePublication { body_index: 9 }
     );
     assert_eq!(
-        publication.expected_kind(),
-        Some(SystemTxKind::RadiclePublication)
+        publication.expected_selector(),
+        Some(RADICLE_PUBLICATION_SELECTOR)
     );
     assert_eq!(
         publication.advance_after_commit_with_publication(false, false, true),

@@ -1,43 +1,14 @@
-//! Seed governance and system precompile state.
+//! Seed system precompile state.
 
-use std::fs;
-use std::path::Path;
-
-use alloy_primitives::U256;
 use serde_json::{json, Map, Value};
 
 use crate::error::GenesisError;
-use crate::keccak::keccak256;
-use crate::network::default_canon_dir;
 use crate::seed_alloc::{seed_code_registry, seed_governments_descriptor};
 use crate::seed_codec::{
-    compute_tee_policy_hash, parse_u64, u64_bytes, write_storage_bytes, StorageBuilder,
-    ACCOUNTING_PROGRESS_ADDRESS, CODE_REGISTRY_ADDRESS, GOVERNANCE_ADDRESS, MARKER_CODE,
-    TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS,
+    compute_tee_policy_hash, parse_u64, StorageBuilder, ACCOUNTING_PROGRESS_ADDRESS,
+    CODE_REGISTRY_ADDRESS, MARKER_CODE, TEE_REGISTRY_ADDRESS, ZEROFEE_ADDRESS,
 };
 use crate::seed_economy::merge_storage_into_alloc;
-
-#[derive(Clone, Copy)]
-struct GovernanceTextSlots {
-    text_slot: u64,
-    version_slot: u64,
-    hash_slot: u64,
-    revisions_base: u64,
-}
-
-const META_CANON_SLOTS: GovernanceTextSlots = GovernanceTextSlots {
-    text_slot: 0,
-    version_slot: 1,
-    hash_slot: 2,
-    revisions_base: 3,
-};
-
-const CANON_SLOTS: GovernanceTextSlots = GovernanceTextSlots {
-    text_slot: 4,
-    version_slot: 5,
-    hash_slot: 6,
-    revisions_base: 7,
-};
 
 /// Seed the genesis TEE attestation policy (`TeeRegistry` slot 2 + `config.teePolicy`) when `tee_policy` is present.
 pub fn seed_tee_policy(
@@ -111,58 +82,12 @@ pub fn seed_accounting_progress(storage: &mut StorageBuilder) {
     storage.set_slot(0u64, 0u64);
 }
 
-/// Seed Governance canon and meta-canon texts from `canon_dir/{metacanon.md,canon.md}` when present.
-pub fn seed_governance(
-    storage: &mut StorageBuilder,
-    canon_dir: Option<&Path>,
-) -> Result<(bool, bool), GenesisError> {
-    let mut meta_seeded = false;
-    let mut canon_seeded = false;
-    if let Some(dir) = canon_dir.filter(|d| d.is_dir()) {
-        let meta_path = dir.join("metacanon.md");
-        if meta_path.is_file() {
-            let data = fs::read(&meta_path).map_err(|err| GenesisError::io(&meta_path, err))?;
-            seed_governance_text(storage, META_CANON_SLOTS, &data)?;
-            meta_seeded = true;
-        }
-        let canon_path = dir.join("canon.md");
-        if canon_path.is_file() {
-            let data = fs::read(&canon_path).map_err(|err| GenesisError::io(&canon_path, err))?;
-            seed_governance_text(storage, CANON_SLOTS, &data)?;
-            canon_seeded = true;
-        }
-    }
-    Ok((meta_seeded, canon_seeded))
-}
-
-fn seed_governance_text(
-    storage: &mut StorageBuilder,
-    slots: GovernanceTextSlots,
-    data: &[u8],
-) -> Result<(), GenesisError> {
-    write_storage_bytes(storage, U256::from(slots.text_slot), data)?;
-    storage.set_slot(slots.version_slot, 1u64);
-    let h = keccak256(data);
-    storage.set_raw_slot_hex(slots.hash_slot, &format!("0x{}", hex::encode(h)))?;
-    storage.set_mapping_b256(slots.revisions_base, &u64_bytes(1), &h);
-    Ok(())
-}
-
-/// Seed Governance, AccountingProgress, CodeRegistry, ZeroFee, and TeeRegistry state.
+/// Seed AccountingProgress, CodeRegistry, ZeroFee, and TeeRegistry state.
 pub fn seed_system_state(
     genesis: &mut Value,
     seed: &Value,
     alloc: &mut Map<String, Value>,
-    canon_dir: Option<&str>,
 ) -> Result<(), GenesisError> {
-    let default_canon = default_canon_dir();
-    let resolved_canon = canon_dir.map_or(default_canon.as_path(), Path::new);
-    let mut governance_storage = StorageBuilder::new();
-    seed_governance(&mut governance_storage, Some(resolved_canon))?;
-    if !governance_storage.entries.is_empty() {
-        merge_storage_into_alloc(alloc, GOVERNANCE_ADDRESS, &governance_storage)?;
-    }
-
     let mut accounting_storage = StorageBuilder::new();
     seed_accounting_progress(&mut accounting_storage);
     merge_storage_into_alloc(alloc, ACCOUNTING_PROGRESS_ADDRESS, &accounting_storage)?;

@@ -13,8 +13,9 @@ use outbe_oracle::{
 use outbe_primitives::{
     error::Result,
     math::scaled_math::checked_quote,
+    series_id::SeriesId,
     storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
+    time::{first_full_day, previous_date_key, timestamp_to_date_key},
     units::MAX_ASSET_DECIMALS,
 };
 pub(crate) fn quote(
@@ -46,8 +47,12 @@ pub(crate) fn quote(
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
     let policy_rate = api::get_policy_rate(storage.clone(), currency)?;
+    let call_terms = outbe_credis::config::read(storage)?;
     let now = storage.now_secs()?;
     let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
+    let call_start_day = first_full_day(now).map_err(date_step_error)?;
+    let series_id = SeriesId::for_pair(day, currency, reference_currency)
+        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
     if OracleContract::new(storage.clone())
         .utc_day_vwap_last_finalized
         .read()?
@@ -72,6 +77,12 @@ pub(crate) fn quote(
         asset_decimals: decimals,
         reference_currency,
         call_anchor_price_minor: anchor,
+        series_id,
+        call_start_day,
+        call_rate: call_terms.call_rate,
+        call_window_seconds: call_terms.call_window_seconds,
+        call_threshold_seconds: call_terms.call_threshold_seconds,
+        call_notice_period_seconds: call_terms.call_notice_period_seconds,
         ..Default::default()
     })
 }

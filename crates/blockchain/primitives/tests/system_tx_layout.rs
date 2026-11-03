@@ -7,12 +7,7 @@
 use alloy_consensus::{SignableTransaction as _, TxLegacy};
 use alloy_primitives::{address, Bytes, Signature, TxKind, U256};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, expected_begin_block_kinds, split_system_layout,
-    validate_active_system_tx_set, BodyZone, SystemTxError, SystemTxInputV2, SystemTxKind,
-    SystemTxLayout, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-    CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_INPUT_VERSION,
-};
+use outbe_primitives::system_tx::*;
 use reth_ethereum::TransactionSigned;
 
 /// Empty layout - used by the block-1 / block-0 layout tests that only need to
@@ -28,31 +23,26 @@ fn empty_layout() -> SystemTxLayout<'static> {
 const TEST_BLOCK: u64 = 32;
 const TEST_CHAIN_ID: u64 = 2026;
 
-fn system_input(kind: SystemTxKind) -> SystemTxInputV2 {
-    match kind {
-        SystemTxKind::CertifiedParentAccounting => SystemTxInputV2::CertifiedParentAccounting {
+fn system_inputs() -> Vec<SystemTx> {
+    vec![
+        SystemTx::CertifiedParentAccounting {
             metadata: CertifiedParentAccountingMetadata::default(),
         },
-        SystemTxKind::LateFinalizeCredits => SystemTxInputV2::LateFinalizeCredits {
+        SystemTx::LateFinalizeCredits {
             artifact: Default::default(),
         },
-        SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
-        SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
-        SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
-        SystemTxKind::RadiclePublication => SystemTxInputV2::RadiclePublication {
-            batch: outbe_primitives::test_utils::sample_radicle_publication_batch(1),
-        },
-        other => panic!("layout fixture does not use {other:?}"),
-    }
+        SystemTx::CycleTick,
+        SystemTx::OracleSlashWindow,
+        SystemTx::HookEvents,
+    ]
 }
 
-fn signed_system_tx(kind: SystemTxKind, ordinal: u8) -> TransactionSigned {
+fn signed_system_tx(input: SystemTx, ordinal: u8) -> TransactionSigned {
     build_unsigned_system_tx(
-        kind,
         ordinal,
         TEST_BLOCK,
         TEST_CHAIN_ID,
-        system_input(kind).encode().expect("system input encodes"),
+        input.encode().expect("system input encodes"),
     )
     .expect("system tx builds")
     .into_signed(Signature::test_signature())
@@ -130,7 +120,7 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
         bytes.extend_from_slice(selector);
         bytes.push(1); // V1 version
         bytes.extend_from_slice(body);
-        let err = SystemTxInputV2::decode(&bytes).expect_err("V1 selector must be rejected");
+        let err = SystemTx::decode(&bytes).expect_err("V1 selector must be rejected");
         match err {
             SystemTxError::UnknownSelector(actual) => {
                 assert_eq!(
@@ -146,7 +136,7 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&CYCLE_TICK_SELECTOR);
     bytes.push(1); // wrong (legacy) version
-    let err = SystemTxInputV2::decode(&bytes)
+    let err = SystemTx::decode(&bytes)
         .expect_err("V1 version byte must be rejected even under a V2 selector");
     assert!(
         matches!(err, SystemTxError::UnsupportedVersion(1)),
@@ -165,14 +155,14 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
     );
 
     // Expected kinds at block 1 with BoundaryOutcome present:
-    let expected = expected_begin_block_kinds(1, true, false);
+    let expected = expected_begin_block_selectors(1, true, false);
     assert_eq!(
         expected,
         vec![
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CYCLE_TICK_SELECTOR,
+            BOUNDARY_OUTCOME_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ],
         "block 1 V2 layout must include CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents",
     );
@@ -188,12 +178,12 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
     validate_active_system_tx_set(&empty_layout(), 0, true, false)
         .expect("empty layout at block 0 must be accepted even if has_boundary_outcome is true");
 
-    let expected = expected_begin_block_kinds(0, false, false);
+    let expected = expected_begin_block_selectors(0, false, false);
     assert!(
         expected.is_empty(),
         "block 0 must have no expected begin-zone system tx kinds; got {expected:?}",
     );
-    let expected_with_bo = expected_begin_block_kinds(0, true, false);
+    let expected_with_bo = expected_begin_block_selectors(0, true, false);
     assert!(
         expected_with_bo.is_empty(),
         "block 0 must have no expected begin-zone system tx kinds even with has_boundary_outcome=true; got {expected_with_bo:?}",
@@ -201,7 +191,7 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 }
 
 fn canonical_transactions() -> Vec<TransactionSigned> {
-    expected_begin_block_kinds(TEST_BLOCK, false, false)
+    system_inputs()
         .into_iter()
         .enumerate()
         .map(|(index, kind)| signed_system_tx(kind, index as u8))
@@ -215,8 +205,8 @@ fn native_layout_separates_begin_prefix_and_user_transactions() {
     let layout = split_system_layout(&txs).unwrap();
     validate_active_system_tx_set(&layout, TEST_BLOCK, false, false).unwrap();
     assert_eq!(
-        layout.begin_block_kinds().unwrap(),
-        expected_begin_block_kinds(TEST_BLOCK, false, false)
+        layout.begin_block_selectors().unwrap(),
+        expected_begin_block_selectors(TEST_BLOCK, false, false)
     );
     assert_eq!(layout.user.len(), 1);
     assert!(layout.end.is_empty());
@@ -238,41 +228,38 @@ fn native_layout_accepts_an_empty_user_zone() {
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
     // Block 2+ canonical layout (no BoundaryOutcome on the parent).
-    let expected = expected_begin_block_kinds(2, false, false);
+    let expected = expected_begin_block_selectors(2, false, false);
     assert_eq!(
         expected,
         vec![
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+            LATE_FINALIZE_CREDITS_SELECTOR,
+            CYCLE_TICK_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ],
     );
 
     // Block 2+ with BoundaryOutcome present (e.g. epoch boundary).
-    let expected = expected_begin_block_kinds(42, true, false);
+    let expected = expected_begin_block_selectors(42, true, false);
     assert_eq!(
         expected,
         vec![
-            SystemTxKind::CertifiedParentAccounting,
-            SystemTxKind::LateFinalizeCredits,
-            SystemTxKind::CycleTick,
-            SystemTxKind::BoundaryOutcome,
-            SystemTxKind::OracleSlashWindow,
-            SystemTxKind::HookEvents,
+            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
+            LATE_FINALIZE_CREDITS_SELECTOR,
+            CYCLE_TICK_SELECTOR,
+            BOUNDARY_OUTCOME_SELECTOR,
+            ORACLE_SLASH_WINDOW_SELECTOR,
+            HOOK_EVENTS_SELECTOR,
         ],
     );
 
     // All begin-zone kinds resolve to BeginBlock body zone.
-    for kind in [
-        SystemTxKind::CertifiedParentAccounting,
-        SystemTxKind::LateFinalizeCredits,
-        SystemTxKind::CycleTick,
-        SystemTxKind::BoundaryOutcome,
-        SystemTxKind::OracleSlashWindow,
-        SystemTxKind::HookEvents,
-    ] {
+    let mut inputs = system_inputs();
+    inputs.push(SystemTx::BoundaryOutcome {
+        artifact: outbe_primitives::test_utils::sample_system_tx_boundary(TEST_BLOCK),
+    });
+    for kind in inputs {
         assert_eq!(kind.body_zone(), BodyZone::BeginBlock);
         assert!(kind.begin_order().is_some());
         assert!(kind.end_order().is_none());

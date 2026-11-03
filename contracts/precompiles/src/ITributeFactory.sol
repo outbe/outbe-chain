@@ -51,6 +51,7 @@ interface ITributeFactory {
     event WorldwideDayOpened(
         uint32 indexed worldwideDay, uint64 formingStart, uint64 formingEnd, uint64 offeringStart, uint64 offeringEnd
     );
+    event WorldwideDayAdvanceFailed(uint32 indexed utcDay, uint64 blockTimestamp, bytes reason);
 
     function getWorldwideDay(uint32 wwd)
         external

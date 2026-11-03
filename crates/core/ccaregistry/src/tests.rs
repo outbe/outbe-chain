@@ -1,6 +1,6 @@
 use crate::{
     api,
-    constants::{BOND_REQUIREMENT, MAX_ACTIVE_CCAS, UNBOND_COOLDOWN_SECONDS},
+    constants::{BOND_REQUIREMENT, UNBOND_COOLDOWN_SECONDS},
     precompile::{dispatch, ICcaRegistry},
     runtime,
     schema::{address_day_key, CcaContract, CcaRecordEntryExt},
@@ -119,57 +119,22 @@ fn an_unbond_claim_that_leaves_less_than_the_bonded_total_reverts() {
 }
 
 #[test]
-fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
+fn active_set_accepts_more_than_128_and_preserves_topup_exit_and_reentry() {
     run(|storage| {
-        for id in 1..=MAX_ACTIVE_CCAS {
+        for id in 1..=1000 {
             bond(&storage, cca_at(id), BOND_REQUIREMENT);
         }
         let contract = CcaContract::new(storage.clone());
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
-
-        let rejected = cca_at(MAX_ACTIVE_CCAS + 1);
-        let registry_balance = storage.balance(CCA_REGISTRY_ADDRESS).unwrap();
-        let error = runtime::bond(
-            storage.clone(),
-            rejected,
-            BOND_REQUIREMENT,
-            "Test CCA".into(),
-        )
-        .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
-                .to_string()
-        );
-        assert!(api::get_cca(&storage, rejected).is_err());
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
-        assert_eq!(
-            storage.balance(CCA_REGISTRY_ADDRESS).unwrap(),
-            registry_balance
-        );
-
-        let partial = cca_at(MAX_ACTIVE_CCAS + 2);
+        assert_eq!(contract.active.len().unwrap(), 1000);
+        let partial = cca_at(1001);
         bond(&storage, partial, BOND_REQUIREMENT - U256::ONE);
         assert_eq!(
             api::cca_state(&storage, partial).unwrap(),
             ICcaRegistry::State::Bonding
         );
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
-        let error =
-            runtime::bond(storage.clone(), partial, U256::ONE, "Test CCA".into()).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
-                .to_string()
-        );
-        assert_eq!(
-            api::get_cca(&storage, partial).unwrap().bondedMinor,
-            BOND_REQUIREMENT - U256::ONE
-        );
-        assert_eq!(
-            api::cca_state(&storage, partial).unwrap(),
-            ICcaRegistry::State::Bonding
-        );
+        assert_eq!(contract.active.len().unwrap(), 1000);
+        bond(&storage, partial, U256::ONE);
+        assert!(api::is_active(&storage, partial).unwrap());
 
         let incumbent = cca_at(1);
         bond(&storage, incumbent, U256::ONE);
@@ -178,49 +143,110 @@ fn active_set_rejects_one_past_the_cap_and_frees_a_slot_on_exit() {
             BOND_REQUIREMENT + U256::ONE
         );
         assert!(api::is_active(&storage, incumbent).unwrap());
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+        assert_eq!(contract.active.len().unwrap(), 1001);
 
         runtime::unbond(storage.clone(), incumbent).unwrap();
         storage
             .set_block_timestamp(U256::from(NOW + UNBOND_COOLDOWN_SECONDS))
             .unwrap();
         runtime::claim_unbonded(storage.clone(), incumbent).unwrap();
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS - 1);
+        assert_eq!(contract.active.len().unwrap(), 1000);
         assert_eq!(
             api::cca_state(&storage, incumbent).unwrap(),
             ICcaRegistry::State::Deregistered
         );
 
-        bond(&storage, partial, U256::ONE);
-        assert!(api::is_active(&storage, partial).unwrap());
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
-
-        let still_rejected = cca_at(MAX_ACTIVE_CCAS + 3);
-        assert!(runtime::bond(
-            storage.clone(),
-            still_rejected,
-            BOND_REQUIREMENT,
-            "Test CCA".into()
-        )
-        .is_err());
-        assert!(api::get_cca(&storage, still_rejected).is_err());
-        assert_eq!(contract.active.len().unwrap(), MAX_ACTIVE_CCAS);
+        bond(&storage, incumbent, BOND_REQUIREMENT);
+        assert_eq!(contract.active.len().unwrap(), 1001);
     });
 }
 
 #[test]
-fn active_reward_weights_reject_a_set_past_the_cap() {
+fn day_index_is_stable_through_zero_weights_deficits_exit_and_sealing() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, BOND_REQUIREMENT);
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(10)).unwrap();
+        runtime::credis_forfeited(&storage, ALICE, DAY, U256::from(15)).unwrap();
+        runtime::credis_forfeited(&storage, BOB, DAY, U256::from(7)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::from(9)).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY + 1, U256::from(20)).unwrap();
+        runtime::unbond(storage.clone(), ALICE).unwrap();
+        assert!(api::reward_day_inputs(&storage, DAY).is_err());
+        api::seal_reward_day(&storage, DAY).unwrap();
+        api::seal_reward_day(&storage, DAY - 10).unwrap();
+        assert_eq!(
+            api::reward_day_inputs(&storage, DAY).unwrap(),
+            (2, U256::from(4))
+        );
+        assert_eq!(
+            api::reward_day_entry(&storage, DAY, 0).unwrap(),
+            (ALICE, U256::from(4))
+        );
+        assert_eq!(
+            api::reward_day_entry(&storage, DAY, 1).unwrap(),
+            (BOB, U256::ZERO)
+        );
+        assert!(api::reward_day_entry(&storage, DAY, 2).is_err());
+        assert!(runtime::credis_forfeited(&storage, BOB, DAY, U256::ONE).is_err());
+        assert!(runtime::credis_issued(&storage, BOB, DAY - 1, U256::ONE).is_err());
+        assert_eq!(
+            api::reward_weight(&storage, ALICE, DAY + 1).unwrap(),
+            U256::from(20)
+        );
+    });
+}
+
+#[test]
+fn day_count_total_and_cleanup_queue_overflow_roll_back() {
+    run(|storage| {
+        bond(&storage, ALICE, BOND_REQUIREMENT);
+        bond(&storage, BOB, BOND_REQUIREMENT);
+        let contract = CcaContract::new(storage.clone());
+        contract.reward_day_count.write(&DAY, u32::MAX).unwrap();
+        assert!(runtime::credis_forfeited(&storage, ALICE, DAY, U256::ONE).is_err());
+        assert_eq!(
+            contract
+                .gratis_deficit_minor_per_utc_day
+                .read(&address_day_key(ALICE, DAY))
+                .unwrap(),
+            U256::ZERO
+        );
+        contract.reward_day_count.clear(&DAY).unwrap();
+        runtime::credis_issued(&storage, ALICE, DAY, U256::MAX).unwrap();
+        assert!(runtime::credis_issued(&storage, BOB, DAY, U256::ONE).is_err());
+        assert_eq!(contract.reward_day_count.read(&DAY).unwrap(), 1);
+        assert_eq!(api::reward_weight(&storage, BOB, DAY).unwrap(), U256::ZERO);
+        api::seal_reward_day(&storage, DAY).unwrap();
+        contract.day_cleanup_tail.write(u64::MAX).unwrap();
+        let ctx =
+            outbe_primitives::block::BlockRuntimeContext::new(Default::default(), storage.clone());
+        assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
+        assert!(!contract.day_cleanup_scheduled.read(&DAY).unwrap());
+    });
+}
+
+#[test]
+fn active_index_capacity_is_checked_before_insertion() {
     run(|storage| {
         let contract = CcaContract::new(storage.clone());
-        for id in 1..=MAX_ACTIVE_CCAS + 1 {
-            contract.active.insert(cca_at(id)).unwrap();
-        }
-        let error = api::active_reward_weights(&storage, DAY).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            outbe_primitives::error::PrecompileError::from(crate::errors::CcaError::ActiveSetFull)
-                .to_string()
+        // The records map reserves its record footprint before the active set.
+        storage
+            .sstore(
+                CCA_REGISTRY_ADDRESS,
+                U256::from(<crate::schema::CcaRecord as outbe_primitives::storage::types::StorableType>::SLOTS),
+                U256::from(u32::MAX),
+            )
+            .unwrap();
+        storage
+            .increase_balance(CCA_REGISTRY_ADDRESS, BOND_REQUIREMENT)
+            .unwrap();
+        assert!(
+            runtime::bond(storage.clone(), ALICE, BOND_REQUIREMENT, "Test CCA".into()).is_err()
         );
+        assert!(!contract.records.exists(ALICE).unwrap());
+        assert_eq!(contract.active.len().unwrap(), u32::MAX);
+        assert_eq!(api::total_bonded(&storage).unwrap(), U256::ZERO);
     });
 }
 
@@ -644,5 +670,118 @@ fn typed_states_preserve_storage_encoding_and_reject_invalid_words() {
                 word
             );
         }
+    });
+}
+
+#[test]
+fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    run(|storage| {
+        for id in 1..=300 {
+            let address = cca_at(id);
+            bond(&storage, address, BOND_REQUIREMENT);
+            if id % 2 == 0 {
+                runtime::credis_forfeited(&storage, address, DAY, U256::ONE).unwrap();
+            } else {
+                runtime::credis_issued(&storage, address, DAY, U256::ONE).unwrap();
+            }
+        }
+        let contract = CcaContract::new(storage.clone());
+        let mut ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(0, NOW, 1), storage.clone());
+        assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
+        api::seal_reward_day(&storage, DAY).unwrap();
+        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
+        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
+        assert_eq!(contract.day_cleanup_tail.read().unwrap(), 1);
+        // No source is deleted merely by scheduling.
+        assert_eq!(
+            api::reward_day_inputs(&storage, DAY).unwrap(),
+            (300, U256::from(150))
+        );
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
+        assert!(!contract
+            .reward_day_members
+            .read(&address_day_key(cca_at(256), DAY))
+            .unwrap());
+        assert_eq!(
+            contract
+                .gratis_deficit_minor_per_utc_day
+                .read(&address_day_key(cca_at(256), DAY))
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            api::reward_day_entry(&storage, DAY, 256).unwrap(),
+            (cca_at(257), U256::ONE)
+        );
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
+        // Fail after some successful deletions, then retry the same height.
+        let key = crate::schema::day_index_key(DAY, 280);
+        contract.reward_day_addresses.clear(&key).unwrap();
+        ctx.block.block_number = 1;
+        assert!(api::process_day_cleanup(&ctx).is_err());
+        assert_eq!(contract.cleanup_processed_block.read().unwrap(), 0);
+        assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
+        assert_eq!(
+            api::reward_day_entry(&storage, DAY, 256).unwrap().0,
+            cca_at(257)
+        );
+        contract
+            .reward_day_addresses
+            .write(&key, cca_at(281))
+            .unwrap();
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_head.read().unwrap(), 1);
+        assert_eq!(
+            api::reward_day_inputs(&storage, DAY).unwrap(),
+            (0, U256::ZERO)
+        );
+        for id in 1..=300 {
+            let key = address_day_key(cca_at(id), DAY);
+            assert!(!contract.reward_day_members.read(&key).unwrap());
+            assert_eq!(
+                contract.gratis_minor_per_utc_day.read(&key).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                contract
+                    .gratis_deficit_minor_per_utc_day
+                    .read(&key)
+                    .unwrap(),
+                U256::ZERO
+            );
+        }
+        api::enqueue_day_cleanup(&ctx, DAY).unwrap();
+        assert_eq!(contract.day_cleanup_tail.read().unwrap(), 1);
+        assert!(runtime::credis_issued(&storage, cca_at(1), DAY, U256::ONE).is_err());
+        assert!(runtime::credis_forfeited(&storage, cca_at(2), DAY, U256::ONE).is_err());
+    });
+}
+
+#[test]
+fn cleanup_empty_headers_are_bounded_and_sealing_can_skip_days() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+    run(|storage| {
+        let mut ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(0, NOW, 1), storage.clone());
+        api::seal_reward_day(&storage, DAY + 10).unwrap();
+        for day in DAY..DAY + 6 {
+            api::enqueue_day_cleanup(&ctx, day).unwrap();
+        }
+        let contract = CcaContract::new(storage.clone());
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
+        ctx.block.block_number = 1;
+        api::process_day_cleanup(&ctx).unwrap();
+        assert_eq!(contract.day_cleanup_head.read().unwrap(), 6);
+        contract.day_cleanup_head.write(7).unwrap();
+        ctx.block.block_number = 2;
+        assert!(api::process_day_cleanup(&ctx).is_err());
+        assert_eq!(contract.cleanup_processed_block.read().unwrap(), 1);
     });
 }

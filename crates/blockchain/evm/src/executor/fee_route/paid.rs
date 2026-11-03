@@ -23,8 +23,10 @@ where
     {
         let tx = recovered.tx();
         let base_fee_per_gas = self.inner.evm.block().basefee() as u128;
+        let blob_gas_price = self.inner.evm.block().blob_gasprice().unwrap_or(0);
         let max_fee_per_gas = tx.max_fee_per_gas();
         let max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
+        let blob_gas_used = tx.blob_gas_used().unwrap_or(0);
 
         let result = self.inner.execute_transaction_with_commit_condition(
             WithTxEnv {
@@ -45,6 +47,18 @@ where
                 .current_block_validator_fees
                 .checked_add(validator_fee)
                 .ok_or(crate::errors::ExecutorValidationError::ValidatorFeeAccumulatorOverflow)?;
+
+            let burned_fee = burned_fee_for_gas(
+                base_fee_per_gas,
+                gas_used.tx_gas_used(),
+                blob_gas_price,
+                blob_gas_used,
+            )
+            .ok_or(crate::errors::ExecutorValidationError::BurnedFeeAccumulatorOverflow)?;
+            self.current_block_burned_fees = self
+                .current_block_burned_fees
+                .checked_add(burned_fee)
+                .ok_or(crate::errors::ExecutorValidationError::BurnedFeeAccumulatorOverflow)?;
         }
 
         Ok(result)
