@@ -39,6 +39,13 @@ pub struct ContractUpgrade {
     pub call_data: Bytes,
 }
 
+impl ContractUpgrade {
+    /// The chain, the proxy and the implementation are nonzero.
+    fn has_fields(&self) -> bool {
+        self.chain_id != 0 && !self.proxy.is_zero() && !self.implementation.is_zero()
+    }
+}
+
 /// JSON payload that upgrades a batch of contracts on the listed chains in
 /// one proposal. The upgrades on one chain run in the listed order.
 ///
@@ -69,12 +76,10 @@ impl UpgradeContractsPayload {
         let mut seen = std::collections::HashSet::new();
         let valid = self.operation == UPGRADE_CONTRACTS_OPERATION
             && !self.upgrades.is_empty()
-            && self.upgrades.iter().all(|u| {
-                u.chain_id != 0
-                    && !u.proxy.is_zero()
-                    && !u.implementation.is_zero()
-                    && seen.insert((u.chain_id, u.proxy))
-            });
+            && self
+                .upgrades
+                .iter()
+                .all(|u| u.has_fields() && seen.insert((u.chain_id, u.proxy)));
         if !valid {
             return Err(UpdateError::InvalidPayload);
         }
