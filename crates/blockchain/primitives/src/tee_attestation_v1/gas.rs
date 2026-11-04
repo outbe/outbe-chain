@@ -378,7 +378,6 @@ impl TeeRegistryGasScheduleV1 {
 pub struct ResourceScheduleV1 {
     pub system_gas_schedule_hash: B256,
     pub tee_registry_gas_schedule_hash: B256,
-    pub bootstrap_block_gas_limit: u64,
     pub steady_block_gas_limit: u64,
 }
 
@@ -388,18 +387,16 @@ impl ResourceScheduleV1 {
             system_gas_schedule_hash: SystemGasScheduleV1::normative().schedule_hash()?,
             tee_registry_gas_schedule_hash: TeeRegistryGasScheduleV1::normative()
                 .schedule_hash()?,
-            bootstrap_block_gas_limit: BOOTSTRAP_BLOCK_GAS_LIMIT,
             steady_block_gas_limit: STEADY_BLOCK_GAS_LIMIT,
         })
     }
 
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         self.validate()?;
-        let mut out = Vec::with_capacity(81);
+        let mut out = Vec::with_capacity(73);
         out.push(PROTOCOL_VERSION_V1);
         out.extend_from_slice(self.system_gas_schedule_hash.as_slice());
         out.extend_from_slice(self.tee_registry_gas_schedule_hash.as_slice());
-        put_u64(&mut out, self.bootstrap_block_gas_limit);
         put_u64(&mut out, self.steady_block_gas_limit);
         Ok(out)
     }
@@ -410,7 +407,6 @@ impl ResourceScheduleV1 {
         let value = Self {
             system_gas_schedule_hash: B256::from(decoder.array::<32>()?),
             tee_registry_gas_schedule_hash: B256::from(decoder.array::<32>()?),
-            bootstrap_block_gas_limit: decoder.u64()?,
             steady_block_gas_limit: decoder.u64()?,
         };
         decoder.finish()?;
@@ -435,9 +431,7 @@ impl ResourceScheduleV1 {
                 "non-normative resource schedule hashes",
             ));
         }
-        if self.bootstrap_block_gas_limit != BOOTSTRAP_BLOCK_GAS_LIMIT
-            || self.steady_block_gas_limit != STEADY_BLOCK_GAS_LIMIT
-        {
+        if self.steady_block_gas_limit != STEADY_BLOCK_GAS_LIMIT {
             return Err(crate::error::TeeCodecNonCanonicalError::NonNormativeBlockGasLimits.into());
         }
         Ok(())

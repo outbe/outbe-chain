@@ -2,7 +2,7 @@ use alloy_consensus::Transaction as _;
 use reth_ethereum::TransactionSigned;
 
 use super::{
-    is_reserved_system_tx, BodyZone, SysTxSelector, SystemTx, SystemTxError,
+    is_reserved_system_tx, BlockHeightRegime, BodyZone, SysTxSelector, SystemTx, SystemTxError,
     BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
     CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR, HOOK_EVENTS_SELECTOR,
     LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, ORACLE_SLASH_WINDOW_SELECTOR,
@@ -132,35 +132,26 @@ pub fn expected_begin_block_selectors_for_publication(
     has_tee_bootstrap: bool,
     has_publication: bool,
 ) -> Vec<SysTxSelector> {
-    let mut expected = match block_number {
-        0 => Vec::new(),
-        1 => Vec::new(),
-        _ => {
-            vec![
-                CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-                // mandatory inclusion-window phase, ordered after Phase 1
-                // and before CycleTick for every block >= 2. It is empty when there
-                // is nothing to credit. Its body still drives the matured-window
-                // settlement.
-                LATE_FINALIZE_CREDITS_SELECTOR,
-            ]
-        }
-    };
-    if block_number > 0 {
-        expected.push(CYCLE_TICK_SELECTOR);
+    let regime = BlockHeightRegime::for_block(block_number);
+    if !regime.has_begin_zone_system_txs() {
+        return Vec::new();
     }
-    if block_number > 0 && has_boundary_outcome {
+    let mut expected = Vec::with_capacity(8);
+    if regime.has_parent_finalization_accounting() {
+        expected.push(CERTIFIED_PARENT_ACCOUNTING_SELECTOR);
+        expected.push(LATE_FINALIZE_CREDITS_SELECTOR);
+    }
+    expected.push(CYCLE_TICK_SELECTOR);
+    if has_boundary_outcome {
         expected.push(BOUNDARY_OUTCOME_SELECTOR);
     }
-    if block_number > 0 && has_tee_bootstrap {
+    if has_tee_bootstrap {
         expected.push(TEE_BOOTSTRAP_SELECTOR);
     }
-    if block_number > 0 {
-        expected.push(ORACLE_SLASH_WINDOW_SELECTOR);
-        expected.push(HOOK_EVENTS_SELECTOR);
-        if has_publication {
-            expected.push(RADICLE_PUBLICATION_SELECTOR);
-        }
+    expected.push(ORACLE_SLASH_WINDOW_SELECTOR);
+    expected.push(HOOK_EVENTS_SELECTOR);
+    if has_publication {
+        expected.push(RADICLE_PUBLICATION_SELECTOR);
     }
     expected
 }
@@ -206,20 +197,17 @@ pub fn validate_system_tx_set_for_publication(
         });
     }
 
-    // / V2: block 1 mandatorily carries the genesis bootstrap
-    // BoundaryOutcome. Reject the layout if the proposer omitted it. The
-    // expected-kinds list rejection below is structural. This rejection is
-    // protocol-level for V2 greenfield.
-    if block_number == 1 && !has_boundary_outcome {
+    let regime = BlockHeightRegime::for_block(block_number);
+    if regime.requires_genesis_bootstrap_txs() && !has_boundary_outcome {
         return Err(SystemTxError::V2Block1MissingBoundaryOutcome);
     }
-    if block_number == 1 && !has_tee_bootstrap {
+    if regime.requires_genesis_bootstrap_txs() && !has_tee_bootstrap {
         return Err(SystemTxError::V2Block1MissingTeeBootstrap);
     }
-    if block_number != 1 && has_tee_bootstrap {
+    if !regime.requires_genesis_bootstrap_txs() && has_tee_bootstrap {
         return Err(SystemTxError::TeeBootstrapWrongHeight { block_number });
     }
-    if block_number == 1 && !layout.user.is_empty() {
+    if !regime.allows_user_transactions() && !regime.is_genesis() && !layout.user.is_empty() {
         return Err(SystemTxError::V2Block1ContainsUserTransactions {
             actual: layout.user.len(),
         });

@@ -131,7 +131,8 @@ fn begin_envelopes_reserve_gas_at_genesis_and_bootstrap_limits() {
     let inputs = [SystemTx::CycleTick.encode().unwrap()];
     let intrinsic = system_tx_intrinsic_gas(&inputs[0]).unwrap();
     let reserve = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
-    for limit in [STEADY_BLOCK_GAS_LIMIT, BOOTSTRAP_BLOCK_GAS_LIMIT] {
+    for height in [0, 1, 2] {
+        let limit = protocol_block_gas_limit(height);
         let plan = SystemTxVisibleGasPlan::new(limit, &inputs).unwrap();
         assert_eq!(plan.total_envelope_gas(), limit - reserve);
         assert_eq!(plan.gas_limit(0), Some(limit - reserve));

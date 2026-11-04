@@ -1,43 +1,137 @@
-use crate::errors::BeginBlockPrecompileError;
-use alloy_primitives::Address;
-use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::Result;
-use outbe_teeregistry::v1::{EnclaveEvidenceV1, NodeHostAssociationV1};
+//! Block 1 (`GenesisBootstrap`) TEE / DCAP bootstrap lifecycle module.
+//!
+//! Consolidates all Block-1 `OST3` (`TeeBootstrapV2`) validation, proposer
+//! attestation key extraction for the Block-1 execution witness, and EVM
+//! `TeeRegistry` bootstrap execution behind a single module boundary.
 
-pub(super) fn prepare_tee_bootstrap(
+use std::collections::BTreeSet;
+
+use alloy_consensus::Transaction as _;
+use alloy_primitives::Address;
+use outbe_primitives::{
+    block::{BlockHeightRegime, BlockRuntimeContext},
+    error::Result,
+    system_tx::SystemTx,
+    tee_attestation_v1::TeePolicyV1,
+    tee_bootstrap_v2::TeeBootstrapV2,
+    tee_signatures::recover_signer,
+};
+use outbe_teeregistry::{
+    v1::{EnclaveEvidenceV1, NodeHostAssociationV1},
+    TeeBootstrapData, TeeRegistry,
+};
+use reth_ethereum::TransactionSigned;
+use reth_primitives_traits::Recovered;
+
+use crate::{
+    errors::{BeginBlockPrecompileError, SystemTxBuildError},
+    tee_attestation_activation::TeeAttestationChainSpecStateV1,
+};
+
+/// Preflights a `TeeBootstrapV2` payload and verifies its policy against the
+/// `ChainSpec` activation schedule when building Block-1 system transactions.
+pub fn validate_tee_bootstrap_for_build(
+    block_number: u64,
+    payload: &TeeBootstrapV2,
+    state: &TeeAttestationChainSpecStateV1,
+) -> std::result::Result<(), SystemTxBuildError> {
+    payload
+        .preflight()
+        .map_err(SystemTxBuildError::invalid_block1_ost3_bootstrap_payload)?;
+    let activation = state
+        .activation()
+        .map_err(SystemTxBuildError::invalid_mandatory_tee_chain_spec_authority)?;
+    let expected_policy = activation
+        .policy_at(block_number)
+        .map_err(SystemTxBuildError::from)?;
+    if &payload.authority.policy != expected_policy {
+        return Err(SystemTxBuildError::Block1Ost3PolicyScheduleMismatch);
+    }
+    Ok(())
+}
+
+/// Extracts the Block-1 proposer's Ed25519 enclave attestation public key from
+/// the `TeeBootstrapV2` payload before `TeeBootstrap` commits to `TeeRegistry`.
+pub fn extract_block_one_proposer_attestation_key(
+    regime: BlockHeightRegime,
+    pending_tee_bootstrap: Option<&TeeBootstrapV2>,
+    expected_begin_system_txs: &[Recovered<TransactionSigned>],
+    proposer: Address,
+) -> Option<[u8; 32]> {
+    if !regime.is_genesis_bootstrap() {
+        return None;
+    }
+    if let Some(payload) = pending_tee_bootstrap {
+        if let Some(key) = attestation_for_proposer(payload, proposer) {
+            return Some(key);
+        }
+    }
+    for tx in expected_begin_system_txs {
+        let Ok(SystemTx::TeeBootstrap { payload }) = SystemTx::decode(tx.input().as_ref()) else {
+            continue;
+        };
+        if let Some(key) = attestation_for_proposer(&payload, proposer) {
+            return Some(key);
+        }
+    }
+    None
+}
+
+/// Returns the Ed25519 attestation public key for `proposer` inside `payload`.
+pub fn attestation_for_proposer(payload: &TeeBootstrapV2, proposer: Address) -> Option<[u8; 32]> {
+    payload
+        .participants
+        .iter()
+        .find(|participant| Address::from(participant.validator_binding.validator) == proposer)
+        .map(|participant| participant.intent.attestation_ed25519)
+}
+
+/// Installs the initial authoritative TEE policy and executes the Block-1 DCAP bootstrap.
+pub fn execute_tee_bootstrap(
     ctx: &BlockRuntimeContext,
-    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
-    state: &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
+    payload: &TeeBootstrapV2,
+    state: &TeeAttestationChainSpecStateV1,
 ) -> Result<()> {
+    prepare_tee_bootstrap(ctx, payload, state)?;
+    run_tee_bootstrap_v1(ctx, payload)
+}
+
+/// Validates the `ChainSpec` TEE activation schedule and installs the initial policy.
+pub fn prepare_tee_bootstrap(
+    ctx: &BlockRuntimeContext,
+    payload: &TeeBootstrapV2,
+    state: &TeeAttestationChainSpecStateV1,
+) -> Result<()> {
+    let expected_policy = resolve_expected_policy(ctx.block.block_number, payload, state)?;
+    TeeRegistry::new(ctx.storage.clone()).install_initial_policy_v1(&expected_policy)?;
+    Ok(())
+}
+
+fn resolve_expected_policy(
+    block_number: u64,
+    payload: &TeeBootstrapV2,
+    state: &TeeAttestationChainSpecStateV1,
+) -> Result<TeePolicyV1> {
     let activation = state
         .activation()
         .map_err(BeginBlockPrecompileError::invalid_tee_chain_spec_authority)?;
-    if ctx.block.block_number < activation.manifest.activation_height {
+    if block_number < activation.manifest.activation_height {
         return Err(BeginBlockPrecompileError::Ost3NotActive.into());
     }
     let expected_policy = activation
-        .policy_at(ctx.block.block_number)
+        .policy_at(block_number)
         .map_err(BeginBlockPrecompileError::invalid_active_tee_policy)?;
     if &payload.authority.policy != expected_policy {
         return Err(BeginBlockPrecompileError::Ost3PolicyScheduleMismatch.into());
     }
-    outbe_teeregistry::TeeRegistry::new(ctx.storage.clone())
-        .install_initial_policy_v1(expected_policy)?;
-    Ok(())
+    Ok(expected_policy.clone())
 }
 
-/// DCAP block-1 bootstrap. The canonical payload already proves bounded shape.
-/// This handler:
-/// 1. binds it to the exact active committee and epoch-0 snapshot.
-/// 2. verifies every validator through the production enclave-resident QVL path.
-/// 3. only then finalizes the existing offer-key bootstrap state.
-pub(crate) fn run_tee_bootstrap_v1(
-    ctx: &BlockRuntimeContext,
-    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
-) -> Result<()> {
-    use outbe_primitives::tee_signatures::recover_signer;
-    use outbe_teeregistry::{TeeBootstrapData, TeeRegistry};
-
+/// DCAP Block-1 bootstrap handler:
+/// 1. Binds `payload` to the active consensus committee and epoch-0 snapshot.
+/// 2. Verifies each validator's enclave evidence and node-host association.
+/// 3. Commits the initial [`TeeBootstrapData`] to [`TeeRegistry`].
+pub fn run_tee_bootstrap_v1(ctx: &BlockRuntimeContext, payload: &TeeBootstrapV2) -> Result<()> {
     let mut registry = TeeRegistry::new(ctx.storage.clone());
     if registry.is_bootstrapped()? {
         return Err(BeginBlockPrecompileError::TeeRegistryAlreadyBootstrapped.into());
@@ -121,9 +215,8 @@ pub(crate) fn run_tee_bootstrap_v1(
 
 fn read_bootstrap_committee(
     ctx: &BlockRuntimeContext,
-    payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
-) -> Result<std::collections::BTreeSet<Address>> {
-    use std::collections::BTreeSet;
+    payload: &TeeBootstrapV2,
+) -> Result<BTreeSet<Address>> {
     let committee: BTreeSet<Address> =
         outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
             .get_active_consensus_set()?

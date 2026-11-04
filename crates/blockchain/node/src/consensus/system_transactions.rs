@@ -1,11 +1,12 @@
 //! Stateless system-transaction header and body bindings, in rejection order.
 use super::{consensus_other, ConsensusError, OutbeBlockBody, OutbeHeader, REWARDS_ADDRESS};
-use alloy_consensus::{BlockHeader as _, Transaction as _};
+use alloy_consensus::BlockHeader as _;
 use outbe_primitives::system_tx::binding::{self, ParentAccountingBindingError};
 use outbe_primitives::{reshare_artifact::OutbeBlockArtifacts, system_tx::SystemTxLayout};
 
 pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), ConsensusError> {
-    if header.number() > 0 && header.beneficiary() != REWARDS_ADDRESS {
+    let regime = outbe_primitives::block::BlockHeightRegime::for_block(header.number());
+    if !regime.is_genesis() && header.beneficiary() != REWARDS_ADDRESS {
         return Err(
             crate::errors::ConsensusPolicyError::NonGenesisBeneficiaryMismatch {
                 expected: REWARDS_ADDRESS,
@@ -51,51 +52,8 @@ pub(super) fn validate_late_credits(
     layout: &SystemTxLayout<'_>,
     artifacts: &OutbeBlockArtifacts,
 ) -> Result<(), ConsensusError> {
-    // Bind the header's `late_finalize_credits` artifact to the body's
-    // `LateFinalizeCredits` system-tx calldata. The artifact has tag 0x06 and is
-    // hash-committed and BLS-verified pre-exec. The binding makes sure that the
-    // verified artifact is exactly the one that settles fees. This mirrors the
-    // BoundaryOutcome parity above. The header `Option` maps to the calldata
-    // artifact via the proposer build path's `unwrap_or_default()`:
-    // `None => empty`, `Some(a) => a`.
-    let header_credits = artifacts.late_finalize_credits.clone().unwrap_or_default();
-    let mut found = false;
-    for input in system_inputs(layout) {
-        let input = input?;
-        if let outbe_evm::system_tx::SystemTx::LateFinalizeCredits { artifact } = input {
-            if artifact != header_credits {
-                return Err(consensus_other(
-                    "LateFinalizeCredits system tx artifact does not match header late_finalize_credits",
-                ));
-            }
-            found = true;
-            break;
-        }
-    }
-    // No body tx (block < 2): the header must then carry no credits.
-    if !found && !header_credits.batches.is_empty() {
-        return Err(consensus_other(
-            "header carries late_finalize_credits but block has no LateFinalizeCredits system tx",
-        ));
-    }
-    Ok(())
-}
-
-fn decode_system_input(
-    tx: &reth_ethereum::TransactionSigned,
-) -> Result<outbe_evm::system_tx::SystemTx, ConsensusError> {
-    outbe_evm::system_tx::SystemTx::decode(tx.input().as_ref())
-        .map_err(|error| crate::errors::ConsensusPolicyError::decode_system_tx_input(error).into())
-}
-
-fn system_inputs<'a>(
-    layout: &'a SystemTxLayout<'_>,
-) -> impl Iterator<Item = Result<outbe_evm::system_tx::SystemTx, ConsensusError>> + 'a {
-    layout
-        .begin
-        .iter()
-        .chain(layout.end.iter())
-        .map(|tx| decode_system_input(tx))
+    binding::validate_late_credits_binding(layout, artifacts)
+        .map_err(crate::errors::consensus_display_error)
 }
 
 #[cfg(test)]

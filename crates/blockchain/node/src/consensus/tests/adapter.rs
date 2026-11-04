@@ -125,7 +125,7 @@ fn header_protocol_gas_error_precedes_stock_checks() {
         .unwrap_err();
     assert_eq!(
         error.to_string(),
-        "block 1 protocol gas limit mismatch: expected 500000000, got 1"
+        "block 1 protocol gas limit mismatch: expected 32000000, got 1"
     );
 }
 

@@ -405,7 +405,7 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         "eth_feeHistory gasUsedRatio must be computed from visible header gas: expected {expected_ratio}, got {actual_ratio}"
     );
     assert!(
-        actual_ratio > 0.0 && actual_ratio < 0.01,
+        actual_ratio > 0.0 && actual_ratio < 0.25,
         "eth_feeHistory must expose small visible system gas, got {actual_ratio}"
     );
     assert!(

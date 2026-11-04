@@ -8,8 +8,7 @@ fn resource_schedule_has_a_fixed_golden_vector() {
         "01",
         "8879dd524fc4c5ccfc1c353b1f6840502f6e4f1eebc9825b27a8039bedf029a9",
         "11edf34f5614ee89ceb28c4597c309ad055cc67a752e335affa69fbc177c3da8",
-        "000000001dcd6500",
-        "0000000001c9c380"
+        "0000000001e84800"
     );
 
     assert_eq!(hex::encode(&encoded), expected);

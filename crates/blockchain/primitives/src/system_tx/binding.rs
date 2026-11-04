@@ -1,7 +1,7 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_publication, SystemTx, SystemTxError,
-    SystemTxLayout, TEE_BOOTSTRAP_SELECTOR,
+    split_system_layout, validate_system_tx_set_for_publication, BlockHeightRegime, SystemTx,
+    SystemTxError, SystemTxLayout, TEE_BOOTSTRAP_SELECTOR,
 };
 use crate::{
     error::PrecompileError,
@@ -60,6 +60,17 @@ pub enum BoundaryBindingError {
     Missing,
 }
 
+/// Failure to bind `LateFinalizeCredits` calldata to the header artifact.
+#[derive(Debug, thiserror::Error)]
+pub enum LateCreditsBindingError {
+    #[error("decode system tx input: {0}")]
+    Decode(#[source] SystemTxError),
+    #[error("LateFinalizeCredits system tx artifact does not match header late_finalize_credits")]
+    Mismatch,
+    #[error("header carries late_finalize_credits but block has no LateFinalizeCredits system tx")]
+    Missing,
+}
+
 /// Decode header artifacts before validating the layout and active membership.
 /// Envelope, signer and execution checks belong to the caller.
 pub fn validate_system_layout<'a>(
@@ -114,7 +125,7 @@ pub fn validate_parent_accounting_binding(
     layout: &SystemTxLayout<'_>,
     header: &OutbeHeader,
 ) -> Result<(), ParentAccountingBindingError> {
-    if header.number() < 2 {
+    if !BlockHeightRegime::for_block(header.number()).has_parent_finalization_accounting() {
         return Ok(());
     }
     let tx = *layout
@@ -161,6 +172,32 @@ pub fn validate_boundary_outcome_binding(
     }
     if !matched {
         return Err(BoundaryBindingError::Missing);
+    }
+    Ok(())
+}
+
+/// Bind the header's `late_finalize_credits` artifact to the body's
+/// `LateFinalizeCredits` system-tx calldata.
+pub fn validate_late_credits_binding(
+    layout: &SystemTxLayout<'_>,
+    artifacts: &OutbeBlockArtifacts,
+) -> Result<(), LateCreditsBindingError> {
+    let header_credits = artifacts.late_finalize_credits.clone().unwrap_or_default();
+    let mut found = false;
+    for tx in layout.begin.iter().chain(layout.end.iter()) {
+        let tx = *tx;
+        let input =
+            SystemTx::decode(tx.input().as_ref()).map_err(LateCreditsBindingError::Decode)?;
+        if let SystemTx::LateFinalizeCredits { artifact } = input {
+            if artifact != header_credits {
+                return Err(LateCreditsBindingError::Mismatch);
+            }
+            found = true;
+            break;
+        }
+    }
+    if !found && !header_credits.batches.is_empty() {
+        return Err(LateCreditsBindingError::Missing);
     }
     Ok(())
 }

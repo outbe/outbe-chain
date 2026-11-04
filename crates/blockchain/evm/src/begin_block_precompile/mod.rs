@@ -17,25 +17,16 @@ use outbe_primitives::storage::StorageHandle;
 mod boundary;
 mod context;
 mod cycle;
-mod finalization;
-mod late_credits;
-mod tee_bootstrap;
 
-use context::{
-    block_runtime_context_from_storage, current_preloaded_system_tx_context,
-    read_preloaded_finalized_summary,
+use context::block_runtime_context_from_storage;
+pub(crate) use context::{
+    current_preloaded_system_tx_context, read_preloaded_finalized_summary,
+    with_preloaded_system_tx_context, PreloadedSystemTxContext,
 };
-pub(crate) use context::{with_preloaded_system_tx_context, PreloadedSystemTxContext};
 
-use tee_bootstrap::prepare_tee_bootstrap;
-pub(crate) use tee_bootstrap::run_tee_bootstrap_v1;
+pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
 
-pub(crate) use finalization::run_finalization_and_slashing;
-
-// Preserve the existing crate-visible path; its callers now live in the same leaf.
-#[allow(unused_imports)]
-pub(crate) use late_credits::authenticate_late_credit;
-pub(crate) use late_credits::run_late_finalize_credits;
+pub(crate) use crate::finalization::{run_finalization_and_slashing, run_late_finalize_credits};
 
 use cycle::run_cycle_tick;
 pub(crate) use cycle::{run_hook_events, run_hyperlane_liveness_window, run_oracle_slash_window};
@@ -147,8 +138,7 @@ fn dispatch_inner(
         }
         SystemTx::TeeBootstrap { payload } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            prepare_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
-            run_tee_bootstrap_v1(&ctx, &payload)?;
+            execute_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
         }
         SystemTx::OracleSlashWindow => {
             let ctx = block_runtime_context_from_storage(storage, false)?;

@@ -2,7 +2,6 @@
 use super::super::*;
 use super::{witness_fault_to_block_error, witness_lock_poisoned};
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
 use outbe_tee::witness::{
     decode_witness_payload_v1, encode_witness_payload_v1, witness_policy, BlockWitnessFault,
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessPolicy, WitnessState,
@@ -129,32 +128,12 @@ where
         block_number: u64,
         proposer: Address,
     ) -> Option<[u8; 32]> {
-        if block_number != 1 {
-            return None;
-        }
-        if let Some(pub_bytes) = self.pending_bootstrap_attestation(proposer) {
-            return Some(pub_bytes);
-        }
-        self.begin_tx_bootstrap_attestation(proposer)
-    }
-
-    fn pending_bootstrap_attestation(&self, proposer: Address) -> Option<[u8; 32]> {
-        self.pending_tee_bootstrap
-            .as_ref()
-            .and_then(|payload| attestation_for_proposer(payload, proposer))
-    }
-
-    fn begin_tx_bootstrap_attestation(&self, proposer: Address) -> Option<[u8; 32]> {
-        for tx in &self.expected_begin_system_txs {
-            let Ok(SystemTx::TeeBootstrap { payload }) = SystemTx::decode(tx.input().as_ref())
-            else {
-                continue;
-            };
-            if let Some(pub_bytes) = attestation_for_proposer(&payload, proposer) {
-                return Some(pub_bytes);
-            }
-        }
-        None
+        crate::tee_bootstrap::extract_block_one_proposer_attestation_key(
+            BlockHeightRegime::for_block(block_number),
+            self.pending_tee_bootstrap.as_ref(),
+            &self.expected_begin_system_txs,
+            proposer,
+        )
     }
 
     fn canary_attestation_fallback(&self) -> Option<[u8; 32]> {
@@ -179,14 +158,6 @@ fn binding_lookup_error(error: PrecompileError) -> BlockExecutionError {
     } else {
         crate::errors::ExecutorValidationError::validate_proposer_identity(error).into()
     }
-}
-
-fn attestation_for_proposer(payload: &TeeBootstrapV2, proposer: Address) -> Option<[u8; 32]> {
-    payload
-        .participants
-        .iter()
-        .find(|participant| Address::from(participant.validator_binding.validator) == proposer)
-        .map(|participant| participant.intent.attestation_ed25519)
 }
 
 fn witness_mode_for_block(verifier_mode: bool) -> WitnessExecutionMode {

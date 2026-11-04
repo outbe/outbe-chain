@@ -87,16 +87,13 @@ fn run_outbe_pre_execution_hooks_inner(
     hook_ctx: &BlockRuntimeContext,
     genesis_validators: Option<&GenesisValidators>,
 ) -> outbe_primitives::error::Result<()> {
-    let block_number = hook_ctx.block.block_number;
     let timestamp = hook_ctx.block.timestamp;
 
-    // Genesis state must be present in genesis.json. The executor only
-    // verifies the local validators config against that canonical state.
-    if block_number <= 1 {
-        if let Some(genesis) = genesis_validators {
-            validate_genesis_state(hook_ctx.storage.clone(), genesis)?;
-        }
-    }
+    crate::genesis::validate_genesis_state_for_regime(
+        hook_ctx.block.regime(),
+        hook_ctx.storage.clone(),
+        genesis_validators,
+    )?;
 
     // Vote: tally expired proposals and dispatch approved ones.
     outbe_vote::lifecycle::VoteLifecycle::begin_block_with_handlers(

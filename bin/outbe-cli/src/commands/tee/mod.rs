@@ -97,6 +97,9 @@ pub enum TeeCmd {
         /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
         #[arg(long)]
         enclave_socket: String,
+        /// Resolved node data directory containing the committed NodeHost identity.
+        #[arg(long)]
+        node_data_dir: PathBuf,
         /// Also read the on-chain `tributeOfferPublicKey()` (TEE registry slot-1)
         /// and assert it equals the enclave's resident offer key.
         #[arg(long, default_value_t = false)]
@@ -148,8 +151,9 @@ impl TeeCmd {
             } => upgrade_finalize(client, &node_data_dir, Duration::from_secs(timeout_secs)).await,
             TeeCmd::Pubkey {
                 enclave_socket,
+                node_data_dir,
                 diff_chain,
-            } => pubkey(client, &enclave_socket, diff_chain).await,
+            } => pubkey(client, &enclave_socket, &node_data_dir, diff_chain).await,
         }
     }
 }

@@ -291,7 +291,7 @@ fn validate_finished_tape(
 
 pub(in crate::executor) const MAX_DECOMPRESSED_WITNESS_BYTES: usize = 262_144;
 
-pub(in crate::executor) fn witness_fault_to_block_error(
+pub(crate) fn witness_fault_to_block_error(
     fault: BlockWitnessFault,
     detail: impl Into<String>,
 ) -> BlockExecutionError {

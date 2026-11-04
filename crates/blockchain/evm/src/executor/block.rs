@@ -117,6 +117,17 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) end_call_gas_used: Option<u64>,
     /// Capacity captured when the end suffix starts. Cleanup's signed limit is derived from it.
     pub(super) end_capacity: Option<u64>,
+    /// Decoded `block_extra_data` cached once at block open so reserved system transactions
+    /// do not re-decode header artifacts on every system tx.
+    pub(super) decoded_block_artifacts: Option<OutbeBlockArtifacts>,
+    /// Phase-1 (`CertifiedParentAccounting`) input and parent execution summary resolved once
+    /// and shared across `verify_phase1_in_preexec`, `apply_phase1_commit_in_preexec`,
+    /// and `begin_block_system_tx_inputs`.
+    pub(super) cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
+    /// Resolved begin-zone system transactions and visible gas plan computed once per block.
+    pub(super) resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
+    /// Pre-verified signer indices per `LateFinalizeCredits` batch from `verify_late_finalize_credits_in_preexec`.
+    pub(super) verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -196,6 +207,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             staged_end_block_txs: Vec::new(),
             end_call_gas_used: None,
             end_capacity: None,
+            decoded_block_artifacts: None,
+            cached_phase1_input: None,
+            resolved_begin_zone: None,
+            verified_late_credit_signers: None,
         }
     }
 }

@@ -10,7 +10,6 @@ use reth_payload_builder::BlobSidecars;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
 use reth_tasks::CancelOnDrop;
-use revm::context_interface::Cfg as _;
 use tracing::{trace, warn};
 
 use super::{preparation::PayloadContext, size_budget::BlockSizeBudget};
@@ -33,15 +32,11 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
 {
     fn gas_accounting(&self) -> (u64, u64, u64) {
-        (
-            self.inner.cumulative_tx_gas_used,
-            self.inner.block_regular_gas_used,
-            self.inner.block_state_gas_used,
-        )
+        Self::gas_accounting(self)
     }
 
     fn tx_gas_limit_cap(&self) -> u64 {
-        self.inner.evm.cfg_env().tx_gas_limit_cap()
+        Self::tx_gas_limit_cap(self)
     }
 }
 
