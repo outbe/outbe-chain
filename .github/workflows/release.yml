@@ -44,6 +44,11 @@ jobs:
           fetch-depth: 0
       - name: Install pinned Noir build tools
         run: release/scripts/install-zk-build-tools.sh
+      - name: Install Cosign installer runtime dependency
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends gettext-base
+          rm -rf /var/lib/apt/lists/*
       - uses: sigstore/cosign-installer@v4.1.1
         with:
           cosign-release: "v2.6.5"
