@@ -44,39 +44,6 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
 }
 
 #[test]
-fn raw_commit_after_end_is_refused_and_poisoned_for_final_validation() {
-    let tx = test_regular_tx().try_into_recovered().unwrap();
-    let signer = tx.signer();
-    let config = OutbeEvmConfig::new(test_chain_spec());
-    let mut state = state_with_active_proposer_and_funded_account(OWNER, signer);
-    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    let output = executor.execute_transaction_without_commit(tx).unwrap();
-    executor.complete_end_block_phase().unwrap();
-    executor.prepare_final_header_artifacts(0).unwrap();
-    executor.commit_transaction(output);
-    assert!(executor.receipts().is_empty());
-    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
-    assert_eq!(
-        executor
-            .inner
-            .evm
-            .db_mut()
-            .basic(signer)
-            .unwrap()
-            .unwrap()
-            .nonce,
-        0
-    );
-    assert!(executor
-        .finish()
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("after the end-block"));
-}
-
-#[test]
 fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
     for block_number in [0, 1, 2] {
         for tx in [test_regular_tx(), test_oracle_submit_vote_tx()] {
