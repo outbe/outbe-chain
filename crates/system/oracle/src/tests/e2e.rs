@@ -881,6 +881,49 @@ fn export_genesis_omits_a_zero_initial_rate() {
         assert!(exported.initial_rates.is_empty());
     });
 }
+/// The old rule took the last snapshot of a UTC day as the peak price. Now the
+/// WWD VWAP is the peak price, so one high last snapshot moves it only by its
+/// volume share.
+#[test]
+fn one_high_last_snapshot_of_a_utc_day_starts_no_curve() {
+    let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
+    let wwd = WorldwideDay::new(20260302);
+    let start_time = wwd.start_timestamp().unwrap();
+    // The UTC day with the date of the WWD is the middle 24 h of its window.
+    let utc_day_end = start_time + 38 * 60 * 60;
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let index = oracle.pair_index_of(pair).unwrap();
+        oracle
+            .record_utc_day_vwap(wwd.value(), index, coen_iso(100))
+            .unwrap();
+        let older = WorldwideDay::new(20260301);
+        assert!(
+            crate::scurve::store_scurve_entry(&mut oracle, pair, older, coen_iso(300)).unwrap()
+        );
+
+        oracle
+            .write_snapshot(start_time + 1_500, &[(pair, coen_iso(100), coen_iso(9))])
+            .unwrap();
+        oracle
+            .write_snapshot(utc_day_end - 1, &[(pair, coen_iso(1_000), coen_iso(1))])
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(wwd, start_time, start_time + 50 * 60 * 60)
+            .unwrap();
+
+        // The WWD VWAP is 190: below the curve of 300, so no new curve starts.
+        assert_eq!(
+            oracle.get_worldwide_day_vwap_for_pair(wwd, index).unwrap(),
+            Some(coen_iso(190))
+        );
+        assert_eq!(oracle.scurve_len.read(&pair).unwrap(), 1);
+    });
+}
+
 #[test]
 fn store_worldwide_day_vwap_snapshot_round_trips_every_pair() {
     use crate::precompile::IOracle;

@@ -95,7 +95,7 @@ fn hook_cases() -> Vec<HookCase> {
             max_calldata_bytes: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_CALLDATA_BYTES,
             max_gas_limit: crate::hyperlane::MAX_ZERO_FEE_CHECKPOINT_GAS_LIMIT,
             malformed_reason: "submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes) decode failed",
-            delegate_role: ValidatorDelegateRole::Oracle,
+            delegate_role: ValidatorDelegateRole::Hyperlane,
         },
     ]
 }
@@ -225,6 +225,13 @@ fn only_a_delegate_for_the_hook_role_acts_for_its_validator() {
                 SIGNER,
             )
             .unwrap();
+            let other_role = match case.delegate_role {
+                ValidatorDelegateRole::Oracle => ValidatorDelegateRole::Hyperlane,
+                ValidatorDelegateRole::Hyperlane => ValidatorDelegateRole::Oracle,
+            };
+            outbe_validatorset::contract::ValidatorSet::new(storage.clone())
+                .set_delegate(VALIDATOR, other_role, STRANGER)
+                .unwrap();
             let waived = ZeroFeeAuthorization {
                 hook: case.hook,
                 subject: VALIDATOR,
@@ -236,10 +243,20 @@ fn only_a_delegate_for_the_hook_role_acts_for_its_validator() {
                 case.hook
             );
             assert_eq!(
-                waive_fee(storage, &stranger),
+                waive_fee(storage.clone(), &stranger),
                 Err(ZeroFeePolicyError::UnauthorizedSigner),
                 "{:?}",
                 case.hook
+            );
+            let validator = ZeroFeeTransaction {
+                signer: VALIDATOR,
+                ..delegated
+            };
+            assert_eq!(
+                waive_fee(storage, &validator),
+                Err(ZeroFeePolicyError::UnauthorizedSigner),
+                "explicit {:?} delegation disables validator-address fallback",
+                case.delegate_role
             );
         });
     }

@@ -356,14 +356,14 @@ static ORACLE_SUBMIT_VOTE_HOOK: ValidatorCallHook<IOracle::submitVoteCall> = Val
     oracle::validate_oracle_submit_vote_state,
 );
 
-/// `HyperlaneController.submitCheckpoint`: an active validator or its oracle
+/// `HyperlaneController.submitCheckpoint`: an active validator or its Hyperlane
 /// delegate.
 static HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ValidatorCallHook<
     IHyperlaneController::submitCheckpointCall,
 > = ValidatorCallHook::new(
     ZeroFeeHookId::HyperlaneSubmitCheckpoint,
     hyperlane::CHECKPOINT_ENVELOPE,
-    |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Oracle),
+    |storage, signer| active_validator_for_role(storage, signer, ValidatorDelegateRole::Hyperlane),
 );
 
 static RENEW_ENCLAVE_HOOK: RenewEnclaveHook = RenewEnclaveHook;

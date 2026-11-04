@@ -232,8 +232,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     }
 
     /// Pre-encodes the final execution-produced header fields.
-    /// The block-builder adapter owns the encoding. This executor entry point
-    /// lets the opaque Reth builder path invoke it before parallel root freeze.
+    /// Settles burned fees before encoding on the parallel-root path.
     #[allow(private_bounds)]
     pub fn prepare_final_header_artifacts<DB>(
         &mut self,
@@ -302,6 +301,7 @@ where
                 crate::errors::ExecutorValidationError::ReservedSystemTxWithoutCommit.into(),
             );
         }
+        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if self.has_active_consensus_witness_scope() {
             return Err(
                 crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
@@ -331,6 +331,7 @@ where
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
         let is_system_tx = is_reserved_system_tx(recovered.tx());
+        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
             if outcome.is_ok() {
@@ -414,6 +415,9 @@ where
         } else {
             self.inner.cumulative_tx_gas_used
         };
+        outbe_primitives::system_tx::BlockGasBudget::new(self.inner.evm.block().gas_limit())
+            .and_then(|budget| budget.remaining_pre_end_gas(gas_used))
+            .map_err(crate::errors::ExecutorValidationError::from)?;
         let result = BlockExecutionResult {
             receipts: std::mem::take(&mut self.inner.receipts),
             requests,

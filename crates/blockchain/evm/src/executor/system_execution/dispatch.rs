@@ -147,6 +147,7 @@ where
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         visible_base_gas: u64,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        self.check_visible_pre_end_gas(visible_base_gas)?;
         let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
         let commit_outcome = self
             .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)

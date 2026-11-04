@@ -204,6 +204,10 @@ where
                 return Ok(BuildOutcome::Cancelled);
             }
         }
+        builder
+            .executor_mut()
+            .apply_end_block_phase()
+            .map_err(PayloadBuilderError::evm)?;
         if !is_better_payload(best_payload.as_ref(), state.total_fees) {
             drop(builder);
             return Ok(BuildOutcome::Aborted {

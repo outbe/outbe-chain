@@ -72,7 +72,7 @@ interface IHyperlaneController {
 
     /// Registers the key this validator signs Hyperlane checkpoints with, when
     /// it differs from the validator address. Caller: the validator or its
-    /// oracle delegate.
+    /// Hyperlane delegate.
     function setHyperlaneSigner(address signer) external;
 
     /// Runs a Hyperlane chain action that a governance vote approved. Permissionless: the vote
@@ -82,8 +82,8 @@ interface IHyperlaneController {
     /// `CROSSCHAIN_BRIDGE` balance.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
-    /// Liveness proof: an active validator (or its oracle delegate, the feeder
-    /// key) submits its latest signed checkpoint for `domain`. The signature is
+    /// Liveness proof: an active validator or its Hyperlane delegate submits
+    /// its latest signed checkpoint for `domain`. The signature is
     /// recovered over the Hyperlane digest and must match the validator's
     /// Hyperlane signer. Only a higher `index` than the recorded one is accepted.
     function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)

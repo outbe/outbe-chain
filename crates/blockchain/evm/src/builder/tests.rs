@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_evm::{block::CommitChanges, RecoveredTx};
+use alloy_evm::{block::CommitChanges, Evm as _, RecoveredTx};
 use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
 use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::block::BlockContext;
@@ -521,6 +521,20 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
     let ctx = config
         .context_for_next_block(&parent, attrs)
         .expect("next block context must build");
+    let begin = config
+        .build_begin_system_txs(
+            2,
+            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            evm_env.block_env.gas_limit,
+            parent.hash(),
+            &ctx.inner.extra_data,
+            ctx.parent_consensus_metadata.clone(),
+            ctx.proposer_evm_address,
+            None,
+            None,
+        )
+        .expect("complete block-2 begin prefix must build");
+    let begin_len = begin.len();
     let evm = config.evm_with_env(&mut proposer_state, evm_env);
     let mut builder = config.create_block_builder(evm, &parent, ctx);
     crate::executor::with_phase1_verify_disabled(|| builder.apply_pre_execution_changes())
@@ -537,12 +551,17 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         gas_used.is_none(),
         "Phase 1 witness validation must not commit or charge gas twice"
     );
+    for tx in begin.into_iter().skip(1) {
+        builder
+            .execute_transaction(tx)
+            .expect("remaining begin phase executes");
+    }
     let outcome = builder
         .finish(&provider, None)
         .expect("block with retained Phase 1 witness must finish");
     assert_eq!(
         outcome.block.body().transactions.len(),
-        1,
+        begin_len,
         "finished block body must retain the Phase 1 witness tx"
     );
     assert_eq!(
@@ -578,7 +597,19 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
 // `genesis_block_with_header_artifact_reexecutes_deterministically` below.
 #[test]
 fn base_block_height2_reexecutes_with_same_state_root() {
+    assert_height2_finalization_parity(false);
+}
+
+#[test]
+fn mixed_block_height2_reexecutes_with_same_state_root() {
+    assert_height2_finalization_parity(true);
+}
+
+fn assert_height2_finalization_parity(include_user: bool) {
+    use alloy_consensus::{SignableTransaction as _, TxEip1559};
+    use alloy_primitives::{Signature, TxKind};
     use outbe_primitives::reshare_artifact::ExecutionSummaryArtifact;
+    use reth_primitives_traits::SignedTransaction as _;
 
     let active_set = [GENESIS_OWNER];
     // Parent is block 1 with a non-zero hash; Phase 1 metadata targets it.
@@ -601,6 +632,27 @@ fn base_block_height2_reexecutes_with_same_state_root() {
     );
     let config = test_config(bridge);
     let provider = DeterministicEmptyStateProvider;
+    let user: reth_ethereum::TransactionSigned = TxEip1559 {
+        chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
+        gas_limit: 100_000,
+        max_fee_per_gas: 2_000_000_000,
+        to: TxKind::Call(Address::repeat_byte(0xDD)),
+        ..Default::default()
+    }
+    .into_signed(Signature::test_signature())
+    .into();
+    let user = user.try_into_recovered().unwrap();
+    let seed_user = |db: &mut CacheDB<EmptyDBTyped<ProviderError>>| {
+        if include_user {
+            db.insert_account_info(
+                user.signer(),
+                AccountInfo {
+                    balance: U256::from(100_000_000_000_000_000_000u128),
+                    ..Default::default()
+                },
+            );
+        }
+    };
 
     // Phase 1 metadata for block 2 targets the immediate parent (block 1).
     // An empty committee / bitmap is structurally valid (no voters, no
@@ -612,55 +664,89 @@ fn base_block_height2_reexecutes_with_same_state_root() {
     };
 
     // Proposer path: build block 2.
-    let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    seed_active_validators(&mut proposer_db, &active_set);
-    assert_seeded_validators(&mut proposer_db, &active_set);
-    let mut proposer_state = State::builder()
-        .with_database(proposer_db)
-        .with_bundle_update()
-        .build();
-
     let mut attrs = next_block_attrs(Bytes::new());
     attrs.parent_consensus_metadata = Some(metadata.clone());
 
-    let built_block = crate::executor::with_phase1_verify_disabled(|| {
-        let mut builder = config
-            .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
-            .expect("builder must be created");
-        builder
-            .apply_pre_execution_changes()
-            .expect("pre-execution changes must succeed");
-        let begin_system_txs = config
-            .build_begin_system_txs(
-                2,
-                GRAMINE_DIRECT_DEV_CHAIN_ID,
-                30_000_000,
-                parent.hash(),
-                &attrs.inner.extra_data,
-                attrs.parent_consensus_metadata.clone(),
-                attrs.proposer_evm_address,
-                None,
-                None,
-            )
-            .expect("begin-zone system txs must build");
-        // Base block: no BoundaryOutcome, so the begin-zone is exactly
-        // CertifiedParentAccounting + LateFinalizeCredits + CycleTick +
-        // OracleSlashWindow + HookEvents.
-        assert_eq!(
-            begin_system_txs.len(),
-            5,
-            "block 2 base-block begin-zone must carry the five mandatory phases",
-        );
-        for tx in begin_system_txs {
+    let build = |prepare_root: bool| {
+        let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        seed_active_validators(&mut proposer_db, &active_set);
+        seed_user(&mut proposer_db);
+        assert_seeded_validators(&mut proposer_db, &active_set);
+        let mut proposer_state = State::builder()
+            .with_database(proposer_db)
+            .with_bundle_update()
+            .build();
+        crate::executor::with_phase1_verify_disabled(|| {
+            let mut builder = config
+                .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
+                .expect("builder must be created");
             builder
-                .execute_transaction(tx)
-                .expect("begin-zone system tx must execute through builder tx loop");
-        }
-        builder
-            .finish(&provider, None)
-            .expect("proposer path must build a block")
-            .block
-    });
+                .apply_pre_execution_changes()
+                .expect("pre-execution changes must succeed");
+            let begin_system_txs = config
+                .build_begin_system_txs(
+                    2,
+                    GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    30_000_000,
+                    parent.hash(),
+                    &attrs.inner.extra_data,
+                    attrs.parent_consensus_metadata.clone(),
+                    attrs.proposer_evm_address,
+                    None,
+                    None,
+                )
+                .expect("begin-zone system txs must build");
+            // Base block: no BoundaryOutcome, so the begin-zone is exactly
+            // CertifiedParentAccounting + LateFinalizeCredits + CycleTick +
+            // OracleSlashWindow + HookEvents.
+            assert_eq!(
+                begin_system_txs.len(),
+                5,
+                "block 2 base-block begin-zone must carry the five mandatory phases",
+            );
+            for tx in begin_system_txs {
+                builder
+                    .execute_transaction(tx)
+                    .expect("begin-zone system tx must execute through builder tx loop");
+            }
+            if include_user {
+                builder.execute_transaction(user.clone()).unwrap();
+            }
+            builder.executor_mut().apply_end_block_phase().unwrap();
+            let precomputed = if prepare_root {
+                builder
+                    .executor_mut()
+                    .prepare_final_header_artifacts(0)
+                    .unwrap();
+                let db = builder.evm_mut().db_mut();
+                db.merge_transitions(
+                    revm::database::states::bundle_state::BundleRetention::Reverts,
+                );
+                let hashed = provider.hashed_post_state(&db.bundle_state).unwrap();
+                Some(provider.state_root_with_updates(hashed).unwrap())
+            } else {
+                None
+            };
+            builder
+                .finish(&provider, precomputed)
+                .expect("proposer path must build a block")
+        })
+    };
+    let synchronous = build(false);
+    let prepared = build(true);
+    assert_eq!(
+        synchronous.execution_result.receipts,
+        prepared.execution_result.receipts
+    );
+    assert_eq!(
+        synchronous.execution_result.gas_used,
+        prepared.execution_result.gas_used
+    );
+    assert_eq!(
+        synchronous.block, prepared.block,
+        "prepared-root and synchronous end completion must agree"
+    );
+    let built_block = synchronous.block;
     let built_root = built_block.header().inner.state_root;
 
     // The base block must carry no consensus-header artifact, only the
@@ -684,15 +770,18 @@ fn base_block_height2_reexecutes_with_same_state_root() {
     // Validator path: re-execute the built block.
     let mut validator_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     seed_active_validators(&mut validator_db, &active_set);
+    seed_user(&mut validator_db);
     let validator_state = State::builder()
         .with_database(validator_db)
         .with_bundle_update()
         .build();
     let validator_state = crate::executor::with_phase1_verify_disabled(|| {
         let mut validator_executor = config.batch_executor(validator_state);
-        validator_executor
+        let replay = validator_executor
             .execute_one(&built_block)
             .expect("validator path must re-execute the built block");
+        assert_eq!(replay.receipts, synchronous.execution_result.receipts);
+        assert_eq!(replay.gas_used, synchronous.execution_result.gas_used);
         validator_executor.into_state()
     });
 

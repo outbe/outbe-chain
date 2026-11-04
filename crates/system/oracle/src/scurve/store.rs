@@ -75,9 +75,10 @@ fn store_scurve_entry_inner(
     Ok(true)
 }
 
-/// Starts a curve at `wwd` for each pair in `wwd_vwaps` whose UTC day of the
-/// same date has a VWAP. That UTC day is the middle 24 h of the forming window,
-/// and it has a VWAP only when it passed the round coverage check.
+/// Starts a curve at `wwd` for each pair in `wwd_vwaps` whose WWD VWAP is not
+/// zero and whose UTC day of the same date has a VWAP. That UTC day is the
+/// middle 24 h of the forming window, and it has a VWAP only when it passed the
+/// round coverage check.
 pub(crate) fn process_wwd_scurves(
     oracle: &mut OracleContract,
     wwd: WorldwideDay,
@@ -88,6 +89,9 @@ pub(crate) fn process_wwd_scurves(
             .iter()
             .any(|&iso_code| AddressPair::new_coen_to(iso_code) == pair)
         {
+            continue;
+        }
+        if vwap.is_zero() {
             continue;
         }
         let index = oracle.pair_index_of(pair)?;

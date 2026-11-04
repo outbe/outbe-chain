@@ -8,6 +8,7 @@ use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
+    protocol_schedule::OutbeProtocolSchedule,
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
         SystemTx, SystemTxVisibleGasPlan, STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
@@ -355,10 +356,12 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
     let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
     let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
     let cycle_remainder = 77_777;
+    let reserve = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
     let block_gas_limit =
-        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder;
+        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder + reserve;
 
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &[cycle, bootstrap]).unwrap();
+    let inputs = [cycle, bootstrap];
+    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &inputs).unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
     assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
@@ -368,7 +371,8 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
         plan.gas_limit(1),
         Some(bootstrap_intrinsic + protocol_precharge)
     );
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+    assert_eq!(plan.total_envelope_gas(), block_gas_limit - reserve);
+    assert_eq!(plan.gas_limit(0), Some(cycle_intrinsic + cycle_remainder));
 }
 
 #[test]
@@ -435,11 +439,11 @@ fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
 }
 
 #[test]
-fn eight_validator_bootstrap_fits_five_transaction_block() {
+fn seven_validator_bootstrap_fits_five_transaction_block() {
     use outbe_primitives::system_tx::{split_system_layout, validate_active_system_tx_set};
     use reth_ethereum::TransactionSigned;
 
-    let payload = production_shaped_payload(8);
+    let payload = production_shaped_payload(7);
     let logical_evidence_len = payload
         .logical_evidence(0)
         .unwrap()
@@ -487,6 +491,10 @@ fn eight_validator_bootstrap_fits_five_transaction_block() {
     let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
     let gas_plan = SystemTxVisibleGasPlan::new(STEADY_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    assert_eq!(
+        gas_plan.total_envelope_gas(),
+        STEADY_BLOCK_GAS_LIMIT - OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
+    );
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()

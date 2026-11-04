@@ -59,6 +59,7 @@ mod artifacts;
 mod block;
 mod boundary;
 pub(crate) mod context;
+mod end_block;
 mod fee_route;
 mod finalization;
 mod hooks;

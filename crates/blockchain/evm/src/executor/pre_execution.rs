@@ -24,6 +24,8 @@ where
             .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        outbe_primitives::system_tx::BlockGasBudget::new(self.inner.evm.block().gas_limit())
+            .map_err(ExecutorValidationError::from)?;
         let beneficiary = self.inner.evm.block().beneficiary();
         let regime = outbe_primitives::block::BlockHeightRegime::for_block(block_number);
 

@@ -91,6 +91,9 @@ contract ERC7786Bridge is
     }
 
     /// @inheritdoc IERC7786GatewaySource
+    /// @dev Deviates from ERC-7786 on purpose: `sendId` is never zero and does not mean "further
+    /// action required". It is the message id. The destination hub gives the same value to the
+    /// recipient as `receiveId` and emits it in {MessageExecuted}. The id does not depend on the gateway.
     function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         public
         payable
@@ -111,8 +114,10 @@ contract ERC7786Bridge is
 
         // Post on the active gateway, forwarding any native fee (fee-bearing transports charge
         // per message).
-        bytes32 id = IERC7786GatewaySource(gateway).sendMessage{value: msg.value}(bridge, wrappedPayload, attributes);
-        sendId = id == bytes32(0) ? bytes32(0) : keccak256(abi.encode(gateway, id));
+        // The gateway's return value is its transport id (e.g. the Hyperlane messageId). It is in the
+        // gateway's own MessageSent event, so the hub does not use it.
+        IERC7786GatewaySource(gateway).sendMessage{value: msg.value}(bridge, wrappedPayload, attributes);
+        sendId = _messageId(InteroperableAddress.formatEvmV1(block.chainid, address(this)), wrappedPayload);
 
         emit MessageSent(sendId, sender, recipient, payload, msg.value, attributes);
     }
@@ -191,7 +196,7 @@ contract ERC7786Bridge is
 
         // Deduplicate. The id binds the source bridge (sender) and the wrapped payload (which
         // carries the nonce).
-        bytes32 id = keccak256(abi.encode(sender, payload));
+        bytes32 id = _messageId(sender, payload);
         require(!_s().executed[id], ERC7786BridgeAlreadyExecuted());
         // Effects before interaction (CEI). If the recipient reverts, this write rolls back with
         // the tx, and the message stays retryable.
@@ -259,6 +264,12 @@ contract ERC7786Bridge is
     }
 
     // ================================================== Internal ===================================================
+
+    /// @dev The message id: `sendId` on the source hub, `receiveId` on the destination hub.
+    /// `sourceBridge` is the source hub as an ERC-7930 address. `wrappedPayload` carries the hub nonce.
+    function _messageId(bytes memory sourceBridge, bytes memory wrappedPayload) internal pure returns (bytes32) {
+        return keccak256(abi.encode(sourceBridge, wrappedPayload));
+    }
 
     function _setGateway(address gateway) internal virtual {
         _s().activeGateway = gateway;

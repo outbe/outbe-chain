@@ -42,12 +42,14 @@ struct StageOptions {
     fail_storage: bool,
     account_nonce: Option<u64>,
     defer_first: bool,
+    gas_deferral: bool,
 }
 
 /// Inject one executor deferral while keeping selection and subsequent EVM execution real.
 struct DeferringBuilder<B> {
     inner: B,
     defer_next: bool,
+    gas_deferral: bool,
 }
 
 impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
@@ -65,6 +67,12 @@ impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (env, tx) = tx.into_parts();
         if std::mem::take(&mut self.defer_next) {
+            if self.gas_deferral {
+                return Err(reth_errors::BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: 50_000,
+                    block_available_gas: 49_999,
+                }.into());
+            }
             return Err(outbe_evm::sponsored_block_budget_deferral(*tx.tx_hash()));
         }
         self.inner
@@ -155,8 +163,12 @@ fn run_user_stage_with_options(
 ) -> UserStageResult {
     let (evm_config, provider) = narrow_user_stage_fixture();
     let chain_spec = provider.chain_spec();
+    let block_gas_limit =
+        outbe_primitives::protocol_schedule::OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
+            + 100_000;
     let parent = SealedHeader::seal_slow(OutbeHeader::new(alloy_consensus::Header {
-        gas_limit: 100_000,
+        number: 1,
+        gas_limit: block_gas_limit,
         timestamp: ACTIVE_PAYLOAD_BLOCK_TIMESTAMP - 1,
         base_fee_per_gas: Some(1_000_000_000),
         ..Default::default()
@@ -175,10 +187,20 @@ fn run_user_stage_with_options(
         attributes: &attributes,
         chain_spec: &chain_spec,
     };
-    let mut env = preparation::prepare(&evm_config, &context)
-        .expect("execution attributes prepare")
-        .env;
+    // Prepare an isolated environment without requiring canonical Phase-1 metadata.
+    // The builder below still executes block 2 and enforces its fixed reservation.
+    let bootstrap_parent = SealedHeader::seal_slow(OutbeHeader::default());
+    let mut env = preparation::prepare(
+        &evm_config,
+        &PayloadContext {
+            parent: &bootstrap_parent,
+            ..context
+        },
+    )
+    .expect("execution attributes prepare")
+    .env;
     env.execute_outbe_block_hooks = false;
+    env.inner.gas_limit = block_gas_limit;
     if !options.code.is_empty() {
         provider.add_account(
             address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"),
@@ -199,6 +221,7 @@ fn run_user_stage_with_options(
     let mut builder = DeferringBuilder {
         inner: builder,
         defer_next: options.defer_first,
+        gas_deferral: options.gas_deferral,
     };
     let invalid = Arc::new(Mutex::new(Vec::new()));
     let mut candidates = Vec::new();
@@ -258,7 +281,7 @@ fn run_user_stage_with_options(
     let mut state = PayloadBuildState::new(
         &context,
         &EthereumBuilderConfig::new(),
-        100_000,
+        block_gas_limit,
         builder.evm_mut().block().basefee(),
     )
     .expect("budgets initialize");
@@ -345,6 +368,24 @@ fn sponsored_budget_deferral_retains_candidate_and_continues_selection() {
 }
 
 #[test]
+fn executor_gas_capacity_deferral_retains_candidate_and_continues_selection() {
+    let result = run_user_stage_with_options(
+        &[(0, 50_000), (0, 30_000)],
+        Default::default(),
+        StageOptions {
+            defer_first: true,
+            gas_deferral: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
+    assert_eq!(result.receipts, vec![true]);
+    assert_eq!(result.gas_used, 21_000);
+    assert_eq!(result.rejected, 0);
+    assert_eq!(result.included_nonces, vec![0]);
+}
+
+#[test]
 fn user_stage_accounts_only_included_transactions_and_skips_nonce_too_low() {
     let result = run_user_stage(&[(0, 30_000), (0, 30_000), (1, 30_000)], Default::default());
     assert_eq!(result.outcome.unwrap(), StageOutcome::Completed);
@@ -379,6 +420,25 @@ fn user_stage_gas_rejection_precedes_cancellation_checkpoint() {
     assert_eq!(result.gas_used, 0);
     assert_eq!(result.fees, U256::ZERO);
     assert_eq!(result.body_bytes, 0);
+}
+
+#[test]
+fn active_reservation_admits_exact_capacity_and_releases_unused_declared_gas() {
+    let exact = run_user_stage(&[(0, 100_000)], Default::default());
+    assert_eq!(exact.outcome.unwrap(), StageOutcome::Completed);
+    assert_eq!(exact.receipts, vec![true]);
+    assert_eq!(exact.gas_used, 21_000);
+    assert_eq!(exact.rejected, 0);
+
+    let reused = run_user_stage(
+        &[(0, 100_000), (0, 79_000), (0, 58_001)],
+        Default::default(),
+    );
+    assert_eq!(reused.outcome.unwrap(), StageOutcome::Completed);
+    assert_eq!(reused.receipts, vec![true, true]);
+    assert_eq!(reused.gas_used, 42_000);
+    assert_eq!(reused.rejected, 1);
+    assert_eq!(reused.fees, U256::from(42_000u64 * 7));
 }
 
 #[test]

@@ -87,7 +87,11 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         tx_type: alloy_consensus::TxType,
         logs: Vec<Log>,
         visible_gas_used: u64,
-    ) -> Result<GasOutput, BlockExecutionError> {
+    ) -> Result<GasOutput, BlockExecutionError>
+    where
+        Evm: alloy_evm::Evm,
+    {
+        self.check_visible_pre_end_gas(visible_gas_used)?;
         let user_cumulative_tx_gas = self
             .inner
             .cumulative_tx_gas_used
@@ -160,6 +164,7 @@ where
                 .into(),
             );
         }
+        self.check_visible_pre_end_gas(visible_gas)?;
         Ok(visible_gas)
     }
 

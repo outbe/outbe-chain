@@ -13,6 +13,7 @@ import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {Proxies} from "./utils/Proxies.sol";
+import {MessageLogs} from "./utils/MessageLogs.sol";
 
 /// @dev Accepts any inbound delivery so adapter-direct sends complete and we can inspect the
 /// recorded metadata.
@@ -101,6 +102,32 @@ contract HyperlaneGatewayAdapterTest is Test {
             seen = true;
         }
         assertTrue(seen, "recipient should have received the message");
+    }
+
+    function test_SendId_HubIdAndTransportId() public {
+        vm.recordLogs();
+        vm.deal(app, 100);
+        vm.prank(app);
+        bytes32 sendId = facadeA.sendMessage{value: 100}(_interop(address(recipient)), "x", _noAttrs());
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertEq(MessageLogs.executed(logs, address(facadeB)), sendId, "destination receiveId equals sendId");
+
+        (bytes32 adapterId, bytes memory adapterSender, bytes memory adapterPayload) =
+            MessageLogs.sent(logs, address(adapterA));
+        assertEq(MessageLogs.hubId(adapterSender, adapterPayload), sendId, "hub id derives from adapter event");
+        assertEq(
+            adapterId,
+            keccak256(
+                abi.encode(
+                    domainA,
+                    domainB,
+                    _b32(address(adapterB)),
+                    abi.encode(adapterSender, _interop(address(facadeB)), adapterPayload)
+                )
+            ),
+            "adapter sendId is the Hyperlane messageId"
+        );
     }
 
     function test_RevertWhen_SendUnknownChain() public {
