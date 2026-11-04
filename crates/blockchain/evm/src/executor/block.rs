@@ -240,6 +240,23 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         self.final_extra_data = bytes;
     }
 
+    fn is_end_tx(tx: &TransactionSigned) -> bool {
+        is_reserved_system_tx(tx)
+            && SystemTx::decode(tx.input().as_ref())
+                .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock)
+    }
+
+    fn clear_uncommitted_tx_witness_with(
+        witness_state: Option<&Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+    ) {
+        if let Some(state) = witness_state {
+            if let Ok(mut guard) = state.lock() {
+                guard.staged.clear();
+                guard.replay_cursor = 0;
+            }
+        }
+    }
+
     /// Pre-encodes the final execution-produced header fields.
     /// Settles burned fees before encoding on the parallel-root path.
     #[allow(private_bounds)]
@@ -342,10 +359,7 @@ where
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
         let is_system_tx = is_reserved_system_tx(recovered.tx());
-        let is_end_tx = is_system_tx
-            && crate::system_tx::SystemTx::decode(recovered.tx().input().as_ref())
-                .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock);
-        if is_end_tx {
+        if Self::is_end_tx(recovered.tx()) {
             return self
                 .execute_end_block_system_tx(recovered.tx(), *recovered.signer())
                 .map_err(preserve_cancelled_execution);
@@ -374,12 +388,7 @@ where
             }
             let decision = f(result);
             if !decision.should_commit() {
-                if let Some(state) = witness_state.as_ref() {
-                    if let Ok(mut guard) = state.lock() {
-                        guard.staged.clear();
-                        guard.replay_cursor = 0;
-                    }
-                }
+                Self::clear_uncommitted_tx_witness_with(witness_state.as_ref());
             }
             decision
         };
