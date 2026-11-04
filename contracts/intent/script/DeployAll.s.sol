@@ -72,6 +72,7 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         (address routerAddress, address allocatorAddress) =
             deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress, vm.addr(deployerPrivateKey));
         console2.log("  Router:", routerAddress);
+        console2.log("  RouterAllocator:", allocatorAddress);
 
         // 4. Wire all contracts together
         console2.log("[4/4] Configure all...");
