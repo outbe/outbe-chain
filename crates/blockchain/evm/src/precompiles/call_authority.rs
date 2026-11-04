@@ -85,10 +85,16 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
             ));
         }
     }
-    entitlements.union(MetadosisMutationEntitlements::exact(
-        Purpose::CycleLifecycle,
-        metadosis_advance_due_binding(chain_id, block_number, timestamp),
-    ))
+    entitlements
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_advance_due_binding(chain_id, block_number, timestamp),
+        ))
+        // ProtocolCycle still starts Metadosis after advancing WorldwideDays.
+        .union(MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(chain_id, block_number, timestamp),
+        ))
 }
 
 /// The Cycle cursor prepares capabilities for a protocol command, not for any

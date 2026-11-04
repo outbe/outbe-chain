@@ -234,27 +234,27 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?,
         )
         .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
-        let call_limit = capacity.checked_sub(cleanup_intrinsic).ok_or_else(|| {
+        let call_limit = capacity.checked_sub(cleanup_intrinsic).ok_or(
             ExecutorValidationError::EndBlockGasLimitMismatch {
                 kind: "CallEventProcessing",
                 expected: 0,
                 actual: capacity,
                 capacity,
-            }
-        })?;
+            },
+        )?;
         let call_tx = self.sign_end_tx(SystemTx::CallEventProcessing, call_limit)?;
         self.execute_end_block_system_tx(call_tx.tx(), Address::from(*call_tx.signer()))?;
         let call_gas_used = self
             .end_call_gas_used
             .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
-        let cleanup_limit = capacity.checked_sub(call_gas_used).ok_or_else(|| {
+        let cleanup_limit = capacity.checked_sub(call_gas_used).ok_or(
             ExecutorValidationError::EndBlockGasLimitMismatch {
                 kind: "CleanupProcessing",
                 expected: 0,
                 actual: call_gas_used,
                 capacity,
-            }
-        })?;
+            },
+        )?;
         let cleanup_tx = self.sign_end_tx(SystemTx::CleanupProcessing, cleanup_limit)?;
         self.execute_end_block_system_tx(cleanup_tx.tx(), Address::from(*cleanup_tx.signer()))?;
         self.staged_end_block_txs = vec![call_tx, cleanup_tx];

@@ -509,8 +509,28 @@ mod tests {
         );
         let hook_events =
             signed_system_tx(&signer, 4, 2, outbe_evm::system_tx::SystemTx::HookEvents);
+        let call_events = signed_system_tx(
+            &signer,
+            outbe_primitives::system_tx::CALL_EVENT_PROCESSING_ORDINAL,
+            2,
+            outbe_evm::system_tx::SystemTx::CallEventProcessing,
+        );
+        let cleanup = signed_system_tx(
+            &signer,
+            outbe_primitives::system_tx::CLEANUP_PROCESSING_ORDINAL,
+            2,
+            outbe_evm::system_tx::SystemTx::CleanupProcessing,
+        );
         let body = OutbeBlockBody {
-            transactions: vec![phase1, late, cycle, oracle, hook_events],
+            transactions: vec![
+                phase1,
+                late,
+                cycle,
+                oracle,
+                hook_events,
+                call_events,
+                cleanup,
+            ],
             ommers: Vec::new(),
             withdrawals: None,
         };

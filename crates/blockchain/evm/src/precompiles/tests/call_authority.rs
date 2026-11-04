@@ -79,6 +79,10 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
         metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
     .union(MetadosisMutationEntitlements::exact(
+        Purpose::CycleLifecycle,
+        metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+    ))
+    .union(MetadosisMutationEntitlements::exact(
         Purpose::CertifiedFinality,
         metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
@@ -170,7 +174,7 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
         ));
         day = outbe_primitives::time::next_date_key(day).expect("date step");
     }
-    assert!(!entitlements.expects(
+    assert!(entitlements.expects(
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ));

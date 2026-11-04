@@ -210,7 +210,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {
         let cycle = Cycle::new(storage.clone());
-        // No unrelated trigger is due. This test exercises the per-block lifecycle continuation.
+        // No unrelated trigger is due. This test exercises the end-zone call continuation.
         // The test includes recovery after a daily scheduling attempt finds no finalized day.
         for spec in ACTIVE_TRIGGERS {
             cycle
@@ -233,6 +233,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             storage.clone(),
         ))
         .unwrap();
+        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+            block_ctx(3, day_start + 11 * 3_600),
+            storage.clone(),
+        ))
+        .unwrap();
         assert_eq!(
             reserve.promis_limit().unwrap(),
             before,
@@ -241,6 +246,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
 
         let closed_at = day_start + SECONDS_PER_DAY;
         run_cycle_tick(&BlockRuntimeContext::new(
+            block_ctx(4, closed_at),
+            storage.clone(),
+        ))
+        .unwrap();
+        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
             block_ctx(4, closed_at),
             storage.clone(),
         ))
@@ -257,9 +267,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .unwrap();
         let ready = BlockRuntimeContext::new(block_ctx(5, closed_at + 1), storage.clone());
         run_cycle_tick(&ready).unwrap();
+        outbe_nodfactory::called::process_call_pass(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         run_cycle_tick(&ready).unwrap();
+        outbe_nodfactory::called::process_call_pass(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
 
         // The queue retains the next day's deadline even though calls have no work.
@@ -268,6 +280,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .write(timestamp_to_date_key(closed_at))
             .unwrap();
         run_cycle_tick(&BlockRuntimeContext::new(
+            block_ctx(6, closed_at + SECONDS_PER_DAY),
+            storage.clone(),
+        ))
+        .unwrap();
+        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
             block_ctx(6, closed_at + SECONDS_PER_DAY),
             storage.clone(),
         ))

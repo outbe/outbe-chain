@@ -78,8 +78,8 @@ fn execute_nod_block(
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
-    let visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
-    let signed_body = system_txs.clone();
+    let mut visible_envelopes: Vec<u64> = system_txs.iter().map(|tx| tx.tx().gas_limit()).collect();
+    let mut signed_body = system_txs.clone();
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let execution = nod_execution_context(
         proposer,
@@ -127,6 +127,11 @@ fn execute_nod_block(
                 <= outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
         );
     }
+    executor.apply_end_block_phase()?;
+    let end_txs = executor.take_staged_end_block_txs();
+    assert_eq!(end_txs.len(), 2);
+    visible_envelopes.extend(end_txs.iter().map(|tx| tx.tx().gas_limit()));
+    signed_body.extend(end_txs);
     let receipts = executor.receipts().to_vec();
     assert_group_mutation_receipts(&receipts, signed_body.len());
     executor
@@ -196,10 +201,10 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
         execute_nod_block(&fixture, false).expect("proposer block execution succeeds");
     let validator_result = execute_nod_block(&fixture, true).expect("canonical replay succeeds");
     assert_eq!(proposer_result, validator_result);
-    assert_cycle_tick_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
+    assert_call_event_receipt_gas(&proposer_result.2, proposer_result.5, &proposer_result.6);
 }
 
-fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes: &[u64]) {
+fn assert_call_event_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes: &[u64]) {
     let body_receipt_index = receipts
         .iter()
         .position(|receipt| {
@@ -208,22 +213,24 @@ fn assert_cycle_tick_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
                     && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })
         })
-        .expect("CycleTick body mutation receipt");
+        .expect("CallEventProcessing body mutation receipt");
+    assert_eq!(body_receipt_index, receipts.len() - 2);
+    assert!(receipts[body_receipt_index].success);
     let previous_cumulative = body_receipt_index
         .checked_sub(1)
         .map_or(0, |index| receipts[index].cumulative_gas_used);
     let body_receipt_gas = receipts[body_receipt_index]
         .cumulative_gas_used
         .saturating_sub(previous_cumulative);
-    let cycle_intrinsic_gas =
-        system_tx_intrinsic_gas(SystemTx::CycleTick.encode().unwrap().as_ref()).unwrap();
-    assert_eq!(
-        body_receipt_gas, cycle_intrinsic_gas,
-        "native storage work uses the internal budget"
+    let call_intrinsic_gas =
+        system_tx_intrinsic_gas(SystemTx::CallEventProcessing.encode().unwrap().as_ref()).unwrap();
+    assert!(
+        body_receipt_gas > call_intrinsic_gas,
+        "end-zone native storage work must be charged to receipt-visible gas"
     );
     assert!(
         body_receipt_gas <= envelopes[body_receipt_index],
-        "receipt-visible CycleTick gas must not exceed its signed gas limit"
+        "receipt-visible call gas must not exceed its signed gas limit"
     );
     assert_eq!(
         gas_used,
@@ -398,7 +405,7 @@ fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent
 fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre::Result<()> {
     let group_key = fixture.group_key;
     outbe_nod::test_support::add(&storage, &fixture.item)?;
-    // CycleTick forfeits the lapsed called group and deletes both bodies.
+    // CallEventProcessing forfeits the lapsed called group and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;

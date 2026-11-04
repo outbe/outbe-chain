@@ -28,7 +28,9 @@ use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconCo
 use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
-use outbe_primitives::system_tx::SysTxSelector;
+use outbe_primitives::system_tx::{
+    SysTxSelector, CALL_EVENT_PROCESSING_ORDINAL, CLEANUP_PROCESSING_ORDINAL,
+};
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
 use reth_ethereum::{consensus::Consensus, TransactionSigned};
@@ -177,7 +179,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
-    let transactions = begin_zone_txs_block2(&signer, parent_hash, Default::default());
+    let transactions = system_txs_block2(&signer, parent_hash, Default::default());
     for tx in &transactions {
         assert_eq!(
             tx.gas_limit(),
@@ -338,7 +340,9 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let cycle2 = signed_v2(&signer, 2, 2, SystemTx::CycleTick);
     let oracle2 = signed_v2(&signer, 3, 2, SystemTx::OracleSlashWindow);
     let hook_events2 = signed_v2(&signer, 4, 2, SystemTx::HookEvents);
-    let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2, hook_events2]);
+    let mut transactions = vec![phase1, late2, cycle2, oracle2, hook_events2];
+    transactions.extend(end_zone_txs_block2(&signer));
+    let body_bad_hash = body(transactions);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
         .expect_err(
@@ -444,7 +448,7 @@ fn malformed_block_rejected_via_v2_with_tx_root_entrypoint() {
 fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
-    let transactions = begin_zone_txs_block2(&signer, parent_hash, Default::default());
+    let transactions = system_txs_block2(&signer, parent_hash, Default::default());
     // The block's true transaction root (also written into the header).
     let correct_tx_root = calculate_transaction_root(&transactions);
     let header = header_for_transactions(2, parent_hash, &transactions);
@@ -521,15 +525,15 @@ fn v2_envelope_with_unknown_selector_rejects() {
 // LateFinalizeCredits header<->body parity + mandatory phase.
 // ---------------------------------------------------------------------------
 
-/// Build the canonical block-2 begin-zone set with a chosen LateFinalizeCredits
+/// Build the canonical block-2 system set with a chosen LateFinalizeCredits
 /// body artifact (ordinals 0..=4): CPA, LateFinalizeCredits, CycleTick,
-/// OracleSlashWindow, HookEvents.
-fn begin_zone_txs_block2(
+/// OracleSlashWindow, HookEvents, followed by the mandatory end-zone suffix.
+fn system_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
     late_artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact,
 ) -> Vec<TransactionSigned> {
-    vec![
+    let mut transactions = vec![
         signed_v2(
             signer,
             0,
@@ -549,6 +553,25 @@ fn begin_zone_txs_block2(
         signed_v2(signer, 2, 2, SystemTx::CycleTick),
         signed_v2(signer, 3, 2, SystemTx::OracleSlashWindow),
         signed_v2(signer, 4, 2, SystemTx::HookEvents),
+    ];
+    transactions.extend(end_zone_txs_block2(signer));
+    transactions
+}
+
+fn end_zone_txs_block2(signer: &OutbeEvmSigner) -> [TransactionSigned; 2] {
+    [
+        signed_v2(
+            signer,
+            CALL_EVENT_PROCESSING_ORDINAL,
+            2,
+            SystemTx::CallEventProcessing,
+        ),
+        signed_v2(
+            signer,
+            CLEANUP_PROCESSING_ORDINAL,
+            2,
+            SystemTx::CleanupProcessing,
+        ),
     ]
 }
 
@@ -577,7 +600,7 @@ fn late_finalize_header_body_calldata_mismatch_fatal() {
     };
 
     // Body carries non-empty credits; the header (default) commits to none.
-    let txs = begin_zone_txs_block2(&signer, parent_hash, nonempty);
+    let txs = system_txs_block2(&signer, parent_hash, nonempty);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)
         .expect_err("header/body late_finalize_credits mismatch must be rejected");
@@ -587,8 +610,7 @@ fn late_finalize_header_body_calldata_mismatch_fatal() {
     );
 
     // Sanity: matching empty header/body passes the parity check (no false positive).
-    let txs_ok =
-        begin_zone_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
+    let txs_ok = system_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
     let header_ok = header_for_transactions(2, parent_hash, &txs_ok);
     validate_system_tx_consensus_boundary(&body(txs_ok), &header_ok)
         .expect("matching empty header/body must pass");
@@ -603,10 +625,9 @@ fn mandatory_late_phase_cannot_be_skipped() {
 
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
-    let mut txs =
-        begin_zone_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
+    let mut txs = system_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
     // Drop the LateFinalizeCredits tx (ordinal 1). This leaves CPA, CycleTick,
-    // OracleSlashWindow, HookEvents.
+    // OracleSlashWindow, HookEvents, and the end-zone suffix.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)
