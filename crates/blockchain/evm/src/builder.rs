@@ -146,6 +146,8 @@ where
         // value is the canonical source for this block. This code overwrites
         // whatever the proposer placed in `extra_data` earlier.
         let execution_summary = self.executor.current_execution_summary();
+        self.transactions
+            .extend(self.executor.take_staged_end_block_txs());
         self.finalize_header_artifacts()?;
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();

@@ -196,6 +196,10 @@ fn canonical_transactions() -> Vec<TransactionSigned> {
         .enumerate()
         .map(|(index, kind)| signed_system_tx(kind, index as u8))
         .chain(std::iter::once(user_tx()))
+        .chain([
+            signed_system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
+            signed_system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
+        ])
         .collect()
 }
 
@@ -209,17 +213,21 @@ fn native_layout_separates_begin_prefix_and_user_transactions() {
         expected_begin_block_selectors(TEST_BLOCK, false, false)
     );
     assert_eq!(layout.user.len(), 1);
-    assert!(layout.end.is_empty());
+    assert_eq!(layout.end.len(), 2);
 }
 
 #[test]
 fn native_layout_accepts_an_empty_user_zone() {
     let mut txs = canonical_transactions();
-    txs.pop();
+    let user_index = txs
+        .iter()
+        .position(|tx| !is_reserved_system_tx(tx))
+        .expect("user tx");
+    txs.remove(user_index);
     let layout = split_system_layout(&txs).unwrap();
     validate_active_system_tx_set(&layout, TEST_BLOCK, false, false).unwrap();
     assert!(layout.user.is_empty());
-    assert!(layout.end.is_empty());
+    assert_eq!(layout.end.len(), 2);
 }
 
 /// V2 begin-zone ordering: CertifiedParentAccounting (>=2), CycleTick (>=1),

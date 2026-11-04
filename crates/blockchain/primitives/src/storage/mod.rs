@@ -353,6 +353,21 @@ pub trait PrecompileStorageProvider {
     /// Emits an event from the given contract address.
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()>;
 
+    /// Remaining execution gas, when this provider meters an end-zone transaction.
+    fn gas_remaining(&self) -> Option<u64> {
+        None
+    }
+
+    /// Caps the next storage charges at `ceiling`. Providers without a meter ignore it.
+    fn begin_gas_ceiling(&mut self, _ceiling: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Clears the ceiling installed by [`Self::begin_gas_ceiling`].
+    fn end_gas_ceiling(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Deducts gas from the remaining gas and returns an error if insufficient.
     fn deduct_gas(&mut self, gas: u64) -> Result<()>;
 

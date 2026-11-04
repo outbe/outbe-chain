@@ -10,8 +10,9 @@ use alloy_primitives::Bytes;
 use super::{
     selector_from_input, BodyZone, SysTxSelector, SystemTxError, BOUNDARY_OUTCOME_SELECTOR,
     CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
-    SYSTEM_TX_INPUT_VERSION, TEE_BOOTSTRAP_SELECTOR,
+    CALL_EVENT_PROCESSING_ORDINAL, CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_ORDINAL,
+    CLEANUP_PROCESSING_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
+    RADICLE_PUBLICATION_SELECTOR, SYSTEM_TX_INPUT_VERSION, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Versioned calldata body system transactions.
@@ -42,6 +43,10 @@ pub enum SystemTx {
     RadiclePublication {
         batch: crate::radicle_publication::PublicationBatch,
     },
+    /// End-zone walk of scheduled call, forfeit, and notice work.
+    CallEventProcessing,
+    /// End-zone deletion sweep. It runs after call events and spends only leftover gas.
+    CleanupProcessing,
 }
 
 impl SystemTx {
@@ -55,6 +60,8 @@ impl SystemTx {
             Self::OracleSlashWindow => "OracleSlashWindow",
             Self::HookEvents => "HookEvents",
             Self::RadiclePublication { .. } => "RadiclePublication",
+            Self::CallEventProcessing => "CallEventProcessing",
+            Self::CleanupProcessing => "CleanupProcessing",
         }
     }
 
@@ -68,11 +75,26 @@ impl SystemTx {
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
             Self::HookEvents => HOOK_EVENTS_SELECTOR,
             Self::RadiclePublication { .. } => RADICLE_PUBLICATION_SELECTOR,
+            Self::CallEventProcessing => CALL_EVENT_PROCESSING_SELECTOR,
+            Self::CleanupProcessing => CLEANUP_PROCESSING_SELECTOR,
         }
     }
 
     pub const fn body_zone(&self) -> BodyZone {
-        BodyZone::BeginBlock
+        match self {
+            Self::CallEventProcessing | Self::CleanupProcessing => BodyZone::EndBlock,
+            _ => BodyZone::BeginBlock,
+        }
+    }
+
+    /// Nonce ordinal. Begin-zone transactions use their body index. End-zone
+    /// transactions use stable ordinals so begin growth cannot collide with them.
+    pub const fn nonce_ordinal(&self) -> Option<u8> {
+        match self {
+            Self::CallEventProcessing => Some(CALL_EVENT_PROCESSING_ORDINAL),
+            Self::CleanupProcessing => Some(CLEANUP_PROCESSING_ORDINAL),
+            _ => None,
+        }
     }
 
     /// Economic and consensus-critical phases fail the block on revert or halt.
@@ -82,20 +104,25 @@ impl SystemTx {
     }
 
     pub const fn begin_order(&self) -> Option<u8> {
-        Some(match self {
-            Self::CertifiedParentAccounting { .. } => 0,
-            Self::LateFinalizeCredits { .. } => 1,
-            Self::CycleTick => 2,
-            Self::BoundaryOutcome { .. } => 3,
-            Self::TeeBootstrap { .. } => 4,
-            Self::OracleSlashWindow => 5,
-            Self::HookEvents => 6,
-            Self::RadiclePublication { .. } => 7,
-        })
+        match self {
+            Self::CertifiedParentAccounting { .. } => Some(0),
+            Self::LateFinalizeCredits { .. } => Some(1),
+            Self::CycleTick => Some(2),
+            Self::BoundaryOutcome { .. } => Some(3),
+            Self::TeeBootstrap { .. } => Some(4),
+            Self::OracleSlashWindow => Some(5),
+            Self::HookEvents => Some(6),
+            Self::RadiclePublication { .. } => Some(7),
+            Self::CallEventProcessing | Self::CleanupProcessing => None,
+        }
     }
 
     pub const fn end_order(&self) -> Option<u8> {
-        None
+        match self {
+            Self::CallEventProcessing => Some(0),
+            Self::CleanupProcessing => Some(1),
+            _ => None,
+        }
     }
 
     pub const fn order_in(&self, zone: BodyZone) -> Option<u8> {
@@ -120,7 +147,11 @@ impl SystemTx {
                         .as_ref(),
                 );
             }
-            Self::CycleTick | Self::OracleSlashWindow | Self::HookEvents => {}
+            Self::CycleTick
+            | Self::OracleSlashWindow
+            | Self::HookEvents
+            | Self::CallEventProcessing
+            | Self::CleanupProcessing => {}
             Self::LateFinalizeCredits { artifact } => {
                 // Empty batches encode to empty bytes. The mandatory tx then
                 // carries an empty body and still drives the window-close settle.
@@ -164,6 +195,8 @@ impl SystemTx {
                 | ORACLE_SLASH_WINDOW_SELECTOR
                 | HOOK_EVENTS_SELECTOR
                 | RADICLE_PUBLICATION_SELECTOR
+                | CALL_EVENT_PROCESSING_SELECTOR
+                | CLEANUP_PROCESSING_SELECTOR
         ) {
             return Err(SystemTxError::UnknownSelector(selector));
         }
@@ -187,6 +220,10 @@ impl SystemTx {
             CYCLE_TICK_SELECTOR => Self::decode_empty_body(body, Self::CycleTick),
             ORACLE_SLASH_WINDOW_SELECTOR => Self::decode_empty_body(body, Self::OracleSlashWindow),
             HOOK_EVENTS_SELECTOR => Self::decode_empty_body(body, Self::HookEvents),
+            CALL_EVENT_PROCESSING_SELECTOR => {
+                Self::decode_empty_body(body, Self::CallEventProcessing)
+            }
+            CLEANUP_PROCESSING_SELECTOR => Self::decode_empty_body(body, Self::CleanupProcessing),
             RADICLE_PUBLICATION_SELECTOR => Ok(Self::RadiclePublication {
                 batch: crate::radicle_publication::PublicationBatch::from_bytes(body)
                     .map_err(SystemTxError::from_precompile)?,

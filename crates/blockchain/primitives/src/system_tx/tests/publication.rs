@@ -63,17 +63,25 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
             .collect(),
         ..Default::default()
     };
+    body.transactions.extend([
+        transaction(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL as usize),
+        transaction(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL as usize),
+    ]);
     assert!(validate_system_layout(&body, &header).is_ok());
-    let accepted = body.transactions.pop().unwrap();
+    let publication_index = body.transactions.len() - 3;
+    let accepted = body.transactions.remove(publication_index);
     assert!(validate_system_layout(&body, &header).is_err());
     let mut different = batch(32);
     different.body.package_manifest_hash = B256::repeat_byte(99);
-    body.transactions.push(transaction(
-        SystemTx::RadiclePublication { batch: different },
-        body.transactions.len(),
-    ));
+    body.transactions.insert(
+        publication_index,
+        transaction(
+            SystemTx::RadiclePublication { batch: different },
+            publication_index,
+        ),
+    );
     assert!(validate_system_layout(&body, &header).is_err());
-    *body.transactions.last_mut().unwrap() = accepted;
+    body.transactions[publication_index] = accepted;
     let mut no_batch = header.clone();
     no_batch.inner.extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         radicle_publication_enabled: true,
@@ -81,7 +89,7 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
     })
     .unwrap();
     assert!(validate_system_layout(&body, &no_batch).is_err());
-    body.transactions.pop();
+    body.transactions.remove(publication_index);
     assert!(validate_system_layout(&body, &no_batch).is_ok());
     no_batch.inner.extra_data = Bytes::new();
     assert!(validate_system_layout(&body, &no_batch).is_ok());

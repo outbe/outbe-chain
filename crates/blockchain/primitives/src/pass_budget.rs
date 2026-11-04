@@ -109,6 +109,9 @@ impl PassBudget {
     }
 
     pub fn visit(&mut self) -> bool {
+        if crate::end_gas::end_gas_active() {
+            return true;
+        }
         take(&mut self.visits, 1)
     }
 
@@ -132,6 +135,10 @@ impl PassBudget {
     /// Takes `count` writes at once. A batch that must not split passes whole when
     /// nothing was written yet, so a batch wider than the budget still gets a block.
     pub fn admit_writes(&mut self, count: u32) -> bool {
+        if crate::end_gas::end_gas_active() {
+            self.written |= count != 0;
+            return true;
+        }
         if !self.fits_writes(count) {
             return false;
         }
@@ -142,6 +149,9 @@ impl PassBudget {
 
     /// Whether a walk whose next visit may write has to stop for this block.
     pub fn spent(&self) -> bool {
+        if crate::end_gas::end_gas_active() {
+            return false;
+        }
         self.visits == 0 || !self.fits_writes(1)
     }
 

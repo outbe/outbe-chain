@@ -162,6 +162,18 @@ fn dispatch_inner(
         SystemTx::RadiclePublication { batch } => {
             outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
+        SystemTx::CallEventProcessing => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_primitives::end_gas::with_end_gas(|| {
+                outbe_cycle::runtime::handle_call_event_processing(&ctx)
+            })?;
+        }
+        SystemTx::CleanupProcessing => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_primitives::end_gas::with_end_gas(|| {
+                outbe_cycle::runtime::handle_cleanup_processing(&ctx)
+            })?;
+        }
     }
 
     Ok(Bytes::new())

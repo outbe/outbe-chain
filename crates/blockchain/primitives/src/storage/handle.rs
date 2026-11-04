@@ -290,6 +290,19 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| provider.deduct_gas(gas))
     }
 
+    pub fn gas_remaining(&self) -> Result<Option<u64>> {
+        self.with_provider(|provider| Ok(provider.gas_remaining()))
+    }
+
+    /// Runs `f` with storage charges capped at `ceiling`. The caller checkpoints
+    /// state. A child out-of-gas rolls that checkpoint back and does not fail the parent.
+    pub fn with_gas_ceiling<R>(&self, ceiling: u64, f: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.with_provider(|provider| provider.begin_gas_ceiling(ceiling))?;
+        let result = f();
+        self.with_provider(|provider| provider.end_gas_ceiling())?;
+        result
+    }
+
     pub fn refund_gas(&self, gas: i64) -> Result<()> {
         self.with_provider(|provider| {
             provider.refund_gas(gas);

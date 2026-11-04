@@ -4,8 +4,9 @@ use reth_ethereum::TransactionSigned;
 use super::{
     is_reserved_system_tx, BodyZone, SysTxSelector, SystemTx, SystemTxError,
     BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR,
-    HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK,
-    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR, HOOK_EVENTS_SELECTOR,
+    LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, ORACLE_SLASH_WINDOW_SELECTOR,
+    RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Structural split of block transactions into system begin-prefix, user middle,
@@ -164,8 +165,15 @@ pub fn expected_begin_block_selectors_for_publication(
     expected
 }
 
-pub fn expected_end_block_selectors() -> Vec<SysTxSelector> {
-    Vec::new()
+pub fn expected_end_block_selectors(block_number: u64) -> Vec<SysTxSelector> {
+    if block_number < 2 {
+        Vec::new()
+    } else {
+        vec![
+            CALL_EVENT_PROCESSING_SELECTOR,
+            CLEANUP_PROCESSING_SELECTOR,
+        ]
+    }
 }
 
 pub fn validate_active_system_tx_set(
@@ -223,7 +231,7 @@ pub fn validate_system_tx_set_for_publication(
         has_tee_bootstrap,
         has_publication,
     );
-    let expected_end = expected_end_block_selectors();
+    let expected_end = expected_end_block_selectors(block_number);
     let actual_begin = layout.begin_block_selectors()?;
     let actual_end = layout.end_block_selectors()?;
     if actual_begin != expected_begin || actual_end != expected_end {

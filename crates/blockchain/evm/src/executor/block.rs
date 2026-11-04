@@ -111,6 +111,12 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Cached compressed `OART 0x0A` payload on the proposer path so `prepare_final_header_artifacts`
     /// and `finalize_header_artifacts` never re-compress the witness tape.
     pub(super) frozen_enclave_witness: Option<Bytes>,
+    /// End-zone transactions built by the proposer. The block builder appends them.
+    pub(super) staged_end_block_txs: Vec<Recovered<TransactionSigned>>,
+    /// Gas used by `CallEventProcessing`, once that suffix transaction has committed.
+    pub(super) end_call_gas_used: Option<u64>,
+    /// Capacity captured when the end suffix starts. Cleanup's signed limit is derived from it.
+    pub(super) end_capacity: Option<u64>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -187,6 +193,9 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             witness_state: None,
             body_tx_index: 0,
             frozen_enclave_witness: None,
+            staged_end_block_txs: Vec::new(),
+            end_call_gas_used: None,
+            end_capacity: None,
         }
     }
 }
@@ -316,6 +325,14 @@ where
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
         let is_system_tx = is_reserved_system_tx(recovered.tx());
+        let is_end_tx = is_system_tx
+            && crate::system_tx::SystemTx::decode(recovered.tx().input().as_ref())
+                .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock);
+        if is_end_tx {
+            return self
+                .execute_end_block_system_tx(recovered.tx(), *recovered.signer())
+                .map_err(preserve_cancelled_execution);
+        }
         self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
@@ -400,9 +417,22 @@ where
         } else {
             self.inner.cumulative_tx_gas_used
         };
-        outbe_primitives::system_tx::BlockGasBudget::new(self.inner.evm.block().gas_limit())
-            .and_then(|budget| budget.remaining_pre_end_gas(gas_used))
-            .map_err(crate::errors::ExecutorValidationError::from)?;
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        if self.end_call_gas_used.is_some() {
+            if gas_used > block_gas_limit {
+                return Err(crate::errors::ExecutorValidationError::from(
+                    outbe_primitives::system_tx::BlockGasBudgetError::PreEndGasExceeded {
+                        consumed_gas: gas_used,
+                        pre_end_capacity: block_gas_limit,
+                    },
+                )
+                .into());
+            }
+        } else {
+            outbe_primitives::system_tx::BlockGasBudget::new(block_gas_limit)
+                .and_then(|budget| budget.remaining_pre_end_gas(gas_used))
+                .map_err(crate::errors::ExecutorValidationError::from)?;
+        }
         let result = BlockExecutionResult {
             receipts: std::mem::take(&mut self.inner.receipts),
             requests,

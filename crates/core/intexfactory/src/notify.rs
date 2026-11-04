@@ -73,6 +73,32 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
 /// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
+fn run_notice_unit(
+    ctx: &BlockRuntimeContext,
+    send: &mut NoticeSend<'_, '_>,
+    index: u32,
+) -> Result<Option<(u32, bool)>> {
+    if !outbe_primitives::end_gas::end_gas_active() {
+        return Ok(Some(send.run(index)?));
+    }
+    if outbe_primitives::end_gas::unit_does_not_fit(
+        ctx.storage.gas_remaining()?,
+        outbe_primitives::end_gas::UnitKind::Notice,
+    ) {
+        return Ok(None);
+    }
+    match ctx.storage.with_gas_ceiling(
+        outbe_primitives::end_gas::NOTICE_UNIT_GAS_CEILING,
+        || ctx.storage.with_checkpoint(|| send.run(index)),
+    ) {
+        Ok(done) => Ok(Some(done)),
+        Err(error) if error.pass_failure() == outbe_primitives::error::PassFailure::Stop => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
@@ -94,7 +120,9 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         && refused_runs < MAX_REFUSED_RUNS_PER_BLOCK
         && notice_retry_at(factory.notify_at.read(&index)?) <= send.now
     {
-        let (consumed, refused) = send.run(index)?;
+        let Some((consumed, refused)) = run_notice_unit(ctx, &mut send, index)? else {
+            break;
+        };
         index += consumed;
         refused_runs = if refused { refused_runs + 1 } else { 0 };
     }

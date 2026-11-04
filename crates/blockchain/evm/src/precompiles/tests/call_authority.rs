@@ -79,10 +79,6 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
         metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
     .union(MetadosisMutationEntitlements::exact(
-        Purpose::CycleLifecycle,
-        metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-    ))
-    .union(MetadosisMutationEntitlements::exact(
         Purpose::CertifiedFinality,
         metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
@@ -174,10 +170,27 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
         ));
         day = outbe_primitives::time::next_date_key(day).expect("date step");
     }
-    assert!(entitlements.expects(
+    assert!(!entitlements.expects(
         Purpose::CycleLifecycle,
         metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ));
+}
+
+#[test]
+fn end_zone_walks_receive_only_process_ready() {
+    let ready = metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP);
+    for input in [SystemTx::CallEventProcessing, SystemTx::CleanupProcessing] {
+        let entitlements = system_entitlements(input);
+        assert!(entitlements.expects(Purpose::CycleLifecycle, ready));
+        assert!(!entitlements.expects(
+            Purpose::CertifiedFinality,
+            metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ));
+        assert!(!entitlements.expects(
+            Purpose::CycleLifecycle,
+            metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ));
+    }
 }
 
 #[test]

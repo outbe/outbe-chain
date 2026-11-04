@@ -415,6 +415,15 @@ pub enum ExecutorValidationError {
     #[error("tx to reserved system transaction address after begin-zone system txs are consumed")]
     ReservedSystemTxAfterBeginZoneConsumed,
     #[error(
+        "end-block {kind} gas limit {actual} does not match required {expected} at capacity {capacity}"
+    )]
+    EndBlockGasLimitMismatch {
+        kind: &'static str,
+        expected: u64,
+        actual: u64,
+        capacity: u64,
+    },
+    #[error(
         "system tx cursor/body mismatch at body_index={body_index}: cursor expects {expected_kind:?}, body has {resolved_kind:?}"
     )]
     SystemTxCursorBodyMismatch {

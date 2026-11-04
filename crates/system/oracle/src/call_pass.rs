@@ -305,7 +305,22 @@ pub fn call_entry<'s, S: CallPass<'s>>(
     entry: impl Display,
     call: impl FnOnce() -> Result<u32>,
 ) -> Result<Visit> {
-    match decide(storage.with_checkpoint(call), S::classify)? {
+    if outbe_primitives::end_gas::end_gas_active()
+        && outbe_primitives::end_gas::unit_does_not_fit(
+            storage.gas_remaining()?,
+            outbe_primitives::end_gas::UnitKind::Call,
+        )
+    {
+        return Ok(Visit::Stop);
+    }
+    let outcome = if outbe_primitives::end_gas::end_gas_active() {
+        storage.with_gas_ceiling(outbe_primitives::end_gas::CALL_UNIT_GAS_CEILING, || {
+            storage.with_checkpoint(call)
+        })
+    } else {
+        storage.with_checkpoint(call)
+    };
+    match decide(outcome, S::classify)? {
         Decided::Done(writes) => {
             budget.admit_writes(writes);
             Ok(Visit::Next)

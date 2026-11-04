@@ -30,6 +30,12 @@ pub fn handle_cycle_tick(
     // Factories return capacity below. Subsequent reserve consumers can use this capacity.
     dispatch_triggers(ctx)?;
     crate::handler::credit_reward_slice(ctx)?;
+    Ok(())
+}
+
+/// Walks scheduled call, forfeit, and notice work. Credis value movement stays
+/// inside its call pass. A gas stop commits the prefix and resumes next block.
+pub fn handle_call_event_processing(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     // Each factory finishes calls before forfeits for its pinned closed day.
     // Gem includes position expiry. Credis includes collateral-return cleanup.
     outbe_nodfactory::called::process_call_pass(ctx)?;
@@ -37,8 +43,11 @@ pub fn handle_cycle_tick(
     outbe_intexfactory::called::process_call_pass(ctx)?;
     outbe_credisfactory::called::process_call_pass(ctx)?;
     outbe_intexfactory::notify::send_call_notices(ctx)?;
-    // These final sweeps only delete state after value accounting completes.
-    // Credis moves value during cleanup, so its coupled pass above performs that cleanup instead.
+    Ok(())
+}
+
+/// Deletes state after value accounting. Credis moves value during its call pass.
+pub fn handle_cleanup_processing(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     outbe_gemfactory::hooks::cleanup(ctx)?;
     outbe_intexfactory::hooks::cleanup(ctx)?;
     outbe_gemfactory::hooks::cleanup_positions(ctx)?;

@@ -37,6 +37,21 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
+std::thread_local! {
+    static SIGNED_SYSTEM_CALL_GAS_LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Executes one Outbe system call with the signed envelope gas limit.
+/// Begin-zone calls keep the 10B lane when this scope is absent.
+pub(crate) fn with_signed_system_call_gas_limit<R>(limit: u64, f: impl FnOnce() -> R) -> R {
+    SIGNED_SYSTEM_CALL_GAS_LIMIT.with(|cell| {
+        let previous = cell.replace(Some(limit));
+        let result = f();
+        cell.set(previous);
+        result
+    })
+}
+
 #[cfg(test)]
 use reth_ethereum::evm::revm::context_interface::result::{
     ExecutionResult, OutOfGasError, ResultGas,
@@ -359,11 +374,14 @@ where
             ));
         }
 
+        let gas_limit = SIGNED_SYSTEM_CALL_GAS_LIMIT
+            .with(|cell| cell.get())
+            .unwrap_or(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))
             .data(data)
-            .gas_limit(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT)
+            .gas_limit(gas_limit)
             .build_fill();
 
         self.inner.ctx.set_tx(tx);

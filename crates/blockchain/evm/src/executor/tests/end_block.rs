@@ -48,10 +48,13 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
     for block_number in [0, 1, 2] {
         for tx in [test_regular_tx(), test_oracle_submit_vote_tx()] {
             let tx = tx.try_into_recovered().unwrap();
-            let config = OutbeEvmConfig::new(test_chain_spec());
+    let signer = test_evm_signer();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
             let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
             let evm = config.evm_with_env(&mut state, test_evm_env(block_number, REWARDS_ADDRESS));
-            let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.proposer_evm_address = Some(signer.address());
+    let mut executor = config.create_executor(evm, ctx);
             let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
             let used = budget.pre_end_capacity() - tx.gas_limit() + 1;
             executor.inner.cumulative_tx_gas_used = used;
@@ -107,19 +110,23 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         .into_signed(Signature::test_signature())
         .into();
         let tx = tx.try_into_recovered().unwrap();
-        let config = OutbeEvmConfig::new(test_chain_spec());
+        let signer = test_evm_signer();
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+        let mut ctx = execution_ctx(None, Bytes::new());
+        ctx.proposer_evm_address = Some(signer.address());
+        let mut executor = config.create_executor(evm, ctx);
         let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         let used = budget.pre_end_capacity() - tx.gas_limit();
         executor.inner.cumulative_tx_gas_used = used;
         executor.execute_transaction(tx.clone()).unwrap();
         let actual_gas = used + 21_000;
         assert_eq!(executor.inner.cumulative_tx_gas_used, actual_gas);
-        let receipts = executor.receipts().to_vec();
+        let receipts = executor.receipts().len();
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
+        assert_eq!(executor.receipts().len(), receipts + 2);
         assert_eq!(
             executor.system_tx_phase_cursor,
             SystemTxPhase::EndBlock {
@@ -127,7 +134,7 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
             }
         );
         executor.apply_end_block_phase().unwrap();
-        assert_eq!(executor.receipts(), receipts);
+        assert_eq!(executor.receipts().len(), receipts + 2);
         assert_eq!(executor.body_tx_index, body_index);
     }
 }
@@ -135,7 +142,8 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
 #[test]
 fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
     for hooks in [true, false] {
-        let config = OutbeEvmConfig::new(test_chain_spec());
+        let signer = test_evm_signer();
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
         let mut state = State::builder()
             .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
             .with_bundle_update()
@@ -143,9 +151,9 @@ fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
         let mut ctx = execution_ctx(None, Bytes::new());
         ctx.execute_outbe_block_hooks = hooks;
+        ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
         executor.system_tx_phase_cursor = SystemTxPhase::HookEvents { body_index: 4 };
-        let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         executor.inner.cumulative_tx_gas_used = 18_000_000;
         executor.apply_end_block_phase().unwrap();
         assert_eq!(
@@ -154,16 +162,16 @@ fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
                 gas_capacity: executor.inner.evm.block().gas_limit() - 18_000_000,
             }
         );
-        assert!(executor.receipts().is_empty());
-        // Direct commit adapters cannot hide a reserve violation at finish.
-        executor.inner.cumulative_tx_gas_used = budget.pre_end_capacity() + 1;
+        assert_eq!(executor.receipts().len(), 2);
+        executor.inner.cumulative_tx_gas_used = executor.inner.evm.block().gas_limit() + 1;
         assert!(executor.finish().is_err());
     }
 }
 
 #[test]
 fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
-    let config = OutbeEvmConfig::new(test_chain_spec());
+    let signer = test_evm_signer();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
     let mut state = State::builder()
         .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
         .with_bundle_update()
@@ -172,7 +180,9 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     env.cfg_env.enable_amsterdam_eip8037 = true;
     env.cfg_env.tx_gas_limit_cap = Some(16_000_000);
     let evm = config.evm_with_env(&mut state, env);
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.proposer_evm_address = Some(signer.address());
+    let mut executor = config.create_executor(evm, ctx);
     let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
     let cap = executor.inner.evm.cfg_env().tx_gas_limit_cap();
     let declared = cap + 1;

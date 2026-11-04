@@ -94,6 +94,16 @@ pub const LATE_FINALIZE_CREDITS_SELECTOR: SysTxSelector = *b"OSL2";
 /// Selector for [`SystemTx::HookEvents`] (V2 OSH2).
 pub const HOOK_EVENTS_SELECTOR: SysTxSelector = *b"OSH2";
 pub const RADICLE_PUBLICATION_SELECTOR: SysTxSelector = *b"OSP2";
+/// Selector for [`SystemTx::CallEventProcessing`] (V2 OSCE).
+pub const CALL_EVENT_PROCESSING_SELECTOR: SysTxSelector = *b"OSCE";
+/// Selector for [`SystemTx::CleanupProcessing`] (V2 OSCP).
+pub const CLEANUP_PROCESSING_SELECTOR: SysTxSelector = *b"OSCP";
+
+/// Stable nonce ordinal for [`SystemTx::CallEventProcessing`].
+/// Begin-zone ordinals stay below this value.
+pub const CALL_EVENT_PROCESSING_ORDINAL: u8 = 14;
+/// Stable nonce ordinal for [`SystemTx::CleanupProcessing`].
+pub const CLEANUP_PROCESSING_ORDINAL: u8 = 15;
 
 /// Hard cap on system transactions emitted in a block.
 pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;

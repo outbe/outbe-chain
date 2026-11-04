@@ -146,10 +146,24 @@ where
             }
             index -= 1;
             let member = self.handler.member_at(entry, index)?;
+            if crate::end_gas::end_gas_active()
+                && crate::end_gas::unit_does_not_fit(
+                    self.storage.gas_remaining()?,
+                    crate::end_gas::UnitKind::Cleanup,
+                )
+            {
+                return Ok(Step::Hold(index + 1));
+            }
             let handler = &mut *self.handler;
-            let outcome = self
-                .storage
-                .with_checkpoint(|| handler.process_member(entry, member));
+            let outcome = if crate::end_gas::end_gas_active() {
+                let storage = self.storage;
+                storage.with_gas_ceiling(crate::end_gas::CLEANUP_UNIT_GAS_CEILING, || {
+                    storage.with_checkpoint(|| handler.process_member(entry, member))
+                })
+            } else {
+                self.storage
+                    .with_checkpoint(|| handler.process_member(entry, member))
+            };
             match decide(outcome, |error| self.handler.classify(error))? {
                 Decided::Done(()) => {}
                 Decided::Stopped => {

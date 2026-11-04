@@ -128,6 +128,8 @@ fn steady_inputs() -> Vec<Bytes> {
         encoded(SystemTx::CycleTick),
         encoded(SystemTx::OracleSlashWindow),
         encoded(SystemTx::HookEvents),
+        encoded(SystemTx::CallEventProcessing),
+        encoded(SystemTx::CleanupProcessing),
     ]);
     inputs
 }
@@ -266,7 +268,7 @@ pub(super) fn assert_diagnostics(
         ("boundary_mismatch", Some("BoundaryOutcome system tx artifact mismatch"), Some("BoundaryOutcome system tx artifact mismatch")),
         ("boundary_match_then_bad_input", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
         ("bad_input_before_boundary_match", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end []"), Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end []")),
+        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [[79, 83, 67, 69], [79, 83, 67, 80]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end [[79, 83, 67, 69], [79, 83, 67, 80]]"), Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [[79, 83, 67, 69], [79, 83, 67, 80]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end [[79, 83, 67, 69], [79, 83, 67, 80]]")),
     ];
     let cases = cases();
     assert_eq!(cases.len(), expected.len());

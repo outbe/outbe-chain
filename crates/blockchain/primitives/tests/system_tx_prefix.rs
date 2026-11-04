@@ -1,9 +1,11 @@
 use alloy_consensus::{SignableTransaction as _, Transaction as _, TxLegacy};
 use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx, split_system_layout, system_tx_visible_gas_limit,
-    validate_active_system_tx_set, SysTxSelector, SystemTx, MAX_SYSTEM_TXS_PER_BLOCK,
-    SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    build_unsigned_system_tx, expected_end_block_selectors, split_system_layout,
+    system_tx_visible_gas_limit, validate_active_system_tx_set, SysTxSelector, SystemTx,
+    CALL_EVENT_PROCESSING_ORDINAL, CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_ORDINAL,
+    CLEANUP_PROCESSING_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+    SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
@@ -129,6 +131,8 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
         system_tx(SystemTx::OracleSlashWindow, 4),
         system_tx(SystemTx::HookEvents, 5),
         user_tx(),
+        system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
+        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
     ];
 
     let layout = split_system_layout(&txs).expect("layout splits");
@@ -145,7 +149,13 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
             .collect::<Vec<_>>()
     );
     assert_eq!(layout.user.len(), 1);
-    assert!(layout.end.is_empty());
+    assert_eq!(
+        layout.end_block_selectors().expect("end selectors"),
+        vec![
+            CALL_EVENT_PROCESSING_SELECTOR,
+            CLEANUP_PROCESSING_SELECTOR
+        ]
+    );
 }
 
 #[test]
@@ -171,7 +181,7 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
                 .iter()
                 .map(SystemTx::selector)
                 .collect(),
-            expected_end: Vec::new(),
+            expected_end: expected_end_block_selectors(BLOCK_NUMBER),
             actual_begin: missing_oracle_inputs
                 .iter()
                 .map(SystemTx::selector)
@@ -196,7 +206,7 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
         validate_active_system_tx_set(&layout, BLOCK_NUMBER, false, false),
         Err(SystemTxError::ActiveSystemTxSetMismatch {
             expected_begin: canonical_without_boundary,
-            expected_end: Vec::new(),
+            expected_end: expected_end_block_selectors(BLOCK_NUMBER),
             actual_begin: canonical_with_boundary
                 .iter()
                 .map(SystemTx::selector)
@@ -255,7 +265,12 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
         system_tx(SystemTx::OracleSlashWindow, 4),
         system_tx(SystemTx::HookEvents, 5),
     ];
-    let layout = split_system_layout(&txs).expect("worst-case system prefix layout splits");
+    let mut layout_txs = txs.clone();
+    layout_txs.extend([
+        system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
+        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
+    ]);
+    let layout = split_system_layout(&layout_txs).expect("worst-case system prefix layout splits");
     validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
         .expect("worst-case active system tx set validates");
     assert_eq!(txs.len(), 6);

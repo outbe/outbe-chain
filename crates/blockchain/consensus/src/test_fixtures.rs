@@ -419,6 +419,27 @@ pub(crate) fn block_with_gas_planned_system_inputs(
             .transactions
             .push(signer.sign_unsigned(unsigned).expect("system tx signs"));
     }
+    if block_number >= 2 {
+        for input in [SystemTx::CallEventProcessing, SystemTx::CleanupProcessing] {
+            let calldata = input.encode().expect("end input encodes");
+            let gas_limit = outbe_primitives::system_tx::system_tx_intrinsic_gas(&calldata)
+                .expect("end intrinsic");
+            let unsigned = build_unsigned_system_tx_with_gas_limit(
+                outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                    ordinal: input.nonce_ordinal().expect("end ordinal"),
+                    block_number,
+                    chain_id,
+                    calldata,
+                    gas_limit,
+                },
+            )
+            .expect("end system tx builds");
+            block
+                .body
+                .transactions
+                .push(signer.sign_unsigned(unsigned).expect("end system tx signs"));
+        }
+    }
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
 }
