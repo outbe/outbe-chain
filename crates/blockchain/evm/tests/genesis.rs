@@ -588,3 +588,49 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
         );
     });
 }
+
+/// A genesis S-curve seed reads back as the same curve that the Oracle starts at
+/// the same WWD with the same peak price.
+#[test]
+fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
+    use outbe_oracle::schema::OracleContract;
+    use outbe_oracle::scurve::{scurve_value, store_scurve_entry};
+    use outbe_primitives::address_pair::AddressPair;
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::time::WorldwideDay;
+
+    const SEED: &str = r#"{
+      "oracle": {
+        "pairs": [{ "base": "COEN", "quote": "840", "initial_rate": "1000000" }],
+        "scurve_seeds": [
+          { "pair_base": "COEN", "pair_quote": "840", "peak_day": 20241220, "peak_price": "1000000" }
+        ]
+      }
+    }"#;
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+    let mut seeded = HashMapStorageProvider::new(512_215);
+    load_seeded_storage(&mut seeded, &genesis, ORACLE_ADDRESS);
+    let mut started = HashMapStorageProvider::new(512_215);
+
+    let pair = AddressPair::new_coen_to(840);
+    let peak = WorldwideDay::new(20241220);
+    StorageHandle::enter(&mut started, |storage| {
+        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        let mut oracle = OracleContract::new(storage);
+        let peak_price = alloy_primitives::U256::from(1_000_000u64);
+        assert!(store_scurve_entry(&mut oracle, pair, peak, peak_price).unwrap());
+    });
+    // The peak WWD, a day in the first period, and a day in the second period.
+    for wwd in [20241220, 20241221, 20250601] {
+        let wwd = WorldwideDay::new(wwd);
+        let value = |provider: &mut HashMapStorageProvider| {
+            StorageHandle::enter(provider, |storage| {
+                scurve_value(&OracleContract::new(storage), pair, wwd).unwrap()
+            })
+        };
+        let seeded_value = value(&mut seeded);
+        assert!(!seeded_value.is_zero(), "{wwd}");
+        assert_eq!(seeded_value, value(&mut started), "{wwd}");
+    }
+}

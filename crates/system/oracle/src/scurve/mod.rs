@@ -457,4 +457,17 @@ mod tests {
             assert_eq!(oracle.scurve_len.read(&cad).unwrap(), 0);
         });
     }
+
+    #[test]
+    fn a_zero_wwd_vwap_starts_no_curve() {
+        with_pair(|oracle, usd| {
+            let index = oracle.pair_index_of(usd).unwrap();
+            oracle
+                .record_utc_day_vwap(wwd(0).value(), index, price6(1))
+                .unwrap();
+
+            process_wwd_scurves(oracle, wwd(0), &[(usd, U256::ZERO)]).unwrap();
+            assert_eq!(oracle.scurve_len.read(&usd).unwrap(), 0);
+        });
+    }
 }
