@@ -140,46 +140,55 @@ pub fn authenticate_late_credit(
     credit: &PerBlockCredit,
 ) -> OutbeResult<()> {
     let rewards = storage.contract::<outbe_rewards::contract::Rewards<'_>>();
+    let fb_number = credit.fb_number;
     authenticate_late_credit_hash(&rewards, credit)?;
-    let escrowed_epoch = rewards.pending_epoch_at.read(&credit.fb_number)?;
-    if escrowed_epoch != credit.epoch {
-        return Err(BeginBlockPrecompileError::LateCreditEpochMismatch {
-            fb_number: credit.fb_number,
+    ensure_escrowed_eq(
+        rewards.pending_epoch_at.read(&fb_number)?,
+        credit.epoch,
+        |escrowed_epoch, credit_epoch| BeginBlockPrecompileError::LateCreditEpochMismatch {
+            fb_number,
             escrowed_epoch,
-            credit_epoch: credit.epoch,
-        }
-        .into());
-    }
-    let escrowed_csh = rewards
-        .pending_committee_set_hash_at
-        .read(&credit.fb_number)?;
-    if escrowed_csh != credit.committee_set_hash {
-        return Err(
-            BeginBlockPrecompileError::LateCreditCommitteeSetHashMismatch {
-                fb_number: credit.fb_number,
-                escrowed_csh,
-                credit_csh: credit.committee_set_hash,
-            }
-            .into(),
-        );
-    }
-    let escrowed_view = rewards.pending_view_at.read(&credit.fb_number)?;
-    if escrowed_view != credit.view {
-        return Err(BeginBlockPrecompileError::LateCreditViewMismatch {
-            fb_number: credit.fb_number,
+            credit_epoch,
+        },
+    )?;
+    ensure_escrowed_eq(
+        rewards.pending_committee_set_hash_at.read(&fb_number)?,
+        credit.committee_set_hash,
+        |escrowed_csh, credit_csh| BeginBlockPrecompileError::LateCreditCommitteeSetHashMismatch {
+            fb_number,
+            escrowed_csh,
+            credit_csh,
+        },
+    )?;
+    ensure_escrowed_eq(
+        rewards.pending_view_at.read(&fb_number)?,
+        credit.view,
+        |escrowed_view, credit_view| BeginBlockPrecompileError::LateCreditViewMismatch {
+            fb_number,
             escrowed_view,
-            credit_view: credit.view,
-        }
-        .into());
-    }
-    let escrowed_parent_view = rewards.pending_parent_view_at.read(&credit.fb_number)?;
-    if escrowed_parent_view != credit.parent_view {
-        return Err(BeginBlockPrecompileError::LateCreditParentViewMismatch {
-            fb_number: credit.fb_number,
-            escrowed_parent_view,
-            credit_parent_view: credit.parent_view,
-        }
-        .into());
+            credit_view,
+        },
+    )?;
+    ensure_escrowed_eq(
+        rewards.pending_parent_view_at.read(&fb_number)?,
+        credit.parent_view,
+        |escrowed_parent_view, credit_parent_view| {
+            BeginBlockPrecompileError::LateCreditParentViewMismatch {
+                fb_number,
+                escrowed_parent_view,
+                credit_parent_view,
+            }
+        },
+    )
+}
+
+fn ensure_escrowed_eq<T: PartialEq>(
+    escrowed: T,
+    credit_value: T,
+    mismatch: impl FnOnce(T, T) -> BeginBlockPrecompileError,
+) -> OutbeResult<()> {
+    if escrowed != credit_value {
+        return Err(mismatch(escrowed, credit_value).into());
     }
     Ok(())
 }
@@ -209,8 +218,8 @@ fn authenticate_late_credit_hash(
 
 /// Executes the `LateFinalizeCredits` system transaction:
 /// 1. Authenticates each credit batch against `Rewards` escrow and records late voters.
-///    When called from `OutbeBlockExecutor`, reuses the signer indices verified in
-///    `verify_late_finalize_credits_in_preexec` so the BLS pairing is not repeated.
+///    When preloaded signer indices are present in the system-tx context, reuses
+///    those pre-verified indices so the BLS pairing is not repeated.
 /// 2. Records window-close absentees and applies voter slashing for `block_number - K`.
 /// 3. Settles the matured reward window at `block_number - K`.
 pub fn run_late_finalize_credits(
@@ -222,38 +231,11 @@ pub fn run_late_finalize_credits(
         .and_then(|context| context.verified_late_credit_signers);
 
     for (batch_idx, credit) in artifact.batches.iter().enumerate() {
-        let k = validate_inclusion_window(block_number, credit.fb_number)
-            .map_err(BeginBlockPrecompileError::from)?;
-
-        authenticate_late_credit(&ctx.storage, credit)?;
-
-        let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
-        let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or(
-            BeginBlockPrecompileError::LateCreditMissingCommitteeSnapshot {
-                epoch: credit.epoch,
-                snapshot_key,
-            },
-        )?;
-
-        let signer_indices = if let Some(cached) = preverified_signers
+        let cached_batch = preverified_signers
             .as_ref()
             .and_then(|batches| batches.get(batch_idx))
-        {
-            cached.clone()
-        } else {
-            verify_late_finalize_proof(&snapshot, credit).map_err(|error| {
-                BeginBlockPrecompileError::late_credit_proof_verify_failed(credit.fb_hash, error)
-            })?
-        };
-
-        for idx in signer_indices {
-            let voter = snapshot
-                .committee
-                .get(idx)
-                .map(|entry| entry.address)
-                .ok_or(BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange { idx })?;
-            outbe_rewards::late_settlement::record_late_credit(ctx, credit.fb_hash, voter, k)?;
-        }
+            .map(Vec::as_slice);
+        record_single_late_credit_batch(ctx, block_number, credit, cached_batch)?;
     }
 
     record_window_close_absentees(ctx, block_number)?;
@@ -262,13 +244,50 @@ pub fn run_late_finalize_credits(
     Ok(())
 }
 
+fn record_single_late_credit_batch(
+    ctx: &BlockRuntimeContext,
+    block_number: u64,
+    credit: &PerBlockCredit,
+    cached_signers: Option<&[usize]>,
+) -> OutbeResult<()> {
+    let k = validate_inclusion_window(block_number, credit.fb_number)
+        .map_err(BeginBlockPrecompileError::from)?;
+
+    authenticate_late_credit(&ctx.storage, credit)?;
+
+    let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
+    let snapshot = read_committee_snapshot(ctx.storage.clone(), snapshot_key)?.ok_or(
+        BeginBlockPrecompileError::LateCreditMissingCommitteeSnapshot {
+            epoch: credit.epoch,
+            snapshot_key,
+        },
+    )?;
+
+    let signer_indices = match cached_signers {
+        Some(cached) => cached.to_vec(),
+        None => verify_late_finalize_proof(&snapshot, credit).map_err(|error| {
+            BeginBlockPrecompileError::late_credit_proof_verify_failed(credit.fb_hash, error)
+        })?,
+    };
+
+    for idx in signer_indices {
+        let voter = snapshot
+            .committee
+            .get(idx)
+            .map(|entry| entry.address)
+            .ok_or(BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange { idx })?;
+        outbe_rewards::late_settlement::record_late_credit(ctx, credit.fb_hash, voter, k)?;
+    }
+    Ok(())
+}
+
 fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -> OutbeResult<()> {
-    let Some(fb_number) = block_number.checked_sub(LATE_FINALIZE_WINDOW_K) else {
+    let Some(fb_number) = block_number
+        .checked_sub(LATE_FINALIZE_WINDOW_K)
+        .filter(|&height| height > 0)
+    else {
         return Ok(());
     };
-    if fb_number == 0 {
-        return Ok(());
-    }
     let Some(info) = outbe_rewards::late_settlement::window_close_credited(ctx, fb_number)? else {
         return Ok(());
     };
@@ -285,16 +304,8 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
     };
 
     let credited: BTreeSet<Address> = info.credited.into_iter().collect();
-    let vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
-    let mut absentees: Vec<Address> = Vec::new();
-    for entry in &snapshot.committee {
-        if credited.contains(&entry.address) {
-            continue;
-        }
-        if vs.is_validator(entry.address)? {
-            absentees.push(entry.address);
-        }
-    }
+    let absentees =
+        collect_window_close_absentees(ctx.storage.clone(), &snapshot.committee, &credited)?;
     if absentees.is_empty() {
         return Ok(());
     }
@@ -313,6 +324,21 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
     )?;
 
     Ok(())
+}
+
+fn collect_window_close_absentees(
+    storage: StorageHandle,
+    committee: &[outbe_validatorset::state::CommitteeEntry],
+    credited: &BTreeSet<Address>,
+) -> OutbeResult<Vec<Address>> {
+    let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+    let mut absentees: Vec<Address> = Vec::new();
+    for entry in committee {
+        if !credited.contains(&entry.address) && vs.is_validator(entry.address)? {
+            absentees.push(entry.address);
+        }
+    }
+    Ok(absentees)
 }
 
 /// Pre-execution verification of a block's late-finalize credit batches.
