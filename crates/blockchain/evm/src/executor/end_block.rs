@@ -21,7 +21,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     pub(in crate::executor) fn ensure_before_end_block(&self) -> Result<(), BlockExecutionError> {
         if matches!(
             self.system_tx_phase_cursor,
-            SystemTxPhase::EndBlockComplete { .. }
+            SystemTxPhase::EndBlock { .. }
         ) {
             return Err(ExecutorValidationError::TransactionAfterEndBlock.into());
         }
@@ -40,7 +40,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             .map_err(ExecutorValidationError::from)?;
         if matches!(
             self.system_tx_phase_cursor,
-            SystemTxPhase::EndBlockComplete { .. }
+            SystemTxPhase::EndBlock { .. }
         ) {
             return Ok(());
         }
@@ -50,7 +50,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             .map_err(ExecutorValidationError::from)?;
         // No end selectors exist yet. This phase intentionally creates no state,
         // receipt, fee, log, or witness entry.
-        self.system_tx_phase_cursor = SystemTxPhase::EndBlockComplete {
+        self.system_tx_phase_cursor = SystemTxPhase::EndBlock {
             gas_capacity: capacity,
         };
         Ok(())

@@ -38,7 +38,7 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
         SystemTxPhase::HookEvents { body_index: 0 },
         SystemTxPhase::RadiclePublication { body_index: 0 },
         SystemTxPhase::UserTxs,
-        SystemTxPhase::EndBlockComplete { gas_capacity: 0 },
+        SystemTxPhase::EndBlock { gas_capacity: 0 },
     ];
     for variant in &variants {
         // Exhaustive match - adding a new variant without updating here is a
@@ -53,7 +53,7 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
             SystemTxPhase::HookEvents { .. } => {}
             SystemTxPhase::RadiclePublication { .. } => {}
             SystemTxPhase::UserTxs => {}
-            SystemTxPhase::EndBlockComplete { .. } => {}
+            SystemTxPhase::EndBlock { .. } => {}
         }
     }
     assert_eq!(
@@ -65,7 +65,7 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
 
 #[test]
 fn completed_end_phase_has_no_envelope_and_cannot_advance_to_users() {
-    let cursor = SystemTxPhase::EndBlockComplete {
+    let cursor = SystemTxPhase::EndBlock {
         gas_capacity: 12_000_000,
     };
     assert_eq!(cursor.expected_selector(), None);
@@ -162,7 +162,7 @@ proptest! {
                 SystemTxPhase::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
                 SystemTxPhase::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
                 SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-                SystemTxPhase::UserTxs | SystemTxPhase::EndBlockComplete { .. } => None,
+                SystemTxPhase::UserTxs | SystemTxPhase::EndBlock { .. } => None,
             };
             prop_assert_eq!(a, expected_for_variant);
             if matches!(cursor, SystemTxPhase::UserTxs) {

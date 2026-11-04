@@ -17,7 +17,7 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     executor.complete_end_block_phase().unwrap();
     assert_eq!(
         executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockComplete {
+        SystemTxPhase::EndBlock {
             gas_capacity: executor.inner.evm.block().gas_limit(),
         }
     );
@@ -138,7 +138,7 @@ fn exact_capacity_commits_actual_gas_then_empty_end_phase_is_terminal() {
         executor.complete_end_block_phase().unwrap();
         assert_eq!(
             executor.system_tx_phase_cursor,
-            SystemTxPhase::EndBlockComplete {
+            SystemTxPhase::EndBlock {
                 gas_capacity: executor.inner.evm.block().gas_limit() - actual_gas,
             }
         );
@@ -180,7 +180,7 @@ fn end_phase_checks_begin_completion_pending_context_and_authoritative_counters(
         executor.complete_end_block_phase().unwrap();
         assert_eq!(
             executor.system_tx_phase_cursor,
-            SystemTxPhase::EndBlockComplete {
+            SystemTxPhase::EndBlock {
                 gas_capacity: executor.inner.evm.block().gas_limit() - 18_000_000,
             }
         );
@@ -219,7 +219,7 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     executor.complete_end_block_phase().unwrap();
     assert_eq!(
         executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockComplete {
+        SystemTxPhase::EndBlock {
             gas_capacity: executor.inner.evm.block().gas_limit() - 18_000_000,
         }
     );
