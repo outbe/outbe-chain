@@ -4,10 +4,36 @@ Proves on-chain that this validator's Hyperlane agent keeps signing. It reads th
 latest signed checkpoint per domain from the validator's own checkpoint bucket and
 submits it to the `HyperlaneController` precompile (`0x…EE14`) with
 `submitCheckpoint`. The controller jails validators that fall behind the quorum for
-`MAX_MISSES` liveness windows in a row (see `crates/system/hyperlanecontroller/README.md`).
+`MAX_MISSES` liveness windows in a row (see
+[`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
 
-Runs on the validator host next to `outbe-feeder` and uses the same key: the
-validator's oracle delegate (or the validator key itself).
+Runs on the validator host next to `outbe-feeder`. Use a separate Hyperlane
+delegate key so the services have independent transaction nonces.
+
+## Operational keys
+
+Use three distinct addresses for each validator:
+
+| Address | Purpose | Binding |
+|---|---|---|
+| `V` | Validator, stake and TEE renewal | Existing validator identity |
+| `P` | Price-feeder transactions | `V` calls `ValidatorSet.setDelegate(1, P)` |
+| `H` | Hyperlane agent and attester | `V` calls `ValidatorSet.setDelegate(2, H)` |
+
+The attester uses `H` as its transaction sender and sets `validator_address`
+to `V`. Register the agent's checkpoint signing key with
+`HyperlaneController.setHyperlaneSigner(H)` from the Hyperlane delegate.
+That mapping selects the checkpoint signature key. Delegation authorizes
+the transaction sender. These are separate checks.
+
+Oracle delegation does not authorize Hyperlane calls. Hyperlane delegation
+does not authorize Oracle votes. Rotation or revocation changes only its
+assigned role. After explicit Hyperlane delegation, `V` cannot submit
+checkpoints or change the checkpoint signer. `V` can rotate or revoke `H`
+through ValidatorSet. Without an explicit Hyperlane delegate, the active
+validator key remains accepted for Hyperlane calls.
+
+Coordinate agent announcements and attester transactions that use `H`.
 
 ## Quick Start
 
@@ -24,7 +50,7 @@ rpc_endpoint = "http://127.0.0.1:8545"
 chain_id = 54322345
 
 [account]
-private_key = "0x..."                                   # oracle delegate key
+private_key = "0x..."                                   # Hyperlane delegate key H
 validator_address = "0x1111111111111111111111111111111111111111"
 
 [hyperlane]
@@ -51,7 +77,8 @@ controller is initialized (`domains()` empty) the attester idles.
 
 `gasless = true` sends `submitCheckpoint` with zero priority fee; the node's
 `HyperlaneSubmitCheckpointHook` waives the fee for active validators and their
-oracle delegates.
+Hyperlane delegates. An explicit Hyperlane delegate replaces the validator
+key for this authorization.
 
 ## Health
 

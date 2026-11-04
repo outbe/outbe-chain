@@ -16,10 +16,11 @@ use crate::{
 #[repr(u8)]
 pub enum ValidatorDelegateRole {
     Oracle = 1,
+    Hyperlane = 2,
 }
 
 impl ValidatorDelegateRole {
-    pub const ALL: [Self; 1] = [Self::Oracle];
+    pub const ALL: [Self; 2] = [Self::Oracle, Self::Hyperlane];
 
     pub const fn id(self) -> u8 {
         self as u8
@@ -32,6 +33,7 @@ impl TryFrom<u8> for ValidatorDelegateRole {
     fn try_from(value: u8) -> Result<Self> {
         match value {
             1 => Ok(Self::Oracle),
+            2 => Ok(Self::Hyperlane),
             _ => Err(ValidatorSetError::UnsupportedDelegateRole.into()),
         }
     }

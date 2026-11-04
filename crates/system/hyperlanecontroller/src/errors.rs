@@ -47,7 +47,7 @@ pub enum HyperlaneControllerError {
     #[error("no MerkleTreeHook configured for domain {domain}")]
     UnknownHook { domain: u32 },
 
-    #[error("caller {caller} is not an active validator or its oracle delegate")]
+    #[error("caller {caller} is not an active validator or its Hyperlane delegate")]
     NotActiveValidator { caller: Address },
 
     #[error(

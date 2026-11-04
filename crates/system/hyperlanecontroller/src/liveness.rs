@@ -13,7 +13,7 @@ use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 
 /// Submissions younger than this many blocks do not count towards the
 /// per-domain reference index. This gives the agent time to sign and upload,
-/// and the feeder time to submit, before the controller considers a lagging
+/// and the attester time to submit, before the controller considers a lagging
 /// validator behind.
 pub const GRACE_BLOCKS: u64 = 30;
 /// The liveness verdict runs when the block number is a multiple of this
@@ -84,8 +84,8 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Liveness proof for one domain. The caller (validator or its oracle
-    /// delegate, i.e. the feeder key) submits its latest signed checkpoint.
+    /// Liveness proof for one domain. The validator or its Hyperlane delegate
+    /// submits its latest signed checkpoint.
     /// The controller verifies the signature against the validator's
     /// Hyperlane signer and records only the index. The controller never
     /// accepts index 0: the first submission must be strictly newer than the
@@ -310,11 +310,11 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// The active validator a transaction sender acts for: the validator
-    /// itself or its oracle delegate (the feeder key).
+    /// itself or its Hyperlane delegate.
     fn validator_of_sender(&self, sender: Address) -> Result<Address> {
         let validator_set = ValidatorSet::new(self.storage.clone());
         let validator = validator_set
-            .resolve_validator_for_role(sender, ValidatorDelegateRole::Oracle)?
+            .resolve_validator_for_role(sender, ValidatorDelegateRole::Hyperlane)?
             .ok_or(HyperlaneControllerError::NotActiveValidator { caller: sender })?;
         if !validator_set
             .validator_lifecycle(validator)?
