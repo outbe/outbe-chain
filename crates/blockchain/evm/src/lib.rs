@@ -1,4 +1,3 @@
-pub mod sys_tx_precompile;
 pub mod builder;
 pub mod config;
 mod create_guard;
@@ -15,6 +14,7 @@ pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
+pub mod sys_tx_precompile;
 pub mod tee_attestation_activation;
 pub mod tee_bootstrap;
 #[cfg(any(test, feature = "test-utils"))]

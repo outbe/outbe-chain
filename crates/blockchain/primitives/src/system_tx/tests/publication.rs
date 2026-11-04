@@ -64,8 +64,14 @@ fn publication_layout_binds_exact_header_batch_after_hooks_and_preserves_legacy(
         ..Default::default()
     };
     body.transactions.extend([
-        transaction(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL as usize),
-        transaction(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL as usize),
+        transaction(
+            SystemTx::CallEventProcessing,
+            CALL_EVENT_PROCESSING_ORDINAL as usize,
+        ),
+        transaction(
+            SystemTx::CleanupProcessing,
+            CLEANUP_PROCESSING_ORDINAL as usize,
+        ),
     ]);
     assert!(validate_system_layout(&body, &header).is_ok());
     let publication_index = body.transactions.len() - 3;

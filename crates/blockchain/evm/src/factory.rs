@@ -301,16 +301,15 @@ where
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
-                    } => crate::sys_tx_precompile::with_preloaded_system_tx_context(
-                        context,
-                        || {
+                    } => {
+                        crate::sys_tx_precompile::with_preloaded_system_tx_context(context, || {
                             self.transact_system_call(
                                 outbe_primitives::addresses::SYSTEM_ADDRESS,
                                 outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                                 data,
                             )
-                        },
-                    ),
+                        })
+                    }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         self.run_inner_transact_raw(tx)
                     }
@@ -374,7 +373,9 @@ where
         }
 
         let end_block_call = outbe_primitives::system_tx::SystemTx::decode(data.as_ref())
-            .is_ok_and(|input| input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock);
+            .is_ok_and(|input| {
+                input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock
+            });
         let gas_limit = if end_block_call {
             self.end_block_gas_remaining.unwrap_or(0)
         } else {

@@ -48,13 +48,13 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
     for block_number in [0, 1, 2] {
         for tx in [test_regular_tx(), test_oracle_submit_vote_tx()] {
             let tx = tx.try_into_recovered().unwrap();
-    let signer = test_evm_signer();
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+            let signer = test_evm_signer();
+            let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
             let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
             let evm = config.evm_with_env(&mut state, test_evm_env(block_number, REWARDS_ADDRESS));
-    let mut ctx = execution_ctx(None, Bytes::new());
-    ctx.proposer_evm_address = Some(signer.address());
-    let mut executor = config.create_executor(evm, ctx);
+            let mut ctx = execution_ctx(None, Bytes::new());
+            ctx.proposer_evm_address = Some(signer.address());
+            let mut executor = config.create_executor(evm, ctx);
             let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
             let used = budget.pre_end_capacity() - tx.gas_limit() + 1;
             executor.inner.cumulative_tx_gas_used = used;

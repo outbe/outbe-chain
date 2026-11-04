@@ -79,7 +79,9 @@ pub fn unit_does_not_fit(remaining: Option<u64>, kind: UnitKind) -> bool {
 }
 
 pub fn empty_tx_intrinsic(tx: &SystemTx) -> Option<u64> {
-    tx.encode().ok().and_then(|bytes| system_tx_intrinsic_gas(&bytes).ok())
+    tx.encode()
+        .ok()
+        .and_then(|bytes| system_tx_intrinsic_gas(&bytes).ok())
 }
 
 #[cfg(test)]

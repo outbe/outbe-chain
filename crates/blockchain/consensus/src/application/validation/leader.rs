@@ -125,9 +125,9 @@ pub(super) fn validate_envelopes(
         let tx = *tx;
         let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
             .map_err(BlockValidationError::DecodeSystemTxInput)?;
-        let ordinal = input.nonce_ordinal().ok_or_else(|| {
-            BlockValidationError::OrdinalOverflow(usize::from(u8::MAX))
-        })?;
+        let ordinal = input
+            .nonce_ordinal()
+            .ok_or_else(|| BlockValidationError::OrdinalOverflow(usize::from(u8::MAX)))?;
         let calldata = input.encode()?;
         let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {

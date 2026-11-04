@@ -151,10 +151,7 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
     assert_eq!(layout.user.len(), 1);
     assert_eq!(
         layout.end_block_selectors().expect("end selectors"),
-        vec![
-            CALL_EVENT_PROCESSING_SELECTOR,
-            CLEANUP_PROCESSING_SELECTOR
-        ]
+        vec![CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR]
     );
 }
 

@@ -244,9 +244,9 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         })?;
         let call_tx = self.sign_end_tx(SystemTx::CallEventProcessing, call_limit)?;
         self.execute_end_block_system_tx(call_tx.tx(), Address::from(*call_tx.signer()))?;
-        let call_gas_used = self.end_call_gas_used.ok_or(
-            ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed,
-        )?;
+        let call_gas_used = self
+            .end_call_gas_used
+            .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
         let cleanup_limit = capacity.checked_sub(call_gas_used).ok_or_else(|| {
             ExecutorValidationError::EndBlockGasLimitMismatch {
                 kind: "CleanupProcessing",
@@ -301,11 +301,11 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             gas_limit,
         })
         .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
-        let signed = evm_signer
-            .sign_unsigned(unsigned)
-            .map_err(|error| {
-                BlockExecutionError::other(crate::errors::ExecutorValidationError::plan_visible_system_tx_gas(error))
-            })?;
+        let signed = evm_signer.sign_unsigned(unsigned).map_err(|error| {
+            BlockExecutionError::other(
+                crate::errors::ExecutorValidationError::plan_visible_system_tx_gas(error),
+            )
+        })?;
         Ok(Recovered::new_unchecked(signed, proposer))
     }
 
@@ -383,9 +383,9 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         match input {
             SystemTx::CallEventProcessing => self.end_call_gas_used = Some(charged),
             SystemTx::CleanupProcessing => {
-                let call_gas = self.end_call_gas_used.ok_or(
-                    ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed,
-                )?;
+                let call_gas = self
+                    .end_call_gas_used
+                    .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
                 if call_gas.saturating_add(charged) > capacity {
                     return Err(ExecutorValidationError::EndBlockGasLimitMismatch {
                         kind: "CleanupProcessing",
@@ -416,8 +416,10 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             code,
             reason,
         );
-        self.inner.cumulative_tx_gas_used = self.inner.cumulative_tx_gas_used.saturating_add(gas_used);
-        self.inner.block_regular_gas_used = self.inner.block_regular_gas_used.saturating_add(gas_used);
+        self.inner.cumulative_tx_gas_used =
+            self.inner.cumulative_tx_gas_used.saturating_add(gas_used);
+        self.inner.block_regular_gas_used =
+            self.inner.block_regular_gas_used.saturating_add(gas_used);
         self.inner.receipts.push(Receipt {
             tx_type: tx.tx_type(),
             success: false,

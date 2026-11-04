@@ -87,10 +87,11 @@ fn run_notice_unit(
     ) {
         return Ok(None);
     }
-    match ctx.storage.with_gas_ceiling(
-        outbe_primitives::end_gas::NOTICE_UNIT_GAS_CEILING,
-        || ctx.storage.with_checkpoint(|| send.run(index)),
-    ) {
+    match ctx
+        .storage
+        .with_gas_ceiling(outbe_primitives::end_gas::NOTICE_UNIT_GAS_CEILING, || {
+            ctx.storage.with_checkpoint(|| send.run(index))
+        }) {
         Ok(done) => Ok(Some(done)),
         Err(error) if error.pass_failure() == outbe_primitives::error::PassFailure::Stop => {
             Ok(None)

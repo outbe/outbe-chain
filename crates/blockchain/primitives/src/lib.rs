@@ -16,6 +16,7 @@ pub mod day_pass;
 pub mod deadline_queue;
 pub mod dispatch;
 pub mod emission;
+pub mod end_gas;
 pub mod entity_codec;
 pub mod erc;
 pub mod error;
@@ -27,7 +28,6 @@ mod journal_writer;
 #[cfg(unix)]
 pub mod local_record;
 pub mod markup;
-pub mod end_gas;
 pub mod math;
 pub mod nod_encryption;
 pub mod nod_rules;

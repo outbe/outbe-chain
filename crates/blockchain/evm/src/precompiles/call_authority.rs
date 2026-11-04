@@ -45,12 +45,10 @@ pub(super) fn metadosis_mutation_entitlements(
         }
         crate::system_tx::SystemTx::CycleTick => cycle_tick_entitlements(&call),
         crate::system_tx::SystemTx::CallEventProcessing
-        | crate::system_tx::SystemTx::CleanupProcessing => {
-            MetadosisMutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_process_ready_binding(call.chain_id, call.block_number, call.timestamp),
-            )
-        }
+        | crate::system_tx::SystemTx::CleanupProcessing => MetadosisMutationEntitlements::exact(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(call.chain_id, call.block_number, call.timestamp),
+        ),
         _ => MetadosisMutationEntitlements::NONE,
     }
 }
@@ -87,11 +85,10 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
             ));
         }
     }
-    entitlements
-        .union(MetadosisMutationEntitlements::exact(
-            Purpose::CycleLifecycle,
-            metadosis_advance_due_binding(chain_id, block_number, timestamp),
-        ))
+    entitlements.union(MetadosisMutationEntitlements::exact(
+        Purpose::CycleLifecycle,
+        metadosis_advance_due_binding(chain_id, block_number, timestamp),
+    ))
 }
 
 /// The Cycle cursor prepares capabilities for a protocol command, not for any
