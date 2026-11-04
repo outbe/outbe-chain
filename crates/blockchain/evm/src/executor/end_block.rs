@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::errors::ExecutorValidationError;
-use crate::factory::with_signed_system_call_gas_limit;
+use crate::factory::SystemCallGasBudget;
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas, BlockGasBudget, SystemTx,
     SystemTxEnvelopeInput, SystemTxPhase, CALL_EVENT_PROCESSING_ORDINAL,
@@ -167,7 +167,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     /// Repeated calls retain the captured capacity and do not execute the suffix twice.
     pub fn apply_end_block_phase<DB>(&mut self) -> Result<(), BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
@@ -222,7 +222,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
 
     fn execute_built_end_suffix<DB>(&mut self, capacity: u64) -> Result<(), BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
@@ -315,7 +315,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         signer: Address,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
@@ -338,33 +338,48 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         let input = admitted.input;
         let ordinal = admitted.ordinal;
         let expected_limit = admitted.gas_limit;
-        let result = with_signed_system_call_gas_limit(expected_limit, || {
-            self.inner.evm.transact_system_call(
-                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                tx.input().clone(),
-            )
-        })
-        .map_err(|error| BlockExecutionError::other(error))?;
-        if !result.result.is_success() {
-            return Err(ExecutorValidationError::CriticalSystemTxDidNotSucceed {
-                expected_phase: input.name(),
-                body_index: usize::from(ordinal),
-                block_number,
-                code: super::system_execution::execute::system_tx_failure_code_for_result(
-                    &result.result,
-                ),
-                result: format!("{:?}", result.result),
+        self.inner
+            .evm
+            .set_end_block_gas_remaining(Some(expected_limit));
+        let transact_outcome = self.inner.evm.transact_system_call(
+            outbe_primitives::addresses::SYSTEM_ADDRESS,
+            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            tx.input().clone(),
+        );
+        let charged = match transact_outcome {
+            Ok(result) if result.result.is_success() => {
+                let output = EthTxResult {
+                    result,
+                    blob_gas_used: 0,
+                    tx_type: tx.tx_type(),
+                };
+                self.inner.commit_transaction(output).tx_gas_used()
             }
-            .into());
-        }
-        let output = EthTxResult {
-            result,
-            blob_gas_used: 0,
-            tx_type: tx.tx_type(),
+            Ok(result) => {
+                let code = super::system_execution::execute::system_tx_failure_code_for_result(
+                    &result.result,
+                );
+                let reason = format!(
+                    "system tx {} did not succeed at body_index={}: {:?}",
+                    input.name(),
+                    ordinal,
+                    result.result
+                );
+                let gas_used = result.result.tx_gas_used();
+                drop(result);
+                self.commit_end_block_failure_receipt(tx, code, reason, gas_used)
+            }
+            Err(error) => {
+                if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_some() {
+                    return Err(BlockExecutionError::other(error));
+                }
+                let reason = format!(
+                    "system tx {} execution failed at body_index={ordinal}: {error}",
+                    input.name()
+                );
+                self.commit_end_block_failure_receipt(tx, 299, reason, 0)
+            }
         };
-        let committed = self.inner.commit_transaction(output);
-        let charged = committed.tx_gas_used();
         match input {
             SystemTx::CallEventProcessing => self.end_call_gas_used = Some(charged),
             SystemTx::CleanupProcessing => {
@@ -387,6 +402,29 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             _ => {}
         }
         Ok(Some(GasOutput::new(charged)))
+    }
+
+    fn commit_end_block_failure_receipt(
+        &mut self,
+        tx: &TransactionSigned,
+        code: u16,
+        reason: String,
+        gas_used: u64,
+    ) -> u64 {
+        let log = crate::failure_receipt::build_outbe_failure_log(
+            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            code,
+            reason,
+        );
+        self.inner.cumulative_tx_gas_used = self.inner.cumulative_tx_gas_used.saturating_add(gas_used);
+        self.inner.block_regular_gas_used = self.inner.block_regular_gas_used.saturating_add(gas_used);
+        self.inner.receipts.push(Receipt {
+            tx_type: tx.tx_type(),
+            success: false,
+            cumulative_gas_used: self.inner.cumulative_tx_gas_used,
+            logs: vec![log],
+        });
+        gas_used
     }
 
     pub(in crate::executor) fn check_visible_pre_end_gas(

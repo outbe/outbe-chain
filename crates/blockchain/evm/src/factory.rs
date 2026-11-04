@@ -37,19 +37,10 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
-std::thread_local! {
-    static SIGNED_SYSTEM_CALL_GAS_LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
-/// Executes one Outbe system call with the signed envelope gas limit.
-/// Begin-zone calls keep the 10B lane when this scope is absent.
-pub(crate) fn with_signed_system_call_gas_limit<R>(limit: u64, f: impl FnOnce() -> R) -> R {
-    SIGNED_SYSTEM_CALL_GAS_LIMIT.with(|cell| {
-        let previous = cell.replace(Some(limit));
-        let result = f();
-        cell.set(previous);
-        result
-    })
+/// Gas budget for system calls. Begin-zone calls use the 10B lane.
+/// End-zone calls use the remaining end-block gas tracked on the EVM.
+pub trait SystemCallGasBudget {
+    fn set_end_block_gas_remaining(&mut self, remaining: Option<u64>);
 }
 
 #[cfg(test)]
@@ -148,6 +139,7 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     precompiles_mut_called: bool,
     witness_state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
     detached_trace_guard: DetachedTraceCleanupGuard,
+    end_block_gas_remaining: Option<u64>,
 }
 
 /// Creates a new Outbe EVM instance.
@@ -169,6 +161,13 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
         precompiles_mut_called: false,
         witness_state: None,
         detached_trace_guard: DetachedTraceCleanupGuard::default(),
+        end_block_gas_remaining: None,
+    }
+}
+
+impl<DB: Database, I, PRECOMPILE> SystemCallGasBudget for OutbeEvm<DB, I, PRECOMPILE> {
+    fn set_end_block_gas_remaining(&mut self, remaining: Option<u64>) {
+        self.end_block_gas_remaining = remaining;
     }
 }
 
@@ -374,9 +373,13 @@ where
             ));
         }
 
-        let gas_limit = SIGNED_SYSTEM_CALL_GAS_LIMIT
-            .with(|cell| cell.get())
-            .unwrap_or(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+        let end_block_call = outbe_primitives::system_tx::SystemTx::decode(data.as_ref())
+            .is_ok_and(|input| input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock);
+        let gas_limit = if end_block_call {
+            self.end_block_gas_remaining.unwrap_or(0)
+        } else {
+            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+        };
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))
@@ -391,6 +394,12 @@ where
             call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
         let state = self.inner.finalize();
 
+        if end_block_call {
+            let used = result.tx_gas_used();
+            self.end_block_gas_remaining = self
+                .end_block_gas_remaining
+                .map(|remaining| remaining.saturating_sub(used));
+        }
         Ok(ResultAndState::new(result, state))
     }
 

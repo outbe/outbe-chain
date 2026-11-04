@@ -280,7 +280,7 @@ where
     // outbe-evm is pinned to revm's standard `HaltReason`; this constraint
     // is what lets [`system_tx_failure_code_for_result`] pattern-match the
     // halt variants for soft-failure code assignment.
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
+    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess + crate::factory::SystemCallGasBudget,
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
