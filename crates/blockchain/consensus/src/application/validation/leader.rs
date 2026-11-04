@@ -79,34 +79,32 @@ pub(super) fn validate_envelopes(
     header: &OutbeHeader,
     chain_id: u64,
 ) -> Result<(), BlockValidationError> {
-    let mut canonical_inputs = Vec::with_capacity(layout.system_tx_count());
-    let mut names = Vec::with_capacity(layout.system_tx_count());
-    for tx in layout.begin.iter().chain(layout.end.iter()) {
-        let tx = *tx;
-        let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
-            .map_err(BlockValidationError::DecodeSystemTxInput)?;
-        names.push(input.name());
-        let calldata = input.encode()?;
-        canonical_inputs.push(calldata);
-    }
-    let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
-        header.gas_limit(),
-        &canonical_inputs,
-    )
-    .map_err(BlockValidationError::PlanVisibleGas)?;
-
-    for (ordinal, ((tx, calldata), kind)) in layout
+    let begin_inputs = layout
         .begin
         .iter()
-        .chain(layout.end.iter())
-        .zip(canonical_inputs)
-        .zip(names)
-        .enumerate()
-    {
+        .map(|tx| {
+            let tx = *tx;
+            let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
+                .map_err(BlockValidationError::DecodeSystemTxInput)?;
+            input
+                .encode()
+                .map(|calldata| (input.name(), calldata))
+                .map_err(BlockValidationError::from)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
+        header.gas_limit(),
+        &begin_inputs
+            .iter()
+            .map(|(_, calldata)| calldata.clone())
+            .collect::<Vec<_>>(),
+    )
+    .map_err(BlockValidationError::PlanVisibleGas)?;
+    for (index, (tx, (kind, calldata))) in layout.begin.iter().zip(begin_inputs).enumerate() {
         let tx = *tx;
-        let ordinal: u8 = ordinal
+        let ordinal: u8 = index
             .try_into()
-            .map_err(|_| BlockValidationError::OrdinalOverflow(ordinal))?;
+            .map_err(|_| BlockValidationError::OrdinalOverflow(index))?;
         let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
             outbe_primitives::system_tx::SystemTxEnvelopeInput {
                 ordinal,
@@ -114,13 +112,38 @@ pub(super) fn validate_envelopes(
                 chain_id,
                 calldata,
                 gas_limit: gas_plan
-                    .gas_limit(usize::from(ordinal))
+                    .gas_limit(index)
                     .ok_or(BlockValidationError::MissingVisibleGasOrdinal(ordinal))?,
             },
         )
         .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
         if tx.signature_hash() != unsigned.signature_hash() {
             return Err(BlockValidationError::SignatureHashMismatch { kind, ordinal });
+        }
+    }
+    for tx in &layout.end {
+        let tx = *tx;
+        let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
+            .map_err(BlockValidationError::DecodeSystemTxInput)?;
+        let ordinal = input
+            .nonce_ordinal()
+            .ok_or_else(|| BlockValidationError::OrdinalOverflow(usize::from(u8::MAX)))?;
+        let calldata = input.encode()?;
+        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
+            outbe_primitives::system_tx::SystemTxEnvelopeInput {
+                ordinal,
+                block_number: header.number(),
+                chain_id,
+                calldata,
+                gas_limit: tx.gas_limit(),
+            },
+        )
+        .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
+        if tx.signature_hash() != unsigned.signature_hash() {
+            return Err(BlockValidationError::SignatureHashMismatch {
+                kind: input.name(),
+                ordinal,
+            });
         }
     }
 

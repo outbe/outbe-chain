@@ -73,6 +73,27 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
 /// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
+fn run_notice_unit(
+    ctx: &BlockRuntimeContext,
+    send: &mut NoticeSend<'_, '_>,
+    index: u32,
+) -> Result<Option<(u32, bool)>> {
+    if ctx.storage.gas_remaining()?.is_none() {
+        return Ok(Some(send.run(index)?));
+    }
+    match ctx
+        .storage
+        .run_gas_bounded_unit(outbe_primitives::end_gas::UnitKind::Notice, || {
+            send.run(index)
+        }) {
+        Ok(done) => Ok(Some(done)),
+        Err(error) if error.pass_failure() == outbe_primitives::error::PassFailure::Stop => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
@@ -80,12 +101,16 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     if head >= tail {
         return Ok(());
     }
+    let mut budget = PassBudget::per_block();
+    if ctx.storage.gas_remaining()?.is_some() {
+        budget.enable_gas_metering();
+    }
     let mut send = NoticeSend {
         factory: &factory,
         storage: &ctx.storage,
         now: ctx.block.timestamp,
         stop: tail,
-        budget: PassBudget::per_block(),
+        budget,
     };
     let mut index = head;
     let mut refused_runs: u32 = 0;
@@ -94,7 +119,9 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         && refused_runs < MAX_REFUSED_RUNS_PER_BLOCK
         && notice_retry_at(factory.notify_at.read(&index)?) <= send.now
     {
-        let (consumed, refused) = send.run(index)?;
+        let Some((consumed, refused)) = run_notice_unit(ctx, &mut send, index)? else {
+            break;
+        };
         index += consumed;
         refused_runs = if refused { refused_runs + 1 } else { 0 };
     }

@@ -287,6 +287,64 @@ impl OutbeEvmConfig {
             .map_err(SystemTxBuildError::phase1_prebuild_sign_tx)?;
         Ok(Some(Recovered::new_unchecked(signed, proposer)))
     }
+
+    pub fn build_end_system_tx(
+        &self,
+        block_number: u64,
+        chain_id: u64,
+        proposer: Address,
+        input: SystemTx,
+        gas_limit: u64,
+    ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
+        sign_end_system_tx(
+            self.evm_signer.as_ref(),
+            proposer,
+            block_number,
+            chain_id,
+            input,
+            gas_limit,
+        )
+    }
+}
+
+pub(crate) fn sign_end_system_tx(
+    evm_signer: Option<&SharedOutbeEvmSigner>,
+    proposer: Address,
+    block_number: u64,
+    chain_id: u64,
+    input: SystemTx,
+    gas_limit: u64,
+) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
+    let evm_signer = evm_signer.ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
+    if evm_signer.address() != proposer {
+        return Err(ExecutorValidationError::SystemTxSignerMismatch {
+            body_index: usize::from(input.nonce_ordinal().unwrap_or(0)),
+            expected_phase: input.name(),
+            proposer,
+            signer: evm_signer.address(),
+        }
+        .into());
+    }
+    let ordinal = input
+        .nonce_ordinal()
+        .ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
+    let calldata = input
+        .encode()
+        .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?;
+    let unsigned = build_unsigned_system_tx_with_gas_limit(
+        outbe_primitives::system_tx::SystemTxEnvelopeInput {
+            ordinal,
+            block_number,
+            chain_id,
+            calldata,
+            gas_limit,
+        },
+    )
+    .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
+    let signed = evm_signer.sign_unsigned(unsigned).map_err(|error| {
+        BlockExecutionError::other(ExecutorValidationError::plan_visible_system_tx_gas(error))
+    })?;
+    Ok(Recovered::new_unchecked(signed, proposer))
 }
 
 fn sign_planned_begin_system_txs(

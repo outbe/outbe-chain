@@ -16,6 +16,7 @@ pub mod day_pass;
 pub mod deadline_queue;
 pub mod dispatch;
 pub mod emission;
+pub mod end_gas;
 pub mod entity_codec;
 pub mod erc;
 pub mod error;

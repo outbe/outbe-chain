@@ -343,7 +343,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 #[test]
 fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     use alloy_primitives::{keccak256, Bytes, B256, U256};
-    use outbe_evm::{begin_block_precompile::dispatch, system_tx::SystemTx};
+    use outbe_evm::{sys_tx_precompile::dispatch, system_tx::SystemTx};
     use outbe_primitives::{
         addresses::SYSTEM_ADDRESS,
         consensus::{DkgBoundaryArtifact, ReshareResult},

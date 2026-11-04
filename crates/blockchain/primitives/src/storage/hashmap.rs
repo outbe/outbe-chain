@@ -60,6 +60,8 @@ pub struct HashMapStorageProvider {
     is_static: bool,
     gas_limit: Option<u64>,
     gas_used: u64,
+    gas_child_remaining: Option<u64>,
+    end_gas_metered: bool,
     meter_storage_gas: bool,
     metered_storage_reads: u64,
     metered_storage_writes: u64,
@@ -128,6 +130,8 @@ impl HashMapStorageProvider {
             is_static: false,
             gas_limit: None,
             gas_used: 0,
+            gas_child_remaining: None,
+            end_gas_metered: false,
             meter_storage_gas: false,
             metered_storage_reads: 0,
             metered_storage_writes: 0,
@@ -622,6 +626,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
+        if let Some(child) = self.gas_child_remaining {
+            if gas > child {
+                if let Some(limit) = self.gas_limit {
+                    self.gas_used = self.gas_used.saturating_add(child).min(limit);
+                }
+                self.gas_child_remaining = Some(0);
+                return Err(PrecompileError::OutOfGas);
+            }
+            self.gas_child_remaining = Some(child - gas);
+        }
         let Some(limit) = self.gas_limit else {
             return Ok(());
         };
@@ -633,6 +647,35 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(PrecompileError::OutOfGas);
         }
         self.gas_used = next;
+        Ok(())
+    }
+
+    fn gas_remaining(&self) -> Option<u64> {
+        self.end_gas_metered
+            .then(|| {
+                self.gas_limit
+                    .map(|limit| limit.saturating_sub(self.gas_used))
+            })
+            .flatten()
+    }
+
+    fn enable_end_gas_metering(&mut self) -> Result<()> {
+        self.end_gas_metered = true;
+        Ok(())
+    }
+
+    fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {
+        if let Some(limit) = self.gas_limit {
+            if limit.saturating_sub(self.gas_used) < ceiling {
+                return Err(PrecompileError::OutOfGas);
+            }
+        }
+        self.gas_child_remaining = Some(ceiling);
+        Ok(())
+    }
+
+    fn end_gas_ceiling(&mut self) -> Result<()> {
+        self.gas_child_remaining = None;
         Ok(())
     }
 

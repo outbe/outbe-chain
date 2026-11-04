@@ -6,6 +6,9 @@
 //!   classification or stateful authorization).
 //! - a soft begin-zone system transaction (`OracleSlashWindow` or
 //!   `HookEvents`) fails to execute.
+//! - an end-zone system transaction (`CallEventProcessing` or
+//!   `CleanupProcessing`) fails to execute. Only that transaction's state
+//!   is discarded. The block continues.
 //!
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,

@@ -29,7 +29,7 @@ pub use context::{OutbeBlockExecutionCtx, OutbeNextBlockEnvAttributes};
 mod assembler;
 pub use assembler::OutbeBlockAssembler;
 
-mod system_txs;
+pub(crate) mod system_txs;
 use system_txs::system_tx_expectations_for_block;
 
 mod factory;

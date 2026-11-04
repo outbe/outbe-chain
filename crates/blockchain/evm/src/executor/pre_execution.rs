@@ -200,6 +200,7 @@ where
                         .verified_phase1_vrf_proof_hash
                         .unwrap_or(B256::ZERO),
                     verified_late_credit_signers: self.verified_late_credit_signers.clone(),
+                    gas_limit_override: None,
                 }),
                 hook_event_logs: self.whitelisted_hook_event_logs.clone(),
             },

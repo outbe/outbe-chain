@@ -491,7 +491,7 @@ fn reserved_system_command_checks_static_authority_before_decode() {
     };
     let mut p = HashMapStorageProvider::new(1);
     p.set_static(true);
-    let result = crate::begin_block_precompile::dispatch(
+    let result = crate::sys_tx_precompile::dispatch(
         StorageHandle::new(&mut p),
         b"not a system command",
         SYSTEM_ADDRESS,

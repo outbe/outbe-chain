@@ -85,6 +85,11 @@ impl BlockHeightRegime {
     }
 
     #[must_use]
+    pub const fn has_end_zone_system_txs(self) -> bool {
+        matches!(self, Self::SteadyState)
+    }
+
+    #[must_use]
     pub const fn requires_rewards_beneficiary(self) -> bool {
         !matches!(self, Self::Genesis)
     }
@@ -205,6 +210,7 @@ mod tests {
         assert!(!g.has_parent_finalization_accounting());
         assert!(!g.requires_genesis_bootstrap_txs());
         assert!(!g.allows_user_transactions());
+        assert!(!g.has_end_zone_system_txs());
         assert!(!g.requires_rewards_beneficiary());
 
         let b = BlockHeightRegime::for_block(1);
@@ -215,6 +221,7 @@ mod tests {
         assert!(!b.has_parent_finalization_accounting());
         assert!(b.requires_genesis_bootstrap_txs());
         assert!(!b.allows_user_transactions());
+        assert!(!b.has_end_zone_system_txs());
         assert!(b.requires_rewards_beneficiary());
 
         for height in [2, 3, 100, u64::MAX] {
@@ -226,6 +233,7 @@ mod tests {
             assert!(s.has_parent_finalization_accounting());
             assert!(!s.requires_genesis_bootstrap_txs());
             assert!(s.allows_user_transactions());
+            assert!(s.has_end_zone_system_txs());
             assert!(s.requires_rewards_beneficiary());
         }
     }

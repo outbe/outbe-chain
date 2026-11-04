@@ -2,9 +2,10 @@ use alloy_primitives::B256;
 
 use super::{
     BlockHeightRegime, SysTxSelector, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
-    TEE_BOOTSTRAP_SELECTOR,
+    CALL_EVENT_PROCESSING_ORDINAL, CALL_EVENT_PROCESSING_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CLEANUP_PROCESSING_ORDINAL, CLEANUP_PROCESSING_SELECTOR,
+    CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR,
+    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
 };
 
 /// Executor cursor that names the next system-tx phase that the block executor
@@ -67,6 +68,16 @@ pub enum SystemTxPhase {
     },
     /// All begin-zone system txs are consumed. User transactions may execute.
     UserTxs,
+    /// Next expected end-zone tx is `CallEventProcessing` (ordinal 14).
+    EndBlockCallEvents {
+        gas_capacity: u64,
+    },
+    /// Next expected end-zone tx is `CleanupProcessing` (ordinal 15).
+    EndBlockCleanup {
+        gas_capacity: u64,
+        call_gas_used: u64,
+    },
+    /// All end-zone system txs are consumed (or block regime has no end-zone txs).
     EndBlock {
         gas_capacity: u64,
     },
@@ -93,8 +104,8 @@ impl SystemTxPhase {
         }
     }
 
-    /// The begin-zone system-tx selector the cursor expects to consume next, or
-    /// `None` if the cursor is `UserTxs`.
+    /// The system-tx selector the cursor expects to consume next, or
+    /// `None` if the cursor is `UserTxs` or completed `EndBlock`.
     pub const fn expected_selector(&self) -> Option<SysTxSelector> {
         match self {
             Self::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
@@ -105,6 +116,8 @@ impl SystemTxPhase {
             Self::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
             Self::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
             Self::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
+            Self::EndBlockCallEvents { .. } => Some(CALL_EVENT_PROCESSING_SELECTOR),
+            Self::EndBlockCleanup { .. } => Some(CLEANUP_PROCESSING_SELECTOR),
             Self::UserTxs | Self::EndBlock { .. } => None,
         }
     }
@@ -113,8 +126,8 @@ impl SystemTxPhase {
         self.expected_selector() == Some(input.selector())
     }
 
-    /// Body index of the next expected begin-zone system tx, or `None` if
-    /// the cursor is `UserTxs`.
+    /// Body index / nonce ordinal of the next expected system tx, or `None` if
+    /// the cursor is `UserTxs` or completed `EndBlock`.
     pub const fn body_index(&self) -> Option<u8> {
         match self {
             Self::Phase1Preexecuted { body_index, .. }
@@ -125,6 +138,8 @@ impl SystemTxPhase {
             | Self::OracleSlashWindow { body_index }
             | Self::HookEvents { body_index }
             | Self::RadiclePublication { body_index } => Some(*body_index),
+            Self::EndBlockCallEvents { .. } => Some(CALL_EVENT_PROCESSING_ORDINAL),
+            Self::EndBlockCleanup { .. } => Some(CLEANUP_PROCESSING_ORDINAL),
             Self::UserTxs | Self::EndBlock { .. } => None,
         }
     }
@@ -188,7 +203,9 @@ impl SystemTxPhase {
             Self::HookEvents { .. } | Self::RadiclePublication { .. } | Self::UserTxs => {
                 Self::UserTxs
             }
-            Self::EndBlock { .. } => self,
+            Self::EndBlockCallEvents { .. }
+            | Self::EndBlockCleanup { .. }
+            | Self::EndBlock { .. } => self,
         }
     }
 }

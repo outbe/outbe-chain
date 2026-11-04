@@ -134,6 +134,9 @@ fn continue_pass<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
         ctx.block.block_number,
         pinned_day,
     )?;
+    if ctx.storage.gas_remaining()?.is_some() {
+        allowance.budget.enable_gas_metering();
+    }
     if allowance.day != pinned_day {
         return Ok(0);
     }
@@ -305,7 +308,8 @@ pub fn call_entry<'s, S: CallPass<'s>>(
     entry: impl Display,
     call: impl FnOnce() -> Result<u32>,
 ) -> Result<Visit> {
-    match decide(storage.with_checkpoint(call), S::classify)? {
+    let outcome = storage.run_gas_bounded_unit(outbe_primitives::end_gas::UnitKind::Call, call);
+    match decide(outcome, S::classify)? {
         Decided::Done(writes) => {
             budget.admit_writes(writes);
             Ok(Visit::Next)
@@ -668,6 +672,52 @@ mod tests {
             assert!(resumed.budget.spent());
             assert!(!resumed.budget.visit());
             assert!(!resumed.budget.admit_writes(100));
+        });
+    }
+
+    #[test]
+    fn gas_stopped_unit_in_end_block_exhausts_allowance_within_same_block() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_gas_limit(10_000_000);
+        StorageHandle::enter(&mut provider, |storage| {
+            storage.enable_end_gas_metering().unwrap();
+            let mut ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_number: 2,
+                    timestamp: date_key_to_utc_timestamp(20260104).unwrap(),
+                    chain_id: 1,
+                    genesis_hash: B256::ZERO,
+                    genesis_timestamp: date_key_to_utc_timestamp(20260101).unwrap(),
+                    proposer: Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage.clone(),
+            );
+            ready(&mut ctx, 2);
+            let mut sweep = TestSweep::new(storage, Address::with_last_byte(99));
+            sweep.remaining.write(&0, 10).unwrap();
+
+            // Simulate a gas-stopped unit during end-block execution at height 2.
+            schedule(&ctx, &mut sweep).unwrap();
+            let mut allowance = BlockAllowance::new(2, 20260101);
+            allowance.budget.enable_gas_metering();
+            assert_eq!(
+                call_entry::<TestSweep<'_>>(&ctx.storage, &mut allowance.budget, "entry", || Err(
+                    PrecompileError::OutOfGas
+                ))
+                .unwrap(),
+                Visit::Stop
+            );
+            sweep.allowance.write(allowance.pack()).unwrap();
+
+            // Re-entering `continue_day` in the same block with end-gas metering active
+            // must NOT bypass `stop()` and must perform 0 work until block height 3.
+            assert_eq!(continue_day(&ctx, &mut sweep).unwrap(), 0);
+            assert_eq!(sweep.remaining.read(&0).unwrap(), 10);
+
+            ctx.block.block_number = 3;
+            assert_eq!(continue_day(&ctx, &mut sweep).unwrap(), 10);
+            assert_eq!(sweep.remaining.read(&0).unwrap(), 0);
         });
     }
 }

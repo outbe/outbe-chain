@@ -151,6 +151,10 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     dispatch_frames: DispatchFrameAuthority,
     /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
     checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint)>,
+    /// Remaining gas of the active resumable-unit child frame.
+    gas_child_remaining: Option<u64>,
+    /// Whether end-block gas metering is active for this storage dispatch.
+    end_gas_metered: bool,
 }
 
 impl CtxStorageProviderConfig {
@@ -254,6 +258,8 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
             checkpoints: Vec::new(),
+            gas_child_remaining: None,
+            end_gas_metered: false,
         }
         .with_genesis_timestamp(config.genesis_timestamp)
     }
@@ -267,6 +273,22 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     /// resolved the consensus state needed to derive it. ProtocolCycle uses
     /// this. Its daily allocation decision depends on Cycle's persisted UTC
     /// cursor rather than on untrusted calldata.
+    fn charge(&mut self, cost: u64) -> Result<()> {
+        if let Some(child) = self.gas_child_remaining {
+            if cost > child {
+                let _ = self.gas.record_regular_cost(child);
+                self.gas_child_remaining = Some(0);
+                return Err(PrecompileError::OutOfGas);
+            }
+            self.gas_child_remaining = Some(child - cost);
+        }
+        if self.gas.record_regular_cost(cost) {
+            Ok(())
+        } else {
+            Err(PrecompileError::OutOfGas)
+        }
+    }
+
     pub(crate) fn replace_metadosis_mutation_entitlements(
         &mut self,
         entitlements: MetadosisMutationEntitlements,
@@ -380,10 +402,30 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Ok(account.data.account().info.clone())
     }
 
-    fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        if !self.gas.record_regular_cost(WARM_STORAGE_READ_COST) {
+    fn gas_remaining(&self) -> Option<u64> {
+        self.end_gas_metered.then(|| self.gas.remaining())
+    }
+
+    fn enable_end_gas_metering(&mut self) -> Result<()> {
+        self.end_gas_metered = true;
+        Ok(())
+    }
+
+    fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {
+        if self.gas.remaining() < ceiling {
             return Err(PrecompileError::OutOfGas);
         }
+        self.gas_child_remaining = Some(ceiling);
+        Ok(())
+    }
+
+    fn end_gas_ceiling(&mut self) -> Result<()> {
+        self.gas_child_remaining = None;
+        Ok(())
+    }
+
+    fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.charge(WARM_STORAGE_READ_COST)?;
         let mut internals = internals(self.ctx);
         let value = internals
             .sload(address, key)
@@ -405,9 +447,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        if !self.gas.record_regular_cost(SSTORE_RESET) {
-            return Err(PrecompileError::OutOfGas);
-        }
+        self.charge(SSTORE_RESET)?;
         let mut internals = internals(self.ctx);
         internals
             .sstore(address, key, value)
@@ -429,11 +469,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn deduct_gas(&mut self, cost: u64) -> Result<()> {
-        if self.gas.record_regular_cost(cost) {
-            Ok(())
-        } else {
-            Err(PrecompileError::OutOfGas)
-        }
+        self.charge(cost)
     }
 
     fn refund_gas(&mut self, refund: i64) {

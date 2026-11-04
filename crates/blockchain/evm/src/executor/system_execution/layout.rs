@@ -375,6 +375,14 @@ where
         use crate::errors::ExecutorValidationError;
 
         let cursor = self.system_tx_phase_cursor;
+        if matches!(
+            cursor,
+            crate::system_tx::SystemTxPhase::EndBlockCallEvents { .. }
+                | crate::system_tx::SystemTxPhase::EndBlockCleanup { .. }
+                | crate::system_tx::SystemTxPhase::EndBlock { .. }
+        ) {
+            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
+        }
         let Some(body_index) = cursor.body_index() else {
             // Cursor=UserTxs: all begin-zone system txs are consumed.
             // A reserved system transaction address here has two possible

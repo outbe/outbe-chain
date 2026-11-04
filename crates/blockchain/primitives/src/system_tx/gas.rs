@@ -135,6 +135,13 @@ impl SystemTxVisibleGasPlan {
 
         for (ordinal, calldata) in system_txs.iter().enumerate() {
             let decoded = SystemTx::decode(calldata)?;
+            if decoded.body_zone() == super::BodyZone::EndBlock {
+                return Err(SystemTxError::SystemTxInWrongZone {
+                    kind: decoded.name(),
+                    expected: super::BodyZone::BeginBlock,
+                    actual: super::BodyZone::EndBlock,
+                });
+            }
             if matches!(decoded, SystemTx::CycleTick) && cycle_ordinal.replace(ordinal).is_some() {
                 return Err(SystemTxError::DuplicateCycleTickGasBudget);
             }

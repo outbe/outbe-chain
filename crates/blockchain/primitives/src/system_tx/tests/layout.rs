@@ -126,6 +126,12 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
         system_tx(SystemTx::CycleTick, 2, 2),
         system_tx(SystemTx::OracleSlashWindow, 3, 2),
         system_tx(SystemTx::HookEvents, 4, 2),
+        system_tx(
+            SystemTx::CallEventProcessing,
+            CALL_EVENT_PROCESSING_ORDINAL,
+            2,
+        ),
+        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL, 2),
     ];
     let block2 = split_system_layout(&block2_txs).expect("layout");
     validate_active_system_tx_set(&block2, 2, false, false).expect("block 2 ok");
@@ -137,6 +143,12 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
         system_tx(boundary(), 3, 2),
         system_tx(SystemTx::OracleSlashWindow, 4, 2),
         system_tx(SystemTx::HookEvents, 5, 2),
+        system_tx(
+            SystemTx::CallEventProcessing,
+            CALL_EVENT_PROCESSING_ORDINAL,
+            2,
+        ),
+        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL, 2),
     ];
     let block2_with_boundary = split_system_layout(&block2_with_boundary_txs).expect("layout");
     validate_active_system_tx_set(&block2_with_boundary, 2, true, false)

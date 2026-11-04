@@ -194,6 +194,7 @@ where
             allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
+            gas_limit_override: None,
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
         self.commit_system_transaction(output, signed_gas_limit, 0, signed_gas_limit)?;

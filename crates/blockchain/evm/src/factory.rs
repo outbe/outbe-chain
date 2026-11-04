@@ -287,16 +287,15 @@ where
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
-                    } => crate::begin_block_precompile::with_preloaded_system_tx_context(
-                        context,
-                        || {
+                    } => {
+                        crate::sys_tx_precompile::with_preloaded_system_tx_context(context, || {
                             self.transact_system_call(
                                 outbe_primitives::addresses::SYSTEM_ADDRESS,
                                 outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                                 data,
                             )
-                        },
-                    ),
+                        })
+                    }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         self.run_inner_transact_raw(tx)
                     }
@@ -359,11 +358,22 @@ where
             ));
         }
 
+        let end_block_call = outbe_primitives::system_tx::SystemTx::decode(data.as_ref())
+            .is_ok_and(|input| {
+                input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock
+            });
+        let gas_limit = crate::sys_tx_precompile::current_preloaded_system_tx_context()
+            .and_then(|ctx| ctx.gas_limit_override)
+            .unwrap_or(if end_block_call {
+                0
+            } else {
+                outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+            });
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))
             .data(data)
-            .gas_limit(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT)
+            .gas_limit(gas_limit)
             .build_fill();
 
         self.inner.ctx.set_tx(tx);
@@ -372,7 +382,6 @@ where
         let result =
             call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
         let state = self.inner.finalize();
-
         Ok(ResultAndState::new(result, state))
     }
 

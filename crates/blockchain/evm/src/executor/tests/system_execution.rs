@@ -75,9 +75,22 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     }
     drop(executor);
 
+    // Call passes now run in the end zone, which starts at block 2.
+    // Isolate that suffix after the delayed block-1 CycleTick initialized genesis.
+    let mut env = test_evm_env(2, REWARDS_ADDRESS);
+    env.block_env.timestamp = U256::from(block_ts + 1);
+    let evm = config.evm_with_env(&mut state, env);
+    let mut execution = execution_ctx(Some(2), Bytes::new());
+    execution.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, execution);
+    executor.apply_end_block_phase().unwrap();
+    assert_eq!(executor.receipts().len(), 2);
+    assert!(executor.receipts().iter().all(|receipt| receipt.success));
+    drop(executor);
+
     let block = BlockContext {
-        block_number: 1,
-        timestamp: block_ts,
+        block_number: 2,
+        timestamp: block_ts + 1,
         chain_id: CHAIN_ID,
         genesis_hash: alloy_primitives::B256::ZERO,
         genesis_timestamp: genesis_ts,

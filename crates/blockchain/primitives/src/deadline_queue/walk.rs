@@ -37,6 +37,9 @@ where
             "expiry cutoff exceeds 24-bit range".into(),
         ));
     }
+    if storage.gas_remaining()?.is_some() {
+        budget.enable_gas_metering();
+    }
     let mut walk = Walk {
         queue,
         storage,
@@ -149,7 +152,9 @@ where
             let handler = &mut *self.handler;
             let outcome = self
                 .storage
-                .with_checkpoint(|| handler.process_member(entry, member));
+                .run_gas_bounded_unit(crate::end_gas::UnitKind::Cleanup, || {
+                    handler.process_member(entry, member)
+                });
             match decide(outcome, |error| self.handler.classify(error))? {
                 Decided::Done(()) => {}
                 Decided::Stopped => {
