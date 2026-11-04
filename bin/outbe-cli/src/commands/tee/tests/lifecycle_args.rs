@@ -40,6 +40,7 @@ fn lifecycle_commands_preserve_required_paths_and_optional_node_signer() -> eyre
     for command in [
         "renew",
         "status",
+        "pubkey",
         "upgrade-prepare",
         "upgrade-provision",
         "upgrade-submit",

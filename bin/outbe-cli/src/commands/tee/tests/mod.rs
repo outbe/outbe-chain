@@ -47,3 +47,5 @@ mod identity;
 mod join_policy;
 
 mod lifecycle_args;
+
+mod pubkey;
