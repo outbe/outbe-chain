@@ -13,6 +13,7 @@ use super::{
 /// `apply_pre_execution_changes` (pre-execution) and not in the main tx loop.
 ///
 /// Invariants:
+/// - Genesis has no begin-zone witnesses and starts at `UserTxs`.
 /// - On block `1` (genesis bootstrap), cursor starts at
 ///   `CycleTick { body_index: 0 }`.
 /// - On block `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`, cursor starts at
@@ -66,11 +67,16 @@ pub enum SystemTxPhase {
     },
     /// All begin-zone system txs are consumed. User transactions may execute.
     UserTxs,
+    EndBlock {
+        gas_capacity: u64,
+    },
 }
 
 impl SystemTxPhase {
     pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
-        if block_number > genesis_bootstrap_block_number
+        if block_number == 0 {
+            Self::UserTxs
+        } else if block_number > genesis_bootstrap_block_number
             && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
         {
             Self::Phase1Preexecuted {
@@ -95,7 +101,7 @@ impl SystemTxPhase {
             Self::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
             Self::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
             Self::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-            Self::UserTxs => None,
+            Self::UserTxs | Self::EndBlock { .. } => None,
         }
     }
 
@@ -115,7 +121,7 @@ impl SystemTxPhase {
             | Self::OracleSlashWindow { body_index }
             | Self::HookEvents { body_index }
             | Self::RadiclePublication { body_index } => Some(*body_index),
-            Self::UserTxs => None,
+            Self::UserTxs | Self::EndBlock { .. } => None,
         }
     }
 
@@ -178,6 +184,7 @@ impl SystemTxPhase {
             Self::HookEvents { .. } | Self::RadiclePublication { .. } | Self::UserTxs => {
                 Self::UserTxs
             }
+            Self::EndBlock { .. } => self,
         }
     }
 }

@@ -6,8 +6,8 @@
 //! - deterministic-output property tests (`proptest`): any permutation of
 //!   inputs to `SystemTxPhase::advance_after_commit` yields byte-identical
 //!   cursor sequences across N invocations.
-//! - cross-version compatibility: the `SystemTxPhase` variant set is exactly
-//!   the V2 contract set (no silently-introduced variants).
+//! - explicit internal lifecycle: the `SystemTxPhase` variant set includes
+//!   the begin phases, user phase, and terminal empty end phase.
 //!
 //! The proptest output determinism property is the key consensus-safety
 //! guard for the cursor refactor. Suppose `advance_after_commit` were
@@ -18,10 +18,9 @@
 use outbe_primitives::system_tx::*;
 use proptest::prelude::*;
 
-/// The full set of `SystemTxPhase` variants must equal the V2 contract:
-/// 10 variants, including the opt-in publication phase.
+/// The internal lifecycle includes the opt-in publication and terminal end phases.
 #[test]
-fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
+fn system_tx_phase_variant_set_includes_terminal_end_phase() {
     // Construct one of each variant. If someone adds a new variant without
     // updating this test, the compiler match below becomes non-exhaustive
     // and the test will fail to compile. That is the intended contract.
@@ -39,6 +38,7 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
         SystemTxPhase::HookEvents { body_index: 0 },
         SystemTxPhase::RadiclePublication { body_index: 0 },
         SystemTxPhase::UserTxs,
+        SystemTxPhase::EndBlock { gas_capacity: 0 },
     ];
     for variant in &variants {
         // Exhaustive match - adding a new variant without updating here is a
@@ -53,17 +53,45 @@ fn cross_version_system_tx_phase_variant_set_is_exactly_v2() {
             SystemTxPhase::HookEvents { .. } => {}
             SystemTxPhase::RadiclePublication { .. } => {}
             SystemTxPhase::UserTxs => {}
+            SystemTxPhase::EndBlock { .. } => {}
         }
     }
-    assert_eq!(variants.len(), 9, "V2 SystemTxPhase contract: 9 variants");
+    assert_eq!(
+        variants.len(),
+        10,
+        "internal SystemTxPhase contract: 10 variants"
+    );
+}
+
+#[test]
+fn completed_end_phase_has_no_envelope_and_cannot_advance_to_users() {
+    let cursor = SystemTxPhase::EndBlock {
+        gas_capacity: 12_000_000,
+    };
+    assert_eq!(cursor.expected_selector(), None);
+    assert_eq!(cursor.body_index(), None);
+    for has_boundary in [false, true] {
+        for has_bootstrap in [false, true] {
+            for has_publication in [false, true] {
+                assert_eq!(
+                    cursor.advance_after_commit_with_publication(
+                        has_boundary,
+                        has_bootstrap,
+                        has_publication,
+                    ),
+                    cursor,
+                );
+            }
+        }
+    }
 }
 
 /// Block 0 is the genesis block: no begin-zone system txs. The cursor must
-/// remain at the placeholder CycleTick state without ever entering Phase 1.
+/// start after the empty begin zone without ever entering Phase 1.
 #[test]
 fn cross_version_genesis_block_cursor_initialisation() {
     let cursor = SystemTxPhase::initial_for_block(0, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
+    assert_eq!(cursor, SystemTxPhase::UserTxs);
     assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
 }
 
@@ -134,7 +162,7 @@ proptest! {
                 SystemTxPhase::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
                 SystemTxPhase::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
                 SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-                SystemTxPhase::UserTxs => None,
+                SystemTxPhase::UserTxs | SystemTxPhase::EndBlock { .. } => None,
             };
             prop_assert_eq!(a, expected_for_variant);
             if matches!(cursor, SystemTxPhase::UserTxs) {

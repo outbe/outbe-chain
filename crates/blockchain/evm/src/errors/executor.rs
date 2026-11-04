@@ -197,6 +197,8 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 #[non_exhaustive]
 pub enum ExecutorValidationError {
     #[error(transparent)]
+    BlockGasBudget(#[from] outbe_primitives::system_tx::BlockGasBudgetError),
+    #[error(transparent)]
     TimestampOverflow(#[from] outbe_primitives::errors::TimestampOverflow),
     #[error("{0}")]
     BlockArtifacts(String),

@@ -391,7 +391,7 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
 }
 
 #[test]
-fn finish_rejects_non_artifact_header_extra_data() {
+fn finish_rejects_non_artifact_header_before_post_execution() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     let mut state = State::builder()
@@ -412,7 +412,9 @@ fn finish_rejects_non_artifact_header_extra_data() {
         },
     };
     let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(0), Bytes::from_static(b"reth/vtest/macos"));
+    let mut ctx = execution_ctx(Some(0), Bytes::from_static(b"reth/vtest/macos"));
+    // Invalid withdrawals must not mask the earlier header-artifact error.
+    ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Default::default()]));
     let executor = config.create_executor(evm, ctx);
 
     let err = match executor.finish() {

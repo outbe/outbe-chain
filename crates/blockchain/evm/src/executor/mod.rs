@@ -60,6 +60,7 @@ mod artifacts;
 mod block;
 mod boundary;
 mod context;
+mod end_block;
 mod fee_route;
 mod hooks;
 mod inputs;

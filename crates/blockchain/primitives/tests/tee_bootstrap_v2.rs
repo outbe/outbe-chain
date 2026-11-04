@@ -8,6 +8,7 @@ use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
+    protocol_schedule::OutbeProtocolSchedule,
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
         SystemTx, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT,
@@ -351,10 +352,12 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
     let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
     let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
     let cycle_remainder = 77_777;
+    let reserve = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
     let block_gas_limit =
-        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder;
+        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder + reserve;
 
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &[cycle, bootstrap]).unwrap();
+    let inputs = [cycle, bootstrap];
+    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &inputs).unwrap();
 
     assert_eq!(plan.protocol_precharge(0), Some(0));
     assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
@@ -364,7 +367,8 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
         plan.gas_limit(1),
         Some(bootstrap_intrinsic + protocol_precharge)
     );
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit);
+    assert_eq!(plan.total_envelope_gas(), block_gas_limit - reserve);
+    assert_eq!(plan.gas_limit(0), Some(cycle_intrinsic + cycle_remainder));
 }
 
 #[test]
@@ -482,6 +486,10 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
     let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
     let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    assert_eq!(
+        gas_plan.total_envelope_gas(),
+        BOOTSTRAP_BLOCK_GAS_LIMIT - OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
+    );
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()
