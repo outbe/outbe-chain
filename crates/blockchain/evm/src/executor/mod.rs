@@ -60,6 +60,7 @@ mod block;
 mod boundary;
 pub(crate) mod context;
 mod fee_route;
+mod finalization;
 mod hooks;
 mod inputs;
 mod post_execution;
