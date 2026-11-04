@@ -5,7 +5,8 @@ pragma solidity ^0.8.30;
 import {
     OAppUpgradeable,
     Origin,
-    MessagingFee
+    MessagingFee,
+    MessagingReceipt
 } from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
@@ -135,10 +136,12 @@ contract LayerZeroGatewayAdapter is OAppUpgradeable, UUPSUpgradeable, IERC7786Ga
         bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit()));
 
         // msg.value funds the LayerZero native fee. Excess is refunded to the caller (the facade).
-        _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
+        // The LayerZero guid is returned as sendId, to follow the delivery in LayerZero Scan.
+        MessagingReceipt memory receipt =
+            _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
 
-        emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
-        return bytes32(0);
+        emit MessageSent(receipt.guid, sender, recipient, payload, msg.value, attributes);
+        return receipt.guid;
     }
 
     /// @inheritdoc IGatewayQuote

@@ -11,6 +11,7 @@ import {IERC7786Recipient} from "src/interfaces/IERC7786.sol";
 import {GasLimitAttribute} from "src/libs/GasLimitAttribute.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {Proxies} from "./utils/Proxies.sol";
+import {MessageLogs} from "./utils/MessageLogs.sol";
 
 /// @dev Recipient that reverts until unlocked, to exercise the park/retry path.
 contract FlakyRecipientMock is IERC7786Recipient {
@@ -97,6 +98,46 @@ contract LoopbackGatewayAdapterTest is Test {
         }
         assertTrue(seen, "recipient executed in the same transaction");
         assertEq(loopback.nextParkedIdx(), 0, "nothing parked on the happy path");
+    }
+
+    // ================================================== message id ==================================================
+
+    function test_SendId_EqualsReceiveId() public {
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+
+        vm.recordLogs();
+        vm.prank(app);
+        bytes32 sendId = bridge.sendMessage(_interop(address(recipient)), "x", _noAttrs());
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertTrue(sendId != bytes32(0), "hub sendId is never zero");
+        (bytes32 hubEventId,,) = MessageLogs.sent(logs, address(bridge));
+        assertEq(hubEventId, sendId, "hub MessageSent holds the returned sendId");
+        assertEq(MessageLogs.executed(logs, address(bridge)), sendId, "MessageExecuted receiveId equals sendId");
+
+        bytes32 recipientId;
+        bytes32 topic = keccak256("MessageReceived(address,bytes32,bytes,bytes,uint256)");
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].emitter != address(recipient) || logs[i].topics[0] != topic) continue;
+            (, recipientId,,,) = abi.decode(logs[i].data, (address, bytes32, bytes, bytes, uint256));
+        }
+        assertEq(recipientId, sendId, "recipient gets sendId as receiveId");
+
+        (bytes32 adapterId, bytes memory adapterSender, bytes memory adapterPayload) =
+            MessageLogs.sent(logs, address(loopback));
+        assertEq(adapterId, bytes32(0), "loopback has no transport id");
+        assertEq(MessageLogs.hubId(adapterSender, adapterPayload), sendId, "hub id derives from adapter event");
+    }
+
+    function test_SendId_DiffersForEqualMessages() public {
+        ERC7786RecipientMock recipient = new ERC7786RecipientMock(address(bridge));
+
+        vm.startPrank(app);
+        bytes32 first = bridge.sendMessage(_interop(address(recipient)), "x", _noAttrs());
+        bytes32 second = bridge.sendMessage(_interop(address(recipient)), "x", _noAttrs());
+        vm.stopPrank();
+
+        assertTrue(first != second, "the hub nonce makes each sendId unique");
     }
 
     function test_Quote_IsZero() public {
