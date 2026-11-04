@@ -259,35 +259,32 @@ fn cleanup_clears_operational_delegate_forward_and_reverse_mappings() {
 
     let val1 = address!("0x00000000000000000000000000000000000000C1");
     let val2 = address!("0x00000000000000000000000000000000000000C2");
-    let delegate = address!("0x00000000000000000000000000000000000000D9");
+    let delegates = [
+        (
+            ValidatorDelegateRole::Oracle,
+            address!("0x00000000000000000000000000000000000000D9"),
+        ),
+        (
+            ValidatorDelegateRole::Hyperlane,
+            address!("0x00000000000000000000000000000000000000DA"),
+        ),
+    ];
 
     with_vs_configured(10, |vs| {
         register_validators(vs, &[(val1, 0xC1), (val2, 0xC2)]).unwrap();
-        vs.set_delegate(val1, ValidatorDelegateRole::Oracle, delegate)
-            .unwrap();
-        assert_eq!(
-            vs.get_delegate(val1, ValidatorDelegateRole::Oracle)
-                .unwrap(),
-            delegate
-        );
+        for (role, delegate) in delegates {
+            vs.set_delegate(val1, role, delegate).unwrap();
+            assert_eq!(vs.get_delegate(val1, role).unwrap(), delegate);
+        }
 
         make_inactive_for_test(vs, val1);
         assert_eq!(vs.cleanup_inactive_validators(0).unwrap(), 1);
 
-        assert_eq!(
-            vs.get_delegate(val1, ValidatorDelegateRole::Oracle)
-                .unwrap(),
-            Address::ZERO
-        );
-        // The freed delegate can now be assigned to another validator without
-        // hitting `DelegateAlreadyAssigned`.
-        vs.set_delegate(val2, ValidatorDelegateRole::Oracle, delegate)
-            .unwrap();
-        assert_eq!(
-            vs.get_delegate(val2, ValidatorDelegateRole::Oracle)
-                .unwrap(),
-            delegate
-        );
+        for (role, delegate) in delegates {
+            assert_eq!(vs.get_delegate(val1, role).unwrap(), Address::ZERO);
+            vs.set_delegate(val2, role, delegate).unwrap();
+            assert_eq!(vs.get_delegate(val2, role).unwrap(), delegate);
+        }
     });
 }
 

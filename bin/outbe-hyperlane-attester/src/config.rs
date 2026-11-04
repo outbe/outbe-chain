@@ -26,8 +26,8 @@ pub struct ChainConfig {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountConfig {
-    /// Hex-encoded private key of the attester account: the validator's oracle
-    /// delegate (same key as outbe-feeder) or the validator itself.
+    /// Hex-encoded private key of the validator's Hyperlane delegate.
+    /// The validator key is accepted when no Hyperlane delegate is assigned.
     pub private_key: String,
     /// Validator that this attester acts for. It is also the checkpoint bucket name.
     pub validator_address: String,

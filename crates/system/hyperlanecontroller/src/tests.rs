@@ -719,6 +719,82 @@ mod liveness {
     }
 
     #[test]
+    fn hyperlane_delegate_is_independent_from_oracle_and_checkpoint_signer() {
+        use outbe_validatorset::delegation::ValidatorDelegateRole;
+
+        let mut p = liveness_provider();
+        let oracle = v(8);
+        let hyperlane = v(9);
+        StorageHandle::enter(&mut p, |storage| {
+            let mut validators = ValidatorSet::new(storage.clone());
+            validators
+                .set_delegate(FIXTURE_VALIDATOR, ValidatorDelegateRole::Oracle, oracle)
+                .unwrap();
+            let set_signer: Bytes =
+                IHyperlaneController::setHyperlaneSignerCall { signer: hyperlane }
+                    .abi_encode()
+                    .into();
+            dispatch(storage.clone(), &set_signer, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
+            let checkpoint = submit_call(LOCAL, &checkpoint_2(), 2);
+            assert_eq!(
+                revert_selector(
+                    dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
+                ),
+                IHyperlaneController::NotActiveValidator::SELECTOR,
+                "checkpoint signer binding does not authorize a transaction sender"
+            );
+
+            validators
+                .set_delegate(
+                    FIXTURE_VALIDATOR,
+                    ValidatorDelegateRole::Hyperlane,
+                    hyperlane,
+                )
+                .unwrap();
+            for sender in [oracle, FIXTURE_VALIDATOR, stranger()] {
+                for input in [&set_signer, &checkpoint] {
+                    assert_eq!(
+                        revert_selector(
+                            dispatch(storage.clone(), input, sender, U256::ZERO).unwrap_err()
+                        ),
+                        IHyperlaneController::NotActiveValidator::SELECTOR
+                    );
+                }
+            }
+            assert_eq!(
+                revert_selector(
+                    dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap_err()
+                ),
+                IHyperlaneController::SignerMismatch::SELECTOR,
+                "an authorized sender still needs the registered checkpoint signature"
+            );
+
+            let reset_signer: Bytes = IHyperlaneController::setHyperlaneSignerCall {
+                signer: Address::ZERO,
+            }
+            .abi_encode()
+            .into();
+            dispatch(storage.clone(), &reset_signer, hyperlane, U256::ZERO).unwrap();
+            dispatch(storage.clone(), &checkpoint, hyperlane, U256::ZERO).unwrap();
+            let controller = HyperlaneControllerContract::new(storage);
+            assert_eq!(
+                controller
+                    .submitted_index
+                    .read(&validator_domain_key(FIXTURE_VALIDATOR, LOCAL))
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                controller
+                    .submitted_index
+                    .read(&validator_domain_key(hyperlane, LOCAL))
+                    .unwrap(),
+                0
+            );
+        });
+    }
+
+    #[test]
     fn a_signer_cannot_be_shared_between_active_validators() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
