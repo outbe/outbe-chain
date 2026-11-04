@@ -1,24 +1,17 @@
-name: 19. goreleaser
+name: 18. GoReleaser
 
 on:
   push:
     tags:
       - "v[0-9]+.*"
-  # Dispatched by the CI `bump` job for a freshly-cut tag: a GITHUB_TOKEN-pushed
-  # tag cannot re-trigger this workflow via the `push` event, so it is invoked
-  # explicitly (`gh workflow run release.yml --ref <tag>`). `github.ref_name`
-  # then resolves to the tag, so the goreleaser job below is unchanged.
+  # Manual fallback for an existing tag. Select the tag as the workflow ref;
+  # `github.ref_name` then resolves to that tag just like a tag-push run.
   workflow_dispatch:
     inputs:
       tag:
         description: "Tag to release (e.g. v0.1.1)"
-        required: false
+        required: true
         type: string
-      dry_run:
-        description: "Build and package without signing or publishing"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -47,33 +40,9 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Trust the checked-out repository
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install pinned Noir build tools
-        run: release/scripts/install-zk-build-tools.sh
-      - name: Install pinned Cosign
-        env:
-          COSIGN_VERSION: v2.6.5
-          COSIGN_SHA256: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
-        run: |
-          install_dir="${HOME}/.cosign"
-          mkdir -p "${install_dir}"
-          curl --retry 6 --retry-delay 5 --retry-all-errors --retry-max-time 120 \
-            -fsSL "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64" \
-            -o "${install_dir}/cosign"
-          echo "${COSIGN_SHA256}  ${install_dir}/cosign" | sha256sum -c -
-          chmod +x "${install_dir}/cosign"
-          echo "${install_dir}" >> "${GITHUB_PATH}"
-      - uses: anchore/sbom-action/download-syft@v0.24.0
-      - uses: Swatinem/rust-cache@v2
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: ./.github/actions/run-goreleaser
         with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: ${{ inputs.dry_run && 'release --snapshot --clean --parallelism=1' || 'release --clean --parallelism=1' }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          dry_run: "false"
 
   # Pushing vX.Y.Z-testnet.N starts the protected SGX release. It is dispatched
   # rather than triggered directly because testnet-release.yml must run with

@@ -1,0 +1,25 @@
+name: 17. GoReleaser — preflight
+
+run-name: Standard release preflight — ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  goreleaser:
+    name: build and package without publishing
+    runs-on: testnet-release-sgx
+    container:
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+    env:
+      CARGO_HOME: /github/home/.cargo
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/run-goreleaser
+        with:
+          dry_run: "true"

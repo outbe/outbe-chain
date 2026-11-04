@@ -1,4 +1,4 @@
-name: 17. preflight
+name: 19. SGX — preflight
 
 on:
   workflow_dispatch:
