@@ -50,22 +50,17 @@ pub(super) fn seed_dense_voter_participation(
     validator_count: u32,
 ) -> eyre::Result<()> {
     let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+    rewards.day_voter_count.write(&prev_day, validator_count)?;
     rewards
-        .daily_voter_count
-        .write(&prev_day, validator_count)?;
-    rewards
-        .daily_total_participation
+        .day_total_votes
         .write(&prev_day, U256::from(validator_count))?;
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
         rewards
-            .daily_voter_at
+            .day_voter_at
             .get_nested(&prev_day)
             .write(&index, voter)?;
-        rewards
-            .daily_participation
-            .get_nested(&prev_day)
-            .write(&voter, 1)?;
+        rewards.day_votes.get_nested(&prev_day).write(&voter, 1)?;
     }
 
     Ok(())

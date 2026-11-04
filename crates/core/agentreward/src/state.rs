@@ -71,7 +71,7 @@ pub(crate) fn enqueue_cleanup(
     contract.cleanup_scheduled.write(&key, true)
 }
 
-pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
+pub(crate) fn cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
     let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
     for _ in 0..4 {
         let head = contract.cleanup_head.read()?;

@@ -11,9 +11,9 @@ fn escrow_two_member_fee(
     ctx.storage
         .increase_balance(outbe_primitives::addresses::REWARDS_ADDRESS, fee)
         .unwrap();
-    outbe_rewards::late_settlement::escrow_block_fee(
+    outbe_rewards::block_fees::escrow_block_fee(
         ctx,
-        &outbe_rewards::late_settlement::FinalizedBlockBinding {
+        &outbe_rewards::block_fees::FinalizedBlockBinding {
             number: 10,
             hash: block_hash,
             committee_size: 2,
@@ -29,10 +29,10 @@ fn escrow_two_member_fee(
 }
 
 /// Phase 7b glue: `run_late_finalize_credits` at block `N+K` closes the
-/// matured window. It pays the escrowed voters, marks `fee_settled`, and routes
+/// matured window. It pays the escrowed voters, marks `fees_transferred`, and routes
 /// the unpaid residue through the active-profile carry-over sink.
 /// The test uses an empty credit artifact so the assertion isolates the
-/// `settle_matured` + residue-recycle wiring. The verifier and `late_settlement`
+/// `seal_block_votes` + residue-recycle wiring. The verifier and `block_fees`
 /// unit tests cover the BLS batch path.
 #[test]
 fn late_finalize_window_close_settles_and_recycles_residue() {
@@ -57,9 +57,9 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         let pool = U256::from(4_000u64) * outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
         ctx.storage.increase_balance(REWARDS_ADDRESS, pool).unwrap();
         // Escrow block 10. Only 3 of 4 voters credited at k=0 (one absent).
-        outbe_rewards::late_settlement::escrow_block_fee(
+        outbe_rewards::block_fees::escrow_block_fee(
             &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            &outbe_rewards::block_fees::FinalizedBlockBinding {
                 number: 10,
                 hash: fb_hash,
                 committee_size,
@@ -94,7 +94,7 @@ fn late_finalize_window_close_settles_and_recycles_residue() {
         assert!(
             ctx.storage
                 .contract::<outbe_rewards::schema::Rewards>()
-                .fee_settled
+                .fees_transferred
                 .read(&fb_hash)
                 .unwrap(),
             "window marked settled"
@@ -256,9 +256,9 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
                 )
                 .unwrap();
             // Credit C0 and C2 at k=0. C1 and C3 absent.
-            outbe_rewards::late_settlement::escrow_block_fee(
+            outbe_rewards::block_fees::escrow_block_fee(
                 &ctx,
-                &outbe_rewards::late_settlement::FinalizedBlockBinding {
+                &outbe_rewards::block_fees::FinalizedBlockBinding {
                     number: 10,
                     hash: fb_hash,
                     committee_size: 4,
@@ -427,9 +427,9 @@ fn late_finalize_unverifiable_credit_is_fatal() {
         let credit = dummy_credit(11);
         // Seed an escrow binding that matches the credit so it passes
         // authentication and reaches the (missing) snapshot lookup.
-        outbe_rewards::late_settlement::escrow_block_fee(
+        outbe_rewards::block_fees::escrow_block_fee(
             &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            &outbe_rewards::block_fees::FinalizedBlockBinding {
                 number: credit.fb_number,
                 hash: credit.fb_hash,
                 committee_size: 4,
@@ -483,9 +483,9 @@ fn assert_auth_mismatch_fatal(
     provider.enter(|storage| {
         let ctx = runtime_ctx(storage);
         // Canonical escrow for fb_number 11 (view/parent_view match dummy_credit).
-        outbe_rewards::late_settlement::escrow_block_fee(
+        outbe_rewards::block_fees::escrow_block_fee(
             &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            &outbe_rewards::block_fees::FinalizedBlockBinding {
                 number: 11,
                 hash: B256::repeat_byte(0xCD),
                 committee_size: 4,
@@ -500,9 +500,9 @@ fn assert_auth_mismatch_fatal(
         .unwrap();
         // Also escrow fb_number 12 (a different block) so a spoofed fb_number
         // hits a populated-but-wrong binding rather than an empty one.
-        outbe_rewards::late_settlement::escrow_block_fee(
+        outbe_rewards::block_fees::escrow_block_fee(
             &ctx,
-            &outbe_rewards::late_settlement::FinalizedBlockBinding {
+            &outbe_rewards::block_fees::FinalizedBlockBinding {
                 number: 12,
                 hash: B256::repeat_byte(0xAA),
                 committee_size: 4,

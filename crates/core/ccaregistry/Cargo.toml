@@ -9,13 +9,13 @@ publish.workspace = true
 outbe-macros.workspace = true
 thiserror.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-rewards.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 
 [dev-dependencies]
 outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-agentreward.workspace = true
-outbe-rewards.workspace = true
 outbe-emission.workspace = true
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true

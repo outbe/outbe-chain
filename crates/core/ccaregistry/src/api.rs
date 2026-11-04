@@ -59,20 +59,10 @@ pub fn total_bonded(storage: &StorageHandle<'_>) -> Result<U256> {
     CcaContract::new(storage.clone()).total_bonded_minor.read()
 }
 
-/// Seal all days through `day`. Dates need not be consecutive; sealing never regresses.
-pub fn seal_reward_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let contract = CcaContract::new(storage.clone());
-        if !contract.has_sealed_day.read()? || day > contract.sealed_through_day.read()? {
-            contract.sealed_through_day.write(day)?;
-            contract.has_sealed_day.write(true)?;
-        }
-        Ok(())
-    })
-}
-
-fn require_sealed(contract: &CcaContract<'_>, day: u32) -> Result<()> {
-    if !contract.has_sealed_day.read()? || day > contract.sealed_through_day.read()? {
+/// Refuses a day after the Rewards `last_sealed_day`. Rewards seals the days in
+/// order, so its `last_sealed_day` is the only sealed-day state.
+fn require_sealed(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
+    if day > outbe_rewards::api::get_last_sealed_day(storage)? {
         return Err(CcaError::RewardDayNotSealed.into());
     }
     Ok(())
@@ -81,7 +71,7 @@ fn require_sealed(contract: &CcaContract<'_>, day: u32) -> Result<()> {
 /// Frozen entry count (including zero weights) and net GRATIS denominator.
 pub fn reward_day_inputs(storage: &StorageHandle<'_>, day: u32) -> Result<(u32, U256)> {
     let contract = CcaContract::new(storage.clone());
-    require_sealed(&contract, day)?;
+    require_sealed(storage, day)?;
     Ok((
         contract.reward_day_count.read(&day)?,
         contract.reward_day_total.read(&day)?,
@@ -95,7 +85,7 @@ pub fn reward_day_entry(
     index: u32,
 ) -> Result<(Address, U256)> {
     let contract = CcaContract::new(storage.clone());
-    require_sealed(&contract, day)?;
+    require_sealed(storage, day)?;
     if index >= contract.reward_day_count.read(&day)? {
         return Err(CcaFatalError::RewardDayIndexCorrupt.into());
     }
@@ -116,7 +106,7 @@ pub fn reward_day_entry(
 pub fn enqueue_day_cleanup(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     ctx.with_checkpoint(|| {
         let contract = CcaContract::new(ctx.storage.clone());
-        require_sealed(&contract, day)?;
+        require_sealed(&ctx.storage, day)?;
         if contract.day_cleanup_scheduled.read(&day)? {
             return Ok(());
         }
@@ -133,11 +123,11 @@ pub fn enqueue_day_cleanup(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()
 
 /// Delete at most 256 entries and inspect at most four queue headers per block.
 /// The checkpoint includes the height marker, so failed slices remain retryable.
-pub fn process_day_cleanup(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    ctx.with_checkpoint(|| process_day_cleanup_inner(ctx))
+pub fn cleanup(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    ctx.with_checkpoint(|| cleanup_inner(ctx))
 }
 
-fn process_day_cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+fn cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let storage = &ctx.storage;
     let contract = CcaContract::new(storage.clone());
     if contract.has_cleanup_processed_block.read()?
@@ -159,7 +149,7 @@ fn process_day_cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         if !contract.day_cleanup_scheduled.read(&day)? {
             return Err(CcaFatalError::RewardDayIndexCorrupt.into());
         }
-        require_sealed(&contract, day)?;
+        require_sealed(storage, day)?;
         let count = contract.reward_day_count.read(&day)?;
         let mut cursor = contract.day_cleanup_cursor.read(&day)?;
         if cursor > count {

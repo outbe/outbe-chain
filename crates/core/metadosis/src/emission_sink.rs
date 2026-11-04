@@ -3,7 +3,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
     storage::{
-        metadosis_cycle_allocation_binding, metadosis_late_settlement_binding,
+        metadosis_block_fee_binding, metadosis_cycle_allocation_binding,
         MetadosisCertifiedFinality, MetadosisCycleLifecycle,
     },
     time::{date_key_to_utc_timestamp, timestamp_to_date_key},
@@ -26,12 +26,9 @@ pub(crate) fn apply(ctx: &BlockRuntimeContext, amount: U256) -> Result<()> {
     )
 }
 
-/// Recycles late-settlement headroom into the Promis Limit.
-pub(crate) fn apply_late_settlement_headroom(
-    ctx: &BlockRuntimeContext,
-    amount: U256,
-) -> Result<U256> {
-    let binding = metadosis_late_settlement_binding(
+/// Recycles block-fee headroom into the Promis Limit.
+pub(crate) fn apply_block_fee_headroom(ctx: &BlockRuntimeContext, amount: U256) -> Result<U256> {
+    let binding = metadosis_block_fee_binding(
         ctx.block.chain_id,
         ctx.block.block_number,
         ctx.block.timestamp,

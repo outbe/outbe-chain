@@ -140,7 +140,7 @@ pub fn run_finalization_and_slashing(
     }
 
     let voters = collect_signing_voters(metadata);
-    outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
+    outbe_rewards::finalized_metadata_hook::record_votes_and_fees(
         ctx,
         metadata,
         finalized.summary.validator_fee_sum,

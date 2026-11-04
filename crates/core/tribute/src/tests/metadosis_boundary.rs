@@ -4,10 +4,9 @@ use alloy_primitives::{B256, U256};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{
-    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_process_ready_binding, MetadosisCertifiedFinality, MetadosisCycleLifecycle,
-    MetadosisMutationPurposeTag, StorageHandle,
+    metadosis_advance_due_binding, metadosis_block_fee_binding, metadosis_cycle_allocation_binding,
+    metadosis_init_genesis_binding, metadosis_process_ready_binding, MetadosisCertifiedFinality,
+    MetadosisCycleLifecycle, MetadosisMutationPurposeTag, StorageHandle,
 };
 use outbe_primitives::time::WorldwideDay;
 
@@ -157,7 +156,7 @@ fn certified_finality_rejects_day_mutation_without_writes() {
     provider.enable_metadosis_mutation_frame(MetadosisMutationPurposeTag::CertifiedFinality);
     let day = WorldwideDay::new(20260920);
     StorageHandle::enter(&mut provider, |storage| {
-        let binding = metadosis_late_settlement_binding(
+        let binding = metadosis_block_fee_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),
             storage.now_secs().unwrap(),

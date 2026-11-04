@@ -54,7 +54,10 @@ fn allocate_fixture(
         },
         ctx.storage.clone(),
     );
-    outbe_rewards::api::close_day_participation(&allocation_ctx, day.value())?;
+    // The Cycle seals the day in Rewards just before the allocation.
+    if outbe_rewards::api::get_last_sealed_day(&ctx.storage)? < day.value() {
+        outbe_rewards::api::seal_votes_and_fees(&allocation_ctx, day.value())?;
+    }
     let mut amounts = [U256::ZERO; 4];
     for &(pool, amount) in pools {
         amounts[pool as usize] = amount;
@@ -359,7 +362,7 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
             },
             storage,
         );
-        outbe_rewards::api::close_day_participation(&ctx, wwd.value()).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&ctx, wwd.value()).unwrap();
         crate::api::abandon_day_agent_rewards(&ctx, wwd).unwrap();
         crate::api::process_agent_rewards(&ctx).unwrap();
         assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 0);
@@ -1633,9 +1636,9 @@ fn every_pool_day() -> HashMapStorageProvider {
         outbe_ccaregistry::api::credis_issued(&storage, cca, day.value(), U256::ONE).unwrap();
 
         let rewards = outbe_rewards::schema::Rewards::new(storage);
-        rewards.daily_voter_count.write(&day.value(), 2).unwrap();
+        rewards.day_voter_count.write(&day.value(), 2).unwrap();
         rewards
-            .daily_total_participation
+            .day_total_votes
             .write(&day.value(), U256::from(2))
             .unwrap();
         for (index, voter) in [Address::repeat_byte(5), Address::repeat_byte(6)]
@@ -1643,12 +1646,12 @@ fn every_pool_day() -> HashMapStorageProvider {
             .enumerate()
         {
             rewards
-                .daily_voter_at
+                .day_voter_at
                 .get_nested(&day.value())
                 .write(&(index as u32), voter)
                 .unwrap();
             rewards
-                .daily_participation
+                .day_votes
                 .get_nested(&day.value())
                 .write(&voter, 1)
                 .unwrap();

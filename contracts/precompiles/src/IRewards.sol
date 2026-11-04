@@ -6,14 +6,8 @@ pragma solidity ^0.8.30;
 /// One six-decimal protocol unit equals 10^12 native units.
 interface IRewards {
     event BlockFeeEscrowed(bytes32 indexed fbHash, uint64 indexed fbNumber, uint256 feeSumNative);
-    event VoterFeePaid(bytes32 indexed fbHash, address indexed voter, uint256 amountNative);
-    /// @dev Distributed plus residue equals the escrow. Burn includes carried dust and
-    /// can exceed this window's residue; dustAfterNative is below 10^12 native units.
-    event LateWindowSettled(
-        bytes32 indexed fbHash,
-        uint256 distributedNative,
-        uint256 residueNative,
-        uint256 burnedNative,
-        uint256 dustAfterNative
-    );
+    event VoterFeeTransferred(bytes32 indexed fbHash, address indexed voter, uint256 amountNative);
+    /// @dev transferredNative plus restNative equals the escrow. The rest goes to the shared
+    /// function of the Promis Limit. Its NativeBurnedToPromisLimit event reports the burn.
+    event BlockFeesTransferred(bytes32 indexed fbHash, uint256 transferredNative, uint256 restNative);
 }

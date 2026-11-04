@@ -10,18 +10,18 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
 /// inclusion-window voter set. The daily emission top-up is credited to the
-/// validator pool of AgentReward, weighted by [`crate::api::read_voters_for_day`].
+/// validator pool of AgentReward, weighted by [`crate::api::get_day_voters`].
 ///
 /// Storage slots:
 ///   0:  participation_counted_for_block    - mapping(B256 => mapping(address => bool))
-///   1:  daily_fee_sum_raw                  - mapping(uint32 => uint256)
-///   2:  daily_participation                - mapping(uint32 => mapping(address => uint64))
-///   3:  daily_voter_count                  - mapping(uint32 => uint32)
-///   4:  daily_voter_at                     - mapping(uint32 => mapping(uint32 => address))
+///   1:  day_fee_sum_native                 - mapping(uint32 => uint256)
+///   2:  day_votes                          - mapping(uint32 => mapping(address => uint64))
+///   3:  day_voter_count                    - mapping(uint32 => uint32)
+///   4:  day_voter_at                       - mapping(uint32 => mapping(uint32 => address))
 ///   5:  block_metadata_counted             - mapping(B256 => bool)
 ///   6:  metadata_fingerprint_for_block     - mapping(B256 => B256)
 ///   7:  pending_fees                       - mapping(B256 => uint256)
-///   8:  fee_settled                        - mapping(B256 => bool)
+///   8:  fees_transferred                   - mapping(B256 => bool)
 ///   9:  late_voter_k_plus1                 - mapping(B256 => mapping(address => uint8))
 ///  10:  late_voter_count                   - mapping(B256 => uint32)
 ///  11:  late_voter_at                      - mapping(B256 => mapping(uint32 => address))
@@ -34,17 +34,16 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  18:  block_guard_ring                   - mapping(uint64 => B256) (prune ring of fb_hash)
 ///  19:  block_guard_ring_seq               - uint64 (ring write cursor)
 ///  20:  pending_reward_day                 - mapping(B256 => uint32)
-///  21:  daily_last_window_close            - mapping(uint32 => uint64)
-///  22:  late_residue_dust_native           - uint256
-///  23:  daily_participation_closed         - mapping(uint32 => bool)
-///  24:  daily_total_participation          - mapping(uint32 => uint256)
-///  25:  cleanup_day_at                     - mapping(uint64 => uint32)
-///  26:  cleanup_head                       - uint64
-///  27:  cleanup_tail                       - uint64
-///  28:  cleanup_scheduled                  - mapping(uint32 => bool)
-///  29:  cleanup_next_index                 - mapping(uint32 => uint32)
-///  30:  cleanup_processed_height           - uint64
-///  31:  cleanup_processed_initialized      - bool
+///  21:  day_votes_sealed_at_block          - mapping(uint32 => uint64)
+///  22:  last_sealed_day                    - uint32
+///  23:  day_total_votes                    - mapping(uint32 => uint256)
+///  24:  day_cleanup_day_at                 - mapping(uint64 => uint32)
+///  25:  day_cleanup_head                   - uint64
+///  26:  day_cleanup_tail                   - uint64
+///  27:  cleanup_scheduled                  - mapping(uint32 => bool)
+///  28:  cleanup_next_index                 - mapping(uint32 => uint32)
+///  29:  cleanup_processed_height           - uint64
+///  30:  cleanup_processed_initialized      - bool
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// Per-(finalized_block_hash, voter) guard: voter participation has
@@ -57,25 +56,25 @@ pub struct Rewards {
     /// of truth for the cap-vs-fees formula at settle time. The emission cap is
     /// six-decimal protocol value while this sum stays in native COEN minor units
     /// (wei; 10^18 per COEN). One protocol unit equals 10^12 native units:
-    ///   `topup = floor((cap * 1e12).saturating_sub(daily_fee_sum_raw) / 1e12)`
-    pub daily_fee_sum_raw: Mapping<u32, U256>,
+    ///   `topup = floor((cap * 1e12).saturating_sub(day_fee_sum_native) / 1e12)`
+    pub day_fee_sum_native: Mapping<u32, U256>,
 
     /// Per-(utc_day, voter) participation count for the day. Used to
     /// proportionally distribute the day's emission top-up.
-    pub daily_participation: Mapping<u32, Mapping<Address, u64>>,
+    pub day_votes: Mapping<u32, Mapping<Address, u64>>,
 
     /// Per-day count of distinct voters seen. It is the upper bound for index
-    /// iteration over `daily_voter_at`.
-    pub daily_voter_count: Mapping<u32, u32>,
+    /// iteration over `day_voter_at`.
+    pub day_voter_count: Mapping<u32, u32>,
 
     /// Per-(utc_day, index) voter address. The index is first-seen-order
     /// of the voter for that day. `participation_counted_for_block` maintains
     /// replay safety. It ensures that the append happens exactly once per
     /// `(finalized_block_hash, voter)`, regardless of replay order.
-    pub daily_voter_at: Mapping<u32, Mapping<u32, Address>>,
+    pub day_voter_at: Mapping<u32, Mapping<u32, Address>>,
 
     /// Per-finalized-block guard: cap/fees-raw from this block already
-    /// accumulated into `daily_fee_sum_raw`.
+    /// accumulated into `day_fee_sum_native`.
     pub block_metadata_counted: Mapping<B256, bool>,
 
     /// Per-finalized-block fingerprint guard. The fingerprint is
@@ -89,12 +88,12 @@ pub struct Rewards {
     /// Escrowed fees in native COEN minor units (wei; 10^18 per COEN), keyed by
     /// `fb_hash`. One six-decimal protocol unit equals 10^12 native units. Recorded instead of
     /// the eager per-voter transfer. Settled at `N+K` across the credited voter
-    /// set with a decay-weighted, fixed-denominator payout. Whole protocol units
-    /// of residue plus carried dust burn; the sub-unit remainder stays as dust.
+    /// set with a decay-weighted, fixed-denominator payout. The rest goes to the
+    /// shared function of the Promis Limit, which keeps the sub-unit rest.
     pub pending_fees: Mapping<B256, U256>,
 
-    /// Per-finalized-block guard: the escrowed fee has been settled exactly once.
-    pub fee_settled: Mapping<B256, bool>,
+    /// Per-finalized-block guard: the escrowed fee was transferred exactly once.
+    pub fees_transferred: Mapping<B256, bool>,
 
     /// Per-(fb_hash, voter) smallest inclusion distance, stored as `k + 1`
     /// (`0` = not yet credited). Thus the base 2f+1 seeded at `k=0` records `1`, and
@@ -150,13 +149,13 @@ pub struct Rewards {
 
     // -- prune ring for the per-finalized-block guard maps ----------
     /// Bounds the per-`fb_hash` guard maps (`block_metadata_counted`,
-    /// `metadata_fingerprint_for_block`, `fee_settled`) to the last [`BLOCK_GUARD_RETAIN`](crate::finalized_metadata_hook::BLOCK_GUARD_RETAIN)
-    /// finalized blocks. `on_finalized_metadata` records each finalized `fb_hash`
+    /// `metadata_fingerprint_for_block`, `fees_transferred`) to the last [`BLOCK_GUARD_RETAIN`](crate::finalized_metadata_hook::BLOCK_GUARD_RETAIN)
+    /// finalized blocks. `record_votes_and_fees` records each finalized `fb_hash`
     /// here and clears the three guards of the block evicted `BLOCK_GUARD_RETAIN`
     /// records ago. Retention is far larger than the K-block late-finalize
     /// window. Thus no guard is dropped while its block can still be replayed
     /// (re-counted) or settled. The nested `participation_counted_for_block` map
-    /// is freed separately at settlement (`settle_window`), where the credited
+    /// is freed separately at transfer (`transfer_block_fees`), where the credited
     /// voter set is known. `B256::ZERO` = empty ring slot.
     pub block_guard_ring: Mapping<u64, B256>,
 
@@ -167,24 +166,23 @@ pub struct Rewards {
     /// Canonical UTC day of an open finalized-block window. Cleared with escrow.
     pub pending_reward_day: Mapping<B256, u32>,
 
-    /// Last inclusion-window close height for each day's finalized blocks.
-    /// LateFinalizeCredits runs before CycleTick in the same block.
-    /// Day settlement still requires a height above this close.
-    pub daily_last_window_close: Mapping<u32, u64>,
+    /// Block at which the votes of the last known block of the day are sealed
+    /// (the close of its inclusion window). LateFinalizeCredits runs before
+    /// CycleTick in the same block. The vote of the day is complete only at a
+    /// later height.
+    pub day_votes_sealed_at_block: Mapping<u32, u64>,
 
-    /// Late-settlement residue in native COEN minor units (wei; 10^18 per COEN),
-    /// carried to the next settlement. Below one six-decimal protocol unit (10^12 native units).
-    pub late_residue_dust_native: Slot<U256>,
+    /// The most recent day sealed by [`crate::api::seal_votes_and_fees`]. Days
+    /// are sealed in order, so day D is sealed when `D <= last_sealed_day`.
+    /// `0` means that no day is sealed.
+    pub last_sealed_day: Slot<u32>,
 
-    /// The day's validator pool has been credited; its participation is final.
-    pub daily_participation_closed: Mapping<u32, bool>,
-
-    /// Checked sum of accepted base and late participation for the day.
-    pub daily_total_participation: Mapping<u32, U256>,
+    /// Checked sum of accepted base and late votes for the day.
+    pub day_total_votes: Mapping<u32, U256>,
     /// Persistent FIFO of disposable day inputs; sequence numbers never wrap.
-    pub cleanup_day_at: Mapping<u64, u32>,
-    pub cleanup_head: Slot<u64>,
-    pub cleanup_tail: Slot<u64>,
+    pub day_cleanup_day_at: Mapping<u64, u32>,
+    pub day_cleanup_head: Slot<u64>,
+    pub day_cleanup_tail: Slot<u64>,
     /// Retained after completion to make duplicate scheduling harmless.
     pub cleanup_scheduled: Mapping<u32, bool>,
     pub cleanup_next_index: Mapping<u32, u32>,
@@ -204,14 +202,14 @@ mod tests {
         let c = Rewards::new(StorageHandle::new(&mut provider));
 
         assert_eq!(c.participation_counted_for_block.base_slot(), U256::from(0));
-        assert_eq!(c.daily_fee_sum_raw.base_slot(), U256::from(1));
-        assert_eq!(c.daily_participation.base_slot(), U256::from(2));
-        assert_eq!(c.daily_voter_count.base_slot(), U256::from(3));
-        assert_eq!(c.daily_voter_at.base_slot(), U256::from(4));
+        assert_eq!(c.day_fee_sum_native.base_slot(), U256::from(1));
+        assert_eq!(c.day_votes.base_slot(), U256::from(2));
+        assert_eq!(c.day_voter_count.base_slot(), U256::from(3));
+        assert_eq!(c.day_voter_at.base_slot(), U256::from(4));
         assert_eq!(c.block_metadata_counted.base_slot(), U256::from(5));
         assert_eq!(c.metadata_fingerprint_for_block.base_slot(), U256::from(6));
         assert_eq!(c.pending_fees.base_slot(), U256::from(7));
-        assert_eq!(c.fee_settled.base_slot(), U256::from(8));
+        assert_eq!(c.fees_transferred.base_slot(), U256::from(8));
         assert_eq!(c.late_voter_k_plus1.base_slot(), U256::from(9));
         assert_eq!(c.late_voter_count.base_slot(), U256::from(10));
         assert_eq!(c.late_voter_at.base_slot(), U256::from(11));
@@ -224,16 +222,15 @@ mod tests {
         assert_eq!(c.block_guard_ring.base_slot(), U256::from(18));
         assert_eq!(c.block_guard_ring_seq.slot(), U256::from(19));
         assert_eq!(c.pending_reward_day.base_slot(), U256::from(20));
-        assert_eq!(c.daily_last_window_close.base_slot(), U256::from(21));
-        assert_eq!(c.late_residue_dust_native.slot(), U256::from(22));
-        assert_eq!(c.daily_participation_closed.base_slot(), U256::from(23));
-        assert_eq!(c.daily_total_participation.base_slot(), U256::from(24));
-        assert_eq!(c.cleanup_day_at.base_slot(), U256::from(25));
-        assert_eq!(c.cleanup_head.slot(), U256::from(26));
-        assert_eq!(c.cleanup_tail.slot(), U256::from(27));
-        assert_eq!(c.cleanup_scheduled.base_slot(), U256::from(28));
-        assert_eq!(c.cleanup_next_index.base_slot(), U256::from(29));
-        assert_eq!(c.cleanup_processed_height.slot(), U256::from(30));
-        assert_eq!(c.cleanup_processed_initialized.slot(), U256::from(31));
+        assert_eq!(c.day_votes_sealed_at_block.base_slot(), U256::from(21));
+        assert_eq!(c.last_sealed_day.slot(), U256::from(22));
+        assert_eq!(c.day_total_votes.base_slot(), U256::from(23));
+        assert_eq!(c.day_cleanup_day_at.base_slot(), U256::from(24));
+        assert_eq!(c.day_cleanup_head.slot(), U256::from(25));
+        assert_eq!(c.day_cleanup_tail.slot(), U256::from(26));
+        assert_eq!(c.cleanup_scheduled.base_slot(), U256::from(27));
+        assert_eq!(c.cleanup_next_index.base_slot(), U256::from(28));
+        assert_eq!(c.cleanup_processed_height.slot(), U256::from(29));
+        assert_eq!(c.cleanup_processed_initialized.slot(), U256::from(30));
     }
 }

@@ -272,7 +272,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             },
             s.clone(),
         );
-        outbe_rewards::api::close_day_participation(&ctx, 20231115).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&ctx, 20231115).unwrap();
         let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
             &ctx,
             20231115.into(),

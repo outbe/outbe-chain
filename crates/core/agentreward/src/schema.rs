@@ -92,26 +92,25 @@ pub struct AgentRewardContract {
     // slot 17: deadline per pool+address, key = keccak(pool byte, address bytes)
     #[attribute(order = 17)]
     pub reward_balance_deadlines: outbe_primitives::storage::dsl::Map<B256, u64>,
+    // The sealed day is Rewards `last_sealed_day`. AgentReward keeps no copy.
     #[attribute(order = 18)]
-    pub sealed_through_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 19)]
     pub pending_jobs_by_day: outbe_primitives::storage::dsl::Map<u32, u8>,
-    #[attribute(order = 20)]
+    #[attribute(order = 19)]
     pub worker_initialized: outbe_primitives::storage::dsl::Value<bool>,
-    #[attribute(order = 21)]
+    #[attribute(order = 20)]
     pub worker_height: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 22)]
+    #[attribute(order = 21)]
     pub cleanup_jobs: outbe_primitives::storage::dsl::Map<u64, AccrualJob>,
-    #[attribute(order = 23)]
+    #[attribute(order = 22)]
     pub cleanup_head: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 24)]
+    #[attribute(order = 23)]
     pub cleanup_tail: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 25)]
+    #[attribute(order = 24)]
     pub cleanup_scheduled: outbe_primitives::storage::dsl::Map<B256, bool>,
     /// Index plus one proves membership even when the indexed address is zero.
-    #[attribute(order = 26)]
+    #[attribute(order = 25)]
     pub waa_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
-    #[attribute(order = 27)]
+    #[attribute(order = 26)]
     pub sra_member_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
