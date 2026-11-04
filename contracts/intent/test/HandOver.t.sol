@@ -52,4 +52,25 @@ contract HandOverTest is Test {
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");
     }
+
+    /// @dev A re-run of an existing stack: DeployAll logs only the Router, so the job exports
+    ///      the other addresses empty. A Router governance owns ends the run before they are read.
+    function test_Run_StopsWhenTheRouterIsHandedOver() public {
+        vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
+        vm.setEnv("DEPLOYER_PK", "1");
+        vm.setEnv("ROUTER_ADDRESS", vm.toString(address(Proxies.auction(CROSSCHAIN_BRIDGE))));
+        vm.setEnv("AUCTION_ADDRESS", "");
+
+        script.run();
+    }
+
+    function test_Run_NamesAnEmptyAddress() public {
+        vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
+        vm.setEnv("DEPLOYER_PK", "1");
+        vm.setEnv("ROUTER_ADDRESS", vm.toString(address(Proxies.auction(vm.addr(1)))));
+        vm.setEnv("AUCTION_ADDRESS", "");
+
+        vm.expectRevert(abi.encodeWithSelector(HandOver.MissingAddress.selector, "AUCTION_ADDRESS"));
+        script.run();
+    }
 }

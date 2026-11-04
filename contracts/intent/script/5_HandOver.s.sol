@@ -15,22 +15,29 @@ import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBrid
 ///
 /// Required env: `DEPLOYER_PK` (the current owner), `OUTBE_CHAIN_ID`, `ROUTER_ADDRESS`,
 ///   `AUCTION_ADDRESS`, `ESCROW_ADDRESS`, `ALLOCATOR_ADDRESS` (RouterAllocator),
-///   `SOLVER_ALLOCATOR_ADDRESS`, and on another chain `OUTBE_RPC_URL`.
+///   `SOLVER_ALLOCATOR_ADDRESS` (not read once the Router is handed over), and on another chain
+///   `OUTBE_RPC_URL`.
 contract HandOver is Script {
     error DomainTooLarge(uint256 chainId);
     error NotHandedOver(address target, address owner);
+    error MissingAddress(string name);
 
     function run() public virtual {
         uint256 deployerPk = vm.envUint("DEPLOYER_PK");
-        address[5] memory owned = [
-            vm.envAddress("ROUTER_ADDRESS"),
-            vm.envAddress("AUCTION_ADDRESS"),
-            vm.envAddress("ESCROW_ADDRESS"),
-            vm.envAddress("ALLOCATOR_ADDRESS"),
-            vm.envAddress("SOLVER_ALLOCATOR_ADDRESS")
-        ];
+        address router = vm.envAddress("ROUTER_ADDRESS");
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
+        if (Ownable(router).owner() == governance) {
+            console2.log("already handed over to governance:", governance);
+            return;
+        }
+        address[5] memory owned = [
+            _envAddress("AUCTION_ADDRESS"),
+            _envAddress("ESCROW_ADDRESS"),
+            _envAddress("ALLOCATOR_ADDRESS"),
+            _envAddress("SOLVER_ALLOCATOR_ADDRESS"),
+            router
+        ];
 
         vm.startBroadcast(deployerPk);
         handOver(governance, owned);
@@ -53,6 +60,14 @@ contract HandOver is Script {
             if (c.owner() != governance) c.transferOwnership(governance);
             if (c.owner() != governance) revert NotHandedOver(owned[i], c.owner());
         }
+    }
+
+    /// @dev A deploy job exports an address it could not parse as an empty variable, so name the
+    ///      variable instead of failing on the parse.
+    function _envAddress(string memory name) internal view returns (address) {
+        string memory value = vm.envOr(name, string(""));
+        if (bytes(value).length == 0) revert MissingAddress(name);
+        return vm.parseAddress(value);
     }
 
     /// @dev Asks CrosschainBridge on Outbe for its Interchain Account on `domain`. A fork cannot run
