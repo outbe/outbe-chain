@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn accepts_protocol_bootstrap_gas_limit_expansion_and_contraction() {
-        use outbe_primitives::system_tx::{BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT};
+        use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
         let consensus = OutbeBeaconConsensus::new(test_chain_spec());
         let genesis = header_with_beneficiary_and_gas_limit(
@@ -562,7 +562,7 @@ mod tests {
             genesis.hash(),
             HeaderOptions {
                 beneficiary: REWARDS_ADDRESS,
-                gas_limit: BOOTSTRAP_BLOCK_GAS_LIMIT,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT,
             },
         );
         let steady = header_with_beneficiary_and_gas_limit(
@@ -577,10 +577,10 @@ mod tests {
 
         consensus
             .validate_header_against_parent(&bootstrap, &genesis)
-            .expect("the protocol-defined evidence-heavy block 1 must bypass the Ethereum ramp");
+            .expect("block 1 uses the uniform 32M protocol gas limit");
         consensus
             .validate_header_against_parent(&steady, &bootstrap)
-            .expect("the protocol-defined steady block 2 must contract to its fixed limit");
+            .expect("block 2 uses the uniform 32M protocol gas limit");
     }
 
     #[test]
@@ -603,13 +603,13 @@ mod tests {
             genesis.hash(),
             HeaderOptions {
                 beneficiary: REWARDS_ADDRESS,
-                gas_limit: STEADY_BLOCK_GAS_LIMIT,
+                gas_limit: STEADY_BLOCK_GAS_LIMIT + 1,
             },
         );
 
         let error = consensus
             .validate_header_against_parent(&wrong_bootstrap, &genesis)
-            .expect_err("block 1 must use the protocol bootstrap gas limit");
+            .expect_err("block 1 must use the protocol gas limit");
         assert!(
             matches!(error, ConsensusError::Other(message) if message.to_string().contains("protocol gas limit"))
         );

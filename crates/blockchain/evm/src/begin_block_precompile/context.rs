@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::executor::AccountedParentArtifact;
 use alloy_primitives::Address;
 use alloy_primitives::B256;
@@ -8,7 +10,7 @@ use outbe_primitives::storage::StorageHandle;
 
 /// Execution context preloaded by the executor before calling the
 /// begin-block precompile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreloadedSystemTxContext {
     pub proposer: Address,
     pub finalized_summary: Option<AccountedParentArtifact>,
@@ -25,6 +27,10 @@ pub(crate) struct PreloadedSystemTxContext {
     /// different VRF proofs cannot collide. The value is `B256::ZERO` when the
     /// preflight was skipped (genesis bootstrap / test-only opt-out).
     pub canonical_vrf_proof_hash: B256,
+    /// Pre-verified signer indices per `LateFinalizeCredits` batch from
+    /// `verify_late_finalize_credits_in_preexec`, eliminating a second BLS
+    /// pairing inside `run_late_finalize_credits`.
+    pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
 }
 
 thread_local! {
@@ -49,7 +55,7 @@ pub(crate) fn with_preloaded_system_tx_context<R>(
     impl Drop for Reset {
         fn drop(&mut self) {
             PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| {
-                *slot.borrow_mut() = self.0;
+                *slot.borrow_mut() = self.0.take();
             });
         }
     }
@@ -59,8 +65,8 @@ pub(crate) fn with_preloaded_system_tx_context<R>(
     f()
 }
 
-pub(super) fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxContext> {
-    PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| *slot.borrow())
+pub(crate) fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxContext> {
+    PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 pub(super) fn block_runtime_context_from_storage(
@@ -104,7 +110,7 @@ pub(super) fn block_runtime_context_from_storage(
     ))
 }
 
-pub(super) fn read_preloaded_finalized_summary(
+pub(crate) fn read_preloaded_finalized_summary(
     _storage: &StorageHandle<'_>,
 ) -> Result<Option<AccountedParentArtifact>> {
     Ok(current_preloaded_system_tx_context().and_then(|context| context.finalized_summary))

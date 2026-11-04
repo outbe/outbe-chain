@@ -18,6 +18,22 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         }
     }
 
+    pub fn gas_accounting(&self) -> (u64, u64, u64) {
+        (
+            self.inner.cumulative_tx_gas_used,
+            self.inner.block_regular_gas_used,
+            self.inner.block_state_gas_used,
+        )
+    }
+
+    pub fn tx_gas_limit_cap(&self) -> u64
+    where
+        E::Spec: Into<revm::primitives::hardfork::SpecId>,
+    {
+        use revm::context_interface::Cfg as _;
+        self.inner.evm.cfg_env().tx_gas_limit_cap()
+    }
+
     /// Builder stage after user transactions and before execution finalization.
     /// Repeated calls retain the captured capacity.
     pub fn apply_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {

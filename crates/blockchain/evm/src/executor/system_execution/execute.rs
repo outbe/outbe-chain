@@ -46,7 +46,7 @@ where
     /// signed envelope (intrinsic plus any schedule-hashed protocol precharge).
     /// It also charges any explicit state-operation gas. It does not expose the
     /// internal execution lane.
-    pub(in crate::executor) fn commit_system_transaction(
+    pub(crate) fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
         visible_base_gas: u64,

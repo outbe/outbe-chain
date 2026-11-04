@@ -40,7 +40,7 @@ pub const MAX_ACTIVE_MEASUREMENT_RULES: usize = 64;
 pub const MAX_TEE_POLICY_BYTES: usize = 32 * 1024;
 pub const MAX_TEE_POLICY_SCHEDULE_ENTRIES: usize = 64;
 pub const MAX_TEE_BOOTSTRAP_BYTES: usize = 1_310_720;
-pub use crate::system_tx::{BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT};
+pub use crate::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
 /// No production path reads this constant. It stays `None`, and tests assert
 /// that value.

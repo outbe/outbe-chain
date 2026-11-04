@@ -13,7 +13,7 @@ use std::{cmp::Ordering, collections::BTreeMap};
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 
 use crate::system_tx::{
-    BOOTSTRAP_BLOCK_GAS_LIMIT, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    STEADY_BLOCK_GAS_LIMIT, SYSTEM_TX_NON_ZERO_BYTE_GAS, SYSTEM_TX_VISIBLE_GAS_FLOOR,
 };
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -111,10 +111,10 @@ impl TeeBootstrapV2 {
         let required_gas = worst_case_intrinsic
             .checked_add(protocol_precharge)
             .ok_or(CodecError::ArithmeticOverflow)?;
-        if required_gas > BOOTSTRAP_BLOCK_GAS_LIMIT {
+        if required_gas > STEADY_BLOCK_GAS_LIMIT {
             return Err(CodecError::LimitExceeded {
                 field: "TeeBootstrapV2 worst-case visible gas",
-                limit: usize::try_from(BOOTSTRAP_BLOCK_GAS_LIMIT)
+                limit: usize::try_from(STEADY_BLOCK_GAS_LIMIT)
                     .map_err(|_| CodecError::ArithmeticOverflow)?,
                 actual: usize::try_from(required_gas)
                     .map_err(|_| CodecError::ArithmeticOverflow)?,

@@ -16,6 +16,7 @@
 use crate::error::PrecompileError;
 
 pub use crate::addresses::OUTBE_SYSTEM_TX_ADDRESS;
+pub use crate::block::BlockHeightRegime;
 
 pub mod binding;
 
@@ -106,18 +107,12 @@ pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
 /// `CycleTick`.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
-/// Consensus gas limit for the evidence-heavy one-time block-1 bootstrap.
-pub const BOOTSTRAP_BLOCK_GAS_LIMIT: u64 = 500_000_000;
-/// Consensus gas limit before bootstrap and from block 2 onward.
-pub const STEADY_BLOCK_GAS_LIMIT: u64 = 30_000_000;
+/// Uniform consensus block gas limit across all block heights (`0`, `1`, `>= 2`).
+pub const STEADY_BLOCK_GAS_LIMIT: u64 = 32_000_000;
 
-/// Height-selected block gas schedule committed by `ResourceScheduleV1`.
-pub const fn protocol_block_gas_limit(block_number: u64) -> u64 {
-    if block_number == GENESIS_BOOTSTRAP_BLOCK_NUMBER {
-        BOOTSTRAP_BLOCK_GAS_LIMIT
-    } else {
-        STEADY_BLOCK_GAS_LIMIT
-    }
+/// Canonical block gas limit committed by `ResourceScheduleV1`.
+pub const fn protocol_block_gas_limit(_block_number: u64) -> u64 {
+    STEADY_BLOCK_GAS_LIMIT
 }
 
 /// Internal execution gas limit used by the Outbe-aware system-call path.

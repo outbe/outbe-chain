@@ -46,13 +46,8 @@ fn rust_only_system_tx_reports_visible_and_internal_ledgers_separately() {
             format!("system-tx/{}/rust-wire/single", scenario.name())
         );
         assert_eq!(
-            report.artifacts["visible.block_gas_limit"],
-            if scenario.name() == "tee-bootstrap" {
-                "500000000"
-            } else {
-                "30000000"
-            },
-            "only the bootstrap fixture must retain block-1 gas allocation"
+            report.artifacts["visible.block_gas_limit"], "32000000",
+            "all block heights use the uniform 32M block gas limit"
         );
         assert_eq!(report.metadata.fidelity, ScenarioFidelity::PartialStubbed);
         assert!(report.calldata.is_some());

@@ -42,6 +42,7 @@ fn finalized_dispatch_context(
         }),
         allow_boundary_proposer: false,
         canonical_vrf_proof_hash,
+        verified_late_credit_signers: None,
     }
 }
 
@@ -84,6 +85,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         }),
         allow_boundary_proposer: false,
         canonical_vrf_proof_hash: vrf_hash,
+        verified_late_credit_signers: None,
     };
 
     provider.enable_metadosis_mutation_frame(
@@ -98,7 +100,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         }
         .encode()
         .unwrap();
-        with_preloaded_system_tx_context(context, || {
+        with_preloaded_system_tx_context(context.clone(), || {
             dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO)
         })
         .unwrap();

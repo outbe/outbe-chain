@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use outbe_evm::OutbeEvmConfig;
 use outbe_primitives::{
-    runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
-    OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbeTxEnvelope,
+    block::BlockHeightRegime, runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, OutbeBuiltPayload,
+    OutbeHeader, OutbePayloadAttributes, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
@@ -192,7 +192,7 @@ where
         {
             return Ok(BuildOutcome::Cancelled);
         }
-        if block_number != GENESIS_BOOTSTRAP_BLOCK_NUMBER {
+        if BlockHeightRegime::for_block(block_number).allows_user_transactions() {
             let mut selection = selection::UserTransactions {
                 pool: &self.pool,
                 best_txs: &mut best_txs,

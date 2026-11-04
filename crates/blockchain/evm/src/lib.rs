@@ -6,7 +6,9 @@ pub mod errors;
 pub mod executor;
 pub mod factory;
 pub mod failure_receipt;
+pub mod finalization;
 pub mod gas;
+pub mod genesis;
 pub mod handlers;
 mod native_delegation;
 pub(crate) mod precompile_routes;
@@ -14,6 +16,7 @@ pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
 pub mod tee_attestation_activation;
+pub mod tee_bootstrap;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 pub mod zk;

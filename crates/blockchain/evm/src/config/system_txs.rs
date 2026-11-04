@@ -11,8 +11,11 @@ use alloy_evm::RecoveredTx;
 use alloy_primitives::{Address, Bytes, B256};
 
 use outbe_primitives::{
+    block::BlockHeightRegime,
     consensus_metadata::CertifiedParentAccountingMetadata,
-    reshare_artifact::{decode_outbe_block_artifacts, ConsensusHeaderArtifact},
+    reshare_artifact::{
+        decode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
+    },
     OutbeBlock,
 };
 
@@ -26,12 +29,23 @@ use reth_primitives_traits::{
 
 use super::OutbeEvmConfig;
 use crate::errors::{ExecutorValidationError, SystemTxBuildError, SystemTxExpectationError};
+use crate::SharedOutbeEvmSigner;
 
 type SystemTxExpectations = (
     Vec<Recovered<TransactionSigned>>,
     Option<SystemTxExpectationError>,
     Option<Address>,
 );
+
+struct ProposerSignContext<'a> {
+    signer: &'a SharedOutbeEvmSigner,
+    proposer: Address,
+    regime: BlockHeightRegime,
+    block_number: u64,
+    chain_id: u64,
+    block_gas_limit: u64,
+    prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
+}
 
 pub(super) fn system_tx_expectations_for_block(
     block: &SealedBlock<OutbeBlock>,
@@ -114,13 +128,43 @@ impl OutbeEvmConfig {
         prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
         pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
-        if block_number == 0 {
+        let regime = BlockHeightRegime::for_block(block_number);
+        if regime.is_genesis() {
             if pending_tee_bootstrap.is_some() {
                 return Err(SystemTxBuildError::Ost3BootstrapInvalidAtGenesis.into());
             }
             return Ok(Vec::new());
         }
 
+        let (signer, proposer) = self.resolve_proposer_system_tx_signer(proposer_evm_address)?;
+        let artifacts = decode_outbe_block_artifacts(extra_data.as_ref())
+            .map_err(ExecutorValidationError::block_artifacts)?;
+        let inputs = self.assemble_proposer_begin_inputs(
+            regime,
+            block_number,
+            parent_hash,
+            artifacts,
+            parent_consensus_metadata,
+            pending_tee_bootstrap,
+        )?;
+        sign_planned_begin_system_txs(
+            inputs,
+            ProposerSignContext {
+                signer,
+                proposer,
+                regime,
+                block_number,
+                chain_id,
+                block_gas_limit,
+                prebuilt_phase1_tx,
+            },
+        )
+    }
+
+    fn resolve_proposer_system_tx_signer(
+        &self,
+        proposer_evm_address: Option<Address>,
+    ) -> Result<(&SharedOutbeEvmSigner, Address), BlockExecutionError> {
         let signer = self
             .evm_signer
             .as_ref()
@@ -133,11 +177,20 @@ impl OutbeEvmConfig {
             }
             .into());
         }
+        Ok((signer, proposer))
+    }
 
-        let artifacts = decode_outbe_block_artifacts(extra_data.as_ref())
-            .map_err(ExecutorValidationError::block_artifacts)?;
+    fn assemble_proposer_begin_inputs(
+        &self,
+        regime: BlockHeightRegime,
+        block_number: u64,
+        parent_hash: B256,
+        artifacts: OutbeBlockArtifacts,
+        parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
+        pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
+    ) -> Result<Vec<SystemTx>, BlockExecutionError> {
         let mut inputs = Vec::new();
-        if block_number >= 2 {
+        if regime.has_parent_finalization_accounting() {
             let metadata = parent_consensus_metadata
                 .ok_or(SystemTxBuildError::MissingParentConsensusMetadata)?;
             if metadata.finalized_block_hash != parent_hash {
@@ -148,115 +201,34 @@ impl OutbeEvmConfig {
                 .into());
             }
             inputs.push(SystemTx::CertifiedParentAccounting { metadata });
-        }
-        if block_number >= 2 {
-            // Mandatory inclusion-window phase after Phase 1. The
-            // gathered credits ride in the header artifact (empty until Phase 7).
-            // Executor parity re-derives the same input on the verifier path.
             inputs.push(SystemTx::LateFinalizeCredits {
-                artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
+                artifact: artifacts.late_finalize_credits.unwrap_or_default(),
             });
         }
-        if block_number >= 1 {
-            inputs.push(SystemTx::CycleTick);
-        }
+        inputs.push(SystemTx::CycleTick);
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             artifacts.consensus_header_artifact
         {
             inputs.push(SystemTx::BoundaryOutcome { artifact });
         }
-        // The greenfield network has exactly one bootstrap wire path: canonical
-        // OST3 is mandatory at block 1 and forbidden at every other height.
-        if block_number == 1 {
+        if regime.requires_genesis_bootstrap_txs() {
             let payload = pending_tee_bootstrap
                 .ok_or(SystemTxBuildError::MissingBlock1Ost3BootstrapPayload)?;
-            payload
-                .preflight()
-                .map_err(SystemTxBuildError::invalid_block1_ost3_bootstrap_payload)?;
-            let activation = self
-                .tee_attestation_v1
-                .activation()
-                .map_err(SystemTxBuildError::invalid_mandatory_tee_chain_spec_authority)?;
-            let expected_policy = activation
-                .policy_at(block_number)
-                .map_err(SystemTxBuildError::from)?;
-            if &payload.authority.policy != expected_policy {
-                return Err(SystemTxBuildError::Block1Ost3PolicyScheduleMismatch.into());
-            }
+            crate::tee_bootstrap::validate_tee_bootstrap_for_build(
+                block_number,
+                &payload,
+                &self.tee_attestation_v1,
+            )?;
             inputs.push(SystemTx::TeeBootstrap { payload });
         } else if pending_tee_bootstrap.is_some() {
             return Err(SystemTxBuildError::Ost3BootstrapForbiddenAtBlock { block_number }.into());
         }
-        if block_number >= 1 {
-            inputs.push(SystemTx::OracleSlashWindow);
-        }
-        if block_number >= 1 {
-            inputs.push(SystemTx::HookEvents);
-        }
+        inputs.push(SystemTx::OracleSlashWindow);
+        inputs.push(SystemTx::HookEvents);
         if let Some(batch) = artifacts.radicle_publication {
             inputs.push(SystemTx::RadiclePublication { batch });
         }
-
-        let encoded_inputs = inputs
-            .into_iter()
-            .map(|input| {
-                let calldata = input
-                    .encode()
-                    .map_err(SystemTxBuildError::encode_system_tx_input)?;
-                Ok(calldata)
-            })
-            .collect::<Result<Vec<_>, BlockExecutionError>>()?;
-        let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
-            .map_err(SystemTxBuildError::plan_visible_system_tx_gas)?;
-
-        encoded_inputs
-            .into_iter()
-            .enumerate()
-            .map(|(ordinal, calldata)| {
-                let gas_limit = gas_plan
-                    .gas_limit(ordinal)
-                    .ok_or(SystemTxBuildError::VisibleGasPlanMissingOrdinal { ordinal })?;
-
-                // For body[0] (Phase 1
-                // CertifiedParentAccounting on block_number >= 2), reuse the
-                // prebuilt tx that the payload builder supplies. The defensive
-                // calldata equality check guarantees that the tx fed to
-                // pre-exec and the tx in body[0] are byte-identical. This
-                // holds even if the calldata derivation ever diverges.
-                if ordinal == 0 && block_number >= 2 {
-                    if let Some(prebuilt) = prebuilt_phase1_tx.as_ref() {
-                        if prebuilt.tx().input() != &calldata {
-                            return Err(SystemTxBuildError::PrebuiltPhase1CalldataDiverges.into());
-                        }
-                        if Address::from(*prebuilt.signer()) != proposer {
-                            return Err(SystemTxBuildError::PrebuiltPhase1SignerMismatch {
-                                signer: Address::from(*prebuilt.signer()),
-                                proposer,
-                            }
-                            .into());
-                        }
-                        return Ok(prebuilt.clone());
-                    }
-                }
-
-                let unsigned = build_unsigned_system_tx_with_gas_limit(
-                    outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                        ordinal: ordinal.try_into().map_err(|_| {
-                            SystemTxBuildError::SystemTxOrdinalExceedsU8 { ordinal }
-                        })?,
-                        block_number,
-                        chain_id,
-                        calldata,
-                        gas_limit,
-                    },
-                )
-                .map_err(SystemTxBuildError::build_unsigned_system_tx)?;
-                let signed = signer
-                    .sign_unsigned(unsigned)
-                    .map_err(SystemTxBuildError::sign_system_tx)?;
-                Ok(Recovered::new_unchecked(signed, proposer))
-            })
-            .collect()
+        Ok(inputs)
     }
 
     /// build and sign a single Phase 1 (`CertifiedParentAccounting`)
@@ -277,12 +249,7 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer_evm_address: Option<Address>,
     ) -> Result<Option<Recovered<TransactionSigned>>, BlockExecutionError> {
-        use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
-
-        // Gate on the protocol-schedule field rather than a
-        // magic literal `1`. The schedule is the single source of truth.
-        let schedule = OutbeProtocolSchedule::default();
-        if block_number <= schedule.genesis_bootstrap_block_number {
+        if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
             return Ok(None);
         }
 
@@ -320,4 +287,71 @@ impl OutbeEvmConfig {
             .map_err(SystemTxBuildError::phase1_prebuild_sign_tx)?;
         Ok(Some(Recovered::new_unchecked(signed, proposer)))
     }
+}
+
+fn sign_planned_begin_system_txs(
+    inputs: Vec<SystemTx>,
+    ctx: ProposerSignContext<'_>,
+) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
+    let encoded_inputs = inputs
+        .into_iter()
+        .map(|input| {
+            input.encode().map_err(|error| {
+                BlockExecutionError::from(SystemTxBuildError::encode_system_tx_input(error))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let gas_plan = SystemTxVisibleGasPlan::new(ctx.block_gas_limit, &encoded_inputs)
+        .map_err(SystemTxBuildError::plan_visible_system_tx_gas)?;
+
+    encoded_inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, calldata)| sign_single_begin_system_tx(&ctx, &gas_plan, ordinal, calldata))
+        .collect()
+}
+
+fn sign_single_begin_system_tx(
+    ctx: &ProposerSignContext<'_>,
+    gas_plan: &SystemTxVisibleGasPlan,
+    ordinal: usize,
+    calldata: Bytes,
+) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
+    let gas_limit = gas_plan
+        .gas_limit(ordinal)
+        .ok_or(SystemTxBuildError::VisibleGasPlanMissingOrdinal { ordinal })?;
+
+    if ordinal == 0 && ctx.regime.has_parent_finalization_accounting() {
+        if let Some(prebuilt) = ctx.prebuilt_phase1_tx.as_ref() {
+            if prebuilt.tx().input() != &calldata {
+                return Err(SystemTxBuildError::PrebuiltPhase1CalldataDiverges.into());
+            }
+            if Address::from(*prebuilt.signer()) != ctx.proposer {
+                return Err(SystemTxBuildError::PrebuiltPhase1SignerMismatch {
+                    signer: Address::from(*prebuilt.signer()),
+                    proposer: ctx.proposer,
+                }
+                .into());
+            }
+            return Ok(prebuilt.clone());
+        }
+    }
+
+    let unsigned = build_unsigned_system_tx_with_gas_limit(
+        outbe_primitives::system_tx::SystemTxEnvelopeInput {
+            ordinal: ordinal
+                .try_into()
+                .map_err(|_| SystemTxBuildError::SystemTxOrdinalExceedsU8 { ordinal })?,
+            block_number: ctx.block_number,
+            chain_id: ctx.chain_id,
+            calldata,
+            gas_limit,
+        },
+    )
+    .map_err(SystemTxBuildError::build_unsigned_system_tx)?;
+    let signed = ctx
+        .signer
+        .sign_unsigned(unsigned)
+        .map_err(SystemTxBuildError::sign_system_tx)?;
+    Ok(Recovered::new_unchecked(signed, ctx.proposer))
 }

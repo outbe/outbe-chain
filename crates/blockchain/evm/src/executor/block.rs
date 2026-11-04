@@ -111,6 +111,17 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Cached compressed `OART 0x0A` payload on the proposer path so `prepare_final_header_artifacts`
     /// and `finalize_header_artifacts` never re-compress the witness tape.
     pub(super) frozen_enclave_witness: Option<Bytes>,
+    /// Decoded `block_extra_data` cached once at block open so reserved system transactions
+    /// do not re-decode header artifacts on every system tx.
+    pub(super) decoded_block_artifacts: Option<OutbeBlockArtifacts>,
+    /// Phase-1 (`CertifiedParentAccounting`) input and parent execution summary resolved once
+    /// and shared across `verify_phase1_in_preexec`, `apply_phase1_commit_in_preexec`,
+    /// and `begin_block_system_tx_inputs`.
+    pub(super) cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
+    /// Resolved begin-zone system transactions and visible gas plan computed once per block.
+    pub(super) resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
+    /// Pre-verified signer indices per `LateFinalizeCredits` batch from `verify_late_finalize_credits_in_preexec`.
+    pub(super) verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -187,6 +198,10 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             witness_state: None,
             body_tx_index: 0,
             frozen_enclave_witness: None,
+            decoded_block_artifacts: None,
+            cached_phase1_input: None,
+            resolved_begin_zone: None,
+            verified_late_credit_signers: None,
         }
     }
 }

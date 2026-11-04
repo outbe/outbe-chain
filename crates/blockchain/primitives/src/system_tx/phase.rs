@@ -1,8 +1,8 @@
 use alloy_primitives::B256;
 
 use super::{
-    SysTxSelector, SystemTx, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-    CYCLE_TICK_SELECTOR, GENESIS_BOOTSTRAP_BLOCK_NUMBER, HOOK_EVENTS_SELECTOR,
+    BlockHeightRegime, SysTxSelector, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
     LATE_FINALIZE_CREDITS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR,
     TEE_BOOTSTRAP_SELECTOR,
 };
@@ -73,17 +73,21 @@ pub enum SystemTxPhase {
 }
 
 impl SystemTxPhase {
-    pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
-        if block_number == 0 {
-            Self::UserTxs
-        } else if block_number > genesis_bootstrap_block_number
-            && block_number > GENESIS_BOOTSTRAP_BLOCK_NUMBER
-        {
-            Self::Phase1Preexecuted {
+    pub const fn initial_for_regime(regime: BlockHeightRegime) -> Self {
+        match regime {
+            BlockHeightRegime::Genesis => Self::UserTxs,
+            BlockHeightRegime::GenesisBootstrap => Self::CycleTick { body_index: 0 },
+            BlockHeightRegime::SteadyState => Self::Phase1Preexecuted {
                 body_index: 0,
                 tx_hash: B256::ZERO,
                 receipt_index: 0,
-            }
+            },
+        }
+    }
+
+    pub const fn initial_for_block(block_number: u64, genesis_bootstrap_block_number: u64) -> Self {
+        if block_number == 0 || block_number > genesis_bootstrap_block_number {
+            Self::initial_for_regime(BlockHeightRegime::for_block(block_number))
         } else {
             Self::CycleTick { body_index: 0 }
         }

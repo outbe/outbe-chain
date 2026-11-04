@@ -169,7 +169,7 @@ fn trace_action_for_tx(
             logs: meta.hook_event_logs.clone(),
         };
     }
-    match meta.system_tx_context {
+    match meta.system_tx_context.clone() {
         Some(context) => DetachedTraceTxAction::ReservedSystemCall {
             data: tx.data.clone(),
             context,
