@@ -27,7 +27,7 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     let mut executor = config.create_executor(evm, ctx);
     executor.apply_pre_execution_changes().unwrap();
     assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
-    executor.complete_end_block_phase().unwrap();
+    executor.apply_end_block_phase().unwrap();
     executor.prepare_final_header_artifacts(0).unwrap();
     assert_eq!(
         executor.system_tx_phase_cursor,
@@ -119,14 +119,14 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         assert_eq!(executor.inner.cumulative_tx_gas_used, actual_gas);
         let receipts = executor.receipts().to_vec();
         let body_index = executor.body_tx_index;
-        executor.complete_end_block_phase().unwrap();
+        executor.apply_end_block_phase().unwrap();
         assert_eq!(
             executor.system_tx_phase_cursor,
             SystemTxPhase::EndBlock {
                 gas_capacity: executor.inner.evm.block().gas_limit() - actual_gas,
             }
         );
-        executor.complete_end_block_phase().unwrap();
+        executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts(), receipts);
         assert_eq!(executor.body_tx_index, body_index);
     }
@@ -147,7 +147,7 @@ fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
         executor.system_tx_phase_cursor = SystemTxPhase::HookEvents { body_index: 4 };
         let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         executor.inner.cumulative_tx_gas_used = 18_000_000;
-        executor.complete_end_block_phase().unwrap();
+        executor.apply_end_block_phase().unwrap();
         assert_eq!(
             executor.system_tx_phase_cursor,
             SystemTxPhase::EndBlock {
@@ -186,7 +186,7 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     assert!(executor.check_user_pre_end_gas(declared).is_err());
     executor.inner.block_regular_gas_used = 1;
     executor.inner.block_state_gas_used = 18_000_000;
-    executor.complete_end_block_phase().unwrap();
+    executor.apply_end_block_phase().unwrap();
     assert_eq!(
         executor.system_tx_phase_cursor,
         SystemTxPhase::EndBlock {

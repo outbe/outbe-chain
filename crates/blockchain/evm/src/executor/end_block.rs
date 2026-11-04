@@ -20,7 +20,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
 
     /// Builder stage after user transactions and before execution finalization.
     /// Repeated calls retain the captured capacity.
-    pub fn complete_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {
+    pub fn apply_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {
         if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock { .. }) {
             return Ok(());
         }
