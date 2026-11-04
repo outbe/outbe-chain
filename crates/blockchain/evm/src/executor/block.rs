@@ -317,7 +317,7 @@ where
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
         let is_system_tx = is_reserved_system_tx(recovered.tx());
-        self.check_candidate_pre_end_gas(is_system_tx, recovered.tx().gas_limit())?;
+        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
             if outcome.is_ok() {

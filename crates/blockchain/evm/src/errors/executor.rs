@@ -198,8 +198,6 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 pub enum ExecutorValidationError {
     #[error(transparent)]
     BlockGasBudget(#[from] outbe_primitives::system_tx::BlockGasBudgetError),
-    #[error("transaction execution is not allowed after the end-block phase")]
-    TransactionAfterEndBlock,
     #[error(transparent)]
     TimestampOverflow(#[from] outbe_primitives::errors::TimestampOverflow),
     #[error("{0}")]

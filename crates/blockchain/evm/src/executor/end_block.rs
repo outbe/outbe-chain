@@ -18,13 +18,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         }
     }
 
-    pub(in crate::executor) fn ensure_before_end_block(&self) -> Result<(), BlockExecutionError> {
-        if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock { .. }) {
-            return Err(ExecutorValidationError::TransactionAfterEndBlock.into());
-        }
-        Ok(())
-    }
-
     /// Builder stage after user transactions and before execution finalization.
     /// Repeated calls retain the captured capacity.
     pub fn complete_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {
@@ -47,7 +40,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         &self,
         additional: u64,
     ) -> Result<(), BlockExecutionError> {
-        self.ensure_before_end_block()?;
         let available = self
             .block_gas_budget()?
             .remaining_pre_end_gas(self.accounted_block_gas())
@@ -63,7 +55,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
         use revm::context_interface::Cfg;
-        self.ensure_before_end_block()?;
         let budget = self.block_gas_budget()?;
         let amsterdam = self.inner.evm.cfg_env().enable_amsterdam_eip8037;
         let regular_used = if amsterdam {
@@ -83,21 +74,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             check_capacity(gas_limit, gas_limit, available)?;
         }
         Ok(())
-    }
-
-    pub(in crate::executor) fn check_candidate_pre_end_gas(
-        &self,
-        is_system: bool,
-        gas_limit: u64,
-    ) -> Result<(), BlockExecutionError>
-    where
-        E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    {
-        if is_system {
-            self.ensure_before_end_block()
-        } else {
-            self.check_user_pre_end_gas(gas_limit)
-        }
     }
 }
 
