@@ -19,7 +19,7 @@ use outbe_primitives::{
 use outbe_validatorset::state::{committee_snapshot_key, read_committee_snapshot};
 
 use crate::{
-    begin_block_precompile::current_preloaded_system_tx_context,
+    sys_tx_precompile::current_preloaded_system_tx_context,
     errors::{BeginBlockPrecompileError, ExecutorValidationError},
     executor::context,
 };

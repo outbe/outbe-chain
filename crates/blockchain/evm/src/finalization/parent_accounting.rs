@@ -22,7 +22,7 @@ use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::Recovered;
 
 use crate::{
-    begin_block_precompile::{
+    sys_tx_precompile::{
         current_preloaded_system_tx_context, read_preloaded_finalized_summary,
     },
     errors::{

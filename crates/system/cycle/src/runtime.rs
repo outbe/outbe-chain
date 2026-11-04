@@ -33,27 +33,6 @@ pub fn handle_cycle_tick(
     Ok(())
 }
 
-/// Walks scheduled call, forfeit, and notice work. Credis value movement stays
-/// inside its call pass. A gas stop commits the prefix and resumes next block.
-pub fn handle_call_event_processing(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    // Each factory finishes calls before forfeits for its pinned closed day.
-    // Gem includes position expiry. Credis includes collateral-return cleanup.
-    outbe_nodfactory::called::process_call_pass(ctx)?;
-    outbe_gemfactory::called::process_call_pass(ctx)?;
-    outbe_intexfactory::called::process_call_pass(ctx)?;
-    outbe_credisfactory::called::process_call_pass(ctx)?;
-    outbe_intexfactory::notify::send_call_notices(ctx)?;
-    Ok(())
-}
-
-/// Deletes state after value accounting. Credis moves value during its call pass.
-pub fn handle_cleanup_processing(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    outbe_gemfactory::hooks::cleanup(ctx)?;
-    outbe_intexfactory::hooks::cleanup(ctx)?;
-    outbe_gemfactory::hooks::cleanup_positions(ctx)?;
-    Ok(())
-}
-
 /// Dispatches every active trigger whose `next_fire_at` is `<=
 /// ctx.block.timestamp`. The checkpoint around a handler contains only that
 /// handler. A revert rolls the handler back, records `recorded_at`, emits

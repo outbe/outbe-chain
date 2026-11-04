@@ -302,7 +302,7 @@ where
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
-                    } => crate::begin_block_precompile::with_preloaded_system_tx_context(
+                    } => crate::sys_tx_precompile::with_preloaded_system_tx_context(
                         context,
                         || {
                             self.transact_system_call(

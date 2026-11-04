@@ -330,7 +330,7 @@ define_exact_routes! {
     PROMIS_LIMIT_ADDRESS => (outbe_promislimit::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),
     ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
     ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
-    OUTBE_SYSTEM_TX_ADDRESS => (crate::begin_block_precompile::dispatch, default_base_gas, ValuePolicy::Reject, crate::begin_block_precompile::PAYABLE_SELECTORS),
+    OUTBE_SYSTEM_TX_ADDRESS => (crate::sys_tx_precompile::dispatch, default_base_gas, ValuePolicy::Reject, crate::sys_tx_precompile::PAYABLE_SELECTORS),
     ZKPROOF_VERIFY_ADDRESS => (crate::zk::dispatch_zk_verify, crate::zk::zk_verify_base_gas, ValuePolicy::Reject, crate::zk::ZK_VERIFY_PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (outbe_teeregistry::v1_precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (outbe_l2registry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),

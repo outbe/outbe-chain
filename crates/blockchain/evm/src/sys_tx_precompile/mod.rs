@@ -1,9 +1,9 @@
-//! Begin-block orchestration precompile system transactions.
+//! System-transaction orchestration precompile.
 //!
 //! The precompile is called through `transact_system_call` with
 //! `SYSTEM_ADDRESS` as the EVM caller. It decodes a versioned
 //! [`SystemTx`](crate::system_tx::SystemTx) payload and routes to
-//! the begin_block system tx body. Thus runtime events are emitted through the
+//! the system tx body. Thus runtime events are emitted through the
 //! EVM journal and become receipt-visible.
 
 use crate::system_tx::SystemTx;
@@ -15,6 +15,8 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 mod boundary;
+mod call_event_handle;
+mod cleanup_handle;
 mod context;
 mod cycle;
 
@@ -155,13 +157,13 @@ fn dispatch_inner(
         SystemTx::CallEventProcessing => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             outbe_primitives::end_gas::with_end_gas(|| {
-                outbe_cycle::runtime::handle_call_event_processing(&ctx)
+                call_event_handle::handle_call_event_processing(&ctx)
             })?;
         }
         SystemTx::CleanupProcessing => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
             outbe_primitives::end_gas::with_end_gas(|| {
-                outbe_cycle::runtime::handle_cleanup_processing(&ctx)
+                cleanup_handle::handle_cleanup_processing(&ctx)
             })?;
         }
     }

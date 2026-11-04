@@ -354,7 +354,7 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
 
         super::super::prepare_boundary_epoch_counters(storage.clone(), &boundary, activation_block)
             .expect("certified boundary must prepare outgoing counters");
-        crate::begin_block_precompile::run_boundary_outcome(&ctx, &boundary)
+        crate::sys_tx_precompile::run_boundary_outcome(&ctx, &boundary)
             .expect("certified delayed boundary must activate");
 
         let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
