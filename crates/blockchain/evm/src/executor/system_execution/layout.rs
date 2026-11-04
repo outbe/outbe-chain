@@ -88,11 +88,11 @@ where
         }
         let mut system_txs = Vec::new();
         if regime.has_parent_finalization_accounting() {
-            if let Some((input, summary)) = self.cached_phase1_input.clone() {
-                system_txs.push((input, Some(summary)));
-            } else {
-                system_txs.push(self.certified_parent_begin_input(0)?);
-            }
+            let (input, summary) = match self.cached_phase1_input.clone() {
+                Some(cached) => cached,
+                None => self.certified_parent_begin_input(0)?,
+            };
+            system_txs.push((input, Some(summary)));
             self.append_begin_input(
                 &mut system_txs,
                 SystemTx::LateFinalizeCredits {
@@ -149,10 +149,10 @@ where
         Ok(())
     }
 
-    pub(crate) fn certified_parent_begin_input(
+    pub(in crate::executor) fn certified_parent_begin_input(
         &self,
         ordinal: usize,
-    ) -> Result<BeginSystemTransaction, BlockExecutionError> {
+    ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
         let verifier_mode = !self.expected_begin_system_txs.is_empty();
@@ -180,7 +180,7 @@ where
             );
         }
         let summary = self.accounted_parent_artifact_for_metadata(metadata)?;
-        Ok((input, Some(summary)))
+        Ok((input, summary))
     }
 
     fn boundary_begin_input(

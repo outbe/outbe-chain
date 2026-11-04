@@ -1,42 +1,35 @@
-//! Phase 1 (`CertifiedParentAccounting`) verification, pre-execution commit, and settlement.
+//! Phase 1 (`CertifiedParentAccounting`) verification, witness resolution, and settlement.
 
 use std::collections::BTreeSet;
 
 use alloy_consensus::Transaction as _;
 use alloy_evm::{
     block::{BlockExecutionError, StateDB},
-    eth::EthTxResult,
-    revm::context::Block as _,
     RecoveredTx,
 };
 use alloy_primitives::{Address, Bytes, B256};
 use outbe_consensus::proof::verify_v2_proof;
 use outbe_primitives::{
-    block::{BlockHeightRegime, BlockRuntimeContext},
+    block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result as OutbeResult,
-    reshare_artifact::{ExecutionSummaryArtifact, OutbeBlockArtifacts},
+    reshare_artifact::ExecutionSummaryArtifact,
     storage::StorageHandle,
-    system_tx::{
-        build_unsigned_system_tx, validate_phase1_witness_against, SystemTx, SystemTxPhase,
-    },
+    system_tx::{build_unsigned_system_tx, validate_phase1_witness_against},
 };
 use outbe_validatorset::state::committee_snapshot_key;
-use reth_ethereum::{
-    evm::{primitives::Evm, revm::context::TxEnv},
-    TransactionSigned,
-};
-use revm::context::result::HaltReason;
+use reth_ethereum::TransactionSigned;
+use reth_primitives_traits::Recovered;
 
 use crate::{
     begin_block_precompile::{
         current_preloaded_system_tx_context, read_preloaded_finalized_summary,
-        with_preloaded_system_tx_context, PreloadedSystemTxContext,
     },
     errors::{
         BeginBlockPrecompileError, ExecutorHookError, ExecutorStorageError, ExecutorValidationError,
     },
-    executor::{context, OutbeBlockExecutor, ZeroFeeCfgAccess},
+    executor::context,
+    SharedOutbeEvmSigner,
 };
 
 /// Structural sanity checks for finalized-parent consensus metadata.
@@ -65,6 +58,15 @@ pub fn validate_finalized_metadata(
         return Err(ExecutorHookError::DuplicateCommitteeAddresses.into());
     }
 
+    validate_committee_and_missed_proposers(storage, metadata, &committee_set)?;
+    validate_binary_signer_bitmap(&metadata.signer_bitmap)
+}
+
+fn validate_committee_and_missed_proposers(
+    storage: StorageHandle,
+    metadata: &CertifiedParentAccountingMetadata,
+    committee_set: &BTreeSet<Address>,
+) -> OutbeResult<()> {
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage);
     for addr in &metadata.ordered_committee {
         if !vs_check.is_validator(*addr)? {
@@ -82,12 +84,15 @@ pub fn validate_finalized_metadata(
         }
     }
 
-    for entry in &metadata.signer_bitmap {
+    Ok(())
+}
+
+fn validate_binary_signer_bitmap(signer_bitmap: &[u8]) -> OutbeResult<()> {
+    for entry in signer_bitmap {
         if *entry > 1 {
             return Err(ExecutorHookError::NonBinarySignerBitmapEntry.into());
         }
     }
-
     Ok(())
 }
 
@@ -117,7 +122,6 @@ pub fn run_finalization_and_slashing(
     metadata: &CertifiedParentAccountingMetadata,
 ) -> OutbeResult<()> {
     let expected_parent_number = validate_accounting_parent(ctx, metadata)?;
-
     validate_finalized_metadata(ctx.storage.clone(), metadata)?;
 
     let finalized = read_preloaded_finalized_summary(&ctx.storage)?.ok_or(
@@ -127,6 +131,50 @@ pub fn run_finalization_and_slashing(
         },
     )?;
 
+    let is_fresh = verify_metadata_progress_and_fingerprint(
+        ctx,
+        metadata,
+        &finalized,
+        expected_parent_number,
+    )?;
+    if !is_fresh {
+        return Ok(());
+    }
+
+    let voters = collect_signing_voters(metadata);
+    outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
+        ctx,
+        metadata,
+        finalized.summary.validator_fee_sum,
+        finalized.timestamp,
+        &voters,
+    )?;
+
+    let missed_validators: Vec<Address> = metadata
+        .missed_proposers
+        .iter()
+        .map(|m| m.validator)
+        .collect();
+    outbe_slashindicator::hooks::slash_window_proposers(
+        ctx.storage.clone(),
+        metadata.finalized_block_hash,
+        &missed_validators,
+    )?;
+    outbe_slashindicator::hooks::prune_slash_guards(
+        ctx.storage.clone(),
+        metadata.finalized_block_hash,
+    )?;
+    outbe_cycle::record_phase1_progress(ctx, expected_parent_number)?;
+
+    Ok(())
+}
+
+fn verify_metadata_progress_and_fingerprint(
+    ctx: &BlockRuntimeContext,
+    metadata: &CertifiedParentAccountingMetadata,
+    finalized: &AccountedParentArtifact,
+    expected_parent_number: u64,
+) -> OutbeResult<bool> {
     let canonical_vrf_proof_hash = current_preloaded_system_tx_context()
         .map(|context| context.canonical_vrf_proof_hash)
         .unwrap_or(B256::ZERO);
@@ -154,7 +202,7 @@ pub fn run_finalization_and_slashing(
                 parent_block_number = expected_parent_number,
                 "CertifiedParentAccounting identical replay accepted",
             );
-            return Ok(());
+            Ok(false)
         }
         outbe_rewards::runtime::MetadataFingerprintOutcome::Fresh => {
             let required_previous = expected_parent_number.saturating_sub(1);
@@ -166,9 +214,12 @@ pub fn run_finalization_and_slashing(
                 }
                 .into());
             }
+            Ok(true)
         }
     }
+}
 
+fn collect_signing_voters(metadata: &CertifiedParentAccountingMetadata) -> Vec<Address> {
     let mut voters = Vec::new();
     for (addr, did_sign) in metadata
         .ordered_committee
@@ -180,34 +231,7 @@ pub fn run_finalization_and_slashing(
             voters.push(addr);
         }
     }
-
-    outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
-        ctx,
-        metadata,
-        finalized.summary.validator_fee_sum,
-        finalized.timestamp,
-        &voters,
-    )?;
-
-    let missed_validators: Vec<Address> = metadata
-        .missed_proposers
-        .iter()
-        .map(|m| m.validator)
-        .collect();
-    outbe_slashindicator::hooks::slash_window_proposers(
-        ctx.storage.clone(),
-        metadata.finalized_block_hash,
-        &missed_validators,
-    )?;
-
-    outbe_slashindicator::hooks::prune_slash_guards(
-        ctx.storage.clone(),
-        metadata.finalized_block_hash,
-    )?;
-
-    outbe_cycle::record_phase1_progress(ctx, expected_parent_number)?;
-
-    Ok(())
+    voters
 }
 
 fn validate_accounting_parent(
@@ -236,149 +260,107 @@ fn validate_accounting_parent(
     Ok(expected_parent_number)
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
-    /// Resolves the accounted-parent artifact for the given Phase 1 metadata.
-    pub(crate) fn accounted_parent_artifact_for_metadata(
-        &self,
-        metadata: &CertifiedParentAccountingMetadata,
-    ) -> Result<AccountedParentArtifact, BlockExecutionError> {
-        if let Some(provider) = self.accounted_parent_artifact_provider.as_ref() {
-            match provider.execution_summary_by_hash(
-                metadata.finalized_block_number,
-                metadata.finalized_block_hash,
-            ) {
-                Ok(Some(resolved)) => return Ok(resolved),
-                Ok(None) | Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
-                Err(error) => {
-                    return Err(BlockExecutionError::other(
-                        ExecutorStorageError::read_accounted_parent_artifact(error),
-                    ));
-                }
-            }
-        }
-
-        if let Some(hint) = self.parent_artifact_hint.as_ref() {
-            let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-            let parent_block_number = block_number.saturating_sub(1);
-            if metadata.finalized_block_hash == self.parent_hash
-                && metadata.finalized_block_number == parent_block_number
-            {
-                return Ok(*hint);
-            }
-            return Err(ExecutorValidationError::ParentArtifactHintMismatch {
-                metadata_number: metadata.finalized_block_number,
-                metadata_hash: metadata.finalized_block_hash,
-                parent_number: parent_block_number,
-                parent_hash: self.parent_hash,
-            }
-            .into());
-        }
-
-        Err(BlockExecutionError::other(
-            ExecutorStorageError::missing_accounted_parent_execution_summary(
-                metadata.finalized_block_number,
-                metadata.finalized_block_hash,
-            ),
-        ))
-    }
-
-    /// Resolves and caches the Phase-1 (`CertifiedParentAccounting`) input and
-    /// parent execution summary once per block so `verify_phase1_in_preexec`,
-    /// `apply_phase1_commit_in_preexec`, and `begin_block_system_tx_inputs`
-    /// never duplicate the parent DB lookup.
-    pub(crate) fn ensure_phase1_input(
-        &mut self,
-    ) -> Result<(SystemTx, AccountedParentArtifact), BlockExecutionError> {
-        if let Some(cached) = self.cached_phase1_input.as_ref() {
-            return Ok(cached.clone());
-        }
-        let (input, summary_opt) = self.certified_parent_begin_input(0)?;
-        let summary = summary_opt.expect("certified_parent_begin_input always resolves summary");
-        self.cached_phase1_input = Some((input.clone(), summary));
-        Ok((input, summary))
-    }
+/// Input parameters for resolving the accounted-parent execution summary.
+pub(crate) struct ParentArtifactLookup<'a> {
+    pub provider: Option<&'a dyn AccountedParentArtifactProvider>,
+    pub hint: Option<AccountedParentArtifact>,
+    pub block_number: u64,
+    pub parent_hash: B256,
+    pub metadata: &'a CertifiedParentAccountingMetadata,
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
+/// Resolves the accounted-parent artifact for the given Phase 1 metadata.
+pub(crate) fn resolve_accounted_parent_artifact(
+    lookup: ParentArtifactLookup<'_>,
+) -> Result<AccountedParentArtifact, BlockExecutionError> {
+    let ParentArtifactLookup {
+        provider,
+        hint,
+        block_number,
+        parent_hash,
+        metadata,
+    } = lookup;
+
+    if let Some(provider) = provider {
+        match provider.execution_summary_by_hash(
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+        ) {
+            Ok(Some(resolved)) => return Ok(resolved),
+            Ok(None) | Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
+            Err(error) => {
+                return Err(BlockExecutionError::other(
+                    ExecutorStorageError::read_accounted_parent_artifact(error),
+                ));
+            }
+        }
+    }
+
+    if let Some(hint) = hint {
+        let parent_block_number = block_number.saturating_sub(1);
+        if metadata.finalized_block_hash == parent_hash
+            && metadata.finalized_block_number == parent_block_number
+        {
+            return Ok(hint);
+        }
+        return Err(ExecutorValidationError::ParentArtifactHintMismatch {
+            metadata_number: metadata.finalized_block_number,
+            metadata_hash: metadata.finalized_block_hash,
+            parent_number: parent_block_number,
+            parent_hash,
+        }
+        .into());
+    }
+
+    Err(BlockExecutionError::other(
+        ExecutorStorageError::missing_accounted_parent_execution_summary(
+            metadata.finalized_block_number,
+            metadata.finalized_block_hash,
+        ),
+    ))
+}
+
+/// Input parameters for pre-execution Phase 1 certificate verification.
+pub(crate) struct Phase1VerifyInput<'a> {
+    pub block_context: BlockContext,
+    pub parent_hash: B256,
+    pub prevrandao: Option<B256>,
+    pub metadata: &'a CertifiedParentAccountingMetadata,
+}
+
+/// Verifies the Phase 1 (`CertifiedParentAccounting`) certificate against the
+/// historical committee snapshot and block `prevrandao`, returning the verified
+/// canonical VRF proof hash.
+pub(crate) fn verify_phase1_certificate<DB>(
+    db: &mut DB,
+    input: Phase1VerifyInput<'_>,
+) -> Result<B256, BlockExecutionError>
 where
     DB: StateDB,
     DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
 {
-    /// V2 Phase 1 preflight for `BlockHeightRegime::SteadyState` (`block_number >= 2`).
-    pub(crate) fn verify_phase1_in_preexec(
-        &mut self,
-        block_number: u64,
-        _block_artifacts: &OutbeBlockArtifacts,
-    ) -> Result<(), BlockExecutionError> {
-        let regime = BlockHeightRegime::for_block(block_number);
-        if !regime.has_parent_finalization_accounting() {
-            if regime.is_genesis_bootstrap()
-                && self.inner.evm.block().prevrandao() != Some(B256::ZERO)
-            {
-                return Err(ExecutorValidationError::GenesisChildPrevrandaoMustBeZero.into());
-            }
-            return Ok(());
-        }
-        #[cfg(test)]
-        if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
-            return Ok(());
-        }
-
-        let (input, _summary) = self.ensure_phase1_input()?;
-        let SystemTx::CertifiedParentAccounting { metadata } = &input else {
-            return Err(
-                ExecutorValidationError::Phase1VerifierExpectedCertifiedParentAccountingInput
-                    .into(),
-            );
-        };
-
-        let snapshot_key =
-            committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
-            .map_err(ExecutorValidationError::from)?;
-        let proposer = self
-            .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
-        let parent_hash = self.parent_hash;
-        let cert_bytes = metadata.proof.clone();
-        let metadata_for_verify = metadata.clone();
-
-        let ctx = self.block_context(block_number, timestamp, proposer);
-        let snapshot = context::read_committee_snapshot(
-            self.inner.evm.db_mut(),
-            ctx,
+    let Phase1VerifyInput {
+        block_context,
+        parent_hash,
+        prevrandao,
+        metadata,
+    } = input;
+    let block_number = block_context.block_number;
+    let snapshot_key =
+        committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
+    let snapshot = context::read_committee_snapshot(db, block_context, snapshot_key, |error| {
+        ExecutorValidationError::phase1_read_committee_snapshot(
+            metadata.finalized_epoch,
             snapshot_key,
-            |error| {
-                ExecutorValidationError::phase1_read_committee_snapshot(
-                    metadata_for_verify.finalized_epoch,
-                    snapshot_key,
-                    error,
-                )
-            },
-        )?;
-        let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
-            epoch: metadata_for_verify.finalized_epoch,
-            snapshot_key,
-        })?;
-
-        let verified = verify_v2_proof(
-            &metadata_for_verify,
-            &snapshot,
-            cert_bytes.as_ref(),
-            parent_hash,
+            error,
         )
+    })?;
+    let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
+        epoch: metadata.finalized_epoch,
+        snapshot_key,
+    })?;
+
+    let verified = verify_v2_proof(metadata, &snapshot, metadata.proof.as_ref(), parent_hash)
         .map_err(|error| {
             BlockExecutionError::from(ExecutorValidationError::phase1_verify_proof_rejected(
                 block_number,
@@ -386,132 +368,68 @@ where
             ))
         })?;
 
-        let actual = self.inner.evm.block().prevrandao();
-        if actual != Some(verified.prev_randao) {
-            return Err(ExecutorValidationError::PrevrandaoMismatch {
-                expected: verified.prev_randao,
-                actual,
-            }
-            .into());
+    if prevrandao != Some(verified.prev_randao) {
+        return Err(ExecutorValidationError::PrevrandaoMismatch {
+            expected: verified.prev_randao,
+            actual: prevrandao,
         }
-
-        self.verified_phase1_vrf_proof_hash = Some(verified.vrf_proof_hash);
-
-        Ok(())
+        .into());
     }
 
-    /// Executes and commits the Phase 1 (`CertifiedParentAccounting`) system tx
-    /// in pre-execution so `run_outbe_pre_execution_hooks` observes post-Phase-1 state.
-    pub(crate) fn apply_phase1_commit_in_preexec(
-        &mut self,
-        block_number: u64,
-        block_artifacts: &OutbeBlockArtifacts,
-    ) -> Result<(), BlockExecutionError> {
-        let regime = BlockHeightRegime::for_block(block_number);
-        if !regime.has_parent_finalization_accounting() {
-            return Ok(());
-        }
-        #[cfg(test)]
-        if crate::executor::PHASE1_VERIFY_DISABLED.with(|cell| cell.get()) {
-            return Ok(());
-        }
+    Ok(verified.vrf_proof_hash)
+}
 
-        let (input, finalized_summary) = self.ensure_phase1_input()?;
-        if !matches!(input, SystemTx::CertifiedParentAccounting { .. }) {
-            return Err(
-                ExecutorValidationError::Phase1CommitUnexpectedKind { kind: input.name() }.into(),
-            );
-        }
-        let calldata = input
-            .encode()
-            .map_err(ExecutorValidationError::phase1_commit_encode_input)?;
+/// Input parameters for resolving and validating the Phase 1 signed witness transaction.
+pub(crate) struct Phase1WitnessLookup<'a> {
+    pub prebuilt_phase1_tx: Option<&'a Recovered<TransactionSigned>>,
+    pub expected_begin_system_txs: &'a [Recovered<TransactionSigned>],
+    pub evm_signer: Option<&'a SharedOutbeEvmSigner>,
+    pub calldata: &'a Bytes,
+    pub proposer: Address,
+    pub chain_id: u64,
+    pub block_number: u64,
+}
 
-        let proposer = self
-            .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+/// Resolves and validates the signed Phase 1 witness transaction (`prebuilt`,
+/// `body[0]`, or locally signed), returning `(tx_hash, signed_gas_limit)`.
+pub(crate) fn resolve_phase1_witness(
+    lookup: Phase1WitnessLookup<'_>,
+) -> Result<Option<(B256, u64)>, BlockExecutionError> {
+    let Phase1WitnessLookup {
+        prebuilt_phase1_tx,
+        expected_begin_system_txs,
+        evm_signer,
+        calldata,
+        proposer,
+        chain_id,
+        block_number,
+    } = lookup;
 
-        let Some((cached_tx_hash, signed_gas_limit)) =
-            self.resolve_phase1_witness(&calldata, proposer, block_number)?
-        else {
-            return Ok(());
-        };
-        let phase_context = PreloadedSystemTxContext {
-            proposer,
-            finalized_summary: Some(finalized_summary),
-            allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
-            canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
-            verified_late_credit_signers: None,
-        };
-
-        let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
-            self.inner.evm.transact_system_call(
-                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                calldata,
-            )
-        });
-        let result = transact_outcome.map_err(|error| {
-            let reason = format!("Phase 1 commit pre-exec: transact_system_call failed: {error}");
-            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none()
-                && outbe_primitives::projection::NodeLocalExecutionAbort::find(&error).is_none()
-            {
-                tracing::error!(target: "outbe::executor", %reason);
-            }
-            BlockExecutionError::other(error)
-        })?;
-        if !result.result.is_success() {
-            let err = ExecutorValidationError::phase1_commit_did_not_succeed(&result.result);
-            tracing::error!(target: "outbe::executor", %err, "critical begin-zone phase did not succeed; failing block");
-            return Err(err.into());
-        }
-        let output = EthTxResult {
-            result,
-            blob_gas_used: 0,
-            tx_type: alloy_consensus::TxType::Legacy,
-        };
-        self.commit_system_transaction(output, signed_gas_limit, 0, signed_gas_limit)?;
-
-        self.system_tx_phase_cursor = SystemTxPhase::Phase1Preexecuted {
-            body_index: 0,
-            tx_hash: cached_tx_hash,
-            receipt_index: 0,
-        };
-        Ok(())
-    }
-
-    fn resolve_phase1_witness(
-        &self,
-        calldata: &Bytes,
-        proposer: Address,
-        block_number: u64,
-    ) -> Result<Option<(B256, u64)>, BlockExecutionError> {
-        let chain_id = self.inner.evm.chain_id();
-        let validate_witness = |tx: &TransactionSigned, source: &'static str| {
-            validate_phase1_witness_against(tx, calldata.as_ref(), proposer, chain_id, block_number)
-                .map_err(|error| {
-                    BlockExecutionError::from(
-                        ExecutorValidationError::phase1_commit_invalid_witness(source, error),
-                    )
-                })
-        };
-        let witness = if let Some(prebuilt) = &self.prebuilt_phase1_tx {
-            let tx_hash = validate_witness(prebuilt.tx(), "prebuilt")?;
-            (tx_hash, prebuilt.tx().gas_limit())
-        } else if let Some(expected) = self.expected_begin_system_txs.first() {
-            let tx_hash = validate_witness(expected.tx(), "body[0]")?;
-            (tx_hash, expected.tx().gas_limit())
-        } else if let Some(signer) = &self.evm_signer {
-            let unsigned = build_unsigned_system_tx(0, block_number, chain_id, calldata.clone())
-                .map_err(ExecutorValidationError::phase1_commit_build_unsigned_witness)?;
-            let signed = signer
-                .sign_unsigned(unsigned)
-                .map_err(ExecutorValidationError::phase1_commit_sign_witness)?;
-            let signed_gas_limit = signed.gas_limit();
-            let tx_hash = validate_witness(&signed, "signed")?;
-            (tx_hash, signed_gas_limit)
-        } else {
-            return Ok(None);
-        };
-        Ok(Some(witness))
-    }
+    let validate_witness = |tx: &TransactionSigned, source: &'static str| {
+        validate_phase1_witness_against(tx, calldata.as_ref(), proposer, chain_id, block_number)
+            .map_err(|error| {
+                BlockExecutionError::from(ExecutorValidationError::phase1_commit_invalid_witness(
+                    source, error,
+                ))
+            })
+    };
+    let witness = if let Some(prebuilt) = prebuilt_phase1_tx {
+        let tx_hash = validate_witness(prebuilt.tx(), "prebuilt")?;
+        (tx_hash, prebuilt.tx().gas_limit())
+    } else if let Some(expected) = expected_begin_system_txs.first() {
+        let tx_hash = validate_witness(expected.tx(), "body[0]")?;
+        (tx_hash, expected.tx().gas_limit())
+    } else if let Some(signer) = evm_signer {
+        let unsigned = build_unsigned_system_tx(0, block_number, chain_id, calldata.clone())
+            .map_err(ExecutorValidationError::phase1_commit_build_unsigned_witness)?;
+        let signed = signer
+            .sign_unsigned(unsigned)
+            .map_err(ExecutorValidationError::phase1_commit_sign_witness)?;
+        let signed_gas_limit = signed.gas_limit();
+        let tx_hash = validate_witness(&signed, "signed")?;
+        (tx_hash, signed_gas_limit)
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(witness))
 }
