@@ -60,6 +60,7 @@ outbe-rpc = { workspace = true, features = ["test-support"] }
 commonware-math.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
+snow.workspace = true
 
 [lints]
 workspace = true

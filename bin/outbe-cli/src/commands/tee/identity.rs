@@ -24,31 +24,30 @@ use outbe_primitives::tee_attestation_v1::ENCLAVE_ID_DOMAIN_V1;
 use outbe_tee::protocol::EnclaveRequest;
 use outbe_tee::protocol::EnclaveResponse;
 
-use outbe_tee::EnclaveClient;
+use outbe_tee::connect_committed_node_host_enclave;
 
 use std::fs;
+use std::path::Path;
 
 use zeroize::Zeroizing;
 
 const DEV_NODE_HOST_DOMAIN_V1: &[u8] = b"outbe/tee/dev-node-host/v1";
 
-/// Query the enclave's offer recipient + identity public keys and (optionally)
-/// diff the permanent offer key against the on-chain registry. Before readiness
-/// the recipient is onboarding-only and cannot be compared with chain state.
+/// Query public keys through the committed NodeHost session without a quote request.
+/// Compare the permanent offer key with the registry only after readiness.
 pub(super) async fn pubkey(
     client: &(impl Rpc + Sync),
     enclave_socket: &str,
+    node_data_dir: &Path,
     diff_chain: bool,
 ) -> Result<()> {
-    let mut enclave = EnclaveClient::connect_endpoint(enclave_socket).map_err(|source| {
-        TeeIdentityError::ConnectEnclave {
-            socket: enclave_socket.to_owned(),
-            source,
-        }
-    })?;
-    let label = enclave.attestation_label().to_string();
-    let (mrenclave, mrsigner, isv_svn) = enclave.measurements();
-    let hardware_quote_type_reported = enclave.is_hardware_attested();
+    let mut enclave =
+        connect_committed_node_host_enclave(enclave_socket, node_data_dir).map_err(|source| {
+            TeeIdentityError::ConnectEnclave {
+                socket: enclave_socket.to_owned(),
+                source,
+            }
+        })?;
     let (offer_key_ready, offer_pub, tee_bls_pub) = match enclave
         .request(&EnclaveRequest::GetPublicKeys)
     {
@@ -72,17 +71,8 @@ pub(super) async fn pubkey(
         hex::encode(&tee_bls_pub)
     );
     println!("permanent offer key ready:                 {offer_key_ready}");
-    println!("attestation:                             {label}");
-    println!("hardware quote type reported:           {hardware_quote_type_reported}");
-    println!(
-        "mrenclave:                               0x{}",
-        hex::encode(mrenclave)
-    );
-    println!(
-        "mrsigner:                                0x{}",
-        hex::encode(mrsigner)
-    );
-    println!("isv_svn:                                 {isv_svn}");
+    println!("session:                                  authenticated NodeHost (Noise IK)");
+    println!("attestation quote:                        not requested");
     if !diff_chain {
         return Ok(());
     }
