@@ -71,22 +71,6 @@ where
             assembler,
         }
     }
-
-    /// Encodes execution-produced header fields before state-root calculation.
-    /// The final finish call repeats the same encoding.
-    pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
-        self.executor.complete_end_block_phase()?;
-        let enclave_witness = self.executor.final_enclave_witness_bytes()?;
-        self.ctx.inner.extra_data = encode_final_header_artifacts(
-            self.ctx.inner.extra_data.as_ref(),
-            self.executor.current_execution_summary(),
-            self.ctx.timestamp_millis_part,
-            enclave_witness,
-        )?;
-        self.executor
-            .set_final_extra_data(self.ctx.inner.extra_data.clone());
-        Ok(())
-    }
 }
 
 impl<'a, DB, EVM> BlockBuilder for OutbeBlockBuilder<'a, EVM>
@@ -142,14 +126,15 @@ where
         // millis and the artifacts kept from
         // the pre-final bytes (DKG/header artifacts and late-finalize credits).
         // The proposer path does not produce the legacy header attestation tag.
-        self.executor.complete_end_block_phase()?;
-        let execution_summary = self.executor.current_execution_summary();
         // Sub-second timestamp travels in `extra_data` under tag 0x05 so
         // the block hash stays Ethereum-spec-compliant
         // (`keccak256(rlp(standard_header))`). The execution-context
         // value is the canonical source for this block. This code overwrites
         // whatever the proposer placed in `extra_data` earlier.
-        self.finalize_header_artifacts()?;
+        self.executor
+            .prepare_final_header_artifacts(self.ctx.timestamp_millis_part)?;
+        self.ctx.inner.extra_data = self.executor.final_extra_data().clone();
+        let execution_summary = self.executor.current_execution_summary();
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
 

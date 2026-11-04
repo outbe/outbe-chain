@@ -198,8 +198,6 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 pub enum ExecutorValidationError {
     #[error(transparent)]
     BlockGasBudget(#[from] outbe_primitives::system_tx::BlockGasBudgetError),
-    #[error("end-block phase requires all begin witnesses to be consumed")]
-    IncompleteBeginPhase,
     #[error("transaction execution is not allowed after the end-block phase")]
     TransactionAfterEndBlock,
     #[error(transparent)]
@@ -229,8 +227,6 @@ pub enum ExecutorValidationError {
     InvalidNonGenesisBeneficiary { expected: Address, actual: Address },
     #[error("invalid system tx layout: {0}")]
     InvalidSystemTxLayout(String),
-    #[error("standard Ethereum post-execution changes already applied")]
-    PostExecutionAlreadyApplied,
     #[error("missing proposer EVM address for begin-zone system txs")]
     MissingBeginZoneProposerAddress,
     #[error("validate proposer identity: {0}")]

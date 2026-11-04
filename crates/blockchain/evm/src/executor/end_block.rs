@@ -19,33 +19,23 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     }
 
     pub(in crate::executor) fn ensure_before_end_block(&self) -> Result<(), BlockExecutionError> {
-        if matches!(
-            self.system_tx_phase_cursor,
-            SystemTxPhase::EndBlock { .. }
-        ) {
+        if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock { .. }) {
             return Err(ExecutorValidationError::TransactionAfterEndBlock.into());
         }
         Ok(())
     }
 
-    /// Complete the empty end-block phase before final artifacts or state-root
-    /// freezing. Repeated calls validate accounting but retain the captured capacity.
+    /// Builder stage after user transactions and before execution finalization.
+    /// Repeated calls retain the captured capacity.
     pub fn complete_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {
         if self.post_end_commit_attempted {
             return Err(ExecutorValidationError::TransactionAfterEndBlock.into());
         }
-        let budget = self.block_gas_budget()?;
-        budget
-            .remaining_pre_end_gas(self.accounted_block_gas())
-            .map_err(ExecutorValidationError::from)?;
-        if matches!(
-            self.system_tx_phase_cursor,
-            SystemTxPhase::EndBlock { .. }
-        ) {
+        if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock { .. }) {
             return Ok(());
         }
-        self.check_begin_phase_complete()?;
-        let capacity = budget
+        let capacity = self
+            .block_gas_budget()?
             .end_capacity(self.accounted_block_gas())
             .map_err(ExecutorValidationError::from)?;
         // No end selectors exist yet. This phase intentionally creates no state,
@@ -53,14 +43,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         self.system_tx_phase_cursor = SystemTxPhase::EndBlock {
             gas_capacity: capacity,
         };
-        Ok(())
-    }
-
-    fn check_begin_phase_complete(&self) -> Result<(), BlockExecutionError> {
-        // Pending/RPC execution does not consume a canonical begin prefix.
-        if self.execute_outbe_block_hooks && self.system_tx_phase_cursor != SystemTxPhase::UserTxs {
-            return Err(ExecutorValidationError::IncompleteBeginPhase.into());
-        }
         Ok(())
     }
 
@@ -86,7 +68,6 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         use revm::context_interface::Cfg;
         self.ensure_before_end_block()?;
         let budget = self.block_gas_budget()?;
-        self.check_begin_phase_complete()?;
         let amsterdam = self.inner.evm.cfg_env().enable_amsterdam_eip8037;
         let regular_used = if amsterdam {
             self.inner.block_regular_gas_used

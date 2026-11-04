@@ -5,6 +5,19 @@ use outbe_primitives::system_tx::{BlockGasBudget, SystemTxPhase};
 use revm::context_interface::Cfg;
 
 #[test]
+fn finalization_does_not_enter_the_builder_end_block_phase() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let mut state = state_with_active_proposer(OWNER);
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    executor.prepare_final_header_artifacts(0).unwrap();
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
+    assert!(executor.ethereum_post_execution_requests.is_some());
+    assert!(executor.receipts().is_empty());
+}
+
+#[test]
 fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let mut state = state_with_active_proposer(OWNER);
@@ -15,6 +28,7 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     executor.apply_pre_execution_changes().unwrap();
     assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
     executor.complete_end_block_phase().unwrap();
+    executor.prepare_final_header_artifacts(0).unwrap();
     assert_eq!(
         executor.system_tx_phase_cursor,
         SystemTxPhase::EndBlock {
@@ -22,6 +36,8 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
         }
     );
     assert!(executor.receipts().is_empty());
+    executor.prepare_final_header_artifacts(0).unwrap();
+    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
     let (_, result) = executor.finish().unwrap();
     assert_eq!(result.gas_used, 0);
     assert!(result.receipts.is_empty());
@@ -37,6 +53,7 @@ fn raw_commit_after_end_is_refused_and_poisoned_for_final_validation() {
     let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
     let output = executor.execute_transaction_without_commit(tx).unwrap();
     executor.complete_end_block_phase().unwrap();
+    executor.prepare_final_header_artifacts(0).unwrap();
     executor.commit_transaction(output);
     assert!(executor.receipts().is_empty());
     assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
@@ -155,7 +172,7 @@ fn exact_capacity_commits_actual_gas_then_empty_end_phase_is_terminal() {
 }
 
 #[test]
-fn end_phase_checks_begin_completion_pending_context_and_authoritative_counters() {
+fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
     for hooks in [true, false] {
         let config = OutbeEvmConfig::new(test_chain_spec());
         let mut state = State::builder()
@@ -167,14 +184,6 @@ fn end_phase_checks_begin_completion_pending_context_and_authoritative_counters(
         ctx.execute_outbe_block_hooks = hooks;
         let mut executor = config.create_executor(evm, ctx);
         executor.system_tx_phase_cursor = SystemTxPhase::HookEvents { body_index: 4 };
-        if hooks {
-            assert!(executor
-                .complete_end_block_phase()
-                .unwrap_err()
-                .to_string()
-                .contains("begin witnesses"));
-            executor.system_tx_phase_cursor = SystemTxPhase::UserTxs;
-        }
         let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
         executor.inner.cumulative_tx_gas_used = 18_000_000;
         executor.complete_end_block_phase().unwrap();

@@ -712,8 +712,8 @@ fn assert_height2_finalization_parity(include_user: bool) {
             if include_user {
                 builder.execute_transaction(user.clone()).unwrap();
             }
+            builder.executor_mut().complete_end_block_phase().unwrap();
             let precomputed = if prepare_root {
-                builder.executor_mut().complete_end_block_phase().unwrap();
                 builder
                     .executor_mut()
                     .prepare_final_header_artifacts(0)

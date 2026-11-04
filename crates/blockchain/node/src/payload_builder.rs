@@ -204,6 +204,10 @@ where
                 return Ok(BuildOutcome::Cancelled);
             }
         }
+        builder
+            .executor_mut()
+            .complete_end_block_phase()
+            .map_err(PayloadBuilderError::evm)?;
         if !is_better_payload(best_payload.as_ref(), state.total_fees) {
             drop(builder);
             return Ok(BuildOutcome::Aborted {
@@ -211,10 +215,6 @@ where
                 cached_reads,
             });
         }
-        builder
-            .executor_mut()
-            .complete_end_block_phase()
-            .map_err(PayloadBuilderError::evm)?;
         let outcome = if let Some(mut handle) = state_root_handle {
             // Deliver all EVM state changes before the parallel root is frozen.
             builder
