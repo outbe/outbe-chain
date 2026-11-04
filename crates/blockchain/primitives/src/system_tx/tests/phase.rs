@@ -117,6 +117,25 @@ fn expected_selector_returns_phase_for_each_variant() {
             Some(RADICLE_PUBLICATION_SELECTOR),
         ),
         (SystemTxPhase::UserTxs, None),
+        (
+            SystemTxPhase::EndBlockCallEvents {
+                gas_capacity: 2_100_000,
+            },
+            Some(CALL_EVENT_PROCESSING_SELECTOR),
+        ),
+        (
+            SystemTxPhase::EndBlockCleanup {
+                gas_capacity: 2_100_000,
+                call_gas_used: 30_000,
+            },
+            Some(CLEANUP_PROCESSING_SELECTOR),
+        ),
+        (
+            SystemTxPhase::EndBlock {
+                gas_capacity: 2_100_000,
+            },
+            None,
+        ),
     ];
     for (phase, expected) in cases {
         assert_eq!(phase.expected_selector(), expected, "phase={phase:?}");
@@ -154,6 +173,25 @@ fn body_index_matches_for_every_begin_zone_variant() {
         (SystemTxPhase::HookEvents { body_index: 7 }, Some(7)),
         (SystemTxPhase::RadiclePublication { body_index: 8 }, Some(8)),
         (SystemTxPhase::UserTxs, None),
+        (
+            SystemTxPhase::EndBlockCallEvents {
+                gas_capacity: 2_100_000,
+            },
+            Some(CALL_EVENT_PROCESSING_ORDINAL),
+        ),
+        (
+            SystemTxPhase::EndBlockCleanup {
+                gas_capacity: 2_100_000,
+                call_gas_used: 30_000,
+            },
+            Some(CLEANUP_PROCESSING_ORDINAL),
+        ),
+        (
+            SystemTxPhase::EndBlock {
+                gas_capacity: 2_100_000,
+            },
+            None,
+        ),
     ] {
         assert_eq!(phase.body_index(), expected, "phase={phase:?}");
     }

@@ -1,20 +1,14 @@
 //! Gas stop for the end-zone call and cleanup transactions.
 //!
-//! Direct callers that do not enter this scope keep the visit and write caps.
+//! Direct callers without an end-block gas meter keep the visit and write caps.
 //! The ceilings below are the measured cost of one supported unit. A unit that
 //! does not fit commits the cursor before it and resumes on the next block.
-
-use std::cell::Cell;
 
 use crate::protocol_schedule::OutbeProtocolSchedule;
 use crate::system_tx::{
     system_tx_intrinsic_gas, SystemTx, CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR,
     SYSTEM_TX_INPUT_VERSION,
 };
-
-thread_local! {
-    static END_GAS_ACTIVE: Cell<bool> = const { Cell::new(false) };
-}
 
 /// Gas cap for one resumable call or forfeit unit.
 ///
@@ -27,19 +21,6 @@ pub const CLEANUP_UNIT_GAS_CEILING: u64 = 1_500_000;
 /// Gas cap for one completed notice send. Same idle-budget bound as a call unit.
 pub const NOTICE_UNIT_GAS_CEILING: u64 = 1_500_000;
 
-pub fn end_gas_active() -> bool {
-    END_GAS_ACTIVE.with(|cell| cell.get())
-}
-
-pub fn with_end_gas<R>(f: impl FnOnce() -> R) -> R {
-    END_GAS_ACTIVE.with(|cell| {
-        let previous = cell.replace(true);
-        let result = f();
-        cell.set(previous);
-        result
-    })
-}
-
 /// Execution gas left for call work on an idle block after both end-zone intrinsics.
 pub fn idle_call_execution_gas() -> u64 {
     let reserved = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
@@ -48,6 +29,20 @@ pub fn idle_call_execution_gas() -> u64 {
     reserved
         .saturating_sub(call_intrinsic)
         .saturating_sub(cleanup_intrinsic)
+}
+
+/// Signed gas limit for `CallEventProcessing` given total end-block `capacity`.
+#[must_use]
+pub fn expected_call_event_gas_limit(capacity: u64) -> Option<u64> {
+    let cleanup_intrinsic = empty_tx_intrinsic(&SystemTx::CleanupProcessing)?;
+    capacity.checked_sub(cleanup_intrinsic)
+}
+
+/// Signed gas limit for `CleanupProcessing` given total end-block `capacity`
+/// and the gas consumed by `CallEventProcessing`.
+#[must_use]
+pub const fn expected_cleanup_gas_limit(capacity: u64, call_gas_used: u64) -> Option<u64> {
+    capacity.checked_sub(call_gas_used)
 }
 
 fn empty_intrinsic(selector: [u8; 4]) -> u64 {
@@ -102,11 +97,15 @@ mod tests {
     }
 
     #[test]
-    fn scope_restores_the_previous_flag() {
-        assert!(!end_gas_active());
-        with_end_gas(|| {
-            assert!(end_gas_active());
-        });
-        assert!(!end_gas_active());
+    fn expected_end_gas_limits_conserve_capacity() {
+        let capacity = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
+        let call_limit = expected_call_event_gas_limit(capacity).unwrap();
+        let cleanup_intrinsic = empty_tx_intrinsic(&SystemTx::CleanupProcessing).unwrap();
+        assert_eq!(call_limit + cleanup_intrinsic, capacity);
+        assert_eq!(
+            expected_cleanup_gas_limit(capacity, call_limit),
+            Some(cleanup_intrinsic)
+        );
+        assert_eq!(expected_cleanup_gas_limit(capacity, capacity + 1), None);
     }
 }

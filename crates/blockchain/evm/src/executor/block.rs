@@ -113,10 +113,6 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) frozen_enclave_witness: Option<Bytes>,
     /// End-zone transactions built by the proposer. The block builder appends them.
     pub(super) staged_end_block_txs: Vec<Recovered<TransactionSigned>>,
-    /// Gas used by `CallEventProcessing`, once that suffix transaction has committed.
-    pub(super) end_call_gas_used: Option<u64>,
-    /// Capacity captured when the end suffix starts. Cleanup's signed limit is derived from it.
-    pub(super) end_capacity: Option<u64>,
     /// Decoded `block_extra_data` cached once at block open so reserved system transactions
     /// do not re-decode header artifacts on every system tx.
     pub(super) decoded_block_artifacts: Option<OutbeBlockArtifacts>,
@@ -205,8 +201,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             body_tx_index: 0,
             frozen_enclave_witness: None,
             staged_end_block_txs: Vec::new(),
-            end_call_gas_used: None,
-            end_capacity: None,
             decoded_block_artifacts: None,
             cached_phase1_input: None,
             resolved_begin_zone: None,
@@ -280,9 +274,7 @@ where
     // outbe-evm is pinned to revm's standard `HaltReason`; this constraint
     // is what lets [`system_tx_failure_code_for_result`] pattern-match the
     // halt variants for soft-failure code assignment.
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>
-        + ZeroFeeCfgAccess
-        + crate::factory::SystemCallGasBudget,
+    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
@@ -341,15 +333,12 @@ where
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
-        let is_system_tx = is_reserved_system_tx(recovered.tx());
-        let is_end_tx = is_system_tx
-            && crate::system_tx::SystemTx::decode(recovered.tx().input().as_ref())
-                .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock);
-        if is_end_tx {
+        if is_end_block_system_tx(recovered.tx()) {
             return self
                 .execute_end_block_system_tx(recovered.tx(), *recovered.signer())
                 .map_err(preserve_cancelled_execution);
         }
+        let is_system_tx = is_reserved_system_tx(recovered.tx());
         self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
@@ -374,12 +363,7 @@ where
             }
             let decision = f(result);
             if !decision.should_commit() {
-                if let Some(state) = witness_state.as_ref() {
-                    if let Ok(mut guard) = state.lock() {
-                        guard.staged.clear();
-                        guard.replay_cursor = 0;
-                    }
-                }
+                clear_uncommitted_witness_on_decline(witness_state.as_ref());
             }
             decision
         };
@@ -435,7 +419,14 @@ where
             self.inner.cumulative_tx_gas_used
         };
         let block_gas_limit = self.inner.evm.block().gas_limit();
-        if self.end_call_gas_used.is_some() {
+        let end_zone_executed = BlockHeightRegime::for_block(block_number)
+            .has_end_zone_system_txs()
+            && matches!(
+                self.system_tx_phase_cursor,
+                crate::system_tx::SystemTxPhase::EndBlockCleanup { .. }
+                    | crate::system_tx::SystemTxPhase::EndBlock { .. }
+            );
+        if end_zone_executed {
             if gas_used > block_gas_limit {
                 return Err(crate::errors::ExecutorValidationError::from(
                     outbe_primitives::system_tx::BlockGasBudgetError::PreEndGasExceeded {
@@ -489,6 +480,23 @@ where
 
     fn evm(&self) -> &Self::Evm {
         self.inner.evm()
+    }
+}
+
+fn is_end_block_system_tx(tx: &TransactionSigned) -> bool {
+    is_reserved_system_tx(tx)
+        && crate::system_tx::SystemTx::decode(tx.input().as_ref())
+            .is_ok_and(|input| input.body_zone() == crate::system_tx::BodyZone::EndBlock)
+}
+
+fn clear_uncommitted_witness_on_decline(
+    witness_state: Option<&Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
+) {
+    if let Some(state) = witness_state {
+        if let Ok(mut guard) = state.lock() {
+            guard.staged.clear();
+            guard.replay_cursor = 0;
+        }
     }
 }
 

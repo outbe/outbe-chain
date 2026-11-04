@@ -353,6 +353,11 @@ pub trait PrecompileStorageProvider {
     /// Emits an event from the given contract address.
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()>;
 
+    /// Activates end-zone execution gas metering on this provider.
+    fn enable_end_gas_metering(&mut self) -> Result<()> {
+        Ok(())
+    }
+
     /// Remaining execution gas, when this provider meters an end-zone transaction.
     fn gas_remaining(&self) -> Option<u64> {
         None

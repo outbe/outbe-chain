@@ -70,6 +70,7 @@ where
             allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: self.verified_late_credit_signers.clone(),
+            gas_limit_override: None,
         };
         let available_visible_gas =
             reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;

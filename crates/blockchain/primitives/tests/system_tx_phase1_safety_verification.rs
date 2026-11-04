@@ -38,6 +38,11 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
         SystemTxPhase::HookEvents { body_index: 0 },
         SystemTxPhase::RadiclePublication { body_index: 0 },
         SystemTxPhase::UserTxs,
+        SystemTxPhase::EndBlockCallEvents { gas_capacity: 0 },
+        SystemTxPhase::EndBlockCleanup {
+            gas_capacity: 0,
+            call_gas_used: 0,
+        },
         SystemTxPhase::EndBlock { gas_capacity: 0 },
     ];
     for variant in &variants {
@@ -53,13 +58,15 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
             SystemTxPhase::HookEvents { .. } => {}
             SystemTxPhase::RadiclePublication { .. } => {}
             SystemTxPhase::UserTxs => {}
+            SystemTxPhase::EndBlockCallEvents { .. } => {}
+            SystemTxPhase::EndBlockCleanup { .. } => {}
             SystemTxPhase::EndBlock { .. } => {}
         }
     }
     assert_eq!(
         variants.len(),
-        10,
-        "internal SystemTxPhase contract: 10 variants"
+        12,
+        "internal SystemTxPhase contract: 12 variants"
     );
 }
 
@@ -162,6 +169,8 @@ proptest! {
                 SystemTxPhase::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
                 SystemTxPhase::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
                 SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
+                SystemTxPhase::EndBlockCallEvents { .. } => Some(CALL_EVENT_PROCESSING_SELECTOR),
+                SystemTxPhase::EndBlockCleanup { .. } => Some(CLEANUP_PROCESSING_SELECTOR),
                 SystemTxPhase::UserTxs | SystemTxPhase::EndBlock { .. } => None,
             };
             prop_assert_eq!(a, expected_for_variant);

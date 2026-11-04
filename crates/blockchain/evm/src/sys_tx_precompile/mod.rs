@@ -155,16 +155,14 @@ fn dispatch_inner(
             outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
         SystemTx::CallEventProcessing => {
+            storage.enable_end_gas_metering()?;
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            outbe_primitives::end_gas::with_end_gas(|| {
-                call_event_handle::handle_call_event_processing(&ctx)
-            })?;
+            call_event_handle::handle_call_event_processing(&ctx)?;
         }
         SystemTx::CleanupProcessing => {
+            storage.enable_end_gas_metering()?;
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            outbe_primitives::end_gas::with_end_gas(|| {
-                cleanup_handle::handle_cleanup_processing(&ctx)
-            })?;
+            cleanup_handle::handle_cleanup_processing(&ctx)?;
         }
     }
 

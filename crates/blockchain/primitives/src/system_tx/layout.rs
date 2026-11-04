@@ -157,7 +157,7 @@ pub fn expected_begin_block_selectors_for_publication(
 }
 
 pub fn expected_end_block_selectors(block_number: u64) -> Vec<SysTxSelector> {
-    if block_number < 2 {
+    if !BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
         Vec::new()
     } else {
         vec![CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR]

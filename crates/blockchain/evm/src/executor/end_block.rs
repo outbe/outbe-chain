@@ -1,12 +1,12 @@
 //! Pre-end admission and the terminal call/cleanup execution phase.
 
 use super::*;
+use crate::config::system_txs::sign_end_system_tx;
 use crate::errors::ExecutorValidationError;
-use crate::factory::SystemCallGasBudget;
+use outbe_primitives::end_gas::{expected_call_event_gas_limit, expected_cleanup_gas_limit};
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas, BlockGasBudget, SystemTx,
-    SystemTxEnvelopeInput, SystemTxPhase, CALL_EVENT_PROCESSING_ORDINAL,
-    CLEANUP_PROCESSING_ORDINAL,
+    build_unsigned_system_tx_with_gas_limit, BlockGasBudget, SystemTx, SystemTxEnvelopeInput,
+    SystemTxPhase, CALL_EVENT_PROCESSING_ORDINAL, CLEANUP_PROCESSING_ORDINAL,
 };
 use reth_primitives_traits::Recovered;
 
@@ -14,12 +14,12 @@ struct AdmittedEndTx {
     input: SystemTx,
     ordinal: u8,
     gas_limit: u64,
+    capacity: u64,
 }
 
 struct EndTxCheck {
     block_number: u64,
-    capacity: u64,
-    call_gas_used: Option<u64>,
+    phase: SystemTxPhase,
     chain_id: u64,
     proposer: Address,
 }
@@ -29,7 +29,7 @@ fn admit_end_tx(
     signer: Address,
     check: EndTxCheck,
 ) -> Result<AdmittedEndTx, BlockExecutionError> {
-    if check.block_number < 2 {
+    if !BlockHeightRegime::for_block(check.block_number).has_end_zone_system_txs() {
         return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
     }
     let input = SystemTx::decode(tx.input().as_ref())
@@ -40,19 +40,14 @@ fn admit_end_tx(
     let ordinal = input
         .nonce_ordinal()
         .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
-    let gas_limit = expected_end_gas_limit(
-        &input,
-        ordinal,
-        check.capacity,
-        check.call_gas_used,
-        tx.gas_limit(),
-    )?;
+    let (capacity, gas_limit) =
+        expected_end_gas_limit(&input, ordinal, check.phase, tx.gas_limit())?;
     if tx.gas_limit() != gas_limit {
         return Err(ExecutorValidationError::EndBlockGasLimitMismatch {
             kind: input.name(),
             expected: gas_limit,
             actual: tx.gas_limit(),
-            capacity: check.capacity,
+            capacity,
         }
         .into());
     }
@@ -84,36 +79,41 @@ fn admit_end_tx(
         input,
         ordinal,
         gas_limit,
+        capacity,
     })
 }
 
 fn expected_end_gas_limit(
     input: &SystemTx,
     ordinal: u8,
-    capacity: u64,
-    call_gas_used: Option<u64>,
+    phase: SystemTxPhase,
     signed_limit: u64,
-) -> Result<u64, BlockExecutionError> {
-    let required = match input {
-        SystemTx::CallEventProcessing
-            if call_gas_used.is_none() && ordinal == CALL_EVENT_PROCESSING_ORDINAL =>
+) -> Result<(u64, u64), BlockExecutionError> {
+    let (capacity, required) = match (phase, input) {
+        (SystemTxPhase::EndBlockCallEvents { gas_capacity }, SystemTx::CallEventProcessing)
+            if ordinal == CALL_EVENT_PROCESSING_ORDINAL =>
         {
-            let encoded = SystemTx::CleanupProcessing
-                .encode()
-                .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?;
-            let cleanup_intrinsic = system_tx_intrinsic_gas(&encoded)
-                .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
-            capacity.checked_sub(cleanup_intrinsic)
+            (gas_capacity, expected_call_event_gas_limit(gas_capacity))
         }
-        SystemTx::CleanupProcessing
-            if ordinal == CLEANUP_PROCESSING_ORDINAL && call_gas_used.is_some() =>
-        {
-            call_gas_used.and_then(|used| capacity.checked_sub(used))
-        }
-        SystemTx::CallEventProcessing | SystemTx::CleanupProcessing => {
+        (
+            SystemTxPhase::EndBlockCleanup {
+                gas_capacity,
+                call_gas_used,
+            },
+            SystemTx::CleanupProcessing,
+        ) if ordinal == CLEANUP_PROCESSING_ORDINAL => (
+            gas_capacity,
+            expected_cleanup_gas_limit(gas_capacity, call_gas_used),
+        ),
+        (_, SystemTx::CallEventProcessing | SystemTx::CleanupProcessing) => {
+            let expected_phase = match phase {
+                SystemTxPhase::EndBlockCallEvents { .. } => "CallEventProcessing",
+                SystemTxPhase::EndBlockCleanup { .. } => "CleanupProcessing",
+                _ => "EndBlock",
+            };
             return Err(ExecutorValidationError::SystemTxPhaseMismatch {
                 body_index: usize::from(ordinal),
-                expected_phase: input.name(),
+                expected_phase,
                 actual_phase: input.name(),
             }
             .into());
@@ -122,15 +122,13 @@ fn expected_end_gas_limit(
             return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
         }
     };
-    required.ok_or_else(|| {
-        ExecutorValidationError::EndBlockGasLimitMismatch {
-            kind: input.name(),
-            expected: 0,
-            actual: signed_limit,
-            capacity,
-        }
-        .into()
-    })
+    let limit = required.ok_or(ExecutorValidationError::EndBlockGasLimitMismatch {
+        kind: input.name(),
+        expected: 0,
+        actual: signed_limit,
+        capacity,
+    })?;
+    Ok((capacity, limit))
 }
 
 impl<E: Evm> OutbeBlockExecutor<'_, E> {
@@ -167,7 +165,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     /// Repeated calls retain the captured capacity and do not execute the suffix twice.
     pub fn apply_end_block_phase<DB>(&mut self) -> Result<(), BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
@@ -176,34 +174,42 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         if matches!(self.system_tx_phase_cursor, SystemTxPhase::EndBlock { .. }) {
             return Ok(());
         }
+        let phase = self.enter_end_block_phase_if_needed()?;
+        if let SystemTxPhase::EndBlockCallEvents { gas_capacity } = phase {
+            self.execute_built_end_suffix(gas_capacity)?;
+        }
+        Ok(())
+    }
+
+    fn enter_end_block_phase_if_needed(&mut self) -> Result<SystemTxPhase, BlockExecutionError> {
+        if matches!(
+            self.system_tx_phase_cursor,
+            SystemTxPhase::EndBlockCallEvents { .. }
+                | SystemTxPhase::EndBlockCleanup { .. }
+                | SystemTxPhase::EndBlock { .. }
+        ) {
+            return Ok(self.system_tx_phase_cursor);
+        }
         let capacity = self
             .block_gas_budget()?
             .end_capacity(self.accounted_block_gas())
             .map_err(ExecutorValidationError::from)?;
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        if block_number >= 2 {
-            self.execute_built_end_suffix(capacity)?;
-        }
-        self.system_tx_phase_cursor = SystemTxPhase::EndBlock {
-            gas_capacity: capacity,
+        let next = if BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
+            SystemTxPhase::EndBlockCallEvents {
+                gas_capacity: capacity,
+            }
+        } else {
+            SystemTxPhase::EndBlock {
+                gas_capacity: capacity,
+            }
         };
-        Ok(())
-    }
-
-    fn captured_end_capacity(&mut self) -> Result<u64, BlockExecutionError> {
-        if let Some(capacity) = self.end_capacity {
-            return Ok(capacity);
-        }
-        let capacity = self
-            .block_gas_budget()?
-            .end_capacity(self.accounted_block_gas())
-            .map_err(ExecutorValidationError::from)?;
-        self.end_capacity = Some(capacity);
-        Ok(capacity)
+        self.system_tx_phase_cursor = next;
+        Ok(next)
     }
 
     fn end_block_proposer(&self, block_number: u64) -> Result<Address, BlockExecutionError> {
-        if block_number == 0 {
+        if BlockHeightRegime::for_block(block_number).is_genesis() {
             return Err(ExecutorValidationError::MissingBeginZoneProposerAddress.into());
         }
         self.proposer_evm_address
@@ -222,19 +228,13 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
 
     fn execute_built_end_suffix<DB>(&mut self, capacity: u64) -> Result<(), BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
-        let cleanup_intrinsic = system_tx_intrinsic_gas(
-            &SystemTx::CleanupProcessing
-                .encode()
-                .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?,
-        )
-        .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
-        let call_limit = capacity.checked_sub(cleanup_intrinsic).ok_or(
+        let call_limit = expected_call_event_gas_limit(capacity).ok_or(
             ExecutorValidationError::EndBlockGasLimitMismatch {
                 kind: "CallEventProcessing",
                 expected: 0,
@@ -244,10 +244,11 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         )?;
         let call_tx = self.sign_end_tx(SystemTx::CallEventProcessing, call_limit)?;
         self.execute_end_block_system_tx(call_tx.tx(), Address::from(*call_tx.signer()))?;
-        let call_gas_used = self
-            .end_call_gas_used
-            .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
-        let cleanup_limit = capacity.checked_sub(call_gas_used).ok_or(
+        let SystemTxPhase::EndBlockCleanup { call_gas_used, .. } = self.system_tx_phase_cursor
+        else {
+            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
+        };
+        let cleanup_limit = expected_cleanup_gas_limit(capacity, call_gas_used).ok_or(
             ExecutorValidationError::EndBlockGasLimitMismatch {
                 kind: "CleanupProcessing",
                 expected: 0,
@@ -274,39 +275,14 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     {
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let proposer = self.end_block_proposer(block_number)?;
-        let evm_signer = self
-            .evm_signer
-            .as_ref()
-            .ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
-        if evm_signer.address() != proposer {
-            return Err(ExecutorValidationError::SystemTxSignerMismatch {
-                body_index: usize::from(input.nonce_ordinal().unwrap_or(0)),
-                expected_phase: input.name(),
-                proposer,
-                signer: evm_signer.address(),
-            }
-            .into());
-        }
-        let ordinal = input
-            .nonce_ordinal()
-            .ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
-        let calldata = input
-            .encode()
-            .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?;
-        let unsigned = build_unsigned_system_tx_with_gas_limit(SystemTxEnvelopeInput {
-            ordinal,
+        sign_end_system_tx(
+            self.evm_signer.as_ref(),
+            proposer,
             block_number,
-            chain_id: self.chain_id,
-            calldata,
+            self.chain_id,
+            input,
             gas_limit,
-        })
-        .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
-        let signed = evm_signer.sign_unsigned(unsigned).map_err(|error| {
-            BlockExecutionError::other(
-                crate::errors::ExecutorValidationError::plan_visible_system_tx_gas(error),
-            )
-        })?;
-        Ok(Recovered::new_unchecked(signed, proposer))
+        )
     }
 
     pub(in crate::executor) fn execute_end_block_system_tx<DB>(
@@ -315,22 +291,24 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         signer: Address,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + SystemCallGasBudget,
+        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
         DB: StateDB,
         DB::Error: std::fmt::Display,
         E::Error: std::fmt::Display,
         E::Spec: Into<revm::primitives::hardfork::SpecId>,
     {
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let capacity = self.captured_end_capacity()?;
+        if !BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
+            return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
+        }
+        let phase = self.enter_end_block_phase_if_needed()?;
         let proposer = self.end_block_proposer(block_number)?;
         let admitted = admit_end_tx(
             tx,
             signer,
             EndTxCheck {
                 block_number,
-                capacity,
-                call_gas_used: self.end_call_gas_used,
+                phase,
                 chain_id: self.chain_id,
                 proposer,
             },
@@ -338,13 +316,16 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         let input = admitted.input;
         let ordinal = admitted.ordinal;
         let expected_limit = admitted.gas_limit;
-        self.inner
-            .evm
-            .set_end_block_gas_remaining(Some(expected_limit));
-        let transact_outcome = self.inner.evm.transact_system_call(
-            outbe_primitives::addresses::SYSTEM_ADDRESS,
-            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            tx.input().clone(),
+        let capacity = admitted.capacity;
+        let transact_outcome = with_preloaded_system_tx_context(
+            PreloadedSystemTxContext::for_end_block(proposer, expected_limit),
+            || {
+                self.inner.evm.transact_system_call(
+                    outbe_primitives::addresses::SYSTEM_ADDRESS,
+                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                    tx.input().clone(),
+                )
+            },
         );
         let charged = match transact_outcome {
             Ok(result) if result.result.is_success() => {
@@ -370,7 +351,9 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 self.commit_end_block_failure_receipt(tx, code, reason, gas_used)
             }
             Err(error) => {
-                if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_some() {
+                if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_some()
+                    || outbe_primitives::projection::NodeLocalExecutionAbort::find(&error).is_some()
+                {
                     return Err(BlockExecutionError::other(error));
                 }
                 let reason = format!(
@@ -381,15 +364,22 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             }
         };
         match input {
-            SystemTx::CallEventProcessing => self.end_call_gas_used = Some(charged),
+            SystemTx::CallEventProcessing => {
+                self.system_tx_phase_cursor = SystemTxPhase::EndBlockCleanup {
+                    gas_capacity: capacity,
+                    call_gas_used: charged,
+                };
+            }
             SystemTx::CleanupProcessing => {
-                let call_gas = self
-                    .end_call_gas_used
-                    .ok_or(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed)?;
-                if call_gas.saturating_add(charged) > capacity {
+                let SystemTxPhase::EndBlockCleanup { call_gas_used, .. } = phase else {
+                    return Err(
+                        ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into(),
+                    );
+                };
+                if call_gas_used.saturating_add(charged) > capacity {
                     return Err(ExecutorValidationError::EndBlockGasLimitMismatch {
                         kind: "CleanupProcessing",
-                        expected: capacity.saturating_sub(call_gas),
+                        expected: capacity.saturating_sub(call_gas_used),
                         actual: charged,
                         capacity,
                     }

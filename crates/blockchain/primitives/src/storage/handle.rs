@@ -290,6 +290,10 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| provider.deduct_gas(gas))
     }
 
+    pub fn enable_end_gas_metering(&self) -> Result<()> {
+        self.with_provider(|provider| provider.enable_end_gas_metering())
+    }
+
     pub fn gas_remaining(&self) -> Result<Option<u64>> {
         self.with_provider(|provider| Ok(provider.gas_remaining()))
     }
@@ -301,6 +305,24 @@ impl<'storage> StorageHandle<'storage> {
         let result = f();
         self.with_provider(|provider| provider.end_gas_ceiling())?;
         result
+    }
+
+    /// Runs one resumable end-zone unit inside a checkpoint, applying `kind`'s gas ceiling
+    /// when end-zone gas metering is active on this storage provider.
+    pub fn run_gas_bounded_unit<R>(
+        &self,
+        kind: crate::end_gas::UnitKind,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        let ceiling = crate::end_gas::unit_ceiling(kind);
+        if let Some(remaining) = self.gas_remaining()? {
+            if remaining < ceiling {
+                return Err(PrecompileError::OutOfGas);
+            }
+            self.with_gas_ceiling(ceiling, || self.with_checkpoint(f))
+        } else {
+            self.with_checkpoint(f)
+        }
     }
 
     pub fn refund_gas(&self, gas: i64) -> Result<()> {

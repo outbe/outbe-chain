@@ -153,6 +153,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint)>,
     /// Remaining gas of the active resumable-unit child frame.
     gas_child_remaining: Option<u64>,
+    /// Whether end-block gas metering is active for this storage dispatch.
+    end_gas_metered: bool,
 }
 
 impl CtxStorageProviderConfig {
@@ -257,6 +259,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             },
             checkpoints: Vec::new(),
             gas_child_remaining: None,
+            end_gas_metered: false,
         }
         .with_genesis_timestamp(config.genesis_timestamp)
     }
@@ -400,7 +403,12 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn gas_remaining(&self) -> Option<u64> {
-        Some(self.gas.remaining())
+        self.end_gas_metered.then(|| self.gas.remaining())
+    }
+
+    fn enable_end_gas_metering(&mut self) -> Result<()> {
+        self.end_gas_metered = true;
+        Ok(())
     }
 
     fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {

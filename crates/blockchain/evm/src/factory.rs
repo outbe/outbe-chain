@@ -37,12 +37,6 @@ use crate::{
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
-/// Gas budget for system calls. Begin-zone calls use the 10B lane.
-/// End-zone calls use the remaining end-block gas tracked on the EVM.
-pub trait SystemCallGasBudget {
-    fn set_end_block_gas_remaining(&mut self, remaining: Option<u64>);
-}
-
 #[cfg(test)]
 use reth_ethereum::evm::revm::context_interface::result::{
     ExecutionResult, OutOfGasError, ResultGas,
@@ -139,7 +133,6 @@ pub struct OutbeEvm<DB: Database, I, PRECOMPILE = EthPrecompiles> {
     precompiles_mut_called: bool,
     witness_state: Option<std::sync::Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
     detached_trace_guard: DetachedTraceCleanupGuard,
-    end_block_gas_remaining: Option<u64>,
 }
 
 /// Creates a new Outbe EVM instance.
@@ -161,13 +154,6 @@ pub fn outbe_evm<DB: Database, I, PRECOMPILE>(
         precompiles_mut_called: false,
         witness_state: None,
         detached_trace_guard: DetachedTraceCleanupGuard::default(),
-        end_block_gas_remaining: None,
-    }
-}
-
-impl<DB: Database, I, PRECOMPILE> SystemCallGasBudget for OutbeEvm<DB, I, PRECOMPILE> {
-    fn set_end_block_gas_remaining(&mut self, remaining: Option<u64>) {
-        self.end_block_gas_remaining = remaining;
     }
 }
 
@@ -376,11 +362,13 @@ where
             .is_ok_and(|input| {
                 input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock
             });
-        let gas_limit = if end_block_call {
-            self.end_block_gas_remaining.unwrap_or(0)
-        } else {
-            outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
-        };
+        let gas_limit = crate::sys_tx_precompile::current_preloaded_system_tx_context()
+            .and_then(|ctx| ctx.gas_limit_override)
+            .unwrap_or(if end_block_call {
+                0
+            } else {
+                outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+            });
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))
@@ -394,13 +382,6 @@ where
         let result =
             call.finish(handler.run_system_call(&mut NativeDelegationEvm(&mut self.inner)))?;
         let state = self.inner.finalize();
-
-        if end_block_call {
-            let used = result.tx_gas_used();
-            self.end_block_gas_remaining = self
-                .end_block_gas_remaining
-                .map(|remaining| remaining.saturating_sub(used));
-        }
         Ok(ResultAndState::new(result, state))
     }
 

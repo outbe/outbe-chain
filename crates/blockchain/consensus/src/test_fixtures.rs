@@ -419,7 +419,8 @@ pub(crate) fn block_with_gas_planned_system_inputs(
             .transactions
             .push(signer.sign_unsigned(unsigned).expect("system tx signs"));
     }
-    if block_number >= 2 {
+    if outbe_primitives::block::BlockHeightRegime::for_block(block_number).has_end_zone_system_txs()
+    {
         for input in [SystemTx::CallEventProcessing, SystemTx::CleanupProcessing] {
             let calldata = input.encode().expect("end input encodes");
             let gas_limit = outbe_primitives::system_tx::system_tx_intrinsic_gas(&calldata)
