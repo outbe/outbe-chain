@@ -14,6 +14,23 @@ alloy_sol_types::sol! {
 }
 
 #[test]
+fn duplicate_post_execution_returns_error_and_preserves_requests() {
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let mut state = state_with_active_proposer(OWNER);
+    let evm = config.evm_with_env(&mut state, test_evm_env(0, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
+    executor.apply_outbe_ethereum_post_execution().unwrap();
+    let requests = executor.ethereum_post_execution_requests.clone();
+    assert!(requests.is_some());
+
+    let error = executor.apply_outbe_ethereum_post_execution().unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("post-execution changes already applied"));
+    assert_eq!(executor.ethereum_post_execution_requests, requests);
+}
+
+#[test]
 fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
     use alloy_eips::eip6110::DEPOSIT_REQUEST_TYPE;
 

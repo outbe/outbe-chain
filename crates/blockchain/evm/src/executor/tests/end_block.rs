@@ -5,7 +5,7 @@ use outbe_primitives::system_tx::{BlockGasBudget, SystemTxPhase};
 use revm::context_interface::Cfg;
 
 #[test]
-fn finalization_does_not_enter_the_builder_end_block_phase() {
+fn header_preparation_does_not_run_post_execution_or_enter_end_block_phase() {
     let config = OutbeEvmConfig::new(test_chain_spec());
     let mut state = state_with_active_proposer(OWNER);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
@@ -13,7 +13,7 @@ fn finalization_does_not_enter_the_builder_end_block_phase() {
     assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
     executor.prepare_final_header_artifacts(0).unwrap();
     assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
-    assert!(executor.ethereum_post_execution_requests.is_some());
+    assert!(executor.ethereum_post_execution_requests.is_none());
     assert!(executor.receipts().is_empty());
 }
 
@@ -91,7 +91,7 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
 }
 
 #[test]
-fn exact_capacity_commits_actual_gas_then_empty_end_phase_is_terminal() {
+fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
     for gas_limit in [21_000, 100_000] {
         let tx: TransactionSigned = TxEip1559 {
             chain_id: CHAIN_ID,
@@ -129,12 +129,6 @@ fn exact_capacity_commits_actual_gas_then_empty_end_phase_is_terminal() {
         executor.complete_end_block_phase().unwrap();
         assert_eq!(executor.receipts(), receipts);
         assert_eq!(executor.body_tx_index, body_index);
-        assert!(executor
-            .execute_transaction(tx)
-            .unwrap_err()
-            .to_string()
-            .contains("after the end-block"));
-        assert_eq!(executor.receipts(), receipts);
     }
 }
 

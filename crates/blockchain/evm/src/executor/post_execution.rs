@@ -11,16 +11,17 @@ where
     E::Error: std::fmt::Display,
 {
     /// Applies Ethereum post-execution writes without Gwei conversion of native Outbe withdrawals.
-    /// Completes execution once, retaining EIP-7685 requests for final result assembly.
-    /// Builders call this before freezing artifacts and state roots; replay calls it at finish.
-    pub(in crate::executor) fn finalize_execution(&mut self) -> Result<(), BlockExecutionError> {
+    /// Retains EIP-7685 requests for final result assembly.
+    pub(in crate::executor) fn apply_outbe_ethereum_post_execution(
+        &mut self,
+    ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        if self.ethereum_post_execution_requests.is_some() {
-            return Ok(());
-        }
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
+        if self.ethereum_post_execution_requests.is_some() {
+            return Err(ExecutorValidationError::PostExecutionAlreadyApplied.into());
+        }
 
         validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
             .map_err(ExecutorValidationError::invalid_withdrawals)?;

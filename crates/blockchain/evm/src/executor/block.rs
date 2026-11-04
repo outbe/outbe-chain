@@ -212,13 +212,12 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         &self.final_extra_data
     }
 
-    #[cfg(test)]
     pub(crate) fn set_final_extra_data(&mut self, bytes: Bytes) {
         self.final_extra_data = bytes;
     }
 
     /// Pre-encodes the final execution-produced header fields.
-    /// Completes execution before encoding, including on the parallel-root path.
+    /// Settles burned fees before encoding on the parallel-root path.
     #[allow(private_bounds)]
     pub fn prepare_final_header_artifacts<DB>(
         &mut self,
@@ -230,7 +229,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Evm: reth_ethereum::evm::primitives::Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
         Evm::Error: std::fmt::Display,
     {
-        self.finalize_execution()?;
+        self.settle_block_burned_fees()?;
         let enclave_witness = self.final_enclave_witness_bytes()?;
         self.final_extra_data = crate::builder::encode_final_header_artifacts(
             self.final_extra_data.as_ref(),
@@ -383,7 +382,6 @@ where
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
-        self.finalize_execution()?;
         let block_timestamp =
             outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
                 .map_err(crate::errors::ExecutorValidationError::from)?;
@@ -392,6 +390,7 @@ where
         let block_artifacts =
             artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 
+        self.apply_outbe_ethereum_post_execution()?;
         let requests = self
             .ethereum_post_execution_requests
             .take()

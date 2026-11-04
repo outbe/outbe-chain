@@ -71,6 +71,20 @@ where
             assembler,
         }
     }
+
+    /// Encodes execution-produced header fields before state-root calculation.
+    pub fn finalize_header_artifacts(&mut self) -> Result<(), BlockExecutionError> {
+        let enclave_witness = self.executor.final_enclave_witness_bytes()?;
+        self.ctx.inner.extra_data = encode_final_header_artifacts(
+            self.ctx.inner.extra_data.as_ref(),
+            self.executor.current_execution_summary(),
+            self.ctx.timestamp_millis_part,
+            enclave_witness,
+        )?;
+        self.executor
+            .set_final_extra_data(self.ctx.inner.extra_data.clone());
+        Ok(())
+    }
 }
 
 impl<'a, DB, EVM> BlockBuilder for OutbeBlockBuilder<'a, EVM>
@@ -131,10 +145,8 @@ where
         // (`keccak256(rlp(standard_header))`). The execution-context
         // value is the canonical source for this block. This code overwrites
         // whatever the proposer placed in `extra_data` earlier.
-        self.executor
-            .prepare_final_header_artifacts(self.ctx.timestamp_millis_part)?;
-        self.ctx.inner.extra_data = self.executor.final_extra_data().clone();
         let execution_summary = self.executor.current_execution_summary();
+        self.finalize_header_artifacts()?;
         let (evm, result) = self.executor.finish()?;
         let (db, evm_env) = evm.finish();
 

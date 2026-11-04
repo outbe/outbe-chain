@@ -112,7 +112,9 @@ fn standalone_finish_and_post_execution_reject_wide_time_before_side_effects() {
             };
             assert_timestamp_validation(error);
         } else {
-            assert_timestamp_validation(executor.finalize_execution().unwrap_err());
+            assert_timestamp_validation(
+                executor.apply_outbe_ethereum_post_execution().unwrap_err(),
+            );
             assert!(executor.ethereum_post_execution_requests.is_none());
             assert!(executor.receipts().is_empty());
             drop(executor);

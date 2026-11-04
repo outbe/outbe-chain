@@ -225,6 +225,8 @@ pub enum ExecutorValidationError {
     InvalidNonGenesisBeneficiary { expected: Address, actual: Address },
     #[error("invalid system tx layout: {0}")]
     InvalidSystemTxLayout(String),
+    #[error("standard Ethereum post-execution changes already applied")]
+    PostExecutionAlreadyApplied,
     #[error("missing proposer EVM address for begin-zone system txs")]
     MissingBeginZoneProposerAddress,
     #[error("validate proposer identity: {0}")]
