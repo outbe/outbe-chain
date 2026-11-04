@@ -36,7 +36,7 @@ where
         &self,
         header: &OutbeHeader,
     ) -> Result<(), ConsensusError> {
-        if header.number() == 0 {
+        if outbe_primitives::block::BlockHeightRegime::for_block(header.number()).is_genesis() {
             return Ok(());
         }
         use outbe_primitives::radicle_genesis::{
@@ -227,15 +227,20 @@ fn validate_against_parent_timestamp_millis(
             }
             .into(),
         ),
-        TimestampAdvance::BelowMinAdvance { drift } if parent.number() > 0 => Err(
-            crate::errors::ConsensusPolicyError::TimestampBelowMinAdvance {
-                timestamp,
-                parent: parent_timestamp,
-                drift,
-                min_advance: MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-            }
-            .into(),
-        ),
+        TimestampAdvance::BelowMinAdvance { drift }
+            if !outbe_primitives::block::BlockHeightRegime::for_block(parent.number())
+                .is_genesis() =>
+        {
+            Err(
+                crate::errors::ConsensusPolicyError::TimestampBelowMinAdvance {
+                    timestamp,
+                    parent: parent_timestamp,
+                    drift,
+                    min_advance: MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
+                }
+                .into(),
+            )
+        }
         TimestampAdvance::BelowMinAdvance { .. } | TimestampAdvance::Inside { .. } => Ok(()),
     }
 }

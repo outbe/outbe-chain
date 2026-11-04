@@ -10,8 +10,7 @@ use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
         build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
-        SystemTx, SystemTxVisibleGasPlan, BOOTSTRAP_BLOCK_GAS_LIMIT, STEADY_BLOCK_GAS_LIMIT,
-        TEE_BOOTSTRAP_SELECTOR,
+        SystemTx, SystemTxVisibleGasPlan, STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -205,26 +204,31 @@ fn fixture_with_participant_count(count: u8) -> TeeBootstrapV2 {
 
 fn production_shaped_payload(count: u8) -> TeeBootstrapV2 {
     let mut payload = fixture_with_participant_count(count);
-    payload.authority.policy.measurement_rules = (1_u8..=64)
-        .map(|measurement| TeeMeasurementRuleV1 {
-            mrenclave: B256::repeat_byte(measurement),
-            mrsigner: B256::repeat_byte(0x82),
-            isv_prod_id: 1,
-            minimum_isv_svn: 2,
+    payload.authority.policy.measurement_rules = (0_u8..4)
+        .map(|index| TeeMeasurementRuleV1 {
+            mrenclave: B256::repeat_byte(0x81_u8.wrapping_add(index)),
+            mrsigner: B256::repeat_byte(0x82_u8.wrapping_add(index)),
+            isv_prod_id: u16::from(index) + 1,
+            minimum_isv_svn: u16::from(index) + 2,
             admit_from_height: 1,
             admit_until_height_exclusive: 1_000,
         })
         .collect();
     let policy_hash = payload.authority.policy.policy_hash().unwrap();
-    for participant in &mut payload.participants {
-        participant.intent.policy_hash = policy_hash;
-    }
     payload.collateral_pool = (1_u8..=8)
         .map(|kind| DcapCollateralComponentV1 {
             kind: DcapCollateralKind::try_from(kind).unwrap(),
-            bytes: vec![kind; 110 * 1024],
+            bytes: vec![kind; 4 * 1024],
         })
         .collect();
+    for (index, participant) in payload.participants.iter_mut().enumerate() {
+        let seed = u8::try_from(index + 1).unwrap();
+        participant.intent.policy_hash = policy_hash;
+        participant.evidence = TeeBootstrapParticipantEvidenceV2::Dcap {
+            quote: vec![seed; 4 * 1024],
+            collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+        };
+    }
     payload
 }
 
@@ -368,9 +372,10 @@ fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
 }
 
 #[test]
-fn block_gas_limit_is_500m_only_at_bootstrap_height() {
+fn block_gas_limit_is_uniform_steady_32m_across_all_heights() {
+    assert_eq!(STEADY_BLOCK_GAS_LIMIT, 32_000_000);
     assert_eq!(protocol_block_gas_limit(0), STEADY_BLOCK_GAS_LIMIT);
-    assert_eq!(protocol_block_gas_limit(1), BOOTSTRAP_BLOCK_GAS_LIMIT);
+    assert_eq!(protocol_block_gas_limit(1), STEADY_BLOCK_GAS_LIMIT);
     assert_eq!(protocol_block_gas_limit(2), STEADY_BLOCK_GAS_LIMIT);
 }
 
@@ -430,11 +435,11 @@ fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
 }
 
 #[test]
-fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
+fn eight_validator_bootstrap_fits_five_transaction_block() {
     use outbe_primitives::system_tx::{split_system_layout, validate_active_system_tx_set};
     use reth_ethereum::TransactionSigned;
 
-    let payload = production_shaped_payload(32);
+    let payload = production_shaped_payload(8);
     let logical_evidence_len = payload
         .logical_evidence(0)
         .unwrap()
@@ -442,7 +447,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .unwrap()
         .len();
     assert!(logical_evidence_len <= MAX_ATTESTATION_EVIDENCE_BYTES);
-    assert!(logical_evidence_len > 880 * 1024);
+    assert!(logical_evidence_len > 32 * 1024);
 
     let artifact = DkgBoundaryArtifact {
         epoch: 0,
@@ -481,7 +486,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .collect::<Vec<_>>();
     let bootstrap_len = encoded[2].len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
-    let gas_plan = SystemTxVisibleGasPlan::new(BOOTSTRAP_BLOCK_GAS_LIMIT, &encoded).unwrap();
+    let gas_plan = SystemTxVisibleGasPlan::new(STEADY_BLOCK_GAS_LIMIT, &encoded).unwrap();
     let transactions: Vec<TransactionSigned> = encoded
         .into_iter()
         .enumerate()
@@ -515,7 +520,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
         .sum::<usize>();
 
     assert!(
-        gas_plan.gas_limit(3).unwrap() < BOOTSTRAP_BLOCK_GAS_LIMIT,
+        gas_plan.gas_limit(3).unwrap() < STEADY_BLOCK_GAS_LIMIT,
         "OST3 must leave gas for the other five mandatory system transactions"
     );
     assert!(
@@ -603,16 +608,16 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
 
 #[test]
 fn assembly_rejects_logical_work_over_bootstrap_gas_cap() {
-    let payload = production_shaped_payload(56);
+    let payload = production_shaped_payload(9);
     let error = assembly::assemble_unsigned(authority(&payload), submissions(&payload))
-        .expect_err("logical QVL work over 500M must fail before signing");
+        .expect_err("logical QVL work over 32M must fail before signing");
     assert!(matches!(
         error,
         CodecError::LimitExceeded {
             field: "TeeBootstrapV2 worst-case visible gas",
             limit,
             actual,
-        } if limit == usize::try_from(BOOTSTRAP_BLOCK_GAS_LIMIT).unwrap() && actual > limit
+        } if limit == usize::try_from(STEADY_BLOCK_GAS_LIMIT).unwrap() && actual > limit
     ));
 }
 
@@ -635,20 +640,20 @@ fn canonical_bootstrap_protocol_fingerprint_is_stable() {
     assert_eq!(
         alloy_primitives::keccak256(&encoded),
         alloy_primitives::b256!(
-            "0x7200be3b5a0ccd931cb54cc53dd1b135cac6a9262d860b91653efce970629306"
+            "0x5a2280be6ef8b004c524fcd76ce5498b32c2591c74c416476bfbdbad1929fab2"
         ),
     );
     assert_eq!(
         payload.signing_hash().unwrap(),
         alloy_primitives::b256!(
-            "0x285a3f37d15df50b520d9955f3b476893b8b790381fdb13408a43148ad07edd0"
+            "0x9aed9070b21466562e37910bf1d82c7e0d624c83e4137bc35216925d1086461b"
         ),
     );
     assert_eq!(calldata.len(), 2448);
     assert_eq!(
         alloy_primitives::keccak256(&calldata),
         alloy_primitives::b256!(
-            "0x8fc64b5af09cc866703a677f290a7f87232b85e3f27f6e8f43b34144b28cb4bc"
+            "0x8247a1fbdb85bb249246bc247a7a0d38224e4069c61142e3962533f929fc2946"
         ),
     );
     assert_eq!(gas, 7308436);

@@ -48,8 +48,15 @@ where
         let tx = recovered.tx();
         let signer = *recovered.signer();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-            .map_err(ExecutorValidationError::block_artifacts)?;
+        let block_artifacts = match self.decoded_block_artifacts.clone() {
+            Some(artifacts) => artifacts,
+            None => {
+                let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+                    .map_err(ExecutorValidationError::block_artifacts)?;
+                self.decoded_block_artifacts = Some(artifacts.clone());
+                artifacts
+            }
+        };
 
         // Witness validate-without-reexec: if Phase 1
         // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
@@ -89,6 +96,7 @@ where
             // skipped (which never co-occurs with this main-loop
             // path entering Phase 1 in production).
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
+            verified_late_credit_signers: self.verified_late_credit_signers.clone(),
         };
         // An EVM result failure (`Revert` / `Halt`) in a phase where
         // `revert_fails_block()` is true fails the whole block. In a soft phase
@@ -358,7 +366,7 @@ where
     }
 
     fn validate_reserved_system_tx(
-        &self,
+        &mut self,
         transaction: (&TransactionSigned, Address),
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,

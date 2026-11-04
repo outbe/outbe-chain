@@ -114,7 +114,10 @@ impl OutbeEvmConfig {
         prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
         pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
     ) -> Result<Vec<Recovered<TransactionSigned>>, BlockExecutionError> {
-        if block_number == 0 {
+        use outbe_primitives::block::BlockHeightRegime;
+
+        let regime = BlockHeightRegime::for_block(block_number);
+        if regime.is_genesis() {
             if pending_tee_bootstrap.is_some() {
                 return Err(SystemTxBuildError::Ost3BootstrapInvalidAtGenesis.into());
             }
@@ -137,7 +140,7 @@ impl OutbeEvmConfig {
         let artifacts = decode_outbe_block_artifacts(extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
         let mut inputs = Vec::new();
-        if block_number >= 2 {
+        if regime.has_parent_finalization_accounting() {
             let metadata = parent_consensus_metadata
                 .ok_or(SystemTxBuildError::MissingParentConsensusMetadata)?;
             if metadata.finalized_block_hash != parent_hash {
@@ -148,18 +151,11 @@ impl OutbeEvmConfig {
                 .into());
             }
             inputs.push(SystemTx::CertifiedParentAccounting { metadata });
-        }
-        if block_number >= 2 {
-            // Mandatory inclusion-window phase after Phase 1. The
-            // gathered credits ride in the header artifact (empty until Phase 7).
-            // Executor parity re-derives the same input on the verifier path.
             inputs.push(SystemTx::LateFinalizeCredits {
                 artifact: artifacts.late_finalize_credits.clone().unwrap_or_default(),
             });
         }
-        if block_number >= 1 {
-            inputs.push(SystemTx::CycleTick);
-        }
+        inputs.push(SystemTx::CycleTick);
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             artifacts.consensus_header_artifact
         {
@@ -167,32 +163,20 @@ impl OutbeEvmConfig {
         }
         // The greenfield network has exactly one bootstrap wire path: canonical
         // OST3 is mandatory at block 1 and forbidden at every other height.
-        if block_number == 1 {
+        if regime.requires_genesis_bootstrap_txs() {
             let payload = pending_tee_bootstrap
                 .ok_or(SystemTxBuildError::MissingBlock1Ost3BootstrapPayload)?;
-            payload
-                .preflight()
-                .map_err(SystemTxBuildError::invalid_block1_ost3_bootstrap_payload)?;
-            let activation = self
-                .tee_attestation_v1
-                .activation()
-                .map_err(SystemTxBuildError::invalid_mandatory_tee_chain_spec_authority)?;
-            let expected_policy = activation
-                .policy_at(block_number)
-                .map_err(SystemTxBuildError::from)?;
-            if &payload.authority.policy != expected_policy {
-                return Err(SystemTxBuildError::Block1Ost3PolicyScheduleMismatch.into());
-            }
+            crate::tee_bootstrap::validate_tee_bootstrap_for_build(
+                block_number,
+                &payload,
+                &self.tee_attestation_v1,
+            )?;
             inputs.push(SystemTx::TeeBootstrap { payload });
         } else if pending_tee_bootstrap.is_some() {
             return Err(SystemTxBuildError::Ost3BootstrapForbiddenAtBlock { block_number }.into());
         }
-        if block_number >= 1 {
-            inputs.push(SystemTx::OracleSlashWindow);
-        }
-        if block_number >= 1 {
-            inputs.push(SystemTx::HookEvents);
-        }
+        inputs.push(SystemTx::OracleSlashWindow);
+        inputs.push(SystemTx::HookEvents);
         if let Some(batch) = artifacts.radicle_publication {
             inputs.push(SystemTx::RadiclePublication { batch });
         }
@@ -223,7 +207,7 @@ impl OutbeEvmConfig {
                 // calldata equality check guarantees that the tx fed to
                 // pre-exec and the tx in body[0] are byte-identical. This
                 // holds even if the calldata derivation ever diverges.
-                if ordinal == 0 && block_number >= 2 {
+                if ordinal == 0 && regime.has_parent_finalization_accounting() {
                     if let Some(prebuilt) = prebuilt_phase1_tx.as_ref() {
                         if prebuilt.tx().input() != &calldata {
                             return Err(SystemTxBuildError::PrebuiltPhase1CalldataDiverges.into());
@@ -277,12 +261,9 @@ impl OutbeEvmConfig {
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
         proposer_evm_address: Option<Address>,
     ) -> Result<Option<Recovered<TransactionSigned>>, BlockExecutionError> {
-        use outbe_primitives::protocol_schedule::OutbeProtocolSchedule;
+        use outbe_primitives::block::BlockHeightRegime;
 
-        // Gate on the protocol-schedule field rather than a
-        // magic literal `1`. The schedule is the single source of truth.
-        let schedule = OutbeProtocolSchedule::default();
-        if block_number <= schedule.genesis_bootstrap_block_number {
+        if !BlockHeightRegime::for_block(block_number).has_parent_finalization_accounting() {
             return Ok(None);
         }
 

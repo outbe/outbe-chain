@@ -4,6 +4,14 @@ type BeginSystemTransaction = (SystemTx, Option<AccountedParentArtifact>);
 
 type ExpectedSystemTransaction = (usize, SystemTx, Option<AccountedParentArtifact>, u64, u64);
 
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedBeginSystemTx {
+    pub input: SystemTx,
+    pub finalized_summary: Option<AccountedParentArtifact>,
+    pub visible_base_gas: u64,
+    pub gas_limit: u64,
+}
+
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     /// read the current begin-zone system-tx phase cursor.
     /// Test-only introspection point. The production driver is internal.
@@ -71,14 +79,20 @@ where
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<Vec<BeginSystemTransaction>, BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
+        use outbe_primitives::block::BlockHeightRegime;
 
+        let regime = BlockHeightRegime::for_block(block_number);
         // Genesis returns before inspecting queued bootstrap or body inputs.
-        if block_number == 0 {
+        if !regime.has_begin_zone_system_txs() {
             return Ok(Vec::new());
         }
         let mut system_txs = Vec::new();
-        if block_number >= 2 {
-            system_txs.push(self.certified_parent_begin_input(0)?);
+        if regime.has_parent_finalization_accounting() {
+            if let Some((input, summary)) = self.cached_phase1_input.clone() {
+                system_txs.push((input, Some(summary)));
+            } else {
+                system_txs.push(self.certified_parent_begin_input(0)?);
+            }
             self.append_begin_input(
                 &mut system_txs,
                 SystemTx::LateFinalizeCredits {
@@ -96,12 +110,12 @@ where
             let input = self.boundary_begin_input(system_txs.len(), artifact)?;
             system_txs.push((input, None));
         }
-        if block_number == 1 {
+        if regime.requires_genesis_bootstrap_txs() {
             let input = self.bootstrap_begin_input(system_txs.len())?;
             system_txs.push((input, None));
         }
         // Keep late OST3 rejection after boundary, before decoding Oracle.
-        if block_number != 1 && self.pending_tee_bootstrap.is_some() {
+        if !regime.requires_genesis_bootstrap_txs() && self.pending_tee_bootstrap.is_some() {
             return Err(
                 ExecutorValidationError::Ost3BootstrapForbiddenAtBlock { block_number }.into(),
             );
@@ -135,7 +149,7 @@ where
         Ok(())
     }
 
-    fn certified_parent_begin_input(
+    pub(crate) fn certified_parent_begin_input(
         &self,
         ordinal: usize,
     ) -> Result<BeginSystemTransaction, BlockExecutionError> {
@@ -221,61 +235,78 @@ where
         Ok(input)
     }
 
+    fn ensure_resolved_begin_zone(
+        &mut self,
+        block_number: u64,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<&[ResolvedBeginSystemTx], BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
+        if self.resolved_begin_zone.is_none() {
+            let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
+            let gas_inputs = system_txs
+                .iter()
+                .map(|(input, _)| {
+                    input.encode().map_err(|error| -> BlockExecutionError {
+                        ExecutorValidationError::encode_system_tx_for_visible_gas_plan(error).into()
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let gas_plan =
+                SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
+                    .map_err(|error| -> BlockExecutionError {
+                        ExecutorValidationError::plan_visible_system_tx_gas(error).into()
+                    })?;
+            let mut resolved = Vec::with_capacity(system_txs.len());
+            for (body_index, (input, finalized_summary)) in system_txs.into_iter().enumerate() {
+                let intrinsic_gas = gas_plan.intrinsic_gas(body_index).ok_or(
+                    ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index },
+                )?;
+                let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or(
+                    ExecutorValidationError::VisibleGasPlanMissingProtocolPrecharge { body_index },
+                )?;
+                let visible_base_gas = intrinsic_gas
+                    .checked_add(protocol_precharge)
+                    .ok_or(ExecutorValidationError::VisibleBaseGasOverflow { body_index })?;
+                let gas_limit = gas_plan
+                    .gas_limit(body_index)
+                    .ok_or(ExecutorValidationError::VisibleGasPlanMissingGasLimit { body_index })?;
+                resolved.push(ResolvedBeginSystemTx {
+                    input,
+                    finalized_summary,
+                    visible_base_gas,
+                    gas_limit,
+                });
+            }
+            self.resolved_begin_zone = Some(resolved);
+        }
+        Ok(self
+            .resolved_begin_zone
+            .as_deref()
+            .expect("resolved_begin_zone populated above"))
+    }
+
     fn expected_system_tx_at_body_index(
-        &self,
+        &mut self,
         body_index: usize,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<(SystemTx, Option<AccountedParentArtifact>, u64, u64), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-        let gas_inputs = system_txs
-            .iter()
-            .map(|(input, _)| {
-                input.encode().map_err(|error| -> BlockExecutionError {
-                    ExecutorValidationError::encode_system_tx_for_visible_gas_plan(error).into()
-                })
+        let resolved = self.ensure_resolved_begin_zone(block_number, block_artifacts)?;
+        resolved
+            .get(body_index)
+            .map(|entry| {
+                (
+                    entry.input.clone(),
+                    entry.finalized_summary,
+                    entry.visible_base_gas,
+                    entry.gas_limit,
+                )
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
-            .map_err(|error| -> BlockExecutionError {
-                ExecutorValidationError::plan_visible_system_tx_gas(error).into()
-            })?;
-        let intrinsic_gas = gas_plan
-            .intrinsic_gas(body_index)
-            .ok_or(ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index })?;
-        let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or(
-            ExecutorValidationError::VisibleGasPlanMissingProtocolPrecharge { body_index },
-        )?;
-        let visible_base_gas = intrinsic_gas
-            .checked_add(protocol_precharge)
-            .ok_or(ExecutorValidationError::VisibleBaseGasOverflow { body_index })?;
-        let gas_limit = gas_plan
-            .gas_limit(body_index)
-            .ok_or(ExecutorValidationError::VisibleGasPlanMissingGasLimit { body_index })?;
-        system_txs
-            .into_iter()
-            .nth(body_index)
-            .map(|(input, summary)| (input, summary, visible_base_gas, gas_limit))
             .ok_or_else(|| {
-                let has_boundary_outcome = matches!(
-                    block_artifacts.consensus_header_artifact,
-                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-                );
-                let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                let expected =
-                    outbe_primitives::system_tx::expected_begin_block_selectors_for_publication(
-                        block_number,
-                        has_boundary_outcome,
-                        has_tee_bootstrap,
-                        block_artifacts.radicle_publication.is_some(),
-                    );
-                ExecutorValidationError::UnexpectedBeginSystemTx {
-                    body_index,
-                    expected,
-                }
-                .into()
+                ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index }.into()
             })
     }
 
@@ -289,7 +320,7 @@ where
     /// for that body index. An example is block 1 + Phase 1 cursor, which is a
     /// programmer invariant violation.
     pub(in crate::executor) fn expected_system_tx_for_cursor(
-        &self,
+        &mut self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<ExpectedSystemTransaction, BlockExecutionError> {

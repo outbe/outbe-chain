@@ -25,6 +25,12 @@ where
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
+        let regime = outbe_primitives::block::BlockHeightRegime::for_block(block_number);
+
+        self.decoded_block_artifacts = None;
+        self.cached_phase1_input = None;
+        self.resolved_begin_zone = None;
+        self.verified_late_credit_signers = None;
 
         // Initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
@@ -33,17 +39,8 @@ where
         // with a zero placeholder tx_hash. The Phase 1 preflight overwrites it
         // once `verify_v2_proof` returns Ok and the system tx is committed in
         // pre-execution.
-        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_block(
-            block_number,
-            crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
-        );
-        if block_number > 0 && beneficiary != outbe_primitives::addresses::REWARDS_ADDRESS {
-            return Err(ExecutorValidationError::InvalidNonGenesisBeneficiary {
-                expected: outbe_primitives::addresses::REWARDS_ADDRESS,
-                actual: beneficiary,
-            }
-            .into());
-        }
+        self.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::initial_for_regime(regime);
+        crate::genesis::validate_block_beneficiary(regime, beneficiary)?;
         if let Some(error) = &self.system_layout_error {
             return Err(ExecutorValidationError::invalid_system_tx_layout(error).into());
         }
@@ -59,7 +56,7 @@ where
 
         // Pending-block RPC executes against its isolated EVM state.
         if !self.execute_outbe_block_hooks {
-            if block_number > 0 {
+            if regime.has_begin_zone_system_txs() {
                 self.init_rpc_direct_witness_state();
                 self.inner.evm.set_witness_state(self.witness_state.clone());
                 crate::executor::witness::install_detached_trace_witness_with_meta(
@@ -76,18 +73,15 @@ where
         // 4. Extract block context before taking a mutable DB borrow.
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
+        self.decoded_block_artifacts = Some(block_artifacts.clone());
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         let allow_boundary_proposer = self.boundary_allows_proposer(&block_artifacts, proposer);
-        if block_number > 0 {
+        crate::genesis::validate_genesis_enclave_witness(regime, &block_artifacts)?;
+        if regime.has_begin_zone_system_txs() {
             self.validate_proposer_identity(proposer, allow_boundary_proposer)?;
             self.init_block_witness_state(block_number, proposer, &block_artifacts)?;
-        } else if block_artifacts.enclave_witness.is_some() {
-            return Err(crate::executor::witness::witness_fault_to_block_error(
-                outbe_tee::witness::BlockWitnessFault::TapeInvalid,
-                "genesis block 0 must not carry enclave_witness",
-            ));
         }
 
         // Phase 1 `verify_v2_proof`
@@ -203,6 +197,7 @@ where
                     canonical_vrf_proof_hash: self
                         .verified_phase1_vrf_proof_hash
                         .unwrap_or(B256::ZERO),
+                    verified_late_credit_signers: self.verified_late_credit_signers.clone(),
                 }),
                 hook_event_logs: self.whitelisted_hook_event_logs.clone(),
             },

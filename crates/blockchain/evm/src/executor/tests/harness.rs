@@ -6,7 +6,7 @@ use super::{OutbeBlockExecutor, B256};
 // it. See `with_phase1_verify_disabled`.
 #[cfg(test)]
 thread_local! {
-    pub(in crate::executor) static PHASE1_VERIFY_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub(crate) static PHASE1_VERIFY_DISABLED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Test-only guard that disables the Phase 1 `verify_v2_proof` preflight

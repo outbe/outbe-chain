@@ -5,7 +5,8 @@ use outbe_primitives::system_tx::binding::{self, ParentAccountingBindingError};
 use outbe_primitives::{reshare_artifact::OutbeBlockArtifacts, system_tx::SystemTxLayout};
 
 pub(super) fn validate_beneficiary(header: &OutbeHeader) -> Result<(), ConsensusError> {
-    if header.number() > 0 && header.beneficiary() != REWARDS_ADDRESS {
+    let regime = outbe_primitives::block::BlockHeightRegime::for_block(header.number());
+    if !regime.is_genesis() && header.beneficiary() != REWARDS_ADDRESS {
         return Err(
             crate::errors::ConsensusPolicyError::NonGenesisBeneficiaryMismatch {
                 expected: REWARDS_ADDRESS,

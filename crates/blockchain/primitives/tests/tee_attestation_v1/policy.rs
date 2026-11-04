@@ -69,7 +69,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let first_hash = first.policy_hash().unwrap();
     assert_eq!(
         hex::encode(first_hash),
-        "c89d53264d68786a3126be04cc47799598c92871b0088aad1d23c397d1f47847"
+        "4fb9b90181c4e59a48efbfbdff0c39e34b88287b11d85f45875d4c4a4682d725"
     );
     let mut second = policy(2, 100, first_hash);
     second.accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::UpToDateOnly;
@@ -91,7 +91,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let encoded = schedule.encode_canonical().unwrap();
     assert_eq!(
         hex::encode(schedule.schedule_hash().unwrap()),
-        "7f30b7850c913f571dee9cb8dbb8290f15903771a43d2c7f8b4ba6629f3dedf9"
+        "1878b25730d0174117a96a8d1dd46e4cbf1fc220411fcf9809b79c150b980f0b"
     );
     assert_eq!(
         TeePolicyScheduleV1::decode_canonical(&encoded).unwrap(),

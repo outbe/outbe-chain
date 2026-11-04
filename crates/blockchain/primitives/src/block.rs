@@ -16,6 +16,80 @@ impl From<ZeroGenesisTimestamp> for PrecompileError {
     }
 }
 
+/// Canonical protocol height regime for a block.
+///
+/// Ontologically partitions the chain's block numbers into three distinct
+/// lifecycle regimes so callers do not scatter raw `0`, `1`, and `>= 2`
+/// comparisons across consensus, payload building, and EVM execution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum BlockHeightRegime {
+    /// Block 0: Canonical genesis block.
+    /// Carries no transactions, no begin-zone system txs, and no execution witness.
+    Genesis,
+    /// Block 1: One-time network bootstrap block.
+    /// Carries begin-zone system txs (`CycleTick`, mandatory epoch-0 `BoundaryOutcome`,
+    /// mandatory `TeeBootstrap`, `OracleSlashWindow`, `HookEvents`, optional `RadiclePublication`),
+    /// no parent finalization accounting (`CertifiedParentAccounting` / `LateFinalizeCredits`),
+    /// and no user transactions.
+    GenesisBootstrap,
+    /// Block `>= 2`: Steady-state execution regime.
+    /// Begins with mandatory `CertifiedParentAccounting` (ordinal 0) and
+    /// `LateFinalizeCredits` (ordinal 1), followed by the remaining begin-zone
+    /// system txs and user transactions.
+    SteadyState,
+}
+
+impl BlockHeightRegime {
+    #[must_use]
+    pub const fn for_block(block_number: u64) -> Self {
+        match block_number {
+            0 => Self::Genesis,
+            crate::system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER => Self::GenesisBootstrap,
+            _ => Self::SteadyState,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_genesis(self) -> bool {
+        matches!(self, Self::Genesis)
+    }
+
+    #[must_use]
+    pub const fn is_genesis_bootstrap(self) -> bool {
+        matches!(self, Self::GenesisBootstrap)
+    }
+
+    #[must_use]
+    pub const fn is_steady_state(self) -> bool {
+        matches!(self, Self::SteadyState)
+    }
+
+    #[must_use]
+    pub const fn has_begin_zone_system_txs(self) -> bool {
+        !matches!(self, Self::Genesis)
+    }
+
+    #[must_use]
+    pub const fn has_parent_finalization_accounting(self) -> bool {
+        matches!(self, Self::SteadyState)
+    }
+
+    #[must_use]
+    pub const fn requires_genesis_bootstrap_txs(self) -> bool {
+        matches!(self, Self::GenesisBootstrap)
+    }
+
+    #[must_use]
+    pub const fn allows_user_transactions(self) -> bool {
+        matches!(self, Self::SteadyState)
+    }
+
+    #[must_use]
+    pub const fn requires_rewards_beneficiary(self) -> bool {
+        !matches!(self, Self::Genesis)
+    }
+}
+
 /// The lifecycle executor builds this context from canonical block/header,
 /// chain, and validator-set state before calling runtime modules.
 #[derive(Clone, Debug)]
@@ -27,6 +101,13 @@ pub struct BlockContext {
     pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
+}
+
+impl BlockContext {
+    #[must_use]
+    pub const fn regime(&self) -> BlockHeightRegime {
+        BlockHeightRegime::for_block(self.block_number)
+    }
 }
 
 #[derive(Clone)]
@@ -112,5 +193,40 @@ mod tests {
 
             assert_eq!(OutputLifecycle::end_block(&ctx).unwrap(), 7);
         });
+    }
+
+    #[test]
+    fn block_height_regime_partitions_genesis_bootstrap_and_steady_state() {
+        let g = BlockHeightRegime::for_block(0);
+        assert!(g.is_genesis());
+        assert!(!g.is_genesis_bootstrap());
+        assert!(!g.is_steady_state());
+        assert!(!g.has_begin_zone_system_txs());
+        assert!(!g.has_parent_finalization_accounting());
+        assert!(!g.requires_genesis_bootstrap_txs());
+        assert!(!g.allows_user_transactions());
+        assert!(!g.requires_rewards_beneficiary());
+
+        let b = BlockHeightRegime::for_block(1);
+        assert!(!b.is_genesis());
+        assert!(b.is_genesis_bootstrap());
+        assert!(!b.is_steady_state());
+        assert!(b.has_begin_zone_system_txs());
+        assert!(!b.has_parent_finalization_accounting());
+        assert!(b.requires_genesis_bootstrap_txs());
+        assert!(!b.allows_user_transactions());
+        assert!(b.requires_rewards_beneficiary());
+
+        for height in [2, 3, 100, u64::MAX] {
+            let s = BlockHeightRegime::for_block(height);
+            assert!(!s.is_genesis());
+            assert!(!s.is_genesis_bootstrap());
+            assert!(s.is_steady_state());
+            assert!(s.has_begin_zone_system_txs());
+            assert!(s.has_parent_finalization_accounting());
+            assert!(!s.requires_genesis_bootstrap_txs());
+            assert!(s.allows_user_transactions());
+            assert!(s.requires_rewards_beneficiary());
+        }
     }
 }

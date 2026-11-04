@@ -278,7 +278,7 @@ mod tests {
                 inputs: steady_system_inputs(parent_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
-            30_000_000,
+            outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT,
         );
 
         validate_system_tx_leader_binding_for_activation(
@@ -310,7 +310,7 @@ mod tests {
                 inputs: steady_system_inputs(parent_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
-            outbe_primitives::system_tx::BOOTSTRAP_BLOCK_GAS_LIMIT,
+            outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT + 1,
         );
 
         let error = validate_system_tx_leader_binding_for_activation(
@@ -321,7 +321,7 @@ mod tests {
                 (&scheme_provider, &committee_provider),
             ),
         )
-        .expect_err("500M is valid only at block 1");
+        .expect_err("non-protocol gas limit must be rejected");
         assert!(error.to_string().contains("protocol gas limit"));
     }
 

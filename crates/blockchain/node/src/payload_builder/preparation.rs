@@ -95,14 +95,17 @@ pub(super) fn prepare(
     // stale `TeeBootstrap` when it later proposes block N > 1. The executor
     // rejects that payload (`committee_snapshot_block` mismatch / already
     // bootstrapped), and that slot stalls.
-    let pending_tee_bootstrap = if block_number == 1 {
-        evm_config
-            .bridge
-            .as_ref()
-            .and_then(|bridge| bridge.pending_tee_bootstrap())
-    } else {
-        None
-    };
+    let pending_tee_bootstrap =
+        if outbe_primitives::block::BlockHeightRegime::for_block(block_number)
+            .requires_genesis_bootstrap_txs()
+        {
+            evm_config
+                .bridge
+                .as_ref()
+                .and_then(|bridge| bridge.pending_tee_bootstrap())
+        } else {
+            None
+        };
 
     let env = OutbeNextBlockEnvAttributes {
         inner: NextBlockEnvAttributes {

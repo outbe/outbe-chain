@@ -1,7 +1,7 @@
 //! Pure system-transaction layout and header/body bindings.
 use super::{
-    split_system_layout, validate_system_tx_set_for_publication, SystemTx, SystemTxError,
-    SystemTxLayout, TEE_BOOTSTRAP_SELECTOR,
+    split_system_layout, validate_system_tx_set_for_publication, BlockHeightRegime, SystemTx,
+    SystemTxError, SystemTxLayout, TEE_BOOTSTRAP_SELECTOR,
 };
 use crate::{
     error::PrecompileError,
@@ -114,7 +114,7 @@ pub fn validate_parent_accounting_binding(
     layout: &SystemTxLayout<'_>,
     header: &OutbeHeader,
 ) -> Result<(), ParentAccountingBindingError> {
-    if header.number() < 2 {
+    if !BlockHeightRegime::for_block(header.number()).has_parent_finalization_accounting() {
         return Ok(());
     }
     let tx = *layout

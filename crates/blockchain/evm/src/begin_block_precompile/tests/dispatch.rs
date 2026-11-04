@@ -65,6 +65,7 @@ fn dispatch_cycle_tick_records_preloaded_proposer() {
                 finalized_summary: None,
                 allow_boundary_proposer: false,
                 canonical_vrf_proof_hash: B256::ZERO,
+                verified_late_credit_signers: None,
             },
             || dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO),
         )

@@ -173,13 +173,14 @@ fn validate_boundary_epoch_transition(
 ) -> outbe_primitives::error::Result<bool> {
     use crate::errors::ExecutorHookError;
 
-    if block_number == 1 && current_epoch == 0 && incoming_epoch == 0 {
+    let regime = BlockHeightRegime::for_block(block_number);
+    if regime.is_genesis_bootstrap() && current_epoch == 0 && incoming_epoch == 0 {
         return Ok(false);
     }
     let next_epoch = current_epoch
         .checked_add(1)
         .ok_or(ExecutorHookError::ValidatorSetEpochOverflow)?;
-    if block_number > 1 && incoming_epoch == next_epoch {
+    if regime.is_steady_state() && incoming_epoch == next_epoch {
         return Ok(true);
     }
     Err(ExecutorHookError::InvalidBoundaryEpochTransition {
@@ -265,11 +266,11 @@ where
     E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn begin_zone_proposer(
+    pub(crate) fn begin_zone_proposer(
         &self,
         block_number: u64,
     ) -> Result<Option<Address>, BlockExecutionError> {
-        if block_number == 0 {
+        if !BlockHeightRegime::for_block(block_number).has_begin_zone_system_txs() {
             return Ok(None);
         }
         self.proposer_evm_address
@@ -327,7 +328,7 @@ where
         Err(ExecutorValidationError::ProposerNotActiveConsensusParticipant { proposer }.into())
     }
 
-    pub(in crate::executor) fn boundary_allows_proposer(
+    pub(crate) fn boundary_allows_proposer(
         &self,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         proposer: Address,
