@@ -153,10 +153,11 @@ contract HyperlaneGatewayAdapter is
         bytes memory metadata = _metadata(GasLimitAttribute.resolve(attributes, defaultGasLimit()));
 
         // msg.value funds the Hyperlane native fee.
-        MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, metadata);
+        // The Hyperlane messageId is returned as sendId, to follow the delivery in the Hyperlane Explorer.
+        bytes32 messageId = MAILBOX.dispatch{value: msg.value}(domain, remoteRouter, adapterPayload, metadata);
 
-        emit MessageSent(bytes32(0), sender, recipient, payload, msg.value, attributes);
-        return bytes32(0);
+        emit MessageSent(messageId, sender, recipient, payload, msg.value, attributes);
+        return messageId;
     }
 
     /// @inheritdoc IGatewayQuote
