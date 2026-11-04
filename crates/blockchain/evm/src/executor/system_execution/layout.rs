@@ -73,14 +73,32 @@ where
         })
     }
 
+    /// Advances the begin-zone system-transaction phase cursor after committing
+    /// a begin-zone system transaction receipt (or consuming a pre-executed Phase 1 witness).
+    pub(in crate::executor) fn advance_system_tx_phase_cursor(
+        &mut self,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) {
+        let has_boundary_outcome = matches!(
+            block_artifacts.consensus_header_artifact,
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+        );
+        let has_tee_bootstrap = self.block_has_tee_bootstrap();
+        let has_publication = block_artifacts.radicle_publication.is_some();
+        self.system_tx_phase_cursor = self
+            .system_tx_phase_cursor
+            .advance_after_commit_with_publication(
+                has_boundary_outcome,
+                has_tee_bootstrap,
+                has_publication,
+            );
+    }
+
     pub(in crate::executor) fn begin_block_system_tx_inputs(
         &self,
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<Vec<BeginSystemTransaction>, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-        use outbe_primitives::block::BlockHeightRegime;
-
         let regime = BlockHeightRegime::for_block(block_number);
         // Genesis returns before inspecting queued bootstrap or body inputs.
         if !regime.has_begin_zone_system_txs() {
@@ -88,38 +106,15 @@ where
         }
         let mut system_txs = Vec::new();
         if regime.has_parent_finalization_accounting() {
-            let (input, summary) = match self.cached_phase1_input.clone() {
-                Some(cached) => cached,
-                None => self.certified_parent_begin_input(0)?,
-            };
-            system_txs.push((input, Some(summary)));
-            self.append_begin_input(
-                &mut system_txs,
-                SystemTx::LateFinalizeCredits {
-                    artifact: block_artifacts
-                        .late_finalize_credits
-                        .clone()
-                        .unwrap_or_default(),
-                },
-            )?;
+            self.append_parent_accounting_inputs(&mut system_txs, block_artifacts)?;
         }
         self.append_begin_input(&mut system_txs, SystemTx::CycleTick)?;
-        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
-            &block_artifacts.consensus_header_artifact
-        {
-            let input = self.boundary_begin_input(system_txs.len(), artifact)?;
-            system_txs.push((input, None));
-        }
-        if regime.requires_genesis_bootstrap_txs() {
-            let input = self.bootstrap_begin_input(system_txs.len())?;
-            system_txs.push((input, None));
-        }
-        // Keep late OST3 rejection after boundary, before decoding Oracle.
-        if !regime.requires_genesis_bootstrap_txs() && self.pending_tee_bootstrap.is_some() {
-            return Err(
-                ExecutorValidationError::Ost3BootstrapForbiddenAtBlock { block_number }.into(),
-            );
-        }
+        self.append_boundary_and_bootstrap_inputs(
+            &mut system_txs,
+            regime,
+            block_number,
+            block_artifacts,
+        )?;
         self.append_begin_input(&mut system_txs, SystemTx::OracleSlashWindow)?;
         self.append_begin_input(&mut system_txs, SystemTx::HookEvents)?;
         if let Some(batch) = &block_artifacts.radicle_publication {
@@ -131,6 +126,54 @@ where
             )?;
         }
         Ok(system_txs)
+    }
+
+    fn append_parent_accounting_inputs(
+        &self,
+        system_txs: &mut Vec<BeginSystemTransaction>,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<(), BlockExecutionError> {
+        let (input, summary) = match self.cached_phase1_input.clone() {
+            Some(cached) => cached,
+            None => self.certified_parent_begin_input(0)?,
+        };
+        system_txs.push((input, Some(summary)));
+        self.append_begin_input(
+            system_txs,
+            SystemTx::LateFinalizeCredits {
+                artifact: block_artifacts
+                    .late_finalize_credits
+                    .clone()
+                    .unwrap_or_default(),
+            },
+        )
+    }
+
+    fn append_boundary_and_bootstrap_inputs(
+        &self,
+        system_txs: &mut Vec<BeginSystemTransaction>,
+        regime: BlockHeightRegime,
+        block_number: u64,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<(), BlockExecutionError> {
+        use crate::errors::ExecutorValidationError;
+
+        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
+            &block_artifacts.consensus_header_artifact
+        {
+            let input = self.boundary_begin_input(system_txs.len(), artifact)?;
+            system_txs.push((input, None));
+        }
+        if regime.requires_genesis_bootstrap_txs() {
+            let input = self.bootstrap_begin_input(system_txs.len())?;
+            system_txs.push((input, None));
+        } else if self.pending_tee_bootstrap.is_some() {
+            // Keep late OST3 rejection after boundary, before decoding Oracle.
+            return Err(
+                ExecutorValidationError::Ost3BootstrapForbiddenAtBlock { block_number }.into(),
+            );
+        }
+        Ok(())
     }
 
     /// Admit a simple phase and advance its ordinal only after validation.
@@ -240,50 +283,55 @@ where
         block_number: u64,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<&[ResolvedBeginSystemTx], BlockExecutionError> {
+        if self.resolved_begin_zone.is_none() {
+            let resolved = self.build_resolved_begin_zone(block_number, block_artifacts)?;
+            return Ok(self.resolved_begin_zone.insert(resolved).as_slice());
+        }
+        Ok(self.resolved_begin_zone.as_deref().unwrap_or(&[]))
+    }
+
+    fn build_resolved_begin_zone(
+        &self,
+        block_number: u64,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+    ) -> Result<Vec<ResolvedBeginSystemTx>, BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        if self.resolved_begin_zone.is_none() {
-            let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
-            let gas_inputs = system_txs
-                .iter()
-                .map(|(input, _)| {
-                    input.encode().map_err(|error| -> BlockExecutionError {
-                        ExecutorValidationError::encode_system_tx_for_visible_gas_plan(error).into()
-                    })
+        let system_txs = self.begin_block_system_tx_inputs(block_number, block_artifacts)?;
+        let gas_inputs = system_txs
+            .iter()
+            .map(|(input, _)| {
+                input.encode().map_err(|error| -> BlockExecutionError {
+                    ExecutorValidationError::encode_system_tx_for_visible_gas_plan(error).into()
                 })
-                .collect::<Result<Vec<_>, _>>()?;
-            let gas_plan =
-                SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
-                    .map_err(|error| -> BlockExecutionError {
-                        ExecutorValidationError::plan_visible_system_tx_gas(error).into()
-                    })?;
-            let mut resolved = Vec::with_capacity(system_txs.len());
-            for (body_index, (input, finalized_summary)) in system_txs.into_iter().enumerate() {
-                let intrinsic_gas = gas_plan.intrinsic_gas(body_index).ok_or(
-                    ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index },
-                )?;
-                let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or(
-                    ExecutorValidationError::VisibleGasPlanMissingProtocolPrecharge { body_index },
-                )?;
-                let visible_base_gas = intrinsic_gas
-                    .checked_add(protocol_precharge)
-                    .ok_or(ExecutorValidationError::VisibleBaseGasOverflow { body_index })?;
-                let gas_limit = gas_plan
-                    .gas_limit(body_index)
-                    .ok_or(ExecutorValidationError::VisibleGasPlanMissingGasLimit { body_index })?;
-                resolved.push(ResolvedBeginSystemTx {
-                    input,
-                    finalized_summary,
-                    visible_base_gas,
-                    gas_limit,
-                });
-            }
-            self.resolved_begin_zone = Some(resolved);
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let gas_plan = SystemTxVisibleGasPlan::new(self.inner.evm.block().gas_limit(), &gas_inputs)
+            .map_err(|error| -> BlockExecutionError {
+                ExecutorValidationError::plan_visible_system_tx_gas(error).into()
+            })?;
+        let mut resolved = Vec::with_capacity(system_txs.len());
+        for (body_index, (input, finalized_summary)) in system_txs.into_iter().enumerate() {
+            let intrinsic_gas = gas_plan
+                .intrinsic_gas(body_index)
+                .ok_or(ExecutorValidationError::VisibleGasPlanMissingIntrinsicGas { body_index })?;
+            let protocol_precharge = gas_plan.protocol_precharge(body_index).ok_or(
+                ExecutorValidationError::VisibleGasPlanMissingProtocolPrecharge { body_index },
+            )?;
+            let visible_base_gas = intrinsic_gas
+                .checked_add(protocol_precharge)
+                .ok_or(ExecutorValidationError::VisibleBaseGasOverflow { body_index })?;
+            let gas_limit = gas_plan
+                .gas_limit(body_index)
+                .ok_or(ExecutorValidationError::VisibleGasPlanMissingGasLimit { body_index })?;
+            resolved.push(ResolvedBeginSystemTx {
+                input,
+                finalized_summary,
+                visible_base_gas,
+                gas_limit,
+            });
         }
-        Ok(self
-            .resolved_begin_zone
-            .as_deref()
-            .expect("resolved_begin_zone populated above"))
+        Ok(resolved)
     }
 
     fn expected_system_tx_at_body_index(

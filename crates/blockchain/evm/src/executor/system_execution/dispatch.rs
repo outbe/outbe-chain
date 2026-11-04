@@ -18,9 +18,6 @@ struct ReservedSystemReceiptContext {
     visible_base_gas: u64,
     visible_gas_limit: u64,
     available_visible_gas: u64,
-    has_boundary_outcome: bool,
-    has_tee_bootstrap: bool,
-    has_publication: bool,
 }
 
 #[allow(private_bounds)]
@@ -48,31 +45,12 @@ where
         let tx = recovered.tx();
         let signer = *recovered.signer();
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let block_artifacts = match self.decoded_block_artifacts.clone() {
-            Some(artifacts) => artifacts,
-            None => {
-                let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
-                    .map_err(ExecutorValidationError::block_artifacts)?;
-                self.decoded_block_artifacts = Some(artifacts.clone());
-                artifacts
-            }
-        };
+        let block_artifacts = self.ensure_decoded_block_artifacts()?;
 
-        // Witness validate-without-reexec: if Phase 1
-        // was already committed in `apply_pre_execution_changes::apply_phase1_commit_in_preexec`,
-        // the cursor carries the cached witness `tx_hash`. Body[0] in the
-        // main tx loop is the proposer-supplied Phase 1 tx. Validate that it
-        // matches the cache (signature hash) and skip re-execution.
-        // Receipt + state already exist from the pre-exec commit.
         if self.consume_preexecuted_phase1_witness(tx, &block_artifacts)? {
             return Ok(None);
         }
 
-        // cursor-driven phase routing replaces the previous
-        // `self.inner.receipts.len()` derivation. The cursor was
-        // initialised in `apply_pre_execution_changes` and advances
-        // exactly once per consumed begin-zone system tx (see the
-        // `advance_after_commit` call below).
         let ValidatedReservedSystemTx {
             body_index,
             input,
@@ -90,54 +68,13 @@ where
             proposer,
             finalized_summary,
             allow_boundary_proposer: self.boundary_allows_proposer(&block_artifacts, proposer),
-            // same VRF-proof-hash plumbing as the
-            // pre-exec commit path. The preflight caches it. The fallback
-            // value `B256::ZERO` is used only when the preflight was
-            // skipped (which never co-occurs with this main-loop
-            // path entering Phase 1 in production).
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: self.verified_late_credit_signers.clone(),
         };
-        // An EVM result failure (`Revert` / `Halt`) in a phase where
-        // `revert_fails_block()` is true fails the whole block. In a soft phase
-        // (OracleSlashWindow, HookEvents), the failure becomes a
-        // `status=0` synthetic receipt with one `OutbeFailure(code, reason)`
-        // log emitted from `OUTBE_SYSTEM_TX_ADDRESS`. revm did not commit the call, so
-        // no state change leaks. Raw `Err` from the system-call engine remains fatal
-        // because upstream revm documents that the journal may be inconsistent on that
-        // path. Body-parity validation above (decode / phase / calldata / signature /
-        // signer) also remains fatal: those are validator-side checks that the proposer
-        // never produces for itself.
         let available_visible_gas =
             reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;
-        let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
-            self.inner.evm.transact_system_call(
-                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                tx.input().clone(),
-            )
-        });
-        // precompute the boundary-outcome flag so the cursor
-        // advance below stays consistent with the resolved expected set
-        // for this block (block 1 always carries the boundary outcome
-        // under V2, and other blocks depend on the header artifact).
-        let has_boundary_outcome = matches!(
-            block_artifacts.consensus_header_artifact,
-            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-        );
-        let has_tee_bootstrap = self.block_has_tee_bootstrap();
-        // Only EVM result failures use the soft-failure receipt path.
-        // Raw engine/provider `Err` was handled above as fatal.
-        let expected_phase = input.name();
-        let result = transact_outcome.map_err(|error| {
-            let reason = format!(
-                "system tx {expected_phase} execution failed at body_index={body_index}: {error}"
-            );
-            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
-                tracing::error!(target: "outbe::executor", %reason);
-            }
-            BlockExecutionError::other(error)
-        })?;
+        let output =
+            self.invoke_reserved_system_call(tx, body_index, input.name(), phase_context)?;
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
             input,
@@ -145,17 +82,8 @@ where
             visible_base_gas,
             visible_gas_limit,
             available_visible_gas,
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            has_publication: block_artifacts.radicle_publication.is_some(),
         };
-        let is_success = result.result.is_success();
-        let output = EthTxResult {
-            result,
-            blob_gas_used: 0,
-            tx_type: tx.tx_type(),
-        };
-        if !is_success {
+        if !output.result.result.is_success() {
             if !f(&output).should_commit() {
                 self.check_no_witness_fault()?;
                 return Ok(None);
@@ -165,9 +93,52 @@ where
                 tx,
                 &output.result.result,
                 receipt_context,
+                &block_artifacts,
             );
         }
-        self.commit_reserved_success_receipt(output, receipt_context, f)
+        self.commit_reserved_success_receipt(output, receipt_context, &block_artifacts, f)
+    }
+
+    fn ensure_decoded_block_artifacts(
+        &mut self,
+    ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {
+        if let Some(artifacts) = self.decoded_block_artifacts.clone() {
+            return Ok(artifacts);
+        }
+        let artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
+            .map_err(crate::errors::ExecutorValidationError::block_artifacts)?;
+        self.decoded_block_artifacts = Some(artifacts.clone());
+        Ok(artifacts)
+    }
+
+    fn invoke_reserved_system_call(
+        &mut self,
+        tx: &TransactionSigned,
+        body_index: usize,
+        expected_phase: &'static str,
+        phase_context: PreloadedSystemTxContext,
+    ) -> Result<EthTxResult<E::HaltReason, reth_ethereum::TxType>, BlockExecutionError> {
+        let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
+            self.inner.evm.transact_system_call(
+                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                tx.input().clone(),
+            )
+        });
+        let result = transact_outcome.map_err(|error| {
+            let reason = format!(
+                "system tx {expected_phase} execution failed at body_index={body_index}: {error}"
+            );
+            if outbe_primitives::projection::ExecutionReadCancelled::find(&error).is_none() {
+                tracing::error!(target: "outbe::executor", %reason);
+            }
+            BlockExecutionError::other(error)
+        })?;
+        Ok(EthTxResult {
+            result,
+            blob_gas_used: 0,
+            tx_type: tx.tx_type(),
+        })
     }
 
     fn commit_reserved_hook_receipt(
@@ -176,23 +147,12 @@ where
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         visible_base_gas: u64,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        let has_boundary_outcome = matches!(
-            block_artifacts.consensus_header_artifact,
-            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-        );
-        let has_tee_bootstrap = self.block_has_tee_bootstrap();
         let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
         let commit_outcome = self
             .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
             .map(Some);
         if commit_outcome.is_ok() {
-            self.system_tx_phase_cursor = self
-                .system_tx_phase_cursor
-                .advance_after_commit_with_publication(
-                    has_boundary_outcome,
-                    has_tee_bootstrap,
-                    block_artifacts.radicle_publication.is_some(),
-                );
+            self.advance_system_tx_phase_cursor(block_artifacts);
         }
         commit_outcome
     }
@@ -201,6 +161,7 @@ where
         &mut self,
         output: EthTxResult<E::HaltReason, reth_ethereum::TxType>,
         context: ReservedSystemReceiptContext,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
@@ -209,27 +170,16 @@ where
         let ReservedSystemReceiptContext {
             visible_base_gas,
             visible_gas_limit,
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            has_publication,
             ..
         } = context;
         if !f(&output).should_commit() {
-            // Cursor does not advance: the caller chose not to commit,
-            // so the body-index slot remains owned by this phase.
             return Ok(None);
         }
         let commit_outcome = self
             .commit_system_transaction(output, visible_base_gas, 0, visible_gas_limit)
             .map(Some);
         if commit_outcome.is_ok() {
-            self.system_tx_phase_cursor = self
-                .system_tx_phase_cursor
-                .advance_after_commit_with_publication(
-                    has_boundary_outcome,
-                    has_tee_bootstrap,
-                    has_publication,
-                );
+            self.advance_system_tx_phase_cursor(block_artifacts);
         }
         commit_outcome
     }
@@ -239,6 +189,7 @@ where
         tx: &TransactionSigned,
         result: &ExecutionResult<HaltReason>,
         context: ReservedSystemReceiptContext,
+        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let ReservedSystemReceiptContext {
             body_index,
@@ -247,9 +198,6 @@ where
             visible_base_gas,
             visible_gas_limit,
             available_visible_gas,
-            has_boundary_outcome,
-            has_tee_bootstrap,
-            has_publication,
         } = context;
         let expected_phase = input.name();
         tracing::error!(
@@ -263,18 +211,6 @@ where
             "system tx failed"
         );
         let code = system_tx_failure_code_for_result(result);
-        // a revert/halt in a consensus- or economic-critical
-        // begin-zone phase is a hard block failure, not a soft-receipt
-        // skip. Their work is one-shot and never retried, so swallowing a
-        // revert permanently loses it (stranded fee escrow, dropped
-        // emission/reshare, unrecorded parent accounting). The revert is a
-        // deterministic function of committed chain state, so every
-        // validator rejects the same block identically. There is no
-        // state-root split. Non-critical phases (OracleSlashWindow,
-        // HookEvents) keep the soft-receipt skip for failures that fit within the
-        // aggregate internal-work budget. An OOG consumes the full
-        // system-call gas limit and therefore remains a hard aggregate
-        // budget failure once earlier mandatory phases have run.
         if input.revert_fails_block() {
             let err = crate::errors::ExecutorValidationError::critical_system_tx_did_not_succeed(
                 expected_phase,
@@ -290,7 +226,6 @@ where
             "system tx {expected_phase} did not succeed at body_index={body_index}: {:?}",
             result
         );
-        let tx_type = tx.tx_type();
         let additional_visible_gas = if matches!(
             result,
             ExecutionResult::Halt {
@@ -303,7 +238,7 @@ where
             0
         };
         let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
-            tx_type,
+            tx_type: tx.tx_type(),
             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
             code,
             reason,
@@ -312,13 +247,7 @@ where
             signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
         })?;
-        self.system_tx_phase_cursor = self
-            .system_tx_phase_cursor
-            .advance_after_commit_with_publication(
-                has_boundary_outcome,
-                has_tee_bootstrap,
-                has_publication,
-            );
+        self.advance_system_tx_phase_cursor(block_artifacts);
         Ok(Some(gas_output))
     }
 
@@ -342,23 +271,7 @@ where
                         .into(),
                     );
                 }
-                // Advance cursor past Phase 1. The mandatory LateFinalizeCredits
-                // phase (body_index=1) is next.
-                let has_boundary_outcome = matches!(
-                    block_artifacts.consensus_header_artifact,
-                    Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
-                );
-                let has_tee_bootstrap = self.block_has_tee_bootstrap();
-                self.system_tx_phase_cursor = self
-                    .system_tx_phase_cursor
-                    .advance_after_commit_with_publication(
-                        has_boundary_outcome,
-                        has_tee_bootstrap,
-                        block_artifacts.radicle_publication.is_some(),
-                    );
-                // Returning true makes the caller skip a further commit: pre-exec
-                // already pushed receipt[0] and committed state. The block
-                // builder still keeps this validated witness in body[0].
+                self.advance_system_tx_phase_cursor(block_artifacts);
                 return Ok(true);
             }
         }
