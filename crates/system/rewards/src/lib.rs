@@ -16,16 +16,25 @@
 //! keep compiling without a sweeping rename. Migrate call sites
 //! opportunistically when next touched, then drop the re-exports.
 pub mod api;
+pub mod block_fees;
 pub mod constants;
 pub mod errors;
 pub mod finalized_metadata_hook;
-pub mod late_settlement;
 pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
 #[cfg(test)]
 mod test_support;
+
+/// Delegate absent-voter penalties after the executor resolves the canonical snapshot.
+pub fn slash_absent_voters(
+    storage: outbe_primitives::storage::StorageHandle,
+    fb_hash: alloy_primitives::B256,
+    absentees: &[alloy_primitives::Address],
+) -> outbe_primitives::error::Result<()> {
+    outbe_slashindicator::hooks::slash_window_voters(storage, fb_hash, absentees)
+}
 
 // Backward-compat aliases for external callers (deprecate when all
 // `outbe_rewards::contract::*` / `outbe_rewards::logic::*` call sites

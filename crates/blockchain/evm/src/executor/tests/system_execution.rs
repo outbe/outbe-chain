@@ -629,18 +629,18 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                 seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
 
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
-                rewards.daily_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
+                rewards.day_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
                 rewards
-                    .daily_total_participation
+                    .day_total_votes
                     .write(&PREVIOUS_DAY, U256::from(1))
                     .unwrap();
                 rewards
-                    .daily_voter_at
+                    .day_voter_at
                     .get_nested(&PREVIOUS_DAY)
                     .write(&0, voter)
                     .unwrap();
                 rewards
-                    .daily_participation
+                    .day_votes
                     .get_nested(&PREVIOUS_DAY)
                     .write(&voter, 1)
                     .unwrap();

@@ -11,11 +11,11 @@ thiserror.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
+outbe-rewards.workspace = true
 
 [dev-dependencies]
 outbe-evm = { workspace = true, features = ["test-utils"] }
 outbe-agentreward.workspace = true
-outbe-rewards.workspace = true
 outbe-emission.workspace = true
 outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-gemfactory.workspace = true

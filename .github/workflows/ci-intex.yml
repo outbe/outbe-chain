@@ -204,6 +204,8 @@ jobs:
           working-directory: contracts/intex
 
       - name: Run Aderyn
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: yarn aderyn
 
       - name: Upload Aderyn report

@@ -39,7 +39,7 @@ impl CcaContract<'_> {
     }
 
     pub(crate) fn require_unsealed_day(&self, day: u32) -> Result<()> {
-        if self.has_sealed_day.read()? && day <= self.sealed_through_day.read()? {
+        if day <= outbe_rewards::api::get_last_sealed_day(&self.storage)? {
             return Err(CcaError::RewardDaySealed.into());
         }
         Ok(())

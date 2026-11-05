@@ -16,6 +16,7 @@ runs:
       shell: bash
       run: release/scripts/install-zk-build-tools.sh
     - name: Install pinned Cosign
+      if: inputs.dry_run != 'true'
       shell: bash
       env:
         COSIGN_VERSION: v2.6.5
@@ -35,6 +36,6 @@ runs:
       with:
         distribution: goreleaser
         version: "~> v2"
-        args: ${{ inputs.dry_run == 'true' && 'release --snapshot --clean --parallelism=1' || 'release --clean --parallelism=1' }}
+        args: ${{ inputs.dry_run == 'true' && 'release --snapshot --skip=sign --clean --parallelism=1' || 'release --clean --parallelism=1' }}
       env:
         GITHUB_TOKEN: ${{ github.token }}

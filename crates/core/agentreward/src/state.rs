@@ -6,7 +6,7 @@ use outbe_primitives::{error::Result, time::WorldwideDay};
 use crate::{
     constants::ACCRUAL_RECIPIENTS_PER_BLOCK,
     errors::AgentRewardError,
-    schema::{AccrualJob, AgentRewardContract, RewardPool},
+    schema::{AccrualJob, AgentRewardContract, DayIndex, RewardPool},
 };
 
 /// Prevalidates a descriptor and returns its no-weight excess and new pending total.
@@ -71,7 +71,7 @@ pub(crate) fn enqueue_cleanup(
     contract.cleanup_scheduled.write(&key, true)
 }
 
-pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
+pub(crate) fn cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
     let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
     for _ in 0..4 {
         let head = contract.cleanup_head.read()?;
@@ -88,28 +88,14 @@ pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> 
             .ok_or(AgentRewardError::InvalidJob)?;
         let pool = RewardPool::from_abi(job.pool)?;
         let day = WorldwideDay::new(job.day);
+        if !(1..=outbe_rewards::api::get_last_sealed_day(&contract.storage)?).contains(&job.day) {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
         let index = contract.day_index(pool)?;
         if job.next_index > job.recipient_count {
             return Err(AgentRewardError::InvalidJob.into());
         }
-        while budget > 0 && job.next_index < job.recipient_count {
-            let key = AgentRewardContract::address_index_key(day, job.next_index);
-            let address = index.addresses.read(&key)?;
-            let count_key = AgentRewardContract::tribute_count_key(day, address);
-            if index.member_index.read(&count_key)?
-                != job
-                    .next_index
-                    .checked_add(1)
-                    .ok_or(AgentRewardError::InvalidJob)?
-            {
-                return Err(AgentRewardError::InvalidJob.into());
-            }
-            index.counts.write(&count_key, 0)?;
-            index.member_index.write(&count_key, 0)?;
-            index.addresses.write(&key, Address::ZERO)?;
-            job.next_index += 1;
-            budget -= 1;
-        }
+        cleanup_entries(&index, day, &mut job, &mut budget)?;
         if job.next_index != job.recipient_count {
             contract.cleanup_jobs.update(&job)?;
             break;
@@ -120,6 +106,33 @@ pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> 
         contract
             .cleanup_head
             .write(head.checked_add(1).ok_or(AgentRewardError::InvalidJob)?)?;
+    }
+    Ok(())
+}
+
+fn cleanup_entries(
+    index: &DayIndex<'_, '_>,
+    day: WorldwideDay,
+    job: &mut AccrualJob,
+    budget: &mut u32,
+) -> Result<()> {
+    while *budget > 0 && job.next_index < job.recipient_count {
+        let key = AgentRewardContract::address_index_key(day, job.next_index);
+        let address = index.addresses.read(&key)?;
+        let count_key = AgentRewardContract::tribute_count_key(day, address);
+        if index.member_index.read(&count_key)?
+            != job
+                .next_index
+                .checked_add(1)
+                .ok_or(AgentRewardError::InvalidJob)?
+        {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
+        index.counts.write(&count_key, 0)?;
+        index.member_index.write(&count_key, 0)?;
+        index.addresses.write(&key, Address::ZERO)?;
+        job.next_index += 1;
+        *budget -= 1;
     }
     Ok(())
 }

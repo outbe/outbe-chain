@@ -26,7 +26,7 @@
   },
   {
     "type": "event",
-    "name": "LateWindowSettled",
+    "name": "BlockFeesTransferred",
     "inputs": [
       {
         "name": "fbHash",
@@ -35,25 +35,13 @@
         "internalType": "bytes32"
       },
       {
-        "name": "distributedNative",
+        "name": "transferredNative",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "residueNative",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "burnedNative",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "dustAfterNative",
+        "name": "restNative",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -63,7 +51,7 @@
   },
   {
     "type": "event",
-    "name": "VoterFeePaid",
+    "name": "VoterFeeTransferred",
     "inputs": [
       {
         "name": "fbHash",

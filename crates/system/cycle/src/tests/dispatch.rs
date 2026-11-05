@@ -56,7 +56,7 @@ fn dispatcher_fires_auction_advance_at_its_slot() {
 /// Records finalized block 10 of genesis day, with committee `early` and
 /// `late`. Only `early` signed the base certificate, so `late` can still earn a
 /// late reward credit.
-fn record_parent_with_late_voter(
+pub(super) fn record_parent_with_late_voter(
     ctx: &BlockRuntimeContext<'_>,
     hash: B256,
     early: Address,
@@ -77,7 +77,7 @@ fn record_parent_with_late_voter(
         proof_kind: outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
         missed_proposers: vec![],
     };
-    outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
+    outbe_rewards::finalized_metadata_hook::record_votes_and_fees(
         ctx,
         &metadata,
         U256::ZERO,
@@ -103,6 +103,12 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
     });
     for height in 11..=13 {
         storage.set_block_number(height);
+        if height == 13 {
+            storage.enable_metadosis_mutation_frames(
+                MetadosisMutationPurposeTag::CertifiedFinality,
+                1,
+            );
+        }
         storage.enter(|handle| {
             let ctx = runtime_context(
                 block_ctx(height, GENESIS_TS + SECONDS_PER_DAY + height - 11),
@@ -119,11 +125,14 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
             assert!(!is_day_settled(&ctx, 20240101));
             if height == 13 {
                 // Real phase order: Cycle first, then final-slot credit and GC.
-                outbe_rewards::late_settlement::record_late_credit(&ctx, hash, late, 3).unwrap();
-                outbe_rewards::late_settlement::settle_matured(&ctx, 13, 3).unwrap();
+                outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 3).unwrap();
+                ctx.storage
+                    .with_checkpoint(|| outbe_rewards::block_fees::seal_block_votes(&ctx, 13, 3))
+                    .unwrap();
             }
         });
     }
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.set_block_number(14);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle, 14, GENESIS_TS + SECONDS_PER_DAY + 3);
@@ -215,8 +224,10 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
                 .unwrap()
         };
 
-        let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
-        outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+        let mut block = block_ctx(2, ANCHOR_TS + 10);
+        block.genesis_timestamp = GENESIS_TS - SECONDS_PER_DAY;
+        let ctx = runtime_context(block, handle.clone());
+        outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
         let amount = U256::from(recipients * 1_000);
         allocate_day_agent_rewards(
             &ctx,
@@ -511,6 +522,10 @@ fn failed_terminal_dispatch_rolls_back_validator_topup() {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
         assert!(!is_day_settled(&fire, 20_240_101));
         assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&fire.storage).unwrap(),
+            0
+        );
+        assert_eq!(
             topup_voters_claimable(&fire),
             U256::ZERO,
             "validator credit must roll back"
@@ -565,6 +580,10 @@ fn retry_after_failed_terminal_dispatch_settles_once() {
         crate::handler::credit_reward_slice(&retry).unwrap();
 
         assert!(is_day_settled(&retry, 20_240_101));
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&retry.storage).unwrap(),
+            20_240_101
+        );
 
         let validator_amount = day_zero_allocation(EmissionSinkId::Validator);
         let expected_promis_load = validator_amount / U256::from(TOPUP_VOTERS.len());
