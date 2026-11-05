@@ -31,12 +31,18 @@ fn zero_period_is_rejected_and_an_offset_at_or_above_the_period_stays_valid() {
     use crate::triggers::{TriggerHandler, TriggerSpec};
 
     assert!(matches!(
-        TriggerSpec::new(1, "zero", 0, 0, TriggerHandler::IntexCallDaily),
+        TriggerSpec::new(1, "zero", 0, 0, 100, TriggerHandler::IntexCallDaily),
         Err(CycleError::ZeroTriggerPeriod)
     ));
-    let wide_offset =
-        TriggerSpec::new(1, "wide-offset", 600, 5_000, TriggerHandler::IntexCallDaily)
-            .expect("offset at or above the period");
+    let wide_offset = TriggerSpec::new(
+        1,
+        "wide-offset",
+        600,
+        5_000,
+        100,
+        TriggerHandler::IntexCallDaily,
+    )
+    .expect("offset at or above the period");
     assert_eq!(wide_offset.period_seconds(), 600);
     assert_eq!(wide_offset.start_offset_seconds, 5_000);
     assert!(wide_offset.depends_on.is_empty());
@@ -117,15 +123,17 @@ fn dispatch_propagates_schedule_overflow_instead_of_skipping_the_trigger() {
             u64::MAX
         );
     });
-    assert!(storage
-        .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
-        .iter()
-        .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err()));
+    assert!(
+        storage
+            .get_events(outbe_primitives::addresses::CYCLE_ADDRESS)
+            .iter()
+            .all(|log| crate::ICycle::CycleTriggerFailed::decode_log_data(log).is_err())
+    );
 }
 
 #[test]
 fn only_the_two_auction_edges_declare_a_dependency() {
-    use crate::triggers::{active_triggers, TriggerId};
+    use crate::triggers::{TriggerId, active_triggers};
 
     let specs = active_triggers().expect("nonzero interval");
     assert!(specs[0].depends_on.is_empty());

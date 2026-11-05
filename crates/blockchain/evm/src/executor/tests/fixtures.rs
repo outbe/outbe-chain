@@ -235,7 +235,8 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
-        vs.set_config_max_validators(128).unwrap();
+        vs.set_config_max_validators(outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND)
+            .unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         for (validator, pk) in validators {
@@ -276,12 +277,15 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
         CYCLE_ADDRESS,
+        outbe_primitives::addresses::DESIS_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
         outbe_primitives::addresses::STAKING_ADDRESS,
         outbe_primitives::addresses::REWARDS_ADDRESS,
         outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
+        outbe_primitives::addresses::CCA_REGISTRY_ADDRESS,
         outbe_primitives::addresses::METADOSIS_ADDRESS,
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS,
         outbe_primitives::addresses::TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         outbe_primitives::addresses::GEM_ADDRESS,

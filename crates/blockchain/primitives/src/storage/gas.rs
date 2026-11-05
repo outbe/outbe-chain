@@ -48,10 +48,120 @@ pub const PRECOMPILE_BASE_GAS: u64 = 200;
 ///   limits a block to approximately 100 verifications.
 pub const ZK_VERIFY_GAS: u64 = 300_000;
 
+/// Invalid use of the checkpoint-owning running trigger scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TriggerScopeError {
+    #[error("provider does not support metered trigger scopes")]
+    Unsupported,
+    #[error("nested trigger scopes are not supported")]
+    Nested,
+    #[error("no trigger scope is active")]
+    Inactive,
+    #[error("invalid unused gas return")]
+    InvalidGasReturn,
+}
+
+/// Gross work allowance. This is deliberately not part of checkpoint state.
+#[derive(Debug, Clone)]
+pub struct TriggerBudget {
+    pub remaining: u64,
+    budget: u64,
+    exhausted: bool,
+    infrastructure_failure: Option<String>,
+}
+
+impl TriggerBudget {
+    pub const fn new(budget: u64) -> Self {
+        Self {
+            remaining: budget,
+            budget,
+            exhausted: false,
+            infrastructure_failure: None,
+        }
+    }
+
+    pub fn status(&self) -> crate::error::Result<()> {
+        if let Some(reason) = &self.infrastructure_failure {
+            return Err(crate::error::PrecompileError::Fatal(reason.clone()));
+        }
+        if self.exhausted {
+            Err(crate::error::PrecompileError::TriggerBudgetExceeded {
+                consumed_gas: self.budget - self.remaining,
+                budget_gas: self.budget,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn charge(&mut self, cost: u64) -> crate::error::Result<()> {
+        self.check(cost)?;
+        self.remaining -= cost;
+        Ok(())
+    }
+
+    pub fn check(&mut self, cost: u64) -> crate::error::Result<()> {
+        self.status()?;
+        if cost > self.remaining {
+            self.exhausted = true;
+            return self.status();
+        }
+        Ok(())
+    }
+
+    pub fn exhaust(&mut self) {
+        self.exhausted = true;
+    }
+
+    /// A caller cannot turn a caught backend failure into successful deferral.
+    pub fn observe_error(&mut self, error: &crate::error::PrecompileError) {
+        use crate::error::PrecompileError;
+        if self.infrastructure_failure.is_none()
+            && matches!(
+                error,
+                PrecompileError::Storage(_)
+                    | PrecompileError::BodyReadCorruption(_)
+                    | PrecompileError::Fatal(_)
+                    | PrecompileError::FatalWithCause(_)
+                    | PrecompileError::Unsupported
+                    | PrecompileError::EnclaveUnavailable(_)
+                    | PrecompileError::SubCall(_)
+            )
+        {
+            self.infrastructure_failure = Some(error.to_string());
+        }
+    }
+
+    pub fn return_unused(&mut self, gas: u64) -> crate::error::Result<()> {
+        self.remaining = self
+            .remaining
+            .checked_add(gas)
+            .filter(|remaining| *remaining <= self.budget)
+            .ok_or(TriggerScopeError::InvalidGasReturn)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
+
+    #[test]
+    fn unused_return_cannot_create_capacity_or_overflow() {
+        for budget in [100, u64::MAX] {
+            let mut meter = TriggerBudget::new(budget);
+            meter.charge(100).unwrap();
+            meter.return_unused(100).unwrap();
+            assert!(matches!(
+                meter.return_unused(1),
+                Err(crate::error::PrecompileError::TriggerScope(
+                    TriggerScopeError::InvalidGasReturn
+                ))
+            ));
+            assert_eq!(meter.remaining, budget);
+        }
+    }
 
     #[test]
     fn outbe_protocol_gas_values_are_stable() {

@@ -9,9 +9,9 @@
 use alloy_primitives::U256;
 use alloy_sol_types::SolError;
 
-use outbe_agentreward::api::{allocate_day_agent_rewards, process_agent_rewards, DayAgentPools};
+use outbe_agentreward::api::{DayAgentPools, allocate_day_agent_rewards, process_agent_rewards};
 use outbe_emission::{
-    allocation::{allocate_emission, EmissionSinkId},
+    allocation::{EmissionSinkId, allocate_emission},
     api::DayAllocationAmounts,
     day_emission::day_emission_limit,
     schema::emission_day_state,
@@ -22,12 +22,12 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
     time::{
-        date_key_to_utc_timestamp, next_date_key, previous_date_key, timestamp_to_date_key,
-        TimeError,
+        TimeError, date_key_to_utc_timestamp, next_date_key, previous_date_key,
+        timestamp_to_date_key,
     },
 };
 
-use crate::{errors::CycleError, schema::Cycle, ICycle};
+use crate::{ICycle, errors::CycleError, schema::Cycle};
 
 /// Maximum number of completed UTC days that `derive_active_utc_day` scans backward
 /// and catches up (one oldest unsettled day per block, OIP-00343).

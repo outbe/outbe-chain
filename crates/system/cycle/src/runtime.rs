@@ -10,11 +10,53 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
 };
 
-use crate::handler::{protocol_day_action, ProtocolDayAction};
-use crate::schema::Cycle;
-use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
 use crate::ICycle;
+use crate::errors::CycleError;
+use crate::handler::{ProtocolDayAction, protocol_day_action};
+use crate::schema::Cycle;
+use crate::state::{EvmAccountingProgress, accounting_gate_blocks};
+use crate::triggers::{TriggerId, TriggerSpec, active_triggers, last_fire_at, next_fire_at};
+
+/// Calibrated Cycle body overhead, excluding handlers and caller prefix work.
+/// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs` measures 16,404,800
+/// gross gas for bootstrap, dispatch, reward slicing and populated cleanup.
+/// Fourfold headroom, rounded up to 1,000,000 gas, yields this reserve.
+pub const CYCLE_OVERHEAD_RESERVE_GAS: u64 = 66_000_000;
+
+#[cfg(feature = "test-utils")]
+std::thread_local! {
+    static TRIGGER_GAS_SAMPLES: std::cell::RefCell<Vec<(u32, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static CYCLE_GAS_SAMPLES: std::cell::RefCell<Vec<(u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Drains gross handler-only gas samples on this test thread. Failed handlers
+/// retain spent gas, so samples include ordinary reverts as well as successes.
+#[cfg(feature = "test-utils")]
+pub fn take_trigger_gas_samples() -> Vec<(u32, u64)> {
+    TRIGGER_GAS_SAMPLES.with(|samples| core::mem::take(&mut *samples.borrow_mut()))
+}
+
+/// Drains successful Cycle body samples `(gross_body_gas, gross_handler_gas)`.
+/// Body gas includes bootstrap, dispatch and reward slicing, but excludes work
+/// performed by the caller before entering Cycle. Subtraction gives overhead.
+#[cfg(feature = "test-utils")]
+pub fn take_cycle_gas_samples() -> Vec<(u64, u64)> {
+    CYCLE_GAS_SAMPLES.with(|samples| core::mem::take(&mut *samples.borrow_mut()))
+}
+
+#[cfg(feature = "test-utils")]
+fn record_cycle_gas_sample(ctx: &BlockRuntimeContext, before: u64, handler_gas: u64) -> Result<()> {
+    let gross = ctx
+        .storage
+        .gas_used()?
+        .checked_sub(before)
+        .filter(|gross| *gross >= handler_gas)
+        .ok_or_else(|| {
+            PrecompileError::Fatal("Cycle observation gross gas counter regressed".into())
+        })?;
+    CYCLE_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((gross, handler_gas)));
+    Ok(())
+}
 
 /// Runs the CycleTick system-transaction body after parent accounting and
 /// canonical late-credit windows. Fresh genesis initializes WorldwideDays at
@@ -22,79 +64,239 @@ use crate::ICycle;
 pub fn handle_cycle_tick(
     ctx: &BlockRuntimeContext<'_>,
     metadosis_genesis_activation_height: u64,
+    capacity: CycleWorkCapacity,
 ) -> Result<()> {
+    handle_cycle_tick_with_budgets(
+        ctx,
+        metadosis_genesis_activation_height,
+        &active_triggers()?,
+        capacity,
+        CYCLE_OVERHEAD_RESERVE_GAS,
+    )
+}
+
+/// Explicit budgeted Cycle body, including bootstrap and reward slicing. The
+/// supplied overhead must cover both as well as all dispatcher bookkeeping.
+pub fn handle_cycle_tick_with_budgets(
+    ctx: &BlockRuntimeContext<'_>,
+    metadosis_genesis_activation_height: u64,
+    triggers: &[TriggerSpec],
+    capacity: CycleWorkCapacity,
+    overhead_reserve_gas: u64,
+) -> Result<()> {
+    #[cfg(feature = "test-utils")]
+    let observation_before = ctx.storage.gas_used()?;
+    let mut reserve = CycleWorkReserve::new(capacity, overhead_reserve_gas);
+    reserve.available(ctx)?;
     if ctx.block.block_number == metadosis_genesis_activation_height {
         outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
-    // ProtocolCycle does not wait for multi-block factory passes.
-    // Factories return capacity below. Subsequent reserve consumers can use this capacity.
-    dispatch_triggers(ctx)?;
+    dispatch_budgeted(ctx, triggers, &mut reserve)?;
     crate::handler::credit_reward_slice(ctx)?;
+    reserve.available(ctx)?;
+    #[cfg(feature = "test-utils")]
+    record_cycle_gas_sample(ctx, observation_before, reserve.handler_gas)?;
     Ok(())
 }
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
-/// ctx.block.timestamp`. The checkpoint around a handler contains only that
-/// handler. A revert rolls the handler back, records `recorded_at`, emits
-/// `CycleTriggerFailed`, and the walk continues. Any other handler error
-/// returns to the caller, and CycleTick rejects the block. A recorded slot
-/// stays consumed until its next scheduled window.
+/// ctx.block.timestamp`. Each handler runs in an atomic work-budget scope.
+/// Ordinary reverts consume the slot; budget exhaustion rolls back the handler
+/// and leaves it and its due dependents pending. Independent work can continue.
+/// Capacity deferral does not attempt the handler. Other errors reject CycleTick.
 ///
 /// The typical case is a slow-running chain that produces blocks every few
 /// seconds. In that case the dispatcher is a near-noop on every block. It
 /// fires ProtocolCycle only on the first block whose timestamp crosses
 /// the next UTC-hour boundary.
-pub fn dispatch_triggers(ctx: &BlockRuntimeContext) -> Result<()> {
-    let triggers = active_triggers()?;
-    // Ids are 0..=6 and 8. Id 7 is unused.
-    let mut failed = [false; 9];
+pub fn dispatch_triggers(ctx: &BlockRuntimeContext, capacity: CycleWorkCapacity) -> Result<()> {
+    dispatch_triggers_with_budgets(
+        ctx,
+        &active_triggers()?,
+        capacity,
+        CYCLE_OVERHEAD_RESERVE_GAS,
+    )
+}
 
-    for spec in &triggers {
-        if let Some(slot) = due_slot(ctx, spec)? {
-            dispatch_due(ctx, spec, slot, &mut failed)?;
+/// Aggregate gross capacity measured at `gas_used_at_entry`, before Cycle work.
+/// The executor supplies the later-phase reserve; Cycle never reads EVM globals.
+#[derive(Clone, Copy, Debug)]
+pub struct CycleWorkCapacity {
+    pub remaining_gas: u64,
+    pub gas_used_at_entry: u64,
+    pub reserve_after_cycle: u64,
+}
+
+impl CycleWorkCapacity {
+    fn available(self, ctx: &BlockRuntimeContext, overhead_reserve_gas: u64) -> Result<u64> {
+        let invalid = || PrecompileError::from(CycleError::InsufficientWorkCapacity);
+        let spent = ctx
+            .storage
+            .gas_used()?
+            .checked_sub(self.gas_used_at_entry)
+            .ok_or_else(invalid)?;
+        let aggregate = self
+            .remaining_gas
+            .checked_sub(spent)
+            .and_then(|remaining| remaining.checked_sub(self.reserve_after_cycle))
+            .and_then(|remaining| remaining.checked_sub(overhead_reserve_gas))
+            .ok_or_else(invalid)?;
+        let enclosing = ctx
+            .storage
+            .metered_gas_remaining()?
+            .ok_or_else(invalid)?
+            .checked_sub(overhead_reserve_gas)
+            .ok_or_else(invalid)?;
+        Ok(aggregate.min(enclosing))
+    }
+}
+
+struct CycleWorkReserve {
+    capacity: CycleWorkCapacity,
+    overhead_gas: u64,
+    handler_gas: u64,
+}
+
+impl CycleWorkReserve {
+    fn new(capacity: CycleWorkCapacity, overhead_gas: u64) -> Self {
+        Self {
+            capacity,
+            overhead_gas,
+            handler_gas: 0,
         }
     }
 
+    fn available(&self, ctx: &BlockRuntimeContext) -> Result<u64> {
+        let invalid = || PrecompileError::from(CycleError::InsufficientWorkCapacity);
+        let overhead_spent = ctx
+            .storage
+            .gas_used()?
+            .checked_sub(self.capacity.gas_used_at_entry)
+            .and_then(|spent| spent.checked_sub(self.handler_gas))
+            .ok_or_else(invalid)?;
+        let remaining_overhead = self
+            .overhead_gas
+            .checked_sub(overhead_spent)
+            .ok_or_else(invalid)?;
+        self.capacity.available(ctx, remaining_overhead)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WalkOutcome {
+    NotRun,
+    Executed,
+    ConsumedFailure,
+    Pending,
+}
+
+/// Explicit scheduler for a supplied trigger table. Callers must supply allowances and
+/// a reserve that bounds the remaining dispatcher bookkeeping and reward slice.
+pub fn dispatch_triggers_with_budgets(
+    ctx: &BlockRuntimeContext,
+    triggers: &[TriggerSpec],
+    capacity: CycleWorkCapacity,
+    overhead_reserve_gas: u64,
+) -> Result<()> {
+    let mut reserve = CycleWorkReserve::new(capacity, overhead_reserve_gas);
+    dispatch_budgeted(ctx, triggers, &mut reserve)
+}
+
+fn dispatch_budgeted(
+    ctx: &BlockRuntimeContext,
+    triggers: &[TriggerSpec],
+    reserve: &mut CycleWorkReserve,
+) -> Result<()> {
+    let mut outcomes = [WalkOutcome::NotRun; 9];
+    reserve.available(ctx)?;
+    for spec in triggers {
+        let index = spec.id as usize;
+        if index >= outcomes.len() {
+            return Err(CycleError::InvalidTriggerId { id: spec.id }.into());
+        }
+        let Some(slot) = due_slot(ctx, spec)? else {
+            continue;
+        };
+        // A pending prerequisite takes precedence: this slot must remain pending
+        // even if a different prerequisite consumed an ordinary failure.
+        if spec
+            .depends_on
+            .iter()
+            .any(|id| outcomes[id.as_u32() as usize] == WalkOutcome::Pending)
+        {
+            record_deferred(ctx, spec, slot, 2)?;
+            outcomes[index] = WalkOutcome::Pending;
+        } else if spec
+            .depends_on
+            .iter()
+            .any(|id| outcomes[id.as_u32() as usize] == WalkOutcome::ConsumedFailure)
+        {
+            record_slot(ctx, spec, slot.recorded_at)?;
+            outcomes[index] = WalkOutcome::ConsumedFailure;
+        } else if spec.work_budget_gas() > reserve.available(ctx)? {
+            record_deferred(ctx, spec, slot, 1)?;
+            outcomes[index] = WalkOutcome::Pending;
+        } else {
+            let before = ctx.storage.gas_used()?;
+            let result = ctx
+                .storage
+                .with_trigger_budget(spec.work_budget_gas(), || spec.handler.run(ctx));
+            let consumed = ctx
+                .storage
+                .gas_used()?
+                .checked_sub(before)
+                .ok_or(CycleError::InsufficientWorkCapacity)?;
+            reserve.handler_gas = reserve
+                .handler_gas
+                .checked_add(consumed)
+                .ok_or(CycleError::InsufficientWorkCapacity)?;
+            #[cfg(feature = "test-utils")]
+            TRIGGER_GAS_SAMPLES.with(|samples| samples.borrow_mut().push((spec.id, consumed)));
+            match result {
+                Ok(()) => {
+                    record_executed(ctx, spec, slot)?;
+                    outcomes[index] = WalkOutcome::Executed;
+                }
+                Err(PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas,
+                    budget_gas,
+                }) => {
+                    let mut cycle = ctx.storage.contract::<Cycle<'_>>();
+                    cycle.emit(ICycle::CycleTriggerOverBudget {
+                        id: spec.id,
+                        consumedGas: consumed_gas,
+                        budgetGas: budget_gas,
+                        blockNumber: ctx.block.block_number,
+                    })?;
+                    outcomes[index] = WalkOutcome::Pending;
+                }
+                Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
+                    record_failed(ctx, spec, slot, &err)?;
+                    outcomes[index] = WalkOutcome::ConsumedFailure;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        reserve.available(ctx)?;
+    }
+    reserve.available(ctx)?;
     Ok(())
 }
 
-/// Runs one due trigger. A dependency failure consumes the slot and does not
-/// call the handler. A handler revert consumes the slot and emits
-/// `CycleTriggerFailed`. Any other handler error returns immediately.
-fn dispatch_due(
+fn record_deferred(
     ctx: &BlockRuntimeContext,
     spec: &TriggerSpec,
     slot: DueSlot,
-    failed: &mut [bool; 9],
+    reason: u8,
 ) -> Result<()> {
-    if spec
-        .depends_on
-        .iter()
-        .any(|id| failed[id.as_u32() as usize])
-    {
-        record_slot(ctx, spec, slot.recorded_at)?;
-        failed[spec.id as usize] = true;
-        tracing::info!(
-            target: "outbe::cycle",
-            trigger_id = spec.id,
-            label = spec.label,
-            recorded_at = slot.recorded_at,
-            block_ts = ctx.block.timestamp,
-            block_number = ctx.block.block_number,
-            "cycle trigger skipped because a dependency failed in this walk"
-        );
-        return Ok(());
-    }
-
-    match ctx.storage.with_checkpoint(|| spec.handler.run(ctx)) {
-        Ok(()) => record_executed(ctx, spec, slot),
-        Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
-            record_failed(ctx, spec, slot, &err)?;
-            failed[spec.id as usize] = true;
-            Ok(())
-        }
-        Err(err) => Err(err),
-    }
+    let mut cycle = ctx.storage.contract::<Cycle<'_>>();
+    cycle.emit(ICycle::CycleTriggerDeferred {
+        id: spec.id,
+        scheduledAt: slot.recorded_at,
+        blockNumber: ctx.block.block_number,
+        reason,
+    })?;
+    Ok(())
 }
 
 /// Writes the consumed slot outside the handler checkpoint.

@@ -42,6 +42,9 @@ pub struct TriggerSpec {
     /// Slot length in seconds. `period_seconds = 86_400` => daily.
     /// [`Self::new`] rejects zero. Callers read the value through [`Self::period_seconds`].
     period_seconds: u64,
+    /// Nonzero gross handler allowance, in the enclosing meter's `u64` gas units.
+    /// Private so all values pass the constructor's configuration validation.
+    work_budget_gas: u64,
     /// First schedule anchor, in seconds after unix epoch zero.
     /// A value greater than or equal to the period stays valid.
     /// `period_seconds = 86_400, start_offset_seconds = 0` => UTC
@@ -73,6 +76,8 @@ pub struct TriggerSpec {
 
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
+    #[cfg(test)]
+    Test(fn(&BlockRuntimeContext<'_>) -> Result<()>),
     ProtocolCycle,
     IntexCallDaily,
     AuctionAdvance,
@@ -84,7 +89,8 @@ pub enum TriggerHandler {
 }
 
 impl TriggerSpec {
-    /// Builds a schedule. A zero period is the only rejected setting.
+    /// Builds a schedule with a required nonzero gross work allowance.
+    /// Zero periods and zero work allowances are rejected.
     /// `start_offset_seconds >= period_seconds` stays valid.
     /// The two behavior flags start false. `depends_on` starts empty.
     /// The trigger table and fixtures set them.
@@ -93,15 +99,20 @@ impl TriggerSpec {
         label: &'static str,
         period_seconds: u64,
         start_offset_seconds: u64,
+        work_budget_gas: u64,
         handler: TriggerHandler,
     ) -> core::result::Result<Self, CycleError> {
         if period_seconds == 0 {
             return Err(CycleError::ZeroTriggerPeriod);
         }
+        if work_budget_gas == 0 {
+            return Err(CycleError::ZeroTriggerWorkBudget);
+        }
         Ok(Self {
             id,
             label,
             period_seconds,
+            work_budget_gas,
             start_offset_seconds,
             requires_accounting_window: false,
             coalesces_backlog: false,
@@ -114,11 +125,18 @@ impl TriggerSpec {
     pub const fn period_seconds(self) -> u64 {
         self.period_seconds
     }
+
+    /// Gross handler gas allowance. The value is greater than zero.
+    pub const fn work_budget_gas(self) -> u64 {
+        self.work_budget_gas
+    }
 }
 
 impl TriggerHandler {
     pub(crate) fn run(self, ctx: &BlockRuntimeContext) -> Result<()> {
         match self {
+            #[cfg(test)]
+            Self::Test(handler) => handler(ctx),
             Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx),
             Self::IntexCallDaily => outbe_intexfactory::called::schedule_call_pass(ctx),
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
@@ -175,6 +193,13 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// and does not run.
 /// AuctionAdvance must stay after ProtocolCycle.
 /// Same-slot brief and auction order depends on that sequence.
+///
+/// Budgets use measured successful gross maxima from
+/// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
+/// and rounded up to 1,000 gas. In stable-id order those maxima are
+/// [381500, 50300, 159263, 50300, 2583089, 50300, 50300, 765752].
+/// The supported nested bridge profile performs calldata copy/hash, persistent
+/// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
@@ -189,6 +214,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "protocol_cycle",
                 PROTOCOL_CYCLE_PERIOD_SECONDS,
                 0,
+                1_526_000,
                 TriggerHandler::ProtocolCycle,
             ));
             spec.requires_accounting_window = true;
@@ -205,6 +231,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "intex_call_daily",
                 CALL_SWEEP_PERIOD_SECONDS,
                 0,
+                202_000,
                 TriggerHandler::IntexCallDaily,
             ));
             spec.requires_accounting_window = false;
@@ -222,6 +249,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "auction_advance",
                 AUCTION_ADVANCE_PERIOD_SECONDS,
                 0,
+                638_000,
                 TriggerHandler::AuctionAdvance,
             ));
             spec.requires_accounting_window = true;
@@ -239,6 +267,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "gem_call_daily",
                 CALL_SWEEP_PERIOD_SECONDS,
                 0,
+                202_000,
                 TriggerHandler::GemCallDaily,
             ));
             spec.requires_accounting_window = false;
@@ -256,6 +285,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "auction_clearing",
                 OUTBOUND_POLL_PERIOD_SECONDS,
                 0,
+                10_333_000,
                 TriggerHandler::AuctionClearing,
             ));
             spec.requires_accounting_window = false;
@@ -274,6 +304,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "credis_call_daily",
                 CALL_SWEEP_PERIOD_SECONDS,
                 0,
+                202_000,
                 TriggerHandler::CredisCallDaily,
             ));
             spec.requires_accounting_window = false;
@@ -288,6 +319,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "nod_call_daily",
                 CALL_SWEEP_PERIOD_SECONDS,
                 0,
+                202_000,
                 TriggerHandler::NodCallDaily,
             ));
             spec.requires_accounting_window = false;
@@ -304,6 +336,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
                 "intex_drain_parked",
                 OUTBOUND_POLL_PERIOD_SECONDS,
                 0,
+                3_064_000,
                 TriggerHandler::IntexDrainParked,
             ));
             spec.requires_accounting_window = false;
@@ -315,7 +348,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
 
 pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] = match active_triggers() {
     Ok(specs) => specs,
-    Err(_) => panic!("protocol cycle period is nonzero"),
+    Err(_) => panic!("trigger periods and calibrated work budgets must be nonzero"),
 };
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -385,6 +418,37 @@ pub const fn last_fire_at(
 mod protocol_parameter_tests {
     use super::*;
     use outbe_primitives::time::SECONDS_PER_DAY;
+
+    #[test]
+    fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
+        let maxima = [
+            381_500u64, 50_300, 159_263, 50_300, 2_583_089, 50_300, 50_300, 765_752,
+        ];
+        let triggers = active_triggers().expect("calibrated trigger table");
+        let mut total = 0u64;
+        for (spec, measured) in triggers.iter().zip(maxima) {
+            let rounded = measured
+                .checked_mul(4)
+                .and_then(|gas| gas.checked_add(999))
+                .map(|gas| gas / 1_000)
+                .and_then(|units| units.checked_mul(1_000))
+                .expect("measured handler headroom fits u64");
+            assert!(spec.work_budget_gas() > 0);
+            assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
+            total = total
+                .checked_add(spec.work_budget_gas())
+                .expect("combined allowances fit u64");
+        }
+        assert_eq!(total, 16_369_000);
+        let overhead = 16_404_800u64
+            .checked_mul(4)
+            .and_then(|gas| gas.checked_add(999_999))
+            .map(|gas| gas / 1_000_000)
+            .and_then(|units| units.checked_mul(1_000_000))
+            .expect("measured overhead headroom fits u64");
+        assert_eq!(crate::runtime::CYCLE_OVERHEAD_RESERVE_GAS, overhead);
+        assert_eq!(total.checked_add(overhead), Some(82_369_000));
+    }
 
     #[test]
     fn protocol_cycle_uses_the_hourly_interval() {

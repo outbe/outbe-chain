@@ -91,12 +91,24 @@ pub(super) fn run() {
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
-    let cycle =
-        fixtures::observe_cycle_tick(system_txs, "valid begin-zone system transaction", |tx| {
+    let cycle = fixtures::observe_cycle_tick(
+        system_txs,
+        "valid begin-zone system transaction",
+        |tx| {
             let internal_before = executor.system_tx_execution_gas;
+            let gross_before = executor.system_tx_gross_gas;
+            let phase = SystemTx::decode(tx.tx().input().as_ref()).expect("system phase");
             let output = executor
                 .execute_transaction(tx)
                 .expect("TEE expiry begin-zone prefix should execute");
+            let gross = executor.system_tx_gross_gas - gross_before;
+            let net = executor.system_tx_execution_gas - internal_before;
+            assert!(gross >= net, "refunds cannot increase gross work");
+            eprintln!(
+                "TEE expiry calibration: phase={}, active={ACTIVE_COUNT}, gross={gross}, net={net}, visible={}",
+                phase.name(),
+                output.tx_gas_used()
+            );
             fixtures::CycleObservation {
                 visible_gas: output.tx_gas_used(),
                 internal_gas: executor
@@ -104,7 +116,8 @@ pub(super) fn run() {
                     .saturating_sub(internal_before),
                 receipt_index: executor.receipts().len() - 1,
             }
-        });
+        },
+    );
     let cycle_gas = cycle
         .as_ref()
         .map(|cycle| cycle.visible_gas)
@@ -118,4 +131,80 @@ pub(super) fn run() {
         .expect("CycleTick receipt index")];
 
     assert_expiry_budget(receipt, cycle_gas, cycle_internal_gas);
+}
+
+#[test]
+fn hyperlane_liveness_gross_work_grows_with_domain_population() {
+    let mut previous_gross = 0;
+    for domain_count in [1u32, 64, 256] {
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut state = state_with_active_validators_seeded_at_block(
+            &[(proposer, dummy_pubkey(0x80))],
+            149,
+            |storage| {
+                seed_expiring_tee_nodes(storage.clone(), &[proposer], u64::MAX)
+                    .expect("valid TEE binding");
+                storage
+                    .contract::<outbe_cycle::schema::Accounting<'_>>()
+                    .last_accounted_block_number
+                    .write(148)
+                    .expect("prior parent accounting");
+                let controller =
+                    outbe_hyperlanecontroller::schema::HyperlaneControllerContract::new(storage);
+                controller
+                    .ica_router
+                    .write(Address::repeat_byte(0x82))
+                    .expect("initialized controller");
+                for domain in 1..=domain_count {
+                    controller.domains.push(domain).expect("domain fixture");
+                }
+            },
+        );
+        let mut env = test_evm_env(150, REWARDS_ADDRESS);
+        env.block_env.timestamp = U256::from(2);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let parent_hash = B256::repeat_byte(0x91);
+        let mut metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+        metadata.finalized_block_number = 149;
+        metadata.finalized_block_hash = parent_hash;
+        let execution = expiry_context(parent_hash, metadata.clone(), proposer);
+        let evm = config.evm_with_env(&mut state, env);
+        let mut executor = config.create_executor(evm, execution);
+        super::with_phase1_verify_disabled(|| {
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution changes");
+        });
+        let txs = begin_system_txs_for_test(
+            &config,
+            BeginBlockFixture {
+                block_number: 150,
+                parent_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(metadata),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
+        );
+        let mut observed = None;
+        for tx in txs {
+            let is_oracle = matches!(
+                SystemTx::decode(tx.tx().input().as_ref()).expect("system phase"),
+                SystemTx::OracleSlashWindow
+            );
+            let before = executor.system_tx_gross_gas;
+            executor.execute_transaction(tx).expect("begin phase");
+            assert!(executor.receipts().last().expect("phase receipt").success);
+            if is_oracle {
+                observed = Some(executor.system_tx_gross_gas - before);
+            }
+        }
+        let gross = observed.expect("OracleSlashWindow measurement");
+        assert!(gross > previous_gross, "domain work must be metered");
+        eprintln!(
+            "Hyperlane liveness calibration: active=1, domains={domain_count}, gross={gross}"
+        );
+        previous_gross = gross;
+    }
 }

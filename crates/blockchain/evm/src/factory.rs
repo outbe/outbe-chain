@@ -6,34 +6,34 @@
 //! `OutbeExecutorBuilder` (defined in `crate::config`).
 
 use alloy_evm::{
+    Evm, EvmFactory,
     eth::EthEvmContext,
     precompiles::PrecompilesMap,
-    revm::handler::{instructions::EthInstructions, EthFrame, EthPrecompiles, PrecompileProvider},
-    Evm, EvmFactory,
+    revm::handler::{EthFrame, EthPrecompiles, PrecompileProvider, instructions::EthInstructions},
 };
-use alloy_primitives::{Address, Bytes, TxKind, B256};
+use alloy_primitives::{Address, B256, Bytes, TxKind};
 use core::ops::{Deref, DerefMut};
 use reth_ethereum::evm::{
     primitives::{Database, EvmEnv},
     revm::{
+        ExecuteEvm, MainBuilder, MainContext,
         context::{BlockEnv, CfgEnv, Context, Evm as RevmEvm, TxEnv},
         context_interface::{
-            result::{EVMError, HaltReason, ResultAndState},
             ContextSetters,
+            result::{EVMError, HaltReason, ResultAndState},
         },
         inspector::{Inspector, NoOpInspector},
-        interpreter::{interpreter::EthInterpreter, InterpreterResult},
+        interpreter::{InterpreterResult, interpreter::EthInterpreter},
         primitives::hardfork::SpecId,
-        ExecuteEvm, MainBuilder, MainContext,
     },
 };
-use revm::handler::{system_call::SystemCallTx, Handler, MainnetHandler};
+use revm::handler::{Handler, MainnetHandler, system_call::SystemCallTx};
 use revm::inspector::InspectorHandler;
 
 use crate::{
     create_guard::{self, ReservedNamespaceHandler},
     native_delegation::NativeDelegationEvm,
-    precompiles::{extend_outbe_precompiles, OutbePrecompileExecutionContext},
+    precompiles::{OutbePrecompileExecutionContext, extend_outbe_precompiles},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 
@@ -288,13 +288,28 @@ where
                         data,
                         context,
                     } => {
-                        crate::sys_tx_precompile::with_preloaded_system_tx_context(context, || {
-                            self.transact_system_call(
-                                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                                data,
+                        let begin_zone = outbe_primitives::system_tx::SystemTx::decode(&data)
+                            .is_ok_and(|input| {
+                                input.body_zone()
+                                    == outbe_primitives::system_tx::BodyZone::BeginBlock
+                            });
+                        let result = crate::sys_tx_precompile::with_preloaded_system_tx_context(
+                            context,
+                            || {
+                                self.transact_system_call(
+                                    outbe_primitives::addresses::SYSTEM_ADDRESS,
+                                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                                    data,
+                                )
+                            },
+                        )?;
+                        if begin_zone {
+                            crate::executor::witness::record_detached_trace_system_gas(
+                                result.result.gas().total_gas_spent(),
                             )
-                        })
+                            .map_err(|error| EVMError::Custom(error.into()))?;
+                        }
+                        Ok(result)
                     }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         self.run_inner_transact_raw(tx)

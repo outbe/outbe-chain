@@ -52,7 +52,7 @@ pub struct Accounting {
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_primitives::storage::{StorageHandle, hashmap::HashMapStorageProvider};
 
     #[test]
     fn storage_slot_layout_is_pinned() {

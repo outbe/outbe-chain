@@ -63,9 +63,14 @@ where
             .ok_or(crate::errors::ExecutorValidationError::SystemTxVisibleGasOverflow)?;
         let system_cumulative_gas_used =
             self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
+        let system_cumulative_gross_gas = self
+            .system_tx_gross_gas
+            .checked_add(output.result.result.gas().total_gas_spent())
+            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
 
         let _ = self.inner.commit_transaction(output);
         self.system_tx_execution_gas = system_cumulative_gas_used;
+        self.system_tx_gross_gas = system_cumulative_gross_gas;
 
         if let Some(receipt) = self.inner.receipts.last_mut() {
             receipt.cumulative_gas_used = visible_cumulative_tx_gas;

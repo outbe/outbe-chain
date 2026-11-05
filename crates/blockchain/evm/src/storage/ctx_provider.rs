@@ -150,7 +150,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
     /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
-    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint)>,
+    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint, Option<i64>)>,
+    trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
     /// Remaining gas of the active resumable-unit child frame.
     gas_child_remaining: Option<u64>,
     /// Whether end-block gas metering is active for this storage dispatch.
@@ -258,6 +259,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
             checkpoints: Vec::new(),
+            trigger_budget: None,
             gas_child_remaining: None,
             end_gas_metered: false,
         }
@@ -274,15 +276,32 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     /// this. Its daily allocation decision depends on Cycle's persisted UTC
     /// cursor rather than on untrusted calldata.
     fn charge(&mut self, cost: u64) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+            if cost > self.gas.remaining() {
+                self.subcall_out_of_gas = true;
+                self.gas.inner_mut().spend_all();
+                return Err(PrecompileError::OutOfGas);
+            }
+            if let Some(budget) = &mut self.trigger_budget {
+                budget.check(cost)?;
+            }
+        }
         if let Some(child) = self.gas_child_remaining {
             if cost > child {
                 let _ = self.gas.record_regular_cost(child);
+                if let Some(budget) = &mut self.trigger_budget {
+                    budget.charge(child)?;
+                }
                 self.gas_child_remaining = Some(0);
                 return Err(PrecompileError::OutOfGas);
             }
             self.gas_child_remaining = Some(child - cost);
         }
         if self.gas.record_regular_cost(cost) {
+            if let Some(budget) = &mut self.trigger_budget {
+                budget.charge(cost)?;
+            }
             Ok(())
         } else {
             Err(PrecompileError::OutOfGas)
@@ -297,6 +316,19 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     }
 
     fn charge_subcall(&mut self, cost: u64) -> std::result::Result<(), SubCallError> {
+        if self.trigger_budget.is_some() {
+            return self.charge(cost).map_err(|error| match error {
+                PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas,
+                    budget_gas,
+                } => SubCallError::TriggerBudgetExceeded {
+                    consumed_gas,
+                    budget_gas,
+                },
+                PrecompileError::OutOfGas => SubCallError::ParentOutOfGas,
+                other => SubCallError::Fatal(other.to_string()),
+            });
+        }
         if self.gas.record_regular_cost(cost) {
             Ok(())
         } else {
@@ -321,6 +353,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         chain_id: u64,
         block_number: u64,
     ) -> outbe_primitives::error::Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if ContextTr::cfg(self.ctx).chain_id() != chain_id
             || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
         {
@@ -381,6 +416,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
+        self.charge(0)?;
         let hash = internals(self.ctx)
             .db_mut()
             .block_hash(number)
@@ -389,12 +425,14 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx)
             .set_code(address, code)
             .map_err(crate::errors::CtxStorageError::storage)
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
+        self.charge(0)?;
         let mut internals = internals(self.ctx);
         let account = internals
             .load_account_code(address)
@@ -404,6 +442,45 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn gas_remaining(&self) -> Option<u64> {
         self.end_gas_metered.then(|| self.gas.remaining())
+    }
+
+    fn metered_gas_remaining(&self) -> Option<u64> {
+        Some(self.gas.remaining())
+    }
+
+    fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
+        use outbe_primitives::storage::gas::{TriggerBudget, TriggerScopeError};
+        if self.trigger_budget.is_some() {
+            return Err(TriggerScopeError::Nested.into());
+        }
+        if self.subcall_out_of_gas {
+            return Err(PrecompileError::OutOfGas);
+        }
+        self.trigger_budget = Some(TriggerBudget::new(budget));
+        Ok(())
+    }
+
+    fn trigger_budget_status(&self) -> Result<()> {
+        if self.subcall_out_of_gas {
+            return Err(PrecompileError::OutOfGas);
+        }
+        self.trigger_budget
+            .as_ref()
+            .ok_or(outbe_primitives::storage::gas::TriggerScopeError::Inactive)?
+            .status()
+    }
+
+    fn end_trigger_budget(&mut self) -> Result<()> {
+        self.trigger_budget
+            .take()
+            .ok_or(outbe_primitives::storage::gas::TriggerScopeError::Inactive)?;
+        Ok(())
+    }
+
+    fn observe_trigger_error(&mut self, error: &PrecompileError) {
+        if let Some(budget) = &mut self.trigger_budget {
+            budget.observe_error(error);
+        }
     }
 
     fn enable_end_gas_metering(&mut self) -> Result<()> {
@@ -433,6 +510,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        self.charge(0)?;
         internals(self.ctx)
             .sload(
                 outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
@@ -443,6 +521,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.charge(0)?;
         Ok(internals(self.ctx).tload(address, key))
     }
 
@@ -456,11 +535,13 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx).tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx).log(Log {
             address,
             data: event,
@@ -495,7 +576,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             selfdestructed_i: depth,
             ..raw
         };
-        self.checkpoints.push((token, raw));
+        self.checkpoints.push((
+            token,
+            raw,
+            self.trigger_budget.as_ref().map(|_| self.gas.refunded()),
+        ));
         token
     }
 
@@ -503,8 +588,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let expected = self
             .checkpoints
             .last()
-            .map(|(token, _)| token.selfdestructed_i);
-        if self.checkpoints.last().map(|(token, _)| *token) != Some(checkpoint) {
+            .map(|(token, _, _)| token.selfdestructed_i);
+        if self.checkpoints.last().map(|(token, _, _)| *token) != Some(checkpoint) {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::CheckpointOutOfOrder {
                     expected,
@@ -522,7 +607,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let Some(pos) = self
             .checkpoints
             .iter()
-            .rposition(|(token, _)| *token == checkpoint)
+            .rposition(|(token, _, _)| *token == checkpoint)
         else {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::InvalidCheckpointRevert {
@@ -532,16 +617,20 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 .into(),
             );
         };
-        while let Some((_, raw)) = (self.checkpoints.len() > pos)
+        while let Some((_, raw, refund)) = (self.checkpoints.len() > pos)
             .then(|| self.checkpoints.pop())
             .flatten()
         {
             internals(self.ctx).checkpoint_revert(raw);
+            if let Some(refund) = refund {
+                self.gas.inner_mut().set_refund(refund);
+            }
         }
         Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -556,6 +645,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -566,6 +656,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -599,6 +690,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             interpreter::instructions::{contract::load_account_delegated, gas_table_spec},
         };
         self.abort_bridge.check_subcall()?;
+        if self.trigger_budget.is_some() {
+            self.charge_subcall(0)?;
+        }
         // The Outbe precompile boundary currently has a single gas pool. Fail
         // closed rather than discarding an EIP-8037 reservoir/state-gas charge.
         if self.ctx.cfg().is_amsterdam_eip8037_enabled() {
@@ -657,6 +751,18 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             remaining
         };
         input.gas_limit = input.gas_limit.min(cap);
+        if self.trigger_budget.is_some() {
+            if let Some(legacy_remaining) = self.gas_child_remaining {
+                input.gas_limit = input.gas_limit.min(legacy_remaining);
+            }
+        }
+        let locally_limited = self
+            .trigger_budget
+            .as_ref()
+            .is_some_and(|budget| budget.remaining < input.gas_limit);
+        if let Some(budget) = &self.trigger_budget {
+            input.gas_limit = input.gas_limit.min(budget.remaining);
+        }
         let allowance = input.gas_limit;
         self.charge_subcall(allowance)?;
         let outcome = sub_call::run_frame(
@@ -676,9 +782,60 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             Some((hash, code)),
         );
         match outcome {
-            Ok(outcome) => sub_call::settle_outcome(outcome, self.gas.inner_mut()),
+            Ok(outcome) => {
+                // Settlement collapses fixed memory/operand failures into public OOG.
+                // More allowance cannot fix those failures, so they are not local exhaustion.
+                let allowance_exhausted = matches!(
+                    outcome.result.result,
+                    revm::interpreter::InstructionResult::OutOfGas
+                        | revm::interpreter::InstructionResult::MemoryOOG
+                        | revm::interpreter::InstructionResult::PrecompileOOG
+                        | revm::interpreter::InstructionResult::ReentrancySentryOOG
+                );
+                let reserved_remaining = self.gas.remaining();
+                let output = sub_call::settle_outcome(outcome, self.gas.inner_mut())?;
+                if let Some(budget) = &mut self.trigger_budget {
+                    // Use canonical settlement's actual return, not output.gas_used.
+                    budget
+                        .return_unused(self.gas.remaining() - reserved_remaining)
+                        .map_err(|error| SubCallError::Fatal(error.to_string()))?;
+                    if let Some(child) = &mut self.gas_child_remaining {
+                        *child = child
+                            .checked_add(self.gas.remaining() - reserved_remaining)
+                            .ok_or_else(|| {
+                                SubCallError::Fatal("legacy gas return overflow".into())
+                            })?;
+                    }
+                    if locally_limited && allowance_exhausted {
+                        budget.exhaust();
+                        if let Err(PrecompileError::TriggerBudgetExceeded {
+                            consumed_gas,
+                            budget_gas,
+                        }) = budget.status()
+                        {
+                            return Err(SubCallError::TriggerBudgetExceeded {
+                                consumed_gas,
+                                budget_gas,
+                            });
+                        }
+                    }
+                }
+                Ok(output)
+            }
             Err(error @ SubCallError::DepthLimitExceeded) => {
                 self.gas.erase_cost(allowance);
+                if let Some(budget) = &mut self.trigger_budget {
+                    budget
+                        .return_unused(allowance)
+                        .map_err(|error| SubCallError::Fatal(error.to_string()))?;
+                }
+                if self.trigger_budget.is_some() {
+                    if let Some(child) = &mut self.gas_child_remaining {
+                        *child = child.checked_add(allowance).ok_or_else(|| {
+                            SubCallError::Fatal("legacy gas return overflow".into())
+                        })?;
+                    }
+                }
                 Ok(SubCallOutput {
                     status: SubCallStatus::Halt(error),
                     returndata: Default::default(),

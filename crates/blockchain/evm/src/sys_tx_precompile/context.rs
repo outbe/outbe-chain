@@ -35,6 +35,9 @@ pub(crate) struct PreloadedSystemTxContext {
     /// (`CallEventProcessing` and `CleanupProcessing`). When `None`, begin-zone
     /// system transactions execute on the 10B `SYSTEM_TX_ARTIFACT_GAS_LIMIT` lane.
     pub gas_limit_override: Option<u64>,
+    /// Aggregate begin-zone gross capacity before this call. Refunds do not
+    /// replenish this allowance; end-zone execution uses its separate lane.
+    pub remaining_system_gross_gas: u64,
 }
 
 impl PreloadedSystemTxContext {
@@ -46,6 +49,7 @@ impl PreloadedSystemTxContext {
             canonical_vrf_proof_hash: B256::ZERO,
             verified_late_credit_signers: None,
             gas_limit_override: Some(gas_limit),
+            remaining_system_gross_gas: 0,
         }
     }
 }

@@ -20,7 +20,7 @@ use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
-use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
+use crate::triggers::{ACTIVE_TRIGGERS, TriggerId, last_fire_at, next_fire_at};
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
@@ -74,6 +74,16 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             .unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    // This synthetic router accepts outbound messages and has no target chains.
+    // Send callers ignore returndata; views receive the real targetsOf ABI shape.
+    // Other addresses remain unsupported, so infrastructure failures still surface.
+    use alloy_sol_types::SolValue;
+    storage.stub_sub_call_at(
+        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+        (Vec::<u32>::new(),).abi_encode_params().into(),
+    );
+    storage.enable_production_storage_gas_metering();
+    storage.set_gas_limit(10_000_000_000);
     storage
 }
 
@@ -164,7 +174,21 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
 }
 
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx)
+    crate::runtime::dispatch_triggers(ctx, cycle_work_capacity(ctx)?)
+}
+
+pub(super) fn cycle_work_capacity(
+    ctx: &BlockRuntimeContext,
+) -> outbe_primitives::error::Result<crate::runtime::CycleWorkCapacity> {
+    Ok(crate::runtime::CycleWorkCapacity {
+        remaining_gas: ctx.storage.metered_gas_remaining()?.ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "Cycle fixture requires an explicit gas meter".into(),
+            )
+        })?,
+        gas_used_at_entry: ctx.storage.gas_used()?,
+        reserve_after_cycle: 0,
+    })
 }
 
 pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
@@ -175,7 +199,11 @@ pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
+    crate::runtime::handle_cycle_tick(
+        ctx,
+        metadosis_genesis_activation_height,
+        cycle_work_capacity(ctx)?,
+    )
 }
 
 pub(super) fn run_emission_limit_daily(
@@ -184,6 +212,7 @@ pub(super) fn run_emission_limit_daily(
     crate::handler::run_emission_limit_daily(ctx)
 }
 
+mod budgets;
 mod calendar;
 mod dispatch;
 mod gap_oip00343;

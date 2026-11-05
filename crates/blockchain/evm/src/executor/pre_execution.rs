@@ -201,6 +201,9 @@ where
                         .unwrap_or(B256::ZERO),
                     verified_late_credit_signers: self.verified_late_credit_signers.clone(),
                     gas_limit_override: None,
+                    remaining_system_gross_gas:
+                        outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+                            .saturating_sub(self.system_tx_gross_gas),
                 }),
                 hook_event_logs: self.whitelisted_hook_event_logs.clone(),
             },

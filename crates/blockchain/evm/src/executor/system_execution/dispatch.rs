@@ -71,6 +71,8 @@ where
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: self.verified_late_credit_signers.clone(),
             gas_limit_override: None,
+            remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+                .saturating_sub(self.system_tx_gross_gas),
         };
         let available_visible_gas =
             reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;
@@ -248,6 +250,7 @@ where
             additional_visible_gas,
             signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
+            internal_gross_gas_used: result.gas().total_gas_spent(),
         })?;
         self.advance_system_tx_phase_cursor(block_artifacts);
         Ok(Some(gas_output))

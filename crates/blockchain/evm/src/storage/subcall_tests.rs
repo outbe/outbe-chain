@@ -14,6 +14,251 @@ const TARGET: Address = Address::repeat_byte(0xab);
 const CALLER: Address = Address::repeat_byte(0xc0);
 const GAS_WORD: &[u8] = &[0x5a, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3];
 
+#[test]
+fn trigger_budget_attributes_only_locally_reduced_child_oog() {
+    use outbe_primitives::storage::StorageHandle;
+    for explicit_cap in [100, u64::MAX] {
+        let mut ctx = context(&[0x5b, 0x60, 0, 0x56]); // Infinite jump loop.
+        let mut p = provider(&mut ctx, 50_000);
+        let result = StorageHandle::enter(&mut p, |storage| {
+            storage.with_trigger_budget(3600, || {
+                let child =
+                    storage.try_call_with_gas(TARGET, U256::ZERO, Bytes::new(), explicit_cap);
+                if explicit_cap == 100 {
+                    assert!(matches!(
+                        child.unwrap().status,
+                        SubCallStatus::Halt(SubCallError::OutOfGas)
+                    ));
+                } else {
+                    assert!(matches!(
+                        child,
+                        Err(SubCallError::TriggerBudgetExceeded {
+                            consumed_gas: 3600,
+                            budget_gas: 3600
+                        })
+                    ));
+                }
+                // Deliberately swallow the child result.
+                Ok(())
+            })
+        });
+        if explicit_cap == 100 {
+            result.unwrap();
+            assert_eq!(p.gas.remaining(), 47_300);
+        } else {
+            assert!(matches!(
+                result,
+                Err(PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas: 3600,
+                    budget_gas: 3600
+                })
+            ));
+            assert_eq!(p.gas.remaining(), 46_400);
+        }
+        assert!(!p.subcall_out_of_gas);
+        assert!(p.trigger_budget.is_none());
+    }
+}
+
+#[test]
+fn trigger_budget_does_not_attribute_fixed_memory_limit_to_local_allowance() {
+    use outbe_primitives::storage::StorageHandle;
+    let mut ctx = context(&[0x60, 0, 0x60, 64, 0x52, 0]);
+    ctx.cfg.memory_limit = 32;
+    let mut p = provider(&mut ctx, 50_000);
+    StorageHandle::enter(&mut p, |storage| {
+        storage.with_trigger_budget(4000, || {
+            let child = storage.try_call(TARGET, U256::ZERO, Bytes::new())?;
+            assert!(matches!(
+                child.status,
+                SubCallStatus::Halt(SubCallError::OutOfGas)
+            ));
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(p.gas.remaining(), 46_000);
+    assert!(!p.subcall_out_of_gas);
+}
+
+#[test]
+fn trigger_budget_admission_and_exact_success_do_not_exhaust_parent() {
+    use outbe_primitives::storage::StorageHandle;
+    for budget in [2599, 2600] {
+        let mut ctx = context(&[0]);
+        let mut p = provider(&mut ctx, 50_000);
+        let result = StorageHandle::enter(&mut p, |storage| {
+            storage.with_trigger_budget(budget, || {
+                storage.call(TARGET, U256::ZERO, Bytes::new())?;
+                Ok(())
+            })
+        });
+        if budget == 2599 {
+            assert!(matches!(
+                result,
+                Err(PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas: 100,
+                    budget_gas: 2599
+                })
+            ));
+            assert_eq!(p.gas.remaining(), 49_900);
+        } else {
+            result.unwrap();
+            assert_eq!(p.gas.remaining(), 47_400);
+        }
+        assert!(!p.subcall_out_of_gas);
+    }
+}
+
+#[test]
+fn trigger_budget_returns_canonical_unused_allowance_without_double_charging() {
+    let mut ctx = context(GAS_WORD);
+    let mut p = provider(&mut ctx, 50_000);
+    p.begin_trigger_budget(5000).unwrap();
+    for admission in [2600, 100] {
+        let local_before = p.trigger_budget.as_ref().unwrap().remaining;
+        let parent_before = p.gas.remaining();
+        let child = p.sub_call(input(u64::MAX)).unwrap();
+        assert!(matches!(child.status, SubCallStatus::Success));
+        let charged = admission + child.gas_used;
+        assert_eq!(parent_before - p.gas.remaining(), charged);
+        assert_eq!(
+            local_before - p.trigger_budget.as_ref().unwrap().remaining,
+            charged
+        );
+        p.trigger_budget_status().unwrap();
+    }
+    p.end_trigger_budget().unwrap();
+}
+
+#[test]
+fn trigger_budget_returns_allowance_on_depth_rejection() {
+    let mut ctx = context(GAS_WORD);
+    while ctx.journal().depth() <= 1024 {
+        ctx.journal_mut().checkpoint();
+    }
+    let mut p = provider(&mut ctx, 50_000);
+    p.begin_trigger_budget(5000).unwrap();
+    let child = p.sub_call(input(u64::MAX)).unwrap();
+    assert!(matches!(
+        child.status,
+        SubCallStatus::Halt(SubCallError::DepthLimitExceeded)
+    ));
+    assert_eq!(p.trigger_budget.as_ref().unwrap().remaining, 2400);
+    assert_eq!(p.gas.remaining(), 47_400);
+    p.trigger_budget_status().unwrap();
+}
+
+#[test]
+fn trigger_budget_coexists_with_legacy_ceiling_and_preserves_unscoped_refunds() {
+    let mut ctx = context(&[0]);
+    let mut p = provider(&mut ctx, 50_000);
+    let checkpoint = p.checkpoint();
+    p.refund_gas(9);
+    p.checkpoint_revert(checkpoint).unwrap();
+    assert_eq!(
+        p.gas_refunded(),
+        9,
+        "unscoped checkpoint semantics are unchanged"
+    );
+    p.begin_gas_ceiling(100).unwrap();
+    p.begin_trigger_budget(5000).unwrap();
+    assert!(matches!(p.deduct_gas(101), Err(PrecompileError::OutOfGas)));
+    assert_eq!(p.gas.remaining(), 49_900);
+    assert_eq!(p.trigger_budget.as_ref().unwrap().remaining, 4900);
+    p.trigger_budget_status().unwrap();
+    p.end_gas_ceiling().unwrap();
+    assert!(matches!(
+        p.deduct_gas(4901),
+        Err(PrecompileError::TriggerBudgetExceeded {
+            consumed_gas: 100,
+            budget_gas: 5000
+        })
+    ));
+    assert_eq!(p.gas.remaining(), 49_900);
+    assert!(!p.subcall_out_of_gas);
+}
+
+#[test]
+fn trigger_budget_legacy_child_ceiling_caps_reservation_and_returns_unused() {
+    let mut ctx = context(GAS_WORD);
+    let mut p = provider(&mut ctx, 50_000);
+    p.begin_gas_ceiling(5000).unwrap();
+    p.begin_trigger_budget(20_000).unwrap();
+    let child = p.sub_call(input(u64::MAX)).unwrap();
+    assert!(matches!(child.status, SubCallStatus::Success));
+    assert_eq!(U256::from_be_slice(&child.returndata), U256::from(2398));
+    let charged = 2600 + child.gas_used;
+    assert_eq!(p.gas.remaining(), 50_000 - charged);
+    assert_eq!(
+        p.trigger_budget.as_ref().unwrap().remaining,
+        20_000 - charged
+    );
+    assert_eq!(p.gas_child_remaining, Some(5000 - charged));
+    p.trigger_budget_status().unwrap();
+    assert!(!p.subcall_out_of_gas);
+}
+
+#[test]
+fn trigger_budget_nested_standard_precompile_consumes_only_actual_work() {
+    let mut ctx = context(&[0]);
+    let mut p = provider(&mut ctx, 50_000);
+    p.begin_trigger_budget(5000).unwrap();
+    let payload = Bytes::from_static(b"bounded identity precompile");
+    let child = p
+        .sub_call(SubCallInput {
+            target: Address::with_last_byte(4),
+            calldata: payload.clone(),
+            ..input(u64::MAX)
+        })
+        .unwrap();
+    assert!(matches!(child.status, SubCallStatus::Success));
+    assert_eq!(child.returndata, payload);
+    assert_eq!(child.gas_used, 18);
+    assert_eq!(
+        50_000 - p.gas.remaining(),
+        5000 - p.trigger_budget.as_ref().unwrap().remaining
+    );
+    p.trigger_budget_status().unwrap();
+}
+
+#[test]
+fn trigger_budget_rollback_removes_real_child_state_logs_balance_and_transient() {
+    use outbe_primitives::storage::StorageHandle;
+    // SSTORE(0,1), TSTORE(0,1), LOG0(empty), STOP.
+    let mut ctx = context(&[
+        0x60, 1, 0x60, 0, 0x55, 0x60, 1, 0x60, 0, 0x5d, 0x60, 0, 0x60, 0, 0xa0, 0,
+    ]);
+    let mut p = provider(&mut ctx, 200_000);
+    p.increase_balance(CALLER, U256::from(10)).unwrap();
+    StorageHandle::enter(&mut p, |storage| {
+        storage.refund_gas(9).unwrap();
+        let result = storage.with_trigger_budget(100_000, || {
+            storage.call(TARGET, U256::ONE, Bytes::new())?;
+            assert_eq!(storage.sload(TARGET, U256::ZERO)?, U256::ONE);
+            assert_eq!(storage.tload(TARGET, U256::ZERO)?, U256::ONE);
+            storage.refund_gas(1000)?;
+            let _ = storage.deduct_gas(100_001);
+            Ok(())
+        });
+        assert!(matches!(
+            result,
+            Err(PrecompileError::TriggerBudgetExceeded { .. })
+        ));
+        assert_eq!(storage.sload(TARGET, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(storage.tload(TARGET, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(TARGET).unwrap(), U256::ZERO);
+        assert_eq!(storage.balance(CALLER).unwrap(), U256::from(10));
+        assert_eq!(storage.gas_refunded().unwrap(), 9);
+        assert!(storage.gas_used().unwrap() > 22_000);
+        storage
+            .with_trigger_budget(100, || storage.deduct_gas(100))
+            .unwrap();
+    });
+    assert!(p.ctx.journal().logs().is_empty());
+    assert!(!p.subcall_out_of_gas);
+}
+
 fn context(code: &[u8]) -> EthEvmContext<CacheDB<EmptyDB>> {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::copy_from_slice(code));
@@ -406,6 +651,27 @@ fn account_and_child_storage_database_failures_remain_fatal() {
             output.is_err(),
             "DB failure must not produce a user receipt"
         );
+    }
+}
+
+#[test]
+fn trigger_budget_caught_real_database_failure_stays_fatal() {
+    use outbe_primitives::storage::StorageHandle;
+    for at_entry in [false, true] {
+        let mut ctx = Context::mainnet().with_db(FailedDatabase { at_entry });
+        let mut p = provider(&mut ctx, 50_000);
+        let result = StorageHandle::enter(&mut p, |storage| {
+            storage.with_trigger_budget(20_000, || {
+                assert!(storage
+                    .try_call_with_gas(TARGET, U256::ZERO, Bytes::new(), 10_000)
+                    .is_err());
+                let _ = storage.deduct_gas(20_001);
+                Ok(())
+            })
+        });
+        assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+        assert!(!p.subcall_out_of_gas);
+        assert!(p.trigger_budget.is_none());
     }
 }
 

@@ -16,6 +16,12 @@ pub enum PrecompileError {
     #[error("out of gas")]
     OutOfGas,
 
+    #[error("trigger budget exceeded: consumed {consumed_gas}, budget {budget_gas}")]
+    TriggerBudgetExceeded { consumed_gas: u64, budget_gas: u64 },
+
+    #[error("trigger scope: {0}")]
+    TriggerScope(#[from] crate::storage::gas::TriggerScopeError),
+
     /// Storage operation failed.
     #[error("storage error: {0}")]
     Storage(String),
@@ -715,6 +721,13 @@ impl From<CurrencyCodeError> for PrecompileError {
 impl From<SubCallError> for PrecompileError {
     fn from(value: SubCallError) -> Self {
         match value {
+            SubCallError::TriggerBudgetExceeded {
+                consumed_gas,
+                budget_gas,
+            } => Self::TriggerBudgetExceeded {
+                consumed_gas,
+                budget_gas,
+            },
             SubCallError::ParentOutOfGas | SubCallError::OutOfGas => Self::OutOfGas,
             SubCallError::StaticContextViolation | SubCallError::StateChangeDuringStaticCall => {
                 Self::WriteProtection
@@ -786,6 +799,9 @@ impl PrecompileError {
             Self::SubCall(error) => Err(revm::precompile::PrecompileError::Fatal(format!(
                 "sub-call error: {error:?}"
             ))),
+            error @ (Self::TriggerBudgetExceeded { .. } | Self::TriggerScope(_)) => {
+                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
+            }
             Self::Unsupported => Err(revm::precompile::PrecompileError::Fatal(
                 "precompile reported Unsupported".into(),
             )),
@@ -818,6 +834,8 @@ impl PrecompileError {
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
             Self::OutOfGas
+            | Self::TriggerBudgetExceeded { .. }
+            | Self::TriggerScope(_)
             | Self::BodyReadCorruption(_)
             | Self::WriteProtection
             | Self::Revert(_)
@@ -833,7 +851,9 @@ impl PrecompileError {
     pub fn pass_failure(&self) -> PassFailure {
         match self {
             error if error.is_node_local() => PassFailure::Propagate,
-            Self::FatalWithCause(_) => PassFailure::Propagate,
+            Self::FatalWithCause(_)
+            | Self::TriggerScope(_)
+            | Self::TriggerBudgetExceeded { .. } => PassFailure::Propagate,
             Self::OutOfGas => PassFailure::Stop,
             _ => PassFailure::Skip,
         }
@@ -878,6 +898,23 @@ pub fn decide<T>(
 mod tests {
     use super::{PassFailure, PrecompileError};
     use crate::storage::SubCallError;
+
+    #[test]
+    fn local_trigger_control_error_stays_typed_and_cannot_escape_as_a_receipt() {
+        let error = PrecompileError::from(SubCallError::TriggerBudgetExceeded {
+            consumed_gas: 100,
+            budget_gas: 101,
+        });
+        assert!(matches!(
+            error,
+            PrecompileError::TriggerBudgetExceeded {
+                consumed_gas: 100,
+                budget_gas: 101
+            }
+        ));
+        assert_eq!(error.pass_failure(), PassFailure::Propagate);
+        assert!(error.into_precompile_result(100).is_err());
+    }
 
     #[test]
     fn sweep_failures_follow_where_the_error_comes_from() {

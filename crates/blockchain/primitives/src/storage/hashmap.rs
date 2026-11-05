@@ -60,6 +60,9 @@ pub struct HashMapStorageProvider {
     is_static: bool,
     gas_limit: Option<u64>,
     gas_used: u64,
+    gas_refunded: i64,
+    parent_out_of_gas: bool,
+    trigger_budget: Option<super::gas::TriggerBudget>,
     gas_child_remaining: Option<u64>,
     end_gas_metered: bool,
     meter_storage_gas: bool,
@@ -98,6 +101,8 @@ pub struct HashMapStorageProvider {
 
 #[cfg_attr(feature = "bench-utils", derive(Clone))]
 struct Snapshot {
+    transient: Option<HashMap<(Address, U256), U256>>,
+    gas_refunded: Option<i64>,
     storage: HashMap<(Address, U256), U256>,
     accounts: HashMap<Address, AccountInfo>,
     events: HashMap<Address, Vec<LogData>>,
@@ -130,6 +135,9 @@ impl HashMapStorageProvider {
             is_static: false,
             gas_limit: None,
             gas_used: 0,
+            gas_refunded: 0,
+            parent_out_of_gas: false,
+            trigger_budget: None,
             gas_child_remaining: None,
             end_gas_metered: false,
             meter_storage_gas: false,
@@ -328,6 +336,7 @@ impl HashMapStorageProvider {
     pub fn set_gas_limit(&mut self, gas_limit: u64) {
         self.gas_limit = Some(gas_limit);
         self.gas_used = 0;
+        self.parent_out_of_gas = false;
         self.metered_storage_reads = 0;
         self.metered_storage_writes = 0;
     }
@@ -429,6 +438,9 @@ impl HashMapStorageProvider {
     }
 
     fn before_mutation(&mut self, address: Address) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if self.mutation_failure_address == Some(address) {
             return Err(PrimitivesStorageError::InjectedMutationFailureForOwner { address }.into());
         }
@@ -480,6 +492,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         chain_id: u64,
         block_number: u64,
     ) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if self.metadosis_mutation_active.is_some()
             || self.chain_id != chain_id
             || self.block_number != block_number
@@ -553,10 +568,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         Ok(self.canonical_block_hashes.get(&number).copied())
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         let account = self.accounts.entry(address).or_default();
         account.code_hash = code.hash_slow();
         account.code = Some(code);
@@ -564,6 +585,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         Ok(self.accounts.entry(address).or_default().clone())
     }
 
@@ -582,6 +606,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(value)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         Ok(self
             .storage
             .get(&(crate::addresses::TEE_REGISTRY_ADDRESS, U256::from(44)))
@@ -590,6 +617,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         Ok(self
             .transient
             .get(&(address, key))
@@ -611,6 +641,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         self.transient.insert((address, key), value);
         Ok(())
     }
@@ -626,12 +659,31 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+            if self
+                .metered_gas_remaining()
+                .is_some_and(|remaining| gas > remaining)
+            {
+                self.parent_out_of_gas = true;
+                if let Some(limit) = self.gas_limit {
+                    self.gas_used = limit;
+                }
+                return Err(PrecompileError::OutOfGas);
+            }
+            if let Some(budget) = &mut self.trigger_budget {
+                budget.check(gas)?;
+            }
+        }
         if let Some(child) = self.gas_child_remaining {
             if gas > child {
                 if let Some(limit) = self.gas_limit {
                     self.gas_used = self.gas_used.saturating_add(child).min(limit);
                 }
                 self.gas_child_remaining = Some(0);
+                if let Some(budget) = &mut self.trigger_budget {
+                    budget.charge(child)?;
+                }
                 return Err(PrecompileError::OutOfGas);
             }
             self.gas_child_remaining = Some(child - gas);
@@ -647,6 +699,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             return Err(PrecompileError::OutOfGas);
         }
         self.gas_used = next;
+        if let Some(budget) = &mut self.trigger_budget {
+            budget.charge(gas)?;
+        }
         Ok(())
     }
 
@@ -657,6 +712,49 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
                     .map(|limit| limit.saturating_sub(self.gas_used))
             })
             .flatten()
+    }
+
+    fn metered_gas_remaining(&self) -> Option<u64> {
+        self.gas_limit
+            .map(|limit| limit.saturating_sub(self.gas_used))
+    }
+
+    fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
+        use super::gas::{TriggerBudget, TriggerScopeError};
+        if self.trigger_budget.is_some() {
+            return Err(TriggerScopeError::Nested.into());
+        }
+        if self.gas_limit.is_none() || !self.meter_storage_gas {
+            return Err(TriggerScopeError::Unsupported.into());
+        }
+        if self.parent_out_of_gas {
+            return Err(PrecompileError::OutOfGas);
+        }
+        self.trigger_budget = Some(TriggerBudget::new(budget));
+        Ok(())
+    }
+
+    fn trigger_budget_status(&self) -> Result<()> {
+        if self.parent_out_of_gas {
+            return Err(PrecompileError::OutOfGas);
+        }
+        self.trigger_budget
+            .as_ref()
+            .ok_or(super::gas::TriggerScopeError::Inactive)?
+            .status()
+    }
+
+    fn end_trigger_budget(&mut self) -> Result<()> {
+        self.trigger_budget
+            .take()
+            .ok_or(super::gas::TriggerScopeError::Inactive)?;
+        Ok(())
+    }
+
+    fn observe_trigger_error(&mut self, error: &PrecompileError) {
+        if let Some(budget) = &mut self.trigger_budget {
+            budget.observe_error(error);
+        }
     }
 
     fn enable_end_gas_metering(&mut self) -> Result<()> {
@@ -679,14 +777,16 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         Ok(())
     }
 
-    fn refund_gas(&mut self, _gas: i64) {}
+    fn refund_gas(&mut self, gas: i64) {
+        self.gas_refunded = self.gas_refunded.saturating_add(gas);
+    }
 
     fn gas_used(&self) -> u64 {
         self.gas_used
     }
 
     fn gas_refunded(&self) -> i64 {
-        0
+        self.gas_refunded
     }
 
     fn is_static(&self) -> bool {
@@ -696,6 +796,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     fn checkpoint(&mut self) -> JournalCheckpoint {
         let idx = self.snapshots.len();
         self.snapshots.push(Snapshot {
+            transient: self.trigger_budget.as_ref().map(|_| self.transient.clone()),
+            gas_refunded: self.trigger_budget.as_ref().map(|_| self.gas_refunded),
             storage: self.storage.clone(),
             accounts: self.accounts.clone(),
             events: self.events.clone(),
@@ -716,6 +818,12 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
         if let Some(snapshot) = super::drain_snapshots_from(&mut self.snapshots, checkpoint)? {
+            if let Some(transient) = snapshot.transient {
+                self.transient = transient;
+            }
+            if let Some(refund) = snapshot.gas_refunded {
+                self.gas_refunded = refund;
+            }
             self.storage = snapshot.storage;
             self.accounts = snapshot.accounts;
             self.events = snapshot.events;
@@ -727,6 +835,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if amount.is_zero() {
             return Ok(());
         }
@@ -760,6 +871,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if amount.is_zero() {
             return Ok(());
         }
@@ -780,6 +894,18 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
+        if let Some(budget) = &self.trigger_budget {
+            budget.status().map_err(|error| match error {
+                PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas,
+                    budget_gas,
+                } => SubCallError::TriggerBudgetExceeded {
+                    consumed_gas,
+                    budget_gas,
+                },
+                other => SubCallError::Fatal(other.to_string()),
+            })?;
+        }
         self.sub_call_inputs.push(input.clone());
         if let Some(selector) = input
             .calldata
@@ -819,6 +945,9 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if amount.is_zero() {
             return Ok(());
         }

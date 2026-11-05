@@ -115,6 +115,8 @@ pub enum SubCallError {
     /// Admission exhausted the enclosing precompile's gas, before a child could run.
     #[error("parent out of gas")]
     ParentOutOfGas,
+    #[error("trigger budget exceeded: consumed {consumed_gas}, budget {budget_gas}")]
+    TriggerBudgetExceeded { consumed_gas: u64, budget_gas: u64 },
     /// Call stack would exceed `CALL_STACK_LIMIT` (1024).
     #[error("depth limit exceeded")]
     DepthLimitExceeded,
@@ -159,6 +161,14 @@ impl<'storage> CheckpointGuard<'storage> {
     pub fn commit(mut self) -> Result<()> {
         if let Some(checkpoint) = self.checkpoint.take() {
             self.storage.checkpoint_commit(checkpoint)?;
+        }
+        Ok(())
+    }
+
+    pub fn revert(mut self) -> Result<()> {
+        if let Some(checkpoint) = self.checkpoint {
+            self.storage.checkpoint_revert(checkpoint)?;
+            self.checkpoint = None;
         }
         Ok(())
     }
@@ -362,6 +372,27 @@ pub trait PrecompileStorageProvider {
     fn gas_remaining(&self) -> Option<u64> {
         None
     }
+
+    /// Actual enclosing meter capacity, independent of end-zone mode.
+    fn metered_gas_remaining(&self) -> Option<u64> {
+        None
+    }
+
+    fn begin_trigger_budget(&mut self, _budget: u64) -> Result<()> {
+        Err(gas::TriggerScopeError::Unsupported.into())
+    }
+
+    /// Sticky parent/local failure, inspected before committing the scope.
+    fn trigger_budget_status(&self) -> Result<()> {
+        Err(gas::TriggerScopeError::Unsupported.into())
+    }
+
+    fn end_trigger_budget(&mut self) -> Result<()> {
+        Err(gas::TriggerScopeError::Unsupported.into())
+    }
+
+    /// Preserve infrastructure faults caught by a handler inside an active scope.
+    fn observe_trigger_error(&mut self, _error: &crate::error::PrecompileError) {}
 
     /// Caps the next storage charges at `ceiling`. Providers without a meter ignore it.
     fn begin_gas_ceiling(&mut self, _ceiling: u64) -> Result<()> {

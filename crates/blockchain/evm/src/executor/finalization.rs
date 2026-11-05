@@ -6,8 +6,8 @@ use crate::{
     finalization::{
         late_credits::verify_late_finalize_credits_batches,
         parent_accounting::{
-            resolve_accounted_parent_artifact, resolve_phase1_witness, verify_phase1_certificate,
             ParentArtifactLookup, Phase1VerifyInput, Phase1WitnessLookup,
+            resolve_accounted_parent_artifact, resolve_phase1_witness, verify_phase1_certificate,
         },
     },
     system_tx::SystemTxPhase,
@@ -195,6 +195,7 @@ where
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
             gas_limit_override: None,
+            remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
         self.commit_system_transaction(output, signed_gas_limit, 0, signed_gas_limit)?;
