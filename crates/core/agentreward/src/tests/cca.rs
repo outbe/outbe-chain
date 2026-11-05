@@ -11,7 +11,7 @@ fn ctx<'a>(storage: StorageHandle<'a>, height: u64) -> BlockRuntimeContext<'a> {
             timestamp: 2_000_000_000,
             chain_id: CHAIN_ID,
             genesis_hash: alloy_primitives::B256::ZERO,
-            genesis_timestamp: 2_000_000_000,
+            genesis_timestamp: 1,
             proposer: alloy_primitives::Address::ZERO,
             validators: Vec::new(),
         },
@@ -30,23 +30,20 @@ fn originate(storage: &StorageHandle<'_>, address: Address, day: WorldwideDay, w
 
 fn voters(storage: &StorageHandle<'_>, day: WorldwideDay, count: u32) {
     let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+    rewards.day_voter_count.write(&day.value(), count).unwrap();
     rewards
-        .daily_voter_count
-        .write(&day.value(), count)
-        .unwrap();
-    rewards
-        .daily_total_participation
+        .day_total_votes
         .write(&day.value(), U256::from(count))
         .unwrap();
     for n in 0..count {
         let address = numbered_address(100_000 + u64::from(n));
         rewards
-            .daily_voter_at
+            .day_voter_at
             .get_nested(&day.value())
             .write(&n, address)
             .unwrap();
         rewards
-            .daily_participation
+            .day_votes
             .get_nested(&day.value())
             .write(&address, 1)
             .unwrap();
@@ -269,6 +266,213 @@ fn gap_ed29_job_rounding_rest_goes_to_promis_limit_once() {
 }
 
 #[test]
+fn gap_ed28_day_records_deleted_after_their_job() {
+    with_contract_mut(|storage, contract| {
+        voters(&storage, DAY, 300);
+        for n in 1..=300 {
+            let address = numbered_address(n);
+            contract.increment_waa_tribute(DAY, address).unwrap();
+            contract.increment_sra_tribute(DAY, address).unwrap();
+            originate(&storage, address, DAY, U256::ONE);
+            if n % 2 == 0 {
+                outbe_ccaregistry::api::credis_forfeited(
+                    &storage,
+                    address,
+                    DAY.value(),
+                    U256::from(2),
+                )
+                .unwrap();
+            }
+        }
+        let context = ctx(storage.clone(), 0);
+        allocate_fixture(
+            &context,
+            DAY,
+            &[
+                (PoolKind::Validator, U256::from(300)),
+                (PoolKind::Waa, U256::from(300)),
+                (PoolKind::Sra, U256::ZERO),
+                (PoolKind::Cca, U256::from(150)),
+            ],
+        )
+        .unwrap();
+        let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+        for height in 0..5 {
+            crate::api::process_agent_rewards(&ctx(storage.clone(), height)).unwrap();
+            if height == 0 {
+                // A partial validator job must retain every source entry.
+                assert_eq!(rewards.day_voter_count.read(&DAY.value()).unwrap(), 300);
+                assert_eq!(
+                    outbe_rewards::api::reward_voter_at(&context, DAY.value(), 0)
+                        .unwrap()
+                        .1,
+                    U256::ONE
+                );
+            }
+            if height == 1 {
+                assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 300);
+                assert_eq!(
+                    contract
+                        .waa_tribute_counts
+                        .read(&AgentRewardContract::tribute_count_key(
+                            DAY,
+                            numbered_address(1)
+                        ))
+                        .unwrap(),
+                    1
+                );
+            }
+            if height == 2 {
+                // Zero-valued jobs still consume and retain their indexed inputs.
+                assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 300);
+                assert_eq!(
+                    contract
+                        .sra_tribute_counts
+                        .read(&AgentRewardContract::tribute_count_key(
+                            DAY,
+                            numbered_address(1)
+                        ))
+                        .unwrap(),
+                    1
+                );
+            }
+            if height == 3 {
+                assert_eq!(
+                    outbe_ccaregistry::api::reward_day_inputs(&storage, DAY.value()).unwrap(),
+                    (300, U256::from(150))
+                );
+                assert_eq!(
+                    outbe_ccaregistry::api::reward_day_entry(&storage, DAY.value(), 1)
+                        .unwrap()
+                        .1,
+                    U256::ZERO
+                );
+            }
+        }
+        assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+        crate::api::process_agent_rewards(&ctx(storage.clone(), 5)).unwrap();
+        assert_eq!(rewards.day_voter_count.read(&DAY.value()).unwrap(), 0);
+        assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
+        assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
+        assert_eq!(
+            outbe_ccaregistry::api::reward_day_inputs(&storage, DAY.value()).unwrap(),
+            (0, U256::ZERO)
+        );
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&storage).unwrap(),
+            DAY.value()
+        );
+        assert!(contract
+            .increment_waa_tribute(DAY, numbered_address(1))
+            .is_err());
+        assert!(contract
+            .increment_sra_tribute(DAY, numbered_address(1))
+            .is_err());
+        assert!(outbe_ccaregistry::api::credis_issued(
+            &storage,
+            numbered_address(1),
+            DAY.value(),
+            U256::ONE
+        )
+        .is_err());
+        assert!(outbe_ccaregistry::api::credis_forfeited(
+            &storage,
+            numbered_address(2),
+            DAY.value(),
+            U256::ONE
+        )
+        .is_err());
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            DAY,
+            crate::api::DayAgentPools::default()
+        )
+        .is_err());
+    });
+}
+
+#[test]
+fn standalone_cleanup_and_worker_share_one_cleanup_budget_and_retry_failed_slices() {
+    with_contract_mut(|storage, contract| {
+        let next_day = WorldwideDay::new(20231114);
+        for n in 1..=300 {
+            contract
+                .increment_waa_tribute(DAY, numbered_address(n))
+                .unwrap();
+            contract
+                .increment_sra_tribute(DAY, numbered_address(n))
+                .unwrap();
+        }
+        contract
+            .increment_waa_tribute(next_day, numbered_address(999))
+            .unwrap();
+        let context = ctx(storage.clone(), 0);
+        outbe_rewards::api::seal_votes_and_fees(&context, DAY.value()).unwrap();
+        crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
+        allocate_fixture(&context, next_day, &[(PoolKind::Waa, U256::ONE)]).unwrap();
+        crate::api::cleanup(&context).unwrap();
+        assert!(contract.cleanup_initialized.read().unwrap());
+        assert_eq!(contract.cleanup_height.read().unwrap(), 0);
+        assert_eq!(
+            contract.cleanup_jobs.get(0).unwrap().unwrap().next_index,
+            256
+        );
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(
+            contract
+                .get_pool_claimable_reward(RewardPool::Waa, numbered_address(999))
+                .unwrap(),
+            U256::ONE
+        );
+        assert_eq!(
+            contract.cleanup_jobs.get(0).unwrap().unwrap().next_index,
+            256
+        );
+
+        let key = AgentRewardContract::tribute_count_key(DAY, numbered_address(290));
+        contract.waa_member_index.write(&key, 0).unwrap();
+        let retry = ctx(storage.clone(), 1);
+        assert!(crate::api::cleanup(&retry).is_err());
+        assert_eq!(contract.cleanup_height.read().unwrap(), 0);
+        assert_eq!(
+            contract.cleanup_jobs.get(0).unwrap().unwrap().next_index,
+            256
+        );
+        assert_eq!(
+            contract
+                .waa_tribute_counts
+                .read(&AgentRewardContract::tribute_count_key(
+                    DAY,
+                    numbered_address(257)
+                ))
+                .unwrap(),
+            1
+        );
+        contract.waa_member_index.write(&key, 290).unwrap();
+        crate::api::cleanup(&retry).unwrap();
+        assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
+        // WAA and SRA share the 256-entry cleanup allowance: 44 + 212.
+        assert_eq!(
+            contract.cleanup_jobs.get(1).unwrap().unwrap().next_index,
+            212
+        );
+        crate::api::cleanup(&retry).unwrap();
+        assert_eq!(
+            contract.cleanup_jobs.get(1).unwrap().unwrap().next_index,
+            212
+        );
+        crate::api::cleanup(&ctx(storage.clone(), 2)).unwrap();
+        assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            next_day,
+            crate::api::DayAgentPools::default()
+        )
+        .is_err());
+    });
+}
+
+#[test]
 fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
     with_contract_mut(|storage, contract| {
         for n in 1..=600 {
@@ -329,7 +533,7 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
 fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
     with_contract_mut(|storage, contract| {
         let context = ctx(storage.clone(), 0);
-        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&context, DAY.value()).unwrap();
         contract.accrual_tail.write(u64::MAX - 3).unwrap();
         assert!(crate::api::allocate_day_agent_rewards(
             &context,
@@ -337,7 +541,11 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
             crate::api::DayAgentPools::default(),
         )
         .is_err());
-        assert_eq!(contract.sealed_through_day.read().unwrap(), 0);
+        assert_eq!(contract.pending_jobs_by_day.read(&DAY.value()).unwrap(), 0);
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&storage).unwrap(),
+            DAY.value()
+        );
         contract.accrual_tail.write(0).unwrap();
         allocate_fixture(&context, DAY, &[]).unwrap();
         assert!(crate::api::allocate_day_agent_rewards(
@@ -350,6 +558,18 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
             .increment_sra_tribute(DAY, numbered_address(1))
             .is_err());
         assert!(crate::api::abandon_day_agent_rewards(&context, DAY).is_err());
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(contract.accrual_head.read().unwrap(), 4);
+        assert_eq!(
+            contract.cleanup_head.read().unwrap(),
+            contract.cleanup_tail.read().unwrap()
+        );
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            DAY,
+            crate::api::DayAgentPools::default(),
+        )
+        .is_err());
     });
 }
 
@@ -389,7 +609,7 @@ fn failed_day_abandonment_queues_once_and_permanently_seals_all_owners() {
                 .unwrap();
         }
         let context = ctx(storage.clone(), 0);
-        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&context, DAY.value()).unwrap();
         crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
         crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
         assert_eq!(contract.cleanup_tail.read().unwrap(), 2);
@@ -401,6 +621,12 @@ fn failed_day_abandonment_queues_once_and_permanently_seals_all_owners() {
             .increment_sra_tribute(DAY, numbered_address(1))
             .is_err());
         assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
+        assert!(crate::api::allocate_day_agent_rewards(
+            &context,
+            DAY,
+            crate::api::DayAgentPools::default(),
+        )
+        .is_err());
     });
 }
 
@@ -422,7 +648,7 @@ fn metered_accrual_and_three_owner_cleanup_fit_the_existing_block_envelope() {
             }
         }
         let context = ctx(storage.clone(), 0);
-        outbe_rewards::api::close_day_participation(&context, DAY.value()).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&context, DAY.value()).unwrap();
         crate::api::abandon_day_agent_rewards(&context, DAY).unwrap();
         allocate_fixture(&context, next_day, &[(PoolKind::Cca, U256::from(257))]).unwrap();
     });
@@ -438,7 +664,7 @@ fn metered_accrual_and_three_owner_cleanup_fit_the_existing_block_envelope() {
         assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
         assert_eq!(
             outbe_rewards::schema::Rewards::new(storage.clone())
-                .daily_voter_count
+                .day_voter_count
                 .read(&DAY.value())
                 .unwrap(),
             0
@@ -465,6 +691,22 @@ fn empty_headers_are_bounded_and_corrupt_pending_counts_fail_before_credit() {
         contract.pending_jobs_by_day.write(&20231114, 4).unwrap();
         crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         assert_eq!(contract.accrual_head.read().unwrap(), 8);
+    });
+    with_contract_mut(|storage, contract| {
+        let context = ctx(storage.clone(), 0);
+        for day in 20231113..=20231118 {
+            outbe_rewards::api::seal_votes_and_fees(&context, day).unwrap();
+            crate::api::abandon_day_agent_rewards(&context, WorldwideDay::new(day)).unwrap();
+        }
+        assert_eq!(contract.cleanup_tail.read().unwrap(), 12);
+        crate::api::cleanup(&context).unwrap();
+        assert_eq!(contract.cleanup_head.read().unwrap(), 4);
+        crate::api::process_agent_rewards(&context).unwrap();
+        assert_eq!(contract.cleanup_head.read().unwrap(), 4);
+        crate::api::cleanup(&ctx(storage.clone(), 1)).unwrap();
+        assert_eq!(contract.cleanup_head.read().unwrap(), 8);
+        crate::api::cleanup(&ctx(storage.clone(), 2)).unwrap();
+        assert_eq!(contract.cleanup_head.read().unwrap(), 12);
     });
 }
 

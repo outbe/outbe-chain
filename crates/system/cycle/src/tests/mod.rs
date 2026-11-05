@@ -141,18 +141,18 @@ pub(super) fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
 
 pub(super) fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(Address, u64)]) {
     let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-    let voter_at = rewards.daily_voter_at.get_nested(&day);
-    let participation = rewards.daily_participation.get_nested(&day);
+    let voter_at = rewards.day_voter_at.get_nested(&day);
+    let participation = rewards.day_votes.get_nested(&day);
     for (index, (voter, count)) in voters.iter().enumerate() {
         voter_at.write(&(index as u32), *voter).unwrap();
         participation.write(voter, *count).unwrap();
     }
     rewards
-        .daily_voter_count
+        .day_voter_count
         .write(&day, voters.len() as u32)
         .unwrap();
     rewards
-        .daily_total_participation
+        .day_total_votes
         .write(
             &day,
             voters.iter().map(|(_, count)| U256::from(*count)).sum(),

@@ -209,8 +209,8 @@ fn settle_emission_day_inner(ctx: &BlockRuntimeContext, prev_day: u32) -> Result
     tracing::debug!(target: "outbe::cycle::gas", step_gas = gas_sample_delta(g1, g0), cumulative = g1, "after allocate_emission");
 
     wrap(
-        "close_day_participation",
-        outbe_rewards::api::close_day_participation(ctx, prev_day),
+        "seal_votes_and_fees",
+        outbe_rewards::api::seal_votes_and_fees(ctx, prev_day),
     )?;
     let validator =
         outbe_rewards::api::allocate_day_validator_rewards(ctx, prev_day, shares.validator)?;
@@ -289,7 +289,7 @@ enum DaySettlement {
 
 /// Checks the settlement preconditions and the `EmissionDay` state of `prev_day`.
 fn day_settlement(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<DaySettlement> {
-    if !outbe_rewards::api::day_participation_complete(ctx, prev_day)? {
+    if !outbe_rewards::api::is_voting_complete(ctx, prev_day)? {
         return Err(CycleError::SettlementBeforeParticipationWindowsClose.into());
     }
 
@@ -484,7 +484,7 @@ fn record_failed_allocation_fallback(ctx: &BlockRuntimeContext, day: u32) -> Res
     ctx.storage.with_checkpoint(|| {
         let day_num = day_number(ctx, day)?;
         let cap = day_emission_limit(day_num);
-        outbe_rewards::api::close_day_participation(ctx, day)?;
+        outbe_rewards::api::seal_votes_and_fees(ctx, day)?;
         outbe_agentreward::api::abandon_day_agent_rewards(ctx, day.into())?;
         if !cap.is_zero() {
             outbe_promislimit::PromisLimitContract::new(ctx.storage.clone()).checked_credit(cap)?;

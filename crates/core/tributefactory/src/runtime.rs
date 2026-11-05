@@ -522,14 +522,14 @@ mod reward_activity_tests {
                     timestamp: now + 86_400,
                     chain_id: 1,
                     genesis_hash: alloy_primitives::B256::ZERO,
-                    genesis_timestamp: u64::max(now + 86_400, 1),
+                    genesis_timestamp: now,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
                 },
                 storage.clone(),
             );
             let day = WorldwideDay::new(timestamp_to_date_key(now));
-            outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+            outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
             assert_eq!(
                 allocate_day_agent_rewards(
                     &ctx,

@@ -115,7 +115,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         let rewards = storage.contract::<outbe_rewards::schema::Rewards>();
         assert_eq!(rewards.pending_fees.read(&fb_hash).unwrap(), preloaded_fee);
         assert_eq!(
-            rewards.daily_fee_sum_raw.read(&parent_day).unwrap(),
+            rewards.day_fee_sum_native.read(&parent_day).unwrap(),
             preloaded_fee
         );
         assert_eq!(rewards.late_voter_count.read(&fb_hash).unwrap(), 1);
@@ -146,7 +146,7 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         let rewards = storage.contract::<outbe_rewards::schema::Rewards>();
         assert_eq!(rewards.pending_fees.read(&fb_hash).unwrap(), preloaded_fee);
         assert_eq!(
-            rewards.daily_fee_sum_raw.read(&parent_day).unwrap(),
+            rewards.day_fee_sum_native.read(&parent_day).unwrap(),
             preloaded_fee
         );
         assert_eq!(rewards.late_voter_count.read(&fb_hash).unwrap(), 1);

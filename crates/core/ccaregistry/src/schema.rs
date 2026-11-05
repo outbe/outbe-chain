@@ -49,24 +49,20 @@ pub struct CcaContract {
     pub reward_day_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
     #[attribute(order = 8)]
     pub reward_day_members: outbe_primitives::storage::dsl::Map<B256, bool>,
-    #[attribute(order = 9)]
-    pub sealed_through_day: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 10)]
-    pub has_sealed_day: outbe_primitives::storage::dsl::Value<bool>,
     /// Retained after cleanup so duplicate scheduling cannot recreate work.
-    #[attribute(order = 11)]
+    #[attribute(order = 9)]
     pub day_cleanup_scheduled: outbe_primitives::storage::dsl::Map<u32, bool>,
-    #[attribute(order = 12)]
+    #[attribute(order = 10)]
     pub day_cleanup_queue: outbe_primitives::storage::dsl::Map<u64, u32>,
-    #[attribute(order = 13)]
+    #[attribute(order = 11)]
     pub day_cleanup_head: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 14)]
+    #[attribute(order = 12)]
     pub day_cleanup_tail: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 15)]
+    #[attribute(order = 13)]
     pub day_cleanup_cursor: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 16)]
+    #[attribute(order = 14)]
     pub cleanup_processed_block: outbe_primitives::storage::dsl::Value<u64>,
-    #[attribute(order = 17)]
+    #[attribute(order = 15)]
     pub has_cleanup_processed_block: outbe_primitives::storage::dsl::Value<bool>,
 }
 
