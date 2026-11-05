@@ -9030,6 +9030,7 @@ dependencies = [
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
+ "outbe-slashindicator",
  "outbe-validatorset",
  "proptest",
  "rand 0.8.6",

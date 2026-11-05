@@ -74,7 +74,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
 /// The codec round-trip pins artifact byte-identity here. The localnet harness covers full
 /// proposer/validator lockstep end-to-end.
 ///
-/// The block executes at `N+K`, so the begin-zone `settle_matured` is not a no-op. The begin-zone
+/// The block executes at `N+K`, so the begin-zone `seal_block_votes` is not a no-op. The begin-zone
 /// actually **pays** a pre-seeded matured escrow (block `N`, non-zero fee, one credited voter at
 /// `k=1`). The resulting fee-share **balance delta** (voter + drained `REWARDS`) must match
 /// byte-for-byte on both the proposer and validator paths. This closes the gap where a zero
@@ -97,14 +97,14 @@ fn proposer_validator_same_state_root() {
     // Real BLS committee of 4 (committee addresses are the late-credit voters).
     let (keys, addrs, snapshot, csh) = late_credit_committee(epoch);
 
-    // Execute at block N+K so the begin-zone `settle_matured` is not a no-op.
+    // Execute at block N+K so the begin-zone `seal_block_votes` is not a no-op.
     let window_k = outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
     let settle_block = window_k + 1; // K+1 = 4: first block where N=1 matures.
     let progress_marker = settle_block - 2; // CPA progress gate: last_accounted.
 
     // Live credit for the finalized parent (fb = settle_block - 1, distance 1), signers 0..2.
     // The credit targets the finalized parent (`parent_hash`). This is the same block that the
-    // block-(N+K) CPA escrows. Thus `on_finalized_metadata` writes its canonical binding
+    // block-(N+K) CPA escrows. Thus `record_votes_and_fees` writes its canonical binding
     // (number->{fb_hash, epoch, committee_set_hash}), and the credit authenticates against it.
     // The CPA metadata carries no base voters, so the recording path records only the signers
     // of the late credit. This exercises the parity of the *recording* path.
@@ -113,7 +113,7 @@ fn proposer_validator_same_state_root() {
     let fb_hash = parent_hash;
 
     // Pre-seeded MATURED escrow for block N = settle_block - K, with a non-zero fee and one
-    // credited voter at k=1. `settle_matured(settle_block, K)` settles this block, so the
+    // credited voter at k=1. `seal_block_votes(settle_block, K)` settles this block, so the
     // begin-zone actually PAYS. This proves that the fee-share balance delta is identical on
     // both paths. A distinct fb_hash and a dedicated voter address keep this concern isolated
     // from the live recording credit above.
@@ -164,7 +164,7 @@ fn proposer_validator_same_state_root() {
             seeded.push((member.address, member.consensus_pubkey));
         }
         let mut state = state_with_active_validators_seeded(&seeded, move |storage| {
-            // The N+K CPA (on_finalized_metadata) writes the escrow binding of the live
+            // The N+K CPA (record_votes_and_fees) writes the escrow binding of the live
             // credit. This closure pre-seeds the committee snapshot for the BLS verify of
             // the credit.
             seed_late_credit_escrow(
@@ -399,9 +399,9 @@ fn seed_late_credit_escrow(
         },
         storage,
     );
-    outbe_rewards::late_settlement::escrow_block_fee(
+    outbe_rewards::block_fees::escrow_block_fee(
         &seed_ctx,
-        &outbe_rewards::late_settlement::FinalizedBlockBinding {
+        &outbe_rewards::block_fees::FinalizedBlockBinding {
             number: settle_target,
             hash: settle_fb_hash,
             committee_size: settle_committee as u32,
@@ -418,7 +418,7 @@ fn seed_late_credit_escrow(
         .contract::<outbe_rewards::schema::Rewards>()
         .pending_reward_day
         .write(&settle_fb_hash, 19700101)?;
-    outbe_rewards::late_settlement::record_late_credit(&seed_ctx, settle_fb_hash, settle_voter, 1)?;
+    outbe_rewards::block_fees::record_late_vote(&seed_ctx, settle_fb_hash, settle_voter, 1)?;
     seed_ctx
         .storage
         .increase_balance(REWARDS_ADDRESS, settle_fee)?;
@@ -502,7 +502,7 @@ fn read_late_credit_settlement(
     // attributed to the authenticated parent's timestamp (1).
     let reward_day = r.pending_reward_day.read(&fb_hash)?;
     assert_eq!(reward_day, 19700101);
-    let participation = r.daily_participation.get_nested(&reward_day);
+    let participation = r.day_votes.get_nested(&reward_day);
     for voter in &addrs[..3] {
         assert_eq!(participation.read(voter)?, 1);
     }

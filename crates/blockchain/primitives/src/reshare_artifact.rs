@@ -134,7 +134,7 @@ pub struct FinalizedParentAttestation {
 }
 
 /// Execution accounting data in the OART v1 envelope, under tag 0x01.
-/// Consensus distributes this validator fee sum to voters and accumulates it in `daily_fee_sum_raw`.
+/// Consensus distributes this validator fee sum to voters and accumulates it in `day_fee_sum_native`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecutionSummaryArtifact {
     pub validator_fee_sum: U256,
