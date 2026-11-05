@@ -59,20 +59,8 @@ pub fn total_bonded(storage: &StorageHandle<'_>) -> Result<U256> {
     CcaContract::new(storage.clone()).total_bonded_minor.read()
 }
 
-/// Seal all days through `day`. Dates need not be consecutive; sealing never regresses.
-pub fn seal_reward_day(storage: &StorageHandle<'_>, day: u32) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let contract = CcaContract::new(storage.clone());
-        if !contract.has_sealed_day.read()? || day > contract.sealed_through_day.read()? {
-            contract.sealed_through_day.write(day)?;
-            contract.has_sealed_day.write(true)?;
-        }
-        Ok(())
-    })
-}
-
 fn require_sealed(contract: &CcaContract<'_>, day: u32) -> Result<()> {
-    if !contract.has_sealed_day.read()? || day > contract.sealed_through_day.read()? {
+    if day == 0 || day > outbe_rewards::api::get_last_sealed_day(&contract.storage)? {
         return Err(CcaError::RewardDayNotSealed.into());
     }
     Ok(())
@@ -133,11 +121,11 @@ pub fn enqueue_day_cleanup(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()
 
 /// Delete at most 256 entries and inspect at most four queue headers per block.
 /// The checkpoint includes the height marker, so failed slices remain retryable.
-pub fn process_day_cleanup(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-    ctx.with_checkpoint(|| process_day_cleanup_inner(ctx))
+pub fn cleanup(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+    ctx.with_checkpoint(|| cleanup_inner(ctx))
 }
 
-fn process_day_cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+fn cleanup_inner(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let storage = &ctx.storage;
     let contract = CcaContract::new(storage.clone());
     if contract.has_cleanup_processed_block.read()?

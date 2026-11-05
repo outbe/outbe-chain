@@ -38,7 +38,7 @@ impl AgentRewardContract<'_> {
         day: WorldwideDay,
         address: Address,
     ) -> Result<()> {
-        if day.value() <= self.sealed_through_day.read()? {
+        if day.value() <= outbe_rewards::api::get_last_sealed_day(&self.storage)? {
             return Err(AgentRewardError::DaySealed(day.value()).into());
         }
         let index = self.day_index(pool)?;

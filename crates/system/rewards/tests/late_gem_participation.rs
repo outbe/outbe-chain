@@ -3,9 +3,9 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
-    storage::hashmap::HashMapStorageProvider,
+    storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag},
 };
-use outbe_rewards::{api, finalized_metadata_hook::on_finalized_metadata, late_settlement};
+use outbe_rewards::{api, block_fees, finalized_metadata_hook::record_votes_and_fees};
 
 const DAY: u32 = 20240101;
 const MIDNIGHT: u64 = 1_704_153_600;
@@ -23,7 +23,7 @@ fn block(height: u64) -> BlockContext {
         timestamp: MIDNIGHT + height - 11,
         chain_id: 1,
         genesis_hash: alloy_primitives::B256::ZERO,
-        genesis_timestamp: (MIDNIGHT + height - 11).max(1),
+        genesis_timestamp: MIDNIGHT - 86_400,
         proposer: Address::ZERO,
         validators: vec![],
     }
@@ -46,32 +46,35 @@ fn seed(ctx: &BlockRuntimeContext) {
         missed_proposers: vec![],
     };
     // This seam consumes already-verified CPA. Cryptographic checks live in EVM.
-    on_finalized_metadata(ctx, &metadata, U256::ZERO, MIDNIGHT - 1, &VOTERS[..3]).unwrap();
+    record_votes_and_fees(ctx, &metadata, U256::ZERO, MIDNIGHT - 1, &VOTERS[..3]).unwrap();
 }
 
 #[test]
 fn midnight_late_vote_survives_reentry_and_counts_once() {
     let mut storage = HashMapStorageProvider::new(1);
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CertifiedFinality, 1);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(11), handle);
         seed(&ctx);
-        assert!(!api::day_participation_complete(&ctx, DAY).unwrap());
-        late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 1).unwrap();
+        assert!(!api::is_voting_complete(&ctx, DAY).unwrap());
+        block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 1).unwrap();
     });
     // Re-enter the same storage provider with new context handles. Day binding
     // and dedup live in contract storage, not context-local bookkeeping. This
     // is an in-memory provider test, not a disk/process restart test.
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(13), handle);
-        late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 3).unwrap();
-        late_settlement::record_late_credit(&ctx, HASH, VOTERS[0], 2).unwrap();
+        block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 3).unwrap();
+        block_fees::record_late_vote(&ctx, HASH, VOTERS[0], 2).unwrap();
         assert_eq!(
-            api::read_voters_for_day(&ctx, DAY).unwrap(),
+            api::get_day_voters(&ctx, DAY).unwrap(),
             VOTERS.map(|v| (v, 1)).to_vec()
         );
-        assert!(api::read_voters_for_day(&ctx, DAY + 1).unwrap().is_empty());
-        assert!(!api::day_participation_complete(&ctx, DAY).unwrap());
-        late_settlement::settle_matured(&ctx, 13, 3).unwrap();
+        assert!(api::get_day_voters(&ctx, DAY + 1).unwrap().is_empty());
+        assert!(!api::is_voting_complete(&ctx, DAY).unwrap());
+        ctx.storage
+            .with_checkpoint(|| block_fees::seal_block_votes(&ctx, 13, 3))
+            .unwrap();
         assert_eq!(
             ctx.storage
                 .contract::<outbe_rewards::schema::Rewards>()
@@ -81,14 +84,14 @@ fn midnight_late_vote_survives_reentry_and_counts_once() {
             0
         );
         // The guard was pruned, but the settled-window tombstone rejects replay.
-        late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 1).unwrap();
+        block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 1).unwrap();
     });
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(14), handle);
-        assert!(api::day_participation_complete(&ctx, DAY).unwrap());
+        assert!(api::is_voting_complete(&ctx, DAY).unwrap());
         // Every voter weighs the same in the day's validator pool.
         assert_eq!(
-            api::read_voters_for_day(&ctx, DAY).unwrap(),
+            api::get_day_voters(&ctx, DAY).unwrap(),
             VOTERS.map(|v| (v, 1)).to_vec()
         );
     });
@@ -100,9 +103,9 @@ fn last_admissible_slot_counts_for_the_reward_even_when_fee_weight_is_zero() {
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(13), handle);
         seed(&ctx);
-        late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 3).unwrap();
+        block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 3).unwrap();
         assert_eq!(
-            api::read_voters_for_day(&ctx, DAY).unwrap(),
+            api::get_day_voters(&ctx, DAY).unwrap(),
             VOTERS.map(|v| (v, 1)).to_vec()
         );
         assert_eq!(outbe_rewards::constants::decay_weight(3), U256::ZERO);
@@ -115,12 +118,9 @@ fn unknown_or_out_of_window_credit_cannot_add_reward_participation() {
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block(11), handle);
         seed(&ctx);
-        let before = api::read_voters_for_day(&ctx, DAY).unwrap();
-        assert!(
-            late_settlement::record_late_credit(&ctx, B256::repeat_byte(0x99), VOTERS[3], 1)
-                .is_err()
-        );
-        assert!(late_settlement::record_late_credit(&ctx, HASH, VOTERS[3], 4).is_err());
-        assert_eq!(api::read_voters_for_day(&ctx, DAY).unwrap(), before);
+        let before = api::get_day_voters(&ctx, DAY).unwrap();
+        assert!(block_fees::record_late_vote(&ctx, B256::repeat_byte(0x99), VOTERS[3], 1).is_err());
+        assert!(block_fees::record_late_vote(&ctx, HASH, VOTERS[3], 4).is_err());
+        assert_eq!(api::get_day_voters(&ctx, DAY).unwrap(), before);
     });
 }

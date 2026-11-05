@@ -78,6 +78,190 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
                 - u64::from(MAX_REWARD_CATCHUP_DAYS - 1) * SECONDS_PER_DAY,
         );
         assert_eq!(active_utc_day(&ctx), expected_floor);
+        account_parent(&ctx, 2);
+        dispatch_triggers(&ctx).unwrap();
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            expected_floor
+        );
+        assert!(is_day_settled(&ctx, expected_floor));
+        assert!(
+            outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!handle
+            .contract::<outbe_rewards::schema::Rewards>()
+            .day_cleanup_scheduled
+            .read(&20_240_101)
+            .unwrap());
+        assert!(outbe_agentreward::AgentRewardContract::new(handle)
+            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x46))
+            .is_err());
+    });
+}
+
+#[test]
+fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = genesis_block(handle, GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+    });
+    let restart_ts = GENESIS_TS + 70 * SECONDS_PER_DAY + 3_600;
+    let hash = B256::repeat_byte(0x78);
+    let early = Address::repeat_byte(0xB2);
+    let late = Address::repeat_byte(0xB3);
+    for height in 11..=13 {
+        storage.set_block_number(height);
+        if height == 13 {
+            storage.enable_metadosis_mutation_frames(
+                MetadosisMutationPurposeTag::CertifiedFinality,
+                1,
+            );
+        }
+        storage.enter(|handle| {
+            let ctx = runtime_context(block_ctx(height, restart_ts + height - 11), handle.clone());
+            if height == 11 {
+                // The first resumed block accounts an old parent outside the catch-up horizon.
+                super::dispatch::record_parent_with_late_voter(&ctx, hash, early, late);
+            }
+            account_parent(&ctx, height);
+            dispatch_triggers(&ctx).unwrap();
+            assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
+            if height == 12 {
+                outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 2).unwrap();
+            }
+            if height == 13 {
+                ctx.storage
+                    .with_checkpoint(|| outbe_rewards::block_fees::seal_block_votes(&ctx, 13, 3))
+                    .unwrap();
+            }
+            assert!(
+                outbe_emission::api::get_emission_day_record(handle, 20_240_101)
+                    .unwrap()
+                    .is_none()
+            );
+        });
+    }
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.set_block_number(14);
+    storage.enter(|handle| {
+        let ctx = dispatch_at(handle.clone(), 14, restart_ts + 3);
+        let floor = outbe_primitives::time::timestamp_to_date_key(GENESIS_TS + 6 * SECONDS_PER_DAY);
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            floor
+        );
+        assert!(is_day_settled(&ctx, floor));
+        assert_eq!(
+            outbe_rewards::api::get_day_voters(&ctx, 20_240_101).unwrap(),
+            vec![(early, 1), (late, 1)]
+        );
+        assert!(!handle
+            .contract::<outbe_rewards::schema::Rewards>()
+            .day_cleanup_scheduled
+            .read(&20_240_101)
+            .unwrap());
+    });
+}
+
+#[test]
+fn failed_allocation_fallback_rolls_back_seal_and_cleanup_before_retry() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = genesis_block(handle, GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(
+            block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 3_600),
+            handle.clone(),
+        );
+        account_parent(&ctx, 2);
+        let mut agents = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        agents
+            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x47))
+            .unwrap();
+        agents
+            .pending_total_minor
+            .write(
+                &(outbe_agentreward::schema::RewardPool::Waa as u8),
+                U256::MAX,
+            )
+            .unwrap();
+        // Allocation overflows first; the full limit makes its fallback fail after sealing.
+        outbe_promislimit::PromisLimitContract::new(handle.clone())
+            .checked_credit(U256::MAX)
+            .unwrap();
+        dispatch_triggers(&ctx).unwrap();
+        assert_eq!(outbe_rewards::api::get_last_sealed_day(&handle).unwrap(), 0);
+        assert!(
+            outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            agents
+                .waa_address_count
+                .read(&20_240_101u32.into())
+                .unwrap(),
+            1
+        );
+        assert!(!handle
+            .contract::<outbe_rewards::schema::Rewards>()
+            .day_cleanup_scheduled
+            .read(&20_240_101)
+            .unwrap());
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(handle.clone())
+                .promis_limit()
+                .unwrap(),
+            U256::MAX
+        );
+        outbe_promislimit::PromisLimitContract::new(handle)
+            .checked_take(U256::MAX)
+            .unwrap();
+    });
+    storage.set_block_number(3);
+    storage.enter(|handle| {
+        let ctx = runtime_context(
+            block_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 7_200),
+            handle.clone(),
+        );
+        account_parent(&ctx, 3);
+        dispatch_triggers(&ctx).unwrap();
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            20_240_101
+        );
+        let cap = outbe_emission::day_emission::day_emission_limit(0);
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(handle.clone())
+                .promis_limit()
+                .unwrap(),
+            cap
+        );
+        crate::handler::credit_reward_slice(&ctx).unwrap();
+        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
+        assert_eq!(
+            outbe_agentreward::AgentRewardContract::new(handle.clone())
+                .waa_address_count
+                .read(&20_240_101u32.into())
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            20_240_101
+        );
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(handle)
+                .promis_limit()
+                .unwrap(),
+            cap
+        );
     });
 }
 
@@ -125,6 +309,10 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             outbe_emission::schema::metadosis_state::CANCELLED
         );
         assert_eq!(U256::from(rec.promis_limit), expected_cap);
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            20_240_101
+        );
         assert!(
             !outbe_agentreward::distribution::has_pending_accruals_for_day(&handle, 20_240_101,)
                 .unwrap()
@@ -134,6 +322,11 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             .is_err());
         crate::handler::credit_reward_slice(&ctx).unwrap();
         assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
+        assert_eq!(
+            outbe_rewards::api::get_last_sealed_day(&handle).unwrap(),
+            20_240_101
+        );
+        crate::handler::settle_emission_day(&ctx, 20_240_101).unwrap();
         assert_eq!(
             outbe_promislimit::PromisLimitContract::new(handle.clone())
                 .promis_limit()

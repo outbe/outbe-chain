@@ -12,6 +12,7 @@ outbe-validatorset = { path = "../validatorset" }
 outbe-consensus.workspace = true
 outbe-emission.workspace = true
 outbe-promislimit.workspace = true
+outbe-slashindicator.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true

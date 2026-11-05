@@ -71,7 +71,7 @@ pub(crate) fn enqueue_cleanup(
     contract.cleanup_scheduled.write(&key, true)
 }
 
-pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
+pub(crate) fn cleanup(contract: &AgentRewardContract<'_>) -> Result<()> {
     let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
     for _ in 0..4 {
         let head = contract.cleanup_head.read()?;
@@ -88,6 +88,9 @@ pub(crate) fn process_cleanup(contract: &AgentRewardContract<'_>) -> Result<()> 
             .ok_or(AgentRewardError::InvalidJob)?;
         let pool = RewardPool::from_abi(job.pool)?;
         let day = WorldwideDay::new(job.day);
+        if !(1..=outbe_rewards::api::get_last_sealed_day(&contract.storage)?).contains(&job.day) {
+            return Err(AgentRewardError::InvalidJob.into());
+        }
         let index = contract.day_index(pool)?;
         if job.next_index > job.recipient_count {
             return Err(AgentRewardError::InvalidJob.into());

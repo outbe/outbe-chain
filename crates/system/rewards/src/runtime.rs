@@ -12,18 +12,36 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result,
-    time::{day_number_between, timestamp_to_date_key},
+    time::{date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key},
 };
 
 use crate::errors::RewardsError;
 use crate::schema::Rewards;
 
+pub(crate) fn seal_votes_and_fees(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
+    let timestamp = date_key_to_utc_timestamp(day).map_err(RewardsError::map_time_err)?;
+    let completed_days = timestamp_to_date_key(ctx.block.genesis_timestamp)
+        ..timestamp_to_date_key(ctx.block.timestamp);
+    if timestamp_to_date_key(timestamp) != day
+        || ctx.block.genesis_timestamp == 0
+        || !completed_days.contains(&day)
+        || !crate::api::is_voting_complete(ctx, day)?
+    {
+        return Err(RewardsError::DayNotReadyToSeal.into());
+    }
+    let rewards = ctx.storage.contract::<Rewards>();
+    if day <= rewards.last_sealed_day.read()? {
+        return Err(RewardsError::DayAlreadySealed.into());
+    }
+    rewards.last_sealed_day.write(day)
+}
+
 pub(crate) fn require_sealed_day(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards = ctx.storage.contract::<Rewards>();
     if day == 0
         || day >= timestamp_to_date_key(ctx.block.timestamp)
-        || !rewards.daily_participation_closed.read(&day)?
-        || !crate::api::day_participation_complete(ctx, day)?
+        || day > rewards.last_sealed_day.read()?
+        || !crate::api::is_voting_complete(ctx, day)?
     {
         return Err(RewardsError::DayNotSealed.into());
     }
@@ -45,7 +63,7 @@ pub(crate) fn allocate_day_validator_rewards(
         let fees = ctx
             .storage
             .contract::<Rewards>()
-            .daily_fee_sum_raw
+            .day_fee_sum_native
             .read(&day)?;
         units_to_protocol_minor_floor(native_budget.saturating_sub(fees))
     };
@@ -58,33 +76,36 @@ pub(crate) fn allocate_day_validator_rewards(
 
 pub(crate) fn enqueue_day_cleanup(ctx: &BlockRuntimeContext, day: u32) -> Result<()> {
     let rewards = ctx.storage.contract::<Rewards>();
-    if rewards.cleanup_scheduled.read(&day)? {
+    if rewards.day_cleanup_scheduled.read(&day)? {
         return Ok(());
     }
     require_sealed_day(ctx, day)?;
     ctx.storage.with_checkpoint(|| {
-        let tail = rewards.cleanup_tail.read()?;
+        let tail = rewards.day_cleanup_tail.read()?;
         let next = tail
             .checked_add(1)
-            .ok_or(RewardsError::CleanupQueueOverflow)?;
-        rewards.cleanup_day_at.write(&tail, day)?;
-        rewards.cleanup_tail.write(next)?;
-        rewards.cleanup_scheduled.write(&day, true)
+            .ok_or(RewardsError::DayCleanupQueueOverflow)?;
+        if rewards.day_cleanup_head.read()? > tail {
+            return Err(RewardsError::CorruptDayCleanupQueue.into());
+        }
+        rewards.day_cleanup_day_at.write(&tail, day)?;
+        rewards.day_cleanup_tail.write(next)?;
+        rewards.day_cleanup_scheduled.write(&day, true)
     })
 }
 
-pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
+pub(crate) fn cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
     ctx.storage.with_checkpoint(|| {
         let rewards = ctx.storage.contract::<Rewards>();
-        if rewards.cleanup_processed_initialized.read()?
-            && rewards.cleanup_processed_height.read()? == ctx.block.block_number
+        if rewards.day_cleanup_processed_initialized.read()?
+            && rewards.day_cleanup_processed_height.read()? == ctx.block.block_number
         {
             return Ok(());
         }
-        let mut head = rewards.cleanup_head.read()?;
-        let tail = rewards.cleanup_tail.read()?;
+        let mut head = rewards.day_cleanup_head.read()?;
+        let tail = rewards.day_cleanup_tail.read()?;
         if head > tail {
-            return Err(RewardsError::CleanupQueueCorrupt.into());
+            return Err(RewardsError::CorruptDayCleanupQueue.into());
         }
         let mut remaining = 256u32;
         for _ in 0..4 {
@@ -96,28 +117,31 @@ pub(crate) fn process_day_cleanup(ctx: &BlockRuntimeContext) -> Result<()> {
             }
             // head < tail <= u64::MAX, so increment cannot overflow.
             head += 1;
-            rewards.cleanup_head.write(head)?;
+            rewards.day_cleanup_head.write(head)?;
         }
         rewards
-            .cleanup_processed_height
+            .day_cleanup_processed_height
             .write(ctx.block.block_number)?;
-        rewards.cleanup_processed_initialized.write(true)
+        rewards.day_cleanup_processed_initialized.write(true)
     })
 }
 
 /// Returns whether this queued day is fully cleared within the remaining entry budget.
 fn cleanup_day(rewards: &Rewards<'_>, head: u64, remaining: &mut u32) -> Result<bool> {
-    let day = rewards.cleanup_day_at.read(&head)?;
-    if day == 0 || !rewards.daily_participation_closed.read(&day)? {
-        return Err(RewardsError::CleanupQueueCorrupt.into());
+    let day = rewards.day_cleanup_day_at.read(&head)?;
+    if day == 0
+        || day > rewards.last_sealed_day.read()?
+        || !rewards.day_cleanup_scheduled.read(&day)?
+    {
+        return Err(RewardsError::CorruptDayCleanupQueue.into());
     }
-    let count = rewards.daily_voter_count.read(&day)?;
-    let mut index = rewards.cleanup_next_index.read(&day)?;
+    let count = rewards.day_voter_count.read(&day)?;
+    let mut index = rewards.day_cleanup_next_index.read(&day)?;
     if index > count {
-        return Err(RewardsError::CleanupQueueCorrupt.into());
+        return Err(RewardsError::CorruptDayCleanupQueue.into());
     }
-    let voters = rewards.daily_voter_at.get_nested(&day);
-    let participation = rewards.daily_participation.get_nested(&day);
+    let voters = rewards.day_voter_at.get_nested(&day);
+    let participation = rewards.day_votes.get_nested(&day);
     while index < count && *remaining > 0 {
         let voter = voters.read(&index)?;
         participation.write(&voter, 0)?;
@@ -127,15 +151,15 @@ fn cleanup_day(rewards: &Rewards<'_>, head: u64, remaining: &mut u32) -> Result<
         *remaining -= 1;
     }
     if index < count {
-        rewards.cleanup_next_index.write(&day, index)?;
+        rewards.day_cleanup_next_index.write(&day, index)?;
         return Ok(false);
     }
-    rewards.daily_voter_count.write(&day, 0)?;
-    rewards.daily_total_participation.write(&day, U256::ZERO)?;
-    rewards.daily_fee_sum_raw.write(&day, U256::ZERO)?;
-    rewards.daily_last_window_close.write(&day, 0)?;
-    rewards.cleanup_next_index.write(&day, 0)?;
-    rewards.cleanup_day_at.write(&head, 0)?;
+    rewards.day_voter_count.write(&day, 0)?;
+    rewards.day_total_votes.write(&day, U256::ZERO)?;
+    rewards.day_fee_sum_native.write(&day, U256::ZERO)?;
+    rewards.day_votes_sealed_at_block.write(&day, 0)?;
+    rewards.day_cleanup_next_index.write(&day, 0)?;
+    rewards.day_cleanup_day_at.write(&head, 0)?;
     Ok(true)
 }
 

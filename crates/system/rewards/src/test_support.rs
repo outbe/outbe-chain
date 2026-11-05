@@ -8,7 +8,7 @@ use outbe_primitives::consensus_metadata::{
 };
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 
-use crate::finalized_metadata_hook::on_finalized_metadata;
+use crate::finalized_metadata_hook::record_votes_and_fees;
 
 pub(crate) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
@@ -105,5 +105,5 @@ pub(crate) fn record_genesis_day_parent(
     fees: u64,
     voters: &[Address],
 ) {
-    on_finalized_metadata(ctx, meta, U256::from(fees), GENESIS_TS, voters).unwrap();
+    record_votes_and_fees(ctx, meta, U256::from(fees), GENESIS_TS, voters).unwrap();
 }
