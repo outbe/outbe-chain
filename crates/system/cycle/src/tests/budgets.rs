@@ -472,12 +472,15 @@ fn queued_reward_storage() -> HashMapStorageProvider {
     use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
     let mut storage = cycle_storage();
     storage.enter(|handle| {
-        let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
         let day = outbe_primitives::time::WorldwideDay::new(20_231_231);
         outbe_agentreward::AgentRewardContract::new(handle.clone())
             .increment_waa_tribute(day, RECIPIENT)
             .unwrap();
-        outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+        // Seal needs a genesis on the activity day and a later block timestamp.
+        let mut block = block_ctx(2, ANCHOR_TS + 10);
+        block.genesis_timestamp = GENESIS_TS - SECONDS_PER_DAY;
+        let ctx = runtime_context(block, handle.clone());
+        outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
         allocate_day_agent_rewards(
             &ctx,
             day,

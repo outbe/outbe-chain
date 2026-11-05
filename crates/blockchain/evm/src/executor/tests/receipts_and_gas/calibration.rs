@@ -750,19 +750,15 @@ fn calibration_bootstrap_and_dense_cleanup_overlap() {
             agent.cleanup_tail.write(1).unwrap();
             agent.waa_address_count.write(&day.into(), 256).unwrap();
             agent.waa_total_count.write(&day.into(), 256).unwrap();
-            rewards.cleanup_tail.write(1).unwrap();
-            rewards.cleanup_day_at.write(&0, day).unwrap();
+            rewards.day_cleanup_tail.write(1).unwrap();
+            rewards.day_cleanup_day_at.write(&0, day).unwrap();
+            rewards.last_sealed_day.write(day).unwrap();
+            rewards.day_cleanup_scheduled.write(&day, true).unwrap();
+            rewards.day_voter_count.write(&day, 256).unwrap();
             rewards
-                .daily_participation_closed
-                .write(&day, true)
-                .unwrap();
-            rewards.daily_voter_count.write(&day, 256).unwrap();
-            rewards
-                .daily_total_participation
+                .day_total_votes
                 .write(&day, U256::from(256))
                 .unwrap();
-            cca.has_sealed_day.write(true).unwrap();
-            cca.sealed_through_day.write(day).unwrap();
             cca.day_cleanup_tail.write(1).unwrap();
             cca.day_cleanup_queue.write(&0, day).unwrap();
             cca.day_cleanup_scheduled.write(&day, true).unwrap();
@@ -777,12 +773,12 @@ fn calibration_bootstrap_and_dense_cleanup_overlap() {
                 agent.waa_tribute_counts.write(&ckey, 1).unwrap();
                 agent.waa_member_index.write(&ckey, index + 1).unwrap();
                 rewards
-                    .daily_voter_at
+                    .day_voter_at
                     .get_nested(&day)
                     .write(&index, address)
                     .unwrap();
                 rewards
-                    .daily_participation
+                    .day_votes
                     .get_nested(&day)
                     .write(&address, 1)
                     .unwrap();
