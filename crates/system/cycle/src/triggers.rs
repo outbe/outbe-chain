@@ -90,6 +90,7 @@ pub enum TriggerHandler {
 
 impl TriggerSpec {
     /// Builds a schedule with a required nonzero gross work allowance.
+    /// Cadence is `(period_seconds, start_offset_seconds)`, both in UTC seconds.
     /// Zero periods and zero work allowances are rejected.
     /// `start_offset_seconds >= period_seconds` stays valid.
     /// The two behavior flags start false. `depends_on` starts empty.
@@ -97,8 +98,7 @@ impl TriggerSpec {
     pub const fn new(
         id: u32,
         label: &'static str,
-        period_seconds: u64,
-        start_offset_seconds: u64,
+        (period_seconds, start_offset_seconds): (u64, u64),
         work_budget_gas: u64,
         handler: TriggerHandler,
     ) -> core::result::Result<Self, CycleError> {
@@ -212,8 +212,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::ProtocolCycle.as_u32(),
                 "protocol_cycle",
-                PROTOCOL_CYCLE_PERIOD_SECONDS,
-                0,
+                (PROTOCOL_CYCLE_PERIOD_SECONDS, 0),
                 1_526_000,
                 TriggerHandler::ProtocolCycle,
             ));
@@ -229,8 +228,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::IntexCallDaily.as_u32(),
                 "intex_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
+                (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
                 TriggerHandler::IntexCallDaily,
             ));
@@ -247,8 +245,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AuctionAdvance.as_u32(),
                 "auction_advance",
-                AUCTION_ADVANCE_PERIOD_SECONDS,
-                0,
+                (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
                 638_000,
                 TriggerHandler::AuctionAdvance,
             ));
@@ -265,8 +262,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::GemCallDaily.as_u32(),
                 "gem_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
+                (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
                 TriggerHandler::GemCallDaily,
             ));
@@ -283,8 +279,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AuctionClearing.as_u32(),
                 "auction_clearing",
-                OUTBOUND_POLL_PERIOD_SECONDS,
-                0,
+                (OUTBOUND_POLL_PERIOD_SECONDS, 0),
                 10_333_000,
                 TriggerHandler::AuctionClearing,
             ));
@@ -302,8 +297,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::CredisCallDaily.as_u32(),
                 "credis_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
+                (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
                 TriggerHandler::CredisCallDaily,
             ));
@@ -317,8 +311,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::NodCallDaily.as_u32(),
                 "nod_call_daily",
-                CALL_SWEEP_PERIOD_SECONDS,
-                0,
+                (CALL_SWEEP_PERIOD_SECONDS, 0),
                 202_000,
                 TriggerHandler::NodCallDaily,
             ));
@@ -334,8 +327,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::IntexDrainParked.as_u32(),
                 "intex_drain_parked",
-                OUTBOUND_POLL_PERIOD_SECONDS,
-                0,
+                (OUTBOUND_POLL_PERIOD_SECONDS, 0),
                 3_064_000,
                 TriggerHandler::IntexDrainParked,
             ));

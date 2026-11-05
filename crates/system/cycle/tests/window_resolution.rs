@@ -16,20 +16,21 @@
 //! `crates/blockchain/evm/src/executor.rs`. It confirms the V2 reorder
 //! invariant that this gate depends on.
 
-use alloy_primitives::{Address, U256, address};
+use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolError;
 use outbe_cycle::{
-    ICycle, read_last_accounted_block_number, record_phase1_progress,
+    read_last_accounted_block_number, record_phase1_progress,
     schema::Accounting,
-    state::{AccountingWindow, accounting_gate_blocks, resolve_accounting_window},
+    state::{accounting_gate_blocks, resolve_accounting_window, AccountingWindow},
     triggers::{TriggerHandler, TriggerSpec},
+    ICycle,
 };
 use outbe_primitives::{
     accounting_progress::AccountingProgressView,
     addresses::ACCOUNTING_PROGRESS_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     error::{PrecompileError, Result},
-    storage::{StorageHandle, hashmap::HashMapStorageProvider},
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use proptest::prelude::*;
 
@@ -43,8 +44,7 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
     let mut spec = TriggerSpec::new(
         4242,
         "test_gated",
-        period_seconds,
-        0,
+        (period_seconds, 0),
         100,
         TriggerHandler::IntexCallDaily,
     )
@@ -58,8 +58,7 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
     let mut spec = TriggerSpec::new(
         4243,
         "test_ungated",
-        period_seconds,
-        0,
+        (period_seconds, 0),
         100,
         TriggerHandler::IntexCallDaily,
     )
@@ -588,8 +587,7 @@ proptest! {
         let mut spec = TriggerSpec::new(
             99,
             "proptest",
-            period,
-            offset,
+            (period, offset),
             100,
             TriggerHandler::IntexCallDaily,
         )

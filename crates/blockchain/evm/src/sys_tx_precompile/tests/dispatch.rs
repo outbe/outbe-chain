@@ -45,10 +45,9 @@ fn dispatch_rejects_wrong_version() {
         input[4] = crate::system_tx::SYSTEM_TX_INPUT_VERSION.saturating_add(1);
         let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap_err();
         assert!(matches!(err, PrecompileError::Revert(_)));
-        assert!(
-            err.to_string()
-                .contains("unsupported system tx input version")
-        );
+        assert!(err
+            .to_string()
+            .contains("unsupported system tx input version"));
     });
 }
 

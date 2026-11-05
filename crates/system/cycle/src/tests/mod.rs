@@ -20,7 +20,7 @@ use outbe_primitives::storage::{MetadosisMutationPurposeTag, StorageHandle};
 use outbe_validatorset::contract::ValidatorSet;
 
 use crate::schema::Cycle;
-use crate::triggers::{ACTIVE_TRIGGERS, TriggerId, last_fire_at, next_fire_at};
+use crate::triggers::{last_fire_at, next_fire_at, TriggerId, ACTIVE_TRIGGERS};
 
 pub(super) const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.

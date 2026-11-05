@@ -47,7 +47,13 @@ use revm::{
 };
 use std::cell::RefCell;
 
-use crate::{gas::SubcallGasMeter, sub_call};
+use crate::gas::SubcallGasMeter;
+
+mod subcall;
+mod trigger_gas;
+
+#[cfg(test)]
+use crate::sub_call;
 
 #[cfg(test)]
 #[path = "subcall_tests.rs"]
@@ -271,71 +277,11 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         self
     }
 
-    /// Installs the exact route inventory after a provider-backed read
-    /// resolved the consensus state needed to derive it. ProtocolCycle uses
-    /// this. Its daily allocation decision depends on Cycle's persisted UTC
-    /// cursor rather than on untrusted calldata.
-    fn charge(&mut self, cost: u64) -> Result<()> {
-        if self.trigger_budget.is_some() {
-            self.trigger_budget_status()?;
-            if cost > self.gas.remaining() {
-                self.subcall_out_of_gas = true;
-                self.gas.inner_mut().spend_all();
-                return Err(PrecompileError::OutOfGas);
-            }
-            if let Some(budget) = &mut self.trigger_budget {
-                budget.check(cost)?;
-            }
-        }
-        if let Some(child) = self.gas_child_remaining {
-            if cost > child {
-                let _ = self.gas.record_regular_cost(child);
-                if let Some(budget) = &mut self.trigger_budget {
-                    budget.charge(child)?;
-                }
-                self.gas_child_remaining = Some(0);
-                return Err(PrecompileError::OutOfGas);
-            }
-            self.gas_child_remaining = Some(child - cost);
-        }
-        if self.gas.record_regular_cost(cost) {
-            if let Some(budget) = &mut self.trigger_budget {
-                budget.charge(cost)?;
-            }
-            Ok(())
-        } else {
-            Err(PrecompileError::OutOfGas)
-        }
-    }
-
     pub(crate) fn replace_metadosis_mutation_entitlements(
         &mut self,
         entitlements: MetadosisMutationEntitlements,
     ) {
         self.dispatch_frames.metadosis = MetadosisMutationFrameState::new(entitlements);
-    }
-
-    fn charge_subcall(&mut self, cost: u64) -> std::result::Result<(), SubCallError> {
-        if self.trigger_budget.is_some() {
-            return self.charge(cost).map_err(|error| match error {
-                PrecompileError::TriggerBudgetExceeded {
-                    consumed_gas,
-                    budget_gas,
-                } => SubCallError::TriggerBudgetExceeded {
-                    consumed_gas,
-                    budget_gas,
-                },
-                PrecompileError::OutOfGas => SubCallError::ParentOutOfGas,
-                other => SubCallError::Fatal(other.to_string()),
-            });
-        }
-        if self.gas.record_regular_cost(cost) {
-            Ok(())
-        } else {
-            self.subcall_out_of_gas = true;
-            self.gas.inner_mut().spend_all();
-            Err(SubCallError::ParentOutOfGas)
-        }
     }
 }
 
@@ -449,38 +395,19 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
-        use outbe_primitives::storage::gas::{TriggerBudget, TriggerScopeError};
-        if self.trigger_budget.is_some() {
-            return Err(TriggerScopeError::Nested.into());
-        }
-        if self.subcall_out_of_gas {
-            return Err(PrecompileError::OutOfGas);
-        }
-        self.trigger_budget = Some(TriggerBudget::new(budget));
-        Ok(())
+        self.start_trigger_budget(budget)
     }
 
     fn trigger_budget_status(&self) -> Result<()> {
-        if self.subcall_out_of_gas {
-            return Err(PrecompileError::OutOfGas);
-        }
-        self.trigger_budget
-            .as_ref()
-            .ok_or(outbe_primitives::storage::gas::TriggerScopeError::Inactive)?
-            .status()
+        self.active_trigger_status()
     }
 
     fn end_trigger_budget(&mut self) -> Result<()> {
-        self.trigger_budget
-            .take()
-            .ok_or(outbe_primitives::storage::gas::TriggerScopeError::Inactive)?;
-        Ok(())
+        self.finish_trigger_budget()
     }
 
     fn observe_trigger_error(&mut self, error: &PrecompileError) {
-        if let Some(budget) = &mut self.trigger_budget {
-            budget.observe_error(error);
-        }
+        self.observe_trigger_failure(error);
     }
 
     fn enable_end_gas_metering(&mut self) -> Result<()> {
@@ -683,168 +610,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn sub_call(
         &mut self,
-        mut input: SubCallInput,
+        input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        use revm::{
-            context_interface::host::LoadError,
-            interpreter::instructions::{contract::load_account_delegated, gas_table_spec},
-        };
-        self.abort_bridge.check_subcall()?;
-        if self.trigger_budget.is_some() {
-            self.charge_subcall(0)?;
-        }
-        // The Outbe precompile boundary currently has a single gas pool. Fail
-        // closed rather than discarding an EIP-8037 reservoir/state-gas charge.
-        if self.ctx.cfg().is_amsterdam_eip8037_enabled() {
-            return Err(SubCallError::Fatal(
-                "Outbe subcalls do not support EIP-8037".into(),
-            ));
-        }
-        let is_static = self.is_static || input.is_static;
-        if is_static && !input.value.is_zero() {
-            return Ok(SubCallOutput {
-                status: SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall),
-                returndata: Default::default(),
-                gas_used: 0,
-                gas_refunded: 0,
-            });
-        }
-        // Price the same account/delegation/value access as the pinned CALL
-        // implementation, before computing EIP-150's cap. This explicit-budget
-        // API intentionally does not add CALL's automatic value stipend.
-        let opcode = if is_static { 0xfa } else { 0xf1 };
-        self.charge_subcall(u64::from(gas_table_spec(self.spec)[opcode]))?;
-        let transfers_value = !input.value.is_zero();
-        if transfers_value {
-            self.charge_subcall(self.ctx.cfg().gas_params().transfer_value_cost())?;
-        }
-        let (cost, state_cost, code, hash) = match load_account_delegated(
-            self.ctx,
-            self.spec,
-            self.gas.remaining(),
-            input.target,
-            transfers_value,
-            !is_static,
-        ) {
-            Ok(loaded) => loaded,
-            Err(LoadError::ColdLoadSkipped) => {
-                self.charge_subcall(u64::MAX)?;
-                return Err(SubCallError::ParentOutOfGas);
-            }
-            Err(LoadError::DBError) => {
-                return Err(crate::errors::SubCallDriverError::database_error(
-                    self.ctx.error(),
-                ));
-            }
-        };
-        if state_cost != 0 {
-            return Err(crate::errors::SubCallDriverError::UnsupportedStateGasCharge.into());
-        }
-        self.charge_subcall(cost)?;
-        let remaining = self.gas.remaining();
-        let cap = if self.spec.is_enabled_in(SpecId::TANGERINE) {
-            self.ctx
-                .cfg()
-                .gas_params()
-                .call_stipend_reduction(remaining)
-        } else {
-            remaining
-        };
-        input.gas_limit = input.gas_limit.min(cap);
-        if self.trigger_budget.is_some() {
-            if let Some(legacy_remaining) = self.gas_child_remaining {
-                input.gas_limit = input.gas_limit.min(legacy_remaining);
-            }
-        }
-        let locally_limited = self
-            .trigger_budget
-            .as_ref()
-            .is_some_and(|budget| budget.remaining < input.gas_limit);
-        if let Some(budget) = &self.trigger_budget {
-            input.gas_limit = input.gas_limit.min(budget.remaining);
-        }
-        let allowance = input.gas_limit;
-        self.charge_subcall(allowance)?;
-        let outcome = sub_call::run_frame(
-            self.ctx,
-            sub_call::SubCallContext {
-                self_address: self.self_address,
-                outer_is_static: self.is_static,
-                execution: crate::precompiles::OutbePrecompileExecutionContext::new(
-                    self.spec,
-                    self.genesis_hash,
-                )
-                .with_genesis_timestamp(self.genesis_timestamp),
-                runtime: crate::precompiles::OutbePrecompileRuntime::new()
-                    .with_abort_bridge(self.abort_bridge.clone()),
-            },
-            input,
-            Some((hash, code)),
-        );
-        match outcome {
-            Ok(outcome) => {
-                // Settlement collapses fixed memory/operand failures into public OOG.
-                // More allowance cannot fix those failures, so they are not local exhaustion.
-                let allowance_exhausted = matches!(
-                    outcome.result.result,
-                    revm::interpreter::InstructionResult::OutOfGas
-                        | revm::interpreter::InstructionResult::MemoryOOG
-                        | revm::interpreter::InstructionResult::PrecompileOOG
-                        | revm::interpreter::InstructionResult::ReentrancySentryOOG
-                );
-                let reserved_remaining = self.gas.remaining();
-                let output = sub_call::settle_outcome(outcome, self.gas.inner_mut())?;
-                if let Some(budget) = &mut self.trigger_budget {
-                    // Use canonical settlement's actual return, not output.gas_used.
-                    budget
-                        .return_unused(self.gas.remaining() - reserved_remaining)
-                        .map_err(|error| SubCallError::Fatal(error.to_string()))?;
-                    if let Some(child) = &mut self.gas_child_remaining {
-                        *child = child
-                            .checked_add(self.gas.remaining() - reserved_remaining)
-                            .ok_or_else(|| {
-                                SubCallError::Fatal("legacy gas return overflow".into())
-                            })?;
-                    }
-                    if locally_limited && allowance_exhausted {
-                        budget.exhaust();
-                        if let Err(PrecompileError::TriggerBudgetExceeded {
-                            consumed_gas,
-                            budget_gas,
-                        }) = budget.status()
-                        {
-                            return Err(SubCallError::TriggerBudgetExceeded {
-                                consumed_gas,
-                                budget_gas,
-                            });
-                        }
-                    }
-                }
-                Ok(output)
-            }
-            Err(error @ SubCallError::DepthLimitExceeded) => {
-                self.gas.erase_cost(allowance);
-                if let Some(budget) = &mut self.trigger_budget {
-                    budget
-                        .return_unused(allowance)
-                        .map_err(|error| SubCallError::Fatal(error.to_string()))?;
-                }
-                if self.trigger_budget.is_some() {
-                    if let Some(child) = &mut self.gas_child_remaining {
-                        *child = child.checked_add(allowance).ok_or_else(|| {
-                            SubCallError::Fatal("legacy gas return overflow".into())
-                        })?;
-                    }
-                }
-                Ok(SubCallOutput {
-                    status: SubCallStatus::Halt(error),
-                    returndata: Default::default(),
-                    gas_used: 0,
-                    gas_refunded: 0,
-                })
-            }
-            Err(error) => Err(error),
-        }
+        self.execute_subcall(input)
     }
 }
 

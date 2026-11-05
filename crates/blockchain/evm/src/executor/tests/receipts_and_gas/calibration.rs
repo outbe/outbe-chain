@@ -182,6 +182,7 @@ fn run_prefix(
         assert_eq!(over.len(), 1);
         let over = &over[0].data;
         assert_eq!(over.id, 4);
+        assert_eq!(over.blockNumber, block);
         let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
             .iter()
             .find(|spec| spec.id == 4)
@@ -281,8 +282,14 @@ fn run_prefix(
                 );
                 for index in 0..2 {
                     let key = outbe_desis::DesisContract::bid_key(day, chain, index);
-                    assert!(!auction.bid_bidder.read(&key).unwrap().is_zero());
-                    assert!(!auction.bid_packed.read(&key).unwrap().is_zero());
+                    assert_eq!(
+                        auction.bid_bidder.read(&key).unwrap(),
+                        numbered_test_address(0xa1, u64::from(chain * 2 + index))
+                    );
+                    let packed = U256::from(1_000_000u64)
+                        | (U256::from((840u64 << 48) | (1 << 32)) << 64)
+                        | (U256::from(840u64) << 128);
+                    assert_eq!(auction.bid_packed.read(&key).unwrap(), packed);
                 }
             }
         });

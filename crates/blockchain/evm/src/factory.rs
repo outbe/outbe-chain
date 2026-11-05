@@ -6,34 +6,34 @@
 //! `OutbeExecutorBuilder` (defined in `crate::config`).
 
 use alloy_evm::{
-    Evm, EvmFactory,
     eth::EthEvmContext,
     precompiles::PrecompilesMap,
-    revm::handler::{EthFrame, EthPrecompiles, PrecompileProvider, instructions::EthInstructions},
+    revm::handler::{instructions::EthInstructions, EthFrame, EthPrecompiles, PrecompileProvider},
+    Evm, EvmFactory,
 };
-use alloy_primitives::{Address, B256, Bytes, TxKind};
+use alloy_primitives::{Address, Bytes, TxKind, B256};
 use core::ops::{Deref, DerefMut};
 use reth_ethereum::evm::{
     primitives::{Database, EvmEnv},
     revm::{
-        ExecuteEvm, MainBuilder, MainContext,
         context::{BlockEnv, CfgEnv, Context, Evm as RevmEvm, TxEnv},
         context_interface::{
-            ContextSetters,
             result::{EVMError, HaltReason, ResultAndState},
+            ContextSetters,
         },
         inspector::{Inspector, NoOpInspector},
-        interpreter::{InterpreterResult, interpreter::EthInterpreter},
+        interpreter::{interpreter::EthInterpreter, InterpreterResult},
         primitives::hardfork::SpecId,
+        ExecuteEvm, MainBuilder, MainContext,
     },
 };
-use revm::handler::{Handler, MainnetHandler, system_call::SystemCallTx};
+use revm::handler::{system_call::SystemCallTx, Handler, MainnetHandler};
 use revm::inspector::InspectorHandler;
 
 use crate::{
     create_guard::{self, ReservedNamespaceHandler},
     native_delegation::NativeDelegationEvm,
-    precompiles::{OutbePrecompileExecutionContext, extend_outbe_precompiles},
+    precompiles::{extend_outbe_precompiles, OutbePrecompileExecutionContext},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
 

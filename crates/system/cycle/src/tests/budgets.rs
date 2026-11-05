@@ -2,9 +2,9 @@
 
 use super::*;
 use crate::{
-    ICycle,
-    runtime::{CycleWorkCapacity, dispatch_triggers_with_budgets, handle_cycle_tick_with_budgets},
+    runtime::{dispatch_triggers_with_budgets, handle_cycle_tick_with_budgets, CycleWorkCapacity},
     triggers::{TriggerHandler, TriggerSpec},
+    ICycle,
 };
 use alloy_sol_types::SolEvent;
 use outbe_primitives::{
@@ -36,7 +36,7 @@ fn fatal(_: &BlockRuntimeContext) -> Result<()> {
 }
 
 fn spec(id: u32, budget: u64, handler: fn(&BlockRuntimeContext<'_>) -> Result<()>) -> TriggerSpec {
-    TriggerSpec::new(id, "test", 60, 0, budget, TriggerHandler::Test(handler)).unwrap()
+    TriggerSpec::new(id, "test", (60, 0), budget, TriggerHandler::Test(handler)).unwrap()
 }
 
 fn storage(ids: &[u32]) -> HashMapStorageProvider {
@@ -119,11 +119,9 @@ fn over_budget_rolls_back_and_propagates_pending_then_retries_once_next_block() 
         .filter_map(|log| ICycle::CycleTriggerDeferred::decode_log_data(log).ok())
         .collect();
     assert_eq!(deferred.len(), 2);
-    assert!(
-        deferred
-            .iter()
-            .all(|event| event.reason == 2 && event.scheduledAt == GENESIS_TS + 60)
-    );
+    assert!(deferred
+        .iter()
+        .all(|event| event.reason == 2 && event.scheduledAt == GENESIS_TS + 60));
 
     specs[0] = spec(0, 140, write_then_spend);
     storage.set_block_number(3);
@@ -174,10 +172,9 @@ fn capacity_deferred_work_is_not_attempted_and_independent_small_work_fits() {
         .collect();
     assert_eq!(deferred.len(), 1);
     assert_eq!(deferred[0].reason, 1);
-    assert!(
-        logs.iter()
-            .all(|log| ICycle::CycleTriggerOverBudget::decode_log_data(log).is_err())
-    );
+    assert!(logs
+        .iter()
+        .all(|log| ICycle::CycleTriggerOverBudget::decode_log_data(log).is_err()));
 }
 
 #[test]
@@ -203,7 +200,7 @@ fn ordinary_reverts_consume_dependencies_but_fatal_errors_stop_the_walk() {
 #[test]
 fn rejects_zero_budget_and_insufficient_essential_capacity() {
     assert!(matches!(
-        TriggerSpec::new(0, "test", 60, 0, 0, TriggerHandler::Test(independent)),
+        TriggerSpec::new(0, "test", (60, 0), 0, TriggerHandler::Test(independent)),
         Err(crate::errors::CycleError::ZeroTriggerWorkBudget)
     ));
     let mut storage = storage(&[]);
@@ -252,8 +249,7 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
         TriggerSpec::new(
             0,
             "protocol",
-            3_600,
-            0,
+            (3_600, 0),
             budget,
             TriggerHandler::ProtocolCycle,
         )
@@ -303,12 +299,10 @@ fn late_protocol_exhaustion_rolls_back_calendar_and_allocation_then_retries_acro
             .count(),
         1
     );
-    assert!(
-        storage
-            .get_events(CYCLE_ADDRESS)
-            .iter()
-            .all(|log| ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_err())
-    );
+    assert!(storage
+        .get_events(CYCLE_ADDRESS)
+        .iter()
+        .all(|log| ICycle::DayEmissionLimitAllocationFailed::decode_log_data(log).is_err()));
 
     storage.set_block_number(3);
     storage.set_gas_limit(100_000_000);
@@ -336,8 +330,7 @@ fn non_due_prerequisites_do_not_block_and_unmetered_provider_cannot_run_scopes()
     let prerequisite = TriggerSpec::new(
         0,
         "not_due",
-        SECONDS_PER_DAY,
-        0,
+        (SECONDS_PER_DAY, 0),
         100,
         TriggerHandler::Test(fatal),
     )
@@ -476,7 +469,7 @@ fn dispatcher_rejects_actual_overhead_one_gas_above_declared_reserve() {
 }
 
 fn queued_reward_storage() -> HashMapStorageProvider {
-    use outbe_agentreward::api::{DayAgentPools, allocate_day_agent_rewards};
+    use outbe_agentreward::api::{allocate_day_agent_rewards, DayAgentPools};
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());

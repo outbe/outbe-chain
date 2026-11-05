@@ -10,11 +10,11 @@ use outbe_primitives::{
     error::PrecompileError,
     storage::MetadosisMutationPurposeTag,
     time::{
-        SECONDS_PER_DAY, WorldwideDay, date_key_to_utc_timestamp, day_number_between,
-        timestamp_to_date_key,
+        date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
+        SECONDS_PER_DAY,
     },
 };
-use outbe_tributefactory::{TributeFactoryContract, precompile::ITributeFactory};
+use outbe_tributefactory::{precompile::ITributeFactory, TributeFactoryContract};
 
 use super::*;
 
@@ -269,12 +269,10 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
             if day_offset == 1 {
-                assert!(
-                    !factory
-                        .forming_snapshot_finalized
-                        .read(&WorldwideDay::new(20_240_101))
-                        .unwrap()
-                );
+                assert!(!factory
+                    .forming_snapshot_finalized
+                    .read(&WorldwideDay::new(20_240_101))
+                    .unwrap());
             }
             if day_offset == 2 {
                 assert!(
@@ -341,13 +339,11 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
-                assert!(
-                    !outbe_tributefactory::worldwideday::is_offering_day(
-                        ctx.storage.clone(),
-                        WorldwideDay::new(20_240_101)
-                    )
-                    .unwrap()
-                );
+                assert!(!outbe_tributefactory::worldwideday::is_offering_day(
+                    ctx.storage.clone(),
+                    WorldwideDay::new(20_240_101)
+                )
+                .unwrap());
                 assert!(
                     !outbe_tribute::TributeContract::new(ctx.storage.clone())
                         .is_day_sealed(WorldwideDay::new(20_240_101))

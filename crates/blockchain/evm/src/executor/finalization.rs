@@ -6,8 +6,8 @@ use crate::{
     finalization::{
         late_credits::verify_late_finalize_credits_batches,
         parent_accounting::{
-            ParentArtifactLookup, Phase1VerifyInput, Phase1WitnessLookup,
             resolve_accounted_parent_artifact, resolve_phase1_witness, verify_phase1_certificate,
+            ParentArtifactLookup, Phase1VerifyInput, Phase1WitnessLookup,
         },
     },
     system_tx::SystemTxPhase,

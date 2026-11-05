@@ -11,6 +11,8 @@ use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use revm::state::{AccountInfo, Bytecode};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+mod trigger_gas;
+
 #[cfg(feature = "bench-utils")]
 use serde::{Deserialize, Serialize};
 
@@ -659,59 +661,11 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn deduct_gas(&mut self, gas: u64) -> Result<()> {
-        if self.trigger_budget.is_some() {
-            self.trigger_budget_status()?;
-            if self
-                .metered_gas_remaining()
-                .is_some_and(|remaining| gas > remaining)
-            {
-                self.parent_out_of_gas = true;
-                if let Some(limit) = self.gas_limit {
-                    self.gas_used = limit;
-                }
-                return Err(PrecompileError::OutOfGas);
-            }
-            if let Some(budget) = &mut self.trigger_budget {
-                budget.check(gas)?;
-            }
-        }
-        if let Some(child) = self.gas_child_remaining {
-            if gas > child {
-                if let Some(limit) = self.gas_limit {
-                    self.gas_used = self.gas_used.saturating_add(child).min(limit);
-                }
-                self.gas_child_remaining = Some(0);
-                if let Some(budget) = &mut self.trigger_budget {
-                    budget.charge(child)?;
-                }
-                return Err(PrecompileError::OutOfGas);
-            }
-            self.gas_child_remaining = Some(child - gas);
-        }
-        let Some(limit) = self.gas_limit else {
-            return Ok(());
-        };
-        let next = self
-            .gas_used
-            .checked_add(gas)
-            .ok_or(PrecompileError::OutOfGas)?;
-        if next > limit {
-            return Err(PrecompileError::OutOfGas);
-        }
-        self.gas_used = next;
-        if let Some(budget) = &mut self.trigger_budget {
-            budget.charge(gas)?;
-        }
-        Ok(())
+        self.charge_gas(gas)
     }
 
     fn gas_remaining(&self) -> Option<u64> {
-        self.end_gas_metered
-            .then(|| {
-                self.gas_limit
-                    .map(|limit| limit.saturating_sub(self.gas_used))
-            })
-            .flatten()
+        self.remaining_end_gas()
     }
 
     fn metered_gas_remaining(&self) -> Option<u64> {
@@ -720,41 +674,19 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
-        use super::gas::{TriggerBudget, TriggerScopeError};
-        if self.trigger_budget.is_some() {
-            return Err(TriggerScopeError::Nested.into());
-        }
-        if self.gas_limit.is_none() || !self.meter_storage_gas {
-            return Err(TriggerScopeError::Unsupported.into());
-        }
-        if self.parent_out_of_gas {
-            return Err(PrecompileError::OutOfGas);
-        }
-        self.trigger_budget = Some(TriggerBudget::new(budget));
-        Ok(())
+        self.start_trigger_budget(budget)
     }
 
     fn trigger_budget_status(&self) -> Result<()> {
-        if self.parent_out_of_gas {
-            return Err(PrecompileError::OutOfGas);
-        }
-        self.trigger_budget
-            .as_ref()
-            .ok_or(super::gas::TriggerScopeError::Inactive)?
-            .status()
+        self.active_trigger_status()
     }
 
     fn end_trigger_budget(&mut self) -> Result<()> {
-        self.trigger_budget
-            .take()
-            .ok_or(super::gas::TriggerScopeError::Inactive)?;
-        Ok(())
+        self.finish_trigger_budget()
     }
 
     fn observe_trigger_error(&mut self, error: &PrecompileError) {
-        if let Some(budget) = &mut self.trigger_budget {
-            budget.observe_error(error);
-        }
+        self.observe_trigger_failure(error);
     }
 
     fn enable_end_gas_metering(&mut self) -> Result<()> {
@@ -763,13 +695,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
     }
 
     fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {
-        if let Some(limit) = self.gas_limit {
-            if limit.saturating_sub(self.gas_used) < ceiling {
-                return Err(PrecompileError::OutOfGas);
-            }
-        }
-        self.gas_child_remaining = Some(ceiling);
-        Ok(())
+        self.start_gas_ceiling(ceiling)
     }
 
     fn end_gas_ceiling(&mut self) -> Result<()> {

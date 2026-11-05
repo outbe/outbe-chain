@@ -129,10 +129,9 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
             !outbe_agentreward::distribution::has_pending_accruals_for_day(&handle, 20_240_101,)
                 .unwrap()
         );
-        assert!(
-            ar.increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
-                .is_err()
-        );
+        assert!(ar
+            .increment_waa_tribute(20_240_101u32.into(), Address::repeat_byte(0x45))
+            .is_err());
         crate::handler::credit_reward_slice(&ctx).unwrap();
         assert_eq!(ar.waa_address_count.read(&20_240_101u32.into()).unwrap(), 0);
         assert_eq!(
@@ -169,20 +168,16 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     assert_eq!(metadosis_canceled[0].emissionDay, 20_240_101);
     assert_eq!(metadosis_canceled[0].reason, 1);
 
-    assert!(
-        storage
-            .get_ordered_events()
-            .iter()
-            .filter_map(|log| IMetadosis::MetadosisLimitSet::decode_log(log).ok())
-            .all(|ev| ev.data.emissionDay != 20_240_101)
-    );
-    assert!(
-        storage
-            .get_ordered_events()
-            .iter()
-            .filter_map(|log| IDesis::DesisLimitSet::decode_log(log).ok())
-            .all(|ev| ev.data.emissionDay != 20_240_101)
-    );
+    assert!(storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IMetadosis::MetadosisLimitSet::decode_log(log).ok())
+        .all(|ev| ev.data.emissionDay != 20_240_101));
+    assert!(storage
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| IDesis::DesisLimitSet::decode_log(log).ok())
+        .all(|ev| ev.data.emissionDay != 20_240_101));
 
     // Now test Step 3 (`start_metadosis`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
     // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage

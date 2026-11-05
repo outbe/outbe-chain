@@ -237,10 +237,9 @@ fn finalization_rejects_non_parent_metadata_before_summary_use() {
         .encode()
         .unwrap();
         let err = dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("CertifiedParentAccounting metadata must target immediate parent")
-        );
+        assert!(err
+            .to_string()
+            .contains("CertifiedParentAccounting metadata must target immediate parent"));
     });
 }
 
