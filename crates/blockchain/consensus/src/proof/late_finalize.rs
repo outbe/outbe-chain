@@ -288,7 +288,7 @@ mod tests {
 
     /// The verifier checks the aggregate over the FULL signer bitmap and
     /// returns every set-bit index. State-level dedup of already-credited
-    /// signers happens downstream (in `record_late_credit`), AFTER this
+    /// signers happens downstream (in `record_late_vote`), AFTER this
     /// returns. Filtering bits before verify would break the
     /// recomputed aggregate public key, so verify must precede dedup.
     #[test]

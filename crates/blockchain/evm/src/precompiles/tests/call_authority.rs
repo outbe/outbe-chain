@@ -5,8 +5,8 @@ use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     reshare_artifact::LateFinalizeCreditsArtifact,
     storage::{
-        metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        metadosis_advance_due_binding, metadosis_block_fee_binding,
+        metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
         metadosis_process_ready_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag as Purpose,
     },
@@ -84,7 +84,7 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
     ))
     .union(MetadosisMutationEntitlements::exact(
         Purpose::CertifiedFinality,
-        metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        metadosis_block_fee_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
     ))
 }
 
@@ -123,7 +123,7 @@ fn exact_production_causes_receive_only_their_purpose() {
         }),
         MetadosisMutationEntitlements::exact(
             Purpose::CertifiedFinality,
-            metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP,),
+            metadosis_block_fee_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP,),
         ),
     );
     assert_eq!(
@@ -188,7 +188,7 @@ fn end_zone_walks_receive_only_process_ready() {
         assert!(entitlements.expects(Purpose::CycleLifecycle, ready));
         assert!(!entitlements.expects(
             Purpose::CertifiedFinality,
-            metadosis_late_settlement_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+            metadosis_block_fee_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
         ));
         assert!(!entitlements.expects(
             Purpose::CycleLifecycle,

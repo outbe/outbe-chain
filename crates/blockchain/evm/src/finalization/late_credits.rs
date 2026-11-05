@@ -217,11 +217,13 @@ fn authenticate_late_credit_hash(
 }
 
 /// Executes the `LateFinalizeCredits` system transaction:
-/// 1. Authenticates each credit batch against `Rewards` escrow and records late voters.
-///    When preloaded signer indices are present in the system-tx context, reuses
-///    those pre-verified indices so the BLS pairing is not repeated.
-/// 2. Records window-close absentees and applies voter slashing for `block_number - K`.
-/// 3. Settles the matured reward window at `block_number - K`.
+/// 1. Authenticates each credit batch against `Rewards` escrow and records late votes
+///    (`rewards::record_late_vote`). When preloaded signer indices are present in the
+///    system-tx context, reuses those pre-verified indices so the BLS pairing is not repeated.
+/// 2. Records window-close absentees for `block_number - K` and slashes them
+///    (`rewards::slash_absent_voters`).
+/// 3. Seals the votes of block `block_number - K` and transfers its fees
+///    (`rewards::seal_block_votes`).
 pub fn run_late_finalize_credits(
     ctx: &BlockRuntimeContext,
     artifact: &LateFinalizeCreditsArtifact,
@@ -239,7 +241,7 @@ pub fn run_late_finalize_credits(
     }
 
     record_window_close_absentees(ctx, block_number)?;
-    outbe_rewards::late_settlement::settle_matured(ctx, block_number, LATE_FINALIZE_WINDOW_K)?;
+    outbe_rewards::block_fees::seal_block_votes(ctx, block_number, LATE_FINALIZE_WINDOW_K)?;
 
     Ok(())
 }
@@ -276,7 +278,7 @@ fn record_single_late_credit_batch(
             .get(idx)
             .map(|entry| entry.address)
             .ok_or(BeginBlockPrecompileError::LateCreditSignerIndexOutOfRange { idx })?;
-        outbe_rewards::late_settlement::record_late_credit(ctx, credit.fb_hash, voter, k)?;
+        outbe_rewards::block_fees::record_late_vote(ctx, credit.fb_hash, voter, k)?;
     }
     Ok(())
 }
@@ -288,7 +290,7 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
     else {
         return Ok(());
     };
-    let Some(info) = outbe_rewards::late_settlement::window_close_credited(ctx, fb_number)? else {
+    let Some(info) = outbe_rewards::block_fees::window_close_credited(ctx, fb_number)? else {
         return Ok(());
     };
 
@@ -317,11 +319,7 @@ fn record_window_close_absentees(ctx: &BlockRuntimeContext, block_number: u64) -
         &absentees,
     )?;
 
-    outbe_slashindicator::hooks::slash_window_voters(
-        ctx.storage.clone(),
-        info.fb_hash,
-        &absentees,
-    )?;
+    outbe_rewards::block_fees::slash_absent_voters(ctx, info.fb_hash, &absentees)?;
 
     Ok(())
 }

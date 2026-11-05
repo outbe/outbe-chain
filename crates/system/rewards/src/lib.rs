@@ -4,8 +4,11 @@
 //! - `lifecycle.rs` - block-boundary entrypoint (`begin_block`).
 //! - `precompile.rs` - ABI dispatch.
 //! - `api.rs` - public cross-module surface used by the Cycle handler.
-//! - `finalized_metadata_hook.rs` - per-finalized-block hook called from
-//!   the begin-zone CertifiedParentAccounting phase.
+//! - `finalized_metadata_hook.rs` - per-finalized-block hook
+//!   (`record_votes_and_fees`) called from the begin-zone
+//!   CertifiedParentAccounting phase.
+//! - `block_fees.rs` - late votes, the seal of block votes, the block fee
+//!   transfer and the absent-voter slashing of the `LateFinalizeCredits` phase.
 //!
 //! Day-boundary settle was removed from this crate (Phase
 //! 6 of the Cycle epic). Daily emission orchestration now lives in
@@ -16,10 +19,10 @@
 //! keep compiling without a sweeping rename. Migrate call sites
 //! opportunistically when next touched, then drop the re-exports.
 pub mod api;
+pub mod block_fees;
 pub mod constants;
 pub mod errors;
 pub mod finalized_metadata_hook;
-pub mod late_settlement;
 pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;

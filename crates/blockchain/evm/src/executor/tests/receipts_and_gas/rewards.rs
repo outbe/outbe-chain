@@ -4,16 +4,16 @@ use super::*;
 use outbe_rewards::precompile::IRewards;
 
 #[test]
-fn real_cpa_escrow_and_late_settlement_receipts_do_not_duplicate_body_witness_logs() {
-    assert_real_cpa_and_late_settlement(false);
+fn real_cpa_escrow_and_block_fee_transfer_receipts_do_not_duplicate_body_witness_logs() {
+    assert_real_cpa_and_block_fee_transfer(false);
 }
 
 #[test]
 fn invalid_slash_percent_rejects_mandatory_late_window_without_committing_penalty() {
-    assert_real_cpa_and_late_settlement(true);
+    assert_real_cpa_and_block_fee_transfer(true);
 }
 
-fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
+fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool) {
     use commonware_codec::Encode;
     use commonware_consensus::{simplex::types::Proposal, types::View};
     use commonware_cryptography::{bls12381::primitives::variant::MinSig, sha256::Digest};
@@ -25,7 +25,7 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         },
     };
     use outbe_primitives::consensus_metadata::ParentParticipationProof;
-    use outbe_rewards::late_settlement::{escrow_block_fee, FinalizedBlockBinding};
+    use outbe_rewards::block_fees::{escrow_block_fee, FinalizedBlockBinding};
 
     outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID).unwrap();
     let signer = test_evm_signer();
@@ -264,7 +264,7 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
             assert_eq!(storage.balance(STAKING_ADDRESS)?, total);
             let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
             assert_eq!(rewards.pending_fees.read(&settled_hash)?, matured_fee);
-            assert!(!rewards.fee_settled.read(&settled_hash)?);
+            assert!(!rewards.fees_transferred.read(&settled_hash)?);
             assert_eq!(rewards.late_voter_count.read(&settled_hash)?, 3);
             assert_eq!(rewards.pending_fb_hash_at.read(&1)?, settled_hash);
             assert_eq!(storage.balance(REWARDS_ADDRESS)?, matured_fee + parent_fee);
@@ -289,7 +289,7 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         "two positive payments followed by one summary"
     );
     for (log, voter) in logs[..2].iter().zip(voters.iter().copied()) {
-        let payment = IRewards::VoterFeePaid::decode_log(log).unwrap();
+        let payment = IRewards::VoterFeeTransferred::decode_log(log).unwrap();
         assert_eq!(payment.fbHash, settled_hash);
         assert_eq!(
             payment.voter, voter,
@@ -298,13 +298,27 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
         assert_eq!(payment.amountNative, U256::from(2_000) * unit);
         assert_rewards_bloom(late, log);
     }
-    let summary = IRewards::LateWindowSettled::decode_log(logs[2]).unwrap();
+    let summary = IRewards::BlockFeesTransferred::decode_log(logs[2]).unwrap();
     assert_eq!(summary.fbHash, settled_hash);
-    assert_eq!(summary.distributedNative, U256::from(4_000) * unit);
-    assert_eq!(summary.residueNative, U256::from(4_000) * unit);
-    assert_eq!(summary.burnedNative, summary.residueNative);
-    assert_eq!(summary.dustAfterNative, U256::ZERO);
+    assert_eq!(summary.transferredNative, U256::from(4_000) * unit);
+    assert_eq!(summary.restNative, U256::from(4_000) * unit);
     assert_rewards_bloom(late, logs[2]);
+    // The rest goes through the shared function of the Promis Limit, which reports the burn.
+    let burns: Vec<_> = late
+        .logs
+        .iter()
+        .filter(|log| log.address == outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS)
+        .map(|log| {
+            outbe_promislimit::precompile::IPromisLimit::NativeBurnedToPromisLimit::decode_log(log)
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(burns.len(), 1);
+    assert_eq!(
+        burns[0].source,
+        outbe_promislimit::BurnSource::BlockFee as u8
+    );
+    assert_eq!(burns[0].burnedUnit, summary.restNative);
     for tx in system_txs {
         executor
             .execute_transaction(tx)
@@ -336,7 +350,7 @@ fn assert_real_cpa_and_late_settlement(invalid_slash_percent: bool) {
     }
     assert_eq!(storage.balance(REWARDS_ADDRESS).unwrap(), parent_fee);
     assert!(outbe_rewards::schema::Rewards::new(storage)
-        .fee_settled
+        .fees_transferred
         .read(&settled_hash)
         .unwrap());
 }

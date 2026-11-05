@@ -492,7 +492,7 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         let rewards = outbe_rewards::schema::Rewards::new(storage);
         let date_key = timestamp_to_date_key(parent_timestamp);
         assert_eq!(rewards.pending_fees.read(&block_hash)?, seeded_fee);
-        assert_eq!(rewards.daily_fee_sum_raw.read(&date_key)?, seeded_fee);
+        assert_eq!(rewards.day_fee_sum_native.read(&date_key)?, seeded_fee);
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
     .expect("accounting state should be readable");
@@ -519,7 +519,7 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
 // ---------------------------------------------------------------------------
 // Settlement-money sanity: the value carried in
 // `ExecutionSummaryArtifact.validator_fee_sum` round-trips exactly through
-// the provider, so downstream `outbe_rewards::on_finalized_metadata` sees the
+// the provider, so downstream `outbe_rewards::record_votes_and_fees` sees the
 // authoritative parent number.
 // ---------------------------------------------------------------------------
 

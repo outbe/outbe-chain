@@ -21,6 +21,14 @@ fn run(f: impl FnOnce(StorageHandle<'_>)) {
     provider.set_timestamp(U256::from(NOW));
     StorageHandle::enter(&mut provider, f);
 }
+/// Seals the reward days through `day` in Rewards, the only sealed-day state.
+fn seal_through(storage: &StorageHandle<'_>, day: u32) {
+    outbe_rewards::schema::Rewards::new(storage.clone())
+        .last_sealed_day
+        .write(day)
+        .unwrap();
+}
+
 fn cca_at(id: u32) -> Address {
     Address::from_word(U256::from(id).into())
 }
@@ -173,8 +181,7 @@ fn day_index_is_stable_through_zero_weights_deficits_exit_and_sealing() {
         runtime::credis_issued(&storage, ALICE, DAY + 1, U256::from(20)).unwrap();
         runtime::unbond(storage.clone(), ALICE).unwrap();
         assert!(api::reward_day_inputs(&storage, DAY).is_err());
-        api::seal_reward_day(&storage, DAY).unwrap();
-        api::seal_reward_day(&storage, DAY - 10).unwrap();
+        seal_through(&storage, DAY);
         assert_eq!(
             api::reward_day_inputs(&storage, DAY).unwrap(),
             (2, U256::from(4))
@@ -217,7 +224,7 @@ fn day_count_total_and_cleanup_queue_overflow_roll_back() {
         assert!(runtime::credis_issued(&storage, BOB, DAY, U256::ONE).is_err());
         assert_eq!(contract.reward_day_count.read(&DAY).unwrap(), 1);
         assert_eq!(api::reward_weight(&storage, BOB, DAY).unwrap(), U256::ZERO);
-        api::seal_reward_day(&storage, DAY).unwrap();
+        seal_through(&storage, DAY);
         contract.day_cleanup_tail.write(u64::MAX).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
@@ -710,7 +717,7 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
             storage.clone(),
         );
         assert!(api::enqueue_day_cleanup(&ctx, DAY).is_err());
-        api::seal_reward_day(&storage, DAY).unwrap();
+        seal_through(&storage, DAY);
         api::enqueue_day_cleanup(&ctx, DAY).unwrap();
         api::enqueue_day_cleanup(&ctx, DAY).unwrap();
         assert_eq!(contract.day_cleanup_tail.read().unwrap(), 1);
@@ -719,7 +726,7 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
             api::reward_day_inputs(&storage, DAY).unwrap(),
             (300, U256::from(150))
         );
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
         assert!(!contract
             .reward_day_members
@@ -736,13 +743,13 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
             api::reward_day_entry(&storage, DAY, 256).unwrap(),
             (cca_at(257), U256::ONE)
         );
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
         // Fail after some successful deletions, then retry the same height.
         let key = crate::schema::day_index_key(DAY, 280);
         contract.reward_day_addresses.clear(&key).unwrap();
         ctx.block.block_number = 1;
-        assert!(api::process_day_cleanup(&ctx).is_err());
+        assert!(api::cleanup(&ctx).is_err());
         assert_eq!(contract.cleanup_processed_block.read().unwrap(), 0);
         assert_eq!(contract.day_cleanup_cursor.read(&DAY).unwrap(), 256);
         assert_eq!(
@@ -753,7 +760,7 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
             .reward_day_addresses
             .write(&key, cca_at(281))
             .unwrap();
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_head.read().unwrap(), 1);
         assert_eq!(
             api::reward_day_inputs(&storage, DAY).unwrap(),
@@ -797,21 +804,21 @@ fn cleanup_empty_headers_are_bounded_and_sealing_can_skip_days() {
             },
             storage.clone(),
         );
-        api::seal_reward_day(&storage, DAY + 10).unwrap();
+        seal_through(&storage, DAY + 10);
         for day in DAY..DAY + 6 {
             api::enqueue_day_cleanup(&ctx, day).unwrap();
         }
         let contract = CcaContract::new(storage.clone());
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_head.read().unwrap(), 4);
         ctx.block.block_number = 1;
-        api::process_day_cleanup(&ctx).unwrap();
+        api::cleanup(&ctx).unwrap();
         assert_eq!(contract.day_cleanup_head.read().unwrap(), 6);
         contract.day_cleanup_head.write(7).unwrap();
         ctx.block.block_number = 2;
-        assert!(api::process_day_cleanup(&ctx).is_err());
+        assert!(api::cleanup(&ctx).is_err());
         assert_eq!(contract.cleanup_processed_block.read().unwrap(), 1);
     });
 }

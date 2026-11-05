@@ -273,7 +273,7 @@ fn protocol_cycle_awaits_late_window(
     )?;
     match day_action {
         ProtocolDayAction::SettlePrevious { day } => {
-            Ok(!outbe_rewards::api::day_participation_complete(ctx, day)?)
+            Ok(!outbe_rewards::api::is_voting_complete(ctx, day)?)
         }
         ProtocolDayAction::SameDay => Ok(false),
     }

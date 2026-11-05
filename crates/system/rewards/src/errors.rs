@@ -17,17 +17,19 @@ pub enum RewardsError {
     BlockGuardRingSeqOverflow,
     #[error("reward window height overflow")]
     RewardWindowHeightOverflow,
-    #[error("daily_fee_sum_raw overflow")]
-    DailyFeeSumRawOverflow,
-    #[error("reward participation arrived after its day was credited")]
-    ParticipationAfterDayClosed,
-    #[error("daily_voter_count overflow")]
-    DailyVoterCountOverflow,
-    #[error("daily_participation overflow")]
-    DailyParticipationOverflow,
-    #[error("daily total participation overflow")]
-    DailyTotalParticipationOverflow,
-    #[error("reward day must be completed, participation-complete and closed")]
+    #[error("day_fee_sum_native overflow")]
+    DayFeeSumOverflow,
+    #[error("vote or fee arrived after its day was sealed")]
+    VoteAfterDaySealed,
+    #[error("day {day} is not after the last sealed day {last_sealed_day}")]
+    DayAlreadySealed { day: u32, last_sealed_day: u32 },
+    #[error("day_voter_count overflow")]
+    DayVoterCountOverflow,
+    #[error("day_votes overflow")]
+    DayVotesOverflow,
+    #[error("day_total_votes overflow")]
+    DayTotalVotesOverflow,
+    #[error("reward day must be completed, sealed and voting-complete")]
     DayNotSealed,
     #[error("reward voter index outside sealed day inputs")]
     VoterIndexOutOfBounds,
@@ -35,30 +37,28 @@ pub enum RewardsError {
     InvalidVoterEntry,
     #[error("native validator budget overflow")]
     NativeValidatorBudgetOverflow,
-    #[error("reward cleanup queue sequence overflow")]
-    CleanupQueueOverflow,
-    #[error("reward cleanup queue is corrupt")]
-    CleanupQueueCorrupt,
+    #[error("reward day cleanup queue sequence overflow")]
+    DayCleanupQueueOverflow,
+    #[error("reward day cleanup queue is corrupt")]
+    CorruptDayCleanupQueue,
     #[error("reward credit outside inclusion window")]
     CreditOutsideInclusionWindow,
     #[error("late reward credit has no canonical UTC day")]
     LateCreditMissingCanonicalUtcDay,
     #[error("late_voter_count overflow")]
     LateVoterCountOverflow,
-    #[error("late settle denominator is zero (empty committee)")]
-    LateSettleDenominatorZero,
-    #[error("late settle insolvent: distributed exceeds escrow")]
-    LateSettleInsolvent,
-    #[error("late parity overflow")]
-    LateParityOverflow,
-    #[error("late settle parity violated")]
-    LateSettleParityViolated,
+    #[error("block fee committee is empty")]
+    BlockFeeEmptyCommittee,
+    #[error("sum of voter portions exceeds the block fees")]
+    SumOfVoterPortionsExceedsBlockFees,
+    #[error("block fee sum overflow")]
+    BlockFeeSumOverflow,
+    #[error("transferred block fees plus rest do not equal the block fees")]
+    BlockFeeInvariantMismatch,
     #[error("late payout multiply overflow")]
     LatePayoutMultiplyOverflow,
     #[error("late distributed overflow")]
     LateDistributedOverflow,
-    #[error("late residue dust overflow")]
-    LateResidueDustOverflow,
     #[error("Rewards precompile exposes no callable methods")]
     NoCallableMethods,
     #[error(

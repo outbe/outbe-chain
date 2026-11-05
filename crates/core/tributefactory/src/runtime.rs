@@ -529,7 +529,7 @@ mod reward_activity_tests {
                 storage.clone(),
             );
             let day = WorldwideDay::new(timestamp_to_date_key(now));
-            outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+            outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
             assert_eq!(
                 allocate_day_agent_rewards(
                     &ctx,

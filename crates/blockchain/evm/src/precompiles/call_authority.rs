@@ -3,8 +3,8 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{
     addresses::{OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_ADDRESS},
     storage::{
-        metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-        metadosis_init_genesis_binding, metadosis_late_settlement_binding,
+        metadosis_advance_due_binding, metadosis_block_fee_binding,
+        metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
         metadosis_process_ready_binding, MetadosisMutationEntitlements,
         MetadosisMutationPurposeTag,
     },
@@ -40,7 +40,7 @@ pub(super) fn metadosis_mutation_entitlements(
         crate::system_tx::SystemTx::LateFinalizeCredits { .. } => {
             MetadosisMutationEntitlements::exact(
                 Purpose::CertifiedFinality,
-                metadosis_late_settlement_binding(call.chain_id, call.block_number, call.timestamp),
+                metadosis_block_fee_binding(call.chain_id, call.block_number, call.timestamp),
             )
         }
         crate::system_tx::SystemTx::CycleTick => cycle_tick_entitlements(&call),
@@ -61,7 +61,7 @@ fn cycle_tick_entitlements(call: &MetadosisMutationCall<'_>) -> MetadosisMutatio
     let cycle_active_utc_day = call.cycle_active_utc_day;
     let mut entitlements = MetadosisMutationEntitlements::exact(
         Purpose::CertifiedFinality,
-        metadosis_late_settlement_binding(chain_id, block_number, timestamp),
+        metadosis_block_fee_binding(chain_id, block_number, timestamp),
     );
     if block_number == 1 {
         entitlements = entitlements.union(MetadosisMutationEntitlements::exact(

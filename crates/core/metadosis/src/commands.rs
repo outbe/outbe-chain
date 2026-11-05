@@ -25,9 +25,9 @@ pub fn apply_cycle_day_limit(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Res
     Ok(U256::ZERO)
 }
 
-/// Purpose-bound late-settlement adapter. Late residue is a Promis Limit credit only.
-pub fn apply_late_settlement_headroom(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
-    crate::emission_sink::apply_late_settlement_headroom(ctx, amount)
+/// Purpose-bound block-fee adapter. The rest of the block fees is a Promis Limit credit only.
+pub fn apply_block_fee_headroom(ctx: &BlockRuntimeContext<'_>, amount: U256) -> Result<U256> {
+    crate::emission_sink::apply_block_fee_headroom(ctx, amount)
 }
 
 /// Sends the daily Cycle terminal allocation to the Metadosis sink, anchored at
@@ -49,9 +49,9 @@ pub fn dispatch_terminal_remainder_at(
     Ok(())
 }
 
-/// Recycles a late residue, from fee settlement or from a finished WAA or SRA
+/// Recycles a rest, from the block fee transfer or from a finished WAA or SRA
 /// reward pool, into terminal Metadosis headroom.
-pub fn dispatch_late_settlement_residue_at(
+pub fn dispatch_block_fee_rest_at(
     ctx: &BlockRuntimeContext<'_>,
     amount: U256,
     timestamp: u64,
@@ -63,11 +63,10 @@ pub fn dispatch_late_settlement_residue_at(
     let mut terminal_block = ctx.block.clone();
     terminal_block.timestamp = timestamp;
     let terminal_ctx = BlockRuntimeContext::new(terminal_block, ctx.storage.clone());
-    let unused = apply_late_settlement_headroom(&terminal_ctx, amount)?;
+    let unused = apply_block_fee_headroom(&terminal_ctx, amount)?;
     if !unused.is_zero() {
         return Err(
-            outbe_emission::errors::EmissionLimitError::LateSettlementSinkReturnedUnusedAmount
-                .into(),
+            outbe_emission::errors::EmissionLimitError::BlockFeeSinkReturnedUnusedAmount.into(),
         );
     }
     Ok(())

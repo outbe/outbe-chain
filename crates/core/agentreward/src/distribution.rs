@@ -2,7 +2,7 @@ use crate::constants::ACCRUAL_RECIPIENTS_PER_BLOCK;
 use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AccrualJob, AgentRewardContract, RewardPool};
-use crate::state::{enqueue_cleanup, prepare_job, process_cleanup, release_pending};
+use crate::state::{cleanup, enqueue_cleanup, prepare_job, release_pending};
 use alloy_primitives::{Address, U256, U512};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -28,6 +28,7 @@ pub struct DayAgentPools {
 }
 
 /// Captures immutable day inputs and queues exactly four jobs. No recipient is credited here.
+/// `day` must be the Rewards `last_sealed_day`. A second allocation of a day is refused.
 pub fn allocate_day_agent_rewards(
     ctx: &BlockRuntimeContext,
     day: WorldwideDay,
@@ -35,16 +36,13 @@ pub fn allocate_day_agent_rewards(
 ) -> Result<DayAgentAllocation> {
     ctx.storage.with_checkpoint(|| {
         let contract = ctx.contract::<AgentRewardContract>();
-        if day.value() <= contract.sealed_through_day.read()? {
-            return Err(AgentRewardError::DaySealed(day.value()).into());
-        }
+        require_allocatable_day(ctx, day)?;
         let head = contract.accrual_head.read()?;
         let tail = contract.accrual_tail.read()?;
         let next_tail = tail.checked_add(4).ok_or(AgentRewardError::InvalidJob)?;
         if head > tail || tail % 4 != 0 || contract.pending_jobs_by_day.read(&day.value())? != 0 {
             return Err(AgentRewardError::InvalidJob.into());
         }
-        outbe_ccaregistry::api::seal_reward_day(&ctx.storage, day.value())?;
         let validator_inputs = outbe_rewards::api::sealed_day_inputs(ctx, day.value())?;
         let cca_inputs = outbe_ccaregistry::api::reward_day_inputs(&ctx.storage, day.value())?;
         let waa_inputs = (
@@ -99,7 +97,6 @@ pub fn allocate_day_agent_rewards(
         }
         contract.accrual_tail.write(next_tail)?;
         contract.pending_jobs_by_day.write(&day.value(), 4)?;
-        contract.sealed_through_day.write(day.value())?;
         Ok(DayAgentAllocation {
             validators_allocated: assigned[0],
             waa_allocated: assigned[1],
@@ -108,6 +105,19 @@ pub fn allocate_day_agent_rewards(
             total_excess: excess,
         })
     })
+}
+
+/// Refuses a day that is not the Rewards `last_sealed_day`, and a day whose
+/// Rewards record is already in the cleanup list. The validator job of a day puts
+/// the record in that list when it ends, and so does an abandoned allocation.
+/// While the jobs of a day run, `pending_jobs_by_day` refuses a second allocation.
+fn require_allocatable_day(ctx: &BlockRuntimeContext, day: WorldwideDay) -> Result<()> {
+    if day.value() != outbe_rewards::api::get_last_sealed_day(&ctx.storage)?
+        || outbe_rewards::api::is_day_cleanup_scheduled(&ctx.storage, day.value())?
+    {
+        return Err(AgentRewardError::DayNotAllocatable(day.value()).into());
+    }
+    Ok(())
 }
 
 /// Constant-time monetary-pending lookup, including zero-value jobs awaiting finalization.
@@ -121,18 +131,15 @@ pub fn has_pending_accruals_for_day(storage: &StorageHandle<'_>, day: u32) -> Re
     Ok(count != 0)
 }
 
-/// Seals failed allocation inputs without creating monetary obligations. Scheduling is idempotent.
+/// Schedules the cleanup of the day lists of a failed allocation without creating
+/// monetary obligations. The caller seals the day in Rewards first. Scheduling is idempotent.
 pub fn abandon_day_agent_rewards(ctx: &BlockRuntimeContext, day: WorldwideDay) -> Result<()> {
     ctx.storage.with_checkpoint(|| {
         let contract = ctx.contract::<AgentRewardContract>();
         if has_pending_accruals_for_day(&ctx.storage, day.value())? {
             return Err(AgentRewardError::InvalidJob.into());
         }
-        contract
-            .sealed_through_day
-            .write(contract.sealed_through_day.read()?.max(day.value()))?;
         outbe_rewards::api::enqueue_day_cleanup(ctx, day.value())?;
-        outbe_ccaregistry::api::seal_reward_day(&ctx.storage, day.value())?;
         outbe_ccaregistry::api::enqueue_day_cleanup(ctx, day.value())?;
         for pool in [RewardPool::Waa, RewardPool::Sra] {
             let count = contract.day_index(pool)?.address_count.read(&day)?;
@@ -155,7 +162,7 @@ pub fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
         }
         let mut budget = ACCRUAL_RECIPIENTS_PER_BLOCK;
         for _ in 0..4 {
-            let Some((mut job, pool, pending)) = next_job(&contract)? else {
+            let Some((mut job, pool, pending)) = next_job(ctx, &contract)? else {
                 break;
             };
             credit_job_entries(ctx, &mut contract, &mut job, pool, &mut budget)?;
@@ -165,15 +172,18 @@ pub fn process_agent_rewards(ctx: &BlockRuntimeContext) -> Result<()> {
             }
             finish_job(ctx, &contract, &job, pool, pending)?;
         }
-        process_cleanup(&contract)?;
-        outbe_rewards::api::process_day_cleanup(ctx)?;
-        outbe_ccaregistry::api::process_day_cleanup(ctx)?;
+        cleanup(&contract)?;
+        outbe_rewards::api::cleanup(ctx)?;
+        outbe_ccaregistry::api::cleanup(ctx)?;
         contract.worker_height.write(ctx.block.block_number)?;
         contract.worker_initialized.write(true)
     })
 }
 
-fn next_job(contract: &AgentRewardContract<'_>) -> Result<Option<(AccrualJob, RewardPool, u8)>> {
+fn next_job(
+    ctx: &BlockRuntimeContext,
+    contract: &AgentRewardContract<'_>,
+) -> Result<Option<(AccrualJob, RewardPool, u8)>> {
     let head = contract.accrual_head.read()?;
     let tail = contract.accrual_tail.read()?;
     if head > tail || tail % 4 != 0 {
@@ -201,7 +211,7 @@ fn next_job(contract: &AgentRewardContract<'_>) -> Result<Option<(AccrualJob, Re
     }
     if pool != expected_pool
         || job.day == 0
-        || job.day > contract.sealed_through_day.read()?
+        || job.day > outbe_rewards::api::get_last_sealed_day(&ctx.storage)?
         || pending != expected_pending
     {
         return Err(AgentRewardError::InvalidJob.into());

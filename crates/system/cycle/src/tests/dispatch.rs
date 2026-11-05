@@ -77,7 +77,7 @@ fn record_parent_with_late_voter(
         proof_kind: outbe_primitives::consensus_metadata::ParentParticipationProof::Finalization,
         missed_proposers: vec![],
     };
-    outbe_rewards::finalized_metadata_hook::on_finalized_metadata(
+    outbe_rewards::finalized_metadata_hook::record_votes_and_fees(
         ctx,
         &metadata,
         U256::ZERO,
@@ -119,8 +119,8 @@ fn protocol_cycle_keeps_midnight_slot_pending_until_late_reward_window_closes() 
             assert!(!is_day_settled(&ctx, 20240101));
             if height == 13 {
                 // Real phase order: Cycle first, then final-slot credit and GC.
-                outbe_rewards::late_settlement::record_late_credit(&ctx, hash, late, 3).unwrap();
-                outbe_rewards::late_settlement::settle_matured(&ctx, 13, 3).unwrap();
+                outbe_rewards::block_fees::record_late_vote(&ctx, hash, late, 3).unwrap();
+                outbe_rewards::block_fees::seal_block_votes(&ctx, 13, 3).unwrap();
             }
         });
     }
@@ -216,7 +216,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         };
 
         let ctx = runtime_context(block_ctx(2, ANCHOR_TS + 10), handle.clone());
-        outbe_rewards::api::close_day_participation(&ctx, day.value()).unwrap();
+        outbe_rewards::api::seal_votes_and_fees(&ctx, day.value()).unwrap();
         let amount = U256::from(recipients * 1_000);
         allocate_day_agent_rewards(
             &ctx,

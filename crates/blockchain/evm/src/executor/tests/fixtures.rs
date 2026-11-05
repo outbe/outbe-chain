@@ -538,7 +538,7 @@ pub(super) fn test_metadata() -> CertifiedParentAccountingMetadata {
 // The previous test asserted mismatch via the `total_emission_limit`
 // field. Wire format v0x04 dropped that field from
 // `ExecutionSummaryArtifact`. The broader
-// `outbe_rewards::on_finalized_metadata` hook and the
+// `outbe_rewards::record_votes_and_fees` hook and the
 // metadata-fingerprint guard in
 // `outbe_rewards::runtime::check_and_record_metadata_fingerprint`
 // verify the remaining `validator_fee_sum` field.
