@@ -1,35 +1,42 @@
 use super::clearing::{clearing_round_gas, fetch_targets};
 use super::*;
+use outbe_primitives::error::PrecompileError;
 
-/// Cycle `auction_advance` trigger: advance every scheduled auction. Each day
-/// runs in its own checkpoint. An Err reverts that day (retried next slot).
+/// Cycle `auction_advance` trigger: poll one scheduled auction in fair rotation.
+/// Each day runs in its own checkpoint; ordinary failures are retried on a later pass.
 pub fn tick_schedule(ctx: &BlockRuntimeContext) -> Result<()> {
     schedule_tick(&ctx.storage, ctx.block.timestamp)
 }
 
 pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
-    let count = {
-        let contract = storage.contract::<DesisContract>();
-        contract.sched_active_count.read()?
-    };
+    storage.with_checkpoint(|| poll_schedule(storage, now))
+}
+
+fn poll_schedule(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
+    let contract = storage.contract::<DesisContract>();
+    let count = contract.sched_active_count.read()?;
     if count == 0 {
         return Ok(());
     }
-    // Snapshot the set before iterating: transitions swap-pop it.
-    let mut days = Vec::with_capacity(count as usize);
-    {
-        let contract = storage.contract::<DesisContract>();
-        for i in 0..count {
-            days.push(contract.sched_active_at.read(&i)?.into());
-        }
-    }
-    for day in days {
-        let res = storage.with_checkpoint(|| advance_day(storage, day, now));
-        if let Err(e) = res {
+    let index = contract.sched_poll_cursor.read()? % count;
+    let day = contract.sched_active_at.read(&index)?.into();
+    match storage.with_checkpoint(|| advance_day(storage, day, now)) {
+        Ok(()) => {}
+        Err(e @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
             tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
         }
+        Err(e) => return Err(e),
     }
-    Ok(())
+    let remaining = contract.sched_active_count.read()?;
+    let next = if remaining == 0 {
+        0
+    } else if contract.sched_active_slot.read(&day)? == 0 {
+        // Swap-remove moved the tail into this slot; poll that day next.
+        index % remaining
+    } else {
+        (index + 1) % remaining
+    };
+    contract.sched_poll_cursor.write(next)
 }
 
 /// Walk one day's schedule: start at the anchor, move to `RevealingBids` at commit end, collect
@@ -116,7 +123,7 @@ fn cancel_unstarted(
     contract.remove_sched_active(emission_day)
 }
 
-/// A started day with no result by its last clearing time. Its bids are dropped. Nothing goes to
+/// A started day with no result by its last clearing time. Queue its bids for cleanup. Nothing goes to
 /// the other chains: they read the day as failed from its own schedule, and the refund time limit
 /// returns the bids there.
 fn fail_auction(
@@ -133,24 +140,10 @@ fn fail_auction(
     contract.clearing_initiated.write(&emission_day, 0u8)?;
     contract.pending_desis_limit_units.write(&emission_day, 0)?;
     contract.clearing_deadline.clear(&emission_day)?;
-    // The router names the day's chains. A day must still end when the router cannot answer,
-    // so its bids then stay behind.
-    match fetch_targets(storage, emission_day) {
-        Ok(chains) => {
-            for chain_id in chains {
-                contract.reset_chain_intake(emission_day, chain_id)?;
-            }
-            contract.day_bid_count.write(&emission_day, 0)?;
-        }
-        Err(error) => tracing::warn!(
-            target: "outbe::desis",
-            %emission_day,
-            error = ?error,
-            "failed day: bids kept, the router named no chains"
-        ),
-    }
+    contract.day_bid_count.write(&emission_day, 0)?;
     refund_unused_desis_limit(storage, contract, emission_day)?;
     contract.write_stage(emission_day, AuctionStage::Failed)?;
+    contract.queue_intake_cleanup(emission_day)?;
     contract.remove_sched_active(emission_day)
 }
 

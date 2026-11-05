@@ -81,6 +81,7 @@ pub fn process_bids_batch(
     }
 
     let chain_key = DesisContract::chain_key(emission_day, src_chain_id);
+    contract.track_intake_chain(emission_day, src_chain_id)?;
     // All of a chain's batches must agree on total_batches, else a bad peer could set an
     // out-of-range bit and false-complete the set with a real batch missing.
     let stored_total = contract.chain_total_batches.read(&chain_key)?;
@@ -136,6 +137,7 @@ pub fn process_bids_done(
 
     let chain_key = DesisContract::chain_key(emission_day, src_chain_id);
     let recorded_batches = contract.chain_done_batches.read(&chain_key)?;
+    contract.track_intake_chain(emission_day, src_chain_id)?;
     if recorded_batches != 0 {
         let same = recorded_batches == u32::from(total_batches)
             && contract.chain_done_bids.read(&chain_key)? == total_bids;

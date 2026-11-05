@@ -10,6 +10,52 @@ use crate::schema::{
 };
 
 impl<'storage> DesisContract<'storage> {
+    pub(crate) fn track_intake_chain(&self, day: EmissionDate, chain: u32) -> Result<()> {
+        let key = Self::chain_key(day, chain);
+        if self.intake_chain_member.read(&key)? != 0 {
+            return Ok(());
+        }
+        // Registry indices are u32, matching the chain identifier domain. Reject overflow.
+        let count = self.intake_chain_count.read(&day)?;
+        let next = count
+            .checked_add(1)
+            .ok_or(crate::DesisError::InvalidCleanupState)?;
+        self.intake_chain_at
+            .write(&Self::chain_key(day, count), chain)?;
+        self.intake_chain_member.write(&key, 1)?;
+        self.intake_chain_count.write(&day, next)
+    }
+
+    /// Queue a terminal day once, without consulting any remote contract.
+    pub fn queue_intake_cleanup(&self, day: EmissionDate) -> Result<()> {
+        if day.value() == 0
+            || !matches!(
+                self.read_stage(day)?,
+                AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+            )
+        {
+            return Err(crate::DesisError::InvalidCleanupState.into());
+        }
+        match self.cleanup_pending.read(&day)? {
+            1 | 2 => return Ok(()),
+            0 => {}
+            _ => return Err(crate::DesisError::InvalidCleanupState.into()),
+        }
+        let head = self.cleanup_head.read()?;
+        let tail = self.cleanup_tail.read()?;
+        if (head == 0) != (tail == 0) {
+            return Err(crate::DesisError::InvalidCleanupState.into());
+        }
+        if tail == 0 {
+            self.cleanup_head.write(day.value())?;
+        } else {
+            self.cleanup_next
+                .write(&EmissionDate::new(tail), day.value())?;
+        }
+        self.cleanup_tail.write(day.value())?;
+        self.cleanup_pending.write(&day, 1)
+    }
+
     // --- AuctionStage ---
 
     pub(crate) fn read_stage(&self, emission_day: EmissionDate) -> Result<AuctionStage> {
@@ -176,30 +222,6 @@ impl<'storage> DesisContract<'storage> {
             }
         }
         Ok(bids)
-    }
-
-    /// Drop the chain's bids and intake state once the day has ended.
-    pub(crate) fn reset_chain_intake(
-        &self,
-        emission_day: EmissionDate,
-        chain_id: u32,
-    ) -> Result<()> {
-        let key = Self::chain_key(emission_day, chain_id);
-        let chain_count = self.chain_bid_count.read(&key)?;
-        for index in 0..chain_count {
-            let bid = Self::bid_key(emission_day, chain_id, index);
-            self.bid_bidder.clear(&bid)?;
-            self.bid_packed.clear(&bid)?;
-        }
-        let day_count = self.day_bid_count.read(&emission_day)?;
-        self.day_bid_count
-            .write(&emission_day, day_count.saturating_sub(chain_count))?;
-        self.chain_bid_count.write(&key, 0)?;
-        self.chain_total_batches.write(&key, 0)?;
-        self.chain_arrived_mask.write(&key, U256::ZERO)?;
-        self.chain_done.write(&key, 0u8)?;
-        self.chain_done_batches.write(&key, 0)?;
-        self.chain_done_bids.write(&key, 0)
     }
 
     // --- clearing fan-in gate (dense active set) ---

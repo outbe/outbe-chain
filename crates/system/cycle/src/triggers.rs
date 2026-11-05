@@ -433,13 +433,15 @@ mod protocol_parameter_tests {
         }
         assert_eq!(total, 16_369_000);
         let overhead = 16_404_800u64
+            .checked_add(2_485_700)
+            .expect("bounded Desis cleanup fits u64")
             .checked_mul(4)
             .and_then(|gas| gas.checked_add(999_999))
             .map(|gas| gas / 1_000_000)
             .and_then(|units| units.checked_mul(1_000_000))
             .expect("measured overhead headroom fits u64");
         assert_eq!(crate::runtime::CYCLE_OVERHEAD_RESERVE_GAS, overhead);
-        assert_eq!(total.checked_add(overhead), Some(82_369_000));
+        assert_eq!(total.checked_add(overhead), Some(92_369_000));
     }
 
     #[test]

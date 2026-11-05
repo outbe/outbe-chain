@@ -18,10 +18,10 @@ use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, Tr
 use crate::ICycle;
 
 /// Calibrated Cycle body overhead, excluding handlers and caller prefix work.
-/// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs` measures 16,404,800
+/// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs` measures 18,890,500
 /// gross gas for bootstrap, dispatch, reward slicing and populated cleanup.
 /// Fourfold headroom, rounded up to 1,000,000 gas, yields this reserve.
-pub const CYCLE_OVERHEAD_RESERVE_GAS: u64 = 66_000_000;
+pub const CYCLE_OVERHEAD_RESERVE_GAS: u64 = 76_000_000;
 
 #[cfg(feature = "test-utils")]
 std::thread_local! {
@@ -37,7 +37,7 @@ pub fn take_trigger_gas_samples() -> Vec<(u32, u64)> {
 }
 
 /// Drains successful Cycle body samples `(gross_body_gas, gross_handler_gas)`.
-/// Body gas includes bootstrap, dispatch and reward slicing, but excludes work
+/// Body gas includes bootstrap, dispatch, reward slicing and auction cleanup, but excludes work
 /// performed by the caller before entering Cycle. Subtraction gives overhead.
 #[cfg(feature = "test-utils")]
 pub fn take_cycle_gas_samples() -> Vec<(u64, u64)> {
@@ -75,8 +75,8 @@ pub fn handle_cycle_tick(
     )
 }
 
-/// Explicit budgeted Cycle body, including bootstrap and reward slicing. The
-/// supplied overhead must cover both as well as all dispatcher bookkeeping.
+/// Explicit budgeted Cycle body, including bootstrap, reward slicing and bounded
+/// auction cleanup. The overhead must also cover all dispatcher bookkeeping.
 pub fn handle_cycle_tick_with_budgets(
     ctx: &BlockRuntimeContext<'_>,
     metadosis_genesis_activation_height: u64,
@@ -93,6 +93,7 @@ pub fn handle_cycle_tick_with_budgets(
     }
     dispatch_budgeted(ctx, triggers, &mut reserve)?;
     crate::handler::credit_reward_slice(ctx)?;
+    outbe_desis::process_cleanup(ctx.storage.clone())?;
     reserve.available(ctx)?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, reserve.handler_gas)?;

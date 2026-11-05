@@ -278,6 +278,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
         CYCLE_ADDRESS,
         outbe_primitives::addresses::DESIS_ADDRESS,
+        outbe_primitives::addresses::PROMIS_LIMIT_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
         outbe_primitives::addresses::STAKING_ADDRESS,
         outbe_primitives::addresses::REWARDS_ADDRESS,

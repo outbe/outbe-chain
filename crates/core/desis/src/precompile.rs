@@ -83,15 +83,27 @@ pub fn dispatch(
                 Ok(U256::from(count))
             }),
             getChainBidsCount(c) => view(c, |c| {
-                use crate::schema::DesisContract;
+                use crate::schema::{AuctionStage, DesisContract};
                 let contract = storage.contract::<DesisContract>();
+                if matches!(
+                    contract.read_stage(c.emissionDay.into())?,
+                    AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+                ) {
+                    return Ok(U256::ZERO);
+                }
                 let key = DesisContract::chain_key(c.emissionDay.into(), c.srcChainId);
                 let count = contract.chain_bid_count.read(&key)?;
                 Ok(U256::from(count))
             }),
             isChainDone(c) => view(c, |c| {
-                use crate::schema::DesisContract;
+                use crate::schema::{AuctionStage, DesisContract};
                 let contract = storage.contract::<DesisContract>();
+                if matches!(
+                    contract.read_stage(c.emissionDay.into())?,
+                    AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+                ) {
+                    return Ok(false);
+                }
                 let key = DesisContract::chain_key(c.emissionDay.into(), c.srcChainId);
                 Ok(contract.chain_done.read(&key)? != 0)
             }),
