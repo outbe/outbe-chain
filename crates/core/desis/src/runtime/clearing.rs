@@ -25,10 +25,13 @@ pub fn force_clear(
     clear_inner(storage, emission_day, &snapshot, &included, &skipped).map(Some)
 }
 
-/// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
-/// fan-in gate. Each day runs in its own checkpoint. An Err reverts that day
-/// (retried next slot) and never escapes into the trigger chain.
+/// Poll one fan-in gate per invocation, rotating through the active set. A day
+/// runs in its own checkpoint; ordinary reverts do not block other days.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
+    ctx.storage.with_checkpoint(|| poll_gate(ctx))
+}
+
+fn poll_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let count = {
         let contract = storage.contract::<DesisContract>();
@@ -37,21 +40,31 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     if count == 0 {
         return Ok(());
     }
-    let now = ctx.block.timestamp;
-    // Snapshot the set before iterating: a successful clear swap-pops it.
-    let mut days = Vec::with_capacity(count as usize);
-    {
-        let contract = storage.contract::<DesisContract>();
-        for i in 0..count {
-            days.push(contract.gate_active_at.read(&i)?.into());
+    let contract = storage.contract::<DesisContract>();
+    let index = contract.gate_poll_cursor.read()? % count;
+    let day = contract.gate_active_at.read(&index)?.into();
+    let res = storage.with_checkpoint(|| force_clear(storage.clone(), day, ctx.block.timestamp));
+    match res {
+        Ok(_) => {}
+        Err(
+            error @ (outbe_primitives::error::PrecompileError::Revert(_)
+            | outbe_primitives::error::PrecompileError::RevertBytes(_)),
+        ) => {
+            tracing::warn!(target: "outbe::desis", %day, error = ?error, "clearing gate: skipping day");
         }
+        Err(error) => return Err(error),
     }
-    for day in days {
-        let res = storage.with_checkpoint(|| force_clear(storage.clone(), day, now));
-        if let Err(e) = res {
-            tracing::warn!(target: "outbe::desis", %day, error = ?e, "clearing gate: skipping day");
-        }
-    }
+    let remaining = contract.gate_active_count.read()?;
+    // Removal swap-pops a new day into this slot. Otherwise move past the day
+    // just polled, including one whose fan-in is not ready yet.
+    let next = if remaining == 0 {
+        0
+    } else if contract.gate_active_slot.read(&day)? == 0 {
+        index % remaining
+    } else {
+        (index + 1) % remaining
+    };
+    contract.gate_poll_cursor.write(next)?;
     Ok(())
 }
 
@@ -71,7 +84,16 @@ pub(crate) fn clearing_round_gas(
             Err(outbe_primitives::time::TimeError::DateBeforeMinimum { .. }) => break,
             Err(err) => return Err(crate::errors::date_step_error(err)),
         };
-        let key = DesisContract::chain_key(EmissionDate::new(day), chain_id);
+        let history_day = EmissionDate::new(day);
+        // Terminal intake is logically empty even while its physical rows await
+        // collection. Cleanup progress must not change the next auction's quote.
+        if matches!(
+            contract.read_stage(history_day)?,
+            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+        ) {
+            continue;
+        }
+        let key = DesisContract::chain_key(history_day, chain_id);
         bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
     }
     let chunks = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
@@ -159,11 +181,9 @@ fn clear_inner(
     contract.write_last_cleared_emission_day(emission_day)?;
     contract.write_last_clearing_issued_count(result.issued_units)?;
 
-    // Clear the bid working-set, pending inputs and the gate (CEI: state writes before external calls).
+    // Retire the economic state before external calls. Bid deletion is a
+    // separate bounded job: valid intake must not make completion unaffordable.
     let desis_limit_minor = contract.pending_desis_limit_minor.read(&emission_day)?;
-    for &chain_id in snapshot {
-        contract.reset_chain_intake(emission_day, chain_id)?;
-    }
     contract.day_bid_count.write(&emission_day, 0)?;
     contract.pending_desis_limit_units.write(&emission_day, 0)?;
     contract
@@ -172,6 +192,7 @@ fn clear_inner(
     contract.clearing_initiated.write(&emission_day, 0u8)?;
     contract.clearing_deadline.clear(&emission_day)?;
     contract.remove_gate_active(emission_day)?;
+    contract.queue_intake_cleanup(emission_day)?;
 
     for &chain_id in skipped {
         contract.emit(IDesis::BidsExpired {

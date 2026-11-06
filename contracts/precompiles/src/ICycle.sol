@@ -31,6 +31,13 @@ interface ICycle {
     /// The event carries no error text. A skipped dependency does not emit it.
     event CycleTriggerFailed(uint32 indexed id, uint64 scheduledAt, uint64 blockTimestamp, uint64 blockNumber);
 
+    /// Emitted after an over-budget handler has rolled back. The slot stays pending.
+    event CycleTriggerOverBudget(uint32 indexed id, uint64 consumedGas, uint64 budgetGas, uint64 blockNumber);
+
+    /// Unattempted pending work: reason 1 is capacity, reason 2 is a deferred dependency.
+    /// `scheduledAt` is the slot that a successful attempt would have recorded.
+    event CycleTriggerDeferred(uint32 indexed id, uint64 scheduledAt, uint64 blockNumber, uint8 reason);
+
     /// Emitted when daily emission limit allocation reverts and the emission limit
     /// goes to the Promis Limit once.
     event DayEmissionLimitAllocationFailed(uint32 indexed emissionDay, uint256 emissionLimitMinor, uint8 reason);

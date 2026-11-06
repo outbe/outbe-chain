@@ -5,17 +5,20 @@
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
 //! over multiple hourly slots, ProtocolCycle fires once for the most recent
-//! slot. It settles only a contiguous UTC-day transition. It forfeits the days
-//! missed during a multi-day halt. It never settles the current UTC day.
+//! slot. It settles one oldest eligible completed day within the 64-day derived
+//! horizon. It never settles the current UTC day.
 //!
 //! [`triggers::TriggerId::ProtocolCycle`] is aligned to UTC-hour boundaries
 //! (`period = 3_600`, `offset = 0` in production). Its handler derives the active
 //! UTC day from [`outbe_emission::schema::EmissionContract::emission_days`] and
-//! settles one contiguous completed day or forfeits a multi-day gap.
+//! settles one eligible completed day per successful hourly slot.
 //! Then the handler invokes the existing Metadosis WWD flow exactly once.
-//! A handler revert rolls that checkpoint back, records the slot, emits
+//! A handler revert rolls its atomic work-budget scope back, records the slot, emits
 //! `CycleTriggerFailed`, and the walk continues.
-//! Fatal and every other handler error leave the slot unchanged and return
+//! Local work exhaustion rolls back the whole handler, emits `CycleTriggerOverBudget`,
+//! and leaves both watermarks and due dependents pending for the next block.
+//! Capacity and dependency deferrals emit `CycleTriggerDeferred` without attempting work.
+//! Fatal and other handler errors leave the slot unchanged and return
 //! to the caller. CycleTick rejects the block on those errors.
 //! A recorded slot waits for its next scheduled window.
 //! At a contiguous day transition the slot remains pending until the prior

@@ -97,3 +97,10 @@ pub const CLEARING_BID_GAS: u64 = 10_000;
 /// Days of a chain's own history a round is sized from, and the floor it is never sized below.
 pub const CLEARING_HISTORY_DAYS: u32 = 7;
 pub const CLEARING_MIN_BIDS: u64 = 32;
+
+/// Cleanup work per Cycle body, independent of auction trigger budgets.
+pub const CLEANUP_WORK_UNITS: u32 = 256;
+/// Bounds empty chains and empty days as well as populated chain headers.
+pub const CLEANUP_MAX_HEADERS: u32 = 4;
+/// Eight 10k-gas units cover at most nine metadata writes plus header reads.
+pub const CLEANUP_HEADER_UNITS: u32 = 8;

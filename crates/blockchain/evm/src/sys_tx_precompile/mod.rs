@@ -20,6 +20,9 @@ mod cleanup_handle;
 mod context;
 mod cycle;
 
+#[cfg(test)]
+pub(crate) use cycle::CYCLE_LATER_PHASE_RESERVE_GAS;
+
 use context::block_runtime_context_from_storage;
 pub(crate) use context::{
     current_preloaded_system_tx_context, read_preloaded_finalized_summary,

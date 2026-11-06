@@ -9,6 +9,9 @@ use thiserror::Error;
 /// Errors that the Desis runtime returns.
 #[derive(Debug, Error)]
 pub enum DesisError {
+    #[error("invalid intake cleanup state")]
+    InvalidCleanupState,
+
     #[error("invalid emission day: {0}")]
     InvalidEmissionDay(EmissionDate),
 
@@ -90,6 +93,7 @@ impl From<DesisError> for PrecompileError {
     fn from(e: DesisError) -> Self {
         use IDesis as I;
         match e {
+            DesisError::InvalidCleanupState => PrecompileError::Fatal(e.to_string()),
             DesisError::InvalidEmissionDay(day) => revert_with(I::InvalidEmissionDay {
                 emissionDay: day.value(),
             }),

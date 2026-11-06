@@ -47,7 +47,13 @@ use revm::{
 };
 use std::cell::RefCell;
 
-use crate::{gas::SubcallGasMeter, sub_call};
+use crate::gas::SubcallGasMeter;
+
+mod subcall;
+mod trigger_gas;
+
+#[cfg(test)]
+use crate::sub_call;
 
 #[cfg(test)]
 #[path = "subcall_tests.rs"]
@@ -150,7 +156,8 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
     /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
-    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint)>,
+    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint, Option<i64>)>,
+    trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
     /// Remaining gas of the active resumable-unit child frame.
     gas_child_remaining: Option<u64>,
     /// Whether end-block gas metering is active for this storage dispatch.
@@ -258,6 +265,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
             },
             checkpoints: Vec::new(),
+            trigger_budget: None,
             gas_child_remaining: None,
             end_gas_metered: false,
         }
@@ -269,41 +277,11 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         self
     }
 
-    /// Installs the exact route inventory after a provider-backed read
-    /// resolved the consensus state needed to derive it. ProtocolCycle uses
-    /// this. Its daily allocation decision depends on Cycle's persisted UTC
-    /// cursor rather than on untrusted calldata.
-    fn charge(&mut self, cost: u64) -> Result<()> {
-        if let Some(child) = self.gas_child_remaining {
-            if cost > child {
-                let _ = self.gas.record_regular_cost(child);
-                self.gas_child_remaining = Some(0);
-                return Err(PrecompileError::OutOfGas);
-            }
-            self.gas_child_remaining = Some(child - cost);
-        }
-        if self.gas.record_regular_cost(cost) {
-            Ok(())
-        } else {
-            Err(PrecompileError::OutOfGas)
-        }
-    }
-
     pub(crate) fn replace_metadosis_mutation_entitlements(
         &mut self,
         entitlements: MetadosisMutationEntitlements,
     ) {
         self.dispatch_frames.metadosis = MetadosisMutationFrameState::new(entitlements);
-    }
-
-    fn charge_subcall(&mut self, cost: u64) -> std::result::Result<(), SubCallError> {
-        if self.gas.record_regular_cost(cost) {
-            Ok(())
-        } else {
-            self.subcall_out_of_gas = true;
-            self.gas.inner_mut().spend_all();
-            Err(SubCallError::ParentOutOfGas)
-        }
     }
 }
 
@@ -321,6 +299,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         chain_id: u64,
         block_number: u64,
     ) -> outbe_primitives::error::Result<()> {
+        if self.trigger_budget.is_some() {
+            self.trigger_budget_status()?;
+        }
         if ContextTr::cfg(self.ctx).chain_id() != chain_id
             || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
         {
@@ -381,6 +362,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
+        self.charge(0)?;
         let hash = internals(self.ctx)
             .db_mut()
             .block_hash(number)
@@ -389,12 +371,14 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx)
             .set_code(address, code)
             .map_err(crate::errors::CtxStorageError::storage)
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
+        self.charge(0)?;
         let mut internals = internals(self.ctx);
         let account = internals
             .load_account_code(address)
@@ -404,6 +388,26 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn gas_remaining(&self) -> Option<u64> {
         self.end_gas_metered.then(|| self.gas.remaining())
+    }
+
+    fn metered_gas_remaining(&self) -> Option<u64> {
+        Some(self.gas.remaining())
+    }
+
+    fn begin_trigger_budget(&mut self, budget: u64) -> Result<()> {
+        self.start_trigger_budget(budget)
+    }
+
+    fn trigger_budget_status(&self) -> Result<()> {
+        self.active_trigger_status()
+    }
+
+    fn end_trigger_budget(&mut self) -> Result<()> {
+        self.finish_trigger_budget()
+    }
+
+    fn observe_trigger_error(&mut self, error: &PrecompileError) {
+        self.observe_trigger_failure(error);
     }
 
     fn enable_end_gas_metering(&mut self) -> Result<()> {
@@ -433,6 +437,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Ok(value.data)
     }
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
+        self.charge(0)?;
         internals(self.ctx)
             .sload(
                 outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
@@ -443,6 +448,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
+        self.charge(0)?;
         Ok(internals(self.ctx).tload(address, key))
     }
 
@@ -456,11 +462,13 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx).tstore(address, key, value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
+        self.charge(0)?;
         internals(self.ctx).log(Log {
             address,
             data: event,
@@ -495,7 +503,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
             selfdestructed_i: depth,
             ..raw
         };
-        self.checkpoints.push((token, raw));
+        self.checkpoints.push((
+            token,
+            raw,
+            self.trigger_budget.as_ref().map(|_| self.gas.refunded()),
+        ));
         token
     }
 
@@ -503,8 +515,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let expected = self
             .checkpoints
             .last()
-            .map(|(token, _)| token.selfdestructed_i);
-        if self.checkpoints.last().map(|(token, _)| *token) != Some(checkpoint) {
+            .map(|(token, _, _)| token.selfdestructed_i);
+        if self.checkpoints.last().map(|(token, _, _)| *token) != Some(checkpoint) {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::CheckpointOutOfOrder {
                     expected,
@@ -522,7 +534,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         let Some(pos) = self
             .checkpoints
             .iter()
-            .rposition(|(token, _)| *token == checkpoint)
+            .rposition(|(token, _, _)| *token == checkpoint)
         else {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::InvalidCheckpointRevert {
@@ -532,16 +544,20 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 .into(),
             );
         };
-        while let Some((_, raw)) = (self.checkpoints.len() > pos)
+        while let Some((_, raw, refund)) = (self.checkpoints.len() > pos)
             .then(|| self.checkpoints.pop())
             .flatten()
         {
             internals(self.ctx).checkpoint_revert(raw);
+            if let Some(refund) = refund {
+                self.gas.inner_mut().set_refund(refund);
+            }
         }
         Ok(())
     }
 
     fn transfer_balance(&mut self, from: Address, to: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -556,6 +572,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn increase_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -566,6 +583,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn decrease_balance(&mut self, address: Address, amount: U256) -> Result<()> {
+        self.charge(0)?;
         if amount.is_zero() {
             return Ok(());
         }
@@ -592,102 +610,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
 
     fn sub_call(
         &mut self,
-        mut input: SubCallInput,
+        input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        use revm::{
-            context_interface::host::LoadError,
-            interpreter::instructions::{contract::load_account_delegated, gas_table_spec},
-        };
-        self.abort_bridge.check_subcall()?;
-        // The Outbe precompile boundary currently has a single gas pool. Fail
-        // closed rather than discarding an EIP-8037 reservoir/state-gas charge.
-        if self.ctx.cfg().is_amsterdam_eip8037_enabled() {
-            return Err(SubCallError::Fatal(
-                "Outbe subcalls do not support EIP-8037".into(),
-            ));
-        }
-        let is_static = self.is_static || input.is_static;
-        if is_static && !input.value.is_zero() {
-            return Ok(SubCallOutput {
-                status: SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall),
-                returndata: Default::default(),
-                gas_used: 0,
-                gas_refunded: 0,
-            });
-        }
-        // Price the same account/delegation/value access as the pinned CALL
-        // implementation, before computing EIP-150's cap. This explicit-budget
-        // API intentionally does not add CALL's automatic value stipend.
-        let opcode = if is_static { 0xfa } else { 0xf1 };
-        self.charge_subcall(u64::from(gas_table_spec(self.spec)[opcode]))?;
-        let transfers_value = !input.value.is_zero();
-        if transfers_value {
-            self.charge_subcall(self.ctx.cfg().gas_params().transfer_value_cost())?;
-        }
-        let (cost, state_cost, code, hash) = match load_account_delegated(
-            self.ctx,
-            self.spec,
-            self.gas.remaining(),
-            input.target,
-            transfers_value,
-            !is_static,
-        ) {
-            Ok(loaded) => loaded,
-            Err(LoadError::ColdLoadSkipped) => {
-                self.charge_subcall(u64::MAX)?;
-                return Err(SubCallError::ParentOutOfGas);
-            }
-            Err(LoadError::DBError) => {
-                return Err(crate::errors::SubCallDriverError::database_error(
-                    self.ctx.error(),
-                ));
-            }
-        };
-        if state_cost != 0 {
-            return Err(crate::errors::SubCallDriverError::UnsupportedStateGasCharge.into());
-        }
-        self.charge_subcall(cost)?;
-        let remaining = self.gas.remaining();
-        let cap = if self.spec.is_enabled_in(SpecId::TANGERINE) {
-            self.ctx
-                .cfg()
-                .gas_params()
-                .call_stipend_reduction(remaining)
-        } else {
-            remaining
-        };
-        input.gas_limit = input.gas_limit.min(cap);
-        let allowance = input.gas_limit;
-        self.charge_subcall(allowance)?;
-        let outcome = sub_call::run_frame(
-            self.ctx,
-            sub_call::SubCallContext {
-                self_address: self.self_address,
-                outer_is_static: self.is_static,
-                execution: crate::precompiles::OutbePrecompileExecutionContext::new(
-                    self.spec,
-                    self.genesis_hash,
-                )
-                .with_genesis_timestamp(self.genesis_timestamp),
-                runtime: crate::precompiles::OutbePrecompileRuntime::new()
-                    .with_abort_bridge(self.abort_bridge.clone()),
-            },
-            input,
-            Some((hash, code)),
-        );
-        match outcome {
-            Ok(outcome) => sub_call::settle_outcome(outcome, self.gas.inner_mut()),
-            Err(error @ SubCallError::DepthLimitExceeded) => {
-                self.gas.erase_cost(allowance);
-                Ok(SubCallOutput {
-                    status: SubCallStatus::Halt(error),
-                    returndata: Default::default(),
-                    gas_used: 0,
-                    gas_refunded: 0,
-                })
-            }
-            Err(error) => Err(error),
-        }
+        self.execute_subcall(input)
     }
 }
 

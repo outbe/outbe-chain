@@ -61,6 +61,8 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
 
     let midnight = GENESIS_TS + 40 * SECONDS_PER_DAY;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_production_storage_gas_metering();
+    provider.set_gas_limit(10_000_000_000);
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(block_ctx(2, midnight - 1), storage.clone());
         (|| {
@@ -135,6 +137,8 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
     let d = timestamp_to_date_key(midnight);
     let restart = midnight + 2 * SECONDS_PER_DAY;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_production_storage_gas_metering();
+    provider.set_gas_limit(10_000_000_000);
     StorageHandle::enter(&mut provider, |storage| {
         (|| {
             let cycle = Cycle::new(storage.clone());
@@ -208,6 +212,8 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
     let day_start = GENESIS_TS + 40 * SECONDS_PER_DAY;
     let deadline = day_start + 10 * 3_600;
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enable_production_storage_gas_metering();
+    provider.set_gas_limit(10_000_000_000);
     StorageHandle::enter(&mut provider, |storage| {
         let cycle = Cycle::new(storage.clone());
         // No unrelated trigger is due. This test exercises the end-zone call continuation.
@@ -379,7 +385,7 @@ fn issue_nod(
 
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
 fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx)?;
+    dispatch_triggers(ctx)?;
     outbe_nodfactory::called::process_call_pass(ctx)?;
     Ok(())
 }

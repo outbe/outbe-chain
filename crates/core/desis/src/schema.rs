@@ -299,6 +299,29 @@ pub struct DesisContract {
     /// fixed at auction start. Same key as `reference_entry_price_minor`.
     #[attribute(order = 41)]
     pub reference_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// Local intake registry, including chains that sent only an empty batch or done marker.
+    #[attribute(order = 43)]
+    pub intake_chain_count: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    #[attribute(order = 44)]
+    pub intake_chain_at: outbe_primitives::storage::dsl::Map<B256, u32>,
+    #[attribute(order = 45)]
+    pub intake_chain_member: outbe_primitives::storage::dsl::Map<B256, u8>,
+    /// FIFO terminal-day cleanup queue. Zero is the empty-list sentinel.
+    #[attribute(order = 46)]
+    pub cleanup_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 47)]
+    pub cleanup_tail: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 48)]
+    pub cleanup_next: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
+    /// 0 = never queued, 1 = pending, 2 = cleaned (prevents duplicate enqueue).
+    #[attribute(order = 49)]
+    pub cleanup_pending: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    /// Round-robin positions in the dense schedule and gate sets.
+    #[attribute(order = 50)]
+    pub sched_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 51)]
+    pub gate_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl DesisContract<'_> {

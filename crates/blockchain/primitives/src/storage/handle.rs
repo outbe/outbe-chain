@@ -57,7 +57,11 @@ impl<'storage> StorageHandle<'storage> {
             .inner
             .try_borrow_mut()
             .map_err(|_| crate::error::PrimitivesStorageError::ProviderAlreadyMutablyBorrowed)?;
-        f(&mut **provider)
+        let result = f(&mut **provider);
+        if let Err(error) = &result {
+            provider.observe_trigger_error(error);
+        }
+        result
     }
 
     pub fn require_metadosis_process_ready(&self) -> Result<()> {
@@ -298,6 +302,91 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| Ok(provider.gas_remaining()))
     }
 
+    pub fn metered_gas_remaining(&self) -> Result<Option<u64>> {
+        self.with_provider(|provider| Ok(provider.metered_gas_remaining()))
+    }
+
+    /// Runs one atomic handler under a gross work allowance. Spent gas is never reverted.
+    pub fn with_trigger_budget<R>(
+        &self,
+        budget_gas: u64,
+        f: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
+        self.with_provider(|provider| provider.begin_trigger_budget(budget_gas))?;
+        // Declaration order guarantees checkpoint rollback before scope cleanup on unwind.
+        struct ScopeCleanup<'a, 'storage> {
+            storage: &'a StorageHandle<'storage>,
+            active: bool,
+        }
+        impl Drop for ScopeCleanup<'_, '_> {
+            fn drop(&mut self) {
+                if self.active {
+                    if let Err(error) = self
+                        .storage
+                        .with_provider(|provider| provider.end_trigger_budget())
+                    {
+                        tracing::error!(%error, "failed to clear trigger scope during unwind");
+                    }
+                }
+            }
+        }
+        let mut scope = ScopeCleanup {
+            storage: self,
+            active: true,
+        };
+        let token = match self.checkpoint() {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => {
+                let cleanup = self.with_provider(|provider| provider.end_trigger_budget());
+                scope.active = false;
+                cleanup.map_err(|error| PrecompileError::FatalWithCause(Box::new(error)))?;
+                return Err(PrecompileError::FatalWithCause(Box::new(error)));
+            }
+        };
+        let checkpoint = CheckpointGuard::new(self.clone(), token);
+        let result = f();
+        let status = self.with_provider(|provider| provider.trigger_budget_status());
+        // Infrastructure failures and genuine enclosing OOG outrank local exhaustion.
+        let result = match result {
+            Err(
+                error @ (PrecompileError::Storage(_)
+                | PrecompileError::Fatal(_)
+                | PrecompileError::FatalWithCause(_)
+                | PrecompileError::SubCall(_)
+                | PrecompileError::BodyReadCorruption(_)
+                | PrecompileError::Unsupported
+                | PrecompileError::TriggerScope(_)
+                | PrecompileError::EnclaveUnavailable(_)),
+            ) => Err(error),
+            result @ (Ok(_)
+            | Err(
+                PrecompileError::OutOfGas
+                | PrecompileError::Halt(_)
+                | PrecompileError::WriteProtection
+                | PrecompileError::Revert(_)
+                | PrecompileError::RevertBytes(_)
+                | PrecompileError::TriggerBudgetExceeded { .. },
+            )) => status.and(result),
+        };
+        let checkpoint_result = if result.is_ok() {
+            match checkpoint.commit() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    // A broken checkpoint stack must not leave handler writes committed.
+                    let rollback = self.checkpoint_revert(token);
+                    rollback.and(Err(error))
+                }
+            }
+        } else {
+            checkpoint.revert()
+        };
+        let cleanup = self.with_provider(|provider| provider.end_trigger_budget());
+        scope.active = false;
+        checkpoint_result.map_err(|error| PrecompileError::FatalWithCause(Box::new(error)))?;
+        cleanup.map_err(|error| PrecompileError::FatalWithCause(Box::new(error)))?;
+        result
+    }
+
     /// Runs `f` with storage charges capped at `ceiling`. The caller checkpoints
     /// state. A child out-of-gas rolls that checkpoint back and does not fail the parent.
     pub fn with_gas_ceiling<R>(&self, ceiling: u64, f: impl FnOnce() -> Result<R>) -> Result<R> {
@@ -465,7 +554,11 @@ impl<'storage> StorageHandle<'storage> {
             .inner
             .try_borrow_mut()
             .map_err(|_| SubCallError::ProviderBorrowed)?;
-        guard.sub_call(input)
+        let result = guard.sub_call(input);
+        if let Err(error) = &result {
+            guard.observe_trigger_error(&PrecompileError::from(error.clone()));
+        }
+        result
     }
 }
 
@@ -490,6 +583,251 @@ where
 mod tests {
     use super::*;
     use crate::storage::hashmap::HashMapStorageProvider;
+
+    fn metered_provider(gas: u64) -> HashMapStorageProvider {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.set_gas_limit(gas);
+        provider.enable_production_storage_gas_metering();
+        provider
+    }
+
+    #[test]
+    fn trigger_budget_swallowed_exhaustion_reverts_nested_state_and_refunds() {
+        let mut provider = metered_provider(50_000);
+        provider.enter(|storage| {
+            storage.refund_gas(7).unwrap();
+            let result = storage.with_trigger_budget(5100, || {
+                storage.sstore(Address::ZERO, U256::ZERO, U256::ONE)?;
+                storage.tstore(Address::ZERO, U256::ZERO, U256::ONE)?;
+                storage.refund_gas(900)?;
+                let inner = storage.checkpoint_guard()?;
+                assert!(matches!(
+                    storage.deduct_gas(101),
+                    Err(PrecompileError::TriggerBudgetExceeded { .. })
+                ));
+                inner.revert()?;
+                // Rollback cannot reset exhaustion, including for uncharged mutations.
+                assert!(storage.increase_balance(Address::ZERO, U256::ONE).is_err());
+                assert!(storage.emit_event(Address::ZERO, LogData::empty()).is_err());
+                Ok(())
+            });
+            assert!(matches!(
+                result,
+                Err(PrecompileError::TriggerBudgetExceeded {
+                    consumed_gas: 5000,
+                    budget_gas: 5100
+                })
+            ));
+            assert_eq!(storage.gas_used().unwrap(), 5000);
+            assert_eq!(storage.gas_refunded().unwrap(), 7);
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(
+                storage.tload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+            // Scope cleanup permits independent work with an exact successful boundary.
+            storage
+                .with_trigger_budget(5000, || {
+                    storage.sstore(Address::ZERO, U256::ZERO, U256::from(2))
+                })
+                .unwrap();
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::from(2)
+            );
+            assert_eq!(storage.gas_remaining().unwrap(), None);
+            assert_eq!(storage.metered_gas_remaining().unwrap(), Some(39_800));
+        });
+    }
+
+    #[test]
+    fn trigger_budget_parent_oog_is_sticky_and_separate() {
+        let mut provider = metered_provider(100);
+        provider.enter(|storage| {
+            let result = storage.with_trigger_budget(u64::MAX, || {
+                assert!(matches!(
+                    storage.deduct_gas(101),
+                    Err(PrecompileError::OutOfGas)
+                ));
+                Ok(())
+            });
+            assert!(matches!(result, Err(PrecompileError::OutOfGas)));
+            assert_eq!(storage.metered_gas_remaining().unwrap(), Some(0));
+            assert!(matches!(
+                storage.with_trigger_budget(0, || Ok(())),
+                Err(PrecompileError::OutOfGas)
+            ));
+        });
+    }
+
+    #[test]
+    fn trigger_budget_unwind_rolls_back_before_clearing_scope() {
+        let mut provider = metered_provider(50_000);
+        provider.enter(|storage| {
+            let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _: Result<()> = storage.with_trigger_budget(5000, || {
+                    storage.sstore(Address::ZERO, U256::ZERO, U256::ONE)?;
+                    panic!("injected handler unwind");
+                });
+            }));
+            assert!(panic.is_err());
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+            assert_eq!(storage.gas_used().unwrap(), 5100);
+            storage.with_trigger_budget(0, || Ok(())).unwrap();
+        });
+    }
+
+    #[test]
+    fn trigger_budget_caught_backend_failure_cannot_become_local_deferral() {
+        let mut provider = metered_provider(50_000);
+        provider.fail_mutation_at(0);
+        provider.enter(|storage| {
+            let result = storage.with_trigger_budget(5000, || {
+                assert!(matches!(
+                    storage.sstore(Address::ZERO, U256::ZERO, U256::ONE),
+                    Err(PrecompileError::Storage(_))
+                ));
+                // Even a caught failure followed by another rejected charge remains fatal.
+                let _ = storage.deduct_gas(1);
+                Ok(())
+            });
+            assert!(matches!(result, Err(PrecompileError::Fatal(_))));
+            storage.with_trigger_budget(0, || Ok(())).unwrap();
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+        });
+    }
+
+    #[test]
+    fn trigger_budget_rollback_closes_authority_but_does_not_restore_entitlement() {
+        use crate::storage::{MetadosisCycleLifecycle, MetadosisMutationPurposeTag};
+        let purpose = MetadosisMutationPurposeTag::CycleLifecycle;
+        let binding = B256::repeat_byte(9);
+        let mut provider = metered_provider(50_000);
+        provider.enable_metadosis_mutation_frame(purpose);
+        provider.enter(|storage| {
+            let result = storage.with_trigger_budget(5000, || {
+                storage.with_metadosis_mutation::<MetadosisCycleLifecycle, _>(binding, || {
+                    storage.sstore(Address::ZERO, U256::ZERO, U256::ONE)?;
+                    storage.deduct_gas(1)
+                })
+            });
+            assert!(matches!(
+                result,
+                Err(PrecompileError::TriggerBudgetExceeded { .. })
+            ));
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+        });
+        // Cleanup removed the active lease, but the one-shot grant remains consumed.
+        assert!(provider
+            .finish_metadosis_mutation_frame(purpose, binding, false)
+            .is_err());
+        assert!(provider
+            .begin_metadosis_mutation_frame(purpose, binding, 1, 0)
+            .is_err());
+    }
+
+    #[test]
+    fn trigger_budget_direct_hook_provider_is_explicitly_unsupported() {
+        use crate::{block::BlockContext, storage::direct::DirectStorageProvider};
+        use revm::database::{CacheDB, EmptyDB};
+        let mut db = CacheDB::new(EmptyDB::default());
+        let mut provider = DirectStorageProvider::new(
+            &mut db,
+            BlockContext {
+                block_number: 1,
+                timestamp: 1,
+                chain_id: 1,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: 1,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            assert_eq!(storage.metered_gas_remaining().unwrap(), None);
+            assert!(matches!(
+                storage.with_trigger_budget(100, || Ok(())),
+                Err(PrecompileError::TriggerScope(
+                    crate::storage::gas::TriggerScopeError::Unsupported
+                ))
+            ));
+        });
+    }
+
+    #[test]
+    fn trigger_budget_rejects_unmetered_and_nested_scopes_without_overwriting() {
+        let mut provider = HashMapStorageProvider::new(1);
+        provider.enter(|storage| {
+            assert!(matches!(
+                storage.with_trigger_budget(1, || Ok(())),
+                Err(PrecompileError::TriggerScope(
+                    crate::storage::gas::TriggerScopeError::Unsupported
+                ))
+            ))
+        });
+        let mut provider = metered_provider(u64::MAX);
+        provider.enter(|storage| {
+            storage
+                .with_trigger_budget(100, || {
+                    assert!(matches!(
+                        storage.with_trigger_budget(u64::MAX, || Ok(())),
+                        Err(PrecompileError::TriggerScope(
+                            crate::storage::gas::TriggerScopeError::Nested
+                        ))
+                    ));
+                    storage.deduct_gas(100)
+                })
+                .unwrap();
+            assert_eq!(storage.gas_used().unwrap(), 100);
+            assert!(matches!(
+                storage.with_trigger_budget(0, || storage.deduct_gas(u64::MAX)),
+                Err(PrecompileError::OutOfGas)
+            ));
+        });
+    }
+
+    #[test]
+    fn trigger_budget_infrastructure_and_checkpoint_failures_outrank_exhaustion() {
+        let mut provider = metered_provider(50_000);
+        provider.enter(|storage| {
+            for error in [
+                PrecompileError::Storage("backend unavailable".into()),
+                PrecompileError::BodyReadCorruption("corrupt record".into()),
+                PrecompileError::Unsupported,
+            ] {
+                let expected = error.to_string();
+                let result: Result<()> = storage.with_trigger_budget(0, || {
+                    let _ = storage.deduct_gas(1);
+                    Err(error)
+                });
+                assert_eq!(result.unwrap_err().to_string(), expected);
+            }
+            let result = storage.with_trigger_budget(5000, || {
+                storage.sstore(Address::ZERO, U256::ZERO, U256::ONE)?;
+                // An abandoned nested checkpoint must make commit fail, not defer successfully.
+                let _abandoned = storage.checkpoint()?;
+                Ok(())
+            });
+            assert!(matches!(result, Err(PrecompileError::FatalWithCause(_))));
+            assert_eq!(
+                storage.sload(Address::ZERO, U256::ZERO).unwrap(),
+                U256::ZERO
+            );
+            storage.with_trigger_budget(0, || Ok(())).unwrap();
+        });
+    }
 
     #[test]
     fn checked_timestamp_preserves_bounds_and_rejects_overflow() {

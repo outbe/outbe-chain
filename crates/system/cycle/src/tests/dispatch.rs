@@ -707,15 +707,16 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
 }
 
 #[test]
-fn out_of_gas_from_the_handler_does_not_consume_the_slot() {
+fn insufficient_mandatory_capacity_does_not_consume_the_slot() {
     let mut storage = prepared_settlement_storage();
     storage.enable_production_storage_gas_metering();
-    // Due-slot reads cost 100. The handler's first write costs 5000 and does not fit.
+    // This cannot fund the calibrated mandatory reserve. The dispatcher must
+    // reject before trying a handler, not misclassify it as local exhaustion.
     storage.set_gas_limit(4_999);
     storage.enter(|handle| {
         let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        let err = dispatch_triggers(&fire).expect_err("out of gas must fail the block");
-        assert!(matches!(err, PrecompileError::OutOfGas));
+        let err = dispatch_triggers(&fire).expect_err("mandatory capacity must fail the block");
+        assert!(matches!(err, PrecompileError::Fatal(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
     });
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());

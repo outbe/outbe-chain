@@ -1,5 +1,6 @@
 use super::*;
 
+mod calibration;
 mod expiry;
 mod factory_approval;
 mod hook_events;
@@ -365,6 +366,8 @@ fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
 
 #[test]
 fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
+    outbe_cycle::runtime::take_trigger_gas_samples();
+    outbe_cycle::runtime::take_cycle_gas_samples();
     const GENESIS_TS: u64 = 1_704_067_200;
     use outbe_primitives::time::SECONDS_PER_DAY;
     // Validators fill the first shared slice; WAA and SRA await a later block.
@@ -393,6 +396,12 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
                 "GAS-05 fixture must start with zero carry-over"
             );
             seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
+            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+                outbe_cycle::schema::Cycle::new(storage.clone())
+                    .last_executed_at
+                    .write(&spec.id, GENESIS_TS + 60)
+                    .unwrap();
+            }
 
             outbe_oracle::api::set_exchange_rate(
                 storage.clone(),
@@ -406,6 +415,10 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             )
             .unwrap();
             seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(prev_day)
+                .unwrap();
             seed_dense_voter_participation(storage.clone(), prev_day, DENSE_VALIDATOR_COUNT)
                 .expect("seed dense voter participation fixture succeeds");
             seed_dense_agent_recipients(storage, prev_day, DENSE_ADDRESS_COUNT)
@@ -434,10 +447,25 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     );
     let cycle_tx = system_txs.remove(0);
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
+    let gross_before = executor.system_tx_gross_gas;
+    let net_before = executor.system_tx_execution_gas;
     let cycle_gas = executor
         .execute_transaction(cycle_tx)
         .expect("dense CycleTick should execute")
         .tx_gas_used();
+    let gross_gas = executor.system_tx_gross_gas - gross_before;
+    let net_gas = executor.system_tx_execution_gas - net_before;
+    assert!(gross_gas >= net_gas, "refunds cannot increase gross work");
+    eprintln!(
+        "Cycle calibration: validators={DENSE_VALIDATOR_COUNT}, addresses_per_pool={DENSE_ADDRESS_COUNT}, gross={gross_gas}, net={net_gas}, visible={cycle_gas}"
+    );
+    let samples = outbe_cycle::runtime::take_trigger_gas_samples();
+    eprintln!("Dense simultaneous trigger gross: {samples:?}");
+    eprintln!(
+        "Dense Cycle body: {:?}",
+        outbe_cycle::runtime::take_cycle_gas_samples()
+    );
+    assert_eq!(samples.len(), 8);
 
     let cycle_receipt = executor
         .receipts()
@@ -631,6 +659,75 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
 }
 
 #[test]
+fn system_gross_work_retains_refunds_without_changing_visible_receipts() {
+    use alloy_evm::eth::EthTxResult;
+    use revm::context::result::{Output, ResultAndState, ResultGas, SuccessReason};
+
+    let signer = test_evm_signer();
+    let mut state = state_with_active_proposer(signer.address());
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+    for count in 1..=2 {
+        let output = EthTxResult {
+            result: ResultAndState::new(
+                ExecutionResult::Success {
+                    reason: SuccessReason::Return,
+                    gas: ResultGas::new_with_state_gas(100_000, 20_000, 0, 0),
+                    logs: Vec::new(),
+                    output: Output::Call(Bytes::new()),
+                },
+                Default::default(),
+            ),
+            blob_gas_used: 0,
+            tx_type: alloy_consensus::TxType::Legacy,
+        };
+        let visible = executor
+            .commit_system_transaction(output, 21_000, 0, 21_000)
+            .expect("refunded system result commits");
+        assert_eq!(visible.tx_gas_used(), 21_000);
+        assert_eq!(executor.system_tx_execution_gas, count * 80_000);
+        assert_eq!(executor.system_tx_gross_gas, count * 100_000);
+        assert_eq!(
+            executor
+                .receipts()
+                .last()
+                .expect("receipt")
+                .cumulative_gas_used,
+            count * 21_000
+        );
+        assert_eq!(executor.inner.cumulative_tx_gas_used, count * 21_000);
+    }
+}
+
+#[test]
+fn system_gross_overflow_rejects_synthetic_failure_atomically() {
+    let signer = test_evm_signer();
+    let mut state = state_with_active_proposer(signer.address());
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
+    executor.system_tx_gross_gas = u64::MAX;
+    executor
+        .push_system_failure_receipt(SystemFailureReceiptInput {
+            tx_type: alloy_consensus::TxType::Legacy,
+            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+            code: 299,
+            reason: "gross overflow".into(),
+            visible_base_gas: 21_000,
+            additional_visible_gas: 0,
+            signed_gas_limit: 21_000,
+            internal_gas_used: 1,
+            internal_gross_gas_used: 1,
+        })
+        .expect_err("gross accumulation must not overflow");
+    assert!(executor.receipts().is_empty());
+    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
+    assert_eq!(executor.system_tx_execution_gas, 0);
+    assert_eq!(executor.system_tx_gross_gas, u64::MAX);
+}
+
+#[test]
 fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -653,6 +750,7 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
             additional_visible_gas,
             signed_gas_limit: visible_base_gas + additional_visible_gas,
             internal_gas_used: 123,
+            internal_gross_gas_used: 123,
         })
         .expect("visible envelope plus state-operation gas should fit");
     let expected_visible = intrinsic_gas + protocol_precharge + additional_visible_gas;
@@ -665,6 +763,7 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     assert_eq!(executor.inner.block_regular_gas_used, expected_visible);
     assert_eq!(executor.inner.block_state_gas_used, expected_visible);
     assert_eq!(executor.system_tx_execution_gas, 123);
+    assert_eq!(executor.system_tx_gross_gas, 123);
 
     let receipts_before = executor.receipts().len();
     let cumulative_before = executor.inner.cumulative_tx_gas_used;
@@ -680,12 +779,14 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
             additional_visible_gas: 1,
             signed_gas_limit: remaining + 1,
             internal_gas_used: 456,
+            internal_gross_gas_used: 456,
         })
         .expect_err("State-operation delta must not push cumulative gas past the block limit");
     assert!(error.to_string().contains("exceeds block gas limit"));
     assert_eq!(executor.receipts().len(), receipts_before);
     assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
     assert_eq!(executor.system_tx_execution_gas, 123);
+    assert_eq!(executor.system_tx_gross_gas, 123);
 }
 
 #[test]
@@ -711,12 +812,14 @@ fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
             additional_visible_gas: 0,
             signed_gas_limit: 0,
             internal_gas_used: 2,
+            internal_gross_gas_used: 2,
         })
         .expect_err("system internal work must be bounded independently from user gas");
 
     assert!(error.to_string().contains("internal system-work budget"));
     assert_eq!(executor.receipts().len(), receipts_before);
     assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+    assert_eq!(executor.system_tx_gross_gas, 0);
     assert_eq!(
         executor.system_tx_execution_gas,
         outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1

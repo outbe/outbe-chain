@@ -268,6 +268,7 @@ fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
             additional_visible_gas: 0,
             signed_gas_limit: 1,
             internal_gas_used: 1,
+            internal_gross_gas_used: 1,
         })
         .is_err());
     assert!(executor.receipts().is_empty());

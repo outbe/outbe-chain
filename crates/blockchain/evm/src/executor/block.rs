@@ -43,11 +43,14 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) current_block_burned_fees: U256,
     /// Whether `settle_block_burned_fees` has already flushed this block's burned fees.
     pub(super) burned_fees_settled: bool,
-    /// Internal gas consumed by begin-zone system transactions under the
+    /// Refund-adjusted gas consumed by begin-zone system transactions under the
     /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
     /// Ethereum-visible block counters use each system tx envelope's visible
     /// intrinsic gas instead.
     pub(super) system_tx_execution_gas: u64,
+    /// Gross begin-zone gas before refunds. Kept separate from receipt gas and
+    /// the existing refund-adjusted internal limit for work-budget calibration.
+    pub(super) system_tx_gross_gas: u64,
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     pub(super) evm_signer: Option<SharedOutbeEvmSigner>,
     pub(super) expected_begin_system_txs: Vec<Recovered<TransactionSigned>>,
@@ -177,6 +180,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             current_block_burned_fees: U256::ZERO,
             burned_fees_settled: false,
             system_tx_execution_gas: 0,
+            system_tx_gross_gas: 0,
             evm_signer,
             expected_begin_system_txs,
             ethereum_post_execution_requests: None,

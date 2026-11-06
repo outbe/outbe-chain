@@ -9,6 +9,7 @@ pub(in crate::executor) struct SystemFailureReceiptInput {
     pub(super) additional_visible_gas: u64,
     pub(super) signed_gas_limit: u64,
     pub(super) internal_gas_used: u64,
+    pub(super) internal_gross_gas_used: u64,
 }
 
 pub(in crate::executor) fn validator_fee_for_gas(
@@ -187,6 +188,10 @@ where
         );
         let system_cumulative_gas_used =
             self.checked_system_tx_execution_gas(input.internal_gas_used)?;
+        let system_cumulative_gross_gas = self
+            .system_tx_gross_gas
+            .checked_add(input.internal_gross_gas_used)
+            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
         let user_cumulative_gas_used = self
             .inner
             .cumulative_tx_gas_used
@@ -199,6 +204,7 @@ where
             logs: vec![log],
         });
         self.system_tx_execution_gas = system_cumulative_gas_used;
+        self.system_tx_gross_gas = system_cumulative_gross_gas;
         self.inner.cumulative_tx_gas_used = user_cumulative_gas_used;
         self.inner.block_regular_gas_used = self
             .inner

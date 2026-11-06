@@ -288,13 +288,28 @@ where
                         data,
                         context,
                     } => {
-                        crate::sys_tx_precompile::with_preloaded_system_tx_context(context, || {
-                            self.transact_system_call(
-                                outbe_primitives::addresses::SYSTEM_ADDRESS,
-                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                                data,
+                        let begin_zone = outbe_primitives::system_tx::SystemTx::decode(&data)
+                            .is_ok_and(|input| {
+                                input.body_zone()
+                                    == outbe_primitives::system_tx::BodyZone::BeginBlock
+                            });
+                        let result = crate::sys_tx_precompile::with_preloaded_system_tx_context(
+                            context,
+                            || {
+                                self.transact_system_call(
+                                    outbe_primitives::addresses::SYSTEM_ADDRESS,
+                                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                                    data,
+                                )
+                            },
+                        )?;
+                        if begin_zone {
+                            crate::executor::witness::record_detached_trace_system_gas(
+                                result.result.gas().total_gas_spent(),
                             )
-                        })
+                            .map_err(|error| EVMError::Custom(error.into()))?;
+                        }
+                        Ok(result)
                     }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
                         self.run_inner_transact_raw(tx)

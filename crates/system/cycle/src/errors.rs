@@ -40,6 +40,12 @@ pub enum CycleError {
     AccountingProgressGap { current: u64, attempted: u64 },
     #[error("trigger period is zero")]
     ZeroTriggerPeriod,
+    #[error("trigger work budget is zero")]
+    ZeroTriggerWorkBudget,
+    #[error("Cycle essential work capacity is insufficient or its gas counters are invalid")]
+    InsufficientWorkCapacity,
+    #[error("Cycle trigger id {id} is outside the dispatcher outcome table")]
+    InvalidTriggerId { id: u32 },
     #[error(
         "schedule slot does not fit in u64: period={period}, offset={offset}, timestamp={timestamp}"
     )]
@@ -59,6 +65,9 @@ pub enum CycleError {
 impl From<CycleError> for PrecompileError {
     fn from(error: CycleError) -> Self {
         match error {
+            error @ (CycleError::ZeroTriggerWorkBudget
+            | CycleError::InsufficientWorkCapacity
+            | CycleError::InvalidTriggerId { .. }) => PrecompileError::Fatal(error.to_string()),
             error @ CycleError::InvalidActiveUtcDay {
                 active: _,
                 block: _,

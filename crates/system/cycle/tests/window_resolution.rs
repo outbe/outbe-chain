@@ -44,8 +44,8 @@ fn gated_spec(period_seconds: u64) -> TriggerSpec {
     let mut spec = TriggerSpec::new(
         4242,
         "test_gated",
-        period_seconds,
-        0,
+        (period_seconds, 0),
+        100,
         TriggerHandler::IntexCallDaily,
     )
     .expect("test period is nonzero");
@@ -58,8 +58,8 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
     let mut spec = TriggerSpec::new(
         4243,
         "test_ungated",
-        period_seconds,
-        0,
+        (period_seconds, 0),
+        100,
         TriggerHandler::IntexCallDaily,
     )
     .expect("test period is nonzero");
@@ -587,8 +587,8 @@ proptest! {
         let mut spec = TriggerSpec::new(
             99,
             "proptest",
-            period,
-            offset,
+            (period, offset),
+            100,
             TriggerHandler::IntexCallDaily,
         )
         .expect("period is at least 60");

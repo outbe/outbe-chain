@@ -1,5 +1,8 @@
 #![cfg(test)]
 
+mod clearing_cleanup;
+mod deadline_cleanup;
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_oracle::api::AddressPair;
@@ -284,19 +287,32 @@ fn brief(s: &StorageHandle, has_limit: bool) {
 fn open_revealing(s: &StorageHandle) {
     brief(s, true);
     runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
+    schedule_after(s, crate::constants::COMMIT_WINDOW_SECONDS);
+}
+
+fn schedule_after(s: &StorageHandle, elapsed: u64) {
+    let anchor = u64::from(
+        s.contract::<DesisContract>()
+            .auction_at
+            .read(&EMISSION_DAY)
+            .unwrap(),
+    );
+    runtime::schedule_tick(s, anchor + elapsed).unwrap();
 }
 
 /// The reveal-end tick: arms the clearing gate from the briefed Desis Limit.
 fn arm_clearing(s: &StorageHandle) {
-    runtime::schedule_tick(s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
+    schedule_after(
+        s,
+        crate::constants::COMMIT_WINDOW_SECONDS + crate::constants::REVEAL_WINDOW_SECONDS,
+    );
 }
 
 /// Brief `units` whole Intex units and drive the schedule until the gate is armed.
 fn open_clearing(s: &StorageHandle, units: u128) {
     brief_at(s, EMISSION_DAY, units * LOAD_MINOR, true);
     runtime::schedule_tick(s, NOW).unwrap();
-    runtime::schedule_tick(s, ANCHOR + SECONDS_PER_DAY).unwrap();
+    schedule_after(s, crate::constants::COMMIT_WINDOW_SECONDS);
     arm_clearing(s);
 }
 
@@ -1124,7 +1140,12 @@ fn start_at(
     let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
         brief(&s);
         seed_rate(&s, ANCHOR, ENTRY_PRICE);
-        runtime::schedule_tick(&s, start).unwrap();
+        match runtime::schedule_tick(&s, start) {
+            Err(outbe_primitives::error::PrecompileError::SubCall(
+                outbe_primitives::storage::SubCallError::NotAvailable,
+            )) if !router => {}
+            result => result.unwrap(),
+        }
         (
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
@@ -1407,6 +1428,15 @@ const LAST_CLEARING: u64 = ANCHOR
     + crate::constants::INTEX_ISSUANCE_WINDOW_SECONDS
     - crate::constants::RESULT_DELIVERY_MARGIN_SECONDS;
 
+fn last_clearing_for(s: &StorageHandle) -> u64 {
+    u64::from(
+        s.contract::<DesisContract>()
+            .auction_at
+            .read(&EMISSION_DAY)
+            .unwrap(),
+    ) + (LAST_CLEARING - ANCHOR)
+}
+
 #[test]
 #[cfg(not(feature = "e2e-test"))]
 fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_message() {
@@ -1482,29 +1512,60 @@ fn holds_bids(s: &StorageHandle, chain: u32, n: u32) -> bool {
 
 #[test]
 #[cfg(not(feature = "e2e-test"))]
-fn a_completed_day_deletes_its_bids() {
+fn a_completed_day_retires_its_intake_before_bounded_deletion() {
     with_storage(|s| {
         open_clearing(&s, 100);
         relay_bids(&s, SRC_CHAIN, 3, 200);
         assert!(holds_bids(&s, SRC_CHAIN, 3));
         clear(&s);
+        assert!(holds_bids(&s, SRC_CHAIN, 3));
+        let count_call = crate::precompile::IDesis::getChainBidsCountCall {
+            emissionDay: EMISSION_DAY.value(),
+            srcChainId: SRC_CHAIN,
+        };
+        let count = crate::precompile::dispatch(
+            s.clone(),
+            &count_call.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::precompile::IDesis::getChainBidsCountCall::abi_decode_returns(&count).unwrap(),
+            U256::ZERO,
+        );
+        let done_call = crate::precompile::IDesis::isChainDoneCall {
+            emissionDay: EMISSION_DAY.value(),
+            srcChainId: SRC_CHAIN,
+        };
+        let done = crate::precompile::dispatch(
+            s.clone(),
+            &done_call.abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert!(!crate::precompile::IDesis::isChainDoneCall::abi_decode_returns(&done).unwrap());
+        crate::process_cleanup(s.clone()).unwrap();
         assert!(!holds_bids(&s, SRC_CHAIN, 3));
     });
 }
 
 #[test]
-fn a_failed_day_deletes_its_bids() {
+fn a_failed_day_queues_its_bids_for_bounded_deletion() {
     with_storage(|s| {
         open_clearing(&s, 100);
         relay_bids(&s, SRC_CHAIN, 3, 200);
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
+        runtime::schedule_tick(&s, last_clearing_for(&s)).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
             contract.read_stage(EMISSION_DAY).unwrap(),
             AuctionStage::Failed
         );
-        assert!(!holds_bids(&s, SRC_CHAIN, 3));
+        assert!(holds_bids(&s, SRC_CHAIN, 3));
         assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 0);
+        crate::process_cleanup(s.clone()).unwrap();
+        assert!(!holds_bids(&s, SRC_CHAIN, 3));
     });
 }
 
@@ -1584,6 +1645,8 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
             },
         );
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
+        // One bounded poll retires yesterday; the next starts the new day.
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 2 * SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 3 * SECONDS_PER_DAY).unwrap();
 
@@ -1632,6 +1695,7 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
         clear(&s);
 
         brief_at(&s, NEXT_EMISSION_DAY, 10 * LOAD_MINOR, true);
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
@@ -2021,6 +2085,7 @@ fn the_load_steps_on_a_day_the_new_load_cancels() {
                 has_limit: true,
             },
         );
+        runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         let contract = s.contract::<DesisContract>();
         assert_eq!(
