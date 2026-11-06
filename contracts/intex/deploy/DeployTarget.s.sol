@@ -34,9 +34,20 @@ contract DeployTarget is BaseScript {
         uint256[] memory targetChainIds = vm.envUint("TARGET_CHAIN_IDS", ",");
         uint32 local = uint32(block.chainid);
 
-        vm.startBroadcast(pk);
-
         Create3Factory factory = create3Factory();
+        // HandOver.s.sol moves the TargetRouter last, so a handed-over router means the whole stack is.
+        if (handedOver(predictProxy(factory, deployer, "TargetRouter"), deployer)) {
+            console.log("Create3Factory:", address(factory));
+            console.log("IntexNFT1155:", predictProxy(factory, deployer, "IntexNFT1155"));
+            console.log("EscrowAdapter:", predictProxy(factory, deployer, "EscrowAdapter"));
+            console.log("IntexAuction:", predictProxy(factory, deployer, "IntexAuction"));
+            console.log("IntexNFT1155Bridge:", predictProxy(factory, deployer, "IntexNFT1155Bridge"));
+            console.log("TargetRouter:", predictProxy(factory, deployer, "TargetRouter"));
+            console.log("Handed over to governance - skipping.");
+            return;
+        }
+
+        vm.startBroadcast(pk);
 
         // Shared NFT collection + bridge: on a remote target, these deploy here. On the origin
         // loopback target, they already exist on this chain, so idempotent deployProxy returns the
