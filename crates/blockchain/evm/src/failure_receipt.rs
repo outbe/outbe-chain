@@ -194,7 +194,8 @@ mod tests {
     /// declared gas budget. Synthesised, not from a runtime path.
     #[test]
     fn snapshot_phase_invariant_violation_204() {
-        let reason = "system tx OracleSlashWindow exceeded artifact gas limit at body_index=3: 100000 > 80000";
+        let reason =
+            "system tx OracleSlash exceeded artifact gas limit at body_index=3: 100000 > 80000";
         let log = build_outbe_failure_log(
             address!("0xff00000000000000000000000000000000000001"),
             204,

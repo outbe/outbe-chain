@@ -399,7 +399,7 @@ fn seed_nod_body_state(fixture: &NodBodyFixture) -> eyre::Result<SeededNodParent
 fn seed_called_nod(storage: StorageHandle<'_>, fixture: &NodBodyFixture) -> eyre::Result<()> {
     let group_key = fixture.group_key;
     outbe_nod::test_support::add(&storage, &fixture.item)?;
-    // CallEventProcessing forfeits the lapsed called group and deletes both bodies.
+    // NodFactory forfeits the lapsed called group and deletes both bodies.
     let nod = NodContract::new(storage.clone());
     nod.group_called_at.write(&group_key, 1)?;
     let notice = nod.group_call_notice_period_seconds.read(&group_key)?;

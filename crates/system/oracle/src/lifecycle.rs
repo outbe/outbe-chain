@@ -42,7 +42,7 @@ impl ProtocolModule for OracleSlashModule {
 
 /// Runs only the slash-window half of Oracle lifecycle.
 ///
-/// The executor calls this through the receipt-visible `OracleSlashWindow`
+/// The executor calls this through the receipt-visible `OracleSlash`
 /// begin-zone system phase after optional `BoundaryOutcome` and before user
 /// transactions. This preserves deterministic penalties without hiding
 /// operator-critical events outside EVM receipts.
@@ -64,7 +64,7 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Called from pre-execution hooks every block.
+/// Called from the `Oracle` begin-block system transaction every block.
 ///
 /// At vote period boundaries, it:
 /// - tallies votes;
@@ -72,7 +72,7 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// - writes price snapshots;
 /// - counts miss/success/abstain per validator.
 ///
-/// It defers the slash window to the receipt-visible `OracleSlashWindow` phase.
+/// It defers the slash window to the receipt-visible `OracleSlash` phase.
 /// A same-block boundary can activate its target set before Oracle jails
 /// an underperformer. The penalty is jail, not a move to EXITING.
 fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {

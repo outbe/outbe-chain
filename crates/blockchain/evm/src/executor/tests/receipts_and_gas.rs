@@ -1,9 +1,9 @@
 use super::*;
 
+mod begin_block_events;
 mod calibration;
 mod expiry;
 mod factory_approval;
-mod hook_events;
 mod native_sinks;
 mod patch_approval;
 mod rewards;

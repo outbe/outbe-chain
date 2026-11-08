@@ -101,7 +101,7 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
         *b"OSF1", // legacy FinalizationAndSlashing
         *b"OSC1", // legacy CycleTick
         *b"OSB1", // legacy BoundaryOutcome
-        *b"OSO1", // legacy OracleSlashWindow
+        *b"OSO1", // legacy OracleSlash v1
     ];
     let v2_selectors: [SysTxSelector; 4] = [
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR,

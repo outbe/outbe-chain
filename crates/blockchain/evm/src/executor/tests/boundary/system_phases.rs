@@ -289,7 +289,7 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         &mut executor,
         system_txs,
         fixtures::BeginPrefixCheck {
-            execution_message: "Phase 1+2+3+OracleSlashWindow begin-zone system tx should execute",
+            execution_message: "Consensus and BeginBlock begin-zone system tx should execute",
             cumulative_receipts: true,
         },
     );

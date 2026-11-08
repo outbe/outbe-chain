@@ -231,7 +231,7 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
 }
 
 #[test]
-fn hook_events_receipt_carries_whitelisted_update_activation_log() {
+fn update_system_receipt_carries_update_activation_log() {
     use alloy_sol_types::SolEvent;
     use outbe_update::payload::encode_schedule_update_json;
     use outbe_update::precompile::IUpdate;
@@ -274,7 +274,7 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
 }
 
 #[test]
-fn real_factory_approval_is_published_in_hook_events_receipt() {
+fn real_factory_approval_is_published_in_vote_system_receipt() {
     factory_approval::run();
 }
 
@@ -390,7 +390,7 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
 /// Automatic retirement emits `UnbondingStarted` at the staking address
 /// directly in the StakingModule begin-block pass.
 #[test]
-fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() {
+fn automatic_retirement_unbonding_started_is_published_in_staking_system_receipt() {
     use alloy_primitives::BloomInput;
     use alloy_sol_types::SolEvent;
     use outbe_staking::contract::Staking;

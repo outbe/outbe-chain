@@ -147,7 +147,7 @@ where
     }
 
     /// Executes and commits the Phase 1 (`CertifiedParentAccounting`) system tx
-    /// in pre-execution so `run_outbe_pre_execution_hooks` observes post-Phase-1 state.
+    /// in pre-execution so subsequent `BeginBlock` system transactions observe post-Phase-1 state.
     pub(crate) fn apply_phase1_commit_in_preexec(
         &mut self,
         block_number: u64,

@@ -189,7 +189,7 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
 }
 
 #[test]
-fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
+fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let parent = B256::with_last_byte(0xA5);
