@@ -42,10 +42,19 @@ fn expiry_context(
     })
 }
 
-fn assert_expiry_budget(receipt: &Receipt, cycle_gas: u64, cycle_internal_gas: u64) {
-    assert!(receipt.success, "worst-case TEE expiry sweep must not OOG");
+fn assert_expiry_budget(
+    liveness_receipt: &Receipt,
+    cycle_receipt: &Receipt,
+    cycle_gas: u64,
+    cycle_internal_gas: u64,
+) {
+    assert!(
+        liveness_receipt.success,
+        "worst-case TEE expiry sweep must not OOG"
+    );
+    assert!(cycle_receipt.success, "CycleTick must succeed");
     assert_eq!(
-        receipt
+        liveness_receipt
             .logs
             .iter()
             .filter(|log| {
@@ -126,11 +135,17 @@ pub(super) fn run() {
         .as_ref()
         .map(|cycle| cycle.internal_gas)
         .expect("CycleTick internal gas must be captured");
-    let receipt = &executor.receipts()[cycle
+    let cycle_receipt = &executor.receipts()[cycle
         .map(|cycle| cycle.receipt_index)
         .expect("CycleTick receipt index")];
+    let liveness_receipt = &executor.receipts()[2];
 
-    assert_expiry_budget(receipt, cycle_gas, cycle_internal_gas);
+    assert_expiry_budget(
+        liveness_receipt,
+        cycle_receipt,
+        cycle_gas,
+        cycle_internal_gas,
+    );
 }
 
 #[test]
@@ -189,18 +204,18 @@ fn hyperlane_liveness_gross_work_grows_with_domain_population() {
         );
         let mut observed = None;
         for tx in txs {
-            let is_oracle = matches!(
+            let is_hyperlane = matches!(
                 SystemTx::decode(tx.tx().input().as_ref()).expect("system phase"),
-                SystemTx::OracleSlashWindow
+                SystemTx::HyperlaneSlash
             );
             let before = executor.system_tx_gross_gas;
             executor.execute_transaction(tx).expect("begin phase");
             assert!(executor.receipts().last().expect("phase receipt").success);
-            if is_oracle {
+            if is_hyperlane {
                 observed = Some(executor.system_tx_gross_gas - before);
             }
         }
-        let gross = observed.expect("OracleSlashWindow measurement");
+        let gross = observed.expect("HyperlaneSlash measurement");
         assert!(gross > previous_gross, "domain work must be metered");
         eprintln!(
             "Hyperlane liveness calibration: active=1, domains={domain_count}, gross={gross}"

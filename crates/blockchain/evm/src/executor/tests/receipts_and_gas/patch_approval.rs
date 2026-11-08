@@ -225,9 +225,9 @@ fn run_patch_vote_case(approve_second: bool, change_to_no: bool) {
         validators: validators.iter().map(|v| v.0).collect(),
     };
     run_atomic_storage_hooks(&mut state, block_context, |ctx| {
-        run_outbe_pre_execution_hooks(ctx, None)
+        <outbe_vote::VoteModule as outbe_primitives::block::ProtocolModule>::begin_block(ctx)
     })
-    .expect("actual begin-block hooks finalize patch Vote");
+    .expect("actual begin-block VoteModule finalizes patch Vote");
     let after = call(&mut state, 10, outsider, 2, CODE_REGISTRY_ADDRESS, get);
     assert!(after.is_success(), "{after:?}");
     let approval =

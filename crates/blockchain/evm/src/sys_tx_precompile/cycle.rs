@@ -123,7 +123,7 @@ fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
     }
 }
 
-pub(crate) fn enforce_enclave_upgrade_deadline(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn enforce_enclave_upgrade_deadline(ctx: &BlockRuntimeContext) -> Result<()> {
     let mut registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
     let Some(upgrade) = registry.upgrade_sweep_due_v1()? else {
         return Ok(());

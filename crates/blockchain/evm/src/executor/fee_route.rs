@@ -28,15 +28,7 @@ where
         let ctx = self.fee_route_context()?;
         let tx = recovered.tx();
         let signer = *recovered.signer();
-        if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
-            return Err(
-                crate::errors::ExecutorValidationError::TransactionGasLimitBelowFloor {
-                    gas_limit: tx.gas_limit(),
-                    floor: Self::SOFT_FAILURE_GAS,
-                }
-                .into(),
-            );
-        }
+        self.validate_user_tx_gas_bounds(tx.gas_limit())?;
 
         let zero_fee_tx = zero_fee_transaction(tx, signer);
         let candidate = match outbe_zerofee::registry().classify(&zero_fee_tx) {
@@ -72,6 +64,30 @@ where
         }
 
         self.execute_paid_transaction(tx_env, recovered, f)
+    }
+
+    fn validate_user_tx_gas_bounds(&self, gas_limit: u64) -> Result<(), BlockExecutionError> {
+        if gas_limit < Self::SOFT_FAILURE_GAS {
+            return Err(
+                crate::errors::ExecutorValidationError::TransactionGasLimitBelowFloor {
+                    gas_limit,
+                    floor: Self::SOFT_FAILURE_GAS,
+                }
+                .into(),
+            );
+        }
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let available = block_gas_limit.saturating_sub(self.accounted_block_gas());
+        if gas_limit > available {
+            return Err(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: gas_limit,
+                    block_available_gas: available,
+                }
+                .into(),
+            );
+        }
+        Ok(())
     }
 
     /// The executor includes policy rejections with fixed gas and a failure log,

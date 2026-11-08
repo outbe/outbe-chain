@@ -349,7 +349,10 @@ where
             return outcome.map_err(preserve_cancelled_execution);
         }
         let is_user_candidate = !is_system_tx;
-        if is_user_candidate && self.execute_outbe_block_hooks {
+        if is_user_candidate
+            && self.execute_outbe_block_hooks
+            && self.decoded_block_artifacts.is_some()
+        {
             self.fsm
                 .on_user_tx()
                 .map_err(crate::errors::ExecutorValidationError::from)?;

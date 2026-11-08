@@ -291,7 +291,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         )?;
         let input = admitted.input;
         let ordinal = admitted.ordinal;
-        if self.execute_outbe_block_hooks {
+        if self.execute_outbe_block_hooks && self.decoded_block_artifacts.is_some() {
             self.fsm
                 .on_system_tx(input.kind())
                 .map_err(ExecutorValidationError::from)?;
@@ -353,7 +353,9 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             }
         }
         self.system_tx_phase_cursor = admitted.next_phase;
-        if matches!(admitted.next_phase, SystemTxPhase::EndBlock) && self.execute_outbe_block_hooks
+        if matches!(admitted.next_phase, SystemTxPhase::EndBlock)
+            && self.execute_outbe_block_hooks
+            && self.decoded_block_artifacts.is_some()
         {
             self.fsm.finish().map_err(ExecutorValidationError::from)?;
         }

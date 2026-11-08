@@ -1,8 +1,8 @@
 use super::*;
 use outbe_primitives::reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit};
 use outbe_primitives::system_tx::{
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    LATE_FINALIZE_CREDITS_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR,
+    TEE_BOOTSTRAP_SELECTOR,
 };
 use outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2;
 use reth_primitives_traits::Recovered;
@@ -29,14 +29,16 @@ fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
         let proposer = scenario.resolve().unwrap();
         let body = scenario.signed_body();
         assert_signed_begin_body(&scenario, &proposer, &body);
+        let pub_idx = proposer
+            .iter()
+            .position(|(tx, _)| matches!(tx, SystemTx::RadiclePublication { .. }))
+            .expect("RadiclePublication must be present in CONSENSUS_ORDER");
         assert!(matches!(
-            proposer[proposer.len() - 2].0,
-            SystemTx::HookEvents
+            proposer[pub_idx - 1].0,
+            SystemTx::ValidatorLiveness
         ));
-        assert!(matches!(
-            proposer.last().unwrap().0,
-            SystemTx::RadiclePublication { .. }
-        ));
+        assert!(matches!(proposer[pub_idx + 1].0, SystemTx::Vote));
+        assert!(matches!(proposer.last().unwrap().0, SystemTx::CycleTick));
         scenario.body = body;
         let verifier = scenario.resolve().unwrap();
         assert_eq!(proposer, verifier);
@@ -226,7 +228,7 @@ fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
         return;
     }
     let selectors: Vec<_> = proposer.iter().map(|(input, _)| input.selector()).collect();
-    assert_eq!(selectors.last(), Some(&HOOK_EVENTS_SELECTOR));
+    assert_eq!(selectors.last(), Some(&CYCLE_TICK_SELECTOR));
     assert_eq!(selectors.contains(&TEE_BOOTSTRAP_SELECTOR), height == 1);
     assert!(selectors.contains(&CYCLE_TICK_SELECTOR));
     if height >= 2 {
@@ -387,7 +389,7 @@ fn forbidden_late_bootstrap_is_checked_after_cpa_and_boundary_but_before_oracle_
         .position(|tx| {
             matches!(
                 SystemTx::decode(tx.tx().input()).unwrap(),
-                SystemTx::OracleSlashWindow
+                SystemTx::OracleSlash
             )
         })
         .unwrap();

@@ -1,6 +1,7 @@
-//! System receipts that publish hook events: slashing, update activation and factory proposals.
+//! System receipts that publish module events directly: slashing, update activation and factory proposals.
 
 use super::*;
+use outbe_primitives::block::ProtocolModule;
 
 #[test]
 fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
@@ -27,7 +28,7 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
                 L2_REGISTRY_ADDRESS,
                 PAYLOAD,
                 CREATED,
-                crate::handlers::vote::registry(),
+                outbe_vote::handlers::registry(),
             )
             .unwrap(),
             id
@@ -55,7 +56,7 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
     };
 
     super::run_atomic_storage_hooks(&mut state, context.clone(), |ctx| {
-        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        outbe_vote::VoteModule::begin_block(ctx)?;
         let vote = Vote::new(ctx.storage.clone());
         assert_eq!(
             vote.proposals.get(id)?.unwrap().proposal_status()?,
@@ -73,7 +74,7 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
             ProposalStatus::Pending
         );
         assert_eq!(vote.list_pending_proposal_ids()?, vec![id]);
-        super::run_outbe_pre_execution_hooks(ctx, None)?;
+        outbe_vote::VoteModule::begin_block(ctx)?;
         assert_eq!(
             vote.proposals.get(id)?.unwrap().proposal_status()?,
             ProposalStatus::Error
@@ -89,14 +90,13 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
         // Re-running the Vote lifecycle must not emit a second ProposalErrored receipt.
         outbe_vote::lifecycle::VoteLifecycle::begin_block_with_handlers(
             ctx,
-            crate::handlers::vote::registry(),
+            outbe_vote::handlers::registry(),
         )?;
         Ok(())
     })
     .expect("target refusal must allow the hook batch to commit on retry");
-    let (receipt_logs, _) = partition_hook_events(&events);
     assert_eq!(
-        receipt_logs
+        events
             .iter()
             .filter(|log| log.address == VOTE_ADDRESS
                 && log.data.topics().first() == Some(&IVote::ProposalErrored::SIGNATURE_HASH))
@@ -174,9 +174,7 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
             .expect("Phase 1 slashing system tx should execute");
     }
 
-    // CPA(0) + LateFinalizeCredits(1) + CycleTick(2) + OracleSlashWindow(3)
-    // + HookEvents(4).
-    assert_eq!(executor.receipts().len(), 5);
+    assert_eq!(executor.receipts().len(), 12);
     let phase1_logs = &executor.receipts()[0].logs;
     let voter_misdemeanor = keccak256("VoterMisdemeanor(address,uint64)");
     let voter_felony = keccak256("VoterFelony(address,uint64,uint64)");
@@ -258,45 +256,21 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
                 .expect("schedule update");
         });
 
-    let ctx = BlockContext {
-        block_gas_limit: 0,
-        user_gas_used: 0,
-        block_number: ACTIVATION_BLOCK,
-        timestamp: ACTIVATION_BLOCK,
-        chain_id: CHAIN_ID,
-        genesis_hash: alloy_primitives::B256::ZERO,
-        genesis_timestamp: ACTIVATION_BLOCK.max(1),
+    let receipt = execute_begin_block_system_tx(
+        &mut state,
+        ACTIVATION_BLOCK,
+        ACTIVATION_BLOCK,
         proposer,
-        validators: vec![proposer],
-    };
-    let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
-        super::run_outbe_pre_execution_hooks(hook_ctx, None)
-    })
-    .expect("pre-exec hooks should emit activation events");
-    let (whitelisted_logs, _) = partition_hook_events(&hook_events);
+        SystemTx::Update,
+    );
     let upgrade_activated = IUpdate::UpgradeActivated::SIGNATURE_HASH;
     assert!(
-        whitelisted_logs.iter().any(|log| {
+        receipt.logs.iter().any(|log| {
             log.address == UPDATE_ADDRESS && log.data.topics().first() == Some(&upgrade_activated)
         }),
-        "pre-exec hooks must emit whitelisted UpgradeActivated for HookEvents receipt"
+        "Update system transaction must emit UpgradeActivated directly"
     );
-
-    let config = OutbeEvmConfig::new(test_chain_spec());
-    let evm = config.evm_with_env(&mut state, test_evm_env(ACTIVATION_BLOCK, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    executor
-        .push_hook_events_receipt(alloy_consensus::TxType::Legacy, whitelisted_logs, 21_000)
-        .expect("HookEvents receipt should publish captured hook logs");
-
-    let hook_receipt = executor.receipts().last().expect("HookEvents receipt");
-    assert!(hook_receipt.success);
-    assert!(
-        hook_receipt.logs.iter().any(|log| {
-            log.address == UPDATE_ADDRESS && log.data.topics().first() == Some(&upgrade_activated)
-        }),
-        "HookEvents receipt must carry UpgradeActivated from pre-exec hook events"
-    );
+    assert_eq!(receipt.cumulative_gas_used, 0);
 }
 
 #[test]
@@ -339,7 +313,7 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
                         created_height: CREATION_BLOCK,
                         attached_value: STABLECOIN_CREATE_BOND,
                     },
-                    crate::handlers::vote::registry(),
+                    outbe_vote::handlers::registry(),
                 )
                 .unwrap();
             let mut corrupted = vote.proposals.get(proposal_id).unwrap().unwrap();
@@ -363,12 +337,11 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
         proposer: issuer,
         validators: validators.iter().map(|(address, _)| *address).collect(),
     };
-    let (_, hook_events) =
+    let (_, receipt_logs) =
         super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
-            super::run_outbe_pre_execution_hooks(hook_ctx, None)
+            outbe_vote::VoteModule::begin_block(hook_ctx)
         })
         .expect("typed target Error must not fail the outer hook batch");
-    let (receipt_logs, _) = partition_hook_events(&hook_events);
     assert!(receipt_logs.iter().all(|log| {
         log.address != STABLECOIN_FACTORY_ADDRESS
             || log.data.topics().first()
@@ -390,23 +363,6 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
         log.address != VOTE_ADDRESS
             || log.data.topics().first() != Some(&IVote::ProposalBondBurned::SIGNATURE_HASH)
     }));
-    {
-        let config = OutbeEvmConfig::new(test_chain_spec());
-        let evm = config.evm_with_env(
-            &mut state,
-            test_evm_env(finalization_block, REWARDS_ADDRESS),
-        );
-        let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-        executor
-            .push_hook_events_receipt(alloy_consensus::TxType::Legacy, receipt_logs, 21_000)
-            .expect("Error outcome HookEvents receipt");
-        let receipt = executor.receipts().last().expect("HookEvents receipt");
-        assert!(receipt.logs.iter().all(|log| {
-            log.address != STABLECOIN_FACTORY_ADDRESS
-                || log.data.topics().first()
-                    != Some(&IStablecoinFactory::StablecoinCreated::SIGNATURE_HASH)
-        }));
-    }
 
     let mut provider = super::DirectStorageProvider::new(&mut state, block_context);
     let storage = StorageHandle::new(&mut provider);
@@ -431,8 +387,8 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
     assert!(factory.reservations.exists(U256::from(1u64)).unwrap());
 }
 
-/// Automatic retirement emits `UnbondingStarted` at the staking address.
-/// The HookEvents receipt must publish that log.
+/// Automatic retirement emits `UnbondingStarted` at the staking address
+/// directly in the StakingModule begin-block pass.
 #[test]
 fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() {
     use alloy_primitives::BloomInput;
@@ -532,12 +488,16 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
         proposer,
         validators: vec![proposer, subject],
     };
-    let (_, hook_events) = super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
-        super::run_outbe_pre_execution_hooks(hook_ctx, None)
-    })
-    .expect("setup: pre-exec hooks");
+    let receipt = execute_begin_block_system_tx(
+        &mut state,
+        HOOK_BLOCK,
+        TIMESTAMP,
+        proposer,
+        SystemTx::Staking,
+    );
 
-    let started: Vec<_> = hook_events
+    let started: Vec<_> = receipt
+        .logs
         .iter()
         .filter(|log| {
             log.address == STAKING_ADDRESS
@@ -561,7 +521,7 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
             automatic: true,
         }
     );
-    assert!(hook_events.iter().all(|log| {
+    assert!(receipt.logs.iter().all(|log| {
         log.address != STAKING_ADDRESS
             || log.data.topics().first() != Some(&IStaking::Slashed::SIGNATURE_HASH)
     }));
@@ -593,26 +553,11 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
     })
     .expect("queue state should match the retirement event");
 
-    let (receipt_logs, tracing_only) = partition_hook_events(&hook_events);
     let is_started = |log: &Log| {
         log.address == STAKING_ADDRESS
             && log.data.topics().first() == Some(&IStaking::UnbondingStarted::SIGNATURE_HASH)
     };
-    let in_tracing = tracing_only.iter().any(&is_started);
-    assert!(
-        receipt_logs.iter().any(&is_started),
-        "automatic UnbondingStarted must be receipt-visible; tracing_only={in_tracing}"
-    );
-    assert!(!in_tracing);
-
-    let config = OutbeEvmConfig::new(test_chain_spec());
-    let evm = config.evm_with_env(&mut state, test_evm_env(HOOK_BLOCK, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    executor
-        .push_hook_events_receipt(alloy_consensus::TxType::Legacy, receipt_logs, 21_000)
-        .expect("HookEvents receipt should publish the retirement log");
-    let receipt = executor.receipts().last().expect("HookEvents receipt");
-    assert!(receipt.success);
+    assert_eq!(receipt.cumulative_gas_used, 0);
     let published = receipt
         .logs
         .iter()
@@ -626,5 +571,57 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
     assert!(bloom.contains_input(BloomInput::Raw(published.address.as_slice())));
     for topic in published.data.topics() {
         assert!(bloom.contains_input(BloomInput::Raw(topic.as_slice())));
+    }
+}
+
+fn execute_begin_block_system_tx(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    block_number: u64,
+    timestamp: u64,
+    proposer: Address,
+    input: SystemTx,
+) -> Receipt {
+    use alloy_evm::Evm as _;
+    use revm::DatabaseCommit;
+
+    let mut evm_env = test_evm_env(block_number, REWARDS_ADDRESS);
+    evm_env.block_env.timestamp = U256::from(timestamp);
+    let config = OutbeEvmConfig::new(test_chain_spec());
+    let result = {
+        let mut evm = config.evm_with_env(&mut *state, evm_env);
+        crate::sys_tx_precompile::with_preloaded_system_tx_context(
+            crate::sys_tx_precompile::PreloadedSystemTxContext {
+                proposer,
+                finalized_summary: None,
+                allow_boundary_proposer: false,
+                canonical_vrf_proof_hash: B256::ZERO,
+                verified_late_credit_signers: None,
+                gas_limit_override: None,
+                remaining_system_gross_gas:
+                    outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+                block_gas_limit: 0,
+                user_gas_used: 0,
+            },
+            || {
+                evm.transact_system_call(
+                    outbe_primitives::addresses::SYSTEM_ADDRESS,
+                    OUTBE_SYSTEM_TX_ADDRESS,
+                    input.encode().expect("begin-block system tx encodes"),
+                )
+            },
+        )
+        .expect("begin-block system call")
+    };
+    assert!(
+        result.result.is_success(),
+        "begin-block system call must succeed"
+    );
+    let logs = result.result.into_logs();
+    state.commit(result.state);
+    Receipt {
+        tx_type: alloy_consensus::TxType::Legacy,
+        success: true,
+        cumulative_gas_used: 0,
+        logs,
     }
 }

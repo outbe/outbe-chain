@@ -306,7 +306,11 @@ where
                         Ok(result)
                     }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
-                        self.run_inner_transact_raw(tx)
+                        let result = self.run_inner_transact_raw(tx)?;
+                        crate::executor::witness::record_detached_trace_user_gas(
+                            result.result.gas().tx_gas_used(),
+                        );
+                        Ok(result)
                     }
                 }
             });

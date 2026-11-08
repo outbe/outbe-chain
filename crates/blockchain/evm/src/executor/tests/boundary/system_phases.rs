@@ -3,16 +3,14 @@ use super::fixtures::*;
 #[test]
 fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
     use crate::system_tx::{
-        CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
-        TEE_BOOTSTRAP_SELECTOR,
+        CYCLE_TICK_SELECTOR, ENCLAVE_UPGRADE_DEADLINE_SELECTOR, HYPERLANE_SLASH_SELECTOR,
+        ORACLE_SELECTOR, ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR, STAKING_SELECTOR,
+        TEE_BOOTSTRAP_SELECTOR, UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
     };
     let signer = test_evm_signer();
     let proposer = signer.address();
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
 
-    // Block 1, empty extra_data: begin-zone is CycleTick + OracleSlashWindow
-    // + HookEvents. A pending bootstrap is injected between CycleTick and
-    // OracleSlashWindow.
     let with_bootstrap = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -27,12 +25,19 @@ fn proposer_injects_tee_bootstrap_after_boundary_when_payload_pending() {
     assert_eq!(
         begin_system_tx_selectors(&with_bootstrap),
         vec![
-            CYCLE_TICK_SELECTOR,
             TEE_BOOTSTRAP_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            VALIDATOR_LIVENESS_SELECTOR,
+            VOTE_SELECTOR,
+            UPDATE_SELECTOR,
+            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
+            REWARDS_SELECTOR,
+            STAKING_SELECTOR,
+            ORACLE_SELECTOR,
+            ORACLE_SLASH_SELECTOR,
+            HYPERLANE_SLASH_SELECTOR,
+            CYCLE_TICK_SELECTOR,
         ],
-        "proposer must inject TeeBootstrap before OracleSlashWindow",
+        "proposer must inject TeeBootstrap in CONSENSUS_ORDER before ValidatorLiveness and BEGIN_BLOCK_ORDER",
     );
 
     // Block 1 is not buildable without the mandatory OST3 payload.
@@ -154,7 +159,7 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
             .expect("activation block begin-zone system tx should execute");
     }
 
-    assert_eq!(executor.receipts().len(), 5);
+    assert_eq!(executor.receipts().len(), 12);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     drop(executor);
 
@@ -187,7 +192,33 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     let proposer = signer.address();
     let joining = address!("0x3333333333333333333333333333333333333333");
     let parent_hash = B256::with_last_byte(0xBC);
-    let mut state = state_with_active_and_registered_candidate(proposer, joining);
+    let mut state =
+        state_with_active_and_registered_candidate_seeded(proposer, joining, |storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for (index, validator) in [proposer, joining].into_iter().enumerate() {
+                let node_hash = keccak256((index as u64).to_be_bytes());
+                registry
+                    .validator_v1_node_hash
+                    .write(&validator, node_hash)
+                    .unwrap();
+                registry
+                    .v1_node_enclave_id
+                    .write(&node_hash, B256::with_last_byte(0x11))
+                    .unwrap();
+                registry
+                    .v1_node_binding_id
+                    .write(&node_hash, B256::with_last_byte(0x12))
+                    .unwrap();
+                registry
+                    .v1_node_intent_hash
+                    .write(&node_hash, B256::with_last_byte(0x13))
+                    .unwrap();
+                registry
+                    .v1_node_valid_until
+                    .write(&node_hash, u64::MAX)
+                    .unwrap();
+            }
+        });
 
     let mut metadata = test_metadata();
     metadata.finalized_block_number = 1;
@@ -262,9 +293,9 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
             cumulative_receipts: true,
         },
     );
-    // CPA + LateFinalizeCredits + CycleTick + BoundaryOutcome +
-    // OracleSlashWindow + HookEvents.
-    assert_eq!(executor.receipts().len(), 6);
+    // 4 CONSENSUS_ORDER txs (CPA + LateFinalizeCredits + BoundaryOutcome + ValidatorLiveness)
+    // + 9 BEGIN_BLOCK_ORDER txs = 13 receipts.
+    assert_eq!(executor.receipts().len(), 13);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         visible_system_gas_used < 30_000_000,
@@ -295,9 +326,9 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         .execute_transaction(recovered_deactivate)
         .expect("same-block user tx should see joining validator as active");
 
-    // 6 begin-zone receipts + 1 user (deactivate) tx.
-    assert_eq!(executor.receipts().len(), 7);
-    assert!(executor.receipts()[6].success);
+    // 13 begin-zone receipts + 1 user (deactivate) tx.
+    assert_eq!(executor.receipts().len(), 14);
+    assert!(executor.receipts()[13].success);
     drop(executor);
 
     let read_ctx = BlockContext {
@@ -442,38 +473,35 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         },
     );
 
-    assert_eq!(executor.receipts().len(), 5);
+    assert_eq!(executor.receipts().len(), 12);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     let oracle_forced_exit = keccak256("ValidatorForcedExit(address)");
     assert!(
-        executor.receipts()[3].logs.iter().any(|log| {
+        executor.receipts()[9].logs.iter().any(|log| {
             log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_forced_exit)
         }),
         "Oracle slash-window force exit must be receipt-visible"
     );
     let oracle_slashed = keccak256("ValidatorSlashed(address,uint64)");
     assert!(
-        executor.receipts()[3].logs.iter().any(|log| {
+        executor.receipts()[9].logs.iter().any(|log| {
             log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_slashed)
         }),
         "Oracle slash-window stake slash must be receipt-visible"
     );
-    let hook_events_receipt = &executor.receipts()[4];
+    let cycle_tick_receipt = &executor.receipts()[11];
     assert!(
-        hook_events_receipt.success,
-        "mandatory HookEvents receipt must succeed even when empty"
+        cycle_tick_receipt.success,
+        "mandatory CycleTick receipt must succeed"
     );
     assert!(
-        !hook_events_receipt
+        !cycle_tick_receipt
             .logs
             .iter()
             .any(|log| log.address == ORACLE_ADDRESS),
-        "non-whitelisted oracle hook events must not appear in HookEvents receipt"
+        "oracle slash events are emitted directly on the OracleSlash receipt, not CycleTick"
     );
-    assert!(
-        visible_system_gas_used < 30_000_000,
-        "visible system gas used {visible_system_gas_used} should fit within block gas limit"
-    );
+    assert_eq!(visible_system_gas_used, 0);
     drop(executor);
 
     let read_ctx = BlockContext {
@@ -531,7 +559,7 @@ fn activation_bootstrap(
 
 #[test]
 fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once() {
-    use crate::executor::hooks::enforce_enclave_upgrade_deadline;
+    use crate::sys_tx_precompile::enforce_enclave_upgrade_deadline;
     use outbe_primitives::units::UNITS_PER_PROTOCOL_MINOR;
 
     for (configured_percent, expected_percent) in [(0, 8u64), (17, 17)] {

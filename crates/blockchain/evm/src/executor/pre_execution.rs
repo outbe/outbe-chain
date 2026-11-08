@@ -92,6 +92,15 @@ where
             has_tee_bootstrap,
             has_publication,
         );
+        if regime.is_genesis_bootstrap() {
+            self.system_tx_phase_cursor = if has_boundary_outcome {
+                crate::system_tx::SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 }
+            } else if has_tee_bootstrap {
+                crate::system_tx::SystemTxPhase::TeeBootstrapOptional { body_index: 0 }
+            } else {
+                crate::system_tx::SystemTxPhase::ValidatorLiveness { body_index: 0 }
+            };
+        }
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
@@ -176,7 +185,15 @@ where
                 phase1_preexecuted,
                 system_tx_context: Some(PreloadedSystemTxContext {
                     proposer,
-                    finalized_summary: None,
+                    // Under the test-only `PHASE1_VERIFY_DISABLED` flag, steady-state
+                    // blocks skip pre-executing `CertifiedParentAccounting` (`OSA3`) in
+                    // `apply_pre_execution_changes`, so `phase1_preexecuted` is `false`
+                    // and `OSA3` runs during detached trace replay with this summary.
+                    finalized_summary: if phase1_preexecuted {
+                        None
+                    } else {
+                        self.ensure_phase1_input().ok().map(|(_, summary)| summary)
+                    },
                     allow_boundary_proposer,
                     canonical_vrf_proof_hash: self
                         .verified_phase1_vrf_proof_hash

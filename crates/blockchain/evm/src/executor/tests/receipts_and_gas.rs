@@ -110,14 +110,11 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     let mut visible_system_gas_used = 0u64;
     for tx in system_txs.clone() {
         let signed_gas_limit = tx.tx().gas_limit();
-        let intrinsic_gas = system_tx_intrinsic_gas(tx.tx().input()).unwrap();
+        assert_eq!(signed_gas_limit, 0);
         let gas_used = executor
             .execute_transaction(tx)
             .expect("begin-zone system tx should execute in tx loop");
-        assert!(
-            (intrinsic_gas..=signed_gas_limit).contains(&gas_used.tx_gas_used()),
-            "receipt gas must stay between intrinsic gas and the signed envelope limit"
-        );
+        assert_eq!(gas_used.tx_gas_used(), 0);
         visible_system_gas_used += gas_used.tx_gas_used();
         assert_eq!(
             executor
@@ -129,30 +126,27 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         );
     }
 
-    assert_eq!(executor.receipts().len(), 4);
+    assert_eq!(executor.receipts().len(), 11);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         executor.system_tx_execution_gas > 0,
         "system tx internal execution gas must still be measured"
     );
     assert_eq!(
-        executor.inner.cumulative_tx_gas_used, visible_system_gas_used,
-        "system tx must charge only visible envelope gas to block accounting"
+        executor.inner.cumulative_tx_gas_used, 0,
+        "system tx must charge 0 gas to block accounting under Tempo model"
     );
     assert_eq!(
-        executor.inner.block_regular_gas_used, visible_system_gas_used,
-        "system tx regular gas must expose only visible envelope gas"
+        executor.inner.block_regular_gas_used, 0,
+        "system tx regular gas must be 0 under Tempo model"
     );
     assert!(executor
         .receipts()
         .iter()
         .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
-    assert_eq!(
-        executor.receipts()[3].cumulative_gas_used,
-        visible_system_gas_used
-    );
+    assert_eq!(executor.receipts()[10].cumulative_gas_used, 0);
 
-    assert_eq!(system_txs.len(), 4);
+    assert_eq!(system_txs.len(), 11);
     assert_eq!(Address::from(*system_txs[0].signer()), proposer);
     assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
     assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
@@ -164,19 +158,23 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     );
     assert!(matches!(
         SystemTx::decode(system_txs[0].tx().input().as_ref()).unwrap(),
-        SystemTx::CycleTick
-    ));
-    assert!(matches!(
-        SystemTx::decode(system_txs[1].tx().input().as_ref()).unwrap(),
         SystemTx::TeeBootstrap { .. }
     ));
     assert!(matches!(
-        SystemTx::decode(system_txs[2].tx().input().as_ref()).unwrap(),
-        SystemTx::OracleSlashWindow
+        SystemTx::decode(system_txs[1].tx().input().as_ref()).unwrap(),
+        SystemTx::ValidatorLiveness
     ));
     assert!(matches!(
-        SystemTx::decode(system_txs[3].tx().input().as_ref()).unwrap(),
-        SystemTx::HookEvents
+        SystemTx::decode(system_txs[8].tx().input().as_ref()).unwrap(),
+        SystemTx::OracleSlash
+    ));
+    assert!(matches!(
+        SystemTx::decode(system_txs[9].tx().input().as_ref()).unwrap(),
+        SystemTx::HyperlaneSlash
+    ));
+    assert!(matches!(
+        SystemTx::decode(system_txs[10].tx().input().as_ref()).unwrap(),
+        SystemTx::CycleTick
     ));
     drop(executor);
 
@@ -214,23 +212,26 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     let chain_spec = test_chain_spec();
     let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let ctx = block_one_execution_ctx(Some(3), Bytes::new());
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let parent_hash = B256::with_last_byte(0x21);
+    let (ctx, metadata) = block_two_execution_ctx(Some(3), Bytes::new(), proposer, parent_hash);
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
         fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer), false),
     );
 
-    executor
-        .apply_pre_execution_changes()
-        .expect("block 1 pre-execution changes should apply");
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("block 2 pre-execution changes should apply");
+    });
     let system_txs = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
+            block_number: 2,
+            parent_hash,
             extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
+            parent_consensus_metadata: Some(metadata),
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
@@ -329,17 +330,21 @@ fn cycle_tick_utc_boundary_gas_usage() {
     );
     let mut cycle_tick_visible_gas = None;
     for tx in system_txs {
+        let is_cycle = matches!(
+            SystemTx::decode(tx.tx().input().as_ref()).unwrap(),
+            SystemTx::CycleTick
+        );
         let gas_output = executor
             .execute_transaction(tx)
             .expect("begin-zone system tx should execute in tx loop");
-        if cycle_tick_visible_gas.is_none() {
+        if is_cycle {
             cycle_tick_visible_gas = Some(gas_output.tx_gas_used());
         }
     }
 
-    assert_eq!(executor.receipts().len(), 4);
+    assert_eq!(executor.receipts().len(), 11);
     let visible_gas = cycle_tick_visible_gas.expect("CycleTick visible gas must be captured");
-    let cycle_tick_receipt = &executor.receipts()[0];
+    let cycle_tick_receipt = &executor.receipts()[10];
     assert!(
         cycle_tick_receipt.success,
         "CycleTick must succeed, not OOG"
@@ -355,10 +360,7 @@ fn cycle_tick_utc_boundary_gas_usage() {
         cycle_tick_receipt.cumulative_gas_used, visible_gas,
         "system receipt cumulative gas must expose visible envelope gas"
     );
-    assert!(
-        visible_gas < 30_000_000,
-        "CycleTick visible gas {visible_gas} must fit within the block gas limit"
-    );
+    assert_eq!(visible_gas, 0);
 }
 
 #[test]
@@ -426,12 +428,16 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             seed_dense_agent_recipients(storage, prev_day, DENSE_ADDRESS_COUNT)
                 .expect("seed dense agent recipients fixture succeeds");
         });
+    let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_ts);
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     evm_env.block_env.timestamp = U256::from(block_ts);
     let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
         .with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
-    let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
+    let mut executor = config.create_executor(
+        evm,
+        execution_ctx_with_tee_bootstrap(Some(0), Bytes::new(), tee_bootstrap.clone()),
+    );
 
     executor
         .apply_pre_execution_changes()
@@ -444,10 +450,15 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             extra_data: &Bytes::new(),
             parent_consensus_metadata: None,
             proposer,
-            bootstrap: BootstrapFixture::StandardForBlock,
+            bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
         },
     );
-    let cycle_tx = system_txs.remove(0);
+    let cycle_tx = system_txs.pop().expect("CycleTick is last in begin prefix");
+    for tx in system_txs {
+        executor
+            .execute_transaction(tx)
+            .expect("earlier begin system tx should execute");
+    }
     let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
     let gross_before = executor.system_tx_gross_gas;
     let net_before = executor.system_tx_execution_gas;
@@ -471,7 +482,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
 
     let cycle_receipt = executor
         .receipts()
-        .first()
+        .last()
         .expect("CycleTick receipt should be present");
     assert!(
         cycle_receipt.success,
@@ -549,30 +560,19 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
         },
     )
     .into_iter();
-    let cycle_tx = system_txs
-        .next()
-        .expect("CycleTick system tx should be present");
-    let tee_bootstrap_tx = system_txs
-        .next()
-        .expect("TeeBootstrap system tx should be present");
+    for _ in 0..8 {
+        let tx = system_txs
+            .next()
+            .expect("mandatory prefix system tx before OracleSlash");
+        let gas = executor
+            .execute_transaction(tx)
+            .expect("mandatory prefix system tx should execute")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
     let oracle_tx = system_txs
         .next()
-        .expect("OracleSlashWindow system tx should be present");
-    let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
-    // A forced OOG does not model Oracle performing ten billion units of useful work. revm
-    // charges the complete system-call gas limit for any OOG. The mandatory phases already
-    // consumed internal work. Thus, to accept the OOG as a soft failure would exceed the
-    // aggregate block budget. Therefore the failure must be hard and atomic, even though an
-    // ordinary OracleSlashWindow revert remains soft.
-    let cycle_gas = executor
-        .execute_transaction(cycle_tx)
-        .expect("CycleTick should execute successfully")
-        .tx_gas_used();
-    assert!(cycle_gas <= cycle_signed_gas_limit);
-    let _tee_bootstrap_gas = executor
-        .execute_transaction(tee_bootstrap_tx)
-        .expect("mandatory TeeBootstrap should execute before the non-critical phase")
-        .tx_gas_used();
+        .expect("OracleSlash system tx should be present at index 8");
 
     let receipts_before = executor.receipts().len();
     let cumulative_visible_gas_before = executor.inner.cumulative_tx_gas_used;
@@ -610,26 +610,25 @@ fn gas_13_system_receipt_rpc_gas_delta_is_visible_envelope_gas() {
         .expect("regular tx signer should recover");
     let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
     let chain_spec = test_chain_spec();
-    let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let ctx = block_one_execution_ctx(Some(3), Bytes::new());
-    let mut executor = OutbeBlockExecutor::new(
-        EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
-    );
+    let parent_hash = B256::with_last_byte(0x13);
+    let (ctx, metadata) = block_two_execution_ctx(Some(3), Bytes::new(), proposer, parent_hash);
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, ctx);
 
-    executor
-        .apply_pre_execution_changes()
-        .expect("pre-execution changes should apply");
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution changes should apply");
+    });
     let mut expected_rpc_gas_deltas = Vec::new();
     for tx in begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
+            block_number: 2,
+            parent_hash,
             extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
+            parent_consensus_metadata: Some(metadata),
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
@@ -687,9 +686,9 @@ fn system_gross_work_retains_refunds_without_changing_visible_receipts() {
             tx_type: alloy_consensus::TxType::Legacy,
         };
         let visible = executor
-            .commit_system_transaction(output, 21_000, 0, 21_000)
+            .commit_system_transaction(output)
             .expect("refunded system result commits");
-        assert_eq!(visible.tx_gas_used(), 21_000);
+        assert_eq!(visible.tx_gas_used(), 0);
         assert_eq!(executor.system_tx_execution_gas, count * 80_000);
         assert_eq!(executor.system_tx_gross_gas, count * 100_000);
         assert_eq!(
@@ -698,9 +697,9 @@ fn system_gross_work_retains_refunds_without_changing_visible_receipts() {
                 .last()
                 .expect("receipt")
                 .cumulative_gas_used,
-            count * 21_000
+            0
         );
-        assert_eq!(executor.inner.cumulative_tx_gas_used, count * 21_000);
+        assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
     }
 }
 
@@ -718,9 +717,6 @@ fn system_gross_overflow_rejects_synthetic_failure_atomically() {
             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
             code: 299,
             reason: "gross overflow".into(),
-            visible_base_gas: 21_000,
-            additional_visible_gas: 0,
-            signed_gas_limit: 21_000,
             internal_gas_used: 1,
             internal_gross_gas_used: 1,
         })
@@ -740,55 +736,21 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
 
-    let intrinsic_gas = 21_000;
-    let protocol_precharge = 300_000;
-    let visible_base_gas = intrinsic_gas + protocol_precharge;
-    let additional_visible_gas = 70_000;
     let output = executor
         .push_system_failure_receipt(SystemFailureReceiptInput {
             tx_type: alloy_consensus::TxType::Legacy,
             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
             code: 299,
             reason: "deterministic test failure".into(),
-            visible_base_gas,
-            additional_visible_gas,
-            signed_gas_limit: visible_base_gas + additional_visible_gas,
             internal_gas_used: 123,
             internal_gross_gas_used: 123,
         })
-        .expect("visible envelope plus state-operation gas should fit");
-    let expected_visible = intrinsic_gas + protocol_precharge + additional_visible_gas;
-    assert_eq!(output.tx_gas_used(), expected_visible);
-    assert_eq!(
-        executor.receipts().last().unwrap().cumulative_gas_used,
-        expected_visible
-    );
-    assert_eq!(executor.inner.cumulative_tx_gas_used, expected_visible);
-    assert_eq!(executor.inner.block_regular_gas_used, expected_visible);
-    assert_eq!(executor.inner.block_state_gas_used, expected_visible);
-    assert_eq!(executor.system_tx_execution_gas, 123);
-    assert_eq!(executor.system_tx_gross_gas, 123);
-
-    let receipts_before = executor.receipts().len();
-    let cumulative_before = executor.inner.cumulative_tx_gas_used;
-    let block_limit = executor.inner.evm.block.gas_limit;
-    let remaining = block_limit - cumulative_before;
-    let error = executor
-        .push_system_failure_receipt(SystemFailureReceiptInput {
-            tx_type: alloy_consensus::TxType::Legacy,
-            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            code: 299,
-            reason: "must not commit".into(),
-            visible_base_gas: remaining,
-            additional_visible_gas: 1,
-            signed_gas_limit: remaining + 1,
-            internal_gas_used: 456,
-            internal_gross_gas_used: 456,
-        })
-        .expect_err("State-operation delta must not push cumulative gas past the block limit");
-    assert!(error.to_string().contains("exceeds block gas limit"));
-    assert_eq!(executor.receipts().len(), receipts_before);
-    assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
+        .expect("0-gas failure receipt should commit");
+    assert_eq!(output.tx_gas_used(), 0);
+    assert_eq!(executor.receipts().last().unwrap().cumulative_gas_used, 0);
+    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
+    assert_eq!(executor.inner.block_regular_gas_used, 0);
+    assert_eq!(executor.inner.block_state_gas_used, 0);
     assert_eq!(executor.system_tx_execution_gas, 123);
     assert_eq!(executor.system_tx_gross_gas, 123);
 }
@@ -812,9 +774,6 @@ fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
             code: 299,
             reason: "must not commit past the internal system-work budget".into(),
-            visible_base_gas: 0,
-            additional_visible_gas: 0,
-            signed_gas_limit: 0,
             internal_gas_used: 2,
             internal_gross_gas_used: 2,
         })
@@ -863,15 +822,16 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
     let mut expected_system_deltas = Vec::with_capacity(system_txs.len());
     for tx in system_txs {
         let signed_gas_limit = tx.tx().gas_limit();
+        assert_eq!(signed_gas_limit, 0);
         let visible_gas = executor
             .execute_transaction(tx)
             .expect("system tx should execute")
             .tx_gas_used();
-        assert!(visible_gas <= signed_gas_limit);
+        assert_eq!(visible_gas, 0);
         expected_system_deltas.push(visible_gas);
         visible_system_gas += visible_gas;
     }
-    assert!(visible_system_gas > 0);
+    assert_eq!(visible_system_gas, 0);
 
     let mut previous = 0;
     let receipt_deltas: Vec<u64> = executor
@@ -890,16 +850,16 @@ fn gas_14_executor_finish_sets_visible_system_gas_for_fee_history_input() {
         .expect("final extra_data should encode");
     let (_evm, result) = executor.finish().expect("finish should succeed");
     assert_eq!(
-        result.gas_used, visible_system_gas,
-        "GAS-14: system-only block gas_used must expose visible system envelope gas"
+        result.gas_used, 0,
+        "GAS-14: system-only block gas_used must be 0 under Tempo model"
     );
     assert_eq!(result.receipts.len(), expected_system_deltas.len());
 
     let gas_limit = 30_000_000u64;
     let gas_used_ratio = result.gas_used as f64 / gas_limit as f64;
-    assert!(
-        gas_used_ratio > 0.0 && gas_used_ratio <= 1.0,
-        "GAS-14: fee-history input ratio must expose complete mandatory block-1 system gas, got {gas_used_ratio}"
+    assert_eq!(
+        gas_used_ratio, 0.0,
+        "GAS-14: fee-history input ratio for system-only block must be 0.0, got {gas_used_ratio}"
     );
 }
 
@@ -912,25 +872,24 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
         .expect("regular tx signer should recover");
     let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
     let chain_spec = test_chain_spec();
-    let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let ctx = block_one_execution_ctx(Some(3), Bytes::new());
-    let mut executor = OutbeBlockExecutor::new(
-        EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
-    );
+    let parent_hash = B256::with_last_byte(0x16);
+    let (ctx, metadata) = block_two_execution_ctx(Some(3), Bytes::new(), proposer, parent_hash);
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, ctx);
 
-    executor
-        .apply_pre_execution_changes()
-        .expect("pre-execution changes should apply");
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution changes should apply");
+    });
     let system_txs = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
+            block_number: 2,
+            parent_hash,
             extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
+            parent_consensus_metadata: Some(metadata),
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
@@ -943,6 +902,7 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
             cumulative_receipts: false,
         },
     );
+    assert_eq!(visible_system_gas, 0);
     let user_gas = executor
         .execute_transaction(user_tx)
         .expect("funded regular user tx should execute")
@@ -952,13 +912,9 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
     let (_evm, result) = executor.finish().expect("finish should succeed");
-    assert_eq!(result.gas_used, visible_system_gas + user_gas);
-    assert_eq!(result.receipts.len(), 5);
-    let first_visible_gas = result.receipts[0].cumulative_gas_used;
-    assert!(first_visible_gas >= outbe_primitives::system_tx::SYSTEM_TX_VISIBLE_GAS_FLOOR);
-    assert_eq!(result.receipts[3].cumulative_gas_used, visible_system_gas);
-    assert_eq!(
-        result.receipts[4].cumulative_gas_used,
-        visible_system_gas + user_gas
-    );
+    assert_eq!(result.gas_used, user_gas);
+    assert_eq!(result.receipts.len(), 13);
+    assert_eq!(result.receipts[0].cumulative_gas_used, 0);
+    assert_eq!(result.receipts[11].cumulative_gas_used, 0);
+    assert_eq!(result.receipts[12].cumulative_gas_used, user_gas);
 }

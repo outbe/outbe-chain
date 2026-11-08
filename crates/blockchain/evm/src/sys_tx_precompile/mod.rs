@@ -23,6 +23,8 @@ mod cycle;
 pub(crate) use cycle::CYCLE_LATER_PHASE_RESERVE_GAS;
 
 use context::block_runtime_context_from_storage;
+#[cfg(test)]
+pub(crate) use context::take_observed_runtime_block_contexts;
 pub(crate) use context::{
     current_preloaded_system_tx_context, read_preloaded_finalized_summary,
     with_preloaded_system_tx_context, PreloadedSystemTxContext,
@@ -32,10 +34,10 @@ pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
 
 pub(crate) use crate::finalization::{run_finalization_and_slashing, run_late_finalize_credits};
 
+pub use cycle::enforce_enclave_upgrade_deadline;
 use cycle::run_cycle_tick;
 pub(crate) use cycle::{
-    enforce_enclave_upgrade_deadline, run_hyperlane_liveness_window, run_oracle_slash_window,
-    run_validator_liveness,
+    run_hyperlane_liveness_window, run_oracle_slash_window, run_validator_liveness,
 };
 
 pub(crate) use boundary::run_boundary_outcome;

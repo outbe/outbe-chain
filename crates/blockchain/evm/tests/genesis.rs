@@ -24,8 +24,9 @@
 use alloy_primitives::Address;
 use outbe_evm::system_tx::{
     expected_begin_block_selectors, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR,
-    ORACLE_SLASH_WINDOW_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
+    HYPERLANE_SLASH_SELECTOR, ORACLE_SELECTOR, ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR,
+    STAKING_SELECTOR, UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
 };
 use outbe_gem::GemContract;
 use outbe_intex::IntexContract;
@@ -439,16 +440,23 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let block1 = expected_begin_block_selectors(1, true, false);
     let expected_block1 = vec![
-        CYCLE_TICK_SELECTOR,
         BOUNDARY_OUTCOME_SELECTOR,
-        ORACLE_SLASH_WINDOW_SELECTOR,
-        HOOK_EVENTS_SELECTOR,
+        VALIDATOR_LIVENESS_SELECTOR,
+        VOTE_SELECTOR,
+        UPDATE_SELECTOR,
+        ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
+        REWARDS_SELECTOR,
+        STAKING_SELECTOR,
+        ORACLE_SELECTOR,
+        ORACLE_SLASH_SELECTOR,
+        HYPERLANE_SLASH_SELECTOR,
+        CYCLE_TICK_SELECTOR,
     ];
     assert_eq!(
         block1, expected_block1,
-        "block 1 V2 layout pins to [CycleTick, \
-         BoundaryOutcome, OracleSlashWindow, HookEvents]; BoundaryOutcome is \
-         the genesis DKG VRF snapshot writer and CertifiedParentAccounting is absent"
+        "block 1 with a boundary and no tee bootstrap pins to BoundaryOutcome, \
+         ValidatorLiveness, and the nine begin-block selectors; \
+         CertifiedParentAccounting is absent"
     );
 
     let block2 = expected_begin_block_selectors(2, false, false);

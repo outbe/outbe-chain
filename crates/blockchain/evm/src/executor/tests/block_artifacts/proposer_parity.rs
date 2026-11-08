@@ -15,28 +15,32 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         let mut state = state_with_active_proposer_and_funded_account(proposer, user_sender);
         let chain_spec = test_chain_spec();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer);
+        let parent_hash = B256::with_last_byte(0x11);
+        let (mut ctx, metadata) =
+            block_two_execution_ctx(None, Bytes::new(), proposer, parent_hash);
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {
-                block_number: 1,
-                parent_hash: B256::ZERO,
+                block_number: 2,
+                parent_hash,
                 extra_data: &Bytes::new(),
-                parent_consensus_metadata: None,
+                parent_consensus_metadata: Some(metadata),
                 proposer,
                 bootstrap: BootstrapFixture::StandardForBlock,
             },
         );
-        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), Bytes::new());
-        ctx.proposer_evm_address = Some(proposer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        ctx.inner.tx_count_hint = Some(begin.len() + 1);
         if replay {
             ctx.expected_begin_system_txs = begin.clone();
         }
         let mut executor = config.create_executor(evm, ctx);
 
-        executor
-            .apply_pre_execution_changes()
-            .expect("active pre-execution succeeds");
+        super::with_phase1_verify_disabled(|| {
+            executor
+                .apply_pre_execution_changes()
+                .expect("active pre-execution succeeds");
+        });
         for tx in begin {
             executor
                 .execute_transaction(tx)
@@ -64,7 +68,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     let proposer = run(false);
     let replay = run(true);
     assert_eq!(proposer, replay);
-    assert_eq!(proposer.0.len(), 5);
+    assert_eq!(proposer.0.len(), 13);
 }
 
 /// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two

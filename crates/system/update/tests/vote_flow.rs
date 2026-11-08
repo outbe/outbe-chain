@@ -3,16 +3,13 @@
 //! Complements crate-local unit tests by wiring validator set, vote tallying,
 //! update scheduling/activation, and (where needed) pre-execution hooks in one runtime.
 
-use alloy_primitives::{address, Address, Log, B256, U256};
+use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 
-use outbe_evm::executor::run_outbe_pre_execution_hooks;
-use outbe_evm::handlers;
 use outbe_primitives::addresses::UPDATE_ADDRESS;
-use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
-use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_update::constants::PROTOCOL_VERSION;
@@ -146,13 +143,13 @@ fn schedule_update(
 
 fn run_vote_begin_block(storage: StorageHandle, block_number: u64) {
     let ctx = block_ctx(storage, block_number);
-    VoteLifecycle::begin_block_with_handlers(&ctx, handlers::vote::registry())
+    VoteLifecycle::begin_block_with_handlers(&ctx, outbe_vote::handlers::registry())
         .expect("vote begin block should succeed");
 }
 
 fn run_update_begin_block(storage: StorageHandle, block_number: u64) {
     let ctx = block_ctx(storage, block_number);
-    UpdateLifecycle::begin_block_with_handlers(&ctx, handlers::update::registry())
+    UpdateLifecycle::begin_block_with_handlers(&ctx, outbe_update::handlers::registry())
         .expect("update begin block should succeed");
 }
 
@@ -161,7 +158,9 @@ fn run_pre_execution_hooks(storage: StorageHandle, block_number: u64) {
         .set_block_timestamp(U256::from(block_number))
         .expect("set block timestamp");
     let ctx = block_ctx(storage, block_number);
-    run_outbe_pre_execution_hooks(&ctx, None).expect("pre-exec hooks should succeed");
+    <outbe_vote::lifecycle::VoteModule as ProtocolModule>::begin_block(&ctx).unwrap();
+    <outbe_update::lifecycle::UpdateModule as ProtocolModule>::begin_block(&ctx).unwrap();
+    outbe_evm::sys_tx_precompile::enforce_enclave_upgrade_deadline(&ctx).unwrap();
 }
 
 fn dispatch_get_active_version_u32(storage: StorageHandle) -> u32 {
@@ -200,7 +199,7 @@ fn create_update_proposal_from(
         UPDATE_ADDRESS,
         &payload,
         current,
-        handlers::vote::registry(),
+        outbe_vote::handlers::registry(),
     )
     .unwrap()
 }
@@ -302,7 +301,7 @@ fn lifecycle_events_visible_in_provider() {
 }
 
 #[test]
-fn lifecycle_events_visible_in_hook_events_receipt_partition() {
+fn upgrade_activated_is_on_the_update_receipt() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(100);
     let storage = StorageHandle::new(&mut provider);
@@ -314,24 +313,11 @@ fn lifecycle_events_visible_in_hook_events_receipt_partition() {
     schedule_update(&mut update, proposal_id, PROTOCOL_VERSION, activation, 100);
     run_update_begin_block(storage, activation);
 
-    let hook_logs: Vec<Log> = provider
-        .get_events(UPDATE_ADDRESS)
-        .iter()
-        .map(|data| Log {
-            address: UPDATE_ADDRESS,
-            data: data.clone(),
-        })
-        .collect();
-    let (whitelisted, tracing_only) = partition_hook_events(&hook_logs);
     assert!(
-        whitelisted.iter().any(
-            |log| log.data.topics().first() == Some(&IUpdate::UpgradeActivated::SIGNATURE_HASH)
-        ),
-        "whitelisted update hook events must include UpgradeActivated for HookEvents receipt"
-    );
-    assert!(
-        tracing_only.is_empty(),
-        "update activation events must not be tracing-only"
+        provider.get_events(UPDATE_ADDRESS).iter().any(|log| {
+            log.topics().first() == Some(&IUpdate::UpgradeActivated::SIGNATURE_HASH)
+        }),
+        "Update begin-block logs are published on the update receipt"
     );
 }
 
@@ -594,7 +580,7 @@ fn executor_runs_vote_before_update() {
             UPDATE_ADDRESS,
             &encode_schedule_update_json(V1_3, proposal_activation, ""),
             created,
-            handlers::vote::registry(),
+            outbe_vote::handlers::registry(),
         )
         .unwrap();
     for (voter, off) in [(VOTER_A, 1), (VOTER_B, 2), (VOTER_C, 3)] {

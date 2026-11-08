@@ -6,10 +6,7 @@ use super::{
 use crate::{
     config::{OutbeBlockExecutionCtx, OutbeEvmConfig},
     signer::OutbeEvmSigner,
-    system_tx::{
-        build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_intrinsic_gas,
-        SystemTx,
-    },
+    system_tx::{build_unsigned_system_tx, system_tx_intrinsic_gas, SystemTx},
 };
 use alloy_consensus::{TxEip1559, TxEip7702, TxReceipt as _};
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip7702::Authorization};
@@ -33,6 +30,7 @@ use fixtures::{
     test_register_waiting, test_regular_tx, BeginBlockFixture, BootstrapFixture, CHAIN_ID, OWNER,
     TEST_BLOCK_TIMESTAMP_BASE,
 };
+pub(in crate::executor) use fixtures::{block_two_execution_ctx, seed_valid_tee_nodes};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_nod::{precompile::INod, NodContract, NodItemState};
 use outbe_primitives::addresses::{
@@ -43,7 +41,6 @@ use outbe_primitives::addresses::{
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::consensus::{ConsensusExecutionBridge, GenesisValidator, GenesisValidators};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
-use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::reshare_artifact::{
     encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
     OutbeBlockArtifacts,

@@ -132,6 +132,21 @@ pub(crate) fn record_detached_trace_system_gas(gross_gas: u64) -> Result<(), &'s
     })
 }
 
+/// Accumulates user-transaction gas in the detached trace context so `EndBlock`
+/// system transactions replayed via `TxTracer` observe the exact `MidBlock`
+/// `user_gas_used` snapshot.
+pub(crate) fn record_detached_trace_user_gas(user_gas: u64) {
+    DETACHED_TRACE_WITNESS.with(|slot| {
+        if let Some(context) = slot
+            .borrow_mut()
+            .as_mut()
+            .and_then(|trace| trace.meta.system_tx_context.as_mut())
+        {
+            context.user_gas_used = context.user_gas_used.saturating_add(user_gas);
+        }
+    });
+}
+
 pub(crate) fn synthetic_trace_success(
     gas_limit: u64,
     logs: Vec<Log>,

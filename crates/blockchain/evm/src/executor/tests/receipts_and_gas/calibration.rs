@@ -581,7 +581,7 @@ fn insufficient_aggregate_headroom_is_critical_not_trigger_deferral() {
     let before = executor.system_tx_gross_gas;
     outbe_cycle::runtime::take_trigger_gas_samples();
     outbe_cycle::runtime::take_cycle_gas_samples();
-    let cycle = begin_system_txs_for_test(
+    let mut txs = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
             block_number: 1,
@@ -591,8 +591,13 @@ fn insufficient_aggregate_headroom_is_critical_not_trigger_deferral() {
             proposer,
             bootstrap: BootstrapFixture::explicit(Some(sample_tee_bootstrap_payload_at(1, 1))),
         },
-    )
-    .remove(0);
+    );
+    let cycle = txs.pop().expect("CycleTick is last in begin prefix");
+    let cycle_body_index = u8::try_from(txs.len()).unwrap();
+    executor.execute_outbe_block_hooks = false;
+    executor.system_tx_phase_cursor = crate::system_tx::SystemTxPhase::CycleTick {
+        body_index: cycle_body_index,
+    };
     let error = executor
         .execute_transaction(cycle)
         .expect_err("mandatory reservations cannot fit");
@@ -651,7 +656,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
             chain_count * 2
         ),
         &[(proposer, dummy_pubkey(0xa2))],
-        (1, timestamp),
+        (if chain_count > 16 { 2 } else { 1 }, timestamp),
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
             let day = EmissionDate::new(20240101);

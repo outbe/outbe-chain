@@ -66,6 +66,14 @@ impl PreloadedSystemTxContext {
 thread_local! {
     static PRELOADED_SYSTEM_TX_CONTEXT: std::cell::RefCell<Option<PreloadedSystemTxContext>> =
         const { std::cell::RefCell::new(None) };
+    #[cfg(test)]
+    static OBSERVED_RUNTIME_BLOCK_CONTEXTS: std::cell::RefCell<Vec<BlockContext>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_observed_runtime_block_contexts() -> Vec<BlockContext> {
+    OBSERVED_RUNTIME_BLOCK_CONTEXTS.with(|slot| std::mem::take(&mut *slot.borrow_mut()))
 }
 
 /// Runs `f` with explicit non-calldata context visible to the system
@@ -134,20 +142,21 @@ pub(super) fn block_runtime_context_from_storage(
         Vec::new()
     };
 
-    Ok(BlockRuntimeContext::new(
-        BlockContext {
-            block_gas_limit,
-            user_gas_used,
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash,
-            genesis_timestamp: storage.genesis_timestamp()?,
-            proposer,
-            validators,
-        },
-        storage,
-    ))
+    let block_ctx = BlockContext {
+        block_gas_limit,
+        user_gas_used,
+        block_number,
+        timestamp,
+        chain_id,
+        genesis_hash,
+        genesis_timestamp: storage.genesis_timestamp()?,
+        proposer,
+        validators,
+    };
+    #[cfg(test)]
+    OBSERVED_RUNTIME_BLOCK_CONTEXTS.with(|slot| slot.borrow_mut().push(block_ctx.clone()));
+
+    Ok(BlockRuntimeContext::new(block_ctx, storage))
 }
 
 pub(crate) fn read_preloaded_finalized_summary(

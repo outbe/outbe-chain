@@ -1,3 +1,12 @@
+//! Builder coverage for the 4-stage system-transaction schedule.
+//!
+//! `CONSENSUS_ORDER` is CertifiedParentAccounting, LateFinalizeCredits,
+//! BoundaryOutcome, TeeBootstrap, ValidatorLiveness, and RadiclePublication.
+//! `BEGIN_BLOCK_ORDER` is Vote, Update, EnclaveUpgradeDeadline, Rewards,
+//! Staking, Oracle, OracleSlash, HyperlaneSlash, and CycleTick.
+//! `END_BLOCK_ORDER` is NodFactory, GemFactory, IntexFactory, CredisFactory,
+//! and GemCleanup.
+
 use std::sync::Arc;
 
 use alloy_evm::{block::CommitChanges, Evm as _, RecoveredTx};
@@ -580,8 +589,8 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
 // block 1 mandatorily carries a `BoundaryOutcome` (genesis DKG boundary).
 // So this test:
 // 1. builds a valid block 2 whose begin-zone is the standard
-//    `CertifiedParentAccounting` (Phase 1) + `CycleTick` + `OracleSlashWindow`
-//    sequence.
+//    CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness, and the
+//    nine BEGIN_BLOCK_ORDER kinds. END_BLOCK_ORDER follows user transactions.
 // 2. proposer-builds it through `builder_for_next_block` + `finish`.
 // 3. re-executes it on the validator path via `batch_executor` / `execute_one`.
 // 4. asserts the two state roots match.
@@ -698,13 +707,13 @@ fn assert_height2_finalization_parity(include_user: bool) {
                     None,
                 )
                 .expect("begin-zone system txs must build");
-            // Base block: no BoundaryOutcome, so the begin-zone is exactly
-            // CertifiedParentAccounting + LateFinalizeCredits + CycleTick +
-            // OracleSlashWindow + HookEvents.
+            // Base block: no BoundaryOutcome and no publication. Begin zone is
+            // CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness,
+            // then the nine begin-block kinds.
             assert_eq!(
                 begin_system_txs.len(),
-                5,
-                "block 2 base-block begin-zone must carry the five mandatory phases",
+                12,
+                "block 2 base-block begin-zone must carry the twelve mandatory phases",
             );
             for tx in begin_system_txs {
                 builder

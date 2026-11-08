@@ -183,7 +183,13 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
 #[test]
 fn end_zone_walks_receive_only_process_ready() {
     let ready = metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP);
-    for input in [SystemTx::CallEventProcessing, SystemTx::CleanupProcessing] {
+    for input in [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
         let entitlements = system_entitlements(input);
         assert!(entitlements.expects(Purpose::CycleLifecycle, ready));
         assert!(!entitlements.expects(
@@ -247,7 +253,7 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
     );
 
     assert_eq!(
-        system_entitlements(SystemTx::OracleSlashWindow),
+        system_entitlements(SystemTx::OracleSlash),
         MetadosisMutationEntitlements::NONE,
     );
 }

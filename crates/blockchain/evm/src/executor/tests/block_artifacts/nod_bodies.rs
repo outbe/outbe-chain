@@ -129,7 +129,7 @@ fn execute_nod_block(
     }
     executor.apply_end_block_phase()?;
     let end_txs = executor.take_staged_end_block_txs();
-    assert_eq!(end_txs.len(), 2);
+    assert_eq!(end_txs.len(), 5);
     visible_envelopes.extend(end_txs.iter().map(|tx| tx.tx().gas_limit()));
     signed_body.extend(end_txs);
     let receipts = executor.receipts().to_vec();
@@ -213,8 +213,8 @@ fn assert_call_event_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
                     && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
             })
         })
-        .expect("CallEventProcessing body mutation receipt");
-    assert_eq!(body_receipt_index, receipts.len() - 2);
+        .expect("NodFactory body mutation receipt");
+    assert_eq!(body_receipt_index, receipts.len() - 5);
     assert!(receipts[body_receipt_index].success);
     let previous_cumulative = body_receipt_index
         .checked_sub(1)
@@ -222,16 +222,8 @@ fn assert_call_event_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
     let body_receipt_gas = receipts[body_receipt_index]
         .cumulative_gas_used
         .saturating_sub(previous_cumulative);
-    let call_intrinsic_gas =
-        system_tx_intrinsic_gas(SystemTx::CallEventProcessing.encode().unwrap().as_ref()).unwrap();
-    assert!(
-        body_receipt_gas > call_intrinsic_gas,
-        "end-zone native storage work must be charged to receipt-visible gas"
-    );
-    assert!(
-        body_receipt_gas <= envelopes[body_receipt_index],
-        "receipt-visible call gas must not exceed its signed gas limit"
-    );
+    assert_eq!(body_receipt_gas, 0);
+    assert_eq!(envelopes[body_receipt_index], 0);
     assert_eq!(
         gas_used,
         receipts.last().unwrap().cumulative_gas_used,
