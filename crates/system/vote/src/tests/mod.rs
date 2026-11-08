@@ -245,6 +245,7 @@ mod error_bond;
 mod guards;
 mod precompile;
 mod targets;
+mod wiring;
 
 fn dummy_pubkey(seed: u8) -> [u8; 48] {
     let mut pk = [0u8; 48];

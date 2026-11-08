@@ -1,10 +1,21 @@
 //! Block lifecycle hook for scheduled update activation.
 
-use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-use crate::handlers::UpgradeHandlerRegistry;
+use crate::handlers::{self, UpgradeHandlerRegistry};
 use crate::schema::Update;
+
+/// Protocol module for `SystemTxKind::Update` (`OSUP`).
+pub struct UpdateModule;
+
+impl ProtocolModule for UpdateModule {
+    const NAME: &'static str = "update";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        UpdateLifecycle::begin_block_with_handlers(ctx, handlers::registry())
+    }
+}
 
 /// Lifecycle hooks for runtime processing.
 pub struct UpdateLifecycle;
@@ -13,13 +24,8 @@ impl UpdateLifecycle {
     /// Activates each scheduled update when the block height reaches its activation height.
     /// Vote owns proposal tally. This hook does not tally proposals.
     ///
-    /// Unlike other lifecycle modules, Update does not implement
-    /// [`BlockLifecycle`](outbe_primitives::block::BlockLifecycle) directly. Callers
-    /// must pass the node-level upgrade handler registry explicitly. In production,
-    /// this is `outbe_evm::handlers::update::registry()`.
-    ///
-    /// The registry is owned outside `outbe-update` so migration handlers can live
-    /// in their owning crates without creating a dependency cycle.
+    /// In production, [`UpdateModule::begin_block`] invokes this with
+    /// [`crate::handlers::registry()`].
     pub fn begin_block_with_handlers(
         ctx: &BlockRuntimeContext,
         registry: &UpgradeHandlerRegistry,

@@ -1,19 +1,22 @@
 //! Vote target wiring tests: L2 registration and public bonded admission.
 
-use super::*;
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
 use outbe_l2registry::L2RegistryContract;
-use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
-use outbe_primitives::addresses::VOTE_ADDRESS;
-use outbe_primitives::block::BlockContext;
+use outbe_primitives::addresses::{L2_REGISTRY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, VOTE_ADDRESS};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::stablecoin::{encode_canonical_stablecoin_create, StablecoinCreatePayload};
+use outbe_primitives::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_stablecoinfactory::StablecoinFactoryContract;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
-use outbe_vote::precompile::IVote;
-use outbe_vote::schema::{BondState, Vote};
+
+use crate::abi::IVote;
+use crate::constants::VOTING_WINDOW_BLOCKS;
+use crate::handlers::{registry, TargetAdmission, TargetExecutionOutcome, VoteTargetContext};
+use crate::lifecycle::VoteModule;
+use crate::schema::{BondState, ProposalStatus, Vote};
 
 mod factory;
 mod vaultrouter;
@@ -344,7 +347,7 @@ fn factory_public_admission_atomically_records_reservation_and_bond() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw,
@@ -375,7 +378,7 @@ fn factory_public_admission_atomically_records_reservation_and_bond() {
     let mut vote = Vote::new(mismatch_storage.clone());
     assert!(vote
         .create_proposal_with_value(
-            outbe_vote::ProposalSubmission {
+            crate::ProposalSubmission {
                 proposer: Address::repeat_byte(0x22),
                 target_module: STABLECOIN_FACTORY_ADDRESS,
                 payload: raw,

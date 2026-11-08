@@ -166,3 +166,19 @@ impl VoteError {
         .into()
     }
 }
+
+impl From<outbe_primitives::vote_target::VoteTargetError> for VoteError {
+    fn from(error: outbe_primitives::vote_target::VoteTargetError) -> Self {
+        use outbe_primitives::vote_target::VoteTargetError;
+        match error {
+            VoteTargetError::InvalidProposalStatus => Self::InvalidProposalStatus,
+            VoteTargetError::InvalidElectorate => Self::InvalidElectorate,
+            VoteTargetError::InvalidPayload => Self::InvalidPayload,
+            VoteTargetError::UnknownTargetModule => Self::UnknownTargetModule,
+            VoteTargetError::DuplicateTargetModule => Self::DuplicateTargetModule,
+            VoteTargetError::StoredPayloadInvalid { module } => {
+                Self::StoredPayloadInvalid { module }
+            }
+        }
+    }
+}

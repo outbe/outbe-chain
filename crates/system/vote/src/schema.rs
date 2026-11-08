@@ -1,34 +1,13 @@
 use crate::errors::VoteError;
 use alloy_primitives::{Address, B256, U256};
-use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::VOTE_ADDRESS;
 use outbe_primitives::storage::{Storable, StorableType};
 
-/// Lifecycle status of a generic proposal.
-///
-/// Stored discriminants stay stable and intentionally differ from the compact ABI
-/// enum. Convert at the precompile boundary instead of casting between them.
-/// The removed reserved status is invalid rather than reused: old records must
-/// never acquire a different meaning when the public enum is compacted.
-///
-/// Voting has two outcomes after the inclusive `voting_deadline_height`:
-/// - Quorum reached: dispatch to the target; successful application is `Approved`.
-/// - Quorum not reached: the proposal is `Expired`.
-///
-/// `Pending` is intermediate. A target-declared execution failure is `Error`,
-/// not a rejection by the voters. It is terminal, leaves the pending index and
-/// refunds its bond in the same pass; the module does not retry it.
-///
-/// There is no manual cancellation or separate conflict-rejection transition.
-/// Further state, such as a scheduled upgrade, belongs to the target module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ProposalStatus {
-    Pending = 0,
-    Approved = 1,
-    Expired = 3,
-    Error = 4,
-}
+pub use outbe_primitives::vote_target::{
+    read_proposal_status, read_vote_proposal, vote_proposals, ProposalRecord,
+    ProposalRecordEntryExt, ProposalRecordView, ProposalStatus, VOTE_PROPOSALS_BASE_SLOT,
+};
 
 /// State of the native bond of a proposal.
 ///
@@ -55,26 +34,6 @@ impl BondState {
     }
 }
 
-impl ProposalStatus {
-    const VARIANTS: [Self; 4] = [Self::Pending, Self::Approved, Self::Expired, Self::Error];
-
-    pub fn from_u8(value: u8) -> std::result::Result<Self, VoteError> {
-        decode_stored_u8(value, &Self::VARIANTS, Self::to_u8)
-            .ok_or(VoteError::InvalidProposalStatus)
-    }
-
-    pub const fn to_u8(self) -> u8 {
-        self as u8
-    }
-
-    /// Returns `true` when the proposal leaves the bounded pending index.
-    /// `Error` is terminal. The module never retries a target-execution failure.
-    /// It refunds the bond when it records the `Error` status.
-    pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Approved | Self::Expired | Self::Error)
-    }
-}
-
 /// Finds the variant with this stored byte. Variant order does not set its value.
 pub(crate) fn decode_stored_u8<T: Copy>(
     value: u8,
@@ -87,45 +46,6 @@ pub(crate) fn decode_stored_u8<T: Copy>(
         .find(|variant| stored(*variant) == value)
 }
 
-/// Generic proposal record keyed by `id`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = proposer)]
-pub struct ProposalRecord {
-    #[key]
-    pub id: U256,
-
-    #[attribute(order = 0)]
-    pub proposer: Address,
-
-    #[attribute(order = 1)]
-    pub target_module: Address,
-
-    #[attribute(order = 2)]
-    pub payload: String,
-
-    #[attribute(order = 3)]
-    pub created_height: u64,
-
-    #[attribute(order = 4)]
-    pub voting_deadline_height: u64,
-
-    // TODO: Extend storage to support enum fields?
-    #[attribute(order = 5)]
-    pub status: u8, // ProposalStatus
-}
-
-impl ProposalRecord {
-    /// Reads the typed proposal status from storage.
-    pub fn proposal_status(&self) -> std::result::Result<ProposalStatus, VoteError> {
-        ProposalStatus::from_u8(self.status)
-    }
-
-    /// Writes the typed proposal status to storage.
-    pub fn set_proposal_status(&mut self, status: ProposalStatus) {
-        self.status = status.to_u8();
-    }
-}
-
 /// Vote record stored in each proposal's ordered vote list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoteRecord {
@@ -135,7 +55,6 @@ pub struct VoteRecord {
     pub block_number: u64,
 }
 
-// TODO: Can we modify `#[storage_record]` macro to generate `Storable`?
 impl StorableType for VoteRecord {
     const SLOTS: usize = 1;
 }

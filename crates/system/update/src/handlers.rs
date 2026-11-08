@@ -1,6 +1,4 @@
 //! Upgrade migration handler types and registry lookup.
-//!
-//! The concrete handler list is owned by the node execution layer (`outbe-evm`).
 
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
@@ -45,4 +43,19 @@ impl UpgradeHandlerRegistry {
             .copied()
             .filter(move |handler| handler.version() == version)
     }
+}
+
+/// Active upgrade handlers for this node binary.
+///
+/// Append entries when a protocol version requires deterministic storage
+/// migration at activation height. Versions without a handler activate as
+/// version-only switches.
+pub static ACTIVE_UPGRADE_HANDLERS: UpgradeHandlers = &[];
+
+static REGISTRY: UpgradeHandlerRegistry = UpgradeHandlerRegistry::new(ACTIVE_UPGRADE_HANDLERS);
+
+/// Returns the compile-time upgrade handler registry for executor and startup wiring.
+#[must_use]
+pub fn registry() -> &'static UpgradeHandlerRegistry {
+    &REGISTRY
 }

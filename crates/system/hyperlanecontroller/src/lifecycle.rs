@@ -60,3 +60,15 @@ pub fn run_liveness_window(ctx: &BlockRuntimeContext) {
         ),
     }
 }
+
+/// Begin-block liveness for the hyperlane slash window.
+pub struct HyperlaneModule;
+
+impl outbe_primitives::block::ProtocolModule for HyperlaneModule {
+    const NAME: &'static str = "hyperlane_slash";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
+        run_liveness_window(ctx);
+        Ok(())
+    }
+}

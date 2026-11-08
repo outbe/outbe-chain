@@ -999,12 +999,37 @@ mod liveness {
     }
 }
 
+#[test]
+fn hyperlane_module_begin_block_runs_liveness_window() {
+    use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1_000);
+    StorageHandle::enter(&mut provider, |storage| {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: 1_000,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        );
+        <crate::HyperlaneModule as ProtocolModule>::begin_block(&ctx).unwrap();
+    });
+}
+
 mod vote_target {
     use super::*;
     use crate::sol_ext::IHyperlaneRouter;
     use crate::HyperlaneVoteTarget;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+    use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
     const APPROVED_AT: u64 = 30;
     const ARBITRUM: u32 = 42_161;

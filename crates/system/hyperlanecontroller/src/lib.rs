@@ -26,6 +26,7 @@ mod liveness;
 mod runtime;
 mod vote_target;
 
+pub use lifecycle::HyperlaneModule;
 pub use liveness::{
     checkpoint_digest, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
 };

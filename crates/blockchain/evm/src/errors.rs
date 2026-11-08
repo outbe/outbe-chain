@@ -270,22 +270,7 @@ impl SystemTxExpectationError {
     }
 }
 
-/// Errors that occur when the handler checks a stablecoin vote target.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum StablecoinVoteTargetError {
-    #[error("non-canonical stablecoin payload")]
-    NonCanonicalPayload,
-    #[error("stablecoin proposer must equal issuer")]
-    ProposerMustEqualIssuer,
-    #[error("invalid stablecoin identity")]
-    InvalidIdentity,
-}
-
-impl From<StablecoinVoteTargetError> for PrecompileError {
-    fn from(error: StablecoinVoteTargetError) -> Self {
-        Self::Revert(error.to_string())
-    }
-}
+pub use outbe_stablecoinfactory::StablecoinVoteTargetError;
 
 /// Errors that occur when a route dispatches a precompile call.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

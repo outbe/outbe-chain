@@ -1,13 +1,13 @@
 //! Network decisions on exact patch revisions; no Git, signing or network I/O.
 
 use alloy_primitives::{Address, U256};
+use outbe_primitives::vote_target::{
+    read_vote_proposal, ProposalStatus, TargetElectorate, TargetExecutionOutcome, VoteTarget,
+    VoteTargetContext,
+};
 use outbe_primitives::{
     addresses::CODE_REGISTRY_ADDRESS, block::BlockRuntimeContext, error::Result,
     storage::StorageHandle,
-};
-use outbe_vote::{
-    handlers::{TargetElectorate, TargetExecutionOutcome, VoteTarget, VoteTargetContext},
-    schema::{ProposalStatus, Vote},
 };
 
 use crate::{
@@ -56,9 +56,7 @@ impl VoteTarget for CodePatchVoteTarget {
         context: VoteTargetContext,
     ) -> Result<TargetExecutionOutcome> {
         let subject = PatchVotePayloadV1::decode(payload)?;
-        let proposal = Vote::new(ctx.storage.clone())
-            .proposals
-            .get(proposal_id)?
+        let proposal = read_vote_proposal(ctx.storage.clone(), proposal_id)?
             .ok_or(CodeRegistryError::ApprovalProposalMismatch)?;
         if proposal.target_module != CODE_REGISTRY_ADDRESS
             || proposal.payload.as_bytes() != payload

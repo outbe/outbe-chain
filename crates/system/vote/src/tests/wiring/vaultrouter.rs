@@ -1,7 +1,7 @@
 use super::*;
+use crate::{handlers::TargetElectorate, ProposalSubmission};
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::{api::IVaultRouter, VaultRouterContract};
-use outbe_vote::{handlers::TargetElectorate, ProposalSubmission};
 
 fn vault_payload(operation: &str, vault: Address) -> String {
     match operation {

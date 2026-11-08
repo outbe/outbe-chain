@@ -1,10 +1,21 @@
 //! Block lifecycle hook for proposal tally.
 
-use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-use crate::handlers::VoteTargetRegistry;
+use crate::handlers::{self, VoteTargetRegistry};
 use crate::schema::Vote;
+
+/// Protocol module for `SystemTxKind::Vote` (`OSVT`).
+pub struct VoteModule;
+
+impl ProtocolModule for VoteModule {
+    const NAME: &'static str = "vote";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        VoteLifecycle::begin_block_with_handlers(ctx, handlers::registry())
+    }
+}
 
 /// Lifecycle hooks for vote runtime processing.
 pub struct VoteLifecycle;
@@ -12,9 +23,7 @@ pub struct VoteLifecycle;
 impl VoteLifecycle {
     /// Tally expired proposals and dispatch approved ones at the current block.
     ///
-    /// The registry is owned outside `outbe-vote` so target handlers can live
-    /// in their owning crates without a dependency cycle. In production, the
-    /// registry is `outbe_evm::handlers::vote::registry()`.
+    /// In production, the registry is [`crate::handlers::registry()`].
     pub fn begin_block_with_handlers(
         ctx: &BlockRuntimeContext,
         registry: &VoteTargetRegistry,
