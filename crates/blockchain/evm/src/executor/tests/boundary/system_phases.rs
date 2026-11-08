@@ -159,6 +159,8 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
     drop(executor);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -299,6 +301,8 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     drop(executor);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 2,
         timestamp: 2,
         chain_id: CHAIN_ID,
@@ -362,6 +366,8 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     let mut setup_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
         &mut state,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: 1,
             chain_id: CHAIN_ID,
@@ -471,6 +477,8 @@ fn oracle_slash_window_runs_after_boundary_activation() {
     drop(executor);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -562,6 +570,8 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
                 .unwrap();
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 100,
                     timestamp: TEST_BLOCK_TIMESTAMP_BASE,
                     chain_id: CHAIN_ID,

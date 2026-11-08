@@ -23,6 +23,8 @@ fn cleanup_progress_does_not_change_the_next_auctions_gas_quote() {
 fn poll(s: &StorageHandle<'_>) {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: NOW,
             chain_id: CHAIN_ID,

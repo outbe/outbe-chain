@@ -167,6 +167,8 @@ pub(super) fn run() {
     let expected_token = expected.token;
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
     let block_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: finalization_block,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,

@@ -122,6 +122,8 @@ fn gate(p: &mut HashMapStorageProvider) -> Result<()> {
     StorageHandle::enter(p, |s| {
         runtime::tick_gate(&BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: CLEAR_AT,
                 chain_id: 1,

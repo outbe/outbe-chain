@@ -128,6 +128,8 @@ fn prepare_boundary(boundary: Boundary) -> eyre::Result<PreparedBoundary> {
     let mut state =
         state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
     let seed_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: CREATION_BLOCK,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -463,6 +465,8 @@ fn observe_contracts(
         expected_token_id,
     } = *fixture;
     let read_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: finalization_block,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,

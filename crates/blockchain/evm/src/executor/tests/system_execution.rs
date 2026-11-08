@@ -89,6 +89,8 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     drop(executor);
 
     let block = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 2,
         timestamp: block_ts + 1,
         chain_id: CHAIN_ID,
@@ -701,6 +703,8 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         drop(executor);
 
         let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: block_timestamp,
             chain_id: CHAIN_ID,
@@ -956,6 +960,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
         .with_bundle_update()
         .build();
     let setup = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 1_000,
         chain_id: CHAIN_ID,
@@ -1004,6 +1010,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     .expect("unbonding fixture");
 
     let run = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 2_000,
         chain_id: CHAIN_ID,
@@ -1054,6 +1062,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     );
 
     let read = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 2_000,
         chain_id: CHAIN_ID,
@@ -1094,6 +1104,8 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         .with_bundle_update()
         .build();
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 84,
         chain_id: CHAIN_ID,
@@ -1129,6 +1141,8 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     );
 
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 96,
         chain_id: CHAIN_ID,
@@ -1165,6 +1179,8 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         .with_bundle_update()
         .build();
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 84,
         chain_id: CHAIN_ID,

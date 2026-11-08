@@ -64,6 +64,7 @@ pub mod tribute_day_encryption;
 pub mod tribute_encryption;
 pub mod units;
 pub mod validators;
+pub mod vote_target;
 pub mod wwd_entity_id;
 pub mod zero_fee;
 

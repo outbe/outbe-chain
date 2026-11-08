@@ -6,6 +6,8 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, next_date_key, Worldwide
 fn advance_at(storage: &StorageHandle<'_>, timestamp: u64, genesis_timestamp: u64) {
     storage.set_block_timestamp(U256::from(timestamp)).unwrap();
     let block = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: storage.block_number().unwrap(),
         timestamp,
         chain_id: CHAIN_ID,
@@ -105,6 +107,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         advance_at(&storage, genesis_ts, genesis_ts);
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: genesis_ts,
                 chain_id: CHAIN_ID,
@@ -155,6 +159,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         let metadosis = MetadosisContract::new(storage.clone());
         let before_start = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: expected_metadosis_start - 1,
                 chain_id: CHAIN_ID,
@@ -173,6 +179,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
 
         let at_start = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: expected_metadosis_start,
                 chain_id: CHAIN_ID,
@@ -199,6 +207,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         arm_reference_price(&storage, restart_ts);
         let restart_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 4,
                 timestamp: restart_ts,
                 chain_id: CHAIN_ID,
@@ -218,6 +228,8 @@ fn oip_00335_schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_
         storage.set_block_timestamp(U256::from(restart_ts)).unwrap();
         let aligned = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: restart_ts,
                 chain_id: CHAIN_ID,
@@ -267,6 +279,8 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: genesis_before_noon,
                 chain_id: CHAIN_ID,
@@ -306,6 +320,8 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .unwrap();
         let empty_due_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: empty_due_ts,
                 chain_id: CHAIN_ID,
@@ -335,6 +351,8 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
             .unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: genesis_after_noon,
                 chain_id: CHAIN_ID,
@@ -367,6 +385,8 @@ fn first_wwd_for_genesis_splits_3_or_4_empty_emission_days_across_noon_utc() {
         let catchup_ts = date_key_to_utc_timestamp(20261011).unwrap() + 12 * 3_600;
         storage.set_block_timestamp(U256::from(catchup_ts)).unwrap();
         let catchup_block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: storage.block_number().unwrap(),
             timestamp: catchup_ts,
             chain_id: CHAIN_ID,
@@ -497,6 +517,8 @@ fn gap_ed05_wwd_without_price_runs_as_empty_day() {
         storage.set_block_timestamp(U256::from(settle_ts)).unwrap();
         let ctx_06 = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: settle_ts,
                 chain_id: CHAIN_ID,
@@ -594,6 +616,8 @@ fn zero_metadosis_limit_cancels_day_with_reason_one_and_preserves_cancelled_stat
         storage.set_block_timestamp(U256::from(due_ts)).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: storage.block_number().unwrap(),
                 timestamp: due_ts,
                 chain_id: CHAIN_ID,

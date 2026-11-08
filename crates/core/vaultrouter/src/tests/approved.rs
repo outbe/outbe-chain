@@ -239,6 +239,8 @@ fn apply_uses_live_metadata_not_informational_proposal_declarations() {
         );
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 0,
                 timestamp: 1_700_000_000,
                 chain_id: CHAIN_ID,

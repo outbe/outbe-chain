@@ -75,6 +75,8 @@ fn historical_testnet_schedule_keeps_its_recorded_activation_height() {
     for height in [activation - 1, activation] {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: height,
                 timestamp: 0,
                 chain_id: TESTNET_CHAIN_ID,

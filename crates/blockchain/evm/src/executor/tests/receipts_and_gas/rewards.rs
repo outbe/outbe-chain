@@ -120,6 +120,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: TEST_BLOCK_TIMESTAMP_BASE,
                 chain_id: CHAIN_ID,
@@ -272,6 +274,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         drop(executor);
 
         let read = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
             chain_id: CHAIN_ID,
@@ -405,6 +409,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         let mut provider = super::super::DirectStorageProvider::new(
             executor.evm_mut().db_mut(),
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number,
                 timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
                 chain_id: CHAIN_ID,
@@ -438,6 +444,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     let mut provider = super::super::DirectStorageProvider::new(
         &mut state,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
             chain_id: CHAIN_ID,

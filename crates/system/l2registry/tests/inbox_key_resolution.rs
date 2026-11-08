@@ -195,6 +195,8 @@ fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
 /// zero bytes selects live inbox resolution, in the same state the EVM reads.
 fn register(db: &mut CacheDB<EmptyDB>, chain_id: u64, l1_address: Address, public_key: &[u8]) {
     let context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: NOW,
         chain_id: CHAIN_ID,

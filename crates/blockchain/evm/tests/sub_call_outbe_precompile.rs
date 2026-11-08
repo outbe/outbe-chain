@@ -204,6 +204,8 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     );
     let mut database = CacheDB::new(EmptyDB::default());
     let block = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: outbe_primitives::chain::CHAIN_ID,

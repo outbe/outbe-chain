@@ -38,6 +38,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: midnight,
                 chain_id: 1,
@@ -61,6 +63,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: midnight,
                 chain_id: 1,
@@ -91,6 +95,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: midnight,
                 chain_id: 1,

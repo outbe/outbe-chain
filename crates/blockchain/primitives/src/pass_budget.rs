@@ -15,7 +15,6 @@ pub struct PassBudget {
     visits: u32,
     writes: u32,
     written: bool,
-    gas_metered: bool,
 }
 
 /// This structure stores the allowance and the only day selected for a pass at this block height.
@@ -91,7 +90,6 @@ impl BlockAllowance {
                 visits,
                 writes,
                 written,
-                gas_metered: false,
             },
         }))
     }
@@ -107,22 +105,13 @@ impl PassBudget {
             visits,
             writes,
             written: false,
-            gas_metered: false,
         }
     }
 
-    /// Switches this budget from fixed visit/write counts to end-block gas metering,
-    /// unless the budget has already been exhausted via [`Self::stop`].
-    pub fn enable_gas_metering(&mut self) {
-        if !(self.visits == 0 && self.writes == 0 && self.written) {
-            self.gas_metered = true;
-        }
-    }
+    /// Retained as a temporary no-op for Wave 2 callers (`oracle`, `intexfactory`) until T3/T4.
+    pub fn enable_gas_metering(&mut self) {}
 
     pub fn visit(&mut self) -> bool {
-        if self.gas_metered {
-            return true;
-        }
         take(&mut self.visits, 1)
     }
 
@@ -136,7 +125,6 @@ impl PassBudget {
         self.visits = 0;
         self.writes = 0;
         self.written = true;
-        self.gas_metered = false;
     }
 
     /// Whether a batch of `count` writes that must not split would be taken now.
@@ -147,10 +135,6 @@ impl PassBudget {
     /// Takes `count` writes at once. A batch that must not split passes whole when
     /// nothing was written yet, so a batch wider than the budget still gets a block.
     pub fn admit_writes(&mut self, count: u32) -> bool {
-        if self.gas_metered {
-            self.written |= count != 0;
-            return true;
-        }
         if !self.fits_writes(count) {
             return false;
         }
@@ -161,9 +145,6 @@ impl PassBudget {
 
     /// Whether a walk whose next visit may write has to stop for this block.
     pub fn spent(&self) -> bool {
-        if self.gas_metered {
-            return false;
-        }
         self.visits == 0 || !self.fits_writes(1)
     }
 
@@ -275,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn gas_stop_persists_and_disables_the_first_write_exception() {
+    fn stop_persists_and_disables_the_first_write_exception() {
         let mut allowance = BlockAllowance::new(7, 20260101);
         allowance.budget.stop();
         let mut resumed = BlockAllowance::for_block(allowance.pack(), 7, 20260101).unwrap();
@@ -286,28 +267,5 @@ mod tests {
             .unwrap()
             .budget
             .spent());
-    }
-
-    #[test]
-    fn gas_stopped_unit_in_end_block_exhausts_allowance_within_same_block() {
-        let mut allowance = BlockAllowance::new(7, 20260101);
-        allowance.budget.enable_gas_metering();
-        assert!(!allowance.budget.spent());
-        assert!(allowance.budget.visit());
-        assert!(allowance.budget.admit_writes(100));
-
-        // When a unit runs out of gas in end-block mode, `stop()` must disable
-        // gas_metered and prevent any retry at the same block height, even if
-        // `enable_gas_metering()` is called again after unpacking.
-        allowance.budget.stop();
-        assert!(allowance.budget.spent());
-        assert!(!allowance.budget.visit());
-        assert!(!allowance.budget.admit_writes(1));
-
-        let mut resumed = BlockAllowance::for_block(allowance.pack(), 7, 20260101).unwrap();
-        resumed.budget.enable_gas_metering();
-        assert!(resumed.budget.spent());
-        assert!(!resumed.budget.visit());
-        assert!(!resumed.budget.admit_writes(1));
     }
 }

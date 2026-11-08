@@ -87,6 +87,8 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
         oracle.utc_day_vwap_last_finalized.write(latest).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: CALLED,
                 chain_id: 1,
@@ -130,6 +132,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             for block in 0..16 {
                 let ctx = BlockRuntimeContext::new(
                     BlockContext {
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                         block_number: at * 32 + block,
                         timestamp: at,
                         chain_id: 1,
@@ -147,6 +151,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             }
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: at * 32 + 16,
                     timestamp: at,
                     chain_id: 1,

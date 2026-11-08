@@ -13,6 +13,8 @@ pub fn with_block(block_number: u64, f: impl FnOnce(BlockRuntimeContext<'_>)) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: GENESIS_TS + 60,
             chain_id: CHAIN_ID,

@@ -155,6 +155,8 @@ fn governance_deadline_replay_child() {
         // Close the legacy proposal so the same author can create another.
         let ctx = BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 101 + expected_window,
                 timestamp: 0,
                 chain_id: outbe_primitives::chain::TESTNET_CHAIN_ID,

@@ -119,6 +119,8 @@ pub(super) fn block_runtime_context_from_storage(
 
     Ok(BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp,
             chain_id,

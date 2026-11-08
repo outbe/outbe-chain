@@ -29,6 +29,8 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
 
     storage.enter(|handle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: genesis_oct_1,
             chain_id: CHAIN_ID,
@@ -52,6 +54,8 @@ fn gap_ed01_every_utc_day_is_an_emission_day() {
         storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 8);
         storage.enter(|handle| {
             let block = BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number,
                 timestamp: ts,
                 chain_id: CHAIN_ID,
@@ -168,6 +172,8 @@ fn gap_ed03_start_date_comes_from_genesis_block() {
         assert_eq!(uninitialized, 0);
         let ctx_zero_genesis = runtime_context(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: block_ts,
                 chain_id: CHAIN_ID,
@@ -505,6 +511,8 @@ fn gap_ed54_wwd_step_runs_once_a_day() {
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 1);
     storage.enter(|handle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: block_no,
             timestamp: ts_day7_00h,
             chain_id: CHAIN_ID,

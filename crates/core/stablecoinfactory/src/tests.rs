@@ -472,6 +472,8 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
         },
     );
     let context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 1_700_000_000,
         chain_id: 1,

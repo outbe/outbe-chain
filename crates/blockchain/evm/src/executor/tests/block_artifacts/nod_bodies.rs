@@ -256,6 +256,8 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         978,
     );
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,

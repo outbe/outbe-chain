@@ -392,6 +392,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let approved_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -433,6 +435,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let expired_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -472,6 +476,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let error_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -521,6 +527,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let corrupted_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,

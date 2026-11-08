@@ -18,6 +18,8 @@ pub fn create_worldwide_day(
 ) -> Result<()> {
     let context = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp,
             chain_id,

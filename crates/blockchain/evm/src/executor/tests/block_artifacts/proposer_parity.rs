@@ -243,6 +243,8 @@ fn proposer_validator_same_state_root() {
 
         // Read the recorded live-credit voters + the settled fee-share balances.
         let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: settle_block,
             timestamp: settle_block,
             chain_id: CHAIN_ID,
@@ -389,6 +391,8 @@ fn seed_late_credit_escrow(
     // gate passes.
     let seed_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: settle_target,
             timestamp: 1,
             chain_id: CHAIN_ID,

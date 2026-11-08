@@ -27,6 +27,8 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         // Block 1: not a vote period boundary (period=2), no tally
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: day + 12,
                 chain_id: 1,
@@ -43,6 +45,8 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         // Block 2: vote period boundary, tally runs
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: day + 24,
                 chain_id: 1,
@@ -345,6 +349,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
         assert_eq!(block % 2, 1);
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block,
                 timestamp: d1_start + 5,
                 chain_id: 1,
@@ -376,6 +382,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
         // watermark nor re-finalizes.
         let ctx2 = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block + 2,
                 timestamp: d1_start + 50,
                 chain_id: 1,
@@ -400,6 +408,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block + 4,
                 timestamp: d2_start + 5,
                 chain_id: 1,

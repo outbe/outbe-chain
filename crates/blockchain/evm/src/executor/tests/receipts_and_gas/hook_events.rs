@@ -43,6 +43,8 @@ fn l2_registration_conflict_is_atomic_with_the_outer_hook_batch() {
     });
     let number = CREATED + VOTING_WINDOW_BLOCKS + 1;
     let context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: number,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -202,6 +204,8 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
     drop(executor);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 2,
         timestamp: 2,
         chain_id: CHAIN_ID,
@@ -255,6 +259,8 @@ fn hook_events_receipt_carries_whitelisted_update_activation_log() {
         });
 
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: ACTIVATION_BLOCK,
         timestamp: ACTIVATION_BLOCK,
         chain_id: CHAIN_ID,
@@ -347,6 +353,8 @@ fn real_factory_execution_error_has_no_factory_receipt_log() {
 
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
     let block_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: finalization_block,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -514,6 +522,8 @@ fn automatic_retirement_unbonding_started_is_published_in_hook_events_receipt() 
     );
 
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: HOOK_BLOCK,
         timestamp: TIMESTAMP,
         chain_id: CHAIN_ID,

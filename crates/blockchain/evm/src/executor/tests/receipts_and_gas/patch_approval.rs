@@ -214,6 +214,8 @@ fn run_patch_vote_case(approve_second: bool, change_to_no: bool) {
     );
 
     let block_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 10,
         timestamp: 1_700_000_010,
         chain_id: CHAIN_ID,

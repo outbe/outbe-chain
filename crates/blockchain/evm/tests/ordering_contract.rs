@@ -82,6 +82,8 @@ fn nominal_epoch_boundary_without_certified_outcome_keeps_activated_epoch() {
         // runs only when `block_number <= 1`.
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: boundary_block,
                 timestamp: /*timestamp=*/ 1_700_000_000,
                 chain_id: CHAIN_ID,
@@ -124,6 +126,8 @@ fn transition_epoch_does_not_fire_inside_an_epoch() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: mid_epoch_block,
                 timestamp: 1_700_000_000,
                 chain_id: CHAIN_ID,

@@ -351,6 +351,8 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             .unwrap();
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 5,
                     timestamp: parent_timestamp,
                     chain_id: 1,
@@ -474,6 +476,8 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
     }
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 6,
         timestamp: 1_700_001_006,
         chain_id: 1,

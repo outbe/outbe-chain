@@ -166,6 +166,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
             &mut state,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: block_ts,
                 chain_id: CHAIN_ID,

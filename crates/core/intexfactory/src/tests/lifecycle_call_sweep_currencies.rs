@@ -59,6 +59,8 @@ fn a_slice_resumes_at_the_currency_it_gave_out_on() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -103,6 +105,8 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -122,6 +126,8 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         fill_window(&oracle, next_day, pair, U256::from(TRIGGER + 1));
         let next = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: next_ts,
                 chain_id: CHAIN_ID,
@@ -166,6 +172,8 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             fill_window(&oracle, day, pair, U256::from(TRIGGER + 1));
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 1 + offset,
                     timestamp: ts,
                     chain_id: CHAIN_ID,
@@ -190,6 +198,8 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 4,
                 timestamp: ISSUED_AT + 62 * DAY,
                 chain_id: CHAIN_ID,
@@ -238,6 +248,8 @@ fn a_sweep_over_several_currencies_always_ends() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,

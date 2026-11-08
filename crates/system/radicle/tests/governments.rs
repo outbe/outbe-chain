@@ -425,6 +425,8 @@ async fn exercise_patch_vote(
             .enter(|s| {
                 let ctx = BlockRuntimeContext::new(
                     BlockContext {
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                         block_number: *height,
                         timestamp: 1_700_000_000 + *height,
                         chain_id,

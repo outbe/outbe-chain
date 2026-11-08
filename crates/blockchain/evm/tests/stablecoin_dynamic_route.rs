@@ -104,6 +104,8 @@ fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Ve
         let mut provider = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: CHAIN_ID,

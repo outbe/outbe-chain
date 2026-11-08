@@ -653,6 +653,8 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         storage.set_block_timestamp(U256::from(call_ts)).unwrap();
         let call_ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 20,
                 timestamp: call_ts,
                 chain_id: 1,
@@ -1172,6 +1174,8 @@ fn run_nod_daily_pass(storage: &StorageHandle<'_>, mut height: u64, timestamp: u
     loop {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: height,
                 timestamp,
                 chain_id: 1,

@@ -274,6 +274,8 @@ pub(super) fn block_context(
 ) -> BlockRuntimeContext<'_> {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: 0,
             chain_id: 1,

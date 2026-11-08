@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E> OutbeBlockExecutor<'_, E> {
+impl<E: Evm> OutbeBlockExecutor<'_, E> {
     pub(crate) fn block_context(
         &self,
         block_number: u64,
@@ -15,6 +15,8 @@ impl<E> OutbeBlockExecutor<'_, E> {
             genesis_timestamp: self.genesis_timestamp,
             proposer,
             validators: Vec::new(),
+            block_gas_limit: self.inner.evm.block().gas_limit(),
+            user_gas_used: self.accounted_block_gas(),
         }
     }
 }

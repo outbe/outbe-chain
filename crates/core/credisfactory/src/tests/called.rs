@@ -271,6 +271,8 @@ fn a_node_local_failure_while_calling_a_credis_fails_the_scan() {
     let result = StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: BLOCK_NUMBER,
                 timestamp: at,
                 chain_id: CHAIN_ID,

@@ -341,6 +341,8 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
         let boundary = boundary_with_epoch(1, false, vec![(validator, dummy_pubkey(0xA1))]);
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: activation_block,
                 timestamp: activation_timestamp,
                 chain_id: CHAIN_ID,

@@ -451,6 +451,8 @@ fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
 
 fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 0,
         timestamp: 0,
         chain_id: MAINNET.chain().id(),

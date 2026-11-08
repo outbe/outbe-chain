@@ -557,6 +557,8 @@ mod metadosis_frame_tests {
         DirectStorageProvider::new(
             db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 9,
                 timestamp: 1_700_000_000,
                 chain_id: 42,

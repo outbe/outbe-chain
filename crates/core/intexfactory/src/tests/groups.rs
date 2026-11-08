@@ -86,6 +86,8 @@ mod group_scans {
             let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 2,
                     timestamp: due,
                     chain_id: super::super::CHAIN_ID,
@@ -160,6 +162,8 @@ mod group_scans {
             let due = IntexContract::day_end(IntexContract::deadline_day(close_at));
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 2,
                     timestamp: due,
                     chain_id: super::super::CHAIN_ID,

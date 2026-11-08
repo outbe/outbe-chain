@@ -455,6 +455,8 @@ mod tests {
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 0,
                     timestamp: date_key_to_utc_timestamp(20260101).unwrap(),
                     chain_id: 1,
@@ -683,6 +685,8 @@ mod tests {
             storage.enable_end_gas_metering().unwrap();
             let mut ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 2,
                     timestamp: date_key_to_utc_timestamp(20260104).unwrap(),
                     chain_id: 1,

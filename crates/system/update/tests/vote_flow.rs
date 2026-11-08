@@ -115,6 +115,8 @@ fn with_vote_runtime_at<F: FnOnce(StorageHandle, u64)>(current: u64, f: F) {
 fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: block_number,
             chain_id: CHAIN_ID,

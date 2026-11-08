@@ -224,6 +224,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );
@@ -316,6 +318,8 @@ mod tests {
                         genesis_timestamp: 1_700_000_000,
                         proposer: alloy_primitives::Address::ZERO,
                         validators: Vec::new(),
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                     },
                     storage.clone(),
                 );
@@ -353,6 +357,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );
@@ -388,6 +394,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );

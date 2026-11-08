@@ -137,7 +137,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             .map_err(|error| ExecutorValidationError::from(error).into())
     }
 
-    fn accounted_block_gas(&self) -> u64 {
+    pub(super) fn accounted_block_gas(&self) -> u64 {
         if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
             self.inner.max_block_gas_used()
         } else {

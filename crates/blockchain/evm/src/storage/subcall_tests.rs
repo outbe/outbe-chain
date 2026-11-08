@@ -687,6 +687,8 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         let mut seed = DirectStorageProvider::new(
             &mut ctx.journaled_state.database,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: 1,

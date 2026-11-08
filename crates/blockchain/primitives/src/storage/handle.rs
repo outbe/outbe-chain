@@ -746,6 +746,8 @@ mod tests {
         let mut provider = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: 1,

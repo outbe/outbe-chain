@@ -181,6 +181,8 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     drop(executor);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -485,6 +487,8 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
     );
     drop(executor);
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: block_ts,
         chain_id: CHAIN_ID,

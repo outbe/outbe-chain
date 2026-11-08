@@ -7,6 +7,8 @@ const DAY: WorldwideDay = WorldwideDay::new(20231113);
 fn ctx<'a>(storage: StorageHandle<'a>, height: u64) -> BlockRuntimeContext<'a> {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: height,
             timestamp: 2_000_000_000,
             chain_id: CHAIN_ID,

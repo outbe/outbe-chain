@@ -200,6 +200,8 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     assert_eq!(feeder_balance_before, U256::ZERO);
 
     let setup_read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,

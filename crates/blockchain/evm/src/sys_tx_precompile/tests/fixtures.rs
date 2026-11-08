@@ -118,6 +118,8 @@ pub(super) fn runtime_ctx(storage: StorageHandle<'_>) -> BlockRuntimeContext<'_>
     let timestamp = storage.now_secs().unwrap();
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: storage.block_number().unwrap(),
             timestamp,
             chain_id: storage.chain_id().unwrap(),

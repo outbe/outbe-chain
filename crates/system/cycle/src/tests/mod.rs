@@ -39,6 +39,8 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     storage.enter(|handle| {
         let ctx = runtime_context(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: GENESIS_TS,
                 chain_id,
@@ -89,6 +91,8 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
 
 pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number,
         timestamp,
         chain_id: CHAIN_ID,

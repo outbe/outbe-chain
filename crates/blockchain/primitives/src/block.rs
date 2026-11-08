@@ -106,12 +106,20 @@ pub struct BlockContext {
     pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
+    pub block_gas_limit: u64,
+    pub user_gas_used: u64,
 }
 
 impl BlockContext {
     #[must_use]
     pub const fn regime(&self) -> BlockHeightRegime {
         BlockHeightRegime::for_block(self.block_number)
+    }
+
+    /// Gas capacity remaining in the block after user transactions.
+    #[must_use]
+    pub const fn remaining_block_gas(&self) -> u64 {
+        self.block_gas_limit.saturating_sub(self.user_gas_used)
     }
 }
 
@@ -136,6 +144,22 @@ impl<'storage> BlockRuntimeContext<'storage> {
 
     pub fn with_checkpoint<R>(&self, f: impl FnOnce() -> Result<R>) -> Result<R> {
         self.storage.with_checkpoint(f)
+    }
+}
+
+/// Unified block lifecycle interface for protocol modules.
+pub trait ProtocolModule {
+    /// Unique module identifier for diagnostics and tracing.
+    const NAME: &'static str;
+
+    /// Executed during the `BeginBlock` stage.
+    fn begin_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        Ok(())
+    }
+
+    /// Executed during the `EndBlock` stage.
+    fn end_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -192,6 +216,8 @@ mod tests {
                     genesis_timestamp: 11,
                     proposer: Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage,
             );
@@ -236,5 +262,44 @@ mod tests {
             assert!(s.has_end_zone_system_txs());
             assert!(s.requires_rewards_beneficiary());
         }
+    }
+
+    struct NopModule;
+
+    impl ProtocolModule for NopModule {
+        const NAME: &'static str = "nop";
+    }
+
+    fn gas_context(block_gas_limit: u64, user_gas_used: u64) -> BlockContext {
+        BlockContext {
+            block_number: 2,
+            timestamp: 11,
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: 11,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+            block_gas_limit,
+            user_gas_used,
+        }
+    }
+
+    #[test]
+    fn protocol_module_defaults_succeed_for_begin_and_end_block() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(gas_context(100, 40), storage);
+            assert_eq!(NopModule::NAME, "nop");
+            assert!(NopModule::begin_block(&ctx).is_ok());
+            assert!(NopModule::end_block(&ctx).is_ok());
+        });
+    }
+
+    #[test]
+    fn remaining_block_gas_saturates_at_zero() {
+        assert_eq!(gas_context(100, 40).remaining_block_gas(), 60);
+        assert_eq!(gas_context(100, 100).remaining_block_gas(), 0);
+        assert_eq!(gas_context(100, 101).remaining_block_gas(), 0);
+        assert_eq!(gas_context(0, u64::MAX).remaining_block_gas(), 0);
     }
 }

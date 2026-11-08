@@ -2685,6 +2685,8 @@ fn tick_gate_no_active_days_is_noop() {
     with_storage(|s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: NOW,
                 chain_id: CHAIN_ID,
@@ -2721,6 +2723,8 @@ fn tick_gate_clears_ready_day() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: NOW,
                 chain_id: CHAIN_ID,

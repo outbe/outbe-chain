@@ -250,6 +250,8 @@ fn run_prefix_checked(
     verify_state(&mut state, &logs);
     let root = if verify_deferred {
         let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: block,
             timestamp,
             chain_id: CHAIN_ID,
@@ -1229,6 +1231,8 @@ fn verify_accepted_auction_cleanup(
             assert_eq!(*credit.get_or_insert(balance), balance);
             let runtime = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: block,
                     timestamp: timestamp + block,
                     chain_id: CHAIN_ID,

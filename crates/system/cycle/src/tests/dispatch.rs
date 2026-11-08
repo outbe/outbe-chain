@@ -674,6 +674,8 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
         anchor_at(handle.clone(), GENESIS_TS + 60);
         let fire = runtime_context(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: TOPUP_FIRE_TS,
                 chain_id: CHAIN_ID,

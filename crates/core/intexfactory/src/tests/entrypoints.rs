@@ -118,6 +118,8 @@ fn the_parked_sweep_is_a_no_op_without_a_router() {
     with_factory(|s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: ISSUED_AT,
                 chain_id: CHAIN_ID,
@@ -151,6 +153,8 @@ fn drain_parked(provider: &mut HashMapStorageProvider) -> outbe_primitives::erro
     StorageHandle::enter(provider, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: ISSUED_AT,
                 chain_id: CHAIN_ID,
@@ -242,6 +246,8 @@ fn send_notices_in_block(
     StorageHandle::enter(provider, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: ISSUED_AT,
                 chain_id: CHAIN_ID,

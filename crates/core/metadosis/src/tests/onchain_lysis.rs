@@ -234,6 +234,8 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
     StorageHandle::enter(provider, |storage| {
         crate::commands::start_metadosis(&BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 10,
                 timestamp: CLOCK,
                 chain_id: CHAIN_ID,

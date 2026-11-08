@@ -189,6 +189,8 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
     StorageHandle::enter(&mut storage, |s| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: due,
                 chain_id: CHAIN_ID,
@@ -246,6 +248,8 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
 
         let later = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 3,
                 timestamp: due + DAY,
                 chain_id: CHAIN_ID,

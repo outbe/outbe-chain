@@ -1035,6 +1035,8 @@ mod vote_target {
         StorageHandle::enter(p, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: APPROVED_AT,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,

@@ -164,6 +164,8 @@ fn with_storage<R>(db: &mut CacheDB<EmptyDB>, f: impl FnOnce(StorageHandle<'_>) 
     let mut provider = DirectStorageProvider::new(
         db,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: NOW,
             chain_id: CHAIN_ID,

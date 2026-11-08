@@ -936,6 +936,8 @@ mod metadosis_mutation_frame_tests {
         let mut prod_provider = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1_700_000_000,
                 chain_id: 1,

@@ -390,6 +390,8 @@ mod tests {
         with_block(0, GENESIS_TS_2024_01_01, |ctx| {
             let uninit_ctx = BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 0,
                     timestamp: GENESIS_TS_2024_01_01,
                     chain_id: 1,
