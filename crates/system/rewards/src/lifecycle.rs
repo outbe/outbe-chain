@@ -10,7 +10,17 @@
 //! `outbe_cycle::runtime::handle_cycle_tick` and dispatches into EmissionLimit ->
 //! AgentReward exactly once per UTC day.
 
-use outbe_primitives::{block::BlockLifecycle, block::BlockRuntimeContext, error::Result};
+use outbe_primitives::{
+    block::{BlockLifecycle, BlockRuntimeContext, ProtocolModule},
+    error::Result,
+};
+
+/// Protocol module for `SystemTxKind::Rewards` (`OSRW`).
+pub struct RewardsModule;
+
+impl ProtocolModule for RewardsModule {
+    const NAME: &'static str = "rewards";
+}
 
 /// Zero-sized marker implementing the block-lifecycle contract for the
 /// Rewards module. Registered in
@@ -66,13 +76,13 @@ mod tests {
     #[test]
     fn begin_block_is_idempotent_across_blocks() {
         with_block(0, GENESIS_TS_2024_01_01, |ctx0| {
-            <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx0).unwrap();
+            <RewardsModule as ProtocolModule>::begin_block(&ctx0).unwrap();
 
             let ctx1 = BlockRuntimeContext::new(
                 block_ctx(1, GENESIS_TS_2024_01_01 + 60),
                 ctx0.storage.clone(),
             );
-            <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx1).unwrap();
+            <RewardsModule as ProtocolModule>::begin_block(&ctx1).unwrap();
 
             let ctx_later = BlockRuntimeContext::new(
                 block_ctx(
@@ -81,7 +91,7 @@ mod tests {
                 ),
                 ctx0.storage.clone(),
             );
-            <RewardsLifecycle as BlockLifecycle>::begin_block(&ctx_later).unwrap();
+            <RewardsModule as ProtocolModule>::begin_block(&ctx_later).unwrap();
         });
     }
 }

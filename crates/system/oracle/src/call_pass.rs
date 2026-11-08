@@ -134,9 +134,6 @@ fn continue_pass<'s, S: CallPass<'s>>(ctx: &BlockRuntimeContext, sweep: &mut S) 
         ctx.block.block_number,
         pinned_day,
     )?;
-    if ctx.storage.gas_remaining()?.is_some() {
-        allowance.budget.enable_gas_metering();
-    }
     if allowance.day != pinned_day {
         return Ok(0);
     }
@@ -308,7 +305,7 @@ pub fn call_entry<'s, S: CallPass<'s>>(
     entry: impl Display,
     call: impl FnOnce() -> Result<u32>,
 ) -> Result<Visit> {
-    let outcome = storage.run_gas_bounded_unit(outbe_primitives::end_gas::UnitKind::Call, call);
+    let outcome = storage.with_checkpoint(call);
     match decide(outcome, S::classify)? {
         Decided::Done(writes) => {
             budget.admit_writes(writes);
@@ -680,9 +677,7 @@ mod tests {
     #[test]
     fn gas_stopped_unit_in_end_block_exhausts_allowance_within_same_block() {
         let mut provider = HashMapStorageProvider::new(1);
-        provider.set_gas_limit(10_000_000);
         StorageHandle::enter(&mut provider, |storage| {
-            storage.enable_end_gas_metering().unwrap();
             let mut ctx = BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
@@ -704,7 +699,6 @@ mod tests {
             // Simulate a gas-stopped unit during end-block execution at height 2.
             schedule(&ctx, &mut sweep).unwrap();
             let mut allowance = BlockAllowance::new(2, 20260101);
-            allowance.budget.enable_gas_metering();
             assert_eq!(
                 call_entry::<TestSweep<'_>>(&ctx.storage, &mut allowance.budget, "entry", || Err(
                     PrecompileError::OutOfGas
@@ -714,8 +708,7 @@ mod tests {
             );
             sweep.allowance.write(allowance.pack()).unwrap();
 
-            // Re-entering `continue_day` in the same block with end-gas metering active
-            // must NOT bypass `stop()` and must perform 0 work until block height 3.
+            // A stopped allowance must not resume in the same block.
             assert_eq!(continue_day(&ctx, &mut sweep).unwrap(), 0);
             assert_eq!(sweep.remaining.read(&0).unwrap(), 10);
 

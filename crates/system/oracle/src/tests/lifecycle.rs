@@ -1,7 +1,7 @@
 //! Lifecycle tests: tally, begin-block hooks, slash window, native checkpoint atomicity.
 
 use alloy_primitives::{Address, U256};
-use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
+use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 use outbe_validatorset::ValidatorLifecycle;
 
 use crate::schema::{OracleContract, SCALE_1E18};

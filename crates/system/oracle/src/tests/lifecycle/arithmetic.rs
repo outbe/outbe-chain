@@ -86,7 +86,7 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&runtime_ctx).unwrap();
 
         assert_eq!(pair_rate(oracle, higher), fixed18(100));
         assert_eq!(pair_rate(oracle, lower), fixed18(50));

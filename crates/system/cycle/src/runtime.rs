@@ -6,8 +6,9 @@
 //! and fires any trigger whose next slot has been reached.
 
 use outbe_primitives::{
-    block::BlockRuntimeContext,
+    block::{BlockRuntimeContext, ProtocolModule},
     error::{PrecompileError, Result},
+    system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
 };
 
 use crate::errors::CycleError;
@@ -16,6 +17,26 @@ use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
 use crate::triggers::{active_triggers, last_fire_at, next_fire_at, TriggerId, TriggerSpec};
 use crate::ICycle;
+
+/// Protocol module for `SystemTxKind::CycleTick` (`OSC2`).
+pub struct CycleModule;
+
+impl ProtocolModule for CycleModule {
+    const NAME: &'static str = "cycle_tick";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        let remaining_gas = ctx
+            .storage
+            .metered_gas_remaining()?
+            .ok_or(CycleError::InsufficientWorkCapacity)?;
+        let capacity = CycleWorkCapacity {
+            remaining_gas,
+            gas_used_at_entry: ctx.storage.gas_used()?,
+            reserve_after_cycle: 0,
+        };
+        handle_cycle_tick(ctx, GENESIS_BOOTSTRAP_BLOCK_NUMBER, capacity)
+    }
+}
 
 /// Calibrated Cycle body overhead, excluding handlers and caller prefix work.
 /// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs` measures 18,890,500

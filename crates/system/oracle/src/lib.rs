@@ -18,6 +18,7 @@ pub mod tally;
 pub mod test_support;
 
 pub use errors::OracleError;
+pub use lifecycle::{OracleModule, OracleSlashModule};
 
 #[cfg(test)]
 mod tests;

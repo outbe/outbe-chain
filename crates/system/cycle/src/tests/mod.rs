@@ -196,7 +196,7 @@ pub(super) fn cycle_work_capacity(
 }
 
 pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    run_cycle_tick_at_activation(ctx, 1)
+    <crate::CycleModule as outbe_primitives::block::ProtocolModule>::begin_block(ctx)
 }
 
 pub(super) fn run_cycle_tick_at_activation(

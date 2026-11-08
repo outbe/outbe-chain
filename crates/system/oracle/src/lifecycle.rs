@@ -1,5 +1,5 @@
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
+    block::{BlockLifecycle, BlockRuntimeContext, ProtocolModule},
     error::Result,
     time::{previous_date_key, timestamp_to_date_key, TimeError},
 };
@@ -20,6 +20,26 @@ impl BlockLifecycle for OracleLifecycle {
 
     fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
         Ok(())
+    }
+}
+
+pub struct OracleModule;
+
+impl ProtocolModule for OracleModule {
+    const NAME: &'static str = "oracle";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        run_begin_block(ctx)
+    }
+}
+
+pub struct OracleSlashModule;
+
+impl ProtocolModule for OracleSlashModule {
+    const NAME: &'static str = "oracle_slash";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        run_slash_window(ctx)
     }
 }
 
