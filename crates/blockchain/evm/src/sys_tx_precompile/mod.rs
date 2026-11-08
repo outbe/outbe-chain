@@ -11,12 +11,11 @@ use alloy_primitives::Address;
 use alloy_primitives::Bytes;
 use alloy_primitives::U256;
 use outbe_primitives::addresses::SYSTEM_ADDRESS;
+use outbe_primitives::block::ProtocolModule as _;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 mod boundary;
-mod call_event_handle;
-mod cleanup_handle;
 mod context;
 mod cycle;
 
@@ -34,7 +33,10 @@ pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
 pub(crate) use crate::finalization::{run_finalization_and_slashing, run_late_finalize_credits};
 
 use cycle::run_cycle_tick;
-pub(crate) use cycle::{run_hook_events, run_hyperlane_liveness_window, run_oracle_slash_window};
+pub(crate) use cycle::{
+    enforce_enclave_upgrade_deadline, run_hyperlane_liveness_window, run_oracle_slash_window,
+    run_validator_liveness,
+};
 
 pub(crate) use boundary::run_boundary_outcome;
 
@@ -133,10 +135,6 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, false)?;
             run_late_finalize_credits(&ctx, &artifact)?;
         }
-        SystemTx::CycleTick => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick(&ctx, 1)?;
-        }
         SystemTx::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_boundary_outcome(&ctx, &artifact)?;
@@ -145,27 +143,68 @@ fn dispatch_inner(
             let ctx = block_runtime_context_from_storage(storage, true)?;
             execute_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
         }
-        SystemTx::OracleSlashWindow => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_oracle_slash_window(&ctx)?;
-            run_hyperlane_liveness_window(&ctx);
-        }
-        SystemTx::HookEvents => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_hook_events(&ctx)?;
+        SystemTx::ValidatorLiveness => {
+            let ctx = block_runtime_context_from_storage(storage, true)?;
+            run_validator_liveness(&ctx)?;
         }
         SystemTx::RadiclePublication { batch } => {
             outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
-        SystemTx::CallEventProcessing => {
-            storage.enable_end_gas_metering()?;
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            call_event_handle::handle_call_event_processing(&ctx)?;
+        SystemTx::Vote => {
+            let ctx = block_runtime_context_from_storage(storage, true)?;
+            outbe_vote::VoteModule::begin_block(&ctx)?;
         }
-        SystemTx::CleanupProcessing => {
-            storage.enable_end_gas_metering()?;
+        SystemTx::Update => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            cleanup_handle::handle_cleanup_processing(&ctx)?;
+            outbe_update::UpdateModule::begin_block(&ctx)?;
+        }
+        SystemTx::EnclaveUpgradeDeadline => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            enforce_enclave_upgrade_deadline(&ctx)?;
+        }
+        SystemTx::Rewards => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_rewards::RewardsModule::begin_block(&ctx)?;
+        }
+        SystemTx::Staking => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_staking::StakingModule::begin_block(&ctx)?;
+        }
+        SystemTx::Oracle => {
+            let ctx = block_runtime_context_from_storage(storage, true)?;
+            outbe_oracle::OracleModule::begin_block(&ctx)?;
+        }
+        SystemTx::OracleSlash => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_oracle_slash_window(&ctx)?;
+        }
+        SystemTx::HyperlaneSlash => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            run_hyperlane_liveness_window(&ctx)?;
+        }
+        SystemTx::CycleTick => {
+            let ctx = block_runtime_context_from_storage(storage, true)?;
+            run_cycle_tick(&ctx, 1)?;
+        }
+        SystemTx::NodFactory => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_nodfactory::NodFactoryModule::end_block(&ctx)?;
+        }
+        SystemTx::GemFactory => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_gemfactory::GemFactoryModule::end_block(&ctx)?;
+        }
+        SystemTx::IntexFactory => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_intexfactory::IntexFactoryModule::end_block(&ctx)?;
+        }
+        SystemTx::CredisFactory => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_credisfactory::CredisFactoryModule::end_block(&ctx)?;
+        }
+        SystemTx::GemCleanup => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_gemfactory::GemCleanupModule::end_block(&ctx)?;
         }
     }
 

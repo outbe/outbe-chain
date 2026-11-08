@@ -6,8 +6,6 @@ struct ValidatedReservedSystemTx {
     body_index: usize,
     input: SystemTx,
     finalized_summary: Option<AccountedParentArtifact>,
-    visible_base_gas: u64,
-    visible_gas_limit: u64,
     proposer: Address,
 }
 
@@ -15,9 +13,6 @@ struct ReservedSystemReceiptContext {
     body_index: usize,
     input: SystemTx,
     block_number: u64,
-    visible_base_gas: u64,
-    visible_gas_limit: u64,
-    available_visible_gas: u64,
 }
 
 #[allow(private_bounds)]
@@ -55,14 +50,8 @@ where
             body_index,
             input,
             finalized_summary,
-            visible_base_gas,
-            visible_gas_limit,
             proposer,
         } = self.validate_reserved_system_tx((tx, signer), block_number, &block_artifacts)?;
-
-        if matches!(input, SystemTx::HookEvents) {
-            return self.commit_reserved_hook_receipt(tx, &block_artifacts, visible_base_gas);
-        }
 
         let phase_context = PreloadedSystemTxContext {
             proposer,
@@ -73,18 +62,15 @@ where
             gas_limit_override: None,
             remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
                 .saturating_sub(self.system_tx_gross_gas),
+            block_gas_limit: self.inner.evm.block().gas_limit(),
+            user_gas_used: 0,
         };
-        let available_visible_gas =
-            reserved_visible_headroom(body_index, (visible_base_gas, visible_gas_limit))?;
         let output =
             self.invoke_reserved_system_call(tx, body_index, input.name(), phase_context)?;
         let receipt_context = ReservedSystemReceiptContext {
             body_index,
             input,
             block_number,
-            visible_base_gas,
-            visible_gas_limit,
-            available_visible_gas,
         };
         if !output.result.result.is_success() {
             if !f(&output).should_commit() {
@@ -99,7 +85,8 @@ where
                 &block_artifacts,
             );
         }
-        self.commit_reserved_success_receipt(output, receipt_context, &block_artifacts, f)
+        let kind = receipt_context.input.kind();
+        self.commit_reserved_success_receipt(output, kind, &block_artifacts, f)
     }
 
     fn ensure_decoded_block_artifacts(
@@ -144,48 +131,22 @@ where
         })
     }
 
-    fn commit_reserved_hook_receipt(
-        &mut self,
-        tx: &TransactionSigned,
-        block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
-        visible_base_gas: u64,
-    ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        self.check_visible_pre_end_gas(visible_base_gas)?;
-        let logs = std::mem::take(&mut self.whitelisted_hook_event_logs);
-        let commit_outcome = self
-            .push_hook_events_receipt(tx.tx_type(), logs, visible_base_gas)
-            .map(Some);
-        if commit_outcome.is_ok() {
-            self.advance_system_tx_phase_cursor(block_artifacts);
-        }
-        commit_outcome
-    }
-
     fn commit_reserved_success_receipt<F>(
         &mut self,
         output: EthTxResult<E::HaltReason, reth_ethereum::TxType>,
-        context: ReservedSystemReceiptContext,
+        kind: outbe_primitives::system_tx::SystemTxKind,
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
     {
-        let ReservedSystemReceiptContext {
-            visible_base_gas,
-            visible_gas_limit,
-            ..
-        } = context;
         if !f(&output).should_commit() {
             return Ok(None);
         }
-        let commit_outcome = self
-            .commit_system_transaction(output, visible_base_gas, 0, visible_gas_limit)
-            .map(Some);
-        if commit_outcome.is_ok() {
-            self.advance_system_tx_phase_cursor(block_artifacts);
-        }
-        commit_outcome
+        let gas_output = self.commit_system_transaction(output)?;
+        self.advance_system_tx_phase_cursor(kind, block_artifacts)?;
+        Ok(Some(gas_output))
     }
 
     fn commit_reserved_failure_receipt(
@@ -199,9 +160,6 @@ where
             body_index,
             input,
             block_number,
-            visible_base_gas,
-            visible_gas_limit,
-            available_visible_gas,
         } = context;
         let expected_phase = input.name();
         tracing::error!(
@@ -230,29 +188,15 @@ where
             "system tx {expected_phase} did not succeed at body_index={body_index}: {:?}",
             result
         );
-        let additional_visible_gas = if matches!(
-            result,
-            ExecutionResult::Halt {
-                reason: HaltReason::OutOfGas(_),
-                ..
-            }
-        ) {
-            available_visible_gas
-        } else {
-            0
-        };
         let gas_output = self.push_system_failure_receipt(SystemFailureReceiptInput {
             tx_type: tx.tx_type(),
             log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
             code,
             reason,
-            visible_base_gas,
-            additional_visible_gas,
-            signed_gas_limit: visible_gas_limit,
             internal_gas_used: result.tx_gas_used(),
             internal_gross_gas_used: result.gas().total_gas_spent(),
         })?;
-        self.advance_system_tx_phase_cursor(block_artifacts);
+        self.advance_system_tx_phase_cursor(input.kind(), block_artifacts)?;
         Ok(Some(gas_output))
     }
 
@@ -276,7 +220,10 @@ where
                         .into(),
                     );
                 }
-                self.advance_system_tx_phase_cursor(block_artifacts);
+                self.advance_system_tx_phase_cursor(
+                    outbe_primitives::system_tx::SystemTxKind::CertifiedParentAccounting,
+                    block_artifacts,
+                )?;
                 return Ok(true);
             }
         }
@@ -290,16 +237,15 @@ where
         block_artifacts: &outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
     ) -> Result<ValidatedReservedSystemTx, BlockExecutionError> {
         let (tx, signer) = transaction;
-        let (body_index, expected_input, finalized_summary, visible_base_gas, planned_gas_limit) =
+        let (body_index, expected_input, finalized_summary) =
             self.expected_system_tx_for_cursor(block_number, block_artifacts)?;
         validate_reserved_system_input(tx, body_index, &expected_input)?;
 
         self.validate_reserved_system_envelope(
             tx,
-            (body_index, expected_input.name(), planned_gas_limit),
+            (body_index, expected_input.name()),
             block_number,
         )?;
-        let visible_gas_limit = tx.gas_limit();
 
         let proposer = self
             .begin_zone_proposer(block_number)?
@@ -320,8 +266,6 @@ where
             body_index,
             input: expected_input,
             finalized_summary,
-            visible_base_gas,
-            visible_gas_limit,
             proposer,
         })
     }
@@ -329,23 +273,20 @@ where
     fn validate_reserved_system_envelope(
         &self,
         tx: &TransactionSigned,
-        expected: (usize, &'static str, u64),
+        expected: (usize, &'static str),
         block_number: u64,
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        let (body_index, expected_phase, planned_gas_limit) = expected;
+        let (body_index, expected_phase) = expected;
         let ordinal = body_index.try_into().map_err(|_| -> BlockExecutionError {
             ExecutorValidationError::SystemTxBodyIndexExceedsU8 { body_index }.into()
         })?;
-        let unsigned = build_unsigned_system_tx_with_gas_limit(
-            outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                ordinal,
-                block_number,
-                chain_id: self.inner.evm.chain_id(),
-                calldata: tx.input().clone(),
-                gas_limit: planned_gas_limit,
-            },
+        let unsigned = build_unsigned_system_tx(
+            ordinal,
+            block_number,
+            self.inner.evm.chain_id(),
+            tx.input().clone(),
         )
         .map_err(|error| -> BlockExecutionError {
             ExecutorValidationError::build_expected_system_tx(body_index, error).into()
@@ -391,21 +332,4 @@ fn validate_reserved_system_input(
     }
 
     Ok(())
-}
-
-fn reserved_visible_headroom(
-    body_index: usize,
-    visible_gas: (u64, u64),
-) -> Result<u64, BlockExecutionError> {
-    let (visible_base_gas, visible_gas_limit) = visible_gas;
-    visible_gas_limit
-        .checked_sub(visible_base_gas)
-        .ok_or_else(|| {
-            crate::errors::ExecutorValidationError::SystemTxSignedGasBelowVisibleBase {
-                body_index,
-                signed: visible_gas_limit,
-                visible_base: visible_base_gas,
-            }
-            .into()
-        })
 }

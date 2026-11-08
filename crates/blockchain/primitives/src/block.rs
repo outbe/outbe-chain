@@ -163,68 +163,10 @@ pub trait ProtocolModule {
     }
 }
 
-/// Static lifecycle contract for deterministic block-boundary runtime modules.
-///
-/// Implementations should be zero-sized marker types. The executor keeps the
-/// ordering explicit and calls implementations through this trait instead of
-/// passing ad hoc `(timestamp, block_number, ...)` argument lists.
-pub trait BlockLifecycle {
-    /// Typed runtime authority required by this lifecycle. Ordinary modules
-    /// use [`BlockRuntimeContext`]; modules that need additional explicit
-    /// capabilities wrap it in a dedicated context instead of bypassing the
-    /// lifecycle contract with an ad-hoc entrypoint.
-    type Context<'a, 'storage>;
-
-    /// Value produced after all lifecycle-owned end-block work succeeds.
-    ///
-    /// Lifecycles without an associated output use `()`.
-    type EndBlockResult;
-
-    fn begin_block(_ctx: &Self::Context<'_, '_>) -> Result<()> {
-        Ok(())
-    }
-
-    fn end_block(ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::hashmap::HashMapStorageProvider;
-
-    struct OutputLifecycle;
-
-    impl BlockLifecycle for OutputLifecycle {
-        type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-        type EndBlockResult = u64;
-
-        fn end_block(ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
-            Ok(ctx.block.block_number)
-        }
-    }
-
-    #[test]
-    fn lifecycle_end_block_can_return_an_associated_output() {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext {
-                    block_number: 7,
-                    timestamp: 11,
-                    chain_id: 1,
-                    genesis_hash: B256::ZERO,
-                    genesis_timestamp: 11,
-                    proposer: Address::ZERO,
-                    validators: Vec::new(),
-                    block_gas_limit: 0,
-                    user_gas_used: 0,
-                },
-                storage,
-            );
-
-            assert_eq!(OutputLifecycle::end_block(&ctx).unwrap(), 7);
-        });
-    }
 
     #[test]
     fn block_height_regime_partitions_genesis_bootstrap_and_steady_state() {

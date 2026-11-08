@@ -79,46 +79,25 @@ pub(super) fn validate_envelopes(
     header: &OutbeHeader,
     chain_id: u64,
 ) -> Result<(), BlockValidationError> {
-    let begin_inputs = layout
-        .begin
-        .iter()
-        .map(|tx| {
-            let tx = *tx;
-            let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
-                .map_err(BlockValidationError::DecodeSystemTxInput)?;
-            input
-                .encode()
-                .map(|calldata| (input.name(), calldata))
-                .map_err(BlockValidationError::from)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let gas_plan = outbe_primitives::system_tx::SystemTxVisibleGasPlan::new(
-        header.gas_limit(),
-        &begin_inputs
-            .iter()
-            .map(|(_, calldata)| calldata.clone())
-            .collect::<Vec<_>>(),
-    )
-    .map_err(BlockValidationError::PlanVisibleGas)?;
-    for (index, (tx, (kind, calldata))) in layout.begin.iter().zip(begin_inputs).enumerate() {
+    for (index, tx) in layout.begin.iter().enumerate() {
         let tx = *tx;
+        let input = outbe_primitives::system_tx::SystemTx::decode(tx.input().as_ref())
+            .map_err(BlockValidationError::DecodeSystemTxInput)?;
         let ordinal: u8 = index
             .try_into()
             .map_err(|_| BlockValidationError::OrdinalOverflow(index))?;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
-            outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                ordinal,
-                block_number: header.number(),
-                chain_id,
-                calldata,
-                gas_limit: gas_plan
-                    .gas_limit(index)
-                    .ok_or(BlockValidationError::MissingVisibleGasOrdinal(ordinal))?,
-            },
+        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
+            ordinal,
+            header.number(),
+            chain_id,
+            input.encode()?,
         )
         .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
         if tx.signature_hash() != unsigned.signature_hash() {
-            return Err(BlockValidationError::SignatureHashMismatch { kind, ordinal });
+            return Err(BlockValidationError::SignatureHashMismatch {
+                kind: input.name(),
+                ordinal,
+            });
         }
     }
     for tx in &layout.end {
@@ -128,15 +107,11 @@ pub(super) fn validate_envelopes(
         let ordinal = input
             .nonce_ordinal()
             .ok_or_else(|| BlockValidationError::OrdinalOverflow(usize::from(u8::MAX)))?;
-        let calldata = input.encode()?;
-        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx_with_gas_limit(
-            outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                ordinal,
-                block_number: header.number(),
-                chain_id,
-                calldata,
-                gas_limit: tx.gas_limit(),
-            },
+        let unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
+            ordinal,
+            header.number(),
+            chain_id,
+            input.encode()?,
         )
         .map_err(BlockValidationError::BuildUnsignedSystemTx)?;
         if tx.signature_hash() != unsigned.signature_hash() {

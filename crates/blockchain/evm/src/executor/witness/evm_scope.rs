@@ -1,7 +1,6 @@
 //! EVM-level witness scope attachment for direct RPC, prewarm, and historical trace replay.
 
 use crate::sys_tx_precompile::PreloadedSystemTxContext;
-use crate::system_tx::SystemTx;
 use alloy_primitives::{Bytes, Log, TxKind};
 use outbe_tee::witness::{
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
@@ -20,7 +19,6 @@ pub(crate) struct DetachedTraceExecutionMeta {
     pub(crate) expected_tx_count: Option<usize>,
     pub(crate) phase1_preexecuted: bool,
     pub(crate) system_tx_context: Option<PreloadedSystemTxContext>,
-    pub(crate) hook_event_logs: Vec<Log>,
 }
 
 #[derive(Clone)]
@@ -52,13 +50,9 @@ pub(crate) enum DetachedTraceTxAction {
     SkipPreexecutedPhase1 {
         gas_limit: u64,
     },
-    SyntheticHookEvents {
-        gas_limit: u64,
-        logs: Vec<Log>,
-    },
     ReservedSystemCall {
         data: Bytes,
-        context: PreloadedSystemTxContext,
+        context: Box<PreloadedSystemTxContext>,
     },
 }
 
@@ -183,16 +177,10 @@ fn trace_action_for_tx(
             gas_limit: tx.gas_limit,
         };
     }
-    if matches!(SystemTx::decode(&tx.data), Ok(SystemTx::HookEvents)) {
-        return DetachedTraceTxAction::SyntheticHookEvents {
-            gas_limit: tx.gas_limit,
-            logs: meta.hook_event_logs.clone(),
-        };
-    }
     match meta.system_tx_context.clone() {
         Some(context) => DetachedTraceTxAction::ReservedSystemCall {
             data: tx.data.clone(),
-            context,
+            context: Box::new(context),
         },
         None => DetachedTraceTxAction::NormalTransact,
     }
@@ -391,10 +379,11 @@ pub(crate) fn with_evm_transact_witness_scope<R>(
 #[cfg(test)]
 mod gross_capacity_tests {
     use super::*;
+    use crate::system_tx::SystemTx;
 
     #[test]
     fn detached_replay_carries_gross_capacity_into_the_next_phase() {
-        let mut context = PreloadedSystemTxContext::for_end_block(Default::default(), 0);
+        let mut context = PreloadedSystemTxContext::for_end_block(Default::default(), 0, 0);
         context.gas_limit_override = None;
         context.remaining_system_gross_gas = 500;
         install_detached_trace_witness_with_meta(

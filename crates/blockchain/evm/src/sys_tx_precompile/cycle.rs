@@ -1,4 +1,4 @@
-use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule as _};
 use outbe_primitives::error::Result;
 
 use super::current_preloaded_system_tx_context;
@@ -10,14 +10,20 @@ use super::current_preloaded_system_tx_context;
 /// These are supported-workload measurements, not bounds on arbitrary bridge code.
 pub(crate) const CYCLE_LATER_PHASE_RESERVE_GAS: u64 = 1_599_000_000;
 
+pub(crate) fn run_validator_liveness(ctx: &BlockRuntimeContext) -> Result<()> {
+    validate_and_record_cycle_proposer(ctx)?;
+    enforce_tee_lease_deadlines(ctx)?;
+    Ok(())
+}
+
 pub(super) fn run_cycle_tick(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
-    validate_and_record_cycle_proposer(ctx)?;
-    enforce_tee_lease_deadlines(ctx)?;
+    let Some(preloaded) = current_preloaded_system_tx_context() else {
+        return outbe_cycle::CycleModule::begin_block(ctx);
+    };
     let insufficient = || outbe_cycle::errors::CycleError::InsufficientWorkCapacity;
-    let preloaded = current_preloaded_system_tx_context().ok_or_else(insufficient)?;
     let remaining = ctx
         .storage
         .metered_gas_remaining()?
@@ -41,8 +47,8 @@ pub(super) fn run_cycle_tick(
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
-/// validator set. The sweep is part of receipt-visible `CycleTick`, before any
-/// user transaction in the block. Block 1 is excluded because its later
+/// validator set. The sweep is part of receipt-visible `ValidatorLiveness`, before any
+/// user transaction in the block. Block 1 is excluded because its earlier
 /// `TeeBootstrap` system transaction creates the founder bindings atomically.
 pub(super) fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<usize> {
     if ctx.block.block_number
@@ -103,41 +109,73 @@ pub(super) fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<u
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
-    let allow_boundary_proposer = current_preloaded_system_tx_context()
-        .map(|context| context.allow_boundary_proposer)
-        .unwrap_or(false);
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
     if vs.is_consensus_participant(ctx.block.proposer)? {
         vs.record_proposer(ctx.block.proposer)?;
-    } else if allow_boundary_proposer && vs.is_validator(ctx.block.proposer)? {
-        // The block is the activation block for a validator-set-changing
-        // BoundaryOutcome, and a next-epoch validator proposed it. The
-        // proposer becomes a consensus participant in BoundaryOutcome, at which
-        // point `run_boundary_outcome` records this proposal exactly once.
+        Ok(())
     } else {
-        return Err(
+        Err(
             crate::errors::BeginBlockPrecompileError::ProposerNotConsensusParticipant {
                 proposer: ctx.block.proposer,
             }
             .into(),
-        );
+        )
+    }
+}
+
+pub(crate) fn enforce_enclave_upgrade_deadline(ctx: &BlockRuntimeContext) -> Result<()> {
+    let mut registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+    let Some(upgrade) = registry.upgrade_sweep_due_v1()? else {
+        return Ok(());
+    };
+    let mut reports = Vec::new();
+    ctx.with_checkpoint(|| {
+        let slash_percent = outbe_slashindicator::schema::SlashIndicator::new(ctx.storage.clone())
+            .slash_amount_percent()?;
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+        let active = validators.get_active_validators()?;
+        for validator in active {
+            let address = validator.validator_address;
+            let updated = registry
+                .validator_enclave_binding_v1(address)?
+                .is_some_and(|binding| {
+                    binding.policy_hash == upgrade.successor_policy_hash
+                        && binding.mrenclave == upgrade.mrenclave
+                });
+            if updated || registry.upgrade_penalty_applied_v1(upgrade.proposal_id, address)? {
+                continue;
+            }
+            if let Some(report) = validators.jail_validator_deferred(address)? {
+                reports.push(report);
+            }
+            let slashed = outbe_staking::contract::Staking::new(ctx.storage.clone())
+                .slash_stake(address, slash_percent)?;
+            registry.mark_upgrade_penalty_v1(upgrade.proposal_id, address)?;
+            registry.emit(
+                outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1 {
+                    proposalId: upgrade.proposal_id,
+                    validator: address,
+                    activationHeight: upgrade.activation_height,
+                    requiredMrenclave: upgrade.mrenclave,
+                    slashedAmount: slashed,
+                },
+            )?;
+        }
+        registry.mark_upgrade_swept_v1(upgrade.proposal_id)
+    })?;
+    for report in reports {
+        report.record();
     }
     Ok(())
 }
 
-/// OracleSlashWindow system tx: run Oracle slash-window penalties after any
-/// same-block boundary activation but before user transactions observe state.
+/// OracleSlash system tx: run Oracle slash-window penalties after any
+/// same-block boundary activation and Oracle tally/S-curve.
 pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::lifecycle::run_slash_window(ctx)
+    outbe_oracle::OracleSlashModule::begin_block(ctx)
 }
 
-/// Hyperlane liveness window, same phase as the Oracle slash window.
-pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) {
-    outbe_hyperlanecontroller::lifecycle::run_liveness_window(ctx)
-}
-
-/// HookEvents system tx: no-op marker. The executor attaches whitelisted
-/// pre-exec hook logs to this phase's receipt without re-running hooks.
-pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
-    Ok(())
+/// HyperlaneSlash system tx: run Hyperlane liveness window.
+pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
+    outbe_hyperlanecontroller::HyperlaneModule::begin_block(ctx)
 }

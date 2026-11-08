@@ -125,20 +125,6 @@ mod tests {
     use outbe_primitives::signer::OutbeEvmSigner;
     use outbe_primitives::system_tx::SystemTx;
 
-    fn steady_system_inputs(parent_hash: B256) -> Vec<SystemTx> {
-        vec![
-            SystemTx::CertifiedParentAccounting {
-                metadata: finalized_metadata(parent_hash),
-            },
-            SystemTx::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-            SystemTx::CycleTick,
-            SystemTx::OracleSlashWindow,
-            SystemTx::HookEvents,
-        ]
-    }
-
     fn leader_context<'a>(
         round: Round,
         proposer: &'a commonware_cryptography::bls12381::PublicKey,
@@ -275,7 +261,7 @@ mod tests {
                 block_number: 2,
                 parent_hash,
                 extra_data: Bytes::new(),
-                inputs: steady_system_inputs(parent_hash),
+                inputs: steady_begin_inputs(parent_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
             outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT,
@@ -307,7 +293,7 @@ mod tests {
                 block_number: 2,
                 parent_hash,
                 extra_data: Bytes::new(),
-                inputs: steady_system_inputs(parent_hash),
+                inputs: steady_begin_inputs(parent_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
             outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT + 1,
@@ -404,7 +390,7 @@ mod tests {
                 block_number: 2,
                 parent_hash,
                 extra_data: Bytes::new(),
-                inputs: steady_system_inputs(wrong_hash),
+                inputs: steady_begin_inputs(wrong_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
         );
@@ -454,20 +440,16 @@ mod tests {
                     &ConsensusHeaderArtifact::BoundaryOutcome(header_artifact),
                 )
                 .expect("header artifact encodes"),
-                inputs: vec![
-                    SystemTx::CertifiedParentAccounting {
-                        metadata: finalized_metadata(parent_hash),
-                    },
-                    SystemTx::LateFinalizeCredits {
-                        artifact: Default::default(),
-                    },
-                    SystemTx::CycleTick,
-                    SystemTx::BoundaryOutcome {
-                        artifact: tx_artifact,
-                    },
-                    SystemTx::OracleSlashWindow,
-                    SystemTx::HookEvents,
-                ],
+                inputs: {
+                    let mut inputs = steady_begin_inputs(parent_hash);
+                    inputs.insert(
+                        2,
+                        SystemTx::BoundaryOutcome {
+                            artifact: tx_artifact,
+                        },
+                    );
+                    inputs
+                },
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
         );

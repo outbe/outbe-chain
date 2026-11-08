@@ -72,15 +72,6 @@ impl HashMapStorageProvider {
         Ok(())
     }
 
-    pub(super) fn remaining_end_gas(&self) -> Option<u64> {
-        self.end_gas_metered
-            .then(|| {
-                self.gas_limit
-                    .map(|limit| limit.saturating_sub(self.gas_used))
-            })
-            .flatten()
-    }
-
     pub(super) fn start_trigger_budget(&mut self, budget: u64) -> Result<()> {
         if self.trigger_budget.is_some() {
             return Err(TriggerScopeError::Nested.into());

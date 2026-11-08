@@ -1,5 +1,5 @@
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext, ProtocolModule},
+    block::{BlockRuntimeContext, ProtocolModule},
     error::Result,
     time::{previous_date_key, timestamp_to_date_key, TimeError},
 };
@@ -10,15 +10,12 @@ use crate::tally;
 
 pub struct OracleLifecycle;
 
-impl BlockLifecycle for OracleLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
+impl OracleLifecycle {
+    pub fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         run_begin_block(ctx)
     }
 
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
+    pub fn end_block(_ctx: &BlockRuntimeContext) -> Result<()> {
         Ok(())
     }
 }

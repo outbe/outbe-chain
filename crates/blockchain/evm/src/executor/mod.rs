@@ -18,11 +18,10 @@ use alloy_evm::{
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_primitives::{
-    block::{BlockContext, BlockHeightRegime, BlockLifecycle, BlockRuntimeContext},
-    consensus::{ConsensusExecutionBridge, GenesisValidators},
+    block::{BlockContext, BlockHeightRegime, BlockRuntimeContext},
+    consensus::ConsensusExecutionBridge,
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::PrecompileError,
-    hook_events::partition_hook_events,
     payload::validate_outbe_withdrawals,
     reshare_artifact::{
         decode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
@@ -47,10 +46,7 @@ use crate::{
     factory::OutbeEvm,
     signer::SharedOutbeEvmSigner,
     sys_tx_precompile::{with_preloaded_system_tx_context, PreloadedSystemTxContext},
-    system_tx::{
-        build_unsigned_system_tx_with_gas_limit, is_reserved_system_tx, SystemTx,
-        SystemTxVisibleGasPlan,
-    },
+    system_tx::{build_unsigned_system_tx, is_reserved_system_tx, SystemTx},
 };
 use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
 use revm::database::DatabaseCommitExt;
@@ -62,7 +58,6 @@ pub(crate) mod context;
 mod end_block;
 mod fee_route;
 mod finalization;
-mod hooks;
 mod inputs;
 mod post_execution;
 mod pre_execution;
@@ -86,8 +81,6 @@ pub(crate) use inputs::{
 
 pub use boundary::marker_addresses;
 
-pub use hooks::run_outbe_pre_execution_hooks;
-
 pub(crate) use boundary::{apply_boundary_outcome, prepare_boundary_epoch_counters};
 
 pub(crate) use system_execution::execute::system_tx_failure_code_for_result;
@@ -106,7 +99,7 @@ pub(crate) use tests::harness::with_phase1_verify_disabled;
 use context::build_block_context;
 
 #[cfg(test)]
-use hooks::run_atomic_storage_hooks;
+use pre_execution::run_atomic_storage_hooks;
 
 use receipts::{burned_fee_for_gas, validator_fee_for_gas, SystemFailureReceiptInput};
 

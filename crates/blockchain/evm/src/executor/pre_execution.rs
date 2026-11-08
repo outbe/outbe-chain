@@ -24,8 +24,6 @@ where
             .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        outbe_primitives::system_tx::BlockGasBudget::new(self.inner.evm.block().gas_limit())
-            .map_err(ExecutorValidationError::from)?;
         let beneficiary = self.inner.evm.block().beneficiary();
         let regime = outbe_primitives::block::BlockHeightRegime::for_block(block_number);
 
@@ -33,10 +31,16 @@ where
         self.cached_phase1_input = None;
         self.resolved_begin_zone = None;
         self.verified_late_credit_signers = None;
+        self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+            block_number,
+            false,
+            false,
+            false,
+        );
 
         // Initialise the begin-zone phase cursor for this block
         // BEFORE any pre-exec mutation that could affect routing. Block 1
-        // Genesis bootstrap skips Phase 1 and starts at CycleTick.
+        // Genesis bootstrap skips Phase 1 and starts at BoundaryOutcome.
         // Block `n` with `n > GENESIS_BOOTSTRAP_BLOCK_NUMBER` enters Phase 1
         // with a zero placeholder tx_hash. The Phase 1 preflight overwrites it
         // once `verify_v2_proof` returns Ok and the system tx is committed in
@@ -76,6 +80,18 @@ where
         let block_artifacts = decode_outbe_block_artifacts(self.block_extra_data.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
         self.decoded_block_artifacts = Some(block_artifacts.clone());
+        let has_boundary_outcome = matches!(
+            block_artifacts.consensus_header_artifact,
+            Some(ConsensusHeaderArtifact::BoundaryOutcome(_))
+        );
+        let has_tee_bootstrap = self.block_has_tee_bootstrap();
+        let has_publication = block_artifacts.radicle_publication.is_some();
+        self.fsm = outbe_primitives::system_tx::BlockExecutionFsm::for_block(
+            block_number,
+            has_boundary_outcome,
+            has_tee_bootstrap,
+            has_publication,
+        );
         let proposer = self
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
@@ -86,33 +102,14 @@ where
             self.init_block_witness_state(block_number, proposer, &block_artifacts)?;
         }
 
-        // Phase 1 `verify_v2_proof`
-        // preflight. It runs AFTER marker preservation + pending-RPC short-
-        // circuit + proposer identity validation. It runs BEFORE
-        // `run_outbe_pre_execution_hooks` and BEFORE the main tx loop.
-        // The verifier is a synchronous pure function with no state
-        // mutation. On `Err`, the executor returns `BlockExecutionError`
-        // without signalling any begin-zone state diff to Reth's state-
-        // root background task. Block 0 / block 1 skip Phase 1.
+        // Phase 1 `verify_v2_proof` preflight.
         self.verify_phase1_in_preexec(block_number, &block_artifacts)?;
 
-        // Late-finalize-credit BLS aggregates are FATAL-verified
-        // here, on the same pre-exec path as Phase 1. This occurs before any
-        // begin-zone state diff is signalled to Reth's state-root task. Proposer and
-        // validator both verify. A bad aggregate, an out-of-window target, or a
-        // missing committee snapshot aborts the block deterministically.
+        // Late-finalize-credit BLS aggregates are FATAL-verified here.
         self.verify_late_finalize_credits_in_preexec(block_number, &block_artifacts)?;
 
         let prefix_witness_scope = self.enter_prefix_witness_scope()?;
-        let preexec_outcome = (|| -> Result<Vec<Log>, BlockExecutionError> {
-            // Phase 1 commit physical move. After
-            // verify Ok, execute + commit the Phase 1 precompile so
-            // `run_outbe_pre_execution_hooks` (Cycle / Rewards / Oracle) observe
-            // post-Phase-1 accounting state. The proposer-supplied body[0] in
-            // the main tx loop is validated against the cached witness hash and
-            // skipped (validate-without-reexec). Receipt + state are already
-            // in place from this call. Reth state-root ordering is preserved
-            // because the preceding `verify_phase1_in_preexec` returned `Ok`.
+        let preexec_outcome = (|| -> Result<(), BlockExecutionError> {
             self.apply_phase1_commit_in_preexec(block_number, &block_artifacts)?;
 
             // 4. Fresh bootstrap validation data from consensus config.
@@ -121,59 +118,44 @@ where
                 .as_ref()
                 .and_then(|b| b.peek_genesis_validators());
 
-            // 5. Run Outbe block hooks. The provider flush commits through State,
-            //    which notifies the parallel state root hook.
-            let (_hook_changes, hook_events) = {
-                let witness_state = self.witness_state.clone();
-                let base_extra_data = self.block_extra_data.clone();
-                let ctx = self.block_context(block_number, timestamp, proposer);
-                let db = self.inner.evm.db_mut();
-                let ctx = build_block_context(db, ctx)?;
-                hooks::run_atomic_storage_hooks_with_pre_flush(
-                    db,
-                    ctx,
-                    |hook_ctx| -> outbe_primitives::error::Result<()> {
-                        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
-                            block_artifacts.consensus_header_artifact.as_ref()
-                        {
-                            prepare_boundary_epoch_counters(
-                                hook_ctx.storage.clone(),
-                                boundary,
-                                block_number,
-                            )?;
-                        }
-                        run_outbe_pre_execution_hooks(hook_ctx, genesis_validators.as_ref())
-                    },
-                    || {
-                        crate::executor::witness::finalize_prefix_witness_with(
-                            witness_state.as_ref(),
-                            base_extra_data.as_ref(),
-                        )
-                    },
-                )?
-            };
-            Ok(hook_events)
+            // 5. Run boundary epoch counter preparation and genesis state validation.
+            let witness_state = self.witness_state.clone();
+            let base_extra_data = self.block_extra_data.clone();
+            let ctx = self.block_context(block_number, timestamp, proposer);
+            let db = self.inner.evm.db_mut();
+            let ctx = build_block_context(db, ctx)?;
+            let _ = run_atomic_storage_hooks_with_pre_flush(
+                db,
+                ctx,
+                |hook_ctx| -> outbe_primitives::error::Result<()> {
+                    if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+                        block_artifacts.consensus_header_artifact.as_ref()
+                    {
+                        prepare_boundary_epoch_counters(
+                            hook_ctx.storage.clone(),
+                            boundary,
+                            block_number,
+                        )?;
+                    }
+                    crate::genesis::validate_genesis_state_for_regime(
+                        hook_ctx.block.regime(),
+                        hook_ctx.storage.clone(),
+                        genesis_validators.as_ref(),
+                    )
+                },
+                || {
+                    crate::executor::witness::finalize_prefix_witness_with(
+                        witness_state.as_ref(),
+                        base_extra_data.as_ref(),
+                    )
+                },
+            )?;
+            Ok(())
         })();
         drop(prefix_witness_scope);
         self.check_no_witness_fault()?;
-        let hook_events = preexec_outcome?;
+        preexec_outcome?;
         // Provider dropped here - mutable DB borrow released.
-
-        // Log hook events via tracing for operator observability.
-        // Whitelisted addresses are published through the mandatory HookEvents
-        // system tx receipt. Non-whitelisted hook events stay tracing-only.
-        for event in &hook_events {
-            tracing::info!(
-                target: "outbe::hooks",
-                address = %event.address,
-                topics = event.data.topics().len(),
-                data_len = event.data.data.len(),
-                "hook event emitted"
-            );
-        }
-
-        let (whitelisted_hook_logs, _tracing_only_hook_logs) = partition_hook_events(&hook_events);
-        self.whitelisted_hook_event_logs = whitelisted_hook_logs;
 
         let phase1_preexecuted = matches!(
             self.system_tx_phase_cursor,
@@ -204,15 +186,11 @@ where
                     remaining_system_gross_gas:
                         outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
                             .saturating_sub(self.system_tx_gross_gas),
+                    block_gas_limit: self.inner.evm.block().gas_limit(),
+                    user_gas_used: 0,
                 }),
-                hook_event_logs: self.whitelisted_hook_event_logs.clone(),
             },
         );
-
-        // 6. Receipt-visible begin-zone system phases are real transactions in
-        // the block body and execute in the normal tx loop before user txs.
-        // Oracle slash-window work is part of that OracleSlashWindow system tx,
-        // so there are no direct post-system storage hooks here.
 
         Ok(())
     }
@@ -250,4 +228,73 @@ where
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+pub(in crate::executor) fn run_atomic_storage_hooks<DB, F>(
+    db: &mut DB,
+    ctx: BlockContext,
+    hooks: F,
+) -> Result<(AddressMap<Account>, Vec<Log>), BlockExecutionError>
+where
+    DB: StateDB,
+    DB::Error: std::fmt::Display,
+    F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
+{
+    run_atomic_storage_hooks_with_pre_flush(db, ctx, hooks, || Ok(()))
+}
+
+pub(in crate::executor) fn run_atomic_storage_hooks_with_pre_flush<DB, F, G>(
+    db: &mut DB,
+    ctx: BlockContext,
+    hooks: F,
+    pre_flush: G,
+) -> Result<(AddressMap<Account>, Vec<Log>), BlockExecutionError>
+where
+    DB: StateDB,
+    DB::Error: std::fmt::Display,
+    F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
+    G: FnOnce() -> Result<(), BlockExecutionError>,
+{
+    let mut provider = DirectStorageProvider::new(db, ctx.clone());
+    let storage = StorageHandle::new(&mut provider);
+    let runtime_ctx = BlockRuntimeContext::new(ctx, storage.clone());
+
+    let result = storage.with_checkpoint(|| hooks(&runtime_ctx));
+
+    result.map_err(|error| match error {
+        PrecompileError::Revert(_)
+        | PrecompileError::RevertBytes(_)
+        | PrecompileError::Halt(_)
+        | PrecompileError::OutOfGas
+        | PrecompileError::WriteProtection
+        | PrecompileError::BodyReadCorruption(_) => BlockExecutionError::from(
+            crate::errors::ExecutorValidationError::hook_precompile(error),
+        ),
+        error
+            if error.is_node_local()
+                || matches!(
+                    error,
+                    PrecompileError::Fatal(_)
+                        | PrecompileError::FatalWithCause(_)
+                        | PrecompileError::SubCall(_)
+                        | PrecompileError::Unsupported
+                ) =>
+        {
+            BlockExecutionError::other(error)
+        }
+        error => BlockExecutionError::from(
+            crate::errors::ExecutorValidationError::hook_precompile(error),
+        ),
+    })?;
+
+    pre_flush()?;
+
+    provider.flush().map_err(|e| {
+        BlockExecutionError::other(crate::errors::ExecutorStorageError::hook_flush(e))
+    })?;
+
+    let changes = provider.take_committed_changes();
+    let events = provider.take_events();
+    Ok((changes, events))
 }

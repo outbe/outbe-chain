@@ -160,8 +160,6 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
     /// Remaining gas of the active resumable-unit child frame.
     gas_child_remaining: Option<u64>,
-    /// Whether end-block gas metering is active for this storage dispatch.
-    end_gas_metered: bool,
 }
 
 impl CtxStorageProviderConfig {
@@ -267,7 +265,6 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             checkpoints: Vec::new(),
             trigger_budget: None,
             gas_child_remaining: None,
-            end_gas_metered: false,
         }
         .with_genesis_timestamp(config.genesis_timestamp)
     }
@@ -386,10 +383,6 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         Ok(account.data.account().info.clone())
     }
 
-    fn gas_remaining(&self) -> Option<u64> {
-        self.end_gas_metered.then(|| self.gas.remaining())
-    }
-
     fn metered_gas_remaining(&self) -> Option<u64> {
         Some(self.gas.remaining())
     }
@@ -410,21 +403,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         self.observe_trigger_failure(error);
     }
 
-    fn enable_end_gas_metering(&mut self) -> Result<()> {
-        self.end_gas_metered = true;
-        Ok(())
-    }
-
     fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {
         if self.gas.remaining() < ceiling {
             return Err(PrecompileError::OutOfGas);
         }
         self.gas_child_remaining = Some(ceiling);
-        Ok(())
-    }
-
-    fn end_gas_ceiling(&mut self) -> Result<()> {
-        self.gas_child_remaining = None;
         Ok(())
     }
 

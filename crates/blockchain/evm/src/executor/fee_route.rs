@@ -81,7 +81,18 @@ where
         tx: &TransactionSigned,
         error: outbe_zerofee::ZeroFeePolicyError,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        self.check_visible_pre_end_gas(Self::SOFT_FAILURE_GAS)?;
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let used = self.accounted_block_gas();
+        let available = block_gas_limit.saturating_sub(used);
+        if Self::SOFT_FAILURE_GAS > available {
+            return Err(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: Self::SOFT_FAILURE_GAS,
+                    block_available_gas: available,
+                }
+                .into(),
+            );
+        }
         self.record_zero_fee_soft_failure(*tx.tx_hash())?;
         self.push_failure_receipt(
             tx.tx_type(),

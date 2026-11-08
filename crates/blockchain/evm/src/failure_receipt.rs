@@ -4,11 +4,11 @@
 //!
 //! - the executor rejects a transaction outside the EVM (zero-fee policy
 //!   classification or stateful authorization).
-//! - a soft begin-zone system transaction (`OracleSlashWindow` or
-//!   `HookEvents`) fails to execute.
-//! - an end-zone system transaction (`CallEventProcessing` or
-//!   `CleanupProcessing`) fails to execute. Only that transaction's state
-//!   is discarded. The block continues.
+//! - a soft begin-zone system transaction (`OracleSlash` or
+//!   `HyperlaneSlash`) fails to execute.
+//! - an end-zone system transaction (`NodFactory`, `GemFactory`,
+//!   `IntexFactory`, `CredisFactory`, or `GemCleanup`) fails to execute.
+//!   Only that transaction's state is discarded. The block continues.
 //!
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,

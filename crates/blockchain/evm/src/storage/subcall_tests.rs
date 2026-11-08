@@ -167,7 +167,7 @@ fn trigger_budget_coexists_with_legacy_ceiling_and_preserves_unscoped_refunds() 
     assert_eq!(p.gas.remaining(), 49_900);
     assert_eq!(p.trigger_budget.as_ref().unwrap().remaining, 4900);
     p.trigger_budget_status().unwrap();
-    p.end_gas_ceiling().unwrap();
+    p.gas_child_remaining = None;
     assert!(matches!(
         p.deduct_gas(4901),
         Err(PrecompileError::TriggerBudgetExceeded {

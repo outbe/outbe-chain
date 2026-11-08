@@ -1,8 +1,7 @@
 //! Block lifecycle hook for the Rewards module.
 //!
-//! `RewardsLifecycle` is the zero-sized marker type that implements
-//! [`BlockLifecycle`] and is registered in the executor's pre-execution
-//! ordering. `begin_block` and `end_block` are no-ops. The start date is
+//! `RewardsModule` implements [`ProtocolModule`] for `SystemTxKind::Rewards` (`OSRW`).
+//! `begin_block` and `end_block` are no-ops. The start date is
 //! the UTC date of the genesis timestamp on the block context.
 //!
 //! Day-boundary settle moved out of Rewards as part of the Cycle
@@ -11,7 +10,7 @@
 //! AgentReward exactly once per UTC day.
 
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext, ProtocolModule},
+    block::{BlockRuntimeContext, ProtocolModule},
     error::Result,
 };
 
@@ -22,21 +21,15 @@ impl ProtocolModule for RewardsModule {
     const NAME: &'static str = "rewards";
 }
 
-/// Zero-sized marker implementing the block-lifecycle contract for the
-/// Rewards module. Registered in
-/// `outbe_evm::executor::run_outbe_pre_execution_hooks` so the executor
-/// can keep ordering explicit and hard-fork governed
+/// Legacy zero-sized marker for Rewards lifecycle tests.
 pub struct RewardsLifecycle;
 
-impl BlockLifecycle for RewardsLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(_ctx: &BlockRuntimeContext) -> Result<()> {
+impl RewardsLifecycle {
+    pub fn begin_block(_ctx: &BlockRuntimeContext) -> Result<()> {
         Ok(())
     }
 
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
+    pub fn end_block(_ctx: &BlockRuntimeContext) -> Result<()> {
         Ok(())
     }
 }
