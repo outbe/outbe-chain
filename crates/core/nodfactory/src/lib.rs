@@ -15,5 +15,7 @@ pub mod sol_ext;
 #[cfg(feature = "e2e-test")]
 mod test_arming_e2e;
 
+pub use hooks::NodFactoryModule;
+
 #[cfg(test)]
 mod tests;

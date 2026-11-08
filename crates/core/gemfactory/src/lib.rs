@@ -18,6 +18,7 @@ pub(crate) mod runtime;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
 
+pub use hooks::{GemCleanupModule, GemFactoryModule};
 pub use schema::{GemFactoryContract, GemIssueParams};
 
 #[cfg(test)]

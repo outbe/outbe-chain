@@ -22,6 +22,7 @@ mod test_arming_e2e;
 
 pub use api::issue_intex;
 pub use errors::IntexFactoryError;
+pub use hooks::IntexFactoryModule;
 pub use outbe_intex::SeriesId;
 pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};

@@ -78,14 +78,7 @@ fn run_notice_unit(
     send: &mut NoticeSend<'_, '_>,
     index: u32,
 ) -> Result<Option<(u32, bool)>> {
-    if ctx.storage.gas_remaining()?.is_none() {
-        return Ok(Some(send.run(index)?));
-    }
-    match ctx
-        .storage
-        .run_gas_bounded_unit(outbe_primitives::end_gas::UnitKind::Notice, || {
-            send.run(index)
-        }) {
+    match ctx.storage.with_checkpoint(|| send.run(index)) {
         Ok(done) => Ok(Some(done)),
         Err(error) if error.pass_failure() == outbe_primitives::error::PassFailure::Stop => {
             Ok(None)
@@ -101,10 +94,7 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     if head >= tail {
         return Ok(());
     }
-    let mut budget = PassBudget::per_block();
-    if ctx.storage.gas_remaining()?.is_some() {
-        budget.enable_gas_metering();
-    }
+    let budget = PassBudget::per_block();
     let mut send = NoticeSend {
         factory: &factory,
         storage: &ctx.storage,
