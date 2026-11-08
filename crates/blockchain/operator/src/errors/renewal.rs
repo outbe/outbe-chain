@@ -1,6 +1,6 @@
 //! Typed errors for TEE lease renewal and journal checks.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::tee_attestation_v1::CodecError;
 use outbe_tee::{dcap_protocol::DcapRejectCodeV1, TransportError};
 use thiserror::Error;
@@ -145,6 +145,12 @@ pub enum RenewalError {
     /// The RPC server returned a different transaction hash.
     #[error("RPC returned a transaction hash different from the signed renewal bytes")]
     SubmittedHashMismatch,
+
+    /// The RPC knows the signed transaction but has no exact receipt yet.
+    #[error(
+        "renewal is already known without the exact transaction receipt ({transaction_hash:#x})"
+    )]
+    AwaitingExactReceipt { transaction_hash: B256 },
 
     /// The receipt omits the `transactionHash` field.
     #[error("exact renewal transaction receipt has no transactionHash")]
