@@ -100,20 +100,18 @@ where
             input.code,
             input.reason,
         );
-        let system_cumulative_gas_used =
-            self.checked_system_tx_execution_gas(input.internal_gas_used)?;
-        let system_cumulative_gross_gas = self
-            .system_tx_gross_gas
-            .checked_add(input.internal_gross_gas_used)
-            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
         self.inner.receipts.push(Receipt {
             tx_type: input.tx_type,
             success: false,
             cumulative_gas_used: self.inner.cumulative_tx_gas_used,
             logs: vec![log],
         });
-        self.system_tx_execution_gas = system_cumulative_gas_used;
-        self.system_tx_gross_gas = system_cumulative_gross_gas;
+        self.system_tx_execution_gas = self
+            .system_tx_execution_gas
+            .saturating_add(input.internal_gas_used);
+        self.system_tx_gross_gas = self
+            .system_tx_gross_gas
+            .saturating_add(input.internal_gross_gas_used);
         Ok(GasOutput::new(0))
     }
 }

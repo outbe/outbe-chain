@@ -14,6 +14,6 @@ pub(crate) fn run_boundary_outcome(
         ctx.block.block_number,
         ctx.block.timestamp,
     )?;
-    outbe_hyperlanecontroller::lifecycle::sync_validators(ctx);
+    outbe_hyperlanecontroller::lifecycle::sync_validators(ctx)?;
     Ok(())
 }

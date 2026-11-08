@@ -409,6 +409,11 @@ where
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
+        if self.execute_outbe_block_hooks {
+            self.fsm
+                .finish()
+                .map_err(crate::errors::ExecutorValidationError::from)?;
+        }
         let block_timestamp =
             outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
                 .map_err(crate::errors::ExecutorValidationError::from)?;

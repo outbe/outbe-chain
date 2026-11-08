@@ -1244,3 +1244,114 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         Some(outbe_primitives::error::PrecompileError::Storage(_))
     ));
 }
+
+#[test]
+fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earlier_state() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let mut state = state_with_active_proposer(proposer);
+    let chain_spec = test_chain_spec();
+    let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
+    let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
+    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+    let ctx = block_one_execution_ctx(Some(3), Bytes::new());
+    let mut executor = OutbeBlockExecutor::new(
+        EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
+
+    executor
+        .apply_pre_execution_changes()
+        .expect("pre-execution changes should apply");
+    let mut system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    )
+    .into_iter();
+
+    // Execute mandatory prefix (0..8) before OracleSlash (OSOS at index 8).
+    for _ in 0..8 {
+        let tx = system_txs.next().expect("prefix tx before OracleSlash");
+        let gas = executor
+            .execute_transaction(tx)
+            .expect("prefix tx should succeed")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+
+    let oracle_slash_tx = system_txs.next().expect("OracleSlash tx at index 8");
+    let dirty_addr = outbe_primitives::addresses::ORACLE_ADDRESS;
+    let dirty_slot = U256::from(0xDEAD_BEEFu64);
+    let dirty_val = U256::from(0xCAFE_BABEu64);
+    let dirty_topic = keccak256("DirtySoftFailEvent()");
+
+    let gas = crate::sys_tx_precompile::with_forced_dirty_system_precompile_revert(
+        dirty_addr,
+        dirty_slot,
+        dirty_val,
+        || executor.execute_transaction(oracle_slash_tx),
+    )
+    .expect("soft-fail OracleSlash revert must not abort block")
+    .tx_gas_used();
+    assert_eq!(gas, 0);
+
+    let osos_receipt = executor.receipts().last().expect("OSOS receipt");
+    assert!(!osos_receipt.success);
+    assert_eq!(osos_receipt.cumulative_gas_used, 0);
+    assert_eq!(osos_receipt.logs.len(), 1);
+    assert!(
+        osos_receipt
+            .logs
+            .iter()
+            .all(|log| log.data.topics().first() != Some(&dirty_topic)),
+        "dirty event log emitted before revert must be rolled back"
+    );
+
+    // Remaining BeginBlock system txs (HyperlaneSlash and CycleTick) must succeed.
+    for remaining_tx in system_txs {
+        let gas = executor
+            .execute_transaction(remaining_tx)
+            .expect("remaining BeginBlock tx should succeed")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+    drop(executor);
+
+    // Verify dirty storage slot was rolled back while earlier ValidatorLiveness state persisted.
+    assert_eq!(
+        state.storage(dirty_addr, dirty_slot).unwrap(),
+        U256::ZERO,
+        "dirty storage write inside reverted soft-fail OSOS must be rolled back"
+    );
+    let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![proposer],
+    };
+    let mut provider =
+        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    StorageHandle::enter(&mut provider, |storage| {
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let record = vs
+            .get_validator(proposer)
+            .unwrap()
+            .expect("proposer exists");
+        assert_eq!(
+            record.blocks_proposed, 1,
+            "earlier committed ValidatorLiveness state must be preserved"
+        );
+    });
+}

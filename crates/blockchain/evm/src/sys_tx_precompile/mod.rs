@@ -19,9 +19,6 @@ mod boundary;
 mod context;
 mod cycle;
 
-#[cfg(test)]
-pub(crate) use cycle::CYCLE_LATER_PHASE_RESERVE_GAS;
-
 use context::block_runtime_context_from_storage;
 #[cfg(test)]
 pub(crate) use context::take_observed_runtime_block_contexts;
@@ -34,11 +31,8 @@ pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
 
 pub(crate) use crate::finalization::{run_finalization_and_slashing, run_late_finalize_credits};
 
-pub use cycle::enforce_enclave_upgrade_deadline;
-use cycle::run_cycle_tick;
-pub(crate) use cycle::{
-    run_hyperlane_liveness_window, run_oracle_slash_window, run_validator_liveness,
-};
+pub(crate) use cycle::run_validator_liveness;
+pub use cycle::{enforce_enclave_upgrade_deadline, EnclaveUpgradeDeadline};
 
 pub(crate) use boundary::run_boundary_outcome;
 
@@ -109,6 +103,36 @@ pub(crate) fn dispatch_with_runtime(
 
 type DispatchAuthorities<'a> = SystemTxRuntime<'a>;
 
+#[cfg(test)]
+std::thread_local! {
+    static FORCE_DIRTY_SYSTEM_PRECOMPILE_REVERT: std::cell::RefCell<Option<(Address, U256, U256)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_forced_dirty_system_precompile_revert<R>(
+    address: Address,
+    slot: U256,
+    value: U256,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Reset;
+
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            FORCE_DIRTY_SYSTEM_PRECOMPILE_REVERT.with(|cell| {
+                *cell.borrow_mut() = None;
+            });
+        }
+    }
+
+    FORCE_DIRTY_SYSTEM_PRECOMPILE_REVERT.with(|cell| {
+        *cell.borrow_mut() = Some((address, slot, value));
+    });
+    let _reset = Reset;
+    f()
+}
+
 fn dispatch_inner(
     storage: StorageHandle,
     data: &[u8],
@@ -124,6 +148,23 @@ fn dispatch_inner(
         return Err(crate::errors::BeginBlockPrecompileError::NativeValueRejected.into());
     }
     outbe_primitives::dispatch::ensure_mutation_allowed(&storage)?;
+
+    #[cfg(test)]
+    if let Some((dirty_addr, dirty_slot, dirty_val)) =
+        FORCE_DIRTY_SYSTEM_PRECOMPILE_REVERT.with(|cell| *cell.borrow())
+    {
+        storage.sstore(dirty_addr, dirty_slot, dirty_val)?;
+        storage.emit_event(
+            dirty_addr,
+            alloy_primitives::LogData::new_unchecked(
+                vec![alloy_primitives::keccak256("DirtySoftFailEvent()")],
+                Bytes::from_static(b"dirty-soft-fail-log"),
+            ),
+        )?;
+        return Err(outbe_primitives::error::PrecompileError::Revert(
+            "forced dirty system precompile revert".into(),
+        ));
+    }
 
     let input = SystemTx::decode(data)
         .map_err(crate::errors::BeginBlockPrecompileError::invalid_system_tx_input)?;
@@ -162,7 +203,7 @@ fn dispatch_inner(
         }
         SystemTx::EnclaveUpgradeDeadline => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            enforce_enclave_upgrade_deadline(&ctx)?;
+            cycle::EnclaveUpgradeDeadline::begin_block(&ctx)?;
         }
         SystemTx::Rewards => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
@@ -178,15 +219,15 @@ fn dispatch_inner(
         }
         SystemTx::OracleSlash => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_oracle_slash_window(&ctx)?;
+            outbe_oracle::OracleSlashModule::begin_block(&ctx)?;
         }
         SystemTx::HyperlaneSlash => {
             let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_hyperlane_liveness_window(&ctx)?;
+            outbe_hyperlanecontroller::HyperlaneModule::begin_block(&ctx)?;
         }
         SystemTx::CycleTick => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_cycle_tick(&ctx, 1)?;
+            outbe_cycle::CycleModule::begin_block(&ctx)?;
         }
         SystemTx::NodFactory => {
             let ctx = block_runtime_context_from_storage(storage, false)?;

@@ -140,6 +140,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                 .unwrap_or_else(|error| panic!("system transaction {index} failed: {error}"));
         }
         executor.execute_transaction(user.clone()).unwrap();
+        executor.apply_end_block_phase().unwrap();
         if !replay {
             executor.prepare_final_header_artifacts(0).unwrap();
             header_extra_data = executor.final_extra_data().clone();
@@ -154,7 +155,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             .bundle_state
             .state()
             .contains_key(&outbe_primitives::addresses::GEM_ADDRESS));
-        assert_eq!(result.receipts.len(), signed_body.len() + 1);
+        assert_eq!(result.receipts.len(), signed_body.len() + 1 + 5);
         assert!(result.receipts.iter().all(|receipt| receipt.success));
         let logs = || {
             result

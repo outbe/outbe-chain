@@ -1,49 +1,21 @@
-use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule as _};
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-use super::current_preloaded_system_tx_context;
+/// Protocol module for `SystemTxKind::EnclaveUpgradeDeadline` (`OSEU`).
+pub struct EnclaveUpgradeDeadline;
 
-/// Fourfold headroom over the measured sum of later begin-phase maxima,
-/// rounded up to one million gas. See executor/tests/receipts_and_gas/calibration.rs
-/// and sys_tx_precompile/tests/publication.rs: boundary 57,151,402, Oracle
-/// 340,578,700, TEE bootstrap 266,500, and publication 1,691,100 gross gas.
-/// These are supported-workload measurements, not bounds on arbitrary bridge code.
-pub(crate) const CYCLE_LATER_PHASE_RESERVE_GAS: u64 = 1_599_000_000;
+impl ProtocolModule for EnclaveUpgradeDeadline {
+    const NAME: &'static str = "enclave_upgrade_deadline";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        enforce_enclave_upgrade_deadline(ctx)
+    }
+}
 
 pub(crate) fn run_validator_liveness(ctx: &BlockRuntimeContext) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     enforce_tee_lease_deadlines(ctx)?;
     Ok(())
-}
-
-pub(super) fn run_cycle_tick(
-    ctx: &BlockRuntimeContext,
-    metadosis_genesis_activation_height: u64,
-) -> Result<()> {
-    let Some(preloaded) = current_preloaded_system_tx_context() else {
-        return outbe_cycle::CycleModule::begin_block(ctx);
-    };
-    let insufficient = || outbe_cycle::errors::CycleError::InsufficientWorkCapacity;
-    let remaining = ctx
-        .storage
-        .metered_gas_remaining()?
-        .ok_or_else(insufficient)?;
-    // Begin-zone calls execute with this internal allowance, not their signed
-    // visible-gas limit. The difference includes the precompile base and all
-    // proposer/TEE prefix work, so setup is deducted exactly once.
-    let call_limit = preloaded
-        .gas_limit_override
-        .unwrap_or(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
-    let spent_before_body = call_limit.checked_sub(remaining).ok_or_else(insufficient)?;
-    let capacity = outbe_cycle::runtime::CycleWorkCapacity {
-        remaining_gas: preloaded
-            .remaining_system_gross_gas
-            .checked_sub(spent_before_body)
-            .ok_or_else(insufficient)?,
-        gas_used_at_entry: ctx.storage.gas_used()?,
-        reserve_after_cycle: CYCLE_LATER_PHASE_RESERVE_GAS,
-    };
-    outbe_cycle::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height, capacity)
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
@@ -167,15 +139,4 @@ pub fn enforce_enclave_upgrade_deadline(ctx: &BlockRuntimeContext) -> Result<()>
         report.record();
     }
     Ok(())
-}
-
-/// OracleSlash system tx: run Oracle slash-window penalties after any
-/// same-block boundary activation and Oracle tally/S-curve.
-pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::OracleSlashModule::begin_block(ctx)
-}
-
-/// HyperlaneSlash system tx: run Hyperlane liveness window.
-pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_hyperlanecontroller::HyperlaneModule::begin_block(ctx)
 }

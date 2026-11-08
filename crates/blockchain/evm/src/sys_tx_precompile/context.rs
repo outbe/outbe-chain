@@ -31,12 +31,6 @@ pub(crate) struct PreloadedSystemTxContext {
     /// `verify_late_finalize_credits_in_preexec`, eliminating a second BLS
     /// pairing inside `run_late_finalize_credits`.
     pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
-    /// Optional explicit gas limit override for system transactions. When `None`,
-    /// system transactions execute on the 10B `SYSTEM_TX_ARTIFACT_GAS_LIMIT` lane.
-    pub gas_limit_override: Option<u64>,
-    /// Aggregate begin-zone gross capacity before this call. Refunds do not
-    /// replenish this allowance; end-zone execution uses its separate lane.
-    pub remaining_system_gross_gas: u64,
     /// Block gas limit for user transactions.
     pub block_gas_limit: u64,
     /// Cumulative gas consumed by user transactions before `EndBlock`.
@@ -55,8 +49,6 @@ impl PreloadedSystemTxContext {
             allow_boundary_proposer: false,
             canonical_vrf_proof_hash: B256::ZERO,
             verified_late_credit_signers: None,
-            gas_limit_override: None,
-            remaining_system_gross_gas: 0,
             block_gas_limit,
             user_gas_used,
         }

@@ -199,10 +199,6 @@ where
                         .verified_phase1_vrf_proof_hash
                         .unwrap_or(B256::ZERO),
                     verified_late_credit_signers: self.verified_late_credit_signers.clone(),
-                    gas_limit_override: None,
-                    remaining_system_gross_gas:
-                        outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
-                            .saturating_sub(self.system_tx_gross_gas),
                     block_gas_limit: self.inner.evm.block().gas_limit(),
                     user_gas_used: 0,
                 }),

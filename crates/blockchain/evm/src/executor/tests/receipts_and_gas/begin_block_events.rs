@@ -596,9 +596,6 @@ fn execute_begin_block_system_tx(
                 allow_boundary_proposer: false,
                 canonical_vrf_proof_hash: B256::ZERO,
                 verified_late_credit_signers: None,
-                gas_limit_override: None,
-                remaining_system_gross_gas:
-                    outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
                 block_gas_limit: 0,
                 user_gas_used: 0,
             },

@@ -108,9 +108,6 @@ impl PassBudget {
         }
     }
 
-    /// Retained as a temporary no-op for Wave 2 callers (`oracle`, `intexfactory`) until T3/T4.
-    pub fn enable_gas_metering(&mut self) {}
-
     pub fn visit(&mut self) -> bool {
         take(&mut self.visits, 1)
     }

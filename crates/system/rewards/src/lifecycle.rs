@@ -9,10 +9,7 @@
 //! `outbe_cycle::runtime::handle_cycle_tick` and dispatches into EmissionLimit ->
 //! AgentReward exactly once per UTC day.
 
-use outbe_primitives::{
-    block::{BlockRuntimeContext, ProtocolModule},
-    error::Result,
-};
+use outbe_primitives::block::ProtocolModule;
 
 /// Protocol module for `SystemTxKind::Rewards` (`OSRW`).
 pub struct RewardsModule;
@@ -21,24 +18,12 @@ impl ProtocolModule for RewardsModule {
     const NAME: &'static str = "rewards";
 }
 
-/// Legacy zero-sized marker for Rewards lifecycle tests.
-pub struct RewardsLifecycle;
-
-impl RewardsLifecycle {
-    pub fn begin_block(_ctx: &BlockRuntimeContext) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn end_block(_ctx: &BlockRuntimeContext) -> Result<()> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime;
     use crate::test_support::{block_ctx, with_block, GENESIS_TS as GENESIS_TS_2024_01_01};
+    use outbe_primitives::block::BlockRuntimeContext;
 
     #[test]
     fn day_number_since_genesis_follows_the_genesis_timestamp() {

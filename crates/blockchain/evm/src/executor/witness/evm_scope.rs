@@ -112,26 +112,6 @@ pub(crate) fn clear_detached_trace_witness() {
     });
 }
 
-/// Carries gross admission capacity forward when RPC replay executes reserved
-/// calls without the block executor. Preexecuted Phase 1 is already included in
-/// the installed context and must not be charged a second time.
-pub(crate) fn record_detached_trace_system_gas(gross_gas: u64) -> Result<(), &'static str> {
-    DETACHED_TRACE_WITNESS.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        let Some(context) = slot
-            .as_mut()
-            .and_then(|trace| trace.meta.system_tx_context.as_mut())
-        else {
-            return Ok(());
-        };
-        context.remaining_system_gross_gas = context
-            .remaining_system_gross_gas
-            .checked_sub(gross_gas)
-            .ok_or("detached trace exceeded gross system-work capacity")?;
-        Ok(())
-    })
-}
-
 /// Accumulates user-transaction gas in the detached trace context so `EndBlock`
 /// system transactions replayed via `TxTracer` observe the exact `MidBlock`
 /// `user_gas_used` snapshot.
@@ -389,60 +369,4 @@ pub(crate) fn with_evm_transact_witness_scope<R>(
         }
     }
     f()
-}
-
-#[cfg(test)]
-mod gross_capacity_tests {
-    use super::*;
-    use crate::system_tx::SystemTx;
-
-    #[test]
-    fn detached_replay_carries_gross_capacity_into_the_next_phase() {
-        let mut context = PreloadedSystemTxContext::for_end_block(Default::default(), 0, 0);
-        context.gas_limit_override = None;
-        context.remaining_system_gross_gas = 500;
-        install_detached_trace_witness_with_meta(
-            1,
-            2,
-            3,
-            Some(Arc::new(Mutex::new(WitnessState::new(
-                WitnessExecutionMode::VerifierReplay,
-                None,
-                EnclaveWitnessTapeV1::default(),
-            )))),
-            DetachedTraceExecutionMeta {
-                system_tx_context: Some(context),
-                ..Default::default()
-            },
-        );
-        record_detached_trace_system_gas(100).unwrap();
-        let tx = TxEnv::builder()
-            .data(SystemTx::CycleTick.encode().unwrap())
-            .build_fill();
-        DETACHED_TRACE_WITNESS.with(|slot| {
-            let slot = slot.borrow();
-            let meta = &slot.as_ref().unwrap().meta;
-            let DetachedTraceTxAction::ReservedSystemCall { context, .. } =
-                trace_action_for_tx(meta, 0, true, &tx)
-            else {
-                panic!("expected a reserved replay call");
-            };
-            assert_eq!(context.remaining_system_gross_gas, 400);
-        });
-        assert!(record_detached_trace_system_gas(401).is_err());
-        DETACHED_TRACE_WITNESS.with(|slot| {
-            assert_eq!(
-                slot.borrow()
-                    .as_ref()
-                    .unwrap()
-                    .meta
-                    .system_tx_context
-                    .as_ref()
-                    .unwrap()
-                    .remaining_system_gross_gas,
-                400
-            );
-        });
-        clear_detached_trace_witness();
-    }
 }

@@ -671,8 +671,10 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
 #[test]
 fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
 ) {
+    use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
     use outbe_gemfactory::{schema::GemPosition, GemFactoryContract};
     use outbe_intex::SeriesId;
+    use outbe_intexfactory::IntexFactoryContract;
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
     use outbe_promislimit::PromisLimitContract;
@@ -683,8 +685,10 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
     let block_ts = TEST_BLOCK_TIMESTAMP_BASE + 2;
     let expires_at = TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY;
+    let expires_day = timestamp_to_date_key(expires_at);
     let expired_hour = expires_at / 3_600;
     let expired_capacity = U256::from(2_000_000u64);
+    let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
 
     struct TestExpiryQueue<'a, 's>(&'a GemFactoryContract<'s>);
     outbe_primitives::impl_deadline_queue!(TestExpiryQueue<u64> {
@@ -705,13 +709,36 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             seed_valid_tee_nodes(storage.clone(), &[proposer]);
             OracleContract::new(storage.clone())
                 .utc_day_vwap_last_finalized
-                .write(timestamp_to_date_key(expires_at))
+                .write(expires_day)
                 .unwrap();
+            // Seed IntexFactory call notice queue for OSIX (send_call_notices).
+            let intex_factory = IntexFactoryContract::new(storage.clone());
+            intex_factory.notify_head.write(0).unwrap();
+            intex_factory.notify_tail.write(1).unwrap();
+            intex_factory
+                .notify_at
+                .write(
+                    &0,
+                    outbe_intexfactory::notify::pack_call_notice(stale_series, expires_at),
+                )
+                .unwrap();
+            // Seed CredisFactory cleanup queue in phase 2 for OSCR (cleanup_through).
+            let credis = CredisContract::new(storage.clone());
+            credis.call_sweep_day.write(expires_day).unwrap();
+            credis.call_latest_day.write(expires_day).unwrap();
+            credis.daily_phase.write(2).unwrap();
+            outbe_primitives::deadline_queue::push(
+                &CredisCleanupQueue(&credis),
+                stale_series,
+                expires_at,
+            )
+            .unwrap();
+
             let gf = GemFactoryContract::new(storage);
             let pos = GemPosition {
                 position_id: U256::from(1u64),
                 merchant: OWNER,
-                source_series_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
+                source_series_id: stale_series,
                 remaining_capacity_minor: expired_capacity,
                 issued_at: expires_at - SECONDS_PER_DAY,
                 expires_at,
@@ -838,6 +865,23 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             read_ctx,
         );
         StorageHandle::enter(&mut provider, |storage| {
+            let intex_factory = IntexFactoryContract::new(storage.clone());
+            assert_eq!(
+                intex_factory.notify_tail.read().unwrap(),
+                0,
+                "OSIX (IntexFactory) must run send_call_notices and drain queued notices"
+            );
+            let credis = CredisContract::new(storage.clone());
+            assert_eq!(
+                credis.call_sweep_day.read().unwrap(),
+                0,
+                "OSCR (CredisFactory) must run cleanup_through and finish the pinned sweep day"
+            );
+            assert_eq!(
+                credis.cleanup_series_slot.read(&stale_series).unwrap(),
+                0,
+                "OSCR (CredisFactory) cleanup_through must drop due cleanup queue entry"
+            );
             let gf = GemFactoryContract::new(storage);
             assert!(
                 gf.positions.get(U256::from(1u64)).unwrap().is_none(),
@@ -845,4 +889,157 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             );
         });
     }
+}
+
+#[test]
+fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earlier_state() {
+    outbe_chain_constants::initialize(None).unwrap();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let preserved_addr = outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
+    let preserved_slot = U256::from(0x1111u64);
+    let preserved_val = U256::from(0x2222u64);
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage.clone(), &[proposer]);
+            storage
+                .sstore(preserved_addr, preserved_slot, preserved_val)
+                .unwrap();
+        });
+
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
+    ctx.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, ctx);
+
+    // 1. OSND succeeds.
+    let nod_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .unwrap();
+    executor.execute_transaction(nod_tx).unwrap();
+
+    // 2. OSGM writes dirty storage + emits dirty log, then reverts (soft-fail).
+    let gem_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .unwrap();
+    let dirty_addr = outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+    let dirty_slot = U256::from(0xDEAD_BEEFu64);
+    let dirty_val = U256::from(0xCAFE_BABEu64);
+    let dirty_topic = keccak256("DirtySoftFailEvent()");
+
+    let gas = crate::sys_tx_precompile::with_forced_dirty_system_precompile_revert(
+        dirty_addr,
+        dirty_slot,
+        dirty_val,
+        || executor.execute_transaction(gem_tx),
+    )
+    .expect("soft-fail OSGM revert must emit status=false receipt and continue")
+    .tx_gas_used();
+    assert_eq!(gas, 0);
+
+    let osgm_receipt = executor.receipts().last().expect("OSGM receipt");
+    assert!(!osgm_receipt.success);
+    assert_eq!(osgm_receipt.cumulative_gas_used, 0);
+    assert_eq!(osgm_receipt.logs.len(), 1);
+    assert!(
+        osgm_receipt
+            .logs
+            .iter()
+            .all(|log| log.data.topics().first() != Some(&dirty_topic)),
+        "dirty event log emitted inside reverted OSGM must be rolled back"
+    );
+
+    // 3. Remaining EndBlock system txs (OSIX, OSCR, OSGC) continue and succeed.
+    for input in [
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        executor.execute_transaction(tx).unwrap();
+    }
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.receipts().len(), 5);
+    assert!(executor.receipts()[0].success);
+    assert!(!executor.receipts()[1].success);
+    assert!(executor.receipts()[2..].iter().all(|r| r.success));
+    drop(executor);
+
+    assert_eq!(
+        state.storage(preserved_addr, preserved_slot).unwrap(),
+        preserved_val,
+        "earlier committed state must be preserved across soft-fail EndBlock revert"
+    );
+    assert_eq!(
+        state.storage(dirty_addr, dirty_slot).unwrap(),
+        U256::ZERO,
+        "dirty storage write inside reverted OSGM must be rolled back"
+    );
+}
+
+#[test]
+fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
+    outbe_chain_constants::initialize(None).unwrap();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage, &[proposer]);
+        });
+
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
+    ctx.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, ctx);
+
+    let user_gas_before = 42_000u64;
+    executor.inner.cumulative_tx_gas_used = user_gas_before;
+    executor.inner.block_regular_gas_used = user_gas_before;
+
+    for input in [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        let gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+            executor.execute_transaction(tx)
+        })
+        .expect("EndBlock OutOfGas must be soft-fail and continue block execution")
+        .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.receipts().len(), 5);
+    for receipt in executor.receipts() {
+        assert!(
+            !receipt.success,
+            "EndBlock OOG must emit status=false receipt"
+        );
+        assert_eq!(
+            receipt.cumulative_gas_used, user_gas_before,
+            "EndBlock OOG must contribute 0 visible gas"
+        );
+        assert_eq!(receipt.logs.len(), 1);
+    }
+    assert_eq!(executor.inner.cumulative_tx_gas_used, user_gas_before);
+
+    executor
+        .prepare_final_header_artifacts(0)
+        .expect("header artifact preparation should succeed after EndBlock OOG");
+    let (_, result) = executor
+        .finish()
+        .expect("block must finish cleanly after EndBlock OOG");
+    assert_eq!(result.gas_used, user_gas_before);
 }

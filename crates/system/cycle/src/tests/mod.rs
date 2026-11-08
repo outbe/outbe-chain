@@ -178,21 +178,7 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
 }
 
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx, cycle_work_capacity(ctx)?)
-}
-
-pub(super) fn cycle_work_capacity(
-    ctx: &BlockRuntimeContext,
-) -> outbe_primitives::error::Result<crate::runtime::CycleWorkCapacity> {
-    Ok(crate::runtime::CycleWorkCapacity {
-        remaining_gas: ctx.storage.metered_gas_remaining()?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(
-                "Cycle fixture requires an explicit gas meter".into(),
-            )
-        })?,
-        gas_used_at_entry: ctx.storage.gas_used()?,
-        reserve_after_cycle: 0,
-    })
+    crate::runtime::dispatch_triggers(ctx)
 }
 
 pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
@@ -203,11 +189,7 @@ pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    crate::runtime::handle_cycle_tick(
-        ctx,
-        metadosis_genesis_activation_height,
-        cycle_work_capacity(ctx)?,
-    )
+    crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
 pub(super) fn run_emission_limit_daily(

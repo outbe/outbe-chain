@@ -194,8 +194,6 @@ where
             allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
-            gas_limit_override: None,
-            remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
             block_gas_limit: self.inner.evm.block().gas_limit(),
             user_gas_used: 0,
         };

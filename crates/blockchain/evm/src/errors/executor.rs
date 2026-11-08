@@ -225,16 +225,6 @@ pub enum ExecutorValidationError {
     ValidateProposerIdentity(String),
     #[error("proposer EVM address is not an active consensus participant: {proposer}")]
     ProposerNotActiveConsensusParticipant { proposer: Address },
-    #[error("internal system-work gas overflow")]
-    InternalSystemWorkGasOverflow,
-    #[error(
-        "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
-    )]
-    InternalSystemWorkBudgetExceeded {
-        cumulative: u64,
-        limit: u64,
-        additional: u64,
-    },
     #[error("LateFinalizeCredits pre-exec: fb_number {fb_number} >= block {block_number}")]
     LateFinalizeFbNumberAtOrAboveBlock { fb_number: u64, block_number: u64 },
     #[error(

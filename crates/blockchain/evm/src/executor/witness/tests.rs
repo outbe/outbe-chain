@@ -735,6 +735,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
             executor.execute_transaction(tx).unwrap();
         }
         executor.execute_transaction(user_tx.clone()).unwrap();
+        executor.apply_end_block_phase().unwrap();
         if !is_verifier {
             executor.prepare_final_header_artifacts(0).unwrap();
         }

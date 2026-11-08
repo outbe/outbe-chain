@@ -280,6 +280,9 @@ fn system_prefix_charges_visible_gas_and_receipt_cumulative_contract() {
     );
 
     executor
+        .apply_end_block_phase()
+        .expect("end-block phase should execute");
+    executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
     let (_evm, block_result) = executor.finish().expect("executor finish should succeed");
@@ -531,7 +534,7 @@ fn gas_05_cycle_tick_gas_regression_exercises_dense_agentreward_state() {
 }
 
 #[test]
-fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
+fn gas_09_noncritical_system_oog_emits_zero_gas_failure_receipt_and_continues_block() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -577,28 +580,38 @@ fn gas_09_noncritical_system_oog_exhausts_aggregate_budget_atomically() {
     let receipts_before = executor.receipts().len();
     let cumulative_visible_gas_before = executor.inner.cumulative_tx_gas_used;
     let internal_work_before = executor.system_tx_execution_gas;
-    let error = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+    let gas_output = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
         executor.execute_transaction(oracle_tx)
     })
-    .expect_err("forced system OOG must exhaust the aggregate internal-work budget");
+    .expect("soft-fail BeginBlock OOG must emit a status=false receipt and continue");
 
-    assert!(
-        error.to_string().contains("internal system-work budget"),
-        "GAS-09: OOG must fail through the aggregate budget guard: {error}"
-    );
+    assert_eq!(gas_output.tx_gas_used(), 0);
     assert_eq!(
         executor.receipts().len(),
-        receipts_before,
-        "GAS-09: aggregate exhaustion must not append a failure receipt"
+        receipts_before + 1,
+        "GAS-09: soft-fail OOG must append a synthetic status=false receipt"
     );
+    let receipt = executor.receipts().last().expect("OracleSlash receipt");
+    assert!(!receipt.success);
+    assert_eq!(receipt.cumulative_gas_used, cumulative_visible_gas_before);
     assert_eq!(
         executor.inner.cumulative_tx_gas_used, cumulative_visible_gas_before,
-        "GAS-09: aggregate exhaustion must not change visible gas accounting"
+        "GAS-09: soft-fail OOG must not change visible gas accounting"
     );
     assert_eq!(
-        executor.system_tx_execution_gas, internal_work_before,
-        "GAS-09: aggregate exhaustion must not commit internal-work accounting"
+        executor.system_tx_execution_gas,
+        internal_work_before
+            .saturating_add(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT),
+        "GAS-09: diagnostic internal-work counter records spent system gas"
     );
+
+    for remaining_tx in system_txs {
+        let gas = executor
+            .execute_transaction(remaining_tx)
+            .expect("remaining BeginBlock system txs should continue after soft-fail OOG")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
 }
 
 #[test]
@@ -704,30 +717,6 @@ fn system_gross_work_retains_refunds_without_changing_visible_receipts() {
 }
 
 #[test]
-fn system_gross_overflow_rejects_synthetic_failure_atomically() {
-    let signer = test_evm_signer();
-    let mut state = state_with_active_proposer(signer.address());
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
-    executor.system_tx_gross_gas = u64::MAX;
-    executor
-        .push_system_failure_receipt(SystemFailureReceiptInput {
-            tx_type: alloy_consensus::TxType::Legacy,
-            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            code: 299,
-            reason: "gross overflow".into(),
-            internal_gas_used: 1,
-            internal_gross_gas_used: 1,
-        })
-        .expect_err("gross accumulation must not overflow");
-    assert!(executor.receipts().is_empty());
-    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
-    assert_eq!(executor.system_tx_execution_gas, 0);
-    assert_eq!(executor.system_tx_gross_gas, u64::MAX);
-}
-
-#[test]
 fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -753,40 +742,6 @@ fn system_protocol_precharge_and_ce_gas_are_published_and_block_limited() {
     assert_eq!(executor.inner.block_state_gas_used, 0);
     assert_eq!(executor.system_tx_execution_gas, 123);
     assert_eq!(executor.system_tx_gross_gas, 123);
-}
-
-#[test]
-fn system_internal_work_budget_rejects_before_receipt_or_state_accounting() {
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let mut state = state_with_active_proposer(proposer);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
-    executor.system_tx_execution_gas =
-        outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1;
-
-    let receipts_before = executor.receipts().len();
-    let cumulative_before = executor.inner.cumulative_tx_gas_used;
-    let error = executor
-        .push_system_failure_receipt(SystemFailureReceiptInput {
-            tx_type: alloy_consensus::TxType::Eip1559,
-            log_address: outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            code: 299,
-            reason: "must not commit past the internal system-work budget".into(),
-            internal_gas_used: 2,
-            internal_gross_gas_used: 2,
-        })
-        .expect_err("system internal work must be bounded independently from user gas");
-
-    assert!(error.to_string().contains("internal system-work budget"));
-    assert_eq!(executor.receipts().len(), receipts_before);
-    assert_eq!(executor.inner.cumulative_tx_gas_used, cumulative_before);
-    assert_eq!(executor.system_tx_gross_gas, 0);
-    assert_eq!(
-        executor.system_tx_execution_gas,
-        outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT - 1
-    );
 }
 
 #[test]
@@ -909,12 +864,16 @@ fn gas_16_mixed_system_and_user_block_finish_uses_visible_system_gas() {
         .tx_gas_used();
 
     executor
+        .apply_end_block_phase()
+        .expect("end-block phase should execute");
+    executor
         .prepare_final_header_artifacts(0)
         .expect("final extra_data should encode");
     let (_evm, result) = executor.finish().expect("finish should succeed");
     assert_eq!(result.gas_used, user_gas);
-    assert_eq!(result.receipts.len(), 13);
+    assert_eq!(result.receipts.len(), 18);
     assert_eq!(result.receipts[0].cumulative_gas_used, 0);
     assert_eq!(result.receipts[11].cumulative_gas_used, 0);
     assert_eq!(result.receipts[12].cumulative_gas_used, user_gas);
+    assert_eq!(result.receipts[17].cumulative_gas_used, user_gas);
 }

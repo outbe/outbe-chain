@@ -636,3 +636,105 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
         });
     }
 }
+
+#[test]
+fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_same_begin_block() {
+    use outbe_primitives::{
+        block::ProtocolModule as _, tee_test_utils::gramine_direct_policy_v1,
+        units::UNITS_PER_PROTOCOL_MINOR,
+    };
+
+    let validator = Address::repeat_byte(0x76);
+    let proposal_id = U256::from(11u64);
+    let activation_height = 100u64;
+    let stake = UNITS_PER_PROTOCOL_MINOR * U256::from(100u64);
+    let expected_slashed = UNITS_PER_PROTOCOL_MINOR * U256::from(10u64);
+    let new_mrenclave = B256::repeat_byte(0x88);
+
+    let genesis_hash = B256::repeat_byte(0x11);
+    let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+    provider.set_block_number(10);
+    provider.set_balance(STAKING_ADDRESS, stake);
+    provider.enter(|storage| {
+        seed_registered_active_validator(storage.clone(), validator, &dummy_pubkey(0x76));
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        staking.stake_amount.write(&validator, stake).unwrap();
+        staking.total_staked.write(stake).unwrap();
+        storage.set_balance(STAKING_ADDRESS, stake).unwrap();
+        outbe_slashindicator::schema::SlashIndicator::new(storage.clone())
+            .config_slash_amount_percent
+            .write(10)
+            .unwrap();
+
+        let initial_policy = gramine_direct_policy_v1(CHAIN_ID, genesis_hash).unwrap();
+        let initial_policy_hash = initial_policy.policy_hash().unwrap();
+        let mut registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
+        registry.install_initial_policy_v1(&initial_policy).unwrap();
+        registry
+            .stage_measurement_upgrade_v1(
+                proposal_id,
+                new_mrenclave,
+                initial_policy_hash,
+                activation_height,
+            )
+            .unwrap();
+
+        let mut update = outbe_update::schema::Update::new(storage);
+        update
+            .write_scheduled_update(
+                proposal_id,
+                outbe_update::constants::PROTOCOL_VERSION,
+                activation_height,
+                "enclave upgrade",
+            )
+            .unwrap();
+    });
+
+    provider.set_block_number(activation_height);
+    provider.enter(|storage| {
+        let staking = outbe_staking::contract::Staking::new(storage.clone());
+        let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
+        // Before OSUP runs at activation_height, the staged upgrade is pending and sweep is not due.
+        assert!(registry.strict_upgrade_pending_v1().unwrap());
+        assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: activation_height,
+                timestamp: TEST_BLOCK_TIMESTAMP_BASE,
+                chain_id: CHAIN_ID,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: TEST_BLOCK_TIMESTAMP_BASE.max(1),
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
+
+        // 1. OSUP (UpdateModule::begin_block) promotes the staged policy at height H.
+        outbe_update::UpdateModule::begin_block(&ctx).unwrap();
+        assert!(!registry.strict_upgrade_pending_v1().unwrap());
+        assert!(
+            registry.upgrade_sweep_due_v1().unwrap().is_some(),
+            "OSUP promotion at height H must make the enclave upgrade sweep due in the same block"
+        );
+
+        // 2. OSEU (EnclaveUpgradeDeadline::begin_block) immediately follows OSUP in BeginBlock at height H.
+        crate::sys_tx_precompile::EnclaveUpgradeDeadline::begin_block(&ctx).unwrap();
+        assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
+        assert_eq!(
+            staking.get_stake(validator).unwrap(),
+            stake - expected_slashed
+        );
+        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        assert_eq!(
+            validators.get_validator(validator).unwrap().unwrap().status,
+            outbe_validatorset::runtime::status::JAILED
+        );
+        assert!(registry
+            .upgrade_penalty_applied_v1(proposal_id, validator)
+            .unwrap());
+    });
+}

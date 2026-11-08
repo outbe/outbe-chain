@@ -50,6 +50,9 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
             .execute_transaction(user)
             .expect("ordinary tx executes before terminal artifact preparation");
         executor
+            .apply_end_block_phase()
+            .expect("end-block phase executes");
+        executor
             .prepare_final_header_artifacts(0)
             .expect("final header artifacts encode");
         let final_extra_data = executor.final_extra_data.clone();
@@ -68,7 +71,7 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
     let proposer = run(false);
     let replay = run(true);
     assert_eq!(proposer, replay);
-    assert_eq!(proposer.0.len(), 13);
+    assert_eq!(proposer.0.len(), 18);
 }
 
 /// Determinism gate: a block carries a valid BLS late-finalize credit. The block executes on two
