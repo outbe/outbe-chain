@@ -71,9 +71,7 @@ pub struct OutbeReporter {
     /// FinalizationActor mailbox for sending finalization notifications.
     /// `unbounded_send` keeps this edge non-blocking from the voter task.
     finalization_mailbox: FinalizationMailbox,
-    /// Bridge. Half C-parlia step 11 removed the legacy
-    /// `refresh_pending_finalized_certificate` call. The field stays
-    /// for the surviving status / cache surface and for follow-up
+    /// Bridge retained for the status / cache surface and for follow-up
     /// metrics emission.
     #[allow(dead_code)]
     bridge: Option<ConsensusExecutionBridge>,

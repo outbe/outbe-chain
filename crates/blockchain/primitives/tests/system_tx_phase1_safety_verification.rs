@@ -1,4 +1,4 @@
-//! Batch 8 - Safety verification for the Phase 1 cursor refactor.
+//! Safety verification for the Phase 1 cursor refactor.
 //!
 //! This file ships the safety checklist mandated for consensus-carrying
 //! refactors:

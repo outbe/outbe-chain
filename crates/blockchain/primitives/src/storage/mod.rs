@@ -127,7 +127,6 @@ pub enum SubCallError {
     #[error("invalid target")]
     InvalidTarget,
     /// Sub-call feature gated by an activation block not yet reached.
-    /// Reserved for the future "Sub-call activation gate (mainnet migration)" Epic.
     #[error("sub-call not activated")]
     NotActivated,
     /// Child frame attempted state mutation under STATICCALL.

@@ -364,7 +364,7 @@ fn sim_full_ceremony_completes_and_all_agree() {
 
 #[test]
 fn sim_single_missing_dealer_times_out_clean() {
-    // t5: with one of n dealers absent, the bootstrap ceremony can never collect
+    // With one of n dealers absent, the bootstrap ceremony can never collect
     // all n genesis logs. Every survivor must hit the ceremony deadline and
     // return a *clean* timeout error - never panic, never finalize a subset key.
     use commonware_p2p::Manager as _;

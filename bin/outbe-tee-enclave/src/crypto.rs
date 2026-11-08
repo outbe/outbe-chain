@@ -1,6 +1,6 @@
 //! Enclave crypto core (secret-bearing - lives only in the enclave binary).
 //!
-//! Two responsibilities for slice 1:
+//! Responsibilities:
 //!
 //! 1. **Offer decryption primitive** - the inverse of the client encryption in
 //!    `outbe_tee::offer_encrypt`: ECDHE(X25519) + HKDF-SHA256 +

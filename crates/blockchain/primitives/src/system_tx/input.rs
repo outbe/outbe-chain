@@ -259,7 +259,7 @@ impl SystemTxKind {
         }
     }
 
-    /// Decision 4A:
+    /// Whether a revert or out-of-gas outcome aborts block execution:
     /// - `true` for all 6 `CONSENSUS_ORDER` kinds + `Vote`, `Update`,
     ///   `EnclaveUpgradeDeadline`, `Rewards`, `Staking`, `Oracle`, `CycleTick`.
     /// - `false` for `OracleSlash`, `HyperlaneSlash`, and all 5 `END_BLOCK_ORDER` kinds.
@@ -378,7 +378,7 @@ impl SystemTx {
         self.kind().nonce_ordinal()
     }
 
-    /// Decision 4A: `true` for consensus- and economic-critical phases; `false`
+    /// Returns `true` for consensus- and economic-critical phases; `false`
     /// for `OracleSlash`, `HyperlaneSlash`, and the 5 `END_BLOCK_ORDER` phases.
     pub const fn revert_fails_block(&self) -> bool {
         self.kind().revert_fails_block()

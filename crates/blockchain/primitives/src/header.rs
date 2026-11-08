@@ -348,12 +348,12 @@ mod tests {
         assert_ne!(a.hash_slow(), b.hash_slow());
     }
 
-    /// / T6.3 observer compat: an `OutbeHeader` serialised through
+    /// Observer compatibility: an `OutbeHeader` serialised through
     /// our `Encodable` impl must decode through the standard
     /// `alloy_consensus::Header::decode` path. An op-node-style external L1
     /// observer takes that path. Also, `keccak256(rlp(header))` must match.
     ///
-    /// This guards the EPIC invariant: the on-chain fix added by
+    /// This guards the invariant that the on-chain fix added by
     /// the failure-receipt work does not introduce any wire-format change
     /// detectable by external observers.
     #[test]

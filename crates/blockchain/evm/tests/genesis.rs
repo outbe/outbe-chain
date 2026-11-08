@@ -12,7 +12,7 @@
 //!    share material in any path. Private keys live exclusively in the
 //!    per-validator directories under the operator filesystem.
 //!
-//! Tests `T-3..T-9` live in [`mod runtime`]. They exercise the begin-zone
+//! The runtime layout tests below exercise the begin-zone
 //! system-transaction layout contract (`outbe_evm::system_tx`) for the
 //! genesis bootstrap:
 //!
@@ -331,14 +331,13 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 // seeder regressions above.
 // ---------------------------------------------------------------------------
 
-// T-3 / used to live here as a source-text grep of
-// `engine/src/stack.rs::validate_recovered_vrf_material`. Source-grep tests
+// Source-grep tests of `engine/src/stack.rs::validate_recovered_vrf_material`
 // drift the moment anyone renames a local, so the behavioural assertion
 // belongs next to the function. `outbe-engine`'s stack tests
 // (`stack::tests::*_dkg_*` family) and the localnet restart smoke harness
 // exercise the DKG-share / VRF-group-key mismatch rejection end-to-end.
 
-/// T-6 / block 1 executes `BoundaryOutcome` and persists the epoch-0
+/// Block 1 executes `BoundaryOutcome` and persists the epoch-0
 /// `CommitteeSnapshot` in `CommitteeSnapshotStore` before block 2's Phase 1
 /// (`CertifiedParentAccounting`) reads it.
 #[test]
@@ -434,7 +433,7 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     });
 }
 
-/// T-7 / Begin-zone layout contract for block 1 (genesis DKG `BoundaryOutcome`,
+/// Begin-zone layout contract for block 1 (genesis DKG `BoundaryOutcome`,
 /// no `CertifiedParentAccounting`) vs block 2 (`CertifiedParentAccounting` first).
 #[test]
 fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
@@ -468,9 +467,9 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     );
 }
 
-/// T-8 / block N >= 2 mandatorily carries
+/// Block N >= 2 mandatorily carries
 /// `CertifiedParentAccounting` as its first begin-zone tx. This is the V2
-/// replacement for the legacy exact-parent finalization invariant per Epic
+/// replacement for the legacy exact-parent finalization invariant.
 #[test]
 fn block2_requires_v2_parent_accounting() {
     let block2_without_boundary = expected_begin_block_selectors(2, false, false);
@@ -494,7 +493,7 @@ fn block2_requires_v2_parent_accounting() {
     );
 }
 
-/// T-9 / blocks 0 and 1 must not include `CertifiedParentAccounting`.
+/// Blocks 0 and 1 must not include `CertifiedParentAccounting`.
 /// Block 0 is genesis (no parent). Block 1's parent is genesis (no Phase 1
 /// state to import). The ignored builder test
 /// `locally_built_genesis_block_reexecutes_with_same_state_root` exists

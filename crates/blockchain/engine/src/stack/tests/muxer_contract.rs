@@ -1,5 +1,5 @@
 // =============================================================================
-// T0 - Commonware Muxer drop vs backup-capture contract.
+// Commonware Muxer drop vs backup-capture contract.
 //
 // The Outbe consensus stack uses `Muxer::new(...)` (no backup) for vote / cert
 // / resolver / dkg sub-channels. It registers a fresh sub-channel for every

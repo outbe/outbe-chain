@@ -261,7 +261,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(())
     }
 
-    // Half C-parlia step 11: `set_pending_consensus_metadata` and
+    // `set_pending_consensus_metadata` and
     // `ingest_consensus_metadata_tx` are deleted. Finalized-parent
     // metadata now lives in the begin-zone Phase 1 system transaction input.
     // The pre-exec dispatch arm at `execute_transaction_with_commit_condition`

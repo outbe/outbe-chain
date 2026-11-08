@@ -187,7 +187,7 @@ fn test_two_groups_sum_reasonable() {
 
 #[test]
 fn prop_fraction_never_exceeds_ceiling() {
-    // 1. Exact T-03 multi-group counterexample: raw f1[0] = 670_117 > fmax_fp = 640_000,
+    // 1. Exact multi-group counterexample: raw f1[0] = 670_117 > fmax_fp = 640_000,
     // while weighted_total = 639_999 <= f_fp = 640_000 (normalization does not fire).
     let capped = calc_fraction_distribution_fp(
         &[U256::from(200_000u64), U256::from(800_000u64)],

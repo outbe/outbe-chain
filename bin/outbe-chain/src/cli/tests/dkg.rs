@@ -88,7 +88,7 @@ fn test_parse_dkg_key_backend_unknown() {
     assert!(super::parse_dkg_key_backend(&cli).is_err());
 }
 
-// --- TC-002: DKG command routing via run_dkg_command ---
+// --- DKG command routing via run_dkg_command ---
 
 fn dkg_args(args: &[&str]) -> Vec<String> {
     let mut v = vec!["outbe-chain".to_string(), "dkg".to_string()];

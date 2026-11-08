@@ -54,7 +54,7 @@ fn heartbeat_sends_fcu_to_last_forkchoice_without_payload_attributes() {
     });
 }
 
-// TC-1 regression: a fatal Err from handle_marshal_update must PROPAGATE out
+// Regression: a fatal Err from handle_marshal_update must PROPAGATE out
 // of run_live_loop (via `?`) so run() ends and the supervisor select-arm
 // treats the executor exit as fatal. Without propagation, the loop would swallow
 // a rejected finalized block and keep running on diverged state.

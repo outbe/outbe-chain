@@ -126,7 +126,7 @@ pub const ORACLE_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// execution and no state mutation happen at this address. It is purely a
 /// logical namespace for `eth_getLogs` filtering. The matching log builder, the `OutbeFailure`
 /// event definition, and the zero-fee error -> code mapping live in
-/// `outbe-evm` and `outbe-zerofee` respectively. See EPIC.
+/// `outbe-evm` and `outbe-zerofee` respectively.
 pub const ZERO_FEE_POLICY_LOG_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE06");
 

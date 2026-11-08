@@ -215,13 +215,13 @@ async fn start_empty_marshal(
     (mailbox, resolver_handler, handle)
 }
 
-// TC-2 regression (finding TC-2 / F1 fix): the executor STARTUP BACKFILL must
+// Regression: the executor STARTUP BACKFILL must
 // FAIL FAST when marshal cannot serve a finalized block at or below its own
 // reported finalized height. `run()` walks `(execution_height,
 // last_consensus_finalized]` and calls `marshal.get_block(h)`. An empty marshal
 // returns `None` for height 1, which means marshal's archive is inconsistent
-// (claims finalized to N but cannot serve M <= N). The F1 fix makes that
-// branch `error! + return Err(...)`. If someone reverted it to the old
+// (claims finalized to N but cannot serve M <= N). That
+// branch returns `Err(...)`. If someone reverted it to the old
 // `warn! + skip`, the backfill loop would fall through every height and then
 // enter the infinite `run_live_loop`. Then `run().await` would NOT return an
 // `Err` (this test would hang on the wrapping timeout and then fail the

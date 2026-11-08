@@ -301,7 +301,7 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     assert_eq!(feeder_balance_after, U256::ZERO);
 }
 
-/// / T6.2 parity: two executors with identical state and tx
+/// Two executors with identical state and tx
 /// produce byte-equal soft-fail receipts. This is the on-chain parity
 /// invariant that keeps `receipts_root` deterministic across proposer
 /// and validators when a zero-fee tx is soft-failed.
@@ -394,7 +394,7 @@ fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
     );
 }
 
-/// / T6.6 property: `validator_fee_sum` MUST NOT be perturbed
+/// `validator_fee_sum` MUST NOT be perturbed
 /// by soft-failed zero-fee transactions. Failed zero-fee txs never run
 /// the EVM and never contribute miner fees. Only successful user txs in
 /// the priority-fee path increment `current_block_validator_fees`.
@@ -473,13 +473,13 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
     }
 }
 
-/// / T6.4 mempool natural-eviction bridge: a soft-failed zero-fee
+/// Mempool natural-eviction bridge: a soft-failed zero-fee
 /// tx returns `Ok(non-zero gas)` from `execute_transaction`, which signals
 /// the `BasicBlockBuilder` to append the tx to `block.body`. Reth's pool
 /// then evicts the tx hash on canonical commit via the standard
 /// `on_new_head_block` -> `pool.remove_transactions(block_hashes)` path.
 ///
-/// This is the contract that lets (T4 Won't Do) skip any custom
+/// This is the contract that lets the pool skip any custom
 /// `mark_invalid` plumbing. It confirms that the executor's `Ok` return
 /// is enough for the natural-eviction flow downstream.
 #[test]

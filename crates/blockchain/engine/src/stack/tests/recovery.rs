@@ -775,7 +775,7 @@ fn test_recovered_boundary_addresses_survive_latest_state_removal() {
     assert_eq!(recovered, boundary_addresses);
 }
 
-// T-3 / behavioural counterpart of the removed source-grep test in
+// Behavioural counterpart of the removed source-grep test in
 // `crates/blockchain/evm/tests/genesis.rs`. `validate_recovered_vrf_material`
 // must reject when the locally-recovered VRF group public key disagrees with
 // the finalized boundary artifact. It must accept when they match, or when
@@ -807,8 +807,8 @@ fn validate_recovered_vrf_material_accepts_matching_boundary_rejects_mismatch() 
 }
 
 // =============================================================================
-// T4 - recovery picks participants from the recovered DKG output's committee
-//      (the share holders), NOT the latest on-chain set, and fails fast when
+// Recovery picks participants from the recovered DKG output's committee
+// (the share holders), NOT the latest on-chain set, and fails fast when
 // the restored material does not match the recovered boundary.
 //
 // `select_recovery_participants` is the pure decision the recovery path now

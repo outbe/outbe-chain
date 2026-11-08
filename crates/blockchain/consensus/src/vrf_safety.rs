@@ -124,7 +124,7 @@ impl VrfSafetyGate {
         }
     }
 
-    /// D3-B: a finished ceremony degrades immediately when its output is
+    /// A finished ceremony degrades immediately when its output is
     /// missing or contains revealed shares. A clean output leaves the active
     /// key unchanged until activation calls [`Self::apply_revealed_output`].
     pub fn apply_pending_ceremony_output(

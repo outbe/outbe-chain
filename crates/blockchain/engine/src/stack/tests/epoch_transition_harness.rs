@@ -4,7 +4,7 @@
 use super::*;
 
 // =============================================================================
-// T3 - ordered::Set index shift on prefix-sort join (must pass).
+// ordered::Set index shift on prefix-sort join (must pass).
 //
 // Prepending a BLS pubkey that sorts before all existing keys to an ordered::Set
 // shifts the indices of every original key by +1. Assume that production code
@@ -85,7 +85,7 @@ fn ordered_set_index_shift_on_prefix_join() {
 }
 
 // =============================================================================
-// T1 / T2a / T2b / T5 - multi-node simplex deterministic harness.
+// Multi-node simplex deterministic harness.
 //
 // These tests run the actual `simplex::Engine` over a deterministic
 // simulated network. They use outbe-chain's `HybridScheme<MinSig>` and the
@@ -94,8 +94,8 @@ fn ordered_set_index_shift_on_prefix_join() {
 // the `stack::epoch` module. Toggling `use_pre_registration` in the harness switches
 // between the pre-fix lazy path and the post-fix pre-register path.
 //
-// Foundation tests T0 (`muxer_contract::*`) and T3
-// (`ordered_set_index_shift_on_prefix_join`) above pin the underlying
+// Foundation tests (`muxer_contract::*`) and
+// `ordered_set_index_shift_on_prefix_join` above pin the underlying
 // commonware-p2p Muxer contract and `ordered::Set` ordering invariant
 // respectively.
 // =============================================================================
@@ -124,7 +124,7 @@ fn epoch_transition_finalizes_view_one() {
             .await;
         assert!(
             outcome.all_finalized_view_one(),
-            "T1 baseline: every node must finalize view 1; got {:?}",
+            "baseline: every node must finalize view 1; got {:?}",
             outcome.view_finalized_per_node
         );
         let _ = View::new(1);
@@ -144,8 +144,8 @@ fn cross_node_race_stalls_under_lazy_registration() {
         let epoch = Epoch::new(2); // leader index = (2+1) % 3 = 0
         let leader = harness.leader_for_view_one(epoch);
 
-        // Identical timing to T2b. Only `use_pre_registration: false`
-        // differs. In the lazy path, the harness ignores `dkg_completion_delay`
+        // Only `use_pre_registration: false`
+        // differs from the pre-registered path. In the lazy path, the harness ignores `dkg_completion_delay`
         // (no pre-register), so followers' Mux registers the new epoch
         // only at `activation_delay = 500ms`. The leader fires at 150ms.
         // The 150-500ms window has no follower route -> Mux drop -> stall.
@@ -183,7 +183,7 @@ fn cross_node_race_stalls_under_lazy_registration() {
             .any(|i| !outcome.view_finalized_per_node[i]);
         assert!(
             any_follower_stalled,
-            "T2a: at least one follower must fail to finalize view 1 under lazy \
+            "at least one follower must fail to finalize view 1 under lazy \
              registration; outcome={:?}",
             outcome.view_finalized_per_node
         );
@@ -203,7 +203,7 @@ fn pre_register_helper_avoids_cross_node_race() {
         let epoch = Epoch::new(2);
         let leader = harness.leader_for_view_one(epoch);
 
-        // Same timing scenario as T2a: leader activates fast,
+        // Same timing scenario as the lazy-registration test: leader activates fast,
         // followers slow. The only difference is `use_pre_registration:
         // true`. In the harness, this flag invokes
         // `register_epoch_subchannels` at modeled DKG completion. This is

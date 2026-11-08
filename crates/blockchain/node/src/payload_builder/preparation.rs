@@ -83,9 +83,9 @@ pub(super) fn prepare(
 
     // One-time TEE bootstrap: the consensus thread's TEE DKG coordination
     // stashes the assembled `TeeBootstrapV2` in the bridge. The proposer
-    // clones it here and injects it into the begin-zone (slice 5.1). Only the
+    // clones it here and injects it into the begin-zone. Only the
     // proposer reads its bridge. Validators verify the body-carried
-    // payload (slice 5.2). Candidate construction is retryable, so a rejected
+    // payload. Candidate construction is retryable, so a rejected
     // first candidate must not consume the only copy that later views need.
     //
     // Guard to block 1 (the fixed `committee_snapshot_block` target): every

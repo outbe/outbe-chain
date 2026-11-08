@@ -53,7 +53,7 @@ mod tests {
     use super::*;
     use alloy_primitives::address;
 
-    // TC-026: Pin precompile addresses
+    // Pin precompile addresses
     #[test]
     fn test_precompile_addresses_pinned() {
         assert_eq!(
@@ -90,7 +90,7 @@ mod tests {
         );
     }
 
-    // TC-026: Pin representative function selectors
+    // Pin representative function selectors
     #[test]
     fn test_function_selectors_pinned() {
         use alloy_sol_types::SolCall;

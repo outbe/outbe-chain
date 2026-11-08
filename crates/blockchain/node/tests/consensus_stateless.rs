@@ -212,7 +212,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 }
 
 // ---------------------------------------------------------------------------
-// T-1: legacy V1 selectors are rejected at every height (no silent drop).
+// Legacy V1 selectors are rejected at every height (no silent drop).
 // ---------------------------------------------------------------------------
 
 /// the stateless validator must reject legacy V1 envelopes
@@ -246,7 +246,7 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 }
 
 // ---------------------------------------------------------------------------
-// T-2: block 0 has no begin-zone system txs under V2.
+// Block 0 has no begin-zone system txs under V2.
 // ---------------------------------------------------------------------------
 
 /// block 0 must contain zero system transactions. The layout validator
@@ -268,7 +268,7 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 }
 
 // ---------------------------------------------------------------------------
-// T-3: block 1 layout requires `BoundaryOutcome` under V2.
+// Block 1 layout requires `BoundaryOutcome` under V2.
 // ---------------------------------------------------------------------------
 
 /// a block-1 body that omits `BoundaryOutcome` is rejected
@@ -292,7 +292,7 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
 }
 
 // ---------------------------------------------------------------------------
-// T-4: block N >= 2 layout requires `CertifiedParentAccounting` at body[0].
+// Block N >= 2 layout requires `CertifiedParentAccounting` at body[0].
 // ---------------------------------------------------------------------------
 
 /// for `block_number >= 2`, the first begin-zone tx must be
@@ -336,11 +336,7 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
 }
 
 // ---------------------------------------------------------------------------
-// T-5: source-text scan - consensus.rs runs no stateful checks.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// T-6: V2 envelope with wrong version byte is rejected.
+// V2 envelope with wrong version byte is rejected.
 // ---------------------------------------------------------------------------
 
 /// the decoder rejects an input whose selector is a V2 selector but whose
@@ -468,7 +464,7 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
 }
 
 // ---------------------------------------------------------------------------
-// T-7: V2 envelope with unknown selector is rejected.
+// V2 envelope with unknown selector is rejected.
 // ---------------------------------------------------------------------------
 
 /// an input whose selector is not any active selector

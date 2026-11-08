@@ -1,7 +1,7 @@
 use super::super::*;
 use super::fixtures::*;
 use outbe_validatorset::test_support::StorageOverrides;
-/// Task 01 test: activate_reshared_set() runs AFTER participation decode.
+/// Verifies that `activate_reshared_set()` runs AFTER participation decode.
 ///
 /// Simulates the executor's finish() hook order:
 /// 1. Read active consensus set (OLD set)
@@ -44,7 +44,7 @@ fn test_reshare_activation_after_participation_decode() {
         assert_eq!(old_addrs.len(), 3);
 
         // Step 2-3: Participation/slashing would happen here using old_addrs.
-        // (We only verify that the set is correct. Task 01 code tests actual slashing.)
+        // (We only verify that the set is correct; dedicated tests cover actual slashing.)
 
         // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
         let new_hash = B256::with_last_byte(0x02);

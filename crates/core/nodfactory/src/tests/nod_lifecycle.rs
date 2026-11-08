@@ -2079,7 +2079,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     });
 }
 
-/// T15/A18.6: every persistent write of a forfeit and its cleanup (credit, event,
+/// Every persistent write of a forfeit and its cleanup (credit, event,
 /// deletion) rolls back with its checkpoint. Retry credits the original unpaid
 /// loads once, neither zero nor twice.
 #[test]

@@ -29,7 +29,7 @@
 //! lookup, accounting progress comparison, artifact hash compare, signer bitmap
 //! check). That verification lives exclusively in
 //! `OutbeBlockExecutor::apply_pre_execution_changes`
-//! (executor reorder task) so consensus pre-execution and execution
+//! so consensus pre-execution and execution
 //! share a single stateful evaluator and cannot diverge.
 //!
 //! The integration-level pin for this stateless contract is

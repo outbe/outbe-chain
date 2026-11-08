@@ -23,7 +23,7 @@ contract OrderValidatorHarness {
 
 /// @title OrderValidatorTest
 /// @notice Direct unit tests for OrderValidator.decodeAndCheck - one per branch plus a fuzz on the
-///         outputAmount floor (OIP-00035 T-01). The library is load-bearing for the OIP-00023
+///         outputAmount floor (OIP-00035). The library is load-bearing for the OIP-00023
 ///         amountOut-floor invariant, so these tests isolate each branch instead of covering it
 ///         transitively.
 contract OrderValidatorTest is Test {

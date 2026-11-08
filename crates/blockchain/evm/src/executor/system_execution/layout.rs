@@ -11,9 +11,8 @@ pub(crate) struct ResolvedBeginSystemTx {
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    /// read the current begin-zone system-tx phase cursor.
+    /// Read the current begin-zone system-tx phase cursor.
     /// Test-only introspection point. The production driver is internal.
-    /// Consumer (cursor-driven routing) lands Batch 3.
     #[allow(dead_code)]
     pub(crate) fn system_tx_phase_cursor(&self) -> crate::system_tx::SystemTxPhase {
         self.system_tx_phase_cursor
