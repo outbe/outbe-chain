@@ -118,10 +118,6 @@ pub enum SystemTxBuildError {
     Ost3BootstrapForbiddenAtBlock { block_number: u64 },
     #[error("encode system tx input: {0}")]
     EncodeSystemTxInput(String),
-    #[error("plan visible system tx gas: {0}")]
-    PlanVisibleSystemTxGas(String),
-    #[error("visible gas plan missing system tx ordinal {ordinal}")]
-    VisibleGasPlanMissingOrdinal { ordinal: usize },
     #[error("prebuilt Phase 1 tx calldata diverges from re-derived input")]
     PrebuiltPhase1CalldataDiverges,
     #[error("prebuilt Phase 1 signer {signer} does not match proposer {proposer}")]
@@ -161,10 +157,6 @@ impl SystemTxBuildError {
         Self::EncodeSystemTxInput(error.to_string())
     }
 
-    pub(crate) fn plan_visible_system_tx_gas(error: impl Display) -> Self {
-        Self::PlanVisibleSystemTxGas(error.to_string())
-    }
-
     pub(crate) fn build_unsigned_system_tx(error: impl Display) -> Self {
         Self::BuildUnsignedSystemTx(error.to_string())
     }
@@ -197,7 +189,7 @@ impl From<SystemTxBuildError> for BlockExecutionError {
 #[non_exhaustive]
 pub enum ExecutorValidationError {
     #[error(transparent)]
-    BlockGasBudget(#[from] outbe_primitives::system_tx::BlockGasBudgetError),
+    SystemTx(#[from] outbe_primitives::system_tx::SystemTxError),
     #[error(transparent)]
     TimestampOverflow(#[from] outbe_primitives::errors::TimestampOverflow),
     #[error("{0}")]
@@ -233,44 +225,6 @@ pub enum ExecutorValidationError {
     ValidateProposerIdentity(String),
     #[error("proposer EVM address is not an active consensus participant: {proposer}")]
     ProposerNotActiveConsensusParticipant { proposer: Address },
-    #[error("HookEvents visible gas overflow")]
-    HookEventsVisibleGasOverflow,
-    #[error("system tx visible gas overflow after additional charge")]
-    SystemTxVisibleGasOverflowAfterAdditionalCharge,
-    #[error(
-        "system tx receipt gas exceeds signed gas limit: visible={visible}, signed_limit={signed_limit}, visible_base={visible_base}, additional={additional}"
-    )]
-    SystemTxReceiptGasExceedsSignedLimit {
-        visible: u64,
-        signed_limit: u64,
-        visible_base: u64,
-        additional: u64,
-    },
-    #[error("system tx cumulative visible gas overflow")]
-    SystemTxCumulativeVisibleGasOverflow,
-    #[error(
-        "system tx visible gas exceeds block gas limit: cumulative={cumulative}, block_limit={block_limit}, visible_base={visible_base}, additional={additional}"
-    )]
-    SystemTxVisibleGasExceedsBlockLimit {
-        cumulative: u64,
-        block_limit: u64,
-        visible_base: u64,
-        additional: u64,
-    },
-    #[error("system tx failure visible gas overflow")]
-    SystemTxFailureVisibleGasOverflow,
-    #[error("system tx visible gas overflow")]
-    SystemTxVisibleGasOverflow,
-    #[error("internal system-work gas overflow")]
-    InternalSystemWorkGasOverflow,
-    #[error(
-        "internal system-work budget exceeded: cumulative={cumulative}, limit={limit}, additional={additional}"
-    )]
-    InternalSystemWorkBudgetExceeded {
-        cumulative: u64,
-        limit: u64,
-        additional: u64,
-    },
     #[error("LateFinalizeCredits pre-exec: fb_number {fb_number} >= block {block_number}")]
     LateFinalizeFbNumberAtOrAboveBlock { fb_number: u64, block_number: u64 },
     #[error(
@@ -406,12 +360,6 @@ pub enum ExecutorValidationError {
     PlanVisibleSystemTxGas(String),
     #[error("visible gas plan missing intrinsic gas for body_index={body_index}")]
     VisibleGasPlanMissingIntrinsicGas { body_index: usize },
-    #[error("visible gas plan missing protocol precharge for body_index={body_index}")]
-    VisibleGasPlanMissingProtocolPrecharge { body_index: usize },
-    #[error("visible base gas overflow for body_index={body_index}")]
-    VisibleBaseGasOverflow { body_index: usize },
-    #[error("visible gas plan missing gas limit for body_index={body_index}")]
-    VisibleGasPlanMissingGasLimit { body_index: usize },
     #[error("tx to reserved system transaction address after begin-zone system txs are consumed")]
     ReservedSystemTxAfterBeginZoneConsumed,
     #[error(
@@ -475,14 +423,6 @@ pub enum ExecutorValidationError {
     SystemTxCalldataMismatch {
         body_index: usize,
         expected_phase: &'static str,
-    },
-    #[error(
-        "system tx signed gas below visible base at body_index={body_index}: signed={signed}, visible_base={visible_base}"
-    )]
-    SystemTxSignedGasBelowVisibleBase {
-        body_index: usize,
-        signed: u64,
-        visible_base: u64,
     },
 }
 

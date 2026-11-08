@@ -50,7 +50,7 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::system_tx::{
-    build_unsigned_system_tx_with_gas_limit, SystemTx, SystemTxVisibleGasPlan,
+    build_unsigned_system_tx, SystemTx, BEGIN_BLOCK_ORDER, END_BLOCK_ORDER,
 };
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
@@ -389,29 +389,18 @@ pub(crate) fn block_with_gas_planned_system_inputs(
         inputs,
         chain_id,
     } = fixture;
-    let encoded_inputs = inputs
-        .into_iter()
-        .map(|input| input.encode().expect("input encodes"))
-        .collect::<Vec<_>>();
-    let gas_plan = SystemTxVisibleGasPlan::new(block_gas_limit, &encoded_inputs)
-        .expect("visible gas plan builds");
 
     let mut block = Block::default();
     block.header.number = block_number;
     block.header.parent_hash = parent_hash;
     block.header.extra_data = extra_data;
     block.header.gas_limit = block_gas_limit;
-    for (ordinal, calldata) in encoded_inputs.into_iter().enumerate() {
-        let unsigned = build_unsigned_system_tx_with_gas_limit(
-            outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                ordinal: ordinal.try_into().expect("test ordinal fits"),
-                block_number,
-                chain_id,
-                calldata,
-                gas_limit: gas_plan
-                    .gas_limit(ordinal)
-                    .expect("gas plan covers every system tx"),
-            },
+    for (ordinal, input) in inputs.into_iter().enumerate() {
+        let unsigned = build_unsigned_system_tx(
+            ordinal.try_into().expect("test ordinal fits"),
+            block_number,
+            chain_id,
+            input.encode().expect("input encodes"),
         )
         .expect("system tx builds");
         block
@@ -421,18 +410,15 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     }
     if outbe_primitives::block::BlockHeightRegime::for_block(block_number).has_end_zone_system_txs()
     {
-        for input in [SystemTx::CallEventProcessing, SystemTx::CleanupProcessing] {
-            let calldata = input.encode().expect("end input encodes");
-            let gas_limit = outbe_primitives::system_tx::system_tx_intrinsic_gas(&calldata)
-                .expect("end intrinsic");
-            let unsigned = build_unsigned_system_tx_with_gas_limit(
-                outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                    ordinal: input.nonce_ordinal().expect("end ordinal"),
-                    block_number,
-                    chain_id,
-                    calldata,
-                    gas_limit,
-                },
+        for kind in END_BLOCK_ORDER {
+            let input = kind
+                .into_empty_system_tx()
+                .expect("end-zone kind is payload-free");
+            let unsigned = build_unsigned_system_tx(
+                input.nonce_ordinal().expect("end ordinal"),
+                block_number,
+                chain_id,
+                input.encode().expect("end input encodes"),
             )
             .expect("end system tx builds");
             block
@@ -443,6 +429,26 @@ pub(crate) fn block_with_gas_planned_system_inputs(
     }
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+}
+
+/// Steady-state begin zone with no boundary, tee bootstrap, or publication.
+pub(crate) fn steady_begin_inputs(parent_hash: B256) -> Vec<SystemTx> {
+    let mut inputs = vec![
+        SystemTx::CertifiedParentAccounting {
+            metadata: finalized_metadata(parent_hash),
+        },
+        SystemTx::LateFinalizeCredits {
+            artifact: Default::default(),
+        },
+        SystemTx::ValidatorLiveness,
+    ];
+    for kind in BEGIN_BLOCK_ORDER {
+        inputs.push(
+            kind.into_empty_system_tx()
+                .expect("begin-block kind is payload-free"),
+        );
+    }
+    inputs
 }
 
 pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
@@ -456,17 +462,7 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
             block_number: 2,
             parent_hash,
             extra_data: Bytes::new(),
-            inputs: vec![
-                SystemTx::CertifiedParentAccounting {
-                    metadata: finalized_metadata(parent_hash),
-                },
-                SystemTx::LateFinalizeCredits {
-                    artifact: Default::default(),
-                },
-                SystemTx::CycleTick,
-                SystemTx::OracleSlashWindow,
-                SystemTx::HookEvents,
-            ],
+            inputs: steady_begin_inputs(parent_hash),
             chain_id: outbe_primitives::chain::CHAIN_ID,
         },
     )

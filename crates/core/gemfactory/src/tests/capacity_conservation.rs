@@ -110,6 +110,8 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: DAY_CLOSED,
                 chain_id: 1,
@@ -133,6 +135,8 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         );
         let next = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: DAY_CLOSED + 1,
                 chain_id: 1,
@@ -198,6 +202,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: at,
                 timestamp: at,
                 chain_id: 1,

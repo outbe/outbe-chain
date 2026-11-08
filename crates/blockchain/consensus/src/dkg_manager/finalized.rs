@@ -19,7 +19,7 @@ use super::{
 use crate::errors::DkgError;
 
 /// Canonical chain-reconstructible record of the revealed validator set at a
-/// finalized epoch boundary (`W-08`).
+/// finalized epoch boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RevealedSetRecord {
     /// Epoch activated by this boundary (`boundary.epoch == OdkoOutcome.epoch.get()`).

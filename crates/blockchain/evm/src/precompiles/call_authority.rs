@@ -44,8 +44,11 @@ pub(super) fn metadosis_mutation_entitlements(
             )
         }
         crate::system_tx::SystemTx::CycleTick => cycle_tick_entitlements(&call),
-        crate::system_tx::SystemTx::CallEventProcessing
-        | crate::system_tx::SystemTx::CleanupProcessing => MetadosisMutationEntitlements::exact(
+        crate::system_tx::SystemTx::NodFactory
+        | crate::system_tx::SystemTx::GemFactory
+        | crate::system_tx::SystemTx::IntexFactory
+        | crate::system_tx::SystemTx::CredisFactory
+        | crate::system_tx::SystemTx::GemCleanup => MetadosisMutationEntitlements::exact(
             Purpose::CycleLifecycle,
             metadosis_process_ready_binding(call.chain_id, call.block_number, call.timestamp),
         ),

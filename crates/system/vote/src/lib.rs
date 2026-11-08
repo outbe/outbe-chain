@@ -50,7 +50,11 @@ pub mod runtime;
 pub mod schema;
 pub mod state;
 
-pub use handlers::{VoteTarget, VoteTargetHandlers, VoteTargetRegistry};
+pub use handlers::{
+    registry as vote_target_registry, VoteTarget, VoteTargetHandlers, VoteTargetRegistry,
+    ACTIVE_VOTE_TARGETS,
+};
+pub use lifecycle::{VoteLifecycle, VoteModule};
 pub use schema::Vote;
 pub use state::{
     active_validator_addresses, calculate_vote_tally, ProposalInfo, ProposalStatus,

@@ -98,6 +98,8 @@ fn drain(handle: &StorageHandle<'_>) {
 fn drain_at(handle: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: now,
             chain_id: CHAIN_ID,

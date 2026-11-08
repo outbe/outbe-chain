@@ -1,6 +1,6 @@
 #![cfg(feature = "tee-attestation-v1")]
 
-use alloy_consensus::SignableTransaction as _;
+use alloy_consensus::{SignableTransaction as _, Transaction as _};
 use alloy_eips::eip2718::Encodable2718 as _;
 use alloy_primitives::{Address, Bytes, Signature, B256};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
@@ -8,10 +8,10 @@ use outbe_primitives::tee_bootstrap_v2::{assembly, codec};
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
-    protocol_schedule::OutbeProtocolSchedule,
     system_tx::{
-        build_unsigned_system_tx_with_gas_limit, protocol_block_gas_limit, system_tx_intrinsic_gas,
-        SystemTx, SystemTxVisibleGasPlan, STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
+        build_unsigned_system_tx, expected_begin_block_selectors, expected_end_block_selectors,
+        protocol_block_gas_limit, split_system_layout, system_tx_visible_gas_limit,
+        validate_active_system_tx_set, SystemTx, STEADY_BLOCK_GAS_LIMIT, TEE_BOOTSTRAP_SELECTOR,
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
@@ -26,6 +26,7 @@ use outbe_primitives::{
         TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
 };
+use reth_ethereum::TransactionSigned;
 
 fn policy() -> TeePolicyV1 {
     TeePolicyV1 {
@@ -320,7 +321,7 @@ fn gas_charges_each_logical_evidence_despite_collateral_deduplication() {
 
     assert_eq!(
         payload
-            .protocol_precharge(&SystemGasScheduleV1::normative(), &registry,)
+            .bootstrap_work_gas(&SystemGasScheduleV1::normative(), &registry)
             .unwrap(),
         expected
     );
@@ -342,37 +343,64 @@ fn ost3_system_calldata_roundtrips_the_canonical_bootstrap() {
     );
 }
 
-#[test]
-fn visible_gas_plan_reserves_ost3_precharge_before_assigning_cycle_remainder() {
-    let payload = fixture();
-    let protocol_precharge = payload
-        .protocol_precharge(
-            &SystemGasScheduleV1::normative(),
-            &TeeRegistryGasScheduleV1::normative(),
-        )
-        .unwrap();
-    let cycle = SystemTx::CycleTick.encode().unwrap();
-    let bootstrap = SystemTx::TeeBootstrap { payload }.encode().unwrap();
-    let cycle_intrinsic = system_tx_intrinsic_gas(&cycle).unwrap();
-    let bootstrap_intrinsic = system_tx_intrinsic_gas(&bootstrap).unwrap();
-    let cycle_remainder = 77_777;
-    let reserve = OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS;
-    let block_gas_limit =
-        cycle_intrinsic + bootstrap_intrinsic + protocol_precharge + cycle_remainder + reserve;
+fn block1_system_inputs(payload: TeeBootstrapV2, artifact: DkgBoundaryArtifact) -> Vec<SystemTx> {
+    vec![
+        SystemTx::BoundaryOutcome { artifact },
+        SystemTx::TeeBootstrap { payload },
+        SystemTx::ValidatorLiveness,
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
+    ]
+}
 
-    let inputs = [cycle, bootstrap];
-    let plan = SystemTxVisibleGasPlan::new(block_gas_limit, &inputs).unwrap();
+fn sign_block1(inputs: Vec<SystemTx>) -> Vec<TransactionSigned> {
+    inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| {
+            build_unsigned_system_tx(
+                u8::try_from(ordinal).unwrap(),
+                1,
+                1,
+                input.encode().unwrap(),
+            )
+            .unwrap()
+            .into_signed(Signature::test_signature())
+            .into()
+        })
+        .collect()
+}
 
-    assert_eq!(plan.protocol_precharge(0), Some(0));
-    assert_eq!(plan.execution_gas_limit(0), Ok(Some(cycle_remainder)));
-    assert_eq!(plan.protocol_precharge(1), Some(protocol_precharge));
-    assert_eq!(plan.execution_gas_limit(1), Ok(Some(0)));
+fn assert_block1_zero_gas_layout(transactions: &[TransactionSigned]) {
+    assert_eq!(transactions.len(), 12);
+    for transaction in transactions {
+        assert_eq!(transaction.gas_limit(), 0);
+        assert_eq!(system_tx_visible_gas_limit(transaction.input()).unwrap(), 0);
+    }
+    let layout = split_system_layout(transactions).expect("block-1 layout splits");
+    validate_active_system_tx_set(&layout, 1, true, true)
+        .expect("block-1 bootstrap layout validates");
     assert_eq!(
-        plan.gas_limit(1),
-        Some(bootstrap_intrinsic + protocol_precharge)
+        layout.begin_block_selectors().unwrap(),
+        expected_begin_block_selectors(1, true, true)
     );
-    assert_eq!(plan.total_envelope_gas(), block_gas_limit - reserve);
-    assert_eq!(plan.gas_limit(0), Some(cycle_intrinsic + cycle_remainder));
+    assert!(layout.end.is_empty());
+    assert!(expected_end_block_selectors(1).is_empty());
+}
+
+#[test]
+fn block1_envelopes_carry_zero_gas() {
+    let payload = fixture();
+    let artifact = outbe_primitives::test_utils::sample_system_tx_boundary(2);
+    let transactions = sign_block1(block1_system_inputs(payload, artifact));
+    assert_block1_zero_gas_layout(&transactions);
 }
 
 #[test]
@@ -439,10 +467,7 @@ fn decoder_rejects_full_calldata_cap_plus_one_before_parsing() {
 }
 
 #[test]
-fn seven_validator_bootstrap_fits_five_transaction_block() {
-    use outbe_primitives::system_tx::{split_system_layout, validate_active_system_tx_set};
-    use reth_ethereum::TransactionSigned;
-
+fn seven_validator_bootstrap_fits_block1_layout() {
     let payload = production_shaped_payload(7);
     let logical_evidence_len = payload
         .logical_evidence(0)
@@ -477,46 +502,11 @@ fn seven_validator_bootstrap_fits_five_transaction_block() {
         tee_expired_target_exclusions: Vec::new(),
         tee_expired_target_exclusions_hash: B256::ZERO,
     };
-    let inputs = vec![
-        SystemTx::CycleTick,
-        SystemTx::BoundaryOutcome { artifact },
-        SystemTx::TeeBootstrap { payload },
-        SystemTx::OracleSlashWindow,
-        SystemTx::HookEvents,
-    ];
-    let encoded = inputs
-        .into_iter()
-        .map(|input| input.encode().unwrap())
-        .collect::<Vec<_>>();
-    let bootstrap_len = encoded[2].len();
+    let inputs = block1_system_inputs(payload, artifact);
+    let bootstrap_len = inputs[1].encode().unwrap().len();
     assert!(bootstrap_len <= MAX_TEE_BOOTSTRAP_BYTES);
-    let gas_plan = SystemTxVisibleGasPlan::new(STEADY_BLOCK_GAS_LIMIT, &encoded).unwrap();
-    assert_eq!(
-        gas_plan.total_envelope_gas(),
-        STEADY_BLOCK_GAS_LIMIT - OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
-    );
-    let transactions: Vec<TransactionSigned> = encoded
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, calldata)| {
-            build_unsigned_system_tx_with_gas_limit(
-                outbe_primitives::system_tx::SystemTxEnvelopeInput {
-                    ordinal: u8::try_from(ordinal).unwrap(),
-                    block_number: 1,
-                    chain_id: 1,
-                    calldata,
-                    gas_limit: gas_plan.gas_limit(ordinal).unwrap(),
-                },
-            )
-            .unwrap()
-            .into_signed(Signature::test_signature())
-            .into()
-        })
-        .collect();
-    assert_eq!(transactions.len(), 5);
-    let layout = split_system_layout(&transactions).expect("block-1 bootstrap layout splits");
-    validate_active_system_tx_set(&layout, 1, true, true)
-        .expect("canonical five-transaction block-1 bootstrap layout validates");
+    let transactions = sign_block1(inputs);
+    assert_block1_zero_gas_layout(&transactions);
 
     let exact_transactions_rlp_len = transactions
         .iter()
@@ -528,12 +518,8 @@ fn seven_validator_bootstrap_fits_five_transaction_block() {
         .sum::<usize>();
 
     assert!(
-        gas_plan.gas_limit(3).unwrap() < STEADY_BLOCK_GAS_LIMIT,
-        "OST3 must leave gas for the other five mandatory system transactions"
-    );
-    assert!(
         exact_transactions_rlp_len < outbe_primitives::consensus::OUTBE_MAX_BLOCK_SIZE,
-        "the exact five block-1 transaction encodings must fit the P2P block cap"
+        "the block-1 transaction encodings must fit the P2P block cap"
     );
 }
 
@@ -639,7 +625,7 @@ fn canonical_bootstrap_protocol_fingerprint_is_stable() {
     .encode()
     .unwrap();
     let gas = payload
-        .protocol_precharge(
+        .bootstrap_work_gas(
             &SystemGasScheduleV1::normative(),
             &TeeRegistryGasScheduleV1::normative(),
         )

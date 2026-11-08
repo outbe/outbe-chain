@@ -125,6 +125,8 @@ fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::tick_gate(&BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 3,
                 timestamp: NOW,
                 chain_id: CHAIN_ID,

@@ -567,7 +567,7 @@ fn locally_built_candidate_is_withheld_when_execution_is_not_ready() {
 fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
     // Runs on the deterministic runtime (mirrors `marshal_resolver_p2p_tests.rs`)
     // so the marshal storage-thread-pool teardown does not produce nextest
-    // "(N leaky)" false-positives under load (TC-6).
+    // "(N leaky)" false-positives under load.
     commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             let provider = HybridSchemeProvider::<MinSig>::new();
@@ -619,7 +619,7 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
     );
 }
 
-/// SD-6: `forward()` WITHOUT a prior `proposed()` is a safe no-op. Marshal has
+/// `forward()` WITHOUT a prior `proposed()` is a safe no-op. Marshal has
 /// nothing stashed for `take_proposed`, so it never calls `Buffer::send` (no
 /// panic, no wrong send). In opt3 `handle_propose` always proposes before
 /// `Relay::broadcast` forwards, so this guards the fallback. A follow-up
@@ -627,7 +627,7 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
 /// is alive and the earlier no-op was specifically the no-prior-proposed case.
 #[test]
 fn forward_without_prior_proposed_is_safe_noop() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             use commonware_consensus::Relay as _;
@@ -692,7 +692,7 @@ fn forward_without_prior_proposed_is_safe_noop() {
 
 #[test]
 fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let resolved = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             // `Supervisor::child` yields an owned clock before `context` is moved
@@ -769,7 +769,7 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
 /// catches up.
 #[test]
 fn epoch_boundary_anchor_wait_miss_forfeits_slot_not_stall() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let outcome = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             use commonware_runtime::Supervisor as _;
@@ -1188,7 +1188,7 @@ async fn wait_for_marshal_info(
 
 #[test]
 fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let accepted = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             use commonware_runtime::Supervisor as _;
@@ -1331,7 +1331,7 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
     );
 }
 
-// P4-T4 unit-seam regression: after a crash where the executor/Reth finalized
+// Unit-seam regression: after a crash where the executor/Reth finalized
 // parent N but FinalizationActor had not yet persisted the local
 // FinalizedParentCertStore record, restart sees an empty in-process selection
 // store while marshal's durable archive still contains N's finalization. The
@@ -1355,7 +1355,7 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
                 .ordered_committee(epoch)
                 .expect("fixture registers the committee"))
             .clone();
-            let clock = context.child("p4_t4_selector_recovery");
+            let clock = context.child("selector_recovery");
 
             let (marshal_mailbox, resolver_keepalive, actor_handle) = start_marshal_with_resolver(
                 context,
@@ -1420,7 +1420,7 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
 
 #[test]
 fn consensus_metadata_verify_rejects_inflated_finalized_number() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             use commonware_runtime::Supervisor as _;
@@ -1473,7 +1473,7 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
 
 #[test]
 fn consensus_metadata_verify_rejects_missing_marshal_mapping() {
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let rejected = commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
         |context| async move {
             use commonware_runtime::Supervisor as _;
@@ -1530,7 +1530,7 @@ fn resolve_for_verify_timeout_logs_full_context() {
         .with_ansi(false)
         .finish();
 
-    // Deterministic runtime (TC-6): avoids marshal teardown leaky false-positives.
+    // Deterministic runtime: avoids marshal teardown leaky false-positives.
     let (resolved_as_timeout, logs) = commonware_runtime::deterministic::Runner::timed(
         Duration::from_secs(30),
     )

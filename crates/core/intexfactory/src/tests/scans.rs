@@ -19,6 +19,8 @@ fn scan_and_call_force_calls_breached_series() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -51,6 +53,8 @@ fn a_called_series_reports_its_settlement_deadline() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -117,6 +121,8 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -149,6 +155,8 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -193,6 +201,8 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     let result = StorageHandle::enter(&mut provider, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -453,6 +463,8 @@ fn queued(s: &StorageHandle<'_>, member: SeriesId) -> bool {
 fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: at,
             chain_id: CHAIN_ID,
@@ -547,6 +559,8 @@ fn every_failed_pass_write_rolls_back(
             let member = arm(&s);
             called::prepare_daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 1,
                     timestamp: at,
                     chain_id: CHAIN_ID,
@@ -566,6 +580,8 @@ fn every_failed_pass_write_rolls_back(
         StorageHandle::enter(provider, |s| {
             called::daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 1,
                     timestamp: at,
                     chain_id: CHAIN_ID,
@@ -819,6 +835,8 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
         let due = IntexContract::day_end(IntexContract::deadline_day(deadline));
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: due,
                 chain_id: CHAIN_ID,
@@ -850,6 +868,8 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
 fn block_at<'s>(s: &StorageHandle<'s>, number: u64, ts: u64) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: number,
             timestamp: ts,
             chain_id: CHAIN_ID,

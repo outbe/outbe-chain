@@ -101,6 +101,8 @@ fn corrupt_stored_payloads_propagate_instead_of_becoming_proposal_error() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 30,
                 timestamp: 1_700_000_000,
                 chain_id: 1,
@@ -132,6 +134,8 @@ fn provider_failure_propagates_and_rolls_back_partial_route_writes() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 30,
                 timestamp: 1_700_000_000,
                 chain_id: 1,
@@ -158,6 +162,8 @@ fn provider_failure_propagates_and_rolls_back_partial_route_writes() {
         StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 30,
                     timestamp: 1_700_000_000,
                     chain_id: 1,
@@ -206,6 +212,8 @@ fn failed_supersession_restores_previous_approval_and_index() {
     StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 30,
                 timestamp: 1_700_000_000,
                 chain_id: 1,

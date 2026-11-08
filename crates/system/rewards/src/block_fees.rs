@@ -447,6 +447,8 @@ mod tests {
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 156,
                     timestamp: 100,
                     chain_id: CHAIN_ID,
@@ -659,6 +661,8 @@ mod tests {
             |handle| {
                 let ctx = BlockRuntimeContext::new(
                     BlockContext {
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                         block_number: 156,
                         timestamp: 100,
                         chain_id: CHAIN_ID,
@@ -843,6 +847,8 @@ mod tests {
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 156,
                     timestamp,
                     chain_id: CHAIN_ID,
@@ -881,6 +887,8 @@ mod tests {
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 156,
                     timestamp,
                     chain_id: CHAIN_ID,

@@ -22,7 +22,11 @@ pub mod state;
 pub mod version;
 pub mod vote_target;
 
-pub use handlers::{UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers};
+pub use handlers::{
+    registry as upgrade_handler_registry, UpgradeHandler, UpgradeHandlerRegistry, UpgradeHandlers,
+    ACTIVE_UPGRADE_HANDLERS,
+};
+pub use lifecycle::{UpdateLifecycle, UpdateModule};
 pub use payload::{
     decode_schedule_update_json, encode_schedule_update_json, validate_schedule_update_json,
     ContractUpgrade, RevokeEnclaveBindingPayloadV1, ScheduleUpdatePayload, UpdateVotePayload,

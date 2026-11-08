@@ -344,6 +344,8 @@ fn zero_address_waa_and_sra_distribution_establishes_deadlines() {
         contract.increment_sra_tribute(day, Address::ZERO).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: T_NOW,
                 chain_id: CHAIN_ID,

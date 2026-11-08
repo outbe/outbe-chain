@@ -277,6 +277,8 @@ fn block_at<'s>(storage: &StorageHandle<'s>, timestamp: u64) -> BlockRuntimeCont
     .unwrap_or(BLOCK_NUMBER);
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: height,
             timestamp,
             chain_id: CHAIN_ID,
@@ -1162,6 +1164,8 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         );
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: BLOCK_NUMBER,
                 timestamp: at,
                 chain_id: CHAIN_ID,
@@ -1322,6 +1326,8 @@ fn a_group_over_the_cleanup_budget_is_deleted_across_blocks_and_credited_once() 
         .unwrap();
         let same_height = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: allowance.height,
                 timestamp: past,
                 chain_id: CHAIN_ID,
@@ -1751,6 +1757,8 @@ fn a_running_call_sweep_keeps_its_day() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: BLOCK_NUMBER,
                 timestamp: later,
                 chain_id: CHAIN_ID,
@@ -1819,6 +1827,8 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
     let result = StorageHandle::enter(&mut provider, |storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: BLOCK_NUMBER,
                 timestamp: at,
                 chain_id: CHAIN_ID,
@@ -2069,7 +2079,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
     });
 }
 
-/// T15/A18.6: every persistent write of a forfeit and its cleanup (credit, event,
+/// Every persistent write of a forfeit and its cleanup (credit, event,
 /// deletion) rolls back with its checkpoint. Retry credits the original unpaid
 /// loads once, neither zero nor twice.
 #[test]

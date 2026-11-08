@@ -1,48 +1,26 @@
-use outbe_primitives::block::BlockRuntimeContext;
+use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-use super::current_preloaded_system_tx_context;
+/// Protocol module for `SystemTxKind::EnclaveUpgradeDeadline` (`OSEU`).
+pub struct EnclaveUpgradeDeadline;
 
-/// Fourfold headroom over the measured sum of later begin-phase maxima,
-/// rounded up to one million gas. See executor/tests/receipts_and_gas/calibration.rs
-/// and sys_tx_precompile/tests/publication.rs: boundary 57,151,402, Oracle
-/// 340,578,700, TEE bootstrap 266,500, and publication 1,691,100 gross gas.
-/// These are supported-workload measurements, not bounds on arbitrary bridge code.
-pub(crate) const CYCLE_LATER_PHASE_RESERVE_GAS: u64 = 1_599_000_000;
+impl ProtocolModule for EnclaveUpgradeDeadline {
+    const NAME: &'static str = "enclave_upgrade_deadline";
 
-pub(super) fn run_cycle_tick(
-    ctx: &BlockRuntimeContext,
-    metadosis_genesis_activation_height: u64,
-) -> Result<()> {
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        enforce_enclave_upgrade_deadline(ctx)
+    }
+}
+
+pub(crate) fn run_validator_liveness(ctx: &BlockRuntimeContext) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
     enforce_tee_lease_deadlines(ctx)?;
-    let insufficient = || outbe_cycle::errors::CycleError::InsufficientWorkCapacity;
-    let preloaded = current_preloaded_system_tx_context().ok_or_else(insufficient)?;
-    let remaining = ctx
-        .storage
-        .metered_gas_remaining()?
-        .ok_or_else(insufficient)?;
-    // Begin-zone calls execute with this internal allowance, not their signed
-    // visible-gas limit. The difference includes the precompile base and all
-    // proposer/TEE prefix work, so setup is deducted exactly once.
-    let call_limit = preloaded
-        .gas_limit_override
-        .unwrap_or(outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
-    let spent_before_body = call_limit.checked_sub(remaining).ok_or_else(insufficient)?;
-    let capacity = outbe_cycle::runtime::CycleWorkCapacity {
-        remaining_gas: preloaded
-            .remaining_system_gross_gas
-            .checked_sub(spent_before_body)
-            .ok_or_else(insufficient)?,
-        gas_used_at_entry: ctx.storage.gas_used()?,
-        reserve_after_cycle: CYCLE_LATER_PHASE_RESERVE_GAS,
-    };
-    outbe_cycle::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height, capacity)
+    Ok(())
 }
 
 /// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
-/// validator set. The sweep is part of receipt-visible `CycleTick`, before any
-/// user transaction in the block. Block 1 is excluded because its later
+/// validator set. The sweep is part of receipt-visible `ValidatorLiveness`, before any
+/// user transaction in the block. Block 1 is excluded because its earlier
 /// `TeeBootstrap` system transaction creates the founder bindings atomically.
 pub(super) fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<usize> {
     if ctx.block.block_number
@@ -103,41 +81,62 @@ pub(super) fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<u
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
-    let allow_boundary_proposer = current_preloaded_system_tx_context()
-        .map(|context| context.allow_boundary_proposer)
-        .unwrap_or(false);
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
     if vs.is_consensus_participant(ctx.block.proposer)? {
         vs.record_proposer(ctx.block.proposer)?;
-    } else if allow_boundary_proposer && vs.is_validator(ctx.block.proposer)? {
-        // The block is the activation block for a validator-set-changing
-        // BoundaryOutcome, and a next-epoch validator proposed it. The
-        // proposer becomes a consensus participant in BoundaryOutcome, at which
-        // point `run_boundary_outcome` records this proposal exactly once.
+        Ok(())
     } else {
-        return Err(
+        Err(
             crate::errors::BeginBlockPrecompileError::ProposerNotConsensusParticipant {
                 proposer: ctx.block.proposer,
             }
             .into(),
-        );
+        )
     }
-    Ok(())
 }
 
-/// OracleSlashWindow system tx: run Oracle slash-window penalties after any
-/// same-block boundary activation but before user transactions observe state.
-pub(crate) fn run_oracle_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
-    outbe_oracle::lifecycle::run_slash_window(ctx)
-}
-
-/// Hyperlane liveness window, same phase as the Oracle slash window.
-pub(crate) fn run_hyperlane_liveness_window(ctx: &BlockRuntimeContext) {
-    outbe_hyperlanecontroller::lifecycle::run_liveness_window(ctx)
-}
-
-/// HookEvents system tx: no-op marker. The executor attaches whitelisted
-/// pre-exec hook logs to this phase's receipt without re-running hooks.
-pub(crate) fn run_hook_events(_ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn enforce_enclave_upgrade_deadline(ctx: &BlockRuntimeContext) -> Result<()> {
+    let mut registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+    let Some(upgrade) = registry.upgrade_sweep_due_v1()? else {
+        return Ok(());
+    };
+    let mut reports = Vec::new();
+    ctx.with_checkpoint(|| {
+        let slash_percent = outbe_slashindicator::schema::SlashIndicator::new(ctx.storage.clone())
+            .slash_amount_percent()?;
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+        let active = validators.get_active_validators()?;
+        for validator in active {
+            let address = validator.validator_address;
+            let updated = registry
+                .validator_enclave_binding_v1(address)?
+                .is_some_and(|binding| {
+                    binding.policy_hash == upgrade.successor_policy_hash
+                        && binding.mrenclave == upgrade.mrenclave
+                });
+            if updated || registry.upgrade_penalty_applied_v1(upgrade.proposal_id, address)? {
+                continue;
+            }
+            if let Some(report) = validators.jail_validator_deferred(address)? {
+                reports.push(report);
+            }
+            let slashed = outbe_staking::contract::Staking::new(ctx.storage.clone())
+                .slash_stake(address, slash_percent)?;
+            registry.mark_upgrade_penalty_v1(upgrade.proposal_id, address)?;
+            registry.emit(
+                outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::EnclaveUpgradeMissedV1 {
+                    proposalId: upgrade.proposal_id,
+                    validator: address,
+                    activationHeight: upgrade.activation_height,
+                    requiredMrenclave: upgrade.mrenclave,
+                    slashedAmount: slashed,
+                },
+            )?;
+        }
+        registry.mark_upgrade_swept_v1(upgrade.proposal_id)
+    })?;
+    for report in reports {
+        report.record();
+    }
     Ok(())
 }

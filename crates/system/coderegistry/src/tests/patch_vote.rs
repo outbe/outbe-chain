@@ -88,6 +88,8 @@ pub(super) fn finalize(provider: &mut HashMapStorageProvider, height: u64) -> Re
     provider.enter(|storage| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: height,
                 timestamp: 1_700_000_000 + height,
                 chain_id,
@@ -159,6 +161,8 @@ fn abi_vote_approves_exact_revision_once_only_after_deadline() {
         let before = registry.patch_approval(id).unwrap().unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 14,
                 timestamp: 99,
                 chain_id: CHAIN_ID,

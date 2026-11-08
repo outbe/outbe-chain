@@ -856,6 +856,8 @@ mod tests {
                 .unwrap();
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 4,
                     timestamp: 11 * DAY,
                     chain_id: 1,
@@ -886,6 +888,8 @@ mod tests {
 
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 5,
                     timestamp: 11 * DAY,
                     chain_id: 1,

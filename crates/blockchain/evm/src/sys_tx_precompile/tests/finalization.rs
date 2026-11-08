@@ -43,8 +43,8 @@ fn finalized_dispatch_context(
         allow_boundary_proposer: false,
         canonical_vrf_proof_hash,
         verified_late_credit_signers: None,
-        gas_limit_override: None,
-        remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+        block_gas_limit: 0,
+        user_gas_used: 0,
     }
 }
 
@@ -88,8 +88,8 @@ fn dispatch_finalization_uses_preloaded_summary_not_calldata_money() {
         allow_boundary_proposer: false,
         canonical_vrf_proof_hash: vrf_hash,
         verified_late_credit_signers: None,
-        gas_limit_override: None,
-        remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+        block_gas_limit: 0,
+        user_gas_used: 0,
     };
 
     provider.enable_metadosis_mutation_frame(

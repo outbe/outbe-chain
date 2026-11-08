@@ -28,6 +28,8 @@ fn cca_at(id: u32) -> Address {
 fn seal(storage: &StorageHandle<'_>, day: u32) {
     let ctx = outbe_primitives::block::BlockRuntimeContext::new(
         outbe_primitives::block::BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 10_000,
             timestamp: 2_000_000_000,
             chain_id: 1,
@@ -236,6 +238,8 @@ fn day_count_total_and_cleanup_queue_overflow_roll_back() {
         contract.day_cleanup_tail.write(u64::MAX).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 0,
                 timestamp: 0,
                 chain_id: 0,
@@ -714,6 +718,8 @@ fn cleanup_is_bounded_resumable_and_atomic_including_deficit_only_entries() {
         let contract = CcaContract::new(storage.clone());
         let mut ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 0,
                 timestamp: NOW,
                 chain_id: 1,
@@ -802,6 +808,8 @@ fn cleanup_empty_headers_are_bounded_and_sealing_can_skip_days() {
     run(|storage| {
         let mut ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 0,
                 timestamp: NOW,
                 chain_id: 1,

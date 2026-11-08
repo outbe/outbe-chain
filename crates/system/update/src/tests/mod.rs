@@ -55,6 +55,8 @@ pub(super) fn with_update_provider<F: FnOnce(StorageHandle)>(f: F) -> HashMapSto
 pub(super) fn block_ctx(storage: StorageHandle, block_number: u64) -> BlockRuntimeContext {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: 0,
             chain_id: TEST_CHAIN_ID,

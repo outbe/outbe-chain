@@ -1,17 +1,11 @@
-//! Deterministic begin/end-block system-transaction primitives.
+//! Deterministic 4-stage system-transaction primitives (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
 //!
 //! Outbe represents runtime system transactions as ordinary signed Ethereum
-//! legacy transaction artifacts so standard `eth_*` RPC methods can expose their
-//! receipts and logs. The artifacts are consensus inputs only: execution uses
-//! `transact_system_call` with `SYSTEM_ADDRESS` as the EVM caller. The signed
-//! transaction authenticates the proposer and fixes receipt/tx ordering.
-//!
-//! Begin-zone order: parent accounting, late credits, Cycle, reward delivery,
-//! boundary outcome, TEE bootstrap, Oracle slash window, hook events,
-//! and optional Radicle publication.
-//! Block height and header artifacts select the mandatory phases.
-//! User transactions follow the complete begin-zone prefix.
-//! The signed envelopes use the existing version-2 codec.
+//! legacy transaction artifacts (`gas_limit = 0`, `gas_price = 0`, `value = 0`)
+//! so standard `eth_*` RPC methods can expose their receipts and logs. The
+//! artifacts are consensus inputs only: execution uses `transact_system_call`
+//! with `SYSTEM_ADDRESS` as the EVM caller and contributes `0` visible gas to
+//! block headers and receipts.
 
 use crate::error::PrecompileError;
 
@@ -21,13 +15,16 @@ pub use crate::block::BlockHeightRegime;
 pub mod binding;
 
 mod envelope;
+mod fsm;
 mod gas;
 mod input;
 mod layout;
 mod phase;
 mod witness;
 
-pub use input::SystemTx;
+pub use input::{
+    SystemTx, SystemTxKind, ALL_KINDS, BEGIN_BLOCK_ORDER, CONSENSUS_ORDER, END_BLOCK_ORDER,
+};
 
 /// Four-byte kind selector for a system transaction.
 pub type SysTxSelector = [u8; 4];
@@ -50,7 +47,9 @@ pub fn is_reserved_system_tx<T: alloy_consensus::Transaction + ?Sized>(tx: &T) -
     tx.to() == Some(OUTBE_SYSTEM_TX_ADDRESS)
 }
 
-pub use phase::SystemTxPhase;
+pub use phase::{
+    BlockExecutionFsm, BlockExecutionStage, BlockSystemFlags, BlockSystemPlan, SystemTxPhase,
+};
 
 pub use layout::{
     expected_begin_block_selectors, expected_begin_block_selectors_for_publication,
@@ -58,10 +57,7 @@ pub use layout::{
     validate_system_tx_set_for_publication, SystemTxLayout,
 };
 
-pub use gas::{
-    system_tx_intrinsic_gas, system_tx_visible_gas_limit, BlockGasBudget, BlockGasBudgetError,
-    SystemTxVisibleGasPlan,
-};
+pub use gas::{system_tx_intrinsic_gas, system_tx_visible_gas_limit};
 
 pub use envelope::{
     build_unsigned_system_tx, build_unsigned_system_tx_with_gas_limit, system_tx_nonce,
@@ -71,50 +67,74 @@ pub use envelope::{
 pub use witness::{recover_phase1_proposer, validate_phase1_witness_against};
 
 /// Version byte immediately after the 4-byte kind selector in system-tx input.
-///
-/// Bumped to `2` for V2 Certified-Parent Accounting. Decoder
-/// rejects any other value, so V1 bodies with `1` are rejected at every height.
 pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
+
+// ----- Stage 1: CONSENSUS_ORDER selectors -----
 
 /// Selector for [`SystemTx::CertifiedParentAccounting`] (V2 OSA3).
 pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: SysTxSelector = *b"OSA3";
-/// Selector for [`SystemTx::CycleTick`] (V2 OSC2).
-pub const CYCLE_TICK_SELECTOR: SysTxSelector = *b"OSC2";
+/// Selector for [`SystemTx::LateFinalizeCredits`] (V2 OSL2).
+pub const LATE_FINALIZE_CREDITS_SELECTOR: SysTxSelector = *b"OSL2";
 /// Selector for [`SystemTx::BoundaryOutcome`] (V2 OSB2).
 pub const BOUNDARY_OUTCOME_SELECTOR: SysTxSelector = *b"OSB2";
-/// Selector for [`SystemTx::OracleSlashWindow`] (V2 OSO2).
-pub const ORACLE_SLASH_WINDOW_SELECTOR: SysTxSelector = *b"OSO2";
-/// Selector for the evidence-carrying V1 TEE bootstrap payload.
-///
-/// `OST2` was never a valid selector for this greenfield chain. Only `OST3`
-/// is produced or accepted, in both `DcapRequired` and `GramineDirectDev`
-/// networks.
+/// Selector for [`SystemTx::TeeBootstrap`] (V2 OST3).
 pub const TEE_BOOTSTRAP_SELECTOR: SysTxSelector = *b"OST3";
-/// Selector for [`SystemTx::LateFinalizeCredits`].
-pub const LATE_FINALIZE_CREDITS_SELECTOR: SysTxSelector = *b"OSL2";
-/// Selector for [`SystemTx::HookEvents`] (V2 OSH2).
-pub const HOOK_EVENTS_SELECTOR: SysTxSelector = *b"OSH2";
+/// Selector for [`SystemTx::ValidatorLiveness`] (V2 OSVL).
+pub const VALIDATOR_LIVENESS_SELECTOR: SysTxSelector = *b"OSVL";
+/// Selector for [`SystemTx::RadiclePublication`] (V2 OSP2).
 pub const RADICLE_PUBLICATION_SELECTOR: SysTxSelector = *b"OSP2";
-/// Selector for [`SystemTx::CallEventProcessing`] (V2 OSCE).
-pub const CALL_EVENT_PROCESSING_SELECTOR: SysTxSelector = *b"OSCE";
-/// Selector for [`SystemTx::CleanupProcessing`] (V2 OSCP).
-pub const CLEANUP_PROCESSING_SELECTOR: SysTxSelector = *b"OSCP";
 
-/// Stable nonce ordinal for [`SystemTx::CallEventProcessing`].
-/// Begin-zone ordinals stay below this value.
-pub const CALL_EVENT_PROCESSING_ORDINAL: u8 = 14;
-/// Stable nonce ordinal for [`SystemTx::CleanupProcessing`].
-pub const CLEANUP_PROCESSING_ORDINAL: u8 = 15;
+// ----- Stage 2: BEGIN_BLOCK_ORDER selectors -----
+
+/// Selector for [`SystemTx::Vote`] (OSVT).
+pub const VOTE_SELECTOR: SysTxSelector = *b"OSVT";
+/// Selector for [`SystemTx::Update`] (OSUP).
+pub const UPDATE_SELECTOR: SysTxSelector = *b"OSUP";
+/// Selector for [`SystemTx::EnclaveUpgradeDeadline`] (OSEU).
+pub const ENCLAVE_UPGRADE_DEADLINE_SELECTOR: SysTxSelector = *b"OSEU";
+/// Selector for [`SystemTx::Rewards`] (OSRW).
+pub const REWARDS_SELECTOR: SysTxSelector = *b"OSRW";
+/// Selector for [`SystemTx::Staking`] (OSST).
+pub const STAKING_SELECTOR: SysTxSelector = *b"OSST";
+/// Selector for [`SystemTx::Oracle`] (OSOR).
+pub const ORACLE_SELECTOR: SysTxSelector = *b"OSOR";
+/// Selector for [`SystemTx::OracleSlash`] (OSOS).
+pub const ORACLE_SLASH_SELECTOR: SysTxSelector = *b"OSOS";
+/// Selector for [`SystemTx::HyperlaneSlash`] (OSHL).
+pub const HYPERLANE_SLASH_SELECTOR: SysTxSelector = *b"OSHL";
+/// Selector for [`SystemTx::CycleTick`] (V2 OSC2).
+pub const CYCLE_TICK_SELECTOR: SysTxSelector = *b"OSC2";
+
+// ----- Stage 4: END_BLOCK_ORDER selectors & ordinals -----
+
+/// Selector for [`SystemTx::NodFactory`] (OSND).
+pub const NOD_FACTORY_SELECTOR: SysTxSelector = *b"OSND";
+/// Selector for [`SystemTx::GemFactory`] (OSGM).
+pub const GEM_FACTORY_SELECTOR: SysTxSelector = *b"OSGM";
+/// Selector for [`SystemTx::IntexFactory`] (OSIX).
+pub const INTEX_FACTORY_SELECTOR: SysTxSelector = *b"OSIX";
+/// Selector for [`SystemTx::CredisFactory`] (OSCR).
+pub const CREDIS_FACTORY_SELECTOR: SysTxSelector = *b"OSCR";
+/// Selector for [`SystemTx::GemCleanup`] (OSGC).
+pub const GEM_CLEANUP_SELECTOR: SysTxSelector = *b"OSGC";
+
+/// Stable nonce ordinal for [`SystemTx::NodFactory`].
+pub const NOD_FACTORY_ORDINAL: u8 = 24;
+/// Stable nonce ordinal for [`SystemTx::GemFactory`].
+pub const GEM_FACTORY_ORDINAL: u8 = 25;
+/// Stable nonce ordinal for [`SystemTx::IntexFactory`].
+pub const INTEX_FACTORY_ORDINAL: u8 = 26;
+/// Stable nonce ordinal for [`SystemTx::CredisFactory`].
+pub const CREDIS_FACTORY_ORDINAL: u8 = 27;
+/// Stable nonce ordinal for [`SystemTx::GemCleanup`].
+pub const GEM_CLEANUP_ORDINAL: u8 = 28;
 
 /// Hard cap on system transactions emitted in a block.
-pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 16;
+pub const MAX_SYSTEM_TXS_PER_BLOCK: u8 = 32;
 
 /// Highest block number that bootstraps the chain without Phase 1
 /// (`CertifiedParentAccounting`). Block `n` runs Phase 1 in pre-execution iff
-/// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`. This constant is `1`, so
-/// Phase 1 begins at block `2`. Block `1` still carries the genesis
-/// `BoundaryOutcome` as a begin-zone system transaction. It comes after
-/// `CycleTick`.
+/// `n >= GENESIS_BOOTSTRAP_BLOCK_NUMBER + 1`.
 pub const GENESIS_BOOTSTRAP_BLOCK_NUMBER: u64 = 1;
 
 /// Uniform consensus block gas limit across all block heights (`0`, `1`, `>= 2`).
@@ -126,16 +146,11 @@ pub const fn protocol_block_gas_limit(_block_number: u64) -> u64 {
 }
 
 /// Internal execution gas limit used by the Outbe-aware system-call path.
-/// This value is never used as the visible `gas_limit` of the signed
-/// transaction envelope. Visible envelopes use their Ethereum intrinsic gas so
-/// generic block replay/import tools do not reject them as exceeding the
-/// block gas limit.
 pub const SYSTEM_TX_ARTIFACT_GAS_LIMIT: u64 = 10_000_000_000;
 
-/// Minimum visible gas charged by a system transaction envelope.
+/// Worst-case Ethereum calldata base gas constant retained for `TeeBootstrapV2::preflight`.
 pub const SYSTEM_TX_VISIBLE_GAS_FLOOR: u64 = 21_000;
-
-const SYSTEM_TX_ZERO_BYTE_GAS: u64 = 4;
+/// Worst-case Ethereum non-zero calldata byte gas constant retained for `TeeBootstrapV2::preflight`.
 pub const SYSTEM_TX_NON_ZERO_BYTE_GAS: u64 = 16;
 
 /// Errors returned by deterministic system-tx helpers.
@@ -162,18 +177,10 @@ pub enum SystemTxError {
     OrdinalTooLarge { ordinal: u8, max: u8 },
     #[error("system tx nonce overflow for block {block_number}, ordinal {ordinal}")]
     NonceOverflow { block_number: u64, ordinal: u8 },
-    #[error("system tx visible gas overflow for calldata length {len}")]
-    VisibleGasOverflow { len: usize },
-    #[error(transparent)]
-    BlockGasBudget(#[from] BlockGasBudgetError),
-    #[error("system tx visible gas plan arithmetic overflow")]
-    VisibleGasPlanOverflow,
-    #[error(
-        "system tx gas limit below intrinsic gas: gas_limit={gas_limit}, intrinsic={intrinsic_gas}"
-    )]
-    GasLimitBelowIntrinsic { gas_limit: u64, intrinsic_gas: u64 },
-    #[error("system tx visible gas plan contains more than one CycleTick")]
-    DuplicateCycleTickGasBudget,
+    #[error("system tx must carry gas_limit == 0, got {actual}")]
+    NonZeroGasLimit { actual: u64 },
+    #[error("system tx must carry gas_price == 0, got {actual}")]
+    NonZeroGasPrice { actual: u128 },
     #[error("system tx kind {kind} is in {actual:?} zone, expected {expected:?}")]
     SystemTxInWrongZone {
         kind: &'static str,
@@ -199,6 +206,19 @@ pub enum SystemTxError {
         actual_begin: Vec<SysTxSelector>,
         actual_end: Vec<SysTxSelector>,
     },
+    #[error("unexpected system tx {actual} in stage {stage:?} (expected {expected:?})")]
+    UnexpectedSystemTx {
+        stage: BlockExecutionStage,
+        expected: Option<&'static str>,
+        actual: &'static str,
+    },
+    #[error("unexpected user transaction in stage {stage:?}")]
+    UnexpectedUserTx { stage: BlockExecutionStage },
+    #[error("block execution finished in stage {stage:?} (expected next {expected_next:?})")]
+    IncompleteBlockExecution {
+        stage: BlockExecutionStage,
+        expected_next: Option<&'static str>,
+    },
     #[error(
         "V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"
     )]
@@ -221,8 +241,6 @@ pub enum SystemTxError {
     Phase1ChainIdMismatch { expected: u64, actual: Option<u64> },
     #[error("phase1 tx nonce mismatch: expected {expected}, actual {actual}")]
     Phase1NonceMismatch { expected: u64, actual: u64 },
-    #[error("phase1 tx gas_limit mismatch: expected {expected}, actual {actual}")]
-    Phase1GasLimitMismatch { expected: u64, actual: u64 },
     #[error("phase1 tx calldata mismatch")]
     Phase1CalldataMismatch,
     #[error("phase1 tx signature_hash mismatch")]

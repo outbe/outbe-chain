@@ -1,8 +1,7 @@
 //! Unconditional reservation and terminal-phase regression tests.
 
 use super::*;
-use outbe_primitives::system_tx::{BlockGasBudget, SystemTxPhase};
-use revm::context_interface::Cfg;
+use outbe_primitives::system_tx::{BlockExecutionStage, SystemTxPhase};
 
 #[test]
 fn header_preparation_does_not_run_post_execution_or_enter_end_block_phase() {
@@ -29,12 +28,8 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::UserTxs);
     executor.apply_end_block_phase().unwrap();
     executor.prepare_final_header_artifacts(0).unwrap();
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlock {
-            gas_capacity: executor.inner.evm.block().gas_limit(),
-        }
-    );
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert!(executor.receipts().is_empty());
     executor.prepare_final_header_artifacts(0).unwrap();
     assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
@@ -55,8 +50,8 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
             let mut ctx = execution_ctx(None, Bytes::new());
             ctx.proposer_evm_address = Some(signer.address());
             let mut executor = config.create_executor(evm, ctx);
-            let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
-            let used = budget.pre_end_capacity() - tx.gas_limit() + 1;
+            let block_gas_limit = executor.inner.evm.block().gas_limit();
+            let used = block_gas_limit - tx.gas_limit() + 1;
             executor.inner.cumulative_tx_gas_used = used;
             let err = executor.execute_transaction(tx.clone()).unwrap_err();
             assert!(matches!(
@@ -115,10 +110,11 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         let mut state = state_with_active_proposer_and_funded_account(OWNER, tx.signer());
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
         let mut ctx = execution_ctx(None, Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
-        let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
-        let used = budget.pre_end_capacity() - tx.gas_limit();
+        let block_gas_limit = executor.inner.evm.block().gas_limit();
+        let used = block_gas_limit - tx.gas_limit();
         executor.inner.cumulative_tx_gas_used = used;
         executor.execute_transaction(tx.clone()).unwrap();
         let actual_gas = used + 21_000;
@@ -126,15 +122,10 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         let receipts = executor.receipts().len();
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
-        assert_eq!(executor.receipts().len(), receipts + 2);
-        assert_eq!(
-            executor.system_tx_phase_cursor,
-            SystemTxPhase::EndBlock {
-                gas_capacity: executor.inner.evm.block().gas_limit() - actual_gas,
-            }
-        );
+        assert_eq!(executor.receipts().len(), receipts + 5);
+        assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
         executor.apply_end_block_phase().unwrap();
-        assert_eq!(executor.receipts().len(), receipts + 2);
+        assert_eq!(executor.receipts().len(), receipts + 5);
         assert_eq!(executor.body_tx_index, body_index);
     }
 }
@@ -153,16 +144,21 @@ fn end_phase_uses_authoritative_counters_without_rechecking_begin_cursor() {
         ctx.execute_outbe_block_hooks = hooks;
         ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
-        executor.system_tx_phase_cursor = SystemTxPhase::HookEvents { body_index: 4 };
+        executor.system_tx_phase_cursor = SystemTxPhase::UserTxs;
+        if hooks {
+            executor.fsm =
+                outbe_primitives::system_tx::BlockExecutionFsm::for_block(2, false, false, false);
+            for kind in
+                outbe_primitives::system_tx::BlockSystemPlan::for_block(2, false, false, false)
+                    .begin_zone_kinds()
+            {
+                executor.fsm.on_system_tx(kind).unwrap();
+            }
+        }
         executor.inner.cumulative_tx_gas_used = 18_000_000;
         executor.apply_end_block_phase().unwrap();
-        assert_eq!(
-            executor.system_tx_phase_cursor,
-            SystemTxPhase::EndBlock {
-                gas_capacity: executor.inner.evm.block().gas_limit() - 18_000_000,
-            }
-        );
-        assert_eq!(executor.receipts().len(), 2);
+        assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+        assert_eq!(executor.receipts().len(), 5);
         executor.inner.cumulative_tx_gas_used = executor.inner.evm.block().gas_limit() + 1;
         assert!(executor.finish().is_err());
     }
@@ -181,32 +177,19 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
     env.cfg_env.tx_gas_limit_cap = Some(16_000_000);
     let evm = config.evm_with_env(&mut state, env);
     let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     ctx.proposer_evm_address = Some(signer.address());
     let mut executor = config.create_executor(evm, ctx);
-    let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
-    let cap = executor.inner.evm.cfg_env().tx_gas_limit_cap();
-    let declared = cap + 1;
-    executor.inner.block_regular_gas_used = budget.pre_end_capacity() - cap;
-    executor.inner.block_state_gas_used = budget.pre_end_capacity() - declared;
-    executor.check_user_pre_end_gas(declared).unwrap();
-    executor.inner.block_state_gas_used += 1;
-    assert!(executor.check_user_pre_end_gas(declared).is_err());
-    executor.inner.block_state_gas_used -= 1;
-    executor.inner.block_regular_gas_used += 1;
-    assert!(executor.check_user_pre_end_gas(declared).is_err());
+    assert_eq!(executor.tx_gas_limit_cap(), 16_000_000);
     executor.inner.block_regular_gas_used = 1;
     executor.inner.block_state_gas_used = 18_000_000;
+    assert_eq!(executor.accounted_block_gas(), 18_000_000);
     executor.apply_end_block_phase().unwrap();
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlock {
-            gas_capacity: executor.inner.evm.block().gas_limit() - 18_000_000,
-        }
-    );
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
 }
 
 #[test]
-fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
+fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let parent = B256::with_last_byte(0xA5);
@@ -227,7 +210,7 @@ fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
             bootstrap: BootstrapFixture::Absent,
         },
     );
-    let hook = begin.last().unwrap().clone();
+    let cycle_tx = begin.last().unwrap().clone();
     let ordinal = u8::try_from(begin.len() - 1).unwrap();
     let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
@@ -237,41 +220,23 @@ fn hook_events_rejection_preserves_logs_and_begin_receipt_accounting() {
     ctx.parent_consensus_metadata = Some(metadata);
     ctx.expected_begin_system_txs = begin;
     let mut executor = config.create_executor(evm, ctx);
-    executor.system_tx_phase_cursor = SystemTxPhase::HookEvents {
+    executor.system_tx_phase_cursor = SystemTxPhase::CycleTick {
         body_index: ordinal,
     };
-    let logs = vec![Log::default()];
-    executor.whitelisted_hook_event_logs = logs.clone();
-    let budget = BlockGasBudget::new(executor.inner.evm.block().gas_limit()).unwrap();
-    executor.inner.cumulative_tx_gas_used = budget.pre_end_capacity();
-    assert!(executor.execute_transaction(hook).is_err());
-    assert_eq!(executor.whitelisted_hook_event_logs, logs);
+    let block_gas_limit = executor.inner.evm.block().gas_limit();
+    executor.inner.cumulative_tx_gas_used = block_gas_limit;
+    assert!(crate::factory::with_forced_outbe_system_call_revert(|| {
+        executor.execute_transaction(cycle_tx)
+    })
+    .is_err());
     assert!(executor.receipts().is_empty());
     assert_eq!(
         executor.system_tx_phase_cursor,
-        SystemTxPhase::HookEvents {
+        SystemTxPhase::CycleTick {
             body_index: ordinal
         }
     );
-    assert_eq!(
-        executor.inner.cumulative_tx_gas_used,
-        budget.pre_end_capacity()
-    );
-    assert!(executor.visible_system_gas(1, 0, 1).is_err());
-    assert!(executor
-        .push_system_failure_receipt(SystemFailureReceiptInput {
-            tx_type: alloy_consensus::TxType::Eip1559,
-            log_address: OUTBE_SYSTEM_TX_ADDRESS,
-            code: 201,
-            reason: "test".into(),
-            visible_base_gas: 1,
-            additional_visible_gas: 0,
-            signed_gas_limit: 1,
-            internal_gas_used: 1,
-            internal_gross_gas_used: 1,
-        })
-        .is_err());
-    assert!(executor.receipts().is_empty());
+    assert_eq!(executor.inner.cumulative_tx_gas_used, block_gas_limit);
     assert_eq!(executor.system_tx_execution_gas, 0);
 }
 
@@ -288,6 +253,7 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
             test_evm_env(block_number, REWARDS_ADDRESS),
         );
         let mut proposer_ctx = execution_ctx(None, Bytes::new());
+        proposer_ctx.execute_outbe_block_hooks = false;
         proposer_ctx.proposer_evm_address = Some(proposer);
         let mut proposer_exec = config.create_executor(proposer_evm, proposer_ctx);
         proposer_exec.apply_end_block_phase().unwrap();
@@ -297,19 +263,11 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
             assert!(staged.is_empty());
             assert_eq!(
                 proposer_exec.system_tx_phase_cursor,
-                SystemTxPhase::EndBlock {
-                    gas_capacity: proposer_exec.inner.evm.block().gas_limit(),
-                }
+                SystemTxPhase::EndBlock
             );
             // Any end-block system tx submitted at Genesis or GenesisBootstrap must be rejected.
             let fake_call = config
-                .build_end_system_tx(
-                    block_number,
-                    CHAIN_ID,
-                    proposer,
-                    SystemTx::CallEventProcessing,
-                    100_000,
-                )
+                .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
                 .unwrap();
             let mut verifier_state = state_with_active_proposer(proposer);
             let verifier_evm = config.evm_with_env(
@@ -317,17 +275,19 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
                 test_evm_env(block_number, REWARDS_ADDRESS),
             );
             let mut verifier_ctx = execution_ctx(None, Bytes::new());
+            verifier_ctx.execute_outbe_block_hooks = false;
             verifier_ctx.proposer_evm_address = Some(proposer);
             let mut verifier_exec = config.create_executor(verifier_evm, verifier_ctx);
             assert!(verifier_exec.execute_transaction(fake_call).is_err());
         } else {
-            assert_eq!(staged.len(), 2);
+            assert_eq!(staged.len(), 5);
             let mut verifier_state = state_with_active_proposer(proposer);
             let verifier_evm = config.evm_with_env(
                 &mut verifier_state,
                 test_evm_env(block_number, REWARDS_ADDRESS),
             );
             let mut verifier_ctx = execution_ctx(None, Bytes::new());
+            verifier_ctx.execute_outbe_block_hooks = false;
             verifier_ctx.proposer_evm_address = Some(proposer);
             let mut verifier_exec = config.create_executor(verifier_evm, verifier_ctx);
             for tx in staged {
@@ -350,111 +310,75 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
 fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
     let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     ctx.proposer_evm_address = Some(proposer);
     let mut executor = config.create_executor(evm, ctx);
 
-    let capacity = executor.inner.evm.block().gas_limit();
-    let expected_call_limit =
-        outbe_primitives::end_gas::expected_call_event_gas_limit(capacity).unwrap();
-
-    // 1. CleanupProcessing before CallEventProcessing must fail with SystemTxPhaseMismatch.
-    let premature_cleanup = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::CleanupProcessing, capacity)
+    // 1. GemFactory before NodFactory must fail with SystemTxPhaseMismatch.
+    let premature_gem = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
         .unwrap();
-    let err = executor.execute_transaction(premature_cleanup).unwrap_err();
-    assert!(err.to_string().contains("CallEventProcessing"));
+    let err = executor.execute_transaction(premature_gem).unwrap_err();
+    assert!(err.to_string().contains("NodFactory"));
 
-    // 2. CallEventProcessing with mismatched gas_limit must fail with EndBlockGasLimitMismatch.
-    let bad_limit_call = config
-        .build_end_system_tx(
-            2,
-            CHAIN_ID,
-            proposer,
-            SystemTx::CallEventProcessing,
-            expected_call_limit - 1,
-        )
-        .unwrap();
-    let err = executor.execute_transaction(bad_limit_call).unwrap_err();
-    assert!(err.to_string().contains("CallEventProcessing"));
+    // 2. NodFactory with non-zero gas_limit must fail with EndBlockGasLimitMismatch.
+    let mut bad_unsigned = outbe_primitives::system_tx::build_unsigned_system_tx(
+        outbe_primitives::system_tx::NOD_FACTORY_ORDINAL,
+        2,
+        CHAIN_ID,
+        SystemTx::NodFactory.encode().unwrap(),
+    )
+    .unwrap();
+    bad_unsigned.gas_limit = 1;
+    let bad_limit_nod = reth_primitives_traits::Recovered::new_unchecked(
+        signer.sign_unsigned(bad_unsigned).unwrap(),
+        proposer,
+    );
+    let err = executor.execute_transaction(bad_limit_nod).unwrap_err();
+    assert!(err.to_string().contains("NodFactory"));
 
-    // 3. Valid CallEventProcessing transitions cursor to EndBlockCleanup.
-    let valid_call = config
-        .build_end_system_tx(
-            2,
-            CHAIN_ID,
-            proposer,
-            SystemTx::CallEventProcessing,
-            expected_call_limit,
-        )
+    // 3. Valid NodFactory transitions cursor to EndBlockGemFactory.
+    let valid_nod = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
         .unwrap();
-    let call_gas = executor
-        .execute_transaction(valid_call.clone())
+    let nod_gas = executor
+        .execute_transaction(valid_nod.clone())
         .unwrap()
         .tx_gas_used();
+    assert_eq!(nod_gas, 0);
     assert_eq!(
         executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockCleanup {
-            gas_capacity: capacity,
-            call_gas_used: call_gas,
-        }
+        SystemTxPhase::EndBlockGemFactory
     );
 
-    // 4. Duplicate CallEventProcessing when cursor is EndBlockCleanup must fail.
-    let err = executor.execute_transaction(valid_call).unwrap_err();
-    assert!(err.to_string().contains("CleanupProcessing"));
+    // 4. Duplicate NodFactory when cursor is EndBlockGemFactory must fail.
+    let err = executor.execute_transaction(valid_nod).unwrap_err();
+    assert!(err.to_string().contains("GemFactory"));
 
-    // 5. Valid CleanupProcessing transitions cursor to EndBlock, and a duplicate CleanupProcessing is rejected.
-    let expected_cleanup_limit =
-        outbe_primitives::end_gas::expected_cleanup_gas_limit(capacity, call_gas).unwrap();
-    let valid_cleanup = config
-        .build_end_system_tx(
-            2,
-            CHAIN_ID,
-            proposer,
-            SystemTx::CleanupProcessing,
-            expected_cleanup_limit,
-        )
-        .unwrap();
-    executor.execute_transaction(valid_cleanup.clone()).unwrap();
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlock {
-            gas_capacity: capacity,
+    // 5. Remaining 4 EndBlock system txs transition cursor to EndBlock, and a duplicate is rejected.
+    for (input, expected_cursor) in [
+        (SystemTx::GemFactory, SystemTxPhase::EndBlockIntexFactory),
+        (SystemTx::IntexFactory, SystemTxPhase::EndBlockCredisFactory),
+        (SystemTx::CredisFactory, SystemTxPhase::EndBlockGemCleanup),
+        (SystemTx::GemCleanup, SystemTxPhase::EndBlock),
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        let gas = executor
+            .execute_transaction(tx.clone())
+            .unwrap()
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+        assert_eq!(executor.system_tx_phase_cursor, expected_cursor);
+        if matches!(expected_cursor, SystemTxPhase::EndBlock) {
+            assert!(executor.execute_transaction(tx).is_err());
         }
-    );
-    assert!(executor.execute_transaction(valid_cleanup).is_err());
-}
-
-#[test]
-fn end_block_unit_stops_cleanly_when_remaining_gas_below_unit_ceiling() {
-    use outbe_primitives::{
-        end_gas::{unit_ceiling, UnitKind},
-        storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    };
-
-    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    // Remaining gas is strictly below unit_ceiling(UnitKind::Call) (1_500_000).
-    provider.set_gas_limit(unit_ceiling(UnitKind::Call) - 1);
-    StorageHandle::enter(&mut provider, |storage| {
-        storage.enable_end_gas_metering().unwrap();
-        let mut invoked = false;
-        let outcome = storage.run_gas_bounded_unit(UnitKind::Call, || {
-            invoked = true;
-            Ok(1u32)
-        });
-        assert!(
-            !invoked,
-            "unit body must not run when remaining gas < ceiling"
-        );
-        assert!(matches!(
-            outcome,
-            Err(outbe_primitives::error::PrecompileError::OutOfGas)
-        ));
-    });
+    }
 }
 
 #[test]
@@ -465,60 +389,657 @@ fn end_block_soft_failure_receipt_preserves_cleanup_budget_and_continues_block()
     let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
     ctx.proposer_evm_address = Some(proposer);
     let mut executor = config.create_executor(evm, ctx);
 
-    let capacity = executor.inner.evm.block().gas_limit();
-    let call_limit = outbe_primitives::end_gas::expected_call_event_gas_limit(capacity).unwrap();
-    let call_tx = config
-        .build_end_system_tx(
-            2,
-            CHAIN_ID,
-            proposer,
-            SystemTx::CallEventProcessing,
-            call_limit,
-        )
-        .unwrap();
-
-    // Force a revert on CallEventProcessing (charges 42_000 gas and emits a soft-failure receipt).
-    let call_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
-        executor.execute_transaction(call_tx)
-    })
-    .unwrap()
-    .tx_gas_used();
-    assert_eq!(call_gas, 42_000);
-    assert_eq!(executor.receipts().len(), 1);
-    assert!(!executor.receipts()[0].success);
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockCleanup {
-            gas_capacity: capacity,
-            call_gas_used: 42_000,
-        }
-    );
-
-    // CleanupProcessing receives the exact remaining budget (`capacity - 42_000`) and succeeds.
-    let cleanup_limit =
-        outbe_primitives::end_gas::expected_cleanup_gas_limit(capacity, call_gas).unwrap();
-    let cleanup_tx = config
-        .build_end_system_tx(
-            2,
-            CHAIN_ID,
-            proposer,
-            SystemTx::CleanupProcessing,
-            cleanup_limit,
-        )
-        .unwrap();
-    executor.execute_transaction(cleanup_tx).unwrap();
-    assert_eq!(executor.receipts().len(), 2);
-    assert!(executor.receipts()[1].success);
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlock {
-            gas_capacity: capacity,
-        }
-    );
+    // Force a revert on all 5 END_BLOCK_ORDER kinds in turn (0 visible gas, emits a
+    // soft-failure receipt with status = false, advances cursor, and continues block).
+    for (idx, (input, expected_cursor)) in [
+        (SystemTx::NodFactory, SystemTxPhase::EndBlockGemFactory),
+        (SystemTx::GemFactory, SystemTxPhase::EndBlockIntexFactory),
+        (SystemTx::IntexFactory, SystemTxPhase::EndBlockCredisFactory),
+        (SystemTx::CredisFactory, SystemTxPhase::EndBlockGemCleanup),
+        (SystemTx::GemCleanup, SystemTxPhase::EndBlock),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        let gas = crate::factory::with_forced_outbe_system_call_revert(|| {
+            executor.execute_transaction(tx)
+        })
+        .unwrap()
+        .tx_gas_used();
+        assert_eq!(gas, 0);
+        assert_eq!(executor.receipts().len(), idx + 1);
+        assert!(!executor.receipts()[idx].success);
+        assert_eq!(executor.receipts()[idx].cumulative_gas_used, 0);
+        assert_eq!(executor.system_tx_phase_cursor, expected_cursor);
+    }
+    assert_eq!(executor.receipts().len(), 5);
+    assert!(executor.receipts().iter().all(|r| !r.success));
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
     executor.prepare_final_header_artifacts(0).unwrap();
     let (_, result) = executor.finish().unwrap();
-    assert_eq!(result.receipts.len(), 2);
+    assert_eq!(result.receipts.len(), 5);
+}
+
+#[test]
+fn all_soft_fail_kinds_abort_block_on_fatal_system_call_error() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+
+    // 1. BeginBlock soft-fail kinds (OracleSlash, HyperlaneSlash) abort block on Fatal/system error.
+    for target_kind in [
+        outbe_primitives::system_tx::SystemTxKind::OracleSlash,
+        outbe_primitives::system_tx::SystemTxKind::HyperlaneSlash,
+    ] {
+        let mut state = state_with_active_proposer_and_funded_account(proposer, Address::ZERO);
+        let parent_hash = B256::with_last_byte(0x41);
+        let (ctx, metadata) = block_two_execution_ctx(Some(1), Bytes::new(), proposer, parent_hash);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, ctx);
+        super::with_phase1_verify_disabled(|| {
+            executor.apply_pre_execution_changes().unwrap();
+        });
+        for tx in begin_system_txs_for_test(
+            &config,
+            BeginBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(metadata),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
+        ) {
+            let decoded = SystemTx::decode(tx.tx().input().as_ref()).unwrap();
+            if decoded.kind() == target_kind {
+                let receipts_before = executor.receipts().len();
+                let res = crate::factory::with_forced_outbe_system_call_error(|| {
+                    executor.execute_transaction(tx)
+                });
+                assert!(
+                    res.is_err(),
+                    "fatal system call error on {target_kind:?} must abort block execution"
+                );
+                assert_eq!(
+                    executor.receipts().len(),
+                    receipts_before,
+                    "fatal system call error must not append a soft-failure receipt"
+                );
+                break;
+            }
+            executor.execute_transaction(tx).unwrap();
+        }
+    }
+
+    // 2. EndBlock soft-fail kinds (OSND..OSGC) abort block on Fatal/system error.
+    let end_inputs = [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ];
+    for target_idx in 0..end_inputs.len() {
+        let mut state = state_with_active_proposer(proposer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut ctx = execution_ctx(None, Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
+        ctx.proposer_evm_address = Some(proposer);
+        let mut executor = config.create_executor(evm, ctx);
+        for (idx, input) in end_inputs.iter().cloned().enumerate() {
+            let tx = config
+                .build_end_system_tx(2, CHAIN_ID, proposer, input)
+                .unwrap();
+            if idx == target_idx {
+                let receipts_before = executor.receipts().len();
+                let res = crate::factory::with_forced_outbe_system_call_error(|| {
+                    executor.execute_transaction(tx)
+                });
+                assert!(
+                    res.is_err(),
+                    "fatal error at EndBlock index {idx} must abort"
+                );
+                assert_eq!(executor.receipts().len(), receipts_before);
+                break;
+            }
+            executor.execute_transaction(tx).unwrap();
+        }
+    }
+}
+
+#[test]
+fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapshot() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let refund_contract = Address::with_last_byte(0xC9);
+    // `PUSH1 0; PUSH1 0; SSTORE; STOP`: clearing non-zero slot 0 grants an SSTORE
+    // gas refund (`refunded() > 0`), so `tx_gas_used() < total_gas_spent()`.
+    let refund_code =
+        Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0x55, 0x00]));
+    let seed_refund_contract = |state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>| {
+        state.database.insert_account_info(
+            refund_contract,
+            AccountInfo {
+                code_hash: refund_code.hash_slow(),
+                code: Some(refund_code.clone()),
+                ..Default::default()
+            },
+        );
+        state
+            .database
+            .insert_account_storage(refund_contract, U256::ZERO, U256::from(1))
+            .unwrap();
+    };
+    let refund_tx = TxEip1559 {
+        chain_id: CHAIN_ID,
+        nonce: 0,
+        gas_limit: 50_000,
+        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+        max_priority_fee_per_gas: 0,
+        to: TxKind::Call(refund_contract),
+        value: U256::ZERO,
+        input: Bytes::new(),
+        access_list: Default::default(),
+    }
+    .into_signed(Signature::test_signature());
+    let refund_tx: Recovered<TransactionSigned> = TransactionSigned::from(refund_tx)
+        .try_into_recovered()
+        .unwrap();
+    let regular_tx = test_regular_tx().try_into_recovered().unwrap();
+
+    for (tx, full_block, expect_refund) in [
+        (regular_tx.clone(), false, false),
+        (regular_tx, true, false),
+        (refund_tx, false, true),
+    ] {
+        let mut state = state_with_active_proposer_and_funded_account(proposer, tx.signer());
+        if expect_refund {
+            seed_refund_contract(&mut state);
+        }
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut ctx = execution_ctx(None, Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
+        ctx.proposer_evm_address = Some(proposer);
+        let mut executor = config.create_executor(evm, ctx);
+        let block_gas_limit = executor.inner.evm.block().gas_limit();
+        if full_block {
+            executor.inner.cumulative_tx_gas_used = block_gas_limit - tx.gas_limit();
+        }
+        let gas_output = executor.execute_transaction(tx.clone()).unwrap();
+        let expected_user_gas = executor.accounted_block_gas();
+        if full_block {
+            assert_eq!(expected_user_gas, block_gas_limit);
+        } else if expect_refund {
+            assert_eq!(expected_user_gas, gas_output.tx_gas_used());
+        } else {
+            assert_eq!(expected_user_gas, 21_000);
+        }
+
+        let _ = crate::sys_tx_precompile::take_observed_runtime_block_contexts();
+        executor.apply_end_block_phase().unwrap();
+        let observed = crate::sys_tx_precompile::take_observed_runtime_block_contexts();
+        assert_eq!(
+            observed.len(),
+            5,
+            "all 5 EndBlock modules must build a BlockRuntimeContext"
+        );
+        for ctx in &observed {
+            assert_eq!(ctx.block_gas_limit, block_gas_limit);
+            assert_eq!(ctx.user_gas_used, expected_user_gas);
+            assert_eq!(
+                ctx.remaining_block_gas(),
+                block_gas_limit.saturating_sub(expected_user_gas)
+            );
+        }
+        drop(executor);
+
+        // Also verify detached TxTracer replay freezes MidBlock user_gas_used across EndBlock txs.
+        let mut trace_state = state_with_active_proposer_and_funded_account(proposer, tx.signer());
+        if expect_refund {
+            seed_refund_contract(&mut trace_state);
+        }
+        let parent_hash = B256::with_last_byte(0x52);
+        let (preexec_ctx, _) =
+            block_two_execution_ctx(Some(6), Bytes::new(), proposer, parent_hash);
+        {
+            let preexec_evm =
+                config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
+            let mut temp_executor = config.create_executor(preexec_evm, preexec_ctx);
+            super::with_phase1_verify_disabled(|| {
+                temp_executor.apply_pre_execution_changes().unwrap();
+            });
+        }
+        if full_block {
+            crate::executor::witness::record_detached_trace_user_gas(
+                block_gas_limit - tx.gas_limit(),
+            );
+        }
+        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut tracer = alloy_evm::tracing::TxTracer::new(trace_evm);
+        let user_tx_env = config.tx_env(&tx);
+        let traced_user = tracer.trace(user_tx_env).unwrap();
+        assert!(traced_user.result.is_success());
+        if expect_refund {
+            let traced_gas = traced_user.result.gas();
+            assert!(
+                traced_gas.tx_gas_used() < traced_gas.total_gas_spent(),
+                "post-refund tx_gas_used ({}) must be strictly less than gross total_gas_spent ({})",
+                traced_gas.tx_gas_used(),
+                traced_gas.total_gas_spent()
+            );
+            assert_eq!(gas_output.tx_gas_used(), traced_gas.tx_gas_used());
+        }
+        let _ = crate::sys_tx_precompile::take_observed_runtime_block_contexts();
+        for input in [
+            SystemTx::NodFactory,
+            SystemTx::GemFactory,
+            SystemTx::IntexFactory,
+            SystemTx::CredisFactory,
+            SystemTx::GemCleanup,
+        ] {
+            let end_tx = config
+                .build_end_system_tx(2, CHAIN_ID, proposer, input)
+                .unwrap();
+            assert!(tracer
+                .trace(config.tx_env(&end_tx))
+                .unwrap()
+                .result
+                .is_success());
+        }
+        let traced_observed = crate::sys_tx_precompile::take_observed_runtime_block_contexts();
+        assert_eq!(traced_observed.len(), 5);
+        for ctx in &traced_observed {
+            assert_eq!(ctx.block_gas_limit, block_gas_limit);
+            assert_eq!(ctx.user_gas_used, expected_user_gas);
+            assert_eq!(
+                ctx.remaining_block_gas(),
+                block_gas_limit.saturating_sub(expected_user_gas)
+            );
+        }
+        crate::executor::witness::clear_detached_trace_witness();
+    }
+}
+
+#[test]
+fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
+) {
+    use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
+    use outbe_gemfactory::{schema::GemPosition, GemFactoryContract};
+    use outbe_intex::SeriesId;
+    use outbe_intexfactory::IntexFactoryContract;
+    use outbe_oracle::schema::OracleContract;
+    use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
+    use outbe_promislimit::PromisLimitContract;
+
+    outbe_chain_constants::initialize(None).unwrap();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let block_ts = TEST_BLOCK_TIMESTAMP_BASE + 2;
+    let expires_at = TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY;
+    let expires_day = timestamp_to_date_key(expires_at);
+    let expired_hour = expires_at / 3_600;
+    let expired_capacity = U256::from(2_000_000u64);
+    let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
+
+    struct TestExpiryQueue<'a, 's>(&'a GemFactoryContract<'s>);
+    outbe_primitives::impl_deadline_queue!(TestExpiryQueue<u64> {
+        root: expiry_tree_root,
+        mid: expiry_tree_mid,
+        leaf: expiry_tree_leaf,
+        len: expiry_day_len,
+        live: expiry_day_live,
+        at: expiry_day_at,
+        slot: expiry_entry_slot,
+        deadline: expiry_deadline,
+        sweep_day: expiry_sweep_day,
+        cursor: expiry_cursor,
+    });
+
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage.clone(), &[proposer]);
+            OracleContract::new(storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(expires_day)
+                .unwrap();
+            // Seed IntexFactory call notice queue for OSIX (send_call_notices).
+            let intex_factory = IntexFactoryContract::new(storage.clone());
+            intex_factory.notify_head.write(0).unwrap();
+            intex_factory.notify_tail.write(1).unwrap();
+            intex_factory
+                .notify_at
+                .write(
+                    &0,
+                    outbe_intexfactory::notify::pack_call_notice(stale_series, expires_at),
+                )
+                .unwrap();
+            // Seed CredisFactory cleanup queue in phase 2 for OSCR (cleanup_through).
+            let credis = CredisContract::new(storage.clone());
+            credis.call_sweep_day.write(expires_day).unwrap();
+            credis.call_latest_day.write(expires_day).unwrap();
+            credis.daily_phase.write(2).unwrap();
+            outbe_primitives::deadline_queue::push(
+                &CredisCleanupQueue(&credis),
+                stale_series,
+                expires_at,
+            )
+            .unwrap();
+
+            let gf = GemFactoryContract::new(storage);
+            let pos = GemPosition {
+                position_id: U256::from(1u64),
+                merchant: OWNER,
+                source_series_id: stale_series,
+                remaining_capacity_minor: expired_capacity,
+                issued_at: expires_at - SECONDS_PER_DAY,
+                expires_at,
+            };
+            gf.positions.create(&pos).unwrap();
+            outbe_primitives::storage::indexed_list::IndexedList::new(
+                gf.owner_position_ids.list(&OWNER),
+                gf.owner_position_index.clone(),
+            )
+            .insert(pos.position_id)
+            .unwrap();
+            outbe_primitives::deadline_queue::push(
+                &TestExpiryQueue(&gf),
+                expired_hour + 1,
+                expires_at,
+            )
+            .unwrap();
+            outbe_primitives::storage::indexed_list::IndexedList::new(
+                gf.hour_positions.list(&expired_hour),
+                gf.hour_position_index.clone(),
+            )
+            .insert(pos.position_id)
+            .unwrap();
+            gf.hour_capacity_minor
+                .write(&expired_hour, expired_capacity)
+                .unwrap();
+        });
+
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
+    ctx.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, ctx);
+
+    let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
+        block_number: 2,
+        timestamp: block_ts,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: block_ts,
+        proposer,
+        validators: vec![proposer],
+    };
+
+    // 1. OSND (NodFactory) executes first; GemFactory expired hour is not yet swept.
+    let nod_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .unwrap();
+    executor.execute_transaction(nod_tx).unwrap();
+    {
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.inner.evm.db_mut(),
+            read_ctx.clone(),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let gf = GemFactoryContract::new(storage.clone());
+            assert_eq!(
+                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
+                expired_capacity,
+                "after OSND alone, GemFactory expired hour must not yet be swept"
+            );
+            assert_eq!(
+                PromisLimitContract::new(storage).promis_limit().unwrap(),
+                U256::ZERO
+            );
+        });
+    }
+
+    // 2. OSGM (GemFactory) executes second and runs phase 2 expire_through BEFORE OSIX and OSCR.
+    let gem_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .unwrap();
+    executor.execute_transaction(gem_tx).unwrap();
+    assert_eq!(
+        executor.system_tx_phase_cursor,
+        SystemTxPhase::EndBlockIntexFactory
+    );
+    {
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.inner.evm.db_mut(),
+            read_ctx.clone(),
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let gf = GemFactoryContract::new(storage.clone());
+            assert_eq!(
+                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
+                U256::ZERO,
+                "immediately after OSGM (before OSIX and OSCR), GemFactory phase 2 expire_through must release expired hour capacity"
+            );
+            assert_eq!(
+                PromisLimitContract::new(storage).promis_limit().unwrap(),
+                expired_capacity,
+                "Promis reserve must receive released Gem capacity before OSIX and OSCR run"
+            );
+            assert!(
+                gf.positions.get(U256::from(1u64)).unwrap().is_some(),
+                "position deletion is deferred to OSGC (GemCleanup)"
+            );
+        });
+    }
+
+    // 3. OSIX (IntexFactory), OSCR (CredisFactory), and OSGC (GemCleanup) execute in order.
+    for input in [
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        executor.execute_transaction(tx).unwrap();
+    }
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.receipts().len(), 5);
+    assert!(executor
+        .receipts()
+        .iter()
+        .all(|r| r.success && r.cumulative_gas_used == 0));
+    {
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.inner.evm.db_mut(),
+            read_ctx,
+        );
+        StorageHandle::enter(&mut provider, |storage| {
+            let intex_factory = IntexFactoryContract::new(storage.clone());
+            assert_eq!(
+                intex_factory.notify_tail.read().unwrap(),
+                0,
+                "OSIX (IntexFactory) must run send_call_notices and drain queued notices"
+            );
+            let credis = CredisContract::new(storage.clone());
+            assert_eq!(
+                credis.call_sweep_day.read().unwrap(),
+                0,
+                "OSCR (CredisFactory) must run cleanup_through and finish the pinned sweep day"
+            );
+            assert_eq!(
+                credis.cleanup_series_slot.read(&stale_series).unwrap(),
+                0,
+                "OSCR (CredisFactory) cleanup_through must drop due cleanup queue entry"
+            );
+            let gf = GemFactoryContract::new(storage);
+            assert!(
+                gf.positions.get(U256::from(1u64)).unwrap().is_none(),
+                "OSGC (GemCleanup) must delete expired positions handed off by OSGM"
+            );
+        });
+    }
+}
+
+#[test]
+fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earlier_state() {
+    outbe_chain_constants::initialize(None).unwrap();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let preserved_addr = outbe_primitives::addresses::NOD_FACTORY_ADDRESS;
+    let preserved_slot = U256::from(0x1111u64);
+    let preserved_val = U256::from(0x2222u64);
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage.clone(), &[proposer]);
+            storage
+                .sstore(preserved_addr, preserved_slot, preserved_val)
+                .unwrap();
+        });
+
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
+    ctx.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, ctx);
+
+    // 1. OSND succeeds.
+    let nod_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
+        .unwrap();
+    executor.execute_transaction(nod_tx).unwrap();
+
+    // 2. OSGM writes dirty storage + emits dirty log, then reverts (soft-fail).
+    let gem_tx = config
+        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
+        .unwrap();
+    let dirty_addr = outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+    let dirty_slot = U256::from(0xDEAD_BEEFu64);
+    let dirty_val = U256::from(0xCAFE_BABEu64);
+    let dirty_topic = keccak256("DirtySoftFailEvent()");
+
+    let gas = crate::sys_tx_precompile::with_forced_dirty_system_precompile_revert(
+        dirty_addr,
+        dirty_slot,
+        dirty_val,
+        || executor.execute_transaction(gem_tx),
+    )
+    .expect("soft-fail OSGM revert must emit status=false receipt and continue")
+    .tx_gas_used();
+    assert_eq!(gas, 0);
+
+    let osgm_receipt = executor.receipts().last().expect("OSGM receipt");
+    assert!(!osgm_receipt.success);
+    assert_eq!(osgm_receipt.cumulative_gas_used, 0);
+    assert_eq!(osgm_receipt.logs.len(), 1);
+    assert!(
+        osgm_receipt
+            .logs
+            .iter()
+            .all(|log| log.data.topics().first() != Some(&dirty_topic)),
+        "dirty event log emitted inside reverted OSGM must be rolled back"
+    );
+
+    // 3. Remaining EndBlock system txs (OSIX, OSCR, OSGC) continue and succeed.
+    for input in [
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        executor.execute_transaction(tx).unwrap();
+    }
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.receipts().len(), 5);
+    assert!(executor.receipts()[0].success);
+    assert!(!executor.receipts()[1].success);
+    assert!(executor.receipts()[2..].iter().all(|r| r.success));
+    drop(executor);
+
+    assert_eq!(
+        state.storage(preserved_addr, preserved_slot).unwrap(),
+        preserved_val,
+        "earlier committed state must be preserved across soft-fail EndBlock revert"
+    );
+    assert_eq!(
+        state.storage(dirty_addr, dirty_slot).unwrap(),
+        U256::ZERO,
+        "dirty storage write inside reverted OSGM must be rolled back"
+    );
+}
+
+#[test]
+fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
+    outbe_chain_constants::initialize(None).unwrap();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage, &[proposer]);
+        });
+
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.execute_outbe_block_hooks = false;
+    ctx.proposer_evm_address = Some(proposer);
+    let mut executor = config.create_executor(evm, ctx);
+
+    let user_gas_before = 42_000u64;
+    executor.inner.cumulative_tx_gas_used = user_gas_before;
+    executor.inner.block_regular_gas_used = user_gas_before;
+
+    for input in [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ] {
+        let tx = config
+            .build_end_system_tx(2, CHAIN_ID, proposer, input)
+            .unwrap();
+        let gas = crate::factory::with_forced_outbe_system_call_oog_halt(|| {
+            executor.execute_transaction(tx)
+        })
+        .expect("EndBlock OutOfGas must be soft-fail and continue block execution")
+        .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    assert_eq!(executor.receipts().len(), 5);
+    for receipt in executor.receipts() {
+        assert!(
+            !receipt.success,
+            "EndBlock OOG must emit status=false receipt"
+        );
+        assert_eq!(
+            receipt.cumulative_gas_used, user_gas_before,
+            "EndBlock OOG must contribute 0 visible gas"
+        );
+        assert_eq!(receipt.logs.len(), 1);
+    }
+    assert_eq!(executor.inner.cumulative_tx_gas_used, user_gas_before);
+
+    executor
+        .prepare_final_header_artifacts(0)
+        .expect("header artifact preparation should succeed after EndBlock OOG");
+    let (_, result) = executor
+        .finish()
+        .expect("block must finish cleanly after EndBlock OOG");
+    assert_eq!(result.gas_used, user_gas_before);
 }

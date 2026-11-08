@@ -46,7 +46,7 @@ fn proposal_status_preserves_all_storage_bytes_and_errors() {
             (3, ProposalStatus::Expired),
             (4, ProposalStatus::Error),
         ],
-        ProposalStatus::from_u8,
+        |byte| ProposalStatus::from_u8(byte).map_err(VoteError::from),
         ProposalStatus::to_u8,
         VoteError::InvalidProposalStatus,
     );

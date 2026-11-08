@@ -44,6 +44,8 @@ fn allocate_fixture(
 ) -> outbe_primitives::error::Result<U256> {
     let allocation_ctx = outbe_primitives::block::BlockRuntimeContext::new(
         outbe_primitives::block::BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 10_000,
             timestamp: 2_000_000_000,
             chain_id: CHAIN_ID,
@@ -103,6 +105,8 @@ fn credit_next_block(
     };
     let next = outbe_primitives::block::BlockRuntimeContext::new(
         outbe_primitives::block::BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: height,
             timestamp: 2_000_000_000,
             chain_id: CHAIN_ID,
@@ -143,6 +147,8 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
     StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: CHAIN_ID,
@@ -235,6 +241,8 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
     StorageHandle::enter(&mut storage, |storage| {
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: CHAIN_ID,
@@ -351,6 +359,8 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
 
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: T_NOW,
                 chain_id: CHAIN_ID,
@@ -1121,6 +1131,8 @@ mod distribute_daily_tests {
 
     fn block_ctx() -> BlockContext {
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: 1_705_276_800, // 2024-01-15 UTC
             chain_id: TEST_CHAIN_ID,
@@ -1489,6 +1501,8 @@ fn distribution_failure_restores_prior_pools_and_counts() {
             .unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: T_NOW,
                 chain_id: CHAIN_ID,
@@ -1561,6 +1575,8 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
         contract.increment_waa_tribute(day, alice).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: T_NOW,
                 chain_id: CHAIN_ID,
@@ -1686,6 +1702,8 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
         StorageHandle::enter(provider, |storage| {
             let ctx = outbe_primitives::block::BlockRuntimeContext::new(
                 outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 1,
                     timestamp: T_NOW,
                     chain_id: CHAIN_ID,

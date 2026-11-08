@@ -674,6 +674,8 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
         anchor_at(handle.clone(), GENESIS_TS + 60);
         let fire = runtime_context(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: TOPUP_FIRE_TS,
                 chain_id: CHAIN_ID,
@@ -702,22 +704,6 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
         assert!(matches!(err, PrecompileError::Storage(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
         assert!(!is_day_settled(&fire, 20_240_101));
-    });
-    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
-}
-
-#[test]
-fn insufficient_mandatory_capacity_does_not_consume_the_slot() {
-    let mut storage = prepared_settlement_storage();
-    storage.enable_production_storage_gas_metering();
-    // This cannot fund the calibrated mandatory reserve. The dispatcher must
-    // reject before trying a handler, not misclassify it as local exhaustion.
-    storage.set_gas_limit(4_999);
-    storage.enter(|handle| {
-        let fire = runtime_context(block_ctx(2, TOPUP_FIRE_TS), handle);
-        let err = dispatch_triggers(&fire).expect_err("mandatory capacity must fail the block");
-        assert!(matches!(err, PrecompileError::Fatal(_)));
-        assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
     });
     assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
 }

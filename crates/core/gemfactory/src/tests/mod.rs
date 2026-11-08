@@ -369,6 +369,8 @@ fn assert_called_source_cannot_be_sent(called_at: u64) {
 fn block_ctx<'a>(storage: &StorageHandle<'a>, now: u64) -> BlockRuntimeContext<'a> {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: now,
             chain_id: 1,

@@ -252,7 +252,7 @@ fn truncated_payload_is_rejected() {
     assert!(decode_outbe_block_artifacts(&encoded).is_err());
 }
 
-// ---- TC-8: codec coverage (round-trip variety, size limit, tag rejection) ----
+// ---- codec coverage (round-trip variety, size limit, tag rejection) ----
 
 use crate::consensus::OUTBE_MAX_EXTRA_DATA_SIZE;
 use proptest::prelude::*;

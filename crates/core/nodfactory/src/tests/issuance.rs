@@ -427,6 +427,8 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
         let through_day = outbe_primitives::deadline_queue::deadline_day(forfeit_ts).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 10,
                 timestamp: forfeit_ts,
                 chain_id: CHAIN_ID,

@@ -31,25 +31,26 @@ pub(crate) struct PreloadedSystemTxContext {
     /// `verify_late_finalize_credits_in_preexec`, eliminating a second BLS
     /// pairing inside `run_late_finalize_credits`.
     pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
-    /// Optional explicit gas limit override for end-block system transactions
-    /// (`CallEventProcessing` and `CleanupProcessing`). When `None`, begin-zone
-    /// system transactions execute on the 10B `SYSTEM_TX_ARTIFACT_GAS_LIMIT` lane.
-    pub gas_limit_override: Option<u64>,
-    /// Aggregate begin-zone gross capacity before this call. Refunds do not
-    /// replenish this allowance; end-zone execution uses its separate lane.
-    pub remaining_system_gross_gas: u64,
+    /// Block gas limit for user transactions.
+    pub block_gas_limit: u64,
+    /// Cumulative gas consumed by user transactions before `EndBlock`.
+    pub user_gas_used: u64,
 }
 
 impl PreloadedSystemTxContext {
-    pub(crate) const fn for_end_block(proposer: Address, gas_limit: u64) -> Self {
+    pub(crate) const fn for_end_block(
+        proposer: Address,
+        block_gas_limit: u64,
+        user_gas_used: u64,
+    ) -> Self {
         Self {
             proposer,
             finalized_summary: None,
             allow_boundary_proposer: false,
             canonical_vrf_proof_hash: B256::ZERO,
             verified_late_credit_signers: None,
-            gas_limit_override: Some(gas_limit),
-            remaining_system_gross_gas: 0,
+            block_gas_limit,
+            user_gas_used,
         }
     }
 }
@@ -57,6 +58,14 @@ impl PreloadedSystemTxContext {
 thread_local! {
     static PRELOADED_SYSTEM_TX_CONTEXT: std::cell::RefCell<Option<PreloadedSystemTxContext>> =
         const { std::cell::RefCell::new(None) };
+    #[cfg(test)]
+    static OBSERVED_RUNTIME_BLOCK_CONTEXTS: std::cell::RefCell<Vec<BlockContext>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_observed_runtime_block_contexts() -> Vec<BlockContext> {
+    OBSERVED_RUNTIME_BLOCK_CONTEXTS.with(|slot| std::mem::take(&mut *slot.borrow_mut()))
 }
 
 /// Runs `f` with explicit non-calldata context visible to the system
@@ -98,9 +107,19 @@ pub(super) fn block_runtime_context_from_storage(
     let timestamp = storage.now_secs()?;
     let chain_id = storage.chain_id()?;
     let genesis_hash = storage.genesis_hash()?;
-    let proposer = current_preloaded_system_tx_context()
+    let preloaded = current_preloaded_system_tx_context();
+    let proposer = preloaded
+        .as_ref()
         .map(|context| context.proposer)
         .unwrap_or(storage.beneficiary()?);
+    let block_gas_limit = preloaded
+        .as_ref()
+        .map(|context| context.block_gas_limit)
+        .unwrap_or(0);
+    let user_gas_used = preloaded
+        .as_ref()
+        .map(|context| context.user_gas_used)
+        .unwrap_or(0);
 
     let validators = if include_validator_snapshot {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
@@ -112,23 +131,24 @@ pub(super) fn block_runtime_context_from_storage(
         validators.sort();
         validators
     } else {
-        // OracleSlashWindow only uses block number/timestamp plus storage. Avoid
-        // charging a mandatory no-op system tx for an unrelated active-set snapshot.
         Vec::new()
     };
 
-    Ok(BlockRuntimeContext::new(
-        BlockContext {
-            block_number,
-            timestamp,
-            chain_id,
-            genesis_hash,
-            genesis_timestamp: storage.genesis_timestamp()?,
-            proposer,
-            validators,
-        },
-        storage,
-    ))
+    let block_ctx = BlockContext {
+        block_gas_limit,
+        user_gas_used,
+        block_number,
+        timestamp,
+        chain_id,
+        genesis_hash,
+        genesis_timestamp: storage.genesis_timestamp()?,
+        proposer,
+        validators,
+    };
+    #[cfg(test)]
+    OBSERVED_RUNTIME_BLOCK_CONTEXTS.with(|slot| slot.borrow_mut().push(block_ctx.clone()));
+
+    Ok(BlockRuntimeContext::new(block_ctx, storage))
 }
 
 pub(crate) fn read_preloaded_finalized_summary(

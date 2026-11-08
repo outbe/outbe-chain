@@ -4,11 +4,11 @@
 //!
 //! - the executor rejects a transaction outside the EVM (zero-fee policy
 //!   classification or stateful authorization).
-//! - a soft begin-zone system transaction (`OracleSlashWindow` or
-//!   `HookEvents`) fails to execute.
-//! - an end-zone system transaction (`CallEventProcessing` or
-//!   `CleanupProcessing`) fails to execute. Only that transaction's state
-//!   is discarded. The block continues.
+//! - a soft begin-zone system transaction (`OracleSlash` or
+//!   `HyperlaneSlash`) fails to execute.
+//! - an end-zone system transaction (`NodFactory`, `GemFactory`,
+//!   `IntexFactory`, `CredisFactory`, or `GemCleanup`) fails to execute.
+//!   Only that transaction's state is discarded. The block continues.
 //!
 //! A revert or halt in the other system-tx phases (for example
 //! `CertifiedParentAccounting`, `LateFinalizeCredits`, `CycleTick`,
@@ -194,7 +194,8 @@ mod tests {
     /// declared gas budget. Synthesised, not from a runtime path.
     #[test]
     fn snapshot_phase_invariant_violation_204() {
-        let reason = "system tx OracleSlashWindow exceeded artifact gas limit at body_index=3: 100000 > 80000";
+        let reason =
+            "system tx OracleSlash exceeded artifact gas limit at body_index=3: 100000 > 80000";
         let log = build_outbe_failure_log(
             address!("0xff00000000000000000000000000000000000001"),
             204,

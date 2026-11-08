@@ -4,7 +4,6 @@ use alloy_sol_types::{SolCall, SolEvent};
 use outbe_nod::precompile::INod;
 use outbe_nod::NodContract;
 use outbe_primitives::addresses::NOD_ADDRESS;
-use outbe_primitives::end_gas::CLEANUP_UNIT_GAS_CEILING;
 use outbe_primitives::time::SECONDS_PER_DAY;
 
 const ISSUED_AT: u64 = 1_752_534_000;
@@ -19,8 +18,6 @@ fn provider_at_cleanup() -> HashMapStorageProvider {
     provider.set_block_number(2);
     provider.set_timestamp(U256::from(cleanup_now()));
     provider.set_beneficiary(VALIDATOR);
-    provider.set_gas_limit(CLEANUP_UNIT_GAS_CEILING.saturating_mul(8));
-    provider.enable_production_storage_gas_metering();
     provider
 }
 
@@ -53,7 +50,7 @@ fn reserve(storage: &StorageHandle<'_>) -> U256 {
 }
 
 fn run_cleanup(storage: StorageHandle<'_>) {
-    let input = SystemTx::CleanupProcessing.encode().unwrap();
+    let input = SystemTx::NodFactory.encode().unwrap();
     dispatch(storage, &input, SYSTEM_ADDRESS, U256::ZERO).unwrap();
 }
 
@@ -67,7 +64,7 @@ fn burn_count(provider: &HashMapStorageProvider) -> usize {
 }
 
 #[test]
-fn cleanup_processing_deletes_a_forfeited_nod_within_the_cleanup_gas_ceiling() {
+fn nod_factory_end_block_deletes_a_forfeited_nod() {
     let mut provider = provider_at_cleanup();
     let nod_id = provider.enter(|storage| {
         let nod_id = issue(&storage, Address::repeat_byte(0x41));
@@ -85,15 +82,9 @@ fn cleanup_processing_deletes_a_forfeited_nod_within_the_cleanup_gas_ceiling() {
             outbe_nod::api::get_item(&storage, nod_id)
                 .unwrap()
                 .is_none(),
-            "a Nod deletion that exceeds the cleanup unit ceiling is held, not deleted"
+            "NodFactory end-block deletes a forfeited nod"
         );
         assert_eq!(reserve(&storage), U256::from(7u64));
-        let used = storage.gas_used().unwrap();
-        assert!(used > 0);
-        assert!(
-            used <= CLEANUP_UNIT_GAS_CEILING,
-            "measured cleanup gas {used} exceeds the unit ceiling"
-        );
     });
     assert_eq!(burn_count(&provider), 1);
 }

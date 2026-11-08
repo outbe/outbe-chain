@@ -27,10 +27,10 @@ pub enum BlockHeightRegime {
     /// Carries no transactions, no begin-zone system txs, and no execution witness.
     Genesis,
     /// Block 1: One-time network bootstrap block.
-    /// Carries begin-zone system txs (`CycleTick`, mandatory epoch-0 `BoundaryOutcome`,
-    /// mandatory `TeeBootstrap`, `OracleSlashWindow`, `HookEvents`, optional `RadiclePublication`),
-    /// no parent finalization accounting (`CertifiedParentAccounting` / `LateFinalizeCredits`),
-    /// and no user transactions.
+    /// Carries begin-zone system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
+    /// `TeeBootstrap`, `ValidatorLiveness`, optional `RadiclePublication`, and the
+    /// 9 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
+    /// (`CertifiedParentAccounting` / `LateFinalizeCredits`), and no user transactions.
     GenesisBootstrap,
     /// Block `>= 2`: Steady-state execution regime.
     /// Begins with mandatory `CertifiedParentAccounting` (ordinal 0) and
@@ -106,12 +106,20 @@ pub struct BlockContext {
     pub genesis_timestamp: u64,
     pub proposer: Address,
     pub validators: Vec<Address>,
+    pub block_gas_limit: u64,
+    pub user_gas_used: u64,
 }
 
 impl BlockContext {
     #[must_use]
     pub const fn regime(&self) -> BlockHeightRegime {
         BlockHeightRegime::for_block(self.block_number)
+    }
+
+    /// Gas capacity remaining in the block after user transactions.
+    #[must_use]
+    pub const fn remaining_block_gas(&self) -> u64 {
+        self.block_gas_limit.saturating_sub(self.user_gas_used)
     }
 }
 
@@ -139,66 +147,26 @@ impl<'storage> BlockRuntimeContext<'storage> {
     }
 }
 
-/// Static lifecycle contract for deterministic block-boundary runtime modules.
-///
-/// Implementations should be zero-sized marker types. The executor keeps the
-/// ordering explicit and calls implementations through this trait instead of
-/// passing ad hoc `(timestamp, block_number, ...)` argument lists.
-pub trait BlockLifecycle {
-    /// Typed runtime authority required by this lifecycle. Ordinary modules
-    /// use [`BlockRuntimeContext`]; modules that need additional explicit
-    /// capabilities wrap it in a dedicated context instead of bypassing the
-    /// lifecycle contract with an ad-hoc entrypoint.
-    type Context<'a, 'storage>;
+/// Unified block lifecycle interface for protocol modules.
+pub trait ProtocolModule {
+    /// Unique module identifier for diagnostics and tracing.
+    const NAME: &'static str;
 
-    /// Value produced after all lifecycle-owned end-block work succeeds.
-    ///
-    /// Lifecycles without an associated output use `()`.
-    type EndBlockResult;
-
-    fn begin_block(_ctx: &Self::Context<'_, '_>) -> Result<()> {
+    /// Executed during the `BeginBlock` stage.
+    fn begin_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         Ok(())
     }
 
-    fn end_block(ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult>;
+    /// Executed during the `EndBlock` stage.
+    fn end_block(_ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::hashmap::HashMapStorageProvider;
-
-    struct OutputLifecycle;
-
-    impl BlockLifecycle for OutputLifecycle {
-        type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-        type EndBlockResult = u64;
-
-        fn end_block(ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
-            Ok(ctx.block.block_number)
-        }
-    }
-
-    #[test]
-    fn lifecycle_end_block_can_return_an_associated_output() {
-        let mut provider = HashMapStorageProvider::new(1);
-        StorageHandle::enter(&mut provider, |storage| {
-            let ctx = BlockRuntimeContext::new(
-                BlockContext {
-                    block_number: 7,
-                    timestamp: 11,
-                    chain_id: 1,
-                    genesis_hash: B256::ZERO,
-                    genesis_timestamp: 11,
-                    proposer: Address::ZERO,
-                    validators: Vec::new(),
-                },
-                storage,
-            );
-
-            assert_eq!(OutputLifecycle::end_block(&ctx).unwrap(), 7);
-        });
-    }
 
     #[test]
     fn block_height_regime_partitions_genesis_bootstrap_and_steady_state() {
@@ -236,5 +204,44 @@ mod tests {
             assert!(s.has_end_zone_system_txs());
             assert!(s.requires_rewards_beneficiary());
         }
+    }
+
+    struct NopModule;
+
+    impl ProtocolModule for NopModule {
+        const NAME: &'static str = "nop";
+    }
+
+    fn gas_context(block_gas_limit: u64, user_gas_used: u64) -> BlockContext {
+        BlockContext {
+            block_number: 2,
+            timestamp: 11,
+            chain_id: 1,
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: 11,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+            block_gas_limit,
+            user_gas_used,
+        }
+    }
+
+    #[test]
+    fn protocol_module_defaults_succeed_for_begin_and_end_block() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(gas_context(100, 40), storage);
+            assert_eq!(NopModule::NAME, "nop");
+            assert!(NopModule::begin_block(&ctx).is_ok());
+            assert!(NopModule::end_block(&ctx).is_ok());
+        });
+    }
+
+    #[test]
+    fn remaining_block_gas_saturates_at_zero() {
+        assert_eq!(gas_context(100, 40).remaining_block_gas(), 60);
+        assert_eq!(gas_context(100, 100).remaining_block_gas(), 0);
+        assert_eq!(gas_context(100, 101).remaining_block_gas(), 0);
+        assert_eq!(gas_context(0, u64::MAX).remaining_block_gas(), 0);
     }
 }

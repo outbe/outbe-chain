@@ -1,5 +1,5 @@
 //! Property tests and bounded-queue invariant tests for `outbe-staking`
-//! (`OIP-00140` `T-01`, `T-05`, `T-07`, and `OIP-00266`).
+//! (`OIP-00140` and `OIP-00266`).
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolError;

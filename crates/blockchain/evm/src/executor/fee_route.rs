@@ -28,15 +28,7 @@ where
         let ctx = self.fee_route_context()?;
         let tx = recovered.tx();
         let signer = *recovered.signer();
-        if tx.gas_limit() < Self::SOFT_FAILURE_GAS {
-            return Err(
-                crate::errors::ExecutorValidationError::TransactionGasLimitBelowFloor {
-                    gas_limit: tx.gas_limit(),
-                    floor: Self::SOFT_FAILURE_GAS,
-                }
-                .into(),
-            );
-        }
+        self.validate_user_tx_gas_bounds(tx.gas_limit())?;
 
         let zero_fee_tx = zero_fee_transaction(tx, signer);
         let candidate = match outbe_zerofee::registry().classify(&zero_fee_tx) {
@@ -74,6 +66,30 @@ where
         self.execute_paid_transaction(tx_env, recovered, f)
     }
 
+    fn validate_user_tx_gas_bounds(&self, gas_limit: u64) -> Result<(), BlockExecutionError> {
+        if gas_limit < Self::SOFT_FAILURE_GAS {
+            return Err(
+                crate::errors::ExecutorValidationError::TransactionGasLimitBelowFloor {
+                    gas_limit,
+                    floor: Self::SOFT_FAILURE_GAS,
+                }
+                .into(),
+            );
+        }
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let available = block_gas_limit.saturating_sub(self.accounted_block_gas());
+        if gas_limit > available {
+            return Err(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: gas_limit,
+                    block_available_gas: available,
+                }
+                .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// The executor includes policy rejections with fixed gas and a failure log,
     /// up to the shared per-block cap. Account for the cap before appending a receipt.
     fn include_zero_fee_soft_failure(
@@ -81,7 +97,18 @@ where
         tx: &TransactionSigned,
         error: outbe_zerofee::ZeroFeePolicyError,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        self.check_visible_pre_end_gas(Self::SOFT_FAILURE_GAS)?;
+        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let used = self.accounted_block_gas();
+        let available = block_gas_limit.saturating_sub(used);
+        if Self::SOFT_FAILURE_GAS > available {
+            return Err(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: Self::SOFT_FAILURE_GAS,
+                    block_available_gas: available,
+                }
+                .into(),
+            );
+        }
         self.record_zero_fee_soft_failure(*tx.tx_hash())?;
         self.push_failure_receipt(
             tx.tx_type(),

@@ -167,7 +167,7 @@ fn trigger_budget_coexists_with_legacy_ceiling_and_preserves_unscoped_refunds() 
     assert_eq!(p.gas.remaining(), 49_900);
     assert_eq!(p.trigger_budget.as_ref().unwrap().remaining, 4900);
     p.trigger_budget_status().unwrap();
-    p.end_gas_ceiling().unwrap();
+    p.gas_child_remaining = None;
     assert!(matches!(
         p.deduct_gas(4901),
         Err(PrecompileError::TriggerBudgetExceeded {
@@ -687,6 +687,8 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         let mut seed = DirectStorageProvider::new(
             &mut ctx.journaled_state.database,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: 1,

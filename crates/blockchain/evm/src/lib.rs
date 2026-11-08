@@ -8,7 +8,6 @@ pub mod failure_receipt;
 pub mod finalization;
 pub mod gas;
 pub mod genesis;
-pub mod handlers;
 mod native_delegation;
 pub(crate) mod precompile_routes;
 pub mod precompiles;

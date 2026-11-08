@@ -56,7 +56,7 @@ where
     //   2. coordinate the committee's enclave registrations + EVM signatures into
     //      the block-1 `TeeBootstrap` payload. This payload registers the
     //      DKG-derived offer key. Stash it in the bridge for the proposer to
-    //      inject (slice 5.1).
+    //      inject.
     // `committee_snapshot_block` is the fixed block 1. The whole ceremony MUST
     // complete before block 1. This code wraps it in `--tee-bootstrap-timeout-secs`.
     // It FAILS FAST (node halts via startup error) on timeout or error. It does not

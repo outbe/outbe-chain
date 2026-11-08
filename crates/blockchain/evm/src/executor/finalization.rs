@@ -147,7 +147,7 @@ where
     }
 
     /// Executes and commits the Phase 1 (`CertifiedParentAccounting`) system tx
-    /// in pre-execution so `run_outbe_pre_execution_hooks` observes post-Phase-1 state.
+    /// in pre-execution so subsequent `BeginBlock` system transactions observe post-Phase-1 state.
     pub(crate) fn apply_phase1_commit_in_preexec(
         &mut self,
         block_number: u64,
@@ -174,7 +174,7 @@ where
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
 
-        let Some((cached_tx_hash, signed_gas_limit)) =
+        let Some((cached_tx_hash, _signed_gas_limit)) =
             resolve_phase1_witness(Phase1WitnessLookup {
                 prebuilt_phase1_tx: self.prebuilt_phase1_tx.as_ref(),
                 expected_begin_system_txs: &self.expected_begin_system_txs,
@@ -194,11 +194,11 @@ where
             allow_boundary_proposer: self.boundary_allows_proposer(block_artifacts, proposer),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
-            gas_limit_override: None,
-            remaining_system_gross_gas: outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT,
+            block_gas_limit: self.inner.evm.block().gas_limit(),
+            user_gas_used: 0,
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
-        self.commit_system_transaction(output, signed_gas_limit, 0, signed_gas_limit)?;
+        self.commit_system_transaction(output)?;
         self.system_tx_phase_cursor = SystemTxPhase::Phase1Preexecuted {
             body_index: 0,
             tx_hash: cached_tx_hash,

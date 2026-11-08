@@ -130,6 +130,8 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
     );
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -413,6 +415,8 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     assert!(expected_rest > U256::ZERO);
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -548,6 +552,8 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
     );
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -643,6 +649,8 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
     let (_evm, _result) = executor.finish().expect("executor finish should succeed");
 
     let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp: 1,
         chain_id: CHAIN_ID,
@@ -911,6 +919,8 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
     // Verify idempotence (credited exactly once on proposer and identical on validator).
     for state in [&mut proposer_state, &mut validator_state] {
         let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: 1,
             chain_id: CHAIN_ID,

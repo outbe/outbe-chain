@@ -73,6 +73,8 @@ fn push_called(handle: &StorageHandle<'_>, index: u32, called_at: u64) {
 fn drain(handle: &StorageHandle<'_>) {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: NOW,
             chain_id: CHAIN_ID,

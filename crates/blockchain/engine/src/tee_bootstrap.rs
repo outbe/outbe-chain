@@ -3,7 +3,7 @@
 //! 1. Run the one-time committee coordination (exactly like the consensus DKG).
 //! 2. Assemble the canonical OST3 payload.
 //! 3. Give the payload to the payload builder through the bridge, so that the **block-1**
-//!    proposer injects it (slice 5.1).
+//!    proposer injects it.
 //!
 //! `committee_snapshot_block` is the fixed block 1. It is the known injection target, the same
 //! as `BoundaryOutcome`, which lands at block 1. Thus there is no run-time block-number

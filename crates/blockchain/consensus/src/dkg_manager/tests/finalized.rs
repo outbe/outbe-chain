@@ -485,7 +485,7 @@ fn revealed_share_triggers_degradation_and_record() {
     let gate = VrfSafetyGate::new(1, 100, 200, 20);
     assert_eq!(gate.snapshot().randomness_status, RandomnessStatus::Healthy);
 
-    // 0. W-05.1(c): Transient `mark_degraded` on a VRF seed miss sets `Degraded`
+    // 0. Transient `mark_degraded` on a VRF seed miss sets `Degraded`
     //    without setting `active_material_revealed`, so a subsequent rotation
     //    transition (`note_preparing`) clears `Degraded`.
     gate.mark_degraded();
@@ -502,7 +502,7 @@ fn revealed_share_triggers_degradation_and_record() {
     gate.note_activated(1, 100, 200, 20);
     assert_eq!(gate.snapshot().randomness_status, RandomnessStatus::Healthy);
 
-    // 1. W-05.1(a)/(b) + D3-B: Immediate degradation upon ceremony completion
+    // 1. Immediate degradation upon ceremony completion
     //    (`apply_pending_ceremony_output`) and sticky preservation across rotation
     //    status updates (`note_preparing`, `note_pending_activation`, `note_grace`,
     //    `note_activated`).
@@ -535,7 +535,7 @@ fn revealed_share_triggers_degradation_and_record() {
         "prepare window must not overwrite Degraded while active material has revealed shares"
     );
 
-    // 2. D2-A: Degraded is status-only (has_threshold_shares() == false,
+    // 2. Degraded is status-only (has_threshold_shares() == false,
     //    is_consensus_active() == true) and does not block block production inside expiry.
     let status = gate.snapshot().randomness_status;
     assert!(!status.has_threshold_shares());
@@ -571,7 +571,7 @@ fn revealed_share_triggers_degradation_and_record() {
     assert_eq!(record.boundary_height, 201);
     assert_eq!(record.revealed, vec![offline_pk]);
 
-    // 4. W-05.1(d): Activating a clean output with empty `revealed()` clears `Degraded` back to `Healthy`.
+    // 4. Activating a clean output with empty `revealed()` clears `Degraded` back to `Healthy`.
     let (_clean_info, clean_output, _shares, _logs, _clean_signed) =
         run_round(&keys, participants, None, None, 32);
     assert!(clean_output.revealed().is_empty());

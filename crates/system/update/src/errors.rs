@@ -3,7 +3,7 @@ use alloy_primitives::Bytes;
 use alloy_primitives::U256;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_vote::handlers::TargetExecutionOutcome;
+use outbe_primitives::vote_target::TargetExecutionOutcome;
 
 use crate::version::format_protocol_version;
 use crate::ProtocolVersion;

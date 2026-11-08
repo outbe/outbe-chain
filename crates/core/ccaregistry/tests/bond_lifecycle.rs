@@ -110,6 +110,8 @@ fn with_storage_at<R>(
     let mut provider = DirectStorageProvider::new(
         db,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: now,
             chain_id: 1,
@@ -144,6 +146,8 @@ fn claim_reward_in_block(
     let mut provider = DirectStorageProvider::new(
         db,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: block,
             timestamp: now,
             chain_id: 1,
@@ -262,6 +266,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         api::credis_issued(&s, CCA, 20231115, U256::from(100)).unwrap();
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: NOW + 2 * SECONDS_PER_DAY,
                 chain_id: 1,

@@ -1,7 +1,7 @@
 use super::*;
 
 const CREATION_BLOCK: u64 = 7;
-const HOOK_EVENTS_GAS: u64 = 21_000;
+const HOOK_EVENTS_GAS: u64 = 0;
 struct ApprovedProposalFixture {
     state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
     issuer: Address,
@@ -48,7 +48,7 @@ fn prepare_approved_proposal() -> ApprovedProposalFixture {
                         created_height: CREATION_BLOCK,
                         attached_value: STABLECOIN_CREATE_BOND,
                     },
-                    crate::handlers::vote::registry(),
+                    outbe_vote::handlers::registry(),
                 )
                 .unwrap();
             assert_eq!(proposal_id, U256::from(1u64));
@@ -167,6 +167,8 @@ pub(super) fn run() {
     let expected_token = expected.token;
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
     let block_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: finalization_block,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -175,32 +177,55 @@ pub(super) fn run() {
         proposer: issuer,
         validators: validators.iter().map(|(address, _)| *address).collect(),
     };
-    let (_, hook_events) =
-        super::run_atomic_storage_hooks(&mut state, block_context.clone(), |hook_ctx| {
-            super::run_outbe_pre_execution_hooks(hook_ctx, None)
-        })
-        .expect("real Vote -> Factory pre-exec lifecycle should commit");
-    let (receipt_logs, _) = partition_hook_events(&hook_events);
-
-    assert_committed_factory_order(&receipt_logs);
+    let receipt = execute_vote_system_tx(&mut state, finalization_block, issuer);
+    assert_committed_factory_order(&receipt.logs);
     assert_approved_factory_state(&mut state, block_context.clone(), expected)
         .expect("assert approved factory state fixture succeeds");
     assert_token_marker(&mut state, expected_token);
+
+    assert_factory_receipt(&receipt);
+}
+
+fn execute_vote_system_tx(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    block_number: u64,
+    proposer: Address,
+) -> Receipt {
+    use alloy_evm::Evm as _;
+    use revm::DatabaseCommit;
+
+    let mut evm_env = test_evm_env(block_number, REWARDS_ADDRESS);
+    evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
     let config = OutbeEvmConfig::new(test_chain_spec());
-    let evm = config.evm_with_env(
-        &mut state,
-        test_evm_env(finalization_block, REWARDS_ADDRESS),
-    );
-    let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
-    executor
-        .push_hook_events_receipt(
-            alloy_consensus::TxType::Legacy,
-            receipt_logs,
-            HOOK_EVENTS_GAS,
+    let result = {
+        let mut evm = config.evm_with_env(&mut *state, evm_env);
+        crate::sys_tx_precompile::with_preloaded_system_tx_context(
+            crate::sys_tx_precompile::PreloadedSystemTxContext {
+                proposer,
+                finalized_summary: None,
+                allow_boundary_proposer: false,
+                canonical_vrf_proof_hash: B256::ZERO,
+                verified_late_credit_signers: None,
+                block_gas_limit: 0,
+                user_gas_used: 0,
+            },
+            || {
+                evm.transact_system_call(
+                    outbe_primitives::addresses::SYSTEM_ADDRESS,
+                    OUTBE_SYSTEM_TX_ADDRESS,
+                    SystemTx::Vote.encode().unwrap(),
+                )
+            },
         )
-        .expect("HookEvents receipt should publish committed Factory log");
-
-    let receipt = executor.receipts().last().expect("HookEvents receipt");
-
-    assert_factory_receipt(receipt);
+        .expect("Vote system call")
+    };
+    assert!(result.result.is_success(), "Vote system call must succeed");
+    let logs = result.result.into_logs();
+    state.commit(result.state);
+    Receipt {
+        tx_type: alloy_consensus::TxType::Legacy,
+        success: true,
+        cumulative_gas_used: 0,
+        logs,
+    }
 }

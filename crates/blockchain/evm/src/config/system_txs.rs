@@ -1,9 +1,7 @@
 use crate::system_tx::build_unsigned_system_tx;
-use crate::system_tx::build_unsigned_system_tx_with_gas_limit;
 use crate::system_tx::split_system_layout;
 use crate::system_tx::validate_system_tx_set_for_publication;
 use crate::system_tx::SystemTx;
-use crate::system_tx::SystemTxVisibleGasPlan;
 
 use alloy_consensus::Transaction as _;
 use alloy_evm::RecoveredTx;
@@ -43,7 +41,6 @@ struct ProposerSignContext<'a> {
     regime: BlockHeightRegime,
     block_number: u64,
     chain_id: u64,
-    block_gas_limit: u64,
     prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
 }
 
@@ -120,7 +117,7 @@ impl OutbeEvmConfig {
         &self,
         block_number: u64,
         chain_id: u64,
-        block_gas_limit: u64,
+        _block_gas_limit: u64,
         parent_hash: B256,
         extra_data: &Bytes,
         parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
@@ -155,7 +152,6 @@ impl OutbeEvmConfig {
                 regime,
                 block_number,
                 chain_id,
-                block_gas_limit,
                 prebuilt_phase1_tx,
             },
         )
@@ -205,7 +201,6 @@ impl OutbeEvmConfig {
                 artifact: artifacts.late_finalize_credits.unwrap_or_default(),
             });
         }
-        inputs.push(SystemTx::CycleTick);
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
             artifacts.consensus_header_artifact
         {
@@ -223,11 +218,21 @@ impl OutbeEvmConfig {
         } else if pending_tee_bootstrap.is_some() {
             return Err(SystemTxBuildError::Ost3BootstrapForbiddenAtBlock { block_number }.into());
         }
-        inputs.push(SystemTx::OracleSlashWindow);
-        inputs.push(SystemTx::HookEvents);
+        inputs.push(SystemTx::ValidatorLiveness);
         if let Some(batch) = artifacts.radicle_publication {
             inputs.push(SystemTx::RadiclePublication { batch });
         }
+        inputs.extend([
+            SystemTx::Vote,
+            SystemTx::Update,
+            SystemTx::EnclaveUpgradeDeadline,
+            SystemTx::Rewards,
+            SystemTx::Staking,
+            SystemTx::Oracle,
+            SystemTx::OracleSlash,
+            SystemTx::HyperlaneSlash,
+            SystemTx::CycleTick,
+        ]);
         Ok(inputs)
     }
 
@@ -294,7 +299,6 @@ impl OutbeEvmConfig {
         chain_id: u64,
         proposer: Address,
         input: SystemTx,
-        gas_limit: u64,
     ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
         sign_end_system_tx(
             self.evm_signer.as_ref(),
@@ -302,7 +306,6 @@ impl OutbeEvmConfig {
             block_number,
             chain_id,
             input,
-            gas_limit,
         )
     }
 }
@@ -313,7 +316,6 @@ pub(crate) fn sign_end_system_tx(
     block_number: u64,
     chain_id: u64,
     input: SystemTx,
-    gas_limit: u64,
 ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
     let evm_signer = evm_signer.ok_or(ExecutorValidationError::MissingBeginZoneProposerAddress)?;
     if evm_signer.address() != proposer {
@@ -331,16 +333,8 @@ pub(crate) fn sign_end_system_tx(
     let calldata = input
         .encode()
         .map_err(ExecutorValidationError::encode_system_tx_for_visible_gas_plan)?;
-    let unsigned = build_unsigned_system_tx_with_gas_limit(
-        outbe_primitives::system_tx::SystemTxEnvelopeInput {
-            ordinal,
-            block_number,
-            chain_id,
-            calldata,
-            gas_limit,
-        },
-    )
-    .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
+    let unsigned = build_unsigned_system_tx(ordinal, block_number, chain_id, calldata)
+        .map_err(ExecutorValidationError::plan_visible_system_tx_gas)?;
     let signed = evm_signer.sign_unsigned(unsigned).map_err(|error| {
         BlockExecutionError::other(ExecutorValidationError::plan_visible_system_tx_gas(error))
     })?;
@@ -359,26 +353,19 @@ fn sign_planned_begin_system_txs(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let gas_plan = SystemTxVisibleGasPlan::new(ctx.block_gas_limit, &encoded_inputs)
-        .map_err(SystemTxBuildError::plan_visible_system_tx_gas)?;
 
     encoded_inputs
         .into_iter()
         .enumerate()
-        .map(|(ordinal, calldata)| sign_single_begin_system_tx(&ctx, &gas_plan, ordinal, calldata))
+        .map(|(ordinal, calldata)| sign_single_begin_system_tx(&ctx, ordinal, calldata))
         .collect()
 }
 
 fn sign_single_begin_system_tx(
     ctx: &ProposerSignContext<'_>,
-    gas_plan: &SystemTxVisibleGasPlan,
     ordinal: usize,
     calldata: Bytes,
 ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
-    let gas_limit = gas_plan
-        .gas_limit(ordinal)
-        .ok_or(SystemTxBuildError::VisibleGasPlanMissingOrdinal { ordinal })?;
-
     if ordinal == 0 && ctx.regime.has_parent_finalization_accounting() {
         if let Some(prebuilt) = ctx.prebuilt_phase1_tx.as_ref() {
             if prebuilt.tx().input() != &calldata {
@@ -395,18 +382,11 @@ fn sign_single_begin_system_tx(
         }
     }
 
-    let unsigned = build_unsigned_system_tx_with_gas_limit(
-        outbe_primitives::system_tx::SystemTxEnvelopeInput {
-            ordinal: ordinal
-                .try_into()
-                .map_err(|_| SystemTxBuildError::SystemTxOrdinalExceedsU8 { ordinal })?,
-            block_number: ctx.block_number,
-            chain_id: ctx.chain_id,
-            calldata,
-            gas_limit,
-        },
-    )
-    .map_err(SystemTxBuildError::build_unsigned_system_tx)?;
+    let ordinal_u8 = ordinal
+        .try_into()
+        .map_err(|_| SystemTxBuildError::SystemTxOrdinalExceedsU8 { ordinal })?;
+    let unsigned = build_unsigned_system_tx(ordinal_u8, ctx.block_number, ctx.chain_id, calldata)
+        .map_err(SystemTxBuildError::build_unsigned_system_tx)?;
     let signed = ctx
         .signer
         .sign_unsigned(unsigned)

@@ -195,6 +195,8 @@ pub(crate) fn block_ctx_at<'s>(
 ) -> BlockRuntimeContext<'s> {
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: timestamp,
             timestamp,
             chain_id: 1,

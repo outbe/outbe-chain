@@ -260,7 +260,7 @@ fn vote_dispatch(
         data,
         caller,
         value,
-        crate::handlers::vote::registry(),
+        outbe_vote::handlers::registry(),
     )
 }
 

@@ -16,6 +16,8 @@ const SLOT: U256 = U256::from_limbs([7, 0, 0, 0]);
 
 fn block_context() -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 1_700_000_000,
         chain_id: 54_322_345,

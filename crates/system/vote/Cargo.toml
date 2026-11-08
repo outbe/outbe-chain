@@ -7,10 +7,16 @@ publish.workspace = true
 
 [dependencies]
 outbe-chain-constants.workspace = true
+outbe-coderegistry.workspace = true
+outbe-hyperlanecontroller.workspace = true
+outbe-l2registry.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-promislimit.workspace = true
+outbe-stablecoinfactory.workspace = true
+outbe-update.workspace = true
 outbe-validatorset.workspace = true
+outbe-vaultrouter.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 serde_json.workspace = true
@@ -18,8 +24,12 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-outbe-update.workspace = true
+commonware-cryptography.workspace = true
+hex.workspace = true
+outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+rand-commonware.workspace = true
+rand-core-commonware.workspace = true
 
 [lints]
 workspace = true

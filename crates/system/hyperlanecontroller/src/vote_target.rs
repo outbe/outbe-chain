@@ -11,10 +11,9 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_vote::errors::VoteError;
-use outbe_vote::handlers::{
+use outbe_primitives::vote_target::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
-    VoteTargetContext,
+    VoteTargetContext, VoteTargetError,
 };
 use serde::Deserialize;
 
@@ -50,7 +49,7 @@ impl Action {
     fn decode(payload: &[u8], outbe: u64) -> Result<Self> {
         // Decode the original bytes so duplicate fields are rejected.
         let action: Self =
-            serde_json::from_slice(payload).map_err(|_| VoteError::InvalidPayload)?;
+            serde_json::from_slice(payload).map_err(|_| VoteTargetError::InvalidPayload)?;
         let remote = |chain_id: &u32| *chain_id != 0 && u64::from(*chain_id) != outbe;
         let valid = match &action {
             Self::AddHyperlaneChain {
@@ -62,7 +61,7 @@ impl Action {
             Self::RemoveHyperlaneChain { chain_id } => remote(chain_id),
         };
         if !valid {
-            return Err(VoteError::InvalidPayload.into());
+            return Err(VoteTargetError::InvalidPayload.into());
         }
         Ok(action)
     }
@@ -107,7 +106,7 @@ impl HyperlaneControllerContract<'_> {
                 });
             }
             let action = Action::decode(payload, self.storage.chain_id()?)
-                .map_err(|_| VoteError::stored_payload_invalid("HyperlaneController"))?;
+                .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
             action.apply(self)?;
             self.emit(IHyperlaneController::ApprovedActionApplied {
                 proposalId: proposal_id,
@@ -140,7 +139,7 @@ impl VoteTarget for HyperlaneVoteTarget {
         // Stored-payload corruption is an invariant failure, never proposal Error.
         decode_stored_proposal_payload(payload, "HyperlaneController")?;
         Action::decode(payload, context.chain_id)
-            .map_err(|_| VoteError::stored_payload_invalid("HyperlaneController"))?;
+            .map_err(|_| VoteTargetError::stored_payload_invalid("HyperlaneController"))?;
         let controller = HyperlaneControllerContract::new(ctx.storage.clone());
         controller
             .approved_payload

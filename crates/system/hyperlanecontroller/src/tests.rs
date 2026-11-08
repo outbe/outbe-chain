@@ -997,6 +997,57 @@ mod liveness {
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
         });
     }
+
+    #[test]
+    fn hyperlane_module_begin_block_runs_liveness_window() {
+        use crate::LIVENESS_WINDOW_BLOCKS;
+        use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
+
+        let mut provider = liveness_provider();
+        provider.set_block_number(LIVENESS_WINDOW_BLOCKS);
+        provider.fail_mutation_at(0);
+        let err = StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    timestamp: 1_700_000_000,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage,
+            );
+            <crate::HyperlaneModule as ProtocolModule>::begin_block(&ctx)
+        })
+        .expect_err("node-local storage failure in check_liveness must propagate");
+        provider.clear_mutation_failure();
+        assert!(
+            err.is_node_local(),
+            "expected node-local error, got: {err:?}"
+        );
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let ctx = BlockRuntimeContext::new(
+                BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    timestamp: 1_700_000_000,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: 1_700_000_000,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage,
+            );
+            <crate::HyperlaneModule as ProtocolModule>::begin_block(&ctx).unwrap();
+        });
+    }
 }
 
 mod vote_target {
@@ -1004,7 +1055,7 @@ mod vote_target {
     use crate::sol_ext::IHyperlaneRouter;
     use crate::HyperlaneVoteTarget;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
-    use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+    use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 
     const APPROVED_AT: u64 = 30;
     const ARBITRUM: u32 = 42_161;
@@ -1035,6 +1086,8 @@ mod vote_target {
         StorageHandle::enter(p, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: APPROVED_AT,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,

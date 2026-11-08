@@ -307,7 +307,7 @@ impl TeeRegistryGasScheduleV1 {
             AttestationMode::GramineDirectDev => self.qvl_dev(evidence_len, active_rule_count)?,
         };
         let input_charge = checked_mul(self.input_byte, checked_usize(input_len)?)?;
-        let protocol_precharge = match kind {
+        let mutator_gas = match kind {
             RegistryMutatorV1::RegisterEnclave => checked_sum(&[
                 self.register_fixed,
                 input_charge,
@@ -341,7 +341,7 @@ impl TeeRegistryGasScheduleV1 {
             ])?,
         };
         self.maximum_calldata_intrinsic_gas(input_len)?
-            .checked_add(protocol_precharge)
+            .checked_add(mutator_gas)
             .ok_or(CodecError::ArithmeticOverflow)
     }
 

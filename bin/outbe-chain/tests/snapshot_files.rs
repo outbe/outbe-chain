@@ -306,7 +306,7 @@ fn assert_protected(protected: &BTreeMap<PathBuf, (Vec<u8>, u32)>) {
     }
 }
 
-// Deliberately test-local checks: product optional validation belongs to task06.
+// Deliberately test-local checks for snapshot manifest file modes and hashes.
 fn check_files(manifest: &SnapshotManifestV1, roots: &RecipientRoots) -> io::Result<()> {
     for domain in &manifest.domains {
         for entry in &domain.entries {

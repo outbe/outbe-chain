@@ -27,6 +27,8 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
         // Block 1: not a vote period boundary (period=2), no tally
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: day + 12,
                 chain_id: 1,
@@ -37,12 +39,14 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&runtime_ctx).unwrap();
         assert!(oracle.vote_exists.read(&v1).unwrap()); // vote still exists
 
         // Block 2: vote period boundary, tally runs
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: day + 24,
                 chain_id: 1,
@@ -53,7 +57,7 @@ fn begin_block_tallies_only_on_a_vote_period_boundary() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&runtime_ctx).unwrap();
         assert!(!oracle.vote_exists.read(&v1).unwrap()); // votes cleared
 
         let rate = oracle.get_exchange_rate(COEN, USDT).unwrap();
@@ -72,8 +76,21 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
         }
         oracle.increment_success(&v1).unwrap(); // 1 success out of 21 = 4.76% < 5%
 
-        // Run slash and reset
-        crate::tally::slash_and_reset_counters(oracle, 10000).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: 96,
+                timestamp: 10_000,
+                chain_id: 1,
+                genesis_hash: alloy_primitives::B256::ZERO,
+                genesis_timestamp: 10_000,
+                proposer: alloy_primitives::Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
+        <crate::lifecycle::OracleSlashModule as ProtocolModule>::begin_block(&ctx).unwrap();
 
         // Counters should be reset
         assert_penalty_counters(oracle, &[(v1, Penalty::Success, 0), (v1, Penalty::Miss, 0)]);
@@ -345,6 +362,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
         assert_eq!(block % 2, 1);
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block,
                 timestamp: d1_start + 5,
                 chain_id: 1,
@@ -355,7 +374,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&ctx).unwrap();
 
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
         assert_eq!(
@@ -376,6 +395,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
         // watermark nor re-finalizes.
         let ctx2 = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block + 2,
                 timestamp: d1_start + 50,
                 chain_id: 1,
@@ -386,7 +407,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx2).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&ctx2).unwrap();
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d);
 
         // Next rollover finalizes the next day contiguously (non-zero
@@ -400,6 +421,8 @@ fn begin_block_finalizes_the_closed_utc_day() {
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: block + 4,
                 timestamp: d2_start + 5,
                 chain_id: 1,
@@ -410,7 +433,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&ctx3).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&ctx3).unwrap();
         assert_eq!(oracle.utc_day_vwap_last_finalized.read().unwrap(), day_d1);
         assert_eq!(
             oracle

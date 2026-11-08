@@ -5,9 +5,6 @@ pub(in crate::executor) struct SystemFailureReceiptInput {
     pub(super) log_address: Address,
     pub(super) code: u16,
     pub(super) reason: String,
-    pub(super) visible_base_gas: u64,
-    pub(super) additional_visible_gas: u64,
-    pub(super) signed_gas_limit: u64,
     pub(super) internal_gas_used: u64,
     pub(super) internal_gross_gas_used: u64,
 }
@@ -80,41 +77,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             .block_state_gas_used
             .saturating_add(Self::SOFT_FAILURE_GAS);
     }
-
-    /// Pushes a `status=1` synthetic receipt for the mandatory `HookEvents` system
-    /// tx, carrying whitelisted pre-exec hook logs without re-running lifecycle hooks.
-    pub(crate) fn push_hook_events_receipt(
-        &mut self,
-        tx_type: alloy_consensus::TxType,
-        logs: Vec<Log>,
-        visible_gas_used: u64,
-    ) -> Result<GasOutput, BlockExecutionError>
-    where
-        Evm: alloy_evm::Evm,
-    {
-        self.check_visible_pre_end_gas(visible_gas_used)?;
-        let user_cumulative_tx_gas = self
-            .inner
-            .cumulative_tx_gas_used
-            .checked_add(visible_gas_used)
-            .ok_or(crate::errors::ExecutorValidationError::HookEventsVisibleGasOverflow)?;
-        self.inner.receipts.push(Receipt {
-            tx_type,
-            success: true,
-            cumulative_gas_used: user_cumulative_tx_gas,
-            logs,
-        });
-        self.inner.cumulative_tx_gas_used = user_cumulative_tx_gas;
-        self.inner.block_regular_gas_used = self
-            .inner
-            .block_regular_gas_used
-            .saturating_add(visible_gas_used);
-        self.inner.block_state_gas_used = self
-            .inner
-            .block_state_gas_used
-            .saturating_add(visible_gas_used);
-        Ok(GasOutput::new(visible_gas_used))
-    }
 }
 
 #[allow(private_bounds)]
@@ -126,94 +88,30 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    pub(in crate::executor) fn visible_system_gas(
-        &self,
-        visible_base_gas: u64,
-        additional_visible_gas: u64,
-        signed_gas_limit: u64,
-    ) -> Result<u64, BlockExecutionError> {
-        use crate::errors::ExecutorValidationError;
-
-        let visible_gas = visible_base_gas
-            .checked_add(additional_visible_gas)
-            .ok_or(ExecutorValidationError::SystemTxVisibleGasOverflowAfterAdditionalCharge)?;
-        if visible_gas > signed_gas_limit {
-            return Err(
-                ExecutorValidationError::SystemTxReceiptGasExceedsSignedLimit {
-                    visible: visible_gas,
-                    signed_limit: signed_gas_limit,
-                    visible_base: visible_base_gas,
-                    additional: additional_visible_gas,
-                }
-                .into(),
-            );
-        }
-        let cumulative = self
-            .inner
-            .cumulative_tx_gas_used
-            .checked_add(visible_gas)
-            .ok_or(ExecutorValidationError::SystemTxCumulativeVisibleGasOverflow)?;
-        let block_gas_limit = self.inner.evm.block().gas_limit();
-        if cumulative > block_gas_limit {
-            return Err(
-                ExecutorValidationError::SystemTxVisibleGasExceedsBlockLimit {
-                    cumulative,
-                    block_limit: block_gas_limit,
-                    visible_base: visible_base_gas,
-                    additional: additional_visible_gas,
-                }
-                .into(),
-            );
-        }
-        self.check_visible_pre_end_gas(visible_gas)?;
-        Ok(visible_gas)
-    }
-
-    /// Pushes a `status=0` system synthetic receipt and publishes only the
-    /// signed envelope and its failure charge. Internal-lane accounting remains
-    /// separate from visible receipt gas.
+    /// Pushes a `status=0` system synthetic receipt with `0` visible gas under
+    /// the Tempo 0-gas model while accounting internal execution gas in
+    /// `system_tx_execution_gas`.
     pub(in crate::executor) fn push_system_failure_receipt(
         &mut self,
         input: SystemFailureReceiptInput,
     ) -> Result<GasOutput, BlockExecutionError> {
-        let visible_gas_used = self.visible_system_gas(
-            input.visible_base_gas,
-            input.additional_visible_gas,
-            input.signed_gas_limit,
-        )?;
         let log = crate::failure_receipt::build_outbe_failure_log(
             input.log_address,
             input.code,
             input.reason,
         );
-        let system_cumulative_gas_used =
-            self.checked_system_tx_execution_gas(input.internal_gas_used)?;
-        let system_cumulative_gross_gas = self
-            .system_tx_gross_gas
-            .checked_add(input.internal_gross_gas_used)
-            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
-        let user_cumulative_gas_used = self
-            .inner
-            .cumulative_tx_gas_used
-            .checked_add(visible_gas_used)
-            .ok_or(crate::errors::ExecutorValidationError::SystemTxFailureVisibleGasOverflow)?;
         self.inner.receipts.push(Receipt {
             tx_type: input.tx_type,
             success: false,
-            cumulative_gas_used: user_cumulative_gas_used,
+            cumulative_gas_used: self.inner.cumulative_tx_gas_used,
             logs: vec![log],
         });
-        self.system_tx_execution_gas = system_cumulative_gas_used;
-        self.system_tx_gross_gas = system_cumulative_gross_gas;
-        self.inner.cumulative_tx_gas_used = user_cumulative_gas_used;
-        self.inner.block_regular_gas_used = self
-            .inner
-            .block_regular_gas_used
-            .saturating_add(visible_gas_used);
-        self.inner.block_state_gas_used = self
-            .inner
-            .block_state_gas_used
-            .saturating_add(visible_gas_used);
-        Ok(GasOutput::new(visible_gas_used))
+        self.system_tx_execution_gas = self
+            .system_tx_execution_gas
+            .saturating_add(input.internal_gas_used);
+        self.system_tx_gross_gas = self
+            .system_tx_gross_gas
+            .saturating_add(input.internal_gross_gas_used);
+        Ok(GasOutput::new(0))
     }
 }

@@ -133,7 +133,7 @@ fn test_resolve_backend_invalid_rejected_by_clap() {
     assert!(result.is_err());
 }
 
-// --- TC-006: keygen command e2e tests ---
+// --- keygen command e2e tests ---
 
 #[test]
 fn test_cmd_generate_creates_key_file() {
@@ -242,7 +242,7 @@ fn test_cmd_sign_registration_missing_key() {
     assert!(result.is_err());
 }
 
-// TC-007: verify signature end-to-end with registration DST
+// Verify signature end-to-end with registration DST
 #[test]
 fn sign_registration_verifies_with_dst() {
     let dir = tempfile::tempdir().unwrap();
@@ -318,7 +318,7 @@ fn test_cmd_verify_corrupted_file_exits() {
     let _ = cmd_verify(key_path, &KeyBackend::Plaintext);
 }
 
-// TC-006: hybrid
+// Hybrid key generation
 #[test]
 fn test_cmd_hybrid_creates_both_keys() {
     let dir = tempfile::tempdir().unwrap();
@@ -327,7 +327,7 @@ fn test_cmd_hybrid_creates_both_keys() {
     assert!(dir.path().join("evm-key.hex").exists());
 }
 
-// TC-028: hybrid ECDSA key validity
+// Hybrid ECDSA key validity
 #[test]
 fn test_cmd_hybrid_ecdsa_key_is_valid_32_bytes() {
     let dir = tempfile::tempdir().unwrap();
@@ -412,7 +412,7 @@ fn validator_command_refuses_existing_artifacts() {
     );
 }
 
-// TC-008: encrypted save/load roundtrip
+// Encrypted save/load roundtrip
 #[test]
 fn test_encrypted_generate_and_show() {
     let dir = tempfile::tempdir().unwrap();
@@ -466,7 +466,7 @@ fn encrypted_cli(extra: &[&str]) -> Cli {
     make_cli(&args)
 }
 
-// T-01: refuse to overwrite an existing signing key unless --force is set.
+// Refuse to overwrite an existing signing key unless --force is set.
 #[test]
 fn test_cmd_generate_refuses_existing_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -547,7 +547,7 @@ fn test_ensure_can_write_paths_interactive_confirm() {
     assert_key_file_already_exists(&err, &evm);
 }
 
-// T-02: evm-key.hex is mode 0600 and the temp file is gone.
+// evm-key.hex is mode 0600 and the temp file is gone.
 #[cfg(unix)]
 #[test]
 fn test_cmd_hybrid_evm_key_is_mode_600_and_leaves_no_tmp_file() {
@@ -568,7 +568,7 @@ fn test_cmd_hybrid_evm_key_is_mode_600_and_leaves_no_tmp_file() {
     assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
-// T-04: passphrase CLI, env, and file.
+// Passphrase CLI, env, and file.
 #[test]
 fn test_passphrase_arg_preserves_bls_passphrase_env() {
     let cmd = <Cli as clap::CommandFactory>::command();
@@ -633,7 +633,7 @@ fn test_resolve_backend_passphrase_file_takes_precedence_over_passphrase() {
     assert!(matches!(backend, KeyBackend::Encrypted(p) if p == "from-file"));
 }
 
-// T-06: roundtrip failure takes the second exit_process branch.
+// Roundtrip failure takes the second exit_process branch.
 #[test]
 #[should_panic(expected = "exit(1)")]
 fn test_cmd_verify_roundtrip_failure_exits() {

@@ -92,6 +92,7 @@ fn serve_public_keys(
             Err(error) => return Err(error.into()),
         }
     };
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     // The old CLI sent GetQuote here and failed before the authenticated session.

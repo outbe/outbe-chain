@@ -185,10 +185,7 @@ fn run_prefix_checked(
     let samples = outbe_cycle::runtime::take_trigger_gas_samples();
     let body = outbe_cycle::runtime::take_cycle_gas_samples();
     for (gross, handlers) in &body {
-        assert!(
-            (gross - handlers).checked_mul(4).unwrap()
-                <= outbe_cycle::runtime::CYCLE_OVERHEAD_RESERVE_GAS
-        );
+        assert!(gross >= handlers);
     }
     eprintln!(
         "CALIBRATION {label}: phases={phases:?}, triggers={samples:?}, body={body:?}, aggregate={}",
@@ -250,6 +247,8 @@ fn run_prefix_checked(
     verify_state(&mut state, &logs);
     let root = if verify_deferred {
         let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: block,
             timestamp,
             chain_id: CHAIN_ID,
@@ -515,95 +514,13 @@ fn oversized_clearing_defers_atomically_and_deterministically_without_blocking_u
 
 #[test]
 fn calibrated_canonical_envelope_fits_artifact_limit() {
-    let later = [57_151_402u64, 340_578_700, 266_500, 1_691_100]
-        .into_iter()
-        .try_fold(0u64, |sum, cost| sum.checked_add(cost))
-        .unwrap();
-    let rounded =
-        later.checked_mul(4).unwrap().checked_add(999_999).unwrap() / 1_000_000 * 1_000_000;
-    assert_eq!(
-        rounded,
-        crate::sys_tx_precompile::CYCLE_LATER_PHASE_RESERVE_GAS
-    );
-    assert_eq!(rounded, 1_599_000_000);
-    let overhead = 16_404_800u64.checked_add(2_485_700).unwrap();
-    let overhead_reserve = overhead
-        .checked_mul(4)
-        .unwrap()
-        .checked_add(999_999)
-        .unwrap()
-        / 1_000_000
-        * 1_000_000;
-    assert_eq!(
-        outbe_cycle::runtime::CYCLE_OVERHEAD_RESERVE_GAS,
-        overhead_reserve
-    );
-    assert_eq!(overhead_reserve, 76_000_000);
     let handlers = outbe_cycle::triggers::ACTIVE_TRIGGERS
         .iter()
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
     assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 8);
     assert_eq!(handlers, 16_369_000);
-    let envelope = handlers
-        .checked_add(outbe_cycle::runtime::CYCLE_OVERHEAD_RESERVE_GAS)
-        .unwrap()
-        .checked_add(rounded)
-        .unwrap()
-        .checked_add(192_562_500)
-        .unwrap();
-    assert_eq!(envelope, 1_883_931_500);
-    assert!(envelope < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
-}
-
-#[test]
-fn insufficient_aggregate_headroom_is_critical_not_trigger_deferral() {
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let mut state = state_with_active_proposer(proposer);
-    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let ctx = execution_ctx_with_tee_bootstrap(
-        Some(0),
-        Bytes::new(),
-        sample_tee_bootstrap_payload_at(1, 1),
-    );
-    let mut executor = config.create_executor(evm, ctx);
-    super::super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes().unwrap());
-    let capacity = outbe_cycle::runtime::CYCLE_OVERHEAD_RESERVE_GAS
-        .checked_add(crate::sys_tx_precompile::CYCLE_LATER_PHASE_RESERVE_GAS)
-        .unwrap();
-    executor.system_tx_gross_gas = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
-        .checked_sub(capacity - 1)
-        .unwrap();
-    let before = executor.system_tx_gross_gas;
-    outbe_cycle::runtime::take_trigger_gas_samples();
-    outbe_cycle::runtime::take_cycle_gas_samples();
-    let cycle = begin_system_txs_for_test(
-        &config,
-        BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
-            extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
-            proposer,
-            bootstrap: BootstrapFixture::explicit(Some(sample_tee_bootstrap_payload_at(1, 1))),
-        },
-    )
-    .remove(0);
-    let error = executor
-        .execute_transaction(cycle)
-        .expect_err("mandatory reservations cannot fit");
-    assert!(matches!(error, BlockExecutionError::Internal(_)), "{error}");
-    assert!(
-        error.to_string().contains("essential work capacity"),
-        "{error}"
-    );
-    assert!(executor.receipts().is_empty());
-    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
-    assert_eq!(executor.system_tx_gross_gas, before);
-    assert!(outbe_cycle::runtime::take_trigger_gas_samples().is_empty());
-    assert!(outbe_cycle::runtime::take_cycle_gas_samples().is_empty());
+    assert!(handlers < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
 }
 
 fn populated_auction(chain_count: u32) -> Calibration {
@@ -649,7 +566,7 @@ fn populated_auction(chain_count: u32) -> Calibration {
             chain_count * 2
         ),
         &[(proposer, dummy_pubkey(0xa2))],
-        (1, timestamp),
+        (if chain_count > 16 { 2 } else { 1 }, timestamp),
         |storage| {
             seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
             let day = EmissionDate::new(20240101);
@@ -1229,6 +1146,8 @@ fn verify_accepted_auction_cleanup(
             assert_eq!(*credit.get_or_insert(balance), balance);
             let runtime = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: block,
                     timestamp: timestamp + block,
                     chain_id: CHAIN_ID,
@@ -1240,16 +1159,7 @@ fn verify_accepted_auction_cleanup(
                 storage.clone(),
             );
             let before = storage.gas_used().unwrap();
-            outbe_cycle::runtime::handle_cycle_tick(
-                &runtime,
-                1,
-                outbe_cycle::runtime::CycleWorkCapacity {
-                    remaining_gas: 100_000_000 - before,
-                    gas_used_at_entry: before,
-                    reserve_after_cycle: 0,
-                },
-            )
-            .unwrap();
+            outbe_cycle::runtime::handle_cycle_tick(&runtime, 1).unwrap();
             eprintln!(
                 "ACCEPTED1088 cleanup Cycle block={block}, gross={}",
                 storage.gas_used().unwrap() - before

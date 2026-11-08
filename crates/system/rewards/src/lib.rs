@@ -27,6 +27,8 @@ pub mod schema;
 #[cfg(test)]
 mod test_support;
 
+pub use lifecycle::RewardsModule;
+
 /// Delegate absent-voter penalties after the executor resolves the canonical snapshot.
 pub fn slash_absent_voters(
     storage: outbe_primitives::storage::StorageHandle,

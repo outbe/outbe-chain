@@ -78,6 +78,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                     )
                     .unwrap();
                 seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
+                seed_valid_tee_nodes(storage.clone(), &[proposer]);
                 outbe_oracle::api::set_exchange_rate(
                     storage,
                     Address::ZERO,
@@ -107,35 +108,39 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             },
         );
         let config = OutbeEvmConfig::new(chain_spec).with_evm_signer(signer);
+        let (mut ctx, metadata) =
+            block_two_execution_ctx(Some(13), header_extra_data.clone(), proposer, parent_hash);
         if !replay {
             signed_body = begin_system_txs_for_test(
                 &config,
                 BeginBlockFixture {
-                    block_number: 1,
+                    block_number: 2,
                     parent_hash,
                     extra_data: &Bytes::new(),
-                    parent_consensus_metadata: None,
+                    parent_consensus_metadata: Some(metadata),
                     proposer,
                     bootstrap: BootstrapFixture::StandardForBlock,
                 },
             );
         }
-        let mut ctx =
-            block_one_execution_ctx(Some(signed_body.len() + 1), header_extra_data.clone());
-        ctx.inner.parent_hash = parent_hash;
-        ctx.proposer_evm_address = Some(proposer);
+        ctx.inner.tx_count_hint = Some(signed_body.len() + 1);
         if replay {
             ctx.expected_begin_system_txs = signed_body.clone();
         }
-        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(block_ts);
+        let evm = config.evm_with_env(&mut state, evm_env);
         let mut executor = config.create_executor(evm, ctx);
-        executor.apply_pre_execution_changes().unwrap();
+        super::with_phase1_verify_disabled(|| {
+            executor.apply_pre_execution_changes().unwrap();
+        });
         for (index, tx) in signed_body.clone().into_iter().enumerate() {
             executor
                 .execute_transaction(tx)
                 .unwrap_or_else(|error| panic!("system transaction {index} failed: {error}"));
         }
         executor.execute_transaction(user.clone()).unwrap();
+        executor.apply_end_block_phase().unwrap();
         if !replay {
             executor.prepare_final_header_artifacts(0).unwrap();
             header_extra_data = executor.final_extra_data().clone();
@@ -150,7 +155,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             .bundle_state
             .state()
             .contains_key(&outbe_primitives::addresses::GEM_ADDRESS));
-        assert_eq!(result.receipts.len(), signed_body.len() + 1);
+        assert_eq!(result.receipts.len(), signed_body.len() + 1 + 5);
         assert!(result.receipts.iter().all(|receipt| receipt.success));
         let logs = || {
             result
@@ -166,6 +171,8 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
             &mut state,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: block_ts,
                 chain_id: CHAIN_ID,

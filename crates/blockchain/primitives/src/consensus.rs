@@ -480,7 +480,7 @@ struct BridgeState {
     execution_summary_cache: VecDeque<ExecutionSummaryCacheEntry>,
     /// One-time TEE bootstrap payload from the consensus-thread TEE DKG
     /// coordination. It goes to the payload builder so that every
-    /// block-1 proposal attempt injects the same bytes (slice 5.1). It must
+    /// block-1 proposal attempt injects the same bytes. It must
     /// remain available across rejected or abandoned proposal candidates. The
     /// block-number guard in the payload builder makes it unreachable after
     /// block 1.

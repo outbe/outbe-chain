@@ -25,6 +25,8 @@ pub(crate) const VAL_Z: Address = address!("0x0000000000000000000000000000000000
 
 pub(crate) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number,
         timestamp,
         chain_id: CHAIN_ID,

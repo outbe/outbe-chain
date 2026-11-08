@@ -84,11 +84,13 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     execution.proposer_evm_address = Some(proposer);
     let mut executor = config.create_executor(evm, execution);
     executor.apply_end_block_phase().unwrap();
-    assert_eq!(executor.receipts().len(), 2);
+    assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     drop(executor);
 
     let block = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 2,
         timestamp: block_ts + 1,
         chain_id: CHAIN_ID,
@@ -395,7 +397,10 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     let user_tx = test_regular_tx()
         .try_into_recovered()
         .expect("regular tx signer should recover");
-    let mut state = state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
+    let mut state =
+        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+            seed_valid_tee_nodes(storage, &[proposer]);
+        });
     state.database.insert_account_info(
         Address::from(*user_tx.signer()),
         AccountInfo {
@@ -404,78 +409,64 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         },
     );
     let chain_spec = test_chain_spec();
-    let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
     let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let ctx = block_one_execution_ctx(Some(1), Bytes::new());
-    let mut executor = OutbeBlockExecutor::new(
-        EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
-        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), false),
-    );
+    let parent_hash = B256::with_last_byte(0x11);
+    let (ctx, metadata) = block_two_execution_ctx(Some(1), Bytes::new(), proposer, parent_hash);
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, ctx);
 
-    executor
-        .apply_pre_execution_changes()
-        .expect("pre-execution changes should apply");
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("pre-execution changes should apply");
+    });
     let mut system_txs = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
+            block_number: 2,
+            parent_hash,
             extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
+            parent_consensus_metadata: Some(metadata),
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     )
     .into_iter();
+    for _ in 0..9 {
+        let tx = system_txs
+            .next()
+            .expect("mandatory prefix system tx before OracleSlash");
+        let gas = executor
+            .execute_transaction(tx)
+            .expect("mandatory prefix system tx should execute")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+    let oracle_slash_tx = system_txs
+        .next()
+        .expect("OracleSlash system tx should be present at index 9");
+    let hyperlane_slash_tx = system_txs
+        .next()
+        .expect("HyperlaneSlash system tx should be present at index 10");
     let cycle_tx = system_txs
         .next()
-        .expect("CycleTick system tx should be present");
-    let tee_bootstrap_tx = system_txs
-        .next()
-        .expect("TeeBootstrap system tx should be present");
-    let oracle_tx = system_txs
-        .next()
-        .expect("OracleSlashWindow system tx should be present");
-    let hook_events_tx = system_txs
-        .next()
-        .expect("HookEvents system tx should be present");
-    let oracle_signed_gas = oracle_tx.tx().gas_limit();
-    let oracle_intrinsic_gas =
-        outbe_primitives::system_tx::system_tx_intrinsic_gas(oracle_tx.tx().input())
-            .expect("OracleSlashWindow intrinsic gas computes");
+        .expect("CycleTick system tx should be present at index 11");
+    assert_eq!(oracle_slash_tx.tx().gas_limit(), 0);
 
-    // CycleTick and TeeBootstrap are consensus-critical. OracleSlashWindow is
-    // soft, so an ordinary revert records a failure receipt and later
-    // begin-zone/user transactions still execute.
-    let cycle_gas = executor
-        .execute_transaction(cycle_tx)
-        .expect("CycleTick should execute successfully")
-        .tx_gas_used();
-    let tee_bootstrap_gas = executor
-        .execute_transaction(tee_bootstrap_tx)
-        .expect("mandatory TeeBootstrap should execute before the non-critical phase")
-        .tx_gas_used();
+    // OracleSlash has revert_fails_block == false, so an ordinary revert records
+    // a 0-gas failure receipt and later begin-zone/user transactions still execute.
     let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
-        executor.execute_transaction(oracle_tx)
+        executor.execute_transaction(oracle_slash_tx)
     })
-    .expect("OracleSlashWindow revert should soft-fail")
+    .expect("OracleSlash revert should soft-fail")
     .tx_gas_used();
-    // The envelope signs only its intrinsic gas, and its failure receipt charges exactly that.
-    assert_eq!(oracle_signed_gas, oracle_intrinsic_gas);
-    assert_eq!(
-        revert_gas, oracle_intrinsic_gas,
-        "GAS-11: reverted OracleSlashWindow charges {revert_gas}, expected {oracle_intrinsic_gas}"
-    );
+    assert_eq!(revert_gas, 0);
     let failure_receipt = executor
         .receipts()
-        .get(2)
-        .expect("reverted OracleSlashWindow must emit a failure receipt");
+        .get(9)
+        .expect("reverted OracleSlash must emit a failure receipt at index 9");
     assert!(!failure_receipt.success);
-    assert_eq!(
-        failure_receipt.cumulative_gas_used,
-        cycle_gas + tee_bootstrap_gas + revert_gas
-    );
+    assert_eq!(failure_receipt.cumulative_gas_used, 0);
     assert_eq!(failure_receipt.logs.len(), 1);
     assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
     assert_eq!(
@@ -490,9 +481,8 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         expected_code_topic,
         "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
     );
-    // Pin the real execution path's pre-refactor reason, including the unquoted phase name.
     let expected_reason = concat!(
-        "system tx OracleSlashWindow did not succeed at body_index=2: ",
+        "system tx OracleSlash did not succeed at body_index=9: ",
         "Revert { gas: ResultGas { total_gas_spent: 42000, state_gas_spent: 0, ",
         "refunded: 0, floor_gas: 0 }, logs: [], output: ",
         "0x666f72636564204f757462652073797374656d2d63616c6c20726576657274 }"
@@ -509,18 +499,72 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
         "GAS-11: soft-failure reason bytes must remain unchanged"
     );
 
-    let hook_events_gas = executor
-        .execute_transaction(hook_events_tx)
-        .expect("HookEvents should execute after the soft failure")
+    // HyperlaneSlash also has revert_fails_block == false: an ordinary revert emits a 0-gas
+    // failure receipt and continues to CycleTick and user transactions.
+    let hyperlane_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
+        executor.execute_transaction(hyperlane_slash_tx)
+    })
+    .expect("HyperlaneSlash revert should also soft-fail")
+    .tx_gas_used();
+    assert_eq!(hyperlane_gas, 0);
+    assert!(!executor.receipts()[10].success);
+    assert_eq!(executor.receipts()[10].cumulative_gas_used, 0);
+
+    let cycle_gas = executor
+        .execute_transaction(cycle_tx)
+        .expect("CycleTick should execute after the soft failure")
         .tx_gas_used();
+    assert_eq!(cycle_gas, 0);
     let user_gas = executor
         .execute_transaction(user_tx)
         .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
         .tx_gas_used();
     assert_eq!(
-        executor.inner.cumulative_tx_gas_used,
-        cycle_gas + tee_bootstrap_gas + revert_gas + hook_events_gas + user_gas,
-        "GAS-11: soft-failed system tx must charge only its published visible gas"
+        executor.inner.cumulative_tx_gas_used, user_gas,
+        "GAS-11: soft-failed system tx must contribute 0 gas to cumulative block gas"
+    );
+}
+
+#[test]
+fn block_one_rejects_user_transaction_after_begin_block_with_unexpected_user_tx() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let user_tx = test_regular_tx()
+        .try_into_recovered()
+        .expect("regular tx signer should recover");
+    let mut state = state_with_active_proposer(proposer);
+    let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+    let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(1), Bytes::new()));
+    executor
+        .apply_pre_execution_changes()
+        .expect("block 1 pre-execution changes should apply");
+    for tx in begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    ) {
+        executor
+            .execute_transaction(tx)
+            .expect("block 1 begin-zone system tx should succeed");
+    }
+    assert_eq!(
+        executor.fsm.stage(),
+        outbe_primitives::system_tx::BlockExecutionStage::Completed
+    );
+    let err = executor
+        .execute_transaction(user_tx)
+        .expect_err("block 1 must reject any MidBlock user transaction");
+    assert!(
+        err.to_string()
+            .contains("unexpected user transaction in stage Completed"),
+        "expected UnexpectedUserTx in stage Completed, got: {err}"
     );
 }
 
@@ -544,7 +588,7 @@ fn execute_critical_cycle_fault(
     executor
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply");
-    let cycle_tx = begin_system_txs_for_test(
+    let mut system_txs = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
             block_number: 1,
@@ -554,10 +598,16 @@ fn execute_critical_cycle_fault(
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
-    )
-    .into_iter()
-    .next()
-    .expect("CycleTick system tx should be present");
+    );
+    let cycle_tx = system_txs
+        .pop()
+        .expect("CycleTick system tx should be last in begin prefix");
+    for tx in system_txs {
+        executor
+            .execute_transaction(tx)
+            .expect("earlier begin system tx should succeed");
+    }
+    let receipts_before = executor.receipts().len();
 
     let result = match fault {
         CriticalCycleFault::Revert => crate::factory::with_forced_outbe_system_call_revert(|| {
@@ -569,7 +619,8 @@ fn execute_critical_cycle_fault(
             })
         }
     };
-    (result, executor.receipts().to_vec())
+    assert_eq!(executor.receipts().len(), receipts_before);
+    (result, Vec::new())
 }
 
 /// A revert in a consensus-critical begin-zone phase (here
@@ -627,6 +678,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             4,
             |storage| {
                 seed_cycle_tick_genesis(storage.clone(), GENESIS_TS, proposer).unwrap();
+                seed_valid_tee_nodes(storage.clone(), &[proposer]);
 
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
                 rewards.day_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
@@ -665,34 +717,37 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         );
 
         let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
-        let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
-        let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+        let parent_hash = B256::with_last_byte(0x12);
+        let (mut execution, metadata) =
+            block_two_execution_ctx(None, Bytes::new(), proposer, parent_hash);
+        execution.parent_artifact_hint.as_mut().unwrap().timestamp = block_timestamp - 30;
+        let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
         evm_env.block_env.timestamp = U256::from(block_timestamp);
         let config = OutbeEvmConfig::new(test_chain_spec_with_genesis_timestamp(GENESIS_TS))
             .with_evm_signer(signer.clone());
         let begin = begin_system_txs_for_test(
             &config,
             BeginBlockFixture {
-                block_number: 1,
-                parent_hash: B256::ZERO,
+                block_number: 2,
+                parent_hash,
                 extra_data: &Bytes::new(),
-                parent_consensus_metadata: None,
+                parent_consensus_metadata: Some(metadata),
                 proposer,
-                bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap.clone())),
+                bootstrap: BootstrapFixture::StandardForBlock,
             },
         );
         let mut body = begin.clone();
         body.push(feeder_vote);
 
         let evm = config.evm_with_env(&mut state, evm_env);
-        let mut execution =
-            execution_ctx_with_tee_bootstrap(Some(body.len()), Bytes::new(), tee_bootstrap);
+        execution.inner.tx_count_hint = Some(body.len());
         execution.expected_begin_system_txs = begin;
-        execution.proposer_evm_address = Some(proposer);
         let mut executor = config.create_executor(evm, execution);
-        executor
-            .apply_pre_execution_changes()
-            .expect("pre-execution hooks must succeed");
+        super::with_phase1_verify_disabled(|| {
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution hooks must succeed");
+        });
         for tx in body {
             executor
                 .execute_transaction(tx)
@@ -701,7 +756,9 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
         drop(executor);
 
         let read_ctx = BlockContext {
-            block_number: 1,
+            block_gas_limit: 0,
+            user_gas_used: 0,
+            block_number: 2,
             timestamp: block_timestamp,
             chain_id: CHAIN_ID,
             genesis_hash: alloy_primitives::B256::ZERO,
@@ -788,10 +845,6 @@ fn verifier_rejects_begin_system_tx_signature_hash_mismatch() {
     let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
     let evm = config.evm_with_env(&mut state, evm_env);
 
-    let wrong_unsigned =
-        build_unsigned_system_tx(0, 2, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
-    let wrong_signed = signer.sign_unsigned(wrong_unsigned).unwrap();
-    let wrong_recovered = reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
     let canonical = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
@@ -803,6 +856,10 @@ fn verifier_rejects_begin_system_tx_signature_hash_mismatch() {
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
+    let wrong_unsigned =
+        build_unsigned_system_tx(0, 2, CHAIN_ID, canonical[0].tx().input().clone()).unwrap();
+    let wrong_signed = signer.sign_unsigned(wrong_unsigned).unwrap();
+    let wrong_recovered = reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
     let mut expected = vec![wrong_recovered.clone()];
     expected.extend(canonical.into_iter().skip(1));
     let mut ctx = execution_ctx(Some(1), Bytes::new());
@@ -843,10 +900,8 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
     })
     .expect("extra_data encodes");
 
-    let cycle_unsigned =
-        build_unsigned_system_tx(0, 1, CHAIN_ID, SystemTx::CycleTick.encode().unwrap()).unwrap();
     let boundary_unsigned = build_unsigned_system_tx(
-        1,
+        0,
         1,
         CHAIN_ID,
         SystemTx::BoundaryOutcome {
@@ -856,13 +911,11 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         .unwrap(),
     )
     .unwrap();
-    let cycle_signed = signer.sign_unsigned(cycle_unsigned).unwrap();
     let boundary_signed = signer.sign_unsigned(boundary_unsigned).unwrap();
-    let cycle_recovered = reth_primitives_traits::Recovered::new_unchecked(cycle_signed, proposer);
     let boundary_recovered =
         reth_primitives_traits::Recovered::new_unchecked(boundary_signed, proposer);
-    let mut ctx = execution_ctx(Some(2), extra_data);
-    ctx.expected_begin_system_txs = vec![cycle_recovered.clone(), boundary_recovered.clone()];
+    let mut ctx = execution_ctx(Some(1), extra_data);
+    ctx.expected_begin_system_txs = vec![boundary_recovered.clone()];
     ctx.proposer_evm_address = Some(proposer);
 
     let mut executor = config.create_executor(evm, ctx);
@@ -870,7 +923,7 @@ fn verifier_rejects_boundary_outcome_system_tx_artifact_mismatch() {
         .apply_pre_execution_changes()
         .expect("pre-execution changes should apply before verifier tx loop");
     let err = executor
-        .execute_transaction(cycle_recovered)
+        .execute_transaction(boundary_recovered)
         .expect_err("verifier must reject BoundaryOutcome tx/header mismatch");
 
     assert!(err
@@ -900,17 +953,8 @@ fn verifier_rejects_begin_system_tx_signer_mismatch() {
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
-    let cycle_input = SystemTx::CycleTick.encode().unwrap();
-    let unsigned = build_unsigned_system_tx_with_gas_limit(
-        outbe_primitives::system_tx::SystemTxEnvelopeInput {
-            ordinal: 0,
-            block_number: 1,
-            chain_id: CHAIN_ID,
-            calldata: cycle_input,
-            gas_limit: canonical[0].tx().gas_limit(),
-        },
-    )
-    .unwrap();
+    let unsigned =
+        build_unsigned_system_tx(0, 1, CHAIN_ID, canonical[0].tx().input().clone()).unwrap();
     let wrong_signed = wrong_signer.sign_unsigned(unsigned).unwrap();
     let wrong_recovered =
         reth_primitives_traits::Recovered::new_unchecked(wrong_signed, wrong_signer.address());
@@ -956,6 +1000,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
         .with_bundle_update()
         .build();
     let setup = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 1_000,
         chain_id: CHAIN_ID,
@@ -1004,6 +1050,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     .expect("unbonding fixture");
 
     let run = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 2_000,
         chain_id: CHAIN_ID,
@@ -1054,6 +1102,8 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     );
 
     let read = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 2_000,
         chain_id: CHAIN_ID,
@@ -1094,6 +1144,8 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
         .with_bundle_update()
         .build();
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 84,
         chain_id: CHAIN_ID,
@@ -1129,6 +1181,8 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     );
 
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 8,
         timestamp: 96,
         chain_id: CHAIN_ID,
@@ -1165,6 +1219,8 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
         .with_bundle_update()
         .build();
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 7,
         timestamp: 84,
         chain_id: CHAIN_ID,
@@ -1187,4 +1243,115 @@ fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
             .and_then(|inner| inner.downcast_other::<outbe_primitives::error::PrecompileError>()),
         Some(outbe_primitives::error::PrecompileError::Storage(_))
     ));
+}
+
+#[test]
+fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earlier_state() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let mut state = state_with_active_proposer(proposer);
+    let chain_spec = test_chain_spec();
+    let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
+    let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
+    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
+    let ctx = block_one_execution_ctx(Some(3), Bytes::new());
+    let mut executor = OutbeBlockExecutor::new(
+        EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
+    );
+
+    executor
+        .apply_pre_execution_changes()
+        .expect("pre-execution changes should apply");
+    let mut system_txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 1,
+            parent_hash: B256::ZERO,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: None,
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    )
+    .into_iter();
+
+    // Execute mandatory prefix (0..8) before OracleSlash (OSOS at index 8).
+    for _ in 0..8 {
+        let tx = system_txs.next().expect("prefix tx before OracleSlash");
+        let gas = executor
+            .execute_transaction(tx)
+            .expect("prefix tx should succeed")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+
+    let oracle_slash_tx = system_txs.next().expect("OracleSlash tx at index 8");
+    let dirty_addr = outbe_primitives::addresses::ORACLE_ADDRESS;
+    let dirty_slot = U256::from(0xDEAD_BEEFu64);
+    let dirty_val = U256::from(0xCAFE_BABEu64);
+    let dirty_topic = keccak256("DirtySoftFailEvent()");
+
+    let gas = crate::sys_tx_precompile::with_forced_dirty_system_precompile_revert(
+        dirty_addr,
+        dirty_slot,
+        dirty_val,
+        || executor.execute_transaction(oracle_slash_tx),
+    )
+    .expect("soft-fail OracleSlash revert must not abort block")
+    .tx_gas_used();
+    assert_eq!(gas, 0);
+
+    let osos_receipt = executor.receipts().last().expect("OSOS receipt");
+    assert!(!osos_receipt.success);
+    assert_eq!(osos_receipt.cumulative_gas_used, 0);
+    assert_eq!(osos_receipt.logs.len(), 1);
+    assert!(
+        osos_receipt
+            .logs
+            .iter()
+            .all(|log| log.data.topics().first() != Some(&dirty_topic)),
+        "dirty event log emitted before revert must be rolled back"
+    );
+
+    // Remaining BeginBlock system txs (HyperlaneSlash and CycleTick) must succeed.
+    for remaining_tx in system_txs {
+        let gas = executor
+            .execute_transaction(remaining_tx)
+            .expect("remaining BeginBlock tx should succeed")
+            .tx_gas_used();
+        assert_eq!(gas, 0);
+    }
+    drop(executor);
+
+    // Verify dirty storage slot was rolled back while earlier ValidatorLiveness state persisted.
+    assert_eq!(
+        state.storage(dirty_addr, dirty_slot).unwrap(),
+        U256::ZERO,
+        "dirty storage write inside reverted soft-fail OSOS must be rolled back"
+    );
+    let read_ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
+        block_number: 1,
+        timestamp: 1,
+        chain_id: CHAIN_ID,
+        genesis_hash: alloy_primitives::B256::ZERO,
+        genesis_timestamp: 1,
+        proposer,
+        validators: vec![proposer],
+    };
+    let mut provider =
+        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    StorageHandle::enter(&mut provider, |storage| {
+        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+        let record = vs
+            .get_validator(proposer)
+            .unwrap()
+            .expect("proposer exists");
+        assert_eq!(
+            record.blocks_proposed, 1,
+            "earlier committed ValidatorLiveness state must be preserved"
+        );
+    });
 }

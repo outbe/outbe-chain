@@ -98,7 +98,7 @@ fn state_with_active_proposer_fixture(
     let proposer_key = dummy_pubkey(0xA2);
     StorageHandle::enter(&mut seed_storage, |storage| {
         seed_cycle_genesis(storage.clone());
-        seed_registered_active_validator(storage.clone(), proposer, &proposer_key);
+        seed_registered_active_validator(storage, proposer, &proposer_key);
     });
 
     let mut db = cache_db_from_storage(seed_storage);
@@ -121,6 +121,14 @@ fn state_with_active_proposer_fixture(
     );
     db.insert_account_info(
         outbe_primitives::addresses::METADOSIS_ADDRESS,
+        AccountInfo {
+            code_hash: marker_code.hash_slow(),
+            code: Some(marker_code.clone()),
+            ..Default::default()
+        },
+    );
+    db.insert_account_info(
+        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -159,6 +167,7 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     StorageHandle::enter(&mut seed_storage, |storage| {
         seed_cycle_genesis(storage.clone());
         seed_registered_active_validator(storage.clone(), proposer, &proposer_key);
+        seed_valid_tee_nodes(storage, &[proposer]);
     });
 
     let mut db = cache_db_from_storage(seed_storage);
@@ -184,6 +193,14 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
+            ..Default::default()
+        },
+    );
+    db.insert_account_info(
+        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        AccountInfo {
+            code_hash: marker_code.hash_slow(),
+            code: Some(marker_code),
             ..Default::default()
         },
     );
@@ -361,6 +378,59 @@ pub(in crate::executor) fn block_one_execution_ctx<'a>(
     extra_data: Bytes,
 ) -> OutbeBlockExecutionCtx<'a> {
     execution_ctx_with_tee_bootstrap(tx_count_hint, extra_data, sample_tee_bootstrap_payload(1))
+}
+
+pub(in crate::executor) fn block_two_execution_ctx<'a>(
+    tx_count_hint: Option<usize>,
+    extra_data: Bytes,
+    proposer: Address,
+    parent_hash: B256,
+) -> (
+    OutbeBlockExecutionCtx<'a>,
+    CertifiedParentAccountingMetadata,
+) {
+    let mut metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+    metadata.finalized_block_number = 1;
+    metadata.finalized_block_hash = parent_hash;
+    let mut ctx = execution_ctx(tx_count_hint, extra_data);
+    ctx.inner.parent_hash = parent_hash;
+    ctx.parent_consensus_metadata = Some(metadata.clone());
+    ctx.parent_artifact_hint = Some(AccountedParentArtifact {
+        summary: ExecutionSummaryArtifact {
+            validator_fee_sum: U256::ZERO,
+        },
+        timestamp: 0,
+        state_root: Some(B256::repeat_byte(0x91)),
+    });
+    ctx.proposer_evm_address = Some(proposer);
+    (ctx, metadata)
+}
+
+pub(in crate::executor) fn seed_valid_tee_nodes(storage: StorageHandle<'_>, addresses: &[Address]) {
+    let registry = outbe_teeregistry::TeeRegistry::new(storage);
+    for (index, validator) in addresses.iter().enumerate() {
+        let node_hash = keccak256((index as u64).to_be_bytes());
+        registry
+            .validator_v1_node_hash
+            .write(validator, node_hash)
+            .unwrap();
+        registry
+            .v1_node_enclave_id
+            .write(&node_hash, B256::with_last_byte(0x11))
+            .unwrap();
+        registry
+            .v1_node_binding_id
+            .write(&node_hash, B256::with_last_byte(0x12))
+            .unwrap();
+        registry
+            .v1_node_intent_hash
+            .write(&node_hash, B256::with_last_byte(0x13))
+            .unwrap();
+        registry
+            .v1_node_valid_until
+            .write(&node_hash, u64::MAX)
+            .unwrap();
+    }
 }
 
 pub(super) fn execution_ctx_with_tee_bootstrap<'a>(

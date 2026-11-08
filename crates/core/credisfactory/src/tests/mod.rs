@@ -351,6 +351,8 @@ fn block_at<'storage>(
             .map_or(BLOCK_NUMBER, |previous| previous.height + 1);
     BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: height,
             timestamp,
             chain_id: CHAIN_ID,

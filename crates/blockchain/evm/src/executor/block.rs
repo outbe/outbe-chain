@@ -95,9 +95,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// body carries it via `expected_begin_system_txs`) and until the tribute-DKG
     /// bootstrap producer supplies a payload.
     pub(super) pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-    /// Whitelisted pre-exec hook logs published through the mandatory
-    /// `HookEvents` system tx receipt at the end of the begin zone.
-    pub(super) whitelisted_hook_event_logs: Vec<Log>,
+    /// Explicit 4-stage block execution state machine (`ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`).
+    pub(super) fsm: outbe_primitives::system_tx::BlockExecutionFsm,
     /// Number of zero-fee soft-failure receipts emitted in THIS
     /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
     /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
@@ -198,7 +197,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             // verify. It remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
             pending_tee_bootstrap,
-            whitelisted_hook_event_logs: Vec::new(),
+            fsm: outbe_primitives::system_tx::BlockExecutionFsm::for_block(0, false, false, false),
             zero_fee_soft_failures: 0,
             sponsored_gas_used: 0,
             witness_state: None,
@@ -262,7 +261,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         Ok(())
     }
 
-    // Half C-parlia step 11: `set_pending_consensus_metadata` and
+    // `set_pending_consensus_metadata` and
     // `ingest_consensus_metadata_tx` are deleted. Finalized-parent
     // metadata now lives in the begin-zone Phase 1 system transaction input.
     // The pre-exec dispatch arm at `execute_transaction_with_commit_condition`
@@ -308,7 +307,6 @@ where
                 crate::errors::ExecutorValidationError::ReservedSystemTxWithoutCommit.into(),
             );
         }
-        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if self.has_active_consensus_witness_scope() {
             return Err(
                 crate::errors::ExecutorValidationError::WitnessRequiresCommitCondition.into(),
@@ -343,7 +341,6 @@ where
                 .map_err(preserve_cancelled_execution);
         }
         let is_system_tx = is_reserved_system_tx(recovered.tx());
-        self.check_user_pre_end_gas(recovered.tx().gas_limit())?;
         if is_system_tx && self.is_preexecuted_phase1_witness(recovered.tx()) {
             let outcome = self.execute_reserved_system_tx(recovered, f);
             if outcome.is_ok() {
@@ -352,6 +349,14 @@ where
             return outcome.map_err(preserve_cancelled_execution);
         }
         let is_user_candidate = !is_system_tx;
+        if is_user_candidate
+            && self.execute_outbe_block_hooks
+            && self.decoded_block_artifacts.is_some()
+        {
+            self.fsm
+                .on_user_tx()
+                .map_err(crate::errors::ExecutorValidationError::from)?;
+        }
         let witness_scope = self.prepare_tx_witness_scope(is_user_candidate)?;
         let witness_state = self.witness_state.clone();
         let body_tx_index = self.body_tx_index;
@@ -404,6 +409,11 @@ where
 
     fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
+        if self.execute_outbe_block_hooks {
+            self.fsm
+                .finish()
+                .map_err(crate::errors::ExecutorValidationError::from)?;
+        }
         let block_timestamp =
             outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
                 .map_err(crate::errors::ExecutorValidationError::from)?;
@@ -423,27 +433,14 @@ where
             self.inner.cumulative_tx_gas_used
         };
         let block_gas_limit = self.inner.evm.block().gas_limit();
-        let end_zone_executed = BlockHeightRegime::for_block(block_number)
-            .has_end_zone_system_txs()
-            && matches!(
-                self.system_tx_phase_cursor,
-                crate::system_tx::SystemTxPhase::EndBlockCleanup { .. }
-                    | crate::system_tx::SystemTxPhase::EndBlock { .. }
+        if gas_used > block_gas_limit {
+            return Err(
+                BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
+                    transaction_gas_limit: gas_used,
+                    block_available_gas: block_gas_limit,
+                }
+                .into(),
             );
-        if end_zone_executed {
-            if gas_used > block_gas_limit {
-                return Err(crate::errors::ExecutorValidationError::from(
-                    outbe_primitives::system_tx::BlockGasBudgetError::PreEndGasExceeded {
-                        consumed_gas: gas_used,
-                        pre_end_capacity: block_gas_limit,
-                    },
-                )
-                .into());
-            }
-        } else {
-            outbe_primitives::system_tx::BlockGasBudget::new(block_gas_limit)
-                .and_then(|budget| budget.remaining_pre_end_gas(gas_used))
-                .map_err(crate::errors::ExecutorValidationError::from)?;
         }
         let result = BlockExecutionResult {
             receipts: std::mem::take(&mut self.inner.receipts),

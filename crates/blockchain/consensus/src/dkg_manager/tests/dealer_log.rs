@@ -586,7 +586,7 @@ fn build_reshare_parity_fixture() -> ReshareParityFixture {
 static RESHARE_PARITY_FIXTURE: std::sync::LazyLock<ReshareParityFixture> =
     std::sync::LazyLock::new(build_reshare_parity_fixture);
 
-/// W-07: Consensus-scheme + serialization boundary parity test for
+/// Consensus-scheme + serialization boundary parity test for
 /// `commonware-cryptography` (currently pinned at `tag = "v2026.9.0"`,
 /// rev `d476a2361ce6840d2b9d0aa6fb30a924429046d4` in workspace `Cargo.toml`).
 ///
@@ -684,7 +684,7 @@ mod reconstruction_properties {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
 
-        /// W-09 (1): `observe` uses the caller's RNG only for batch-verification
+        /// `observe` uses the caller's RNG only for batch-verification
         /// weights, so any two RNG seeds must agree on both the boolean gate and
         /// the reconstructed `Output` bytes.
         #[test]
@@ -741,7 +741,7 @@ mod reconstruction_properties {
             }
         }
 
-        /// W-09 (2): Permuting raw `SignedDealerLog` inputs before
+        /// Permuting raw `SignedDealerLog` inputs before
         /// `verify_dealer_log` + `apply_finalized_dealer_log` yields the same
         /// canonical dealer map and reconstructed `Output` once all logs are
         /// recorded, and two `DkgCeremony` machines fed the same ordered
@@ -826,7 +826,7 @@ mod reconstruction_properties {
             );
         }
 
-        /// W-09 (3): Signed-but-garbage logs pass signature check (`verify_dealer_log`)
+        /// Signed-but-garbage logs pass signature check (`verify_dealer_log`)
         /// but are uniformly rejected by `observe`: `< 2f + 1` valid logs always fail
         /// even when padded with garbage logs to `>= 2f + 1`, whereas `>= 2f + 1`
         /// valid logs filter out the garbage log and reconstruct the exact same output

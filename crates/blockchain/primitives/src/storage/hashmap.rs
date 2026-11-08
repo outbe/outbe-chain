@@ -66,7 +66,6 @@ pub struct HashMapStorageProvider {
     parent_out_of_gas: bool,
     trigger_budget: Option<super::gas::TriggerBudget>,
     gas_child_remaining: Option<u64>,
-    end_gas_metered: bool,
     meter_storage_gas: bool,
     metered_storage_reads: u64,
     metered_storage_writes: u64,
@@ -141,7 +140,6 @@ impl HashMapStorageProvider {
             parent_out_of_gas: false,
             trigger_budget: None,
             gas_child_remaining: None,
-            end_gas_metered: false,
             meter_storage_gas: false,
             metered_storage_reads: 0,
             metered_storage_writes: 0,
@@ -664,10 +662,6 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.charge_gas(gas)
     }
 
-    fn gas_remaining(&self) -> Option<u64> {
-        self.remaining_end_gas()
-    }
-
     fn metered_gas_remaining(&self) -> Option<u64> {
         self.gas_limit
             .map(|limit| limit.saturating_sub(self.gas_used))
@@ -689,18 +683,8 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.observe_trigger_failure(error);
     }
 
-    fn enable_end_gas_metering(&mut self) -> Result<()> {
-        self.end_gas_metered = true;
-        Ok(())
-    }
-
     fn begin_gas_ceiling(&mut self, ceiling: u64) -> Result<()> {
         self.start_gas_ceiling(ceiling)
-    }
-
-    fn end_gas_ceiling(&mut self) -> Result<()> {
-        self.gas_child_remaining = None;
-        Ok(())
     }
 
     fn refund_gas(&mut self, gas: i64) {
@@ -936,6 +920,8 @@ mod metadosis_mutation_frame_tests {
         let mut prod_provider = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1_700_000_000,
                 chain_id: 1,

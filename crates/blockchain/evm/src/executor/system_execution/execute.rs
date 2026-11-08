@@ -38,70 +38,34 @@ where
     E::Spec: Into<revm::primitives::hardfork::SpecId>,
     E::Error: std::fmt::Display,
 {
-    /// Commits an Outbe begin-zone system transaction with separate internal
-    /// and visible gas accounting.
+    /// Commits an Outbe begin-zone system transaction under the Tempo 0-gas model.
     ///
-    /// The precompile executes under the separate internal system-work budget.
-    /// The public Ethereum block gas lane charges the visible base gas of the
-    /// signed envelope (intrinsic plus any schedule-hashed protocol precharge).
-    /// It also charges any explicit state-operation gas. It does not expose the
-    /// internal execution lane.
+    /// The precompile executes under the separate internal system-work budget
+    /// (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The public Ethereum block gas
+    /// counters (`cumulative_tx_gas_used`, `block_regular_gas_used`,
+    /// `block_state_gas_used`) remain unchanged (`0` visible gas).
     pub(crate) fn commit_system_transaction(
         &mut self,
         output: EthTxResult<E::HaltReason, alloy_consensus::TxType>,
-        visible_base_gas: u64,
-        additional_visible_gas: u64,
-        signed_gas_limit: u64,
     ) -> Result<GasOutput, BlockExecutionError> {
-        let visible_gas_used =
-            self.visible_system_gas(visible_base_gas, additional_visible_gas, signed_gas_limit)?;
         let user_cumulative_tx_gas = self.inner.cumulative_tx_gas_used;
         let user_regular_gas = self.inner.block_regular_gas_used;
         let user_state_gas = self.inner.block_state_gas_used;
-        let visible_cumulative_tx_gas = user_cumulative_tx_gas
-            .checked_add(visible_gas_used)
-            .ok_or(crate::errors::ExecutorValidationError::SystemTxVisibleGasOverflow)?;
-        let system_cumulative_gas_used =
-            self.checked_system_tx_execution_gas(output.result.result.tx_gas_used())?;
-        let system_cumulative_gross_gas = self
-            .system_tx_gross_gas
-            .checked_add(output.result.result.gas().total_gas_spent())
-            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
+        let tx_gas_used = output.result.result.tx_gas_used();
+        let gross_gas = output.result.result.gas().total_gas_spent();
 
         let _ = self.inner.commit_transaction(output);
-        self.system_tx_execution_gas = system_cumulative_gas_used;
-        self.system_tx_gross_gas = system_cumulative_gross_gas;
+        self.system_tx_execution_gas = self.system_tx_execution_gas.saturating_add(tx_gas_used);
+        self.system_tx_gross_gas = self.system_tx_gross_gas.saturating_add(gross_gas);
 
         if let Some(receipt) = self.inner.receipts.last_mut() {
-            receipt.cumulative_gas_used = visible_cumulative_tx_gas;
+            receipt.cumulative_gas_used = user_cumulative_tx_gas;
         }
 
-        self.inner.cumulative_tx_gas_used = visible_cumulative_tx_gas;
-        self.inner.block_regular_gas_used = user_regular_gas.saturating_add(visible_gas_used);
-        self.inner.block_state_gas_used = user_state_gas.saturating_add(visible_gas_used);
+        self.inner.cumulative_tx_gas_used = user_cumulative_tx_gas;
+        self.inner.block_regular_gas_used = user_regular_gas;
+        self.inner.block_state_gas_used = user_state_gas;
 
-        Ok(GasOutput::new(visible_gas_used))
-    }
-
-    pub(in crate::executor) fn checked_system_tx_execution_gas(
-        &self,
-        additional: u64,
-    ) -> Result<u64, BlockExecutionError> {
-        let cumulative = self
-            .system_tx_execution_gas
-            .checked_add(additional)
-            .ok_or(crate::errors::ExecutorValidationError::InternalSystemWorkGasOverflow)?;
-        let limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
-        if cumulative > limit {
-            return Err(
-                crate::errors::ExecutorValidationError::InternalSystemWorkBudgetExceeded {
-                    cumulative,
-                    limit,
-                    additional,
-                }
-                .into(),
-            );
-        }
-        Ok(cumulative)
+        Ok(GasOutput::new(0))
     }
 }

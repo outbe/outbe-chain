@@ -1,3 +1,12 @@
+//! Builder coverage for the 4-stage system-transaction schedule.
+//!
+//! `CONSENSUS_ORDER` is CertifiedParentAccounting, LateFinalizeCredits,
+//! BoundaryOutcome, TeeBootstrap, ValidatorLiveness, and RadiclePublication.
+//! `BEGIN_BLOCK_ORDER` is Vote, Update, EnclaveUpgradeDeadline, Rewards,
+//! Staking, Oracle, OracleSlash, HyperlaneSlash, and CycleTick.
+//! `END_BLOCK_ORDER` is NodFactory, GemFactory, IntexFactory, CredisFactory,
+//! and GemCleanup.
+
 use std::sync::Arc;
 
 use alloy_evm::{block::CommitChanges, Evm as _, RecoveredTx};
@@ -451,6 +460,8 @@ fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
 
 fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {
     let ctx = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 0,
         timestamp: 0,
         chain_id: MAINNET.chain().id(),
@@ -556,18 +567,103 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
             .execute_transaction(tx)
             .expect("remaining begin phase executes");
     }
+    let end_inputs = [
+        crate::system_tx::SystemTx::NodFactory,
+        crate::system_tx::SystemTx::GemFactory,
+        crate::system_tx::SystemTx::IntexFactory,
+        crate::system_tx::SystemTx::CredisFactory,
+        crate::system_tx::SystemTx::GemCleanup,
+    ];
+    let end_len = end_inputs.len();
+    for input in end_inputs {
+        let tx = config
+            .build_end_system_tx(2, GRAMINE_DIRECT_DEV_CHAIN_ID, GENESIS_OWNER, input)
+            .expect("end-block system tx must build");
+        builder
+            .execute_transaction(tx)
+            .expect("end-block phase executes");
+    }
     let outcome = builder
         .finish(&provider, None)
         .expect("block with retained Phase 1 witness must finish");
     assert_eq!(
         outcome.block.body().transactions.len(),
-        begin_len,
-        "finished block body must retain the Phase 1 witness tx"
+        begin_len + end_len,
+        "finished block body must retain the Phase 1 witness tx and EndBlock suffix"
     );
     assert_eq!(
         outcome.block.body().transactions[0].signature_hash(),
         phase1_hash,
         "body[0] must be the exact pre-executed Phase 1 witness"
+    );
+}
+
+#[test]
+fn builder_finish_rejects_block_2_without_end_block_phase() {
+    let bridge = test_bridge();
+    let parent = test_parent_at(1);
+    bridge.record_execution_summary_with_state_root(
+        1,
+        parent.hash(),
+        ExecutionSummaryArtifact {
+            validator_fee_sum: U256::ZERO,
+        },
+        parent.header().inner.timestamp,
+        parent.header().inner.state_root,
+    );
+    let config = test_config(bridge);
+    let provider = DeterministicEmptyStateProvider;
+    let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    seed_active_validators(&mut proposer_db, &[GENESIS_OWNER]);
+    let mut proposer_state = State::builder()
+        .with_database(proposer_db)
+        .with_bundle_update()
+        .build();
+
+    let mut attrs = next_block_attrs(Bytes::new());
+    let metadata = CertifiedParentAccountingMetadata {
+        finalized_block_number: 1,
+        finalized_block_hash: parent.hash(),
+        ..Default::default()
+    };
+    attrs.parent_consensus_metadata = Some(metadata);
+
+    let evm_env = config
+        .next_evm_env(&parent, &attrs)
+        .expect("next block EVM env must build");
+    let ctx = config
+        .context_for_next_block(&parent, attrs)
+        .expect("next block context must build");
+    let begin = config
+        .build_begin_system_txs(
+            2,
+            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            evm_env.block_env.gas_limit,
+            parent.hash(),
+            &ctx.inner.extra_data,
+            ctx.parent_consensus_metadata.clone(),
+            ctx.proposer_evm_address,
+            None,
+            None,
+        )
+        .expect("complete block-2 begin prefix must build");
+    let evm = config.evm_with_env(&mut proposer_state, evm_env);
+    let mut builder = config.create_block_builder(evm, &parent, ctx);
+    crate::executor::with_phase1_verify_disabled(|| builder.apply_pre_execution_changes())
+        .expect("Phase 1 must be pre-executed");
+    for tx in begin {
+        builder
+            .execute_transaction(tx)
+            .expect("begin phase executes");
+    }
+    let err = match builder.finish(&provider, None) {
+        Ok(_) => panic!("builder.finish on block 2 without EndBlock must fail"),
+        Err(err) => err,
+    };
+    assert!(
+        err.to_string()
+            .contains("block execution finished in stage MidBlock"),
+        "expected IncompleteBlockExecution error, got: {err}"
     );
 }
 
@@ -578,8 +674,8 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
 // block 1 mandatorily carries a `BoundaryOutcome` (genesis DKG boundary).
 // So this test:
 // 1. builds a valid block 2 whose begin-zone is the standard
-//    `CertifiedParentAccounting` (Phase 1) + `CycleTick` + `OracleSlashWindow`
-//    sequence.
+//    CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness, and the
+//    nine BEGIN_BLOCK_ORDER kinds. END_BLOCK_ORDER follows user transactions.
 // 2. proposer-builds it through `builder_for_next_block` + `finish`.
 // 3. re-executes it on the validator path via `batch_executor` / `execute_one`.
 // 4. asserts the two state roots match.
@@ -696,13 +792,13 @@ fn assert_height2_finalization_parity(include_user: bool) {
                     None,
                 )
                 .expect("begin-zone system txs must build");
-            // Base block: no BoundaryOutcome, so the begin-zone is exactly
-            // CertifiedParentAccounting + LateFinalizeCredits + CycleTick +
-            // OracleSlashWindow + HookEvents.
+            // Base block: no BoundaryOutcome and no publication. Begin zone is
+            // CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness,
+            // then the nine begin-block kinds.
             assert_eq!(
                 begin_system_txs.len(),
-                5,
-                "block 2 base-block begin-zone must carry the five mandatory phases",
+                12,
+                "block 2 base-block begin-zone must carry the twelve mandatory phases",
             );
             for tx in begin_system_txs {
                 builder

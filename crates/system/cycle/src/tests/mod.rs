@@ -39,6 +39,8 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
     storage.enter(|handle| {
         let ctx = runtime_context(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: GENESIS_TS,
                 chain_id,
@@ -89,6 +91,8 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
 
 pub(super) fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number,
         timestamp,
         chain_id: CHAIN_ID,
@@ -174,36 +178,18 @@ pub(super) fn account_parent(ctx: &BlockRuntimeContext, block_number: u64) {
 }
 
 pub(super) fn dispatch_triggers(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    crate::runtime::dispatch_triggers(ctx, cycle_work_capacity(ctx)?)
-}
-
-pub(super) fn cycle_work_capacity(
-    ctx: &BlockRuntimeContext,
-) -> outbe_primitives::error::Result<crate::runtime::CycleWorkCapacity> {
-    Ok(crate::runtime::CycleWorkCapacity {
-        remaining_gas: ctx.storage.metered_gas_remaining()?.ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Fatal(
-                "Cycle fixture requires an explicit gas meter".into(),
-            )
-        })?,
-        gas_used_at_entry: ctx.storage.gas_used()?,
-        reserve_after_cycle: 0,
-    })
+    crate::runtime::dispatch_triggers(ctx)
 }
 
 pub(super) fn run_cycle_tick(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
-    run_cycle_tick_at_activation(ctx, 1)
+    <crate::CycleModule as outbe_primitives::block::ProtocolModule>::begin_block(ctx)
 }
 
 pub(super) fn run_cycle_tick_at_activation(
     ctx: &BlockRuntimeContext,
     metadosis_genesis_activation_height: u64,
 ) -> outbe_primitives::error::Result<()> {
-    crate::runtime::handle_cycle_tick(
-        ctx,
-        metadosis_genesis_activation_height,
-        cycle_work_capacity(ctx)?,
-    )
+    crate::runtime::handle_cycle_tick(ctx, metadosis_genesis_activation_height)
 }
 
 pub(super) fn run_emission_limit_daily(

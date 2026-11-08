@@ -19,6 +19,8 @@ const VOTERS: [Address; 4] = [
 
 fn block(height: u64) -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: height,
         timestamp: MIDNIGHT + height - 11,
         chain_id: 1,

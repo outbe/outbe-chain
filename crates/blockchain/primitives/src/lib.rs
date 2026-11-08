@@ -16,14 +16,12 @@ pub mod day_pass;
 pub mod deadline_queue;
 pub mod dispatch;
 pub mod emission;
-pub mod end_gas;
 pub mod entity_codec;
 pub mod erc;
 pub mod error;
 pub mod errors;
 pub mod filesystem;
 pub mod header;
-pub mod hook_events;
 mod journal_writer;
 #[cfg(unix)]
 pub mod local_record;
@@ -64,6 +62,7 @@ pub mod tribute_day_encryption;
 pub mod tribute_encryption;
 pub mod units;
 pub mod validators;
+pub mod vote_target;
 pub mod wwd_entity_id;
 pub mod zero_fee;
 

@@ -18,12 +18,15 @@ pub mod called;
 mod cleanup;
 pub mod errors;
 pub mod forfeited;
+pub mod hooks;
 pub mod precompile;
 pub mod rules;
 pub mod runtime;
 mod sol_ext;
 #[cfg(feature = "e2e-test")]
 mod test_arming_e2e;
+
+pub use hooks::CredisFactoryModule;
 
 #[cfg(test)]
 mod tests;

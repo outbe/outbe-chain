@@ -19,9 +19,9 @@
 use alloy_consensus::{Block as AlloyBlock, Header, Transaction as _, TxLegacy};
 use alloy_primitives::{Address, Bloom, Bytes, TxKind, B256, B64, U256};
 use outbe_evm::system_tx::{
-    build_unsigned_system_tx, system_tx_visible_gas_limit, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
-    SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION, SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    build_unsigned_system_tx, SystemTx, BOUNDARY_OUTCOME_SELECTOR,
+    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CYCLE_TICK_SELECTOR, ORACLE_SLASH_SELECTOR,
+    SYSTEM_TX_ARTIFACT_GAS_LIMIT, SYSTEM_TX_INPUT_VERSION,
 };
 use outbe_evm::OutbeEvmSigner;
 use outbe_node::consensus::{validate_system_tx_consensus_boundary, OutbeBeaconConsensus};
@@ -29,7 +29,8 @@ use outbe_primitives::addresses::{OUTBE_SYSTEM_TX_ADDRESS, REWARDS_ADDRESS};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
 use outbe_primitives::system_tx::{
-    SysTxSelector, CALL_EVENT_PROCESSING_ORDINAL, CLEANUP_PROCESSING_ORDINAL,
+    SysTxSelector, CREDIS_FACTORY_ORDINAL, GEM_CLEANUP_ORDINAL, GEM_FACTORY_ORDINAL,
+    INTEX_FACTORY_ORDINAL, NOD_FACTORY_ORDINAL,
 };
 use outbe_primitives::{OutbeBlockBody, OutbeHeader};
 use reth_chainspec::ChainSpecBuilder;
@@ -38,7 +39,7 @@ use reth_primitives_traits::{proofs::calculate_transaction_root, Block as _};
 use std::sync::Arc;
 
 const TEST_CHAIN_ID: u64 = 1;
-const TEST_GAS_LIMIT: u64 = 1_000_000;
+const TEST_GAS_LIMIT: u64 = 0;
 
 fn signer() -> OutbeEvmSigner {
     OutbeEvmSigner::from_secret_bytes([7u8; 32]).expect("valid test signer")
@@ -183,10 +184,9 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
     for tx in &transactions {
         assert_eq!(
             tx.gas_limit(),
-            system_tx_visible_gas_limit(tx.input()).expect("visible system gas computes"),
-            "reserved Outbe system tx envelopes must carry deterministic visible gas"
+            0,
+            "reserved Outbe system tx envelopes must carry 0 visible gas under the Tempo model"
         );
-        assert!(tx.gas_limit() >= SYSTEM_TX_VISIBLE_GAS_FLOOR);
         assert!(
             tx.gas_limit() <= MAX_TX_GAS_LIMIT_OSAKA,
             "visible Outbe system tx envelope gas must stay inside Osaka/EIP-7825 user tx cap"
@@ -212,7 +212,7 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
 }
 
 // ---------------------------------------------------------------------------
-// T-1: legacy V1 selectors are rejected at every height (no silent drop).
+// Legacy V1 selectors are rejected at every height (no silent drop).
 // ---------------------------------------------------------------------------
 
 /// the stateless validator must reject legacy V1 envelopes
@@ -246,7 +246,7 @@ fn legacy_v1_system_tx_rejected_at_all_heights() {
 }
 
 // ---------------------------------------------------------------------------
-// T-2: block 0 has no begin-zone system txs under V2.
+// Block 0 has no begin-zone system txs under V2.
 // ---------------------------------------------------------------------------
 
 /// block 0 must contain zero system transactions. The layout validator
@@ -268,7 +268,7 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 }
 
 // ---------------------------------------------------------------------------
-// T-3: block 1 layout requires `BoundaryOutcome` under V2.
+// Block 1 layout requires `BoundaryOutcome` under V2.
 // ---------------------------------------------------------------------------
 
 /// a block-1 body that omits `BoundaryOutcome` is rejected
@@ -277,9 +277,9 @@ fn block_0_has_no_begin_zone_system_txs_under_v2() {
 #[test]
 fn block_1_layout_requires_boundary_outcome_for_v2() {
     let signer = signer();
-    let cycle = signed_v2(&signer, 0, 1, SystemTx::CycleTick);
-    let oracle = signed_v2(&signer, 1, 1, SystemTx::OracleSlashWindow);
-    let body = body(vec![cycle, oracle]);
+    let oracle = signed_v2(&signer, 0, 1, SystemTx::OracleSlash);
+    let cycle = signed_v2(&signer, 1, 1, SystemTx::CycleTick);
+    let body = body(vec![oracle, cycle]);
     let header = header_for(1, B256::ZERO);
 
     let err = validate_system_tx_consensus_boundary(&body, &header)
@@ -292,7 +292,7 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
 }
 
 // ---------------------------------------------------------------------------
-// T-4: block N >= 2 layout requires `CertifiedParentAccounting` at body[0].
+// Block N >= 2 layout requires `CertifiedParentAccounting` at body[0].
 // ---------------------------------------------------------------------------
 
 /// for `block_number >= 2`, the first begin-zone tx must be
@@ -302,10 +302,10 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
 fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     let signer = signer();
 
-    // (a) block 2 with only CycleTick + OracleSlashWindow - no CertifiedParentAccounting.
-    let cycle = signed_v2(&signer, 0, 2, SystemTx::CycleTick);
-    let oracle = signed_v2(&signer, 1, 2, SystemTx::OracleSlashWindow);
-    let body_missing_phase1 = body(vec![cycle, oracle]);
+    // (a) block 2 with only OracleSlash + CycleTick - no CertifiedParentAccounting.
+    let oracle = signed_v2(&signer, 0, 2, SystemTx::OracleSlash);
+    let cycle = signed_v2(&signer, 1, 2, SystemTx::CycleTick);
+    let body_missing_phase1 = body(vec![oracle, cycle]);
     let header_missing = header_for(2, B256::ZERO);
     let err_missing = validate_system_tx_consensus_boundary(&body_missing_phase1, &header_missing)
         .expect_err("block 2 without CertifiedParentAccounting at body[0] must be rejected");
@@ -321,27 +321,7 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
     // hash that does not match the header's parent_hash - also rejected.
     let parent_hash = B256::with_last_byte(0xAA);
     let wrong_parent = B256::with_last_byte(0xBB);
-    let phase1 = signed_v2(
-        &signer,
-        0,
-        2,
-        SystemTx::CertifiedParentAccounting {
-            metadata: phase1_metadata(1, wrong_parent),
-        },
-    );
-    let late2 = signed_v2(
-        &signer,
-        1,
-        2,
-        SystemTx::LateFinalizeCredits {
-            artifact: Default::default(),
-        },
-    );
-    let cycle2 = signed_v2(&signer, 2, 2, SystemTx::CycleTick);
-    let oracle2 = signed_v2(&signer, 3, 2, SystemTx::OracleSlashWindow);
-    let hook_events2 = signed_v2(&signer, 4, 2, SystemTx::HookEvents);
-    let mut transactions = vec![phase1, late2, cycle2, oracle2, hook_events2];
-    transactions.extend(end_zone_txs_block2(&signer));
+    let transactions = system_txs_block2(&signer, wrong_parent, Default::default());
     let body_bad_hash = body(transactions);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
@@ -356,11 +336,7 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
 }
 
 // ---------------------------------------------------------------------------
-// T-5: source-text scan - consensus.rs runs no stateful checks.
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// T-6: V2 envelope with wrong version byte is rejected.
+// V2 envelope with wrong version byte is rejected.
 // ---------------------------------------------------------------------------
 
 /// the decoder rejects an input whose selector is a V2 selector but whose
@@ -488,7 +464,7 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
 }
 
 // ---------------------------------------------------------------------------
-// T-7: V2 envelope with unknown selector is rejected.
+// V2 envelope with unknown selector is rejected.
 // ---------------------------------------------------------------------------
 
 /// an input whose selector is not any active selector
@@ -502,7 +478,7 @@ fn v2_envelope_with_unknown_selector_rejects() {
     assert_eq!(CERTIFIED_PARENT_ACCOUNTING_SELECTOR, *b"OSA3");
     assert_eq!(CYCLE_TICK_SELECTOR, *b"OSC2");
     assert_eq!(BOUNDARY_OUTCOME_SELECTOR, *b"OSB2");
-    assert_eq!(ORACLE_SLASH_WINDOW_SELECTOR, *b"OSO2");
+    assert_eq!(ORACLE_SLASH_SELECTOR, *b"OSOS");
 
     let signer = signer();
     let mut input = Vec::with_capacity(5);
@@ -526,52 +502,47 @@ fn v2_envelope_with_unknown_selector_rejects() {
 // ---------------------------------------------------------------------------
 
 /// Build the canonical block-2 system set with a chosen LateFinalizeCredits
-/// body artifact (ordinals 0..=4): CPA, LateFinalizeCredits, CycleTick,
-/// OracleSlashWindow, HookEvents, followed by the mandatory end-zone suffix.
+/// body artifact (ordinals 0..=11): CPA, LateFinalizeCredits, ValidatorLiveness,
+/// and the 9 BEGIN_BLOCK_ORDER transactions, followed by the 5 END_BLOCK_ORDER transactions.
 fn system_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
     late_artifact: outbe_primitives::reshare_artifact::LateFinalizeCreditsArtifact,
 ) -> Vec<TransactionSigned> {
-    let mut transactions = vec![
-        signed_v2(
-            signer,
-            0,
-            2,
-            SystemTx::CertifiedParentAccounting {
-                metadata: phase1_metadata(1, parent_hash),
-            },
-        ),
-        signed_v2(
-            signer,
-            1,
-            2,
-            SystemTx::LateFinalizeCredits {
-                artifact: late_artifact,
-            },
-        ),
-        signed_v2(signer, 2, 2, SystemTx::CycleTick),
-        signed_v2(signer, 3, 2, SystemTx::OracleSlashWindow),
-        signed_v2(signer, 4, 2, SystemTx::HookEvents),
+    let begin_inputs = [
+        SystemTx::CertifiedParentAccounting {
+            metadata: phase1_metadata(1, parent_hash),
+        },
+        SystemTx::LateFinalizeCredits {
+            artifact: late_artifact,
+        },
+        SystemTx::ValidatorLiveness,
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
     ];
+    let mut transactions = begin_inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| signed_v2(signer, ordinal as u8, 2, input))
+        .collect::<Vec<_>>();
     transactions.extend(end_zone_txs_block2(signer));
     transactions
 }
 
-fn end_zone_txs_block2(signer: &OutbeEvmSigner) -> [TransactionSigned; 2] {
+fn end_zone_txs_block2(signer: &OutbeEvmSigner) -> [TransactionSigned; 5] {
     [
-        signed_v2(
-            signer,
-            CALL_EVENT_PROCESSING_ORDINAL,
-            2,
-            SystemTx::CallEventProcessing,
-        ),
-        signed_v2(
-            signer,
-            CLEANUP_PROCESSING_ORDINAL,
-            2,
-            SystemTx::CleanupProcessing,
-        ),
+        signed_v2(signer, NOD_FACTORY_ORDINAL, 2, SystemTx::NodFactory),
+        signed_v2(signer, GEM_FACTORY_ORDINAL, 2, SystemTx::GemFactory),
+        signed_v2(signer, INTEX_FACTORY_ORDINAL, 2, SystemTx::IntexFactory),
+        signed_v2(signer, CREDIS_FACTORY_ORDINAL, 2, SystemTx::CredisFactory),
+        signed_v2(signer, GEM_CLEANUP_ORDINAL, 2, SystemTx::GemCleanup),
     ]
 }
 
@@ -626,8 +597,8 @@ fn mandatory_late_phase_cannot_be_skipped() {
     let signer = signer();
     let parent_hash = B256::with_last_byte(0xA4);
     let mut txs = system_txs_block2(&signer, parent_hash, LateFinalizeCreditsArtifact::default());
-    // Drop the LateFinalizeCredits tx (ordinal 1). This leaves CPA, CycleTick,
-    // OracleSlashWindow, HookEvents, and the end-zone suffix.
+    // Drop the LateFinalizeCredits tx (ordinal 1). This leaves CPA, ValidatorLiveness,
+    // the 9 BEGIN_BLOCK_ORDER transactions, and the 5 END_BLOCK_ORDER transactions.
     txs.remove(1);
     let header = header_for_transactions(2, parent_hash, &txs);
     let err = validate_system_tx_consensus_boundary(&body(txs), &header)

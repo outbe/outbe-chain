@@ -1,4 +1,4 @@
-//! Rewards logs must use the executing system receipt, not HookEvents.
+//! Rewards logs must use the executing system receipt, not other system receipts.
 
 use super::*;
 use outbe_rewards::precompile::IRewards;
@@ -120,6 +120,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: TEST_BLOCK_TIMESTAMP_BASE,
                 chain_id: CHAIN_ID,
@@ -272,6 +274,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         drop(executor);
 
         let read = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
             chain_id: CHAIN_ID,
@@ -405,6 +409,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         let mut provider = super::super::DirectStorageProvider::new(
             executor.evm_mut().db_mut(),
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number,
                 timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
                 chain_id: CHAIN_ID,
@@ -432,12 +438,14 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .all(|log| log.address != REWARDS_ADDRESS &&
                 outbe_promislimit::precompile::IPromisLimit::NativeBurnedToPromisLimit::decode_log(log)
                     .map_or(true, |burn| burn.source != outbe_promislimit::BurnSource::BlockFee as u8))),
-        "Rewards and shared-burn logs must not leak into CycleTick or HookEvents"
+        "Rewards and shared-burn logs must not leak into CycleTick or other system receipts"
     );
     drop(executor);
     let mut provider = super::super::DirectStorageProvider::new(
         &mut state,
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number,
             timestamp: TEST_BLOCK_TIMESTAMP_BASE + block_number,
             chain_id: CHAIN_ID,

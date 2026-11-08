@@ -70,6 +70,8 @@ fn ungated_spec(period_seconds: u64) -> TriggerSpec {
 
 fn block_ctx(block_number: u64, timestamp: u64) -> BlockContext {
     BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number,
         timestamp,
         chain_id: CHAIN_ID,
@@ -262,6 +264,8 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle: StorageHandle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 0,
             timestamp: 0,
             chain_id: CHAIN_ID,
@@ -309,6 +313,8 @@ fn with_progress_ctx(
 ) {
     storage.enter(|handle: StorageHandle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 2,
             timestamp: 0,
             chain_id: CHAIN_ID,
@@ -439,6 +445,8 @@ fn genesis_progress_reads_zero_before_first_phase1_write() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enter(|handle: StorageHandle| {
         let block = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 0,
             timestamp: 0,
             chain_id: CHAIN_ID,
@@ -487,6 +495,8 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: storage.block_number().expect("block number"),
                     timestamp: storage.now_secs().expect("timestamp"),
                     chain_id: storage.chain_id().expect("chain id"),
@@ -504,6 +514,8 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: storage.block_number().expect("block number"),
                     timestamp: storage.now_secs().expect("timestamp"),
                     chain_id: storage.chain_id().expect("chain id"),
@@ -525,6 +537,8 @@ fn phase1_reorg_requires_branch_parent_state_for_fresh_progress() {
         p.enter(|storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: storage.block_number().expect("block number"),
                     timestamp: storage.now_secs().expect("timestamp"),
                     chain_id: storage.chain_id().expect("chain id"),

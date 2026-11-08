@@ -278,41 +278,24 @@ where
                         gas_limit,
                         Vec::new(),
                     )),
-                    crate::executor::witness::DetachedTraceTxAction::SyntheticHookEvents {
-                        gas_limit,
-                        logs,
-                    } => Ok(crate::executor::witness::synthetic_trace_success(
-                        gas_limit, logs,
-                    )),
                     crate::executor::witness::DetachedTraceTxAction::ReservedSystemCall {
                         data,
                         context,
                     } => {
-                        let begin_zone = outbe_primitives::system_tx::SystemTx::decode(&data)
-                            .is_ok_and(|input| {
-                                input.body_zone()
-                                    == outbe_primitives::system_tx::BodyZone::BeginBlock
-                            });
-                        let result = crate::sys_tx_precompile::with_preloaded_system_tx_context(
-                            context,
-                            || {
-                                self.transact_system_call(
-                                    outbe_primitives::addresses::SYSTEM_ADDRESS,
-                                    outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-                                    data,
-                                )
-                            },
-                        )?;
-                        if begin_zone {
-                            crate::executor::witness::record_detached_trace_system_gas(
-                                result.result.gas().total_gas_spent(),
+                        crate::sys_tx_precompile::with_preloaded_system_tx_context(*context, || {
+                            self.transact_system_call(
+                                outbe_primitives::addresses::SYSTEM_ADDRESS,
+                                outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+                                data,
                             )
-                            .map_err(|error| EVMError::Custom(error.into()))?;
-                        }
-                        Ok(result)
+                        })
                     }
                     crate::executor::witness::DetachedTraceTxAction::NormalTransact => {
-                        self.run_inner_transact_raw(tx)
+                        let result = self.run_inner_transact_raw(tx)?;
+                        crate::executor::witness::record_detached_trace_user_gas(
+                            result.result.gas().tx_gas_used(),
+                        );
+                        Ok(result)
                     }
                 }
             });
@@ -373,17 +356,7 @@ where
             ));
         }
 
-        let end_block_call = outbe_primitives::system_tx::SystemTx::decode(data.as_ref())
-            .is_ok_and(|input| {
-                input.body_zone() == outbe_primitives::system_tx::BodyZone::EndBlock
-            });
-        let gas_limit = crate::sys_tx_precompile::current_preloaded_system_tx_context()
-            .and_then(|ctx| ctx.gas_limit_override)
-            .unwrap_or(if end_block_call {
-                0
-            } else {
-                outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
-            });
+        let gas_limit = outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT;
         let tx = TxEnv::builder()
             .caller(caller)
             .kind(TxKind::Call(contract))

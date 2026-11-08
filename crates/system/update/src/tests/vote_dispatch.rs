@@ -121,6 +121,8 @@ fn approved_vote_proposal_schedules_update_and_activates() {
 
         let ctx = BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: activation,
                 timestamp: 0,
                 chain_id: TEST_CHAIN_ID,
@@ -175,6 +177,8 @@ fn every_network_requires_notice_at_update_admission_and_vote_approval() {
             let proposal_id = create_approved_update(&mut vote, &payload, current);
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: approval_height,
                     timestamp: 0,
                     chain_id,
@@ -208,6 +212,8 @@ fn every_network_requires_notice_at_update_admission_and_vote_approval() {
                 assert_eq!(scheduled.unwrap().activation_height, activation);
                 let activation_ctx = BlockRuntimeContext::new(
                     BlockContext {
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                         block_number: activation,
                         timestamp: 0,
                         chain_id,

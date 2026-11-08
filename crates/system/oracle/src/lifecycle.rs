@@ -1,5 +1,5 @@
 use outbe_primitives::{
-    block::{BlockLifecycle, BlockRuntimeContext},
+    block::{BlockRuntimeContext, ProtocolModule},
     error::Result,
     time::{previous_date_key, timestamp_to_date_key, TimeError},
 };
@@ -10,22 +10,39 @@ use crate::tally;
 
 pub struct OracleLifecycle;
 
-impl BlockLifecycle for OracleLifecycle {
-    type Context<'a, 'storage> = BlockRuntimeContext<'storage>;
-    type EndBlockResult = ();
-
-    fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
+impl OracleLifecycle {
+    pub fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         run_begin_block(ctx)
     }
 
-    fn end_block(_ctx: &BlockRuntimeContext) -> Result<Self::EndBlockResult> {
+    pub fn end_block(_ctx: &BlockRuntimeContext) -> Result<()> {
         Ok(())
+    }
+}
+
+pub struct OracleModule;
+
+impl ProtocolModule for OracleModule {
+    const NAME: &'static str = "oracle";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        run_begin_block(ctx)
+    }
+}
+
+pub struct OracleSlashModule;
+
+impl ProtocolModule for OracleSlashModule {
+    const NAME: &'static str = "oracle_slash";
+
+    fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
+        run_slash_window(ctx)
     }
 }
 
 /// Runs only the slash-window half of Oracle lifecycle.
 ///
-/// The executor calls this through the receipt-visible `OracleSlashWindow`
+/// The executor calls this through the receipt-visible `OracleSlash`
 /// begin-zone system phase after optional `BoundaryOutcome` and before user
 /// transactions. This preserves deterministic penalties without hiding
 /// operator-critical events outside EVM receipts.
@@ -47,7 +64,7 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Called from pre-execution hooks every block.
+/// Called from the `Oracle` begin-block system transaction every block.
 ///
 /// At vote period boundaries, it:
 /// - tallies votes;
@@ -55,7 +72,7 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// - writes price snapshots;
 /// - counts miss/success/abstain per validator.
 ///
-/// It defers the slash window to the receipt-visible `OracleSlashWindow` phase.
+/// It defers the slash window to the receipt-visible `OracleSlash` phase.
 /// A same-block boundary can activate its target set before Oracle jails
 /// an underperformer. The penalty is jail, not a move to EXITING.
 fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {

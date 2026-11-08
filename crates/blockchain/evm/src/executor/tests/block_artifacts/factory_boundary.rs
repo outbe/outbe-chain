@@ -126,8 +126,35 @@ fn prepare_boundary(boundary: Boundary) -> eyre::Result<PreparedBoundary> {
     let payload = core::str::from_utf8(&payload)?;
 
     let mut state =
-        state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |_| {});
+        state_with_active_validators_seeded_at_block(&validators, CREATION_BLOCK, |storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for (index, (validator, _)) in validators.iter().enumerate() {
+                let node_hash = keccak256((index as u64).to_be_bytes());
+                registry
+                    .validator_v1_node_hash
+                    .write(validator, node_hash)
+                    .unwrap();
+                registry
+                    .v1_node_enclave_id
+                    .write(&node_hash, B256::with_last_byte(0x11))
+                    .unwrap();
+                registry
+                    .v1_node_binding_id
+                    .write(&node_hash, B256::with_last_byte(0x12))
+                    .unwrap();
+                registry
+                    .v1_node_intent_hash
+                    .write(&node_hash, B256::with_last_byte(0x13))
+                    .unwrap();
+                registry
+                    .v1_node_valid_until
+                    .write(&node_hash, u64::MAX)
+                    .unwrap();
+            }
+        });
     let seed_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: CREATION_BLOCK,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -337,7 +364,7 @@ fn seed_factory_boundary(
             created_height: CREATION_BLOCK,
             attached_value: STABLECOIN_CREATE_BOND,
         },
-        crate::handlers::vote::registry(),
+        outbe_vote::handlers::registry(),
     )?;
     match boundary {
         Boundary::Approved | Boundary::Error => {
@@ -463,6 +490,8 @@ fn observe_contracts(
         expected_token_id,
     } = *fixture;
     let read_context = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: finalization_block,
         timestamp: 1_700_000_000,
         chain_id: CHAIN_ID,
@@ -511,8 +540,8 @@ fn factory_boundaries_are_byte_equal_across_proposer_and_validator_execution() {
             proposer, validator,
             "{boundary:?} must be byte/state equal across execution roles"
         );
-        assert_eq!(proposer.receipt_success, vec![true; 5]);
-        assert_eq!(proposer.cumulative_gas.len(), 5);
+        assert_eq!(proposer.receipt_success, vec![true; 12]);
+        assert_eq!(proposer.cumulative_gas.len(), 12);
         match boundary {
             Boundary::Approved => {
                 assert_eq!(proposer.created_logs, 1);

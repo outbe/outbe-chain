@@ -16,9 +16,10 @@ use outbe_primitives::runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE;
 
 use outbe_evm::{
     system_tx::{
-        split_system_layout, system_tx_intrinsic_gas, BOUNDARY_OUTCOME_SELECTOR,
-        CYCLE_TICK_SELECTOR, HOOK_EVENTS_SELECTOR, ORACLE_SLASH_WINDOW_SELECTOR,
-        TEE_BOOTSTRAP_SELECTOR,
+        split_system_layout, BOUNDARY_OUTCOME_SELECTOR, CYCLE_TICK_SELECTOR,
+        ENCLAVE_UPGRADE_DEADLINE_SELECTOR, HYPERLANE_SLASH_SELECTOR, ORACLE_SELECTOR,
+        ORACLE_SLASH_SELECTOR, REWARDS_SELECTOR, STAKING_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+        UPDATE_SELECTOR, VALIDATOR_LIVENESS_SELECTOR, VOTE_SELECTOR,
     },
     OutbeEvmSigner,
 };
@@ -353,16 +354,10 @@ fn build_active_payload_case(
             Some(bootstrap),
         )
         .expect("active begin zone builds");
-    let begin_visible_gas = begin
-        .iter()
-        .map(|transaction| {
-            system_tx_intrinsic_gas(transaction.tx().input().as_ref())
-                .expect("system transaction has valid intrinsic gas")
-        })
-        .sum::<u64>();
-    let admission_boundary_gas = ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT
-        .checked_sub(begin_visible_gas)
-        .expect("system zones fit inside the block gas limit");
+    for transaction in &begin {
+        assert_eq!(transaction.tx().gas_limit(), 0);
+    }
+    let admission_boundary_gas = ACTIVE_PAYLOAD_BLOCK_GAS_LIMIT;
     let candidate_gas_limit = admission_boundary_gas
         .checked_add(user_gas_over_boundary)
         .expect("test boundary delta fits u64");
@@ -456,11 +451,18 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
     assert_eq!(
         layout.begin_block_selectors().expect("begin inputs decode"),
         vec![
-            CYCLE_TICK_SELECTOR,
             BOUNDARY_OUTCOME_SELECTOR,
             TEE_BOOTSTRAP_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            VALIDATOR_LIVENESS_SELECTOR,
+            VOTE_SELECTOR,
+            UPDATE_SELECTOR,
+            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
+            REWARDS_SELECTOR,
+            STAKING_SELECTOR,
+            ORACLE_SELECTOR,
+            ORACLE_SLASH_SELECTOR,
+            HYPERLANE_SLASH_SELECTOR,
+            CYCLE_TICK_SELECTOR,
         ]
     );
     assert!(layout.user.is_empty());
@@ -471,7 +473,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         .expect("builder exposes the exact executed payload");
     let receipts = &executed.execution_output.result.receipts;
     assert_eq!(receipts.len(), body.len());
-    assert_eq!(receipts.len(), 5);
+    assert_eq!(receipts.len(), 12);
     assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
 
     let replay = case
@@ -496,7 +498,7 @@ fn bootstrap_payload_builder_does_not_even_evaluate_oversized_pool_candidate() {
 
     assert!(
         layout.user.is_empty(),
-        "the candidate that consumes one unit of OSR2 reserve must not enter the block"
+        "the candidate that exceeds the block gas limit must not enter the block"
     );
     assert!(layout.end.is_empty());
     assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
@@ -533,11 +535,18 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
             .begin_block_selectors()
             .expect("retry begin inputs decode"),
         vec![
-            CYCLE_TICK_SELECTOR,
             BOUNDARY_OUTCOME_SELECTOR,
             TEE_BOOTSTRAP_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            VALIDATOR_LIVENESS_SELECTOR,
+            VOTE_SELECTOR,
+            UPDATE_SELECTOR,
+            ENCLAVE_UPGRADE_DEADLINE_SELECTOR,
+            REWARDS_SELECTOR,
+            STAKING_SELECTOR,
+            ORACLE_SELECTOR,
+            ORACLE_SLASH_SELECTOR,
+            HYPERLANE_SLASH_SELECTOR,
+            CYCLE_TICK_SELECTOR,
         ]
     );
 }

@@ -61,6 +61,8 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
         // The pass starts the day before the deadline, and the Oracle is final past its close.
         super::called::prepare_daily_pass(&BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: DEADLINE,
                 chain_id: 1,
@@ -92,6 +94,8 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: at,
                 chain_id: 1,

@@ -75,15 +75,6 @@ pub struct OutbeProtocolSchedule {
     pub phase1_preflight_p99_budget_ms_n100: u64,
 }
 
-impl OutbeProtocolSchedule {
-    /// Fixed end-block reservation, derived once as `30_000_000 * 7 / 100`.
-    ///
-    /// Gas uses `u64`, matching the header and executor gas counters. Changing
-    /// the block gas limit does not rescale this value; changing the reservation
-    /// requires a coordinated protocol decision.
-    pub const END_BLOCK_RESERVED_GAS: u64 = 2_100_000;
-}
-
 impl Default for OutbeProtocolSchedule {
     /// Pinned values. Any drift here is a hard-fork-equivalent
     /// change to operator behavior.

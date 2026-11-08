@@ -294,10 +294,6 @@ impl<'storage> StorageHandle<'storage> {
         self.with_provider(|provider| provider.deduct_gas(gas))
     }
 
-    pub fn enable_end_gas_metering(&self) -> Result<()> {
-        self.with_provider(|provider| provider.enable_end_gas_metering())
-    }
-
     pub fn gas_remaining(&self) -> Result<Option<u64>> {
         self.with_provider(|provider| Ok(provider.gas_remaining()))
     }
@@ -385,33 +381,6 @@ impl<'storage> StorageHandle<'storage> {
         checkpoint_result.map_err(|error| PrecompileError::FatalWithCause(Box::new(error)))?;
         cleanup.map_err(|error| PrecompileError::FatalWithCause(Box::new(error)))?;
         result
-    }
-
-    /// Runs `f` with storage charges capped at `ceiling`. The caller checkpoints
-    /// state. A child out-of-gas rolls that checkpoint back and does not fail the parent.
-    pub fn with_gas_ceiling<R>(&self, ceiling: u64, f: impl FnOnce() -> Result<R>) -> Result<R> {
-        self.with_provider(|provider| provider.begin_gas_ceiling(ceiling))?;
-        let result = f();
-        self.with_provider(|provider| provider.end_gas_ceiling())?;
-        result
-    }
-
-    /// Runs one resumable end-zone unit inside a checkpoint, applying `kind`'s gas ceiling
-    /// when end-zone gas metering is active on this storage provider.
-    pub fn run_gas_bounded_unit<R>(
-        &self,
-        kind: crate::end_gas::UnitKind,
-        f: impl FnOnce() -> Result<R>,
-    ) -> Result<R> {
-        let ceiling = crate::end_gas::unit_ceiling(kind);
-        if let Some(remaining) = self.gas_remaining()? {
-            if remaining < ceiling {
-                return Err(PrecompileError::OutOfGas);
-            }
-            self.with_gas_ceiling(ceiling, || self.with_checkpoint(f))
-        } else {
-            self.with_checkpoint(f)
-        }
     }
 
     pub fn refund_gas(&self, gas: i64) -> Result<()> {
@@ -746,6 +715,8 @@ mod tests {
         let mut provider = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1,
                 chain_id: 1,

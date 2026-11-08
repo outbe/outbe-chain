@@ -8,8 +8,7 @@ use reth_ethereum::TransactionSigned;
 use reth_primitives_traits::SignedTransaction;
 
 use super::{
-    build_unsigned_system_tx, system_tx_nonce, system_tx_visible_gas_limit, SystemTx,
-    SystemTxError, OUTBE_SYSTEM_TX_ADDRESS,
+    build_unsigned_system_tx, system_tx_nonce, SystemTx, SystemTxError, OUTBE_SYSTEM_TX_ADDRESS,
 };
 
 /// Validate that a signed Phase 1 system transaction is the canonical
@@ -74,11 +73,14 @@ fn validate_phase1_envelope_shape(
             actual: tx.nonce(),
         });
     }
-    let expected_gas_limit = system_tx_visible_gas_limit(calldata)?;
-    if tx.gas_limit() != expected_gas_limit {
-        return Err(SystemTxError::Phase1GasLimitMismatch {
-            expected: expected_gas_limit,
+    if tx.gas_limit() != 0 {
+        return Err(SystemTxError::NonZeroGasLimit {
             actual: tx.gas_limit(),
+        });
+    }
+    if tx.max_fee_per_gas() != 0 {
+        return Err(SystemTxError::NonZeroGasPrice {
+            actual: tx.max_fee_per_gas(),
         });
     }
     validate_phase1_calldata(tx, calldata)?;

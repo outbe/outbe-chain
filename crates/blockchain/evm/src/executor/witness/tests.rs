@@ -524,7 +524,7 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
 fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use crate::config::OutbeEvmConfig;
     use crate::executor::tests::fixtures::{
-        begin_system_txs_for_test, block_one_execution_ctx, dummy_pubkey, post_state_root,
+        begin_system_txs_for_test, dummy_pubkey, post_state_root,
         state_with_active_validators_seeded, test_chain_spec, test_evm_env, test_evm_signer,
         BeginBlockFixture, BootstrapFixture, CHAIN_ID,
     };
@@ -629,6 +629,13 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
                     .asset_vault_set(settlement_asset)
                     .insert(Address::repeat_byte(0x99))
                     .unwrap();
+                crate::executor::tests::seed_valid_tee_nodes(storage.clone(), &[proposer]);
+                let registry = outbe_teeregistry::TeeRegistry::new(storage);
+                let node_hash = registry.validator_v1_node_hash.read(&proposer).unwrap();
+                registry
+                    .v1_node_attestation_ed25519
+                    .write(&node_hash, B256::from(leader_pk))
+                    .unwrap();
             });
         outbe_nod::test_support::uninstall();
         state.database.insert_account_info(
@@ -692,13 +699,16 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
 
     let chain_spec = test_chain_spec();
     let config = OutbeEvmConfig::new(chain_spec).with_evm_signer(signer);
+    let parent_hash = B256::with_last_byte(0x11);
+    let (_, metadata) =
+        crate::executor::tests::block_two_execution_ctx(None, Bytes::new(), proposer, parent_hash);
     let begin = begin_system_txs_for_test(
         &config,
         BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
+            block_number: 2,
+            parent_hash,
             extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
+            parent_consensus_metadata: Some(metadata),
             proposer,
             bootstrap: BootstrapFixture::StandardForBlock,
         },
@@ -706,19 +716,26 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
 
     let run_block_in_mode = |is_verifier: bool, extra_data: Bytes| {
         let mut state = build_seeded_state();
-        let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), extra_data);
-        ctx.proposer_evm_address = Some(proposer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let (mut ctx, _) = crate::executor::tests::block_two_execution_ctx(
+            Some(begin.len() + 1),
+            extra_data,
+            proposer,
+            parent_hash,
+        );
         if is_verifier {
             ctx.block_hash = Some(B256::repeat_byte(0x9A));
             ctx.expected_begin_system_txs = begin.clone();
         }
         let mut executor = config.create_executor(evm, ctx);
-        executor.apply_pre_execution_changes().unwrap();
+        crate::executor::with_phase1_verify_disabled(|| {
+            executor.apply_pre_execution_changes().unwrap();
+        });
         for tx in begin.clone() {
             executor.execute_transaction(tx).unwrap();
         }
         executor.execute_transaction(user_tx.clone()).unwrap();
+        executor.apply_end_block_phase().unwrap();
         if !is_verifier {
             executor.prepare_final_header_artifacts(0).unwrap();
         }
@@ -763,17 +780,23 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     // followed by same-thread eth_call isolation check.
     let mut trace_state = build_seeded_state();
     {
-        let preexec_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
-        let mut ctx = block_one_execution_ctx(Some(begin.len() + 1), proposer_out.2.clone());
-        ctx.proposer_evm_address = Some(proposer);
+        let preexec_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
+        let (mut ctx, _) = crate::executor::tests::block_two_execution_ctx(
+            Some(begin.len() + 1),
+            proposer_out.2.clone(),
+            proposer,
+            parent_hash,
+        );
         ctx.block_hash = Some(B256::repeat_byte(0x9A));
         ctx.expected_begin_system_txs = begin.clone();
         let mut temp_executor = config.create_executor(preexec_evm, ctx);
-        temp_executor.apply_pre_execution_changes().unwrap();
+        crate::executor::with_phase1_verify_disabled(|| {
+            temp_executor.apply_pre_execution_changes().unwrap();
+        });
         // Dropped without finish(), mirroring Reth Trace::apply_pre_execution_changes.
     }
     {
-        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
+        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
         let mut tracer = TxTracer::new(trace_evm);
         for tx in begin
             .iter()
@@ -791,7 +814,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     // Subsequent eth_call on the same thread and same block must NOT match stale detached trace
     // witness (must enter RpcDirect and return PrivateExecutionUnavailable, not TapeInvalid).
     {
-        let mut call_evm = config.evm_with_env(&mut trace_state, test_evm_env(1, REWARDS_ADDRESS));
+        let mut call_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
         let mut call_tx_env = config.tx_env(&user_tx);
         call_tx_env.nonce = 1;
         let err = call_evm

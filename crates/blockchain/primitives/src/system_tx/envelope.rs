@@ -3,12 +3,9 @@ use alloy_primitives::Bytes;
 use alloy_primitives::TxKind;
 use alloy_primitives::U256;
 
-use super::{
-    system_tx_intrinsic_gas, SystemTx, SystemTxError, MAX_SYSTEM_TXS_PER_BLOCK,
-    OUTBE_SYSTEM_TX_ADDRESS,
-};
+use super::{SystemTx, SystemTxError, MAX_SYSTEM_TXS_PER_BLOCK, OUTBE_SYSTEM_TX_ADDRESS};
 
-/// Ordered system-transaction envelope inputs with an explicit visible gas limit.
+/// Ordered system-transaction envelope inputs under the Tempo 0-gas model (`gas_limit == 0`).
 #[derive(Debug)]
 pub struct SystemTxEnvelopeInput {
     pub ordinal: u8,
@@ -40,13 +37,12 @@ pub fn build_unsigned_system_tx(
     chain_id: u64,
     calldata: Bytes,
 ) -> Result<TxLegacy, SystemTxError> {
-    let gas_limit = system_tx_intrinsic_gas(calldata.as_ref())?;
     build_unsigned_system_tx_with_gas_limit(SystemTxEnvelopeInput {
         ordinal,
         block_number,
         chain_id,
         calldata,
-        gas_limit,
+        gas_limit: 0,
     })
 }
 
@@ -62,19 +58,15 @@ pub fn build_unsigned_system_tx_with_gas_limit(
     } = input;
 
     SystemTx::decode(calldata.as_ref())?;
-    let intrinsic_gas = system_tx_intrinsic_gas(calldata.as_ref())?;
-    if gas_limit < intrinsic_gas {
-        return Err(SystemTxError::GasLimitBelowIntrinsic {
-            gas_limit,
-            intrinsic_gas,
-        });
+    if gas_limit != 0 {
+        return Err(SystemTxError::NonZeroGasLimit { actual: gas_limit });
     }
 
     Ok(TxLegacy {
         chain_id: Some(chain_id),
         nonce: system_tx_nonce(block_number, ordinal)?,
         gas_price: 0,
-        gas_limit,
+        gas_limit: 0,
         to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
         value: U256::ZERO,
         input: calldata,

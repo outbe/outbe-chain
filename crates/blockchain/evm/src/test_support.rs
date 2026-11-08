@@ -80,6 +80,8 @@ pub fn seed_storage<R>(
     seed: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
     let block = BlockContext {
+        block_gas_limit: 0,
+        user_gas_used: 0,
         block_number: 1,
         timestamp,
         chain_id: CHAIN_ID,

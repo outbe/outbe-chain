@@ -6,7 +6,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
-use outbe_vote::handlers::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
+use outbe_primitives::vote_target::{TargetExecutionOutcome, VoteTarget, VoteTargetContext};
 use serde::Deserialize;
 
 use crate::errors::L2RegistryError;
@@ -224,6 +224,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );
@@ -316,6 +318,8 @@ mod tests {
                         genesis_timestamp: 1_700_000_000,
                         proposer: alloy_primitives::Address::ZERO,
                         validators: Vec::new(),
+                        block_gas_limit: 0,
+                        user_gas_used: 0,
                     },
                     storage.clone(),
                 );
@@ -353,6 +357,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );
@@ -388,6 +394,8 @@ mod tests {
                     genesis_timestamp: 1_700_000_000,
                     proposer: alloy_primitives::Address::ZERO,
                     validators: Vec::new(),
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                 },
                 storage.clone(),
             );

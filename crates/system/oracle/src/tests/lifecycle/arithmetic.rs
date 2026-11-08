@@ -74,6 +74,8 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
         let timestamp = outbe_primitives::time::date_key_to_utc_timestamp(20_200_102).unwrap() + 24;
         let runtime_ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp,
                 chain_id: 1,
@@ -84,7 +86,7 @@ fn begin_block_skips_only_the_unrepresentable_legacy_cross_row() {
             },
             storage.clone(),
         );
-        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+        <crate::lifecycle::OracleModule as ProtocolModule>::begin_block(&runtime_ctx).unwrap();
 
         assert_eq!(pair_rate(oracle, higher), fixed18(100));
         assert_eq!(pair_rate(oracle, lower), fixed18(50));

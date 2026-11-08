@@ -19,7 +19,7 @@ mod init;
 pub(crate) use evm_scope::install_detached_trace_witness;
 pub(crate) use evm_scope::{
     clear_detached_trace_witness, install_detached_trace_witness_with_meta,
-    match_detached_trace_tx, record_detached_trace_system_gas, run_matched_detached_trace_tx,
+    match_detached_trace_tx, record_detached_trace_user_gas, run_matched_detached_trace_tx,
     synthetic_trace_success, with_evm_transact_witness_scope, DetachedTraceExecutionMeta,
     DetachedTraceTxAction, EvmTransactWitnessInput,
 };

@@ -34,7 +34,6 @@ fn wide_timestamp_rejects_pre_execution_before_any_mutation_with_or_without_hook
                 crate::system_tx::SystemTxPhase::UserTxs
             );
             assert!(executor.receipts().is_empty());
-            assert!(executor.whitelisted_hook_event_logs.is_empty());
             assert!(executor.ethereum_post_execution_requests.is_none());
             drop(executor);
             assert!(

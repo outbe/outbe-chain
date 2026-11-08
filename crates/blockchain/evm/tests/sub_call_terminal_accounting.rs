@@ -216,6 +216,8 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
         let mut seed = DirectStorageProvider::new(
             &mut db,
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: 1_700_000_000,
                 chain_id: 1,

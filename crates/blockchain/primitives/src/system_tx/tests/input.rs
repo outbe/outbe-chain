@@ -2,23 +2,17 @@ use super::*;
 
 #[test]
 fn input_roundtrips_every_system_tx_variant() {
-    for (input, (selector, name)) in inputs().into_iter().zip([
-        (*b"OSA3", "CertifiedParentAccounting"),
-        (*b"OSL2", "LateFinalizeCredits"),
-        (*b"OSC2", "CycleTick"),
-        (*b"OSB2", "BoundaryOutcome"),
-        (*b"OST3", "TeeBootstrap"),
-        (*b"OSO2", "OracleSlashWindow"),
-        (*b"OSH2", "HookEvents"),
-        (*b"OSP2", "RadiclePublication"),
-    ]) {
+    assert_eq!(inputs().len(), ALL_KINDS.len());
+    for (input, kind) in inputs().into_iter().zip(ALL_KINDS) {
         let encoded = input.encode().expect("input encodes");
-        assert_eq!(&encoded[..4], &selector);
-        assert_eq!(encoded[4], 2);
+        assert_eq!(&encoded[..4], &kind.selector());
+        assert_eq!(encoded[4], SYSTEM_TX_INPUT_VERSION);
         let decoded = SystemTx::decode(&encoded).expect("input decodes");
         assert_eq!(decoded, input);
-        assert_eq!(decoded.selector(), selector);
-        assert_eq!(decoded.name(), name);
+        assert_eq!(decoded.kind(), kind);
+        assert_eq!(decoded.selector(), kind.selector());
+        assert_eq!(decoded.name(), kind.name());
+        assert_eq!(SystemTxKind::from_selector(kind.selector()), Some(kind));
     }
 }
 
@@ -30,10 +24,17 @@ fn decode_preserves_selector_version_and_body_validation_precedence() {
             Err(SystemTxError::InputTooShort { len })
         );
     }
-    assert_eq!(
-        SystemTx::decode(b"NOPE\x01"),
-        Err(SystemTxError::UnknownSelector(*b"NOPE"))
-    );
+    for unknown in [
+        *b"NOPE", *b"OSO2", *b"OSH2", *b"OSCE", *b"OSCP", *b"OSF1", *b"OSC1", *b"OSB1", *b"OSO1",
+    ] {
+        let mut bytes = Vec::with_capacity(5);
+        bytes.extend_from_slice(&unknown);
+        bytes.push(SYSTEM_TX_INPUT_VERSION);
+        assert_eq!(
+            SystemTx::decode(&bytes),
+            Err(SystemTxError::UnknownSelector(unknown))
+        );
+    }
     for input in inputs() {
         let mut unsupported = input.encode().unwrap().to_vec();
         unsupported[4] = 1;
@@ -42,20 +43,18 @@ fn decode_preserves_selector_version_and_body_validation_precedence() {
             Err(SystemTxError::UnsupportedVersion(1))
         );
     }
-    for input in [
-        SystemTx::CycleTick,
-        SystemTx::OracleSlashWindow,
-        SystemTx::HookEvents,
-    ] {
-        let mut nonempty = input.encode().unwrap().to_vec();
-        nonempty.push(0);
-        assert_eq!(
-            SystemTx::decode(&nonempty),
-            Err(SystemTxError::UnexpectedBody {
-                kind: input.name(),
-                len: 1
-            })
-        );
+    for kind in ALL_KINDS {
+        if let Some(empty_tx) = kind.into_empty_system_tx() {
+            let mut nonempty = empty_tx.encode().unwrap().to_vec();
+            nonempty.push(0);
+            assert_eq!(
+                SystemTx::decode(&nonempty),
+                Err(SystemTxError::UnexpectedBody {
+                    kind: empty_tx.name(),
+                    len: 1
+                })
+            );
+        }
     }
     assert_eq!(
         SystemTx::decode(b"OSB2\x02"),

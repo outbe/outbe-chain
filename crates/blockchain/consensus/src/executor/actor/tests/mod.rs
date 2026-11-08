@@ -20,7 +20,7 @@ use reth_node_builder::ConsensusEngineHandle;
 use std::sync::{Arc, Mutex};
 
 // -----------------------------------------------------------------------
-// TC-2 (backfill fail-fast) helpers and regression test
+// Backfill fail-fast helpers and regression test
 // -----------------------------------------------------------------------
 
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};

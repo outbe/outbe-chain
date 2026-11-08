@@ -5,10 +5,9 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::validate_currency_code;
-use outbe_vote::errors::VoteError;
-use outbe_vote::handlers::{
+use outbe_primitives::vote_target::{
     decode_proposal_payload, decode_stored_proposal_payload, TargetExecutionOutcome, VoteTarget,
-    VoteTargetContext,
+    VoteTargetContext, VoteTargetError,
 };
 use serde::Deserialize;
 
@@ -51,7 +50,7 @@ impl Action {
         // Decode the original bytes as well as the shared JSON envelope so duplicate
         // fields cannot be hidden by Value's last-field-wins representation.
         let action: Self =
-            serde_json::from_slice(payload).map_err(|_| VoteError::InvalidPayload)?;
+            serde_json::from_slice(payload).map_err(|_| VoteTargetError::InvalidPayload)?;
         let address = match &action {
             Self::AddVault {
                 vault,
@@ -59,20 +58,20 @@ impl Action {
                 iso_code,
             } => {
                 if asset.is_zero() || validate_currency_code(*iso_code).is_err() {
-                    return Err(VoteError::InvalidPayload.into());
+                    return Err(VoteTargetError::InvalidPayload.into());
                 }
                 vault
             }
             Self::RemoveVault { vault } => vault,
             Self::AddLiquiditySource { address, r#type } => {
                 if *r#type == 0 || IVaultRouter::StablesSource::try_from(*r#type).is_err() {
-                    return Err(VoteError::InvalidPayload.into());
+                    return Err(VoteTargetError::InvalidPayload.into());
                 }
                 address
             }
             Self::AddLiquidityTarget { address, r#type } => {
                 if *r#type == 0 || IVaultRouter::StablesTarget::try_from(*r#type).is_err() {
-                    return Err(VoteError::InvalidPayload.into());
+                    return Err(VoteTargetError::InvalidPayload.into());
                 }
                 address
             }
@@ -81,7 +80,7 @@ impl Action {
             }
         };
         if address.is_zero() {
-            return Err(VoteError::InvalidPayload.into());
+            return Err(VoteTargetError::InvalidPayload.into());
         }
         Ok(action)
     }
@@ -142,7 +141,7 @@ impl VoteTarget for VaultRouterVoteTarget {
         // Stored-payload corruption is an invariant failure, never proposal Error.
         decode_stored_proposal_payload(payload, "VaultRouter")?;
         let action = Action::decode(payload)
-            .map_err(|_| VoteError::stored_payload_invalid("VaultRouter"))?;
+            .map_err(|_| VoteTargetError::stored_payload_invalid("VaultRouter"))?;
         let result = ctx
             .storage
             .with_checkpoint(|| action.apply(ctx, proposal_id));

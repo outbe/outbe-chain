@@ -556,6 +556,8 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
     storage.enter(|s| {
         let context = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 4,
                 timestamp: 1004,
                 chain_id: 2026,
@@ -797,6 +799,8 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
     storage.enter(|s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 3,
                 timestamp: 1003,
                 chain_id: 1,
@@ -1074,6 +1078,8 @@ fn finalized_vote_pages_select_only_the_network_repository() {
         storage.enter(|s| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
                     block_number: 3,
                     timestamp: 1003,
                     chain_id: 1,

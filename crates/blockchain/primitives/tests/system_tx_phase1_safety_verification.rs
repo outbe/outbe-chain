@@ -1,4 +1,4 @@
-//! Batch 8 - Safety verification for the Phase 1 cursor refactor.
+//! Safety verification for the Phase 1 cursor refactor.
 //!
 //! This file ships the safety checklist mandated for consensus-carrying
 //! refactors:
@@ -31,50 +31,63 @@ fn system_tx_phase_variant_set_includes_terminal_end_phase() {
             receipt_index: 0,
         },
         SystemTxPhase::LateFinalizeCredits { body_index: 0 },
-        SystemTxPhase::CycleTick { body_index: 0 },
         SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 },
         SystemTxPhase::TeeBootstrapOptional { body_index: 0 },
-        SystemTxPhase::OracleSlashWindow { body_index: 0 },
-        SystemTxPhase::HookEvents { body_index: 0 },
+        SystemTxPhase::ValidatorLiveness { body_index: 0 },
         SystemTxPhase::RadiclePublication { body_index: 0 },
+        SystemTxPhase::Vote { body_index: 0 },
+        SystemTxPhase::Update { body_index: 0 },
+        SystemTxPhase::EnclaveUpgradeDeadline { body_index: 0 },
+        SystemTxPhase::Rewards { body_index: 0 },
+        SystemTxPhase::Staking { body_index: 0 },
+        SystemTxPhase::Oracle { body_index: 0 },
+        SystemTxPhase::OracleSlash { body_index: 0 },
+        SystemTxPhase::HyperlaneSlash { body_index: 0 },
+        SystemTxPhase::CycleTick { body_index: 0 },
         SystemTxPhase::UserTxs,
-        SystemTxPhase::EndBlockCallEvents { gas_capacity: 0 },
-        SystemTxPhase::EndBlockCleanup {
-            gas_capacity: 0,
-            call_gas_used: 0,
-        },
-        SystemTxPhase::EndBlock { gas_capacity: 0 },
+        SystemTxPhase::EndBlockNodFactory,
+        SystemTxPhase::EndBlockGemFactory,
+        SystemTxPhase::EndBlockIntexFactory,
+        SystemTxPhase::EndBlockCredisFactory,
+        SystemTxPhase::EndBlockGemCleanup,
+        SystemTxPhase::EndBlock,
     ];
     for variant in &variants {
-        // Exhaustive match - adding a new variant without updating here is a
-        // compile error.
         match variant {
             SystemTxPhase::Phase1Preexecuted { .. } => {}
             SystemTxPhase::LateFinalizeCredits { .. } => {}
-            SystemTxPhase::CycleTick { .. } => {}
             SystemTxPhase::BoundaryOutcomeOptional { .. } => {}
             SystemTxPhase::TeeBootstrapOptional { .. } => {}
-            SystemTxPhase::OracleSlashWindow { .. } => {}
-            SystemTxPhase::HookEvents { .. } => {}
+            SystemTxPhase::ValidatorLiveness { .. } => {}
             SystemTxPhase::RadiclePublication { .. } => {}
+            SystemTxPhase::Vote { .. } => {}
+            SystemTxPhase::Update { .. } => {}
+            SystemTxPhase::EnclaveUpgradeDeadline { .. } => {}
+            SystemTxPhase::Rewards { .. } => {}
+            SystemTxPhase::Staking { .. } => {}
+            SystemTxPhase::Oracle { .. } => {}
+            SystemTxPhase::OracleSlash { .. } => {}
+            SystemTxPhase::HyperlaneSlash { .. } => {}
+            SystemTxPhase::CycleTick { .. } => {}
             SystemTxPhase::UserTxs => {}
-            SystemTxPhase::EndBlockCallEvents { .. } => {}
-            SystemTxPhase::EndBlockCleanup { .. } => {}
-            SystemTxPhase::EndBlock { .. } => {}
+            SystemTxPhase::EndBlockNodFactory => {}
+            SystemTxPhase::EndBlockGemFactory => {}
+            SystemTxPhase::EndBlockIntexFactory => {}
+            SystemTxPhase::EndBlockCredisFactory => {}
+            SystemTxPhase::EndBlockGemCleanup => {}
+            SystemTxPhase::EndBlock => {}
         }
     }
     assert_eq!(
         variants.len(),
-        12,
-        "internal SystemTxPhase contract: 12 variants"
+        22,
+        "internal SystemTxPhase contract: 22 variants"
     );
 }
 
 #[test]
 fn completed_end_phase_has_no_envelope_and_cannot_advance_to_users() {
-    let cursor = SystemTxPhase::EndBlock {
-        gas_capacity: 12_000_000,
-    };
+    let cursor = SystemTxPhase::EndBlock;
     assert_eq!(cursor.expected_selector(), None);
     assert_eq!(cursor.body_index(), None);
     for has_boundary in [false, true] {
@@ -156,22 +169,32 @@ proptest! {
         has_publication_batch in any::<bool>(),
     ) {
         let mut cursor = SystemTxPhase::initial_for_block(block_number, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-        for _ in 0..10 {
+        for _ in 0..16 {
             let a = cursor.expected_selector();
             let b = cursor.expected_selector();
             prop_assert_eq!(a, b);
             let expected_for_variant = match cursor {
                 SystemTxPhase::Phase1Preexecuted { .. } => Some(CERTIFIED_PARENT_ACCOUNTING_SELECTOR),
                 SystemTxPhase::LateFinalizeCredits { .. } => Some(LATE_FINALIZE_CREDITS_SELECTOR),
-                SystemTxPhase::CycleTick { .. } => Some(CYCLE_TICK_SELECTOR),
                 SystemTxPhase::BoundaryOutcomeOptional { .. } => Some(BOUNDARY_OUTCOME_SELECTOR),
                 SystemTxPhase::TeeBootstrapOptional { .. } => Some(TEE_BOOTSTRAP_SELECTOR),
-                SystemTxPhase::OracleSlashWindow { .. } => Some(ORACLE_SLASH_WINDOW_SELECTOR),
-                SystemTxPhase::HookEvents { .. } => Some(HOOK_EVENTS_SELECTOR),
+                SystemTxPhase::ValidatorLiveness { .. } => Some(VALIDATOR_LIVENESS_SELECTOR),
                 SystemTxPhase::RadiclePublication { .. } => Some(RADICLE_PUBLICATION_SELECTOR),
-                SystemTxPhase::EndBlockCallEvents { .. } => Some(CALL_EVENT_PROCESSING_SELECTOR),
-                SystemTxPhase::EndBlockCleanup { .. } => Some(CLEANUP_PROCESSING_SELECTOR),
-                SystemTxPhase::UserTxs | SystemTxPhase::EndBlock { .. } => None,
+                SystemTxPhase::Vote { .. } => Some(VOTE_SELECTOR),
+                SystemTxPhase::Update { .. } => Some(UPDATE_SELECTOR),
+                SystemTxPhase::EnclaveUpgradeDeadline { .. } => Some(ENCLAVE_UPGRADE_DEADLINE_SELECTOR),
+                SystemTxPhase::Rewards { .. } => Some(REWARDS_SELECTOR),
+                SystemTxPhase::Staking { .. } => Some(STAKING_SELECTOR),
+                SystemTxPhase::Oracle { .. } => Some(ORACLE_SELECTOR),
+                SystemTxPhase::OracleSlash { .. } => Some(ORACLE_SLASH_SELECTOR),
+                SystemTxPhase::HyperlaneSlash { .. } => Some(HYPERLANE_SLASH_SELECTOR),
+                SystemTxPhase::CycleTick { .. } => Some(CYCLE_TICK_SELECTOR),
+                SystemTxPhase::EndBlockNodFactory => Some(NOD_FACTORY_SELECTOR),
+                SystemTxPhase::EndBlockGemFactory => Some(GEM_FACTORY_SELECTOR),
+                SystemTxPhase::EndBlockIntexFactory => Some(INTEX_FACTORY_SELECTOR),
+                SystemTxPhase::EndBlockCredisFactory => Some(CREDIS_FACTORY_SELECTOR),
+                SystemTxPhase::EndBlockGemCleanup => Some(GEM_CLEANUP_SELECTOR),
+                SystemTxPhase::UserTxs | SystemTxPhase::EndBlock => None,
             };
             prop_assert_eq!(a, expected_for_variant);
             if matches!(cursor, SystemTxPhase::UserTxs) {
@@ -196,7 +219,7 @@ fn body_index_monotonic_across_advance() {
     for block in [1u64, 2, 7, 42, 1000] {
         let mut cursor = SystemTxPhase::initial_for_block(block, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
         let mut prev_idx = cursor.body_index();
-        for _ in 0..8 {
+        for _ in 0..16 {
             let next = cursor.advance_after_commit(true, false);
             let next_idx = next.body_index();
             match (prev_idx, next_idx) {
@@ -215,4 +238,64 @@ fn body_index_monotonic_across_advance() {
             cursor = next;
         }
     }
+}
+
+/// End-block phases are a separate chain. UserTxs does not enter it.
+#[test]
+fn end_block_phase_chain_is_separate_from_user_txs() {
+    assert_eq!(
+        SystemTxPhase::UserTxs.advance_after_commit(true, true),
+        SystemTxPhase::UserTxs
+    );
+    let chain = [
+        SystemTxPhase::EndBlockNodFactory,
+        SystemTxPhase::EndBlockGemFactory,
+        SystemTxPhase::EndBlockIntexFactory,
+        SystemTxPhase::EndBlockCredisFactory,
+        SystemTxPhase::EndBlockGemCleanup,
+        SystemTxPhase::EndBlock,
+    ];
+    let selectors = [
+        Some(NOD_FACTORY_SELECTOR),
+        Some(GEM_FACTORY_SELECTOR),
+        Some(INTEX_FACTORY_SELECTOR),
+        Some(CREDIS_FACTORY_SELECTOR),
+        Some(GEM_CLEANUP_SELECTOR),
+        None,
+    ];
+    let ordinals = [
+        Some(NOD_FACTORY_ORDINAL),
+        Some(GEM_FACTORY_ORDINAL),
+        Some(INTEX_FACTORY_ORDINAL),
+        Some(CREDIS_FACTORY_ORDINAL),
+        Some(GEM_CLEANUP_ORDINAL),
+        None,
+    ];
+    let mut cursor = SystemTxPhase::EndBlockNodFactory;
+    for ((expected, selector), ordinal) in chain.into_iter().zip(selectors).zip(ordinals) {
+        assert_eq!(cursor, expected);
+        assert_eq!(cursor.expected_selector(), selector);
+        assert_eq!(cursor.body_index(), ordinal);
+        cursor = cursor.advance_after_commit(false, false);
+    }
+    assert_eq!(cursor, SystemTxPhase::EndBlock);
+}
+
+#[test]
+fn block_execution_fsm_finish_requires_the_scheduled_zones() {
+    let mut fsm = BlockExecutionFsm::for_block(2, false, false, false);
+    assert_eq!(fsm.stage(), BlockExecutionStage::ConsensusStage);
+    assert!(matches!(
+        fsm.finish(),
+        Err(SystemTxError::IncompleteBlockExecution {
+            stage: BlockExecutionStage::ConsensusStage,
+            ..
+        })
+    ));
+    assert!(matches!(
+        fsm.on_user_tx(),
+        Err(SystemTxError::UnexpectedUserTx {
+            stage: BlockExecutionStage::ConsensusStage
+        })
+    ));
 }

@@ -29,7 +29,7 @@
 //! lookup, accounting progress comparison, artifact hash compare, signer bitmap
 //! check). That verification lives exclusively in
 //! `OutbeBlockExecutor::apply_pre_execution_changes`
-//! (executor reorder task) so consensus pre-execution and execution
+//! so consensus pre-execution and execution
 //! share a single stateful evaluator and cannot diverge.
 //!
 //! The integration-level pin for this stateless contract is
@@ -484,53 +484,46 @@ mod tests {
         let signer = outbe_evm::OutbeEvmSigner::from_secret_bytes([3u8; 32]).unwrap();
         let parent_hash = B256::with_last_byte(0xAA);
         let wrong_parent_hash = B256::with_last_byte(0xBB);
-        let phase1 = signed_system_tx(
-            &signer,
-            0,
-            2,
+        let begin_inputs = [
             outbe_evm::system_tx::SystemTx::CertifiedParentAccounting {
                 metadata: phase1_metadata(1, wrong_parent_hash),
             },
-        );
-        let late = signed_system_tx(
-            &signer,
-            1,
-            2,
             outbe_evm::system_tx::SystemTx::LateFinalizeCredits {
                 artifact: Default::default(),
             },
-        );
-        let cycle = signed_system_tx(&signer, 2, 2, outbe_evm::system_tx::SystemTx::CycleTick);
-        let oracle = signed_system_tx(
-            &signer,
-            3,
-            2,
-            outbe_evm::system_tx::SystemTx::OracleSlashWindow,
-        );
-        let hook_events =
-            signed_system_tx(&signer, 4, 2, outbe_evm::system_tx::SystemTx::HookEvents);
-        let call_events = signed_system_tx(
-            &signer,
-            outbe_primitives::system_tx::CALL_EVENT_PROCESSING_ORDINAL,
-            2,
-            outbe_evm::system_tx::SystemTx::CallEventProcessing,
-        );
-        let cleanup = signed_system_tx(
-            &signer,
-            outbe_primitives::system_tx::CLEANUP_PROCESSING_ORDINAL,
-            2,
-            outbe_evm::system_tx::SystemTx::CleanupProcessing,
-        );
+            outbe_evm::system_tx::SystemTx::ValidatorLiveness,
+            outbe_evm::system_tx::SystemTx::Vote,
+            outbe_evm::system_tx::SystemTx::Update,
+            outbe_evm::system_tx::SystemTx::EnclaveUpgradeDeadline,
+            outbe_evm::system_tx::SystemTx::Rewards,
+            outbe_evm::system_tx::SystemTx::Staking,
+            outbe_evm::system_tx::SystemTx::Oracle,
+            outbe_evm::system_tx::SystemTx::OracleSlash,
+            outbe_evm::system_tx::SystemTx::HyperlaneSlash,
+            outbe_evm::system_tx::SystemTx::CycleTick,
+        ];
+        let end_inputs = [
+            outbe_evm::system_tx::SystemTx::NodFactory,
+            outbe_evm::system_tx::SystemTx::GemFactory,
+            outbe_evm::system_tx::SystemTx::IntexFactory,
+            outbe_evm::system_tx::SystemTx::CredisFactory,
+            outbe_evm::system_tx::SystemTx::GemCleanup,
+        ];
+        let mut transactions = begin_inputs
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, input)| signed_system_tx(&signer, ordinal as u8, 2, input))
+            .collect::<Vec<_>>();
+        transactions.extend(end_inputs.into_iter().enumerate().map(|(offset, input)| {
+            signed_system_tx(
+                &signer,
+                outbe_primitives::system_tx::NOD_FACTORY_ORDINAL + offset as u8,
+                2,
+                input,
+            )
+        }));
         let body = OutbeBlockBody {
-            transactions: vec![
-                phase1,
-                late,
-                cycle,
-                oracle,
-                hook_events,
-                call_events,
-                cleanup,
-            ],
+            transactions,
             ommers: Vec::new(),
             withdrawals: None,
         };

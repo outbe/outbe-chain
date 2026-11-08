@@ -75,6 +75,8 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -153,6 +155,8 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -180,6 +184,8 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
 fn call_and_deadline(s: &StorageHandle<'_>, member: SeriesId, scan_ts: u64) -> u64 {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 1,
             timestamp: scan_ts,
             chain_id: CHAIN_ID,
@@ -206,6 +212,8 @@ fn due(deadline: u64) -> u64 {
 fn sweep_at(s: &StorageHandle<'_>, now: u64) {
     let ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 2,
             timestamp: now,
             chain_id: CHAIN_ID,
@@ -474,6 +482,8 @@ fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
         }
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -524,6 +534,8 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -595,6 +607,8 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -611,6 +625,8 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         // the sweep finishes on the terms it started with.
         let next_day = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: scan_ts + DAY,
                 chain_id: CHAIN_ID,
@@ -646,6 +662,8 @@ fn a_sweep_opened_a_day_later_sees_the_window_expire() {
 
         let next_day = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts + DAY,
                 chain_id: CHAIN_ID,
@@ -673,6 +691,8 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -704,6 +724,8 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -748,6 +770,8 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -791,6 +815,8 @@ fn a_window_price_out_of_range_skips_the_currency() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -834,6 +860,8 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
 
         let ctx = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 1,
                 timestamp: scan_ts,
                 chain_id: CHAIN_ID,
@@ -865,6 +893,8 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         fill_window(&oracle, later_day, pair, U256::from(TRIGGER * 4));
         let later = BlockRuntimeContext::new(
             BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
                 block_number: 2,
                 timestamp: later_ts,
                 chain_id: CHAIN_ID,

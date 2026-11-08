@@ -21,7 +21,7 @@ fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus()
         let (expected_id, expected_token) = factory.predict_token_address(issuer, "EXUSD").unwrap();
         proposal_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw,
@@ -37,10 +37,11 @@ fn real_factory_vote_approval_creates_token_refunds_once_and_preserves_surplus()
             .unwrap();
 
         let deadline = 7 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &finalize_context(storage.clone(), deadline + 1, issuer),
-            registry(),
-        )
+        <VoteModule as ProtocolModule>::begin_block(&finalize_context(
+            storage.clone(),
+            deadline + 1,
+            issuer,
+        ))
         .unwrap();
 
         assert_eq!(
@@ -111,7 +112,7 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
         let mut vote = Vote::new(storage.clone());
         proposal_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw,
@@ -136,10 +137,11 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
             .promis_limit()
             .unwrap();
         let deadline = 7 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &finalize_context(storage.clone(), deadline + 1, issuer),
-            registry(),
-        )
+        <VoteModule as ProtocolModule>::begin_block(&finalize_context(
+            storage.clone(),
+            deadline + 1,
+            issuer,
+        ))
         .unwrap();
 
         assert_eq!(
@@ -190,7 +192,7 @@ fn pfs_010_05_expiry_releases_identity_and_pending_cap_and_burns_once() {
         let mut vote = Vote::new(storage.clone());
         let retry_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw,
@@ -235,7 +237,7 @@ fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw,
@@ -254,10 +256,11 @@ fn pfs_010_06_execution_error_refunds_bond_once_and_retains_reservation() {
             .unwrap();
 
         let deadline = 7 + VOTING_WINDOW_BLOCKS;
-        vote.process_begin_block(
-            &finalize_context(storage.clone(), deadline + 1, issuer),
-            registry(),
-        )
+        <VoteModule as ProtocolModule>::begin_block(&finalize_context(
+            storage.clone(),
+            deadline + 1,
+            issuer,
+        ))
         .unwrap();
 
         assert_eq!(
@@ -344,7 +347,7 @@ fn real_factory_vote_rejects_global_ticker_collision_before_allocation() {
     let mut vote = Vote::new(storage.clone());
     let first = vote
         .create_proposal_with_value(
-            outbe_vote::ProposalSubmission {
+            crate::ProposalSubmission {
                 proposer: issuer_a,
                 target_module: STABLECOIN_FACTORY_ADDRESS,
                 payload: core::str::from_utf8(&raw_a).unwrap(),
@@ -356,7 +359,7 @@ fn real_factory_vote_rejects_global_ticker_collision_before_allocation() {
         .unwrap();
     assert!(vote
         .create_proposal_with_value(
-            outbe_vote::ProposalSubmission {
+            crate::ProposalSubmission {
                 proposer: issuer_b,
                 target_module: STABLECOIN_FACTORY_ADDRESS,
                 payload: core::str::from_utf8(&raw_b).unwrap(),
@@ -392,6 +395,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let approved_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -433,6 +438,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let expired_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -472,6 +479,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let error_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -521,6 +530,8 @@ fn factory_target_approved_expired_malformed_payload_and_corrupted_reservation_o
         .unwrap();
     let corrupted_ctx = BlockRuntimeContext::new(
         BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
             block_number: 7,
             timestamp: 1_700_000_000,
             chain_id: 1,
@@ -559,7 +570,7 @@ fn pfs_010_08_fatal_creation_rolls_back_the_containing_block() {
         let mut vote = Vote::new(storage.clone());
         let proposal_id = vote
             .create_proposal_with_value(
-                outbe_vote::ProposalSubmission {
+                crate::ProposalSubmission {
                     proposer: issuer,
                     target_module: STABLECOIN_FACTORY_ADDRESS,
                     payload: raw_text,

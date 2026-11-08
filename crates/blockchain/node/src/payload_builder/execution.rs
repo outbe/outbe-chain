@@ -46,7 +46,7 @@ pub(super) struct PayloadBuildState {
     pub(super) blob_sidecars: BlobSidecars,
     pub(super) block_blob_count: u64,
     pub(super) size_budget: BlockSizeBudget,
-    pub(super) pre_end_gas_limit: u64,
+    pub(super) block_gas_limit: u64,
     pub(super) regular_gas_used: u64,
     pub(super) state_gas_used: u64,
     pub(super) eip8037: bool,
@@ -82,15 +82,13 @@ impl PayloadBuildState {
             .unwrap_or(0);
 
         let size_budget = BlockSizeBudget::new(withdrawals_rlp_length, is_osaka);
-        let gas_budget = outbe_primitives::system_tx::BlockGasBudget::new(block_gas_limit)
-            .map_err(PayloadBuilderError::other)?;
         Ok(Self {
             cumulative_gas_used: 0,
             total_fees: U256::ZERO,
             blob_sidecars: BlobSidecars::Empty,
             block_blob_count: 0,
             size_budget,
-            pre_end_gas_limit: gas_budget.pre_end_capacity(),
+            block_gas_limit,
             regular_gas_used: 0,
             state_gas_used: 0,
             eip8037: false,
