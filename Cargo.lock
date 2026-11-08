@@ -7844,6 +7844,7 @@ dependencies = [
  "outbe-tee",
  "outbe-teeregistry",
  "outbe-txpool",
+ "outbe-update",
  "outbe-validatorset",
  "outbe-zk-backend",
  "postcard",

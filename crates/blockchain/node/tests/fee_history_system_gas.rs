@@ -334,13 +334,18 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         .transactions()
         .map(|tx| (*tx.tx_hash(), tx.gas_limit()))
         .collect::<Vec<_>>();
+    assert_eq!(
+        system_transactions.len(),
+        12,
+        "system-only block 1 must include the 12 canonical BeginBlock system transaction envelopes"
+    );
     let visible_system_gas_limit: u64 = system_transactions
         .iter()
         .map(|(_, gas_limit)| gas_limit)
         .sum();
-    assert!(
-        visible_system_gas_limit > 0,
-        "system-only block must include system transaction envelopes"
+    assert_eq!(
+        visible_system_gas_limit, 0,
+        "Tempo 0-gas system transaction envelopes must carry gas_limit == 0"
     );
 
     let rpc_url = node
@@ -368,13 +373,21 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
             .get_transaction_receipt(tx_hash)
             .await?
             .expect("system transaction receipt should be available through RPC");
-        assert!(
-            receipt.gas_used <= gas_limit,
-            "system transaction gas used must not exceed its signed envelope limit"
+        assert_eq!(
+            gas_limit, 0,
+            "system transaction signed envelope limit must be 0"
+        );
+        assert_eq!(
+            receipt.gas_used, 0,
+            "system transaction receipt gas used must be 0 under the Tempo model"
         );
         receipt_gas_used = receipt_gas_used.saturating_add(receipt.gas_used);
         final_cumulative_gas_used = receipt.inner.cumulative_gas_used();
     }
+    assert_eq!(
+        final_cumulative_gas_used, 0,
+        "final system receipt cumulative gas must be 0 for a system-only block"
+    );
     assert_eq!(
         final_cumulative_gas_used, receipt_gas_used,
         "final system receipt cumulative gas must equal the sum of actual receipt gas"
@@ -384,16 +397,16 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         "RPC block gasLimit must stay in the user/block lane, not the internal system execution budget"
     );
     assert_eq!(
+        rpc_block.header.gas_used, 0,
+        "RPC block gasUsed must be 0 for a system-only block"
+    );
+    assert_eq!(
         rpc_block.header.gas_used, final_cumulative_gas_used,
         "RPC block gasUsed must equal the final receipt cumulative gas"
     );
     assert!(
-        rpc_block.header.gas_used < visible_system_gas_limit,
-        "actual RPC block gasUsed must remain below the reserved system envelope limits"
-    );
-    assert!(
         rpc_block.header.gas_used < SYSTEM_TX_ARTIFACT_GAS_LIMIT,
-        "RPC block gasUsed must not expose the 100M internal system execution budget"
+        "RPC block gasUsed must not expose the internal system execution budget"
     );
 
     let fee_history = provider.get_fee_history(1, latest.into(), &[]).await?;
@@ -405,12 +418,12 @@ async fn gas_14_rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         "eth_feeHistory gasUsedRatio must be computed from visible header gas: expected {expected_ratio}, got {actual_ratio}"
     );
     assert!(
-        actual_ratio > 0.0 && actual_ratio < 0.25,
-        "eth_feeHistory must expose small visible system gas, got {actual_ratio}"
+        actual_ratio.abs() < f64::EPSILON,
+        "eth_feeHistory must expose 0.0 gasUsedRatio on a system-only block under Tempo 0-gas, got {actual_ratio}"
     );
     assert!(
         actual_ratio <= 1.0,
-        "eth_feeHistory must not leak a 100M system budget over the 30M block gas limit"
+        "eth_feeHistory must not leak the internal system budget over the block gas limit"
     );
 
     let version_calldata = Bytes::copy_from_slice(&keccak256(b"getActiveVersion()")[..4]);

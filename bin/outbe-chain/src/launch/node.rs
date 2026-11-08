@@ -236,7 +236,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
 
         outbe_engine::validators::check_binary_version_compatibility(
             &node.provider,
-            outbe_evm::handlers::update::registry(),
+            outbe_update::handlers::registry(),
         )?;
 
         if log_consensus_launch_mode(args.is_validator, args.upstream.is_some()) {

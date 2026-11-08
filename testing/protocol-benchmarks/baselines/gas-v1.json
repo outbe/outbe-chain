@@ -7346,41 +7346,23 @@
         "fidelity": "partial_stubbed"
       },
       "calldata": {
-        "bytes": 354,
-        "zero_bytes": 79,
+        "bytes": 353,
+        "zero_bytes": 78,
         "nonzero_bytes": 275,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 316,
+        "zero_byte_gas": 312,
         "nonzero_byte_gas": 4400
       },
       "gas_totals": {
-        "system_visible": 25716,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
-          "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 316,
-          "operations": 79
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 4400,
-          "operations": 275
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
+          "key": "visible.zero_gas_envelope",
           "gas": 0,
-          "operations": 0
+          "operations": 1
         },
         {
           "ledger": "system_internal",
@@ -7400,9 +7382,9 @@
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "25716"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
     "system-tx/certified-parent-accounting/rust-wire/single": {
@@ -7424,33 +7406,15 @@
         "nonzero_byte_gas": 2224
       },
       "gas_totals": {
-        "system_visible": 23396,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
-          "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 172,
-          "operations": 43
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 2224,
-          "operations": 139
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
+          "key": "visible.zero_gas_envelope",
           "gas": 0,
-          "operations": 0
+          "operations": 1
         },
         {
           "ledger": "system_internal",
@@ -7470,9 +7434,61 @@
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "23396"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/credis-factory/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/credis-factory/rust-wire/single",
+        "display_name": "System tx credis-factory (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f534352",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
     "system-tx/cycle-tick/rust-wire/single": {
@@ -7494,33 +7510,15 @@
         "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "system_visible": 21080,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
           "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 80,
-          "operations": 5
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 0,
-          "operations": 0
         },
         {
           "ledger": "system_internal",
@@ -7540,15 +7538,15 @@
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "29978920",
-        "visible.gas_limit": "30000000"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
-    "system-tx/hook-events/rust-wire/single": {
+    "system-tx/enclave-upgrade-deadline/rust-wire/single": {
       "metadata": {
-        "id": "system-tx/hook-events/rust-wire/single",
-        "display_name": "System tx hook-events (Rust wire/accounting only)",
+        "id": "system-tx/enclave-upgrade-deadline/rust-wire/single",
+        "display_name": "System tx enclave-upgrade-deadline (Rust wire/accounting only)",
         "execution_class": "system_transaction",
         "profile": "single",
         "crypto_mode": "none",
@@ -7564,33 +7562,15 @@
         "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "system_visible": 21080,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
           "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 80,
-          "operations": 5
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 0,
-          "operations": 0
         },
         {
           "ledger": "system_internal",
@@ -7603,16 +7583,224 @@
         {
           "label": "production system-tx execution",
           "target": "0xff00000000000000000000000000000000000001",
-          "selector": "0x4f534832",
+          "selector": "0x4f534555",
           "status": "excluded; TODO outbe-chain-6le.7",
           "gas_used": 0,
           "fidelity": "benchmark_stub"
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "21080"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/gem-cleanup/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/gem-cleanup/rust-wire/single",
+        "display_name": "System tx gem-cleanup (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f534743",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/gem-factory/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/gem-factory/rust-wire/single",
+        "display_name": "System tx gem-factory (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f53474d",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/hyperlane-slash/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/hyperlane-slash/rust-wire/single",
+        "display_name": "System tx hyperlane-slash (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f53484c",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/intex-factory/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/intex-factory/rust-wire/single",
+        "display_name": "System tx intex-factory (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f534958",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
     "system-tx/late-finalize-credits/rust-wire/single": {
@@ -7634,33 +7822,15 @@
         "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "system_visible": 21080,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
           "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 80,
-          "operations": 5
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 0,
-          "operations": 0
         },
         {
           "ledger": "system_internal",
@@ -7680,15 +7850,15 @@
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "21080"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
-    "system-tx/oracle-slash-window/rust-wire/single": {
+    "system-tx/nod-factory/rust-wire/single": {
       "metadata": {
-        "id": "system-tx/oracle-slash-window/rust-wire/single",
-        "display_name": "System tx oracle-slash-window (Rust wire/accounting only)",
+        "id": "system-tx/nod-factory/rust-wire/single",
+        "display_name": "System tx nod-factory (Rust wire/accounting only)",
         "execution_class": "system_transaction",
         "profile": "single",
         "crypto_mode": "none",
@@ -7704,33 +7874,15 @@
         "nonzero_byte_gas": 80
       },
       "gas_totals": {
-        "system_visible": 21080,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
           "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 0,
-          "operations": 0
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 80,
-          "operations": 5
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 0,
-          "operations": 0
         },
         {
           "ledger": "system_internal",
@@ -7743,16 +7895,276 @@
         {
           "label": "production system-tx execution",
           "target": "0xff00000000000000000000000000000000000001",
-          "selector": "0x4f534f32",
+          "selector": "0x4f534e44",
           "status": "excluded; TODO outbe-chain-6le.7",
           "gas_used": 0,
           "fidelity": "benchmark_stub"
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "30000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "21080"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/oracle-slash/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/oracle-slash/rust-wire/single",
+        "display_name": "System tx oracle-slash (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f534f53",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/oracle/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/oracle/rust-wire/single",
+        "display_name": "System tx oracle (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f534f52",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/radicle-publication/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/radicle-publication/rust-wire/single",
+        "display_name": "System tx radicle-publication (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 3683,
+        "zero_bytes": 97,
+        "nonzero_bytes": 3586,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 388,
+        "nonzero_byte_gas": 57376
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f535032",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/rewards/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/rewards/rust-wire/single",
+        "display_name": "System tx rewards (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f535257",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/staking/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/staking/rust-wire/single",
+        "display_name": "System tx staking (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f535354",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
     "system-tx/tee-bootstrap/rust-wire/single": {
@@ -7767,39 +8179,21 @@
       },
       "calldata": {
         "bytes": 1493,
-        "zero_bytes": 285,
-        "nonzero_bytes": 1208,
+        "zero_bytes": 282,
+        "nonzero_bytes": 1211,
         "transaction_base_gas": 21000,
-        "zero_byte_gas": 1140,
-        "nonzero_byte_gas": 19328
+        "zero_byte_gas": 1128,
+        "nonzero_byte_gas": 19376
       },
       "gas_totals": {
-        "system_visible": 3725817,
+        "system_visible": 0,
         "system_internal": 0
       },
       "gas_components": [
         {
           "ledger": "system_visible",
-          "key": "visible.transaction_base",
-          "gas": 21000,
-          "operations": 1
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.zero_calldata_bytes",
-          "gas": 1140,
-          "operations": 285
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.nonzero_calldata_bytes",
-          "gas": 19328,
-          "operations": 1208
-        },
-        {
-          "ledger": "system_visible",
-          "key": "visible.protocol_precharge",
-          "gas": 3684349,
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
           "operations": 1
         },
         {
@@ -7820,9 +8214,165 @@
         }
       ],
       "artifacts": {
-        "visible.block_gas_limit": "500000000",
-        "visible.ce_gas_limit": "0",
-        "visible.gas_limit": "3725817"
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/update/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/update/rust-wire/single",
+        "display_name": "System tx update (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f535550",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/validator-liveness/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/validator-liveness/rust-wire/single",
+        "display_name": "System tx validator-liveness (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f53564c",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
+      }
+    },
+    "system-tx/vote/rust-wire/single": {
+      "metadata": {
+        "id": "system-tx/vote/rust-wire/single",
+        "display_name": "System tx vote (Rust wire/accounting only)",
+        "execution_class": "system_transaction",
+        "profile": "single",
+        "crypto_mode": "none",
+        "execution_layer": "marginal",
+        "fidelity": "partial_stubbed"
+      },
+      "calldata": {
+        "bytes": 5,
+        "zero_bytes": 0,
+        "nonzero_bytes": 5,
+        "transaction_base_gas": 21000,
+        "zero_byte_gas": 0,
+        "nonzero_byte_gas": 80
+      },
+      "gas_totals": {
+        "system_visible": 0,
+        "system_internal": 0
+      },
+      "gas_components": [
+        {
+          "ledger": "system_visible",
+          "key": "visible.zero_gas_envelope",
+          "gas": 0,
+          "operations": 1
+        },
+        {
+          "ledger": "system_internal",
+          "key": "internal.execution_excluded_rust_only",
+          "gas": 0,
+          "operations": 0
+        }
+      ],
+      "child_frames": [
+        {
+          "label": "production system-tx execution",
+          "target": "0xff00000000000000000000000000000000000001",
+          "selector": "0x4f535654",
+          "status": "excluded; TODO outbe-chain-6le.7",
+          "gas_used": 0,
+          "fidelity": "benchmark_stub"
+        }
+      ],
+      "artifacts": {
+        "visible.block_gas_limit": "32000000",
+        "visible.execution_gas_limit": "10000000000",
+        "visible.gas_limit": "0"
       }
     },
     "tribute/create/zk/cold": {

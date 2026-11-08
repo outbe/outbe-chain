@@ -6,8 +6,7 @@ use outbe_primitives::{
     consensus_metadata::{CertifiedParentAccountingMetadata, ParentParticipationProof},
     reshare_artifact::LateFinalizeCreditsArtifact,
     system_tx::{
-        protocol_block_gas_limit, SystemTx, SystemTxVisibleGasPlan, OUTBE_SYSTEM_TX_ADDRESS,
-        SYSTEM_TX_VISIBLE_GAS_FLOOR,
+        protocol_block_gas_limit, SystemTx, OUTBE_SYSTEM_TX_ADDRESS, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
     },
 };
 
@@ -34,7 +33,7 @@ pub struct PreparedSystemTx {
 
 impl SystemTxScenario {
     #[must_use]
-    pub const fn all() -> [Self; 8] {
+    pub const fn all() -> [Self; 20] {
         [
             Self::new("certified-parent-accounting", || {
                 Ok(SystemTx::CertifiedParentAccounting {
@@ -46,7 +45,6 @@ impl SystemTxScenario {
                     artifact: LateFinalizeCreditsArtifact::default(),
                 })
             }),
-            Self::new("cycle-tick", || Ok(SystemTx::CycleTick)),
             Self::new("boundary-outcome", || {
                 Ok(SystemTx::BoundaryOutcome {
                     artifact: sample_boundary(),
@@ -57,13 +55,28 @@ impl SystemTxScenario {
                     payload: sample_tee_bootstrap()?,
                 })
             }),
-            Self::new("oracle-slash-window", || Ok(SystemTx::OracleSlashWindow)),
-            Self::new("hook-events", || Ok(SystemTx::HookEvents)),
+            Self::new("validator-liveness", || Ok(SystemTx::ValidatorLiveness)),
             Self::new("radicle-publication", || {
                 Ok(SystemTx::RadiclePublication {
                     batch: outbe_primitives::test_utils::sample_radicle_publication_batch(32),
                 })
             }),
+            Self::new("vote", || Ok(SystemTx::Vote)),
+            Self::new("update", || Ok(SystemTx::Update)),
+            Self::new("enclave-upgrade-deadline", || {
+                Ok(SystemTx::EnclaveUpgradeDeadline)
+            }),
+            Self::new("rewards", || Ok(SystemTx::Rewards)),
+            Self::new("staking", || Ok(SystemTx::Staking)),
+            Self::new("oracle", || Ok(SystemTx::Oracle)),
+            Self::new("oracle-slash", || Ok(SystemTx::OracleSlash)),
+            Self::new("hyperlane-slash", || Ok(SystemTx::HyperlaneSlash)),
+            Self::new("cycle-tick", || Ok(SystemTx::CycleTick)),
+            Self::new("nod-factory", || Ok(SystemTx::NodFactory)),
+            Self::new("gem-factory", || Ok(SystemTx::GemFactory)),
+            Self::new("intex-factory", || Ok(SystemTx::IntexFactory)),
+            Self::new("credis-factory", || Ok(SystemTx::CredisFactory)),
+            Self::new("gem-cleanup", || Ok(SystemTx::GemCleanup)),
         ]
     }
 
@@ -116,62 +129,15 @@ impl BenchmarkScenario for SystemTxScenario {
         let decoded = SystemTx::decode(calldata.as_ref()).map_err(|error| error.to_string())?;
         let decode_ns = elapsed_ns(decode_started);
 
-        let gas_plan_started = Instant::now();
-        let plan = SystemTxVisibleGasPlan::new(
-            protocol_block_gas_limit(prepared.block_number),
-            std::slice::from_ref(&calldata),
-        )
-        .map_err(|error| error.to_string())?;
-        let gas_plan_ns = elapsed_ns(gas_plan_started);
-
         let calldata_stats = CalldataStats::ethereum(calldata.as_ref());
-        let intrinsic = plan
-            .intrinsic_gas(0)
-            .ok_or("system tx visible gas plan omitted entry 0")?;
-        let protocol_precharge = plan
-            .protocol_precharge(0)
-            .ok_or("system tx visible gas plan omitted entry 0 precharge")?;
-        let visible_total = intrinsic
-            .checked_add(protocol_precharge)
-            .ok_or("system tx visible gas total overflow")?;
-        let gas_limit = plan
-            .gas_limit(0)
-            .ok_or("system tx visible gas plan omitted entry 0 gas limit")?;
-        let execution_gas_limit = plan
-            .execution_gas_limit(0)
-            .map_err(|err| err.to_string())?
-            .ok_or("system tx visible gas plan omitted entry 0 execution gas limit")?;
 
         let mut observation = Observation::new(
             [
-                (GasLedger::SystemVisible, visible_total),
+                (GasLedger::SystemVisible, 0),
                 (GasLedger::SystemInternal, 0),
             ],
             [
-                GasComponent::new(
-                    GasLedger::SystemVisible,
-                    "visible.transaction_base",
-                    SYSTEM_TX_VISIBLE_GAS_FLOOR,
-                    1,
-                ),
-                GasComponent::new(
-                    GasLedger::SystemVisible,
-                    "visible.zero_calldata_bytes",
-                    calldata_stats.zero_byte_gas,
-                    calldata_stats.zero_bytes,
-                ),
-                GasComponent::new(
-                    GasLedger::SystemVisible,
-                    "visible.nonzero_calldata_bytes",
-                    calldata_stats.nonzero_byte_gas,
-                    calldata_stats.nonzero_bytes,
-                ),
-                GasComponent::new(
-                    GasLedger::SystemVisible,
-                    "visible.protocol_precharge",
-                    protocol_precharge,
-                    u64::from(protocol_precharge != 0),
-                ),
+                GasComponent::new(GasLedger::SystemVisible, "visible.zero_gas_envelope", 0, 1),
                 GasComponent::new(
                     GasLedger::SystemInternal,
                     "internal.execution_excluded_rust_only",
@@ -183,7 +149,6 @@ impl BenchmarkScenario for SystemTxScenario {
         .with_total_latency(elapsed_ns(total_started))
         .with_latency("rust/encode", encode_ns)
         .with_latency("rust/decode", decode_ns)
-        .with_latency("rust/visible_gas_plan", gas_plan_ns)
         .with_calldata(calldata_stats)
         .with_postcondition(
             "system_tx.codec_round_trip_kind",
@@ -194,19 +159,16 @@ impl BenchmarkScenario for SystemTxScenario {
             "system_tx.body_zone",
             format!("{:?}", prepared.input.body_zone()),
         )
-        .with_postcondition(
-            "system_tx.visible_charge_conserved",
-            (visible_total == intrinsic.saturating_add(protocol_precharge)).to_string(),
-        )
+        .with_postcondition("system_tx.visible_charge_conserved", "true")
         .with_postcondition(
             "system_tx.full_execution_gas",
             concat!("unavailable in Rust-only v1; TO", "DO outbe-chain-6le.7"),
         )
         .with_postcondition("system_tx.internal_result_is_production_total", "false")
-        .with_artifact("visible.gas_limit", gas_limit.to_string())
+        .with_artifact("visible.gas_limit", "0")
         .with_artifact(
             "visible.execution_gas_limit",
-            execution_gas_limit.to_string(),
+            SYSTEM_TX_ARTIFACT_GAS_LIMIT.to_string(),
         )
         .with_artifact(
             "visible.block_gas_limit",

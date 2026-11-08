@@ -3,28 +3,20 @@ use crate::application::handler::verification::VerifyTask;
 use futures::{FutureExt as _, StreamExt as _};
 use outbe_primitives::projection::ExecutionReadBudget;
 use outbe_primitives::signer::OutbeEvmSigner;
-use outbe_primitives::system_tx::SystemTx;
 
 fn proposed_block(parent: Option<&ConsensusBlock>, malformed_phase1: bool) -> ConsensusBlock {
     let parent_hash = parent.map_or(B256::ZERO, ConsensusBlock::block_hash);
     let mut raw = if parent.is_some() && !malformed_phase1 {
+        // Canonical block 2: CPA, LateFinalize, ValidatorLiveness, the nine
+        // begin-block kinds, then the five end-zone kinds at ordinals 24..=28.
+        // `malformed_phase1` keeps the empty parent-height fixture below.
         crate::test_fixtures::block_with_system_inputs(
             &OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap(),
             crate::test_fixtures::SystemBlockFixture {
                 block_number: 2,
                 parent_hash,
                 extra_data: Bytes::new(),
-                inputs: vec![
-                    SystemTx::CertifiedParentAccounting {
-                        metadata: crate::test_fixtures::finalized_metadata(parent_hash),
-                    },
-                    SystemTx::LateFinalizeCredits {
-                        artifact: Default::default(),
-                    },
-                    SystemTx::CycleTick,
-                    SystemTx::OracleSlashWindow,
-                    SystemTx::HookEvents,
-                ],
+                inputs: crate::test_fixtures::steady_begin_inputs(parent_hash),
                 chain_id: outbe_primitives::chain::CHAIN_ID,
             },
         )

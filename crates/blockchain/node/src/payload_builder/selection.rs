@@ -125,13 +125,13 @@ where
         let regular_limit = pool_tx.gas_limit().min(self.state.tx_gas_limit_cap);
         let regular_fits = self
             .state
-            .pre_end_gas_limit
+            .block_gas_limit
             .checked_sub(regular_used)
             .is_some_and(|remaining| regular_limit <= remaining);
         let state_fits = !self.state.eip8037
             || self
                 .state
-                .pre_end_gas_limit
+                .block_gas_limit
                 .checked_sub(self.state.state_gas_used)
                 .is_some_and(|remaining| pool_tx.gas_limit() <= remaining);
         if !regular_fits || !state_fits {
@@ -139,7 +139,7 @@ where
                 pool_tx,
                 InvalidPoolTransactionError::ExceedsGasLimit(
                     pool_tx.gas_limit(),
-                    self.state.pre_end_gas_limit,
+                    self.state.block_gas_limit,
                 ),
             );
             return false;

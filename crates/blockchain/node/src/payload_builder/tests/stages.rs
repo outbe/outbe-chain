@@ -163,9 +163,7 @@ fn run_user_stage_with_options(
 ) -> UserStageResult {
     let (evm_config, provider) = narrow_user_stage_fixture();
     let chain_spec = provider.chain_spec();
-    let block_gas_limit =
-        outbe_primitives::protocol_schedule::OutbeProtocolSchedule::END_BLOCK_RESERVED_GAS
-            + 100_000;
+    let block_gas_limit = 100_000;
     let parent = SealedHeader::seal_slow(OutbeHeader::new(alloy_consensus::Header {
         number: 1,
         gas_limit: block_gas_limit,
