@@ -60,8 +60,9 @@ pub(super) async fn send_exact_transaction(
             if exact_transaction_receipt_exists(rpc, raw).await? {
                 raw.transaction_hash
             } else {
-                return Err(error)
-                    .wrap_err("renewal is already known without the exact transaction receipt");
+                return Err(error).wrap_err(RenewalError::AwaitingExactReceipt {
+                    transaction_hash: raw.transaction_hash,
+                });
             }
         }
         Err(error) if transaction_nonce_is_too_low(&error) => {
