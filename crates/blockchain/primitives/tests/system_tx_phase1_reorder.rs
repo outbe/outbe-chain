@@ -1,11 +1,8 @@
-//! - Phase 1 pre-execution reorder invariants.
+//! Phase 1 pre-execution reorder invariants.
 //!
-//! Tests in this file pin the public-API surface of `SystemTxPhase` and
-//! `expected_begin_block_selectors` that drive the begin-zone phase routing.
-//! Some tests assert the *cursor-level* invariant that lays the foundation
-//! for moving Phase 1 commit into pre-execution. Tests whose verification
-//! requires the actual commit-timing move are marked `#[ignore]`. They point
-//! to (Phase 1 commit-into-pre-execution + state-root ordering).
+//! `SystemTxPhase` and `BlockExecutionFsm` share the begin-zone selector
+//! schedule. The cursor stops at `UserTxs`. The FSM continues through the
+//! end zone at ordinals 24..=28.
 
 use outbe_primitives::system_tx::*;
 
@@ -13,21 +10,19 @@ const BLOCK_1: u64 = 1;
 const BLOCK_2: u64 = 2;
 const BLOCK_42: u64 = 42;
 
-/// block 1 (genesis bootstrap) must skip Phase 1
-/// and start the cursor at CycleTick. No Phase1Preexecuted variant must be
-/// produced for the bootstrap block under any condition.
+/// Block 1 skips Phase 1 and starts at BoundaryOutcome.
 #[test]
 fn apply_pre_execution_changes_skips_phase1_for_block_1() {
     let cursor = SystemTxPhase::initial_for_block(BLOCK_1, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    assert_eq!(cursor, SystemTxPhase::CycleTick { body_index: 0 });
-    assert_eq!(cursor.expected_selector(), Some(CYCLE_TICK_SELECTOR));
-    assert!(matches!(cursor, SystemTxPhase::CycleTick { .. }));
-    // Crucially, no Phase 1 variant for block 1.
+    assert_eq!(
+        cursor,
+        SystemTxPhase::BoundaryOutcomeOptional { body_index: 0 }
+    );
+    assert_eq!(cursor.expected_selector(), Some(BOUNDARY_OUTCOME_SELECTOR));
     assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
 }
 
-/// Cursor body-index ordering through the first scheduled phase of the V2
-/// block-`n>=2` canonical layout.
+/// Phase 1 is receipt index 0. CycleTick is the last begin-zone phase.
 #[test]
 fn phase1_receipt_index_0_before_cycle_tick() {
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
@@ -39,67 +34,94 @@ fn phase1_receipt_index_0_before_cycle_tick() {
             ..
         }
     ));
-    // Advance past Phase 1: LateFinalizeCredits at body_index=1, then
-    // CycleTick at body_index=2.
-    let late = phase1.advance_after_commit(false, false);
-    assert_eq!(late, SystemTxPhase::LateFinalizeCredits { body_index: 1 });
-    let cycle = late.advance_after_commit(false, false);
-    assert_eq!(cycle, SystemTxPhase::CycleTick { body_index: 2 });
-    // CycleTick body_index is exactly 2 - after Phase 1 (0) and LateFinalize (1).
-    assert_eq!(cycle.body_index(), Some(2));
+    let selectors = expected_begin_block_selectors(BLOCK_2, false, false);
+    let mut cursor = phase1;
+    for (index, selector) in selectors.iter().enumerate() {
+        assert_eq!(cursor.body_index(), Some(u8::try_from(index).unwrap()));
+        assert_eq!(cursor.expected_selector(), Some(*selector));
+        if *selector == CYCLE_TICK_SELECTOR {
+            assert_eq!(index, 11);
+        }
+        cursor = cursor.advance_after_commit(false, false);
+    }
+    assert_eq!(cursor, SystemTxPhase::UserTxs);
 }
 
-/// Block `n>=2` body-index map: Phase 1 -> LateFinalizeCredits -> CycleTick ->
-/// (optional BoundaryOutcome) -> OracleSlashWindow ->
-/// HookEvents -> UserTxs. Reorder must preserve the ordering relative to the
-/// body receipt slots.
+/// Steady-state selector order is stable with and without BoundaryOutcome.
+/// Body index increases by 1. The FSM uses the same begin selectors, then
+/// the end-zone ordinals 24..=28.
 #[test]
 fn phase1_reordering_preserves_body_receipt_order() {
-    let kinds_no_boundary = expected_begin_block_selectors(BLOCK_42, false, false);
     assert_eq!(
-        kinds_no_boundary,
+        expected_begin_block_selectors(BLOCK_42, false, false),
         vec![
-            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-            LATE_FINALIZE_CREDITS_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            *b"OSA3", *b"OSL2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW", *b"OSST",
+            *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
+        ]
+    );
+    let selectors = expected_begin_block_selectors(BLOCK_42, true, false);
+    assert_eq!(
+        selectors,
+        vec![
+            *b"OSA3", *b"OSL2", *b"OSB2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW",
+            *b"OSST", *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
         ]
     );
 
-    let kinds_with_boundary = expected_begin_block_selectors(BLOCK_42, true, false);
-    assert_eq!(
-        kinds_with_boundary,
-        vec![
-            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-            LATE_FINALIZE_CREDITS_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-            BOUNDARY_OUTCOME_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
-        ]
-    );
+    let mut fsm = BlockExecutionFsm::for_block(BLOCK_42, true, false, false);
+    let mut cursor = SystemTxPhase::initial_for_block(BLOCK_42, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
+    for (index, selector) in selectors.iter().enumerate() {
+        let index = u8::try_from(index).unwrap();
+        assert_eq!(cursor.expected_selector(), Some(*selector));
+        assert_eq!(cursor.body_index(), Some(index));
+        assert_eq!(fsm.expected_selector(), Some(*selector));
+        assert_eq!(fsm.expected_ordinal(), Some(index));
+        let kind = fsm.expected_system_tx_kind().unwrap();
+        fsm.on_system_tx(kind).unwrap();
+        cursor = cursor.advance_after_commit(true, false);
+    }
+    assert_eq!(cursor, SystemTxPhase::UserTxs);
+    assert_eq!(fsm.stage(), BlockExecutionStage::MidBlock);
+    fsm.on_user_tx().unwrap();
+    assert_eq!(fsm.user_txs_executed(), 1);
 
-    // Drive the cursor through the canonical block-42 with-boundary sequence
-    // and assert body_index increases monotonically by exactly 1 per advance.
-    let phase1 = SystemTxPhase::initial_for_block(BLOCK_42, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
-    let late = phase1.advance_after_commit(true, false);
-    let cycle = late.advance_after_commit(true, false);
-    let boundary = cycle.advance_after_commit(true, false);
-    let oracle = boundary.advance_after_commit(true, false);
-    let hook_events = oracle.advance_after_commit(true, false);
-    let after_hook_events = hook_events.advance_after_commit(true, false);
-    assert_eq!(phase1.body_index(), Some(0));
-    assert_eq!(late.body_index(), Some(1));
-    assert_eq!(cycle.body_index(), Some(2));
-    assert_eq!(boundary.body_index(), Some(3));
-    assert_eq!(oracle.body_index(), Some(4));
-    assert_eq!(hook_events.body_index(), Some(5));
-    assert_eq!(after_hook_events, SystemTxPhase::UserTxs);
+    let end_selectors = expected_end_block_selectors(BLOCK_42);
+    assert_eq!(
+        end_selectors,
+        vec![*b"OSND", *b"OSGM", *b"OSIX", *b"OSCR", *b"OSGC"]
+    );
+    for (offset, selector) in end_selectors.iter().enumerate() {
+        let ordinal = 24 + u8::try_from(offset).unwrap();
+        assert_eq!(fsm.expected_selector(), Some(*selector));
+        assert_eq!(fsm.expected_ordinal(), Some(ordinal));
+        assert!((NOD_FACTORY_ORDINAL..=GEM_CLEANUP_ORDINAL).contains(&ordinal));
+        let kind = fsm.expected_system_tx_kind().unwrap();
+        fsm.on_system_tx(kind).unwrap();
+    }
+    assert_eq!(fsm.stage(), BlockExecutionStage::Completed);
+    fsm.finish().unwrap();
 }
 
-/// Cursor invariant: Phase 1 is consumed at most once per block. After
-/// advancing past Phase 1, further advances never return a Phase 1 variant.
+/// A begin-zone kind submitted during the consensus stage is rejected.
+#[test]
+fn block_execution_fsm_rejects_reordered_system_tx() {
+    let mut fsm = BlockExecutionFsm::for_block(BLOCK_42, false, false, false);
+    let err = fsm.on_system_tx(SystemTxKind::Vote).unwrap_err();
+    assert!(matches!(
+        err,
+        SystemTxError::UnexpectedSystemTx {
+            stage: BlockExecutionStage::ConsensusStage,
+            ..
+        }
+    ));
+    assert_eq!(
+        fsm.expected_system_tx_kind(),
+        Some(SystemTxKind::CertifiedParentAccounting)
+    );
+    assert_eq!(fsm.expected_ordinal(), Some(0));
+}
+
+/// Phase 1 is consumed once. The long begin walk reaches UserTxs.
 #[test]
 fn phase1_executes_exactly_once() {
     let mut cursor = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
@@ -107,7 +129,7 @@ fn phase1_executes_exactly_once() {
     if matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }) {
         saw_phase1 += 1;
     }
-    for _ in 0..10 {
+    for _ in 0..16 {
         cursor = cursor.advance_after_commit(true, false);
         if matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }) {
             saw_phase1 += 1;

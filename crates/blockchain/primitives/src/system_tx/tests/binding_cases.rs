@@ -7,7 +7,7 @@ use super::primitives::{
     reshare_artifact::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
-    system_tx::{SystemTx, SystemTxLayout},
+    system_tx::{SystemTx, SystemTxLayout, BEGIN_BLOCK_ORDER, END_BLOCK_ORDER},
     OutbeBlockBody, OutbeHeader,
 };
 use alloy_consensus::{Header, SignableTransaction, TxLegacy};
@@ -61,7 +61,7 @@ fn transaction(input: Bytes) -> TransactionSigned {
         chain_id: Some(2026),
         nonce: 0,
         gas_price: 0,
-        gas_limit: 21_000,
+        gas_limit: 0,
         to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
         value: U256::ZERO,
         input,
@@ -123,14 +123,14 @@ fn steady_inputs() -> Vec<Bytes> {
         encoded(SystemTx::LateFinalizeCredits {
             artifact: Default::default(),
         }),
+        encoded(SystemTx::ValidatorLiveness),
     ];
-    inputs.extend([
-        encoded(SystemTx::CycleTick),
-        encoded(SystemTx::OracleSlashWindow),
-        encoded(SystemTx::HookEvents),
-        encoded(SystemTx::CallEventProcessing),
-        encoded(SystemTx::CleanupProcessing),
-    ]);
+    for kind in BEGIN_BLOCK_ORDER {
+        inputs.push(encoded(kind.into_empty_system_tx().unwrap()));
+    }
+    for kind in END_BLOCK_ORDER {
+        inputs.push(encoded(kind.into_empty_system_tx().unwrap()));
+    }
     inputs
 }
 
@@ -247,6 +247,7 @@ pub(super) fn assert_diagnostics(
     validate_parent: impl Fn(&SystemTxLayout<'_>, &OutbeHeader) -> Result<(), String>,
     validate_boundary: impl Fn(&SystemTxLayout<'_>, &OutbeBlockArtifacts) -> Result<(), String>,
 ) {
+    let expected_mismatch = "invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 66, 50], [79, 83, 86, 76], [79, 83, 86, 84], [79, 83, 85, 80], [79, 83, 69, 85], [79, 83, 82, 87], [79, 83, 83, 84], [79, 83, 79, 82], [79, 83, 79, 83], [79, 83, 72, 76], [79, 83, 67, 50]], expected end [[79, 83, 78, 68], [79, 83, 71, 77], [79, 83, 73, 88], [79, 83, 67, 82], [79, 83, 71, 67]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 86, 76], [79, 83, 86, 84], [79, 83, 85, 80], [79, 83, 69, 85], [79, 83, 82, 87], [79, 83, 83, 84], [79, 83, 79, 82], [79, 83, 79, 83], [79, 83, 72, 76], [79, 83, 67, 50]], actual end [[79, 83, 78, 68], [79, 83, 71, 77], [79, 83, 73, 88], [79, 83, 67, 82], [79, 83, 71, 67]]";
     let expected = [
         ("genesis_empty", None, None),
         ("block1_requires_boundary", Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)"), Some("invalid system tx set: V2 genesis bootstrap: block 1 must carry a BoundaryOutcome system tx (got has_boundary_outcome = false)")),
@@ -268,7 +269,7 @@ pub(super) fn assert_diagnostics(
         ("boundary_mismatch", Some("BoundaryOutcome system tx artifact mismatch"), Some("BoundaryOutcome system tx artifact mismatch")),
         ("boundary_match_then_bad_input", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
         ("bad_input_before_boundary_match", Some("decode system tx input: system tx input too short: 0 bytes"), Some("decode system transaction input: system tx input too short: 0 bytes")),
-        ("boundary_header_missing_body", Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [[79, 83, 67, 69], [79, 83, 67, 80]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end [[79, 83, 67, 69], [79, 83, 67, 80]]"), Some("invalid system tx set: active system tx set mismatch: expected begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 66, 50], [79, 83, 79, 50], [79, 83, 72, 50]], expected end [[79, 83, 67, 69], [79, 83, 67, 80]], actual begin [[79, 83, 65, 51], [79, 83, 76, 50], [79, 83, 67, 50], [79, 83, 79, 50], [79, 83, 72, 50]], actual end [[79, 83, 67, 69], [79, 83, 67, 80]]")),
+        ("boundary_header_missing_body", Some(expected_mismatch), Some(expected_mismatch)),
     ];
     let cases = cases();
     assert_eq!(cases.len(), expected.len());

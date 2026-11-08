@@ -23,7 +23,6 @@ pub mod error;
 pub mod errors;
 pub mod filesystem;
 pub mod header;
-pub mod hook_events;
 mod journal_writer;
 #[cfg(unix)]
 pub mod local_record;

@@ -27,10 +27,10 @@ pub enum BlockHeightRegime {
     /// Carries no transactions, no begin-zone system txs, and no execution witness.
     Genesis,
     /// Block 1: One-time network bootstrap block.
-    /// Carries begin-zone system txs (`CycleTick`, mandatory epoch-0 `BoundaryOutcome`,
-    /// mandatory `TeeBootstrap`, `OracleSlashWindow`, `HookEvents`, optional `RadiclePublication`),
-    /// no parent finalization accounting (`CertifiedParentAccounting` / `LateFinalizeCredits`),
-    /// and no user transactions.
+    /// Carries begin-zone system txs (mandatory epoch-0 `BoundaryOutcome`, mandatory
+    /// `TeeBootstrap`, `ValidatorLiveness`, optional `RadiclePublication`, and the
+    /// 9 `BEGIN_BLOCK_ORDER` modules), no parent finalization accounting
+    /// (`CertifiedParentAccounting` / `LateFinalizeCredits`), and no user transactions.
     GenesisBootstrap,
     /// Block `>= 2`: Steady-state execution regime.
     /// Begins with mandatory `CertifiedParentAccounting` (ordinal 0) and

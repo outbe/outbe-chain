@@ -104,12 +104,12 @@ impl TeeBootstrapV2 {
             .checked_mul(SYSTEM_TX_NON_ZERO_BYTE_GAS)
             .and_then(|gas| gas.checked_add(SYSTEM_TX_VISIBLE_GAS_FLOOR))
             .ok_or(CodecError::ArithmeticOverflow)?;
-        let protocol_precharge = self.protocol_precharge(
+        let bootstrap_work = self.bootstrap_work_gas(
             &SystemGasScheduleV1::normative(),
             &TeeRegistryGasScheduleV1::normative(),
         )?;
         let required_gas = worst_case_intrinsic
-            .checked_add(protocol_precharge)
+            .checked_add(bootstrap_work)
             .ok_or(CodecError::ArithmeticOverflow)?;
         if required_gas > STEADY_BLOCK_GAS_LIMIT {
             return Err(CodecError::LimitExceeded {
@@ -136,7 +136,7 @@ impl TeeBootstrapV2 {
         Ok(keccak256(preimage))
     }
 
-    pub fn protocol_precharge(
+    pub fn bootstrap_work_gas(
         &self,
         system_schedule: &SystemGasScheduleV1,
         tee_registry_schedule: &TeeRegistryGasScheduleV1,

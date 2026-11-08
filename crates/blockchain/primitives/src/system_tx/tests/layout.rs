@@ -22,6 +22,36 @@ fn user_tx() -> TransactionSigned {
     .into()
 }
 
+fn block1_canonical_txs() -> Vec<TransactionSigned> {
+    let mut inputs = vec![boundary(), bootstrap(), SystemTx::ValidatorLiveness];
+    inputs.extend(begin_stage_inputs());
+    inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| system_tx(input, ordinal as u8, 1))
+        .collect()
+}
+
+fn block2_canonical_txs(with_boundary: bool) -> Vec<TransactionSigned> {
+    let mut begin_inputs = vec![accounting(), late_credits()];
+    if with_boundary {
+        begin_inputs.push(boundary());
+    }
+    begin_inputs.push(SystemTx::ValidatorLiveness);
+    begin_inputs.extend(begin_stage_inputs());
+
+    let mut txs: Vec<TransactionSigned> = begin_inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| system_tx(input, ordinal as u8, 2))
+        .collect();
+    for input in end_stage_inputs() {
+        let ordinal = input.nonce_ordinal().expect("end ordinal");
+        txs.push(system_tx(input, ordinal, 2));
+    }
+    txs
+}
+
 #[test]
 fn split_accepts_empty_and_user_only_layouts() {
     let empty = split_system_layout(&[]).expect("empty splits");
@@ -50,8 +80,9 @@ fn split_accepts_block1_cycle_tick_prefix() {
 fn split_accepts_block_with_optional_boundary_prefix() {
     let txs = vec![
         system_tx(accounting(), 0, 42),
-        system_tx(SystemTx::CycleTick, 1, 42),
-        system_tx(boundary(), 2, 42),
+        system_tx(boundary(), 1, 42),
+        system_tx(SystemTx::ValidatorLiveness, 2, 42),
+        system_tx(SystemTx::CycleTick, 3, 42),
         user_tx(),
     ];
     let layout = split_system_layout(&txs).expect("layout splits");
@@ -59,10 +90,13 @@ fn split_accepts_block_with_optional_boundary_prefix() {
         layout.begin_block_selectors().expect("selectors"),
         vec![
             CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-            CYCLE_TICK_SELECTOR,
             BOUNDARY_OUTCOME_SELECTOR,
+            VALIDATOR_LIVENESS_SELECTOR,
+            CYCLE_TICK_SELECTOR,
         ]
     );
+    assert_eq!(layout.consensus_txs().unwrap().len(), 3);
+    assert_eq!(layout.begin_stage_txs().unwrap().len(), 1);
     assert_eq!(layout.user.len(), 1);
 }
 
@@ -93,9 +127,9 @@ fn split_rejects_reserved_tx_in_wrong_suffix_zone() {
 #[test]
 fn split_rejects_reserved_tx_in_middle_zone() {
     let txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 1),
+        system_tx(boundary(), 0, 1),
         user_tx(),
-        system_tx(boundary(), 1, 1),
+        system_tx(SystemTx::CycleTick, 1, 1),
         user_tx(),
     ];
     assert!(matches!(
@@ -109,47 +143,15 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
     let block0 = split_system_layout(&[]).expect("layout");
     validate_active_system_tx_set(&block0, 0, false, false).expect("genesis ok");
 
-    // V2: block 1 must carry a BoundaryOutcome for the genesis bootstrap.
-    let block1_txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 1),
-        system_tx(boundary(), 1, 1),
-        system_tx(bootstrap(), 2, 1),
-        system_tx(SystemTx::OracleSlashWindow, 3, 1),
-        system_tx(SystemTx::HookEvents, 4, 1),
-    ];
+    let block1_txs = block1_canonical_txs();
     let block1 = split_system_layout(&block1_txs).expect("layout");
     validate_active_system_tx_set(&block1, 1, true, true).expect("block 1 V2 ok");
 
-    let block2_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(late_credits(), 1, 2),
-        system_tx(SystemTx::CycleTick, 2, 2),
-        system_tx(SystemTx::OracleSlashWindow, 3, 2),
-        system_tx(SystemTx::HookEvents, 4, 2),
-        system_tx(
-            SystemTx::CallEventProcessing,
-            CALL_EVENT_PROCESSING_ORDINAL,
-            2,
-        ),
-        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL, 2),
-    ];
+    let block2_txs = block2_canonical_txs(false);
     let block2 = split_system_layout(&block2_txs).expect("layout");
     validate_active_system_tx_set(&block2, 2, false, false).expect("block 2 ok");
 
-    let block2_with_boundary_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(late_credits(), 1, 2),
-        system_tx(SystemTx::CycleTick, 2, 2),
-        system_tx(boundary(), 3, 2),
-        system_tx(SystemTx::OracleSlashWindow, 4, 2),
-        system_tx(SystemTx::HookEvents, 5, 2),
-        system_tx(
-            SystemTx::CallEventProcessing,
-            CALL_EVENT_PROCESSING_ORDINAL,
-            2,
-        ),
-        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL, 2),
-    ];
+    let block2_with_boundary_txs = block2_canonical_txs(true);
     let block2_with_boundary = split_system_layout(&block2_with_boundary_txs).expect("layout");
     validate_active_system_tx_set(&block2_with_boundary, 2, true, false)
         .expect("block 2 boundary ok");
@@ -158,8 +160,8 @@ fn validate_active_system_tx_set_accepts_expected_membership() {
 #[test]
 fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     let missing_finalization_txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 2),
-        system_tx(SystemTx::OracleSlashWindow, 1, 2),
+        system_tx(SystemTx::ValidatorLiveness, 0, 2),
+        system_tx(SystemTx::CycleTick, 1, 2),
     ];
     let missing_finalization = split_system_layout(&missing_finalization_txs).expect("layout");
     assert!(matches!(
@@ -167,25 +169,8 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
         Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
     ));
 
-    let missing_cycle_tick_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(SystemTx::OracleSlashWindow, 1, 2),
-    ];
-    let missing_cycle_tick = split_system_layout(&missing_cycle_tick_txs).expect("layout");
-    assert!(matches!(
-        validate_active_system_tx_set(&missing_cycle_tick, 2, false, false),
-        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
-    ));
-
-    // V2: block 1 must include CycleTick, BoundaryOutcome and TeeBootstrap.
-    // Missing CycleTick (with the other mandatory phases present)
-    // still yields ActiveSystemTxSetMismatch.
-    let block1_missing_cycle_tick_txs = vec![
-        system_tx(boundary(), 0, 1),
-        system_tx(bootstrap(), 1, 1),
-        system_tx(SystemTx::OracleSlashWindow, 2, 1),
-        system_tx(SystemTx::HookEvents, 3, 1),
-    ];
+    let mut block1_missing_cycle_tick_txs = block1_canonical_txs();
+    block1_missing_cycle_tick_txs.pop();
     let block1_missing_cycle_tick =
         split_system_layout(&block1_missing_cycle_tick_txs).expect("layout");
     assert!(matches!(
@@ -194,75 +179,39 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
     ));
 
     let block1_missing_tee_txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 1),
-        system_tx(boundary(), 1, 1),
-        system_tx(SystemTx::OracleSlashWindow, 2, 1),
-        system_tx(SystemTx::HookEvents, 3, 1),
+        system_tx(boundary(), 0, 1),
+        system_tx(SystemTx::ValidatorLiveness, 1, 1),
+        system_tx(SystemTx::CycleTick, 2, 1),
     ];
     let block1_missing_tee = split_system_layout(&block1_missing_tee_txs).expect("layout");
-    assert!(
-        validate_active_system_tx_set(&block1_missing_tee, 1, true, false).is_err(),
-        "block 1 must not commit without TeeBootstrap"
+    assert_eq!(
+        validate_active_system_tx_set(&block1_missing_tee, 1, true, false),
+        Err(SystemTxError::V2Block1MissingTeeBootstrap)
     );
 
-    let block1_with_user_txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 1),
-        system_tx(boundary(), 1, 1),
-        system_tx(bootstrap(), 2, 1),
-        system_tx(SystemTx::OracleSlashWindow, 3, 1),
-        system_tx(SystemTx::HookEvents, 4, 1),
-        user_tx(),
-    ];
+    let mut block1_with_user_txs = block1_canonical_txs();
+    block1_with_user_txs.push(user_tx());
     let block1_with_user = split_system_layout(&block1_with_user_txs).expect("layout");
-    assert!(
-        validate_active_system_tx_set(&block1_with_user, 1, true, true).is_err(),
-        "block 1 must contain exactly the six mandatory system transactions"
+    assert_eq!(
+        validate_active_system_tx_set(&block1_with_user, 1, true, true),
+        Err(SystemTxError::V2Block1ContainsUserTransactions { actual: 1 })
     );
 
-    // V2: block 1 without BoundaryOutcome fails with the V2-specific
-    // genesis bootstrap error before structural checks.
-    let block1_no_boundary_txs = vec![
-        system_tx(SystemTx::CycleTick, 0, 1),
-        system_tx(SystemTx::OracleSlashWindow, 1, 1),
-        system_tx(SystemTx::HookEvents, 2, 1),
-    ];
+    let block1_no_boundary_txs = vec![system_tx(SystemTx::CycleTick, 0, 1)];
     let block1_no_boundary = split_system_layout(&block1_no_boundary_txs).expect("layout");
     assert!(matches!(
         validate_active_system_tx_set(&block1_no_boundary, 1, false, false),
         Err(SystemTxError::V2Block1MissingBoundaryOutcome)
     ));
 
-    let missing_oracle_slash_window_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(SystemTx::CycleTick, 1, 2),
-        system_tx(SystemTx::HookEvents, 2, 2),
-    ];
-    let missing_oracle_slash_window =
-        split_system_layout(&missing_oracle_slash_window_txs).expect("layout");
-    assert!(matches!(
-        validate_active_system_tx_set(&missing_oracle_slash_window, 2, false, false),
-        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
-    ));
-
-    let missing_boundary_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(SystemTx::CycleTick, 1, 2),
-        system_tx(SystemTx::OracleSlashWindow, 2, 2),
-        system_tx(SystemTx::HookEvents, 3, 2),
-    ];
+    let missing_boundary_txs = block2_canonical_txs(false);
     let missing_boundary = split_system_layout(&missing_boundary_txs).expect("layout");
     assert!(matches!(
         validate_active_system_tx_set(&missing_boundary, 2, true, false),
         Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
     ));
 
-    let unexpected_boundary_txs = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(SystemTx::CycleTick, 1, 2),
-        system_tx(boundary(), 2, 2),
-        system_tx(SystemTx::OracleSlashWindow, 3, 2),
-        system_tx(SystemTx::HookEvents, 4, 2),
-    ];
+    let unexpected_boundary_txs = block2_canonical_txs(true);
     let unexpected_boundary = split_system_layout(&unexpected_boundary_txs).expect("layout");
     assert!(matches!(
         validate_active_system_tx_set(&unexpected_boundary, 2, false, false),
@@ -271,24 +220,39 @@ fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
 }
 
 #[test]
-fn revert_fails_block_classifies_critical_begin_zone_phases() {
-    // Consensus- and economic-critical phases fail the block on a
-    // revert/halt. Non-critical phases keep the soft-receipt skip. Pin the
-    // full classification so that each new phase must make this choice.
-    for kind in [
-        accounting(),
-        late_credits(),
-        SystemTx::CycleTick,
-        boundary(),
-        bootstrap(),
-        publication(),
-    ] {
+fn revert_fails_block_classifies_all_twenty_kinds_per_decision_4a() {
+    let hard_fail_kinds = [
+        SystemTxKind::CertifiedParentAccounting,
+        SystemTxKind::LateFinalizeCredits,
+        SystemTxKind::BoundaryOutcome,
+        SystemTxKind::TeeBootstrap,
+        SystemTxKind::ValidatorLiveness,
+        SystemTxKind::RadiclePublication,
+        SystemTxKind::Vote,
+        SystemTxKind::Update,
+        SystemTxKind::EnclaveUpgradeDeadline,
+        SystemTxKind::Rewards,
+        SystemTxKind::Staking,
+        SystemTxKind::Oracle,
+        SystemTxKind::CycleTick,
+    ];
+    let soft_fail_kinds = [
+        SystemTxKind::OracleSlash,
+        SystemTxKind::HyperlaneSlash,
+        SystemTxKind::NodFactory,
+        SystemTxKind::GemFactory,
+        SystemTxKind::IntexFactory,
+        SystemTxKind::CredisFactory,
+        SystemTxKind::GemCleanup,
+    ];
+    assert_eq!(hard_fail_kinds.len() + soft_fail_kinds.len(), 20);
+    for kind in hard_fail_kinds {
         assert!(
             kind.revert_fails_block(),
             "{kind:?} must fail the block on revert"
         );
     }
-    for kind in [SystemTx::OracleSlashWindow, SystemTx::HookEvents] {
+    for kind in soft_fail_kinds {
         assert!(
             !kind.revert_fails_block(),
             "{kind:?} must keep the soft-receipt skip"
@@ -298,37 +262,25 @@ fn revert_fails_block_classifies_critical_begin_zone_phases() {
 
 #[test]
 fn validate_active_system_tx_set_rejects_phase3b_outside_block1() {
-    // TeeBootstrap is the mandatory block-1 Phase 3b and cannot be replayed
-    // at a later height even when the body-derived flag says it is present.
-    let txs = vec![
+    let mut txs = vec![
         system_tx(accounting(), 0, 2),
         system_tx(late_credits(), 1, 2),
-        system_tx(SystemTx::CycleTick, 2, 2),
-        system_tx(boundary(), 3, 2),
-        system_tx(bootstrap(), 4, 2),
-        system_tx(SystemTx::OracleSlashWindow, 5, 2),
-        system_tx(SystemTx::HookEvents, 6, 2),
+        system_tx(boundary(), 2, 2),
+        system_tx(bootstrap(), 3, 2),
+        system_tx(SystemTx::ValidatorLiveness, 4, 2),
     ];
+    for (idx, input) in begin_stage_inputs().into_iter().enumerate() {
+        txs.push(system_tx(input, (5 + idx) as u8, 2));
+    }
     let layout = split_system_layout(&txs).expect("layout");
-    assert!(validate_active_system_tx_set(&layout, 2, true, true).is_err());
-
-    // Same bytes, but the flag says no bootstrap expected -> mismatch.
+    assert_eq!(
+        validate_active_system_tx_set(&layout, 2, true, true),
+        Err(SystemTxError::TeeBootstrapWrongHeight { block_number: 2 })
+    );
     assert!(matches!(
         validate_active_system_tx_set(&layout, 2, true, false),
         Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
     ));
-
-    // A later bootstrap without a boundary outcome is equally invalid.
-    let txs_no_bo = vec![
-        system_tx(accounting(), 0, 2),
-        system_tx(late_credits(), 1, 2),
-        system_tx(SystemTx::CycleTick, 2, 2),
-        system_tx(bootstrap(), 3, 2),
-        system_tx(SystemTx::OracleSlashWindow, 4, 2),
-        system_tx(SystemTx::HookEvents, 5, 2),
-    ];
-    let layout_no_bo = split_system_layout(&txs_no_bo).expect("layout");
-    assert!(validate_active_system_tx_set(&layout_no_bo, 2, false, true).is_err());
 }
 
 #[test]
@@ -342,8 +294,8 @@ fn reserved_address_does_not_collide_with_system_precompiles() {
 fn selectors_require_complete_decode_even_after_a_matching_transaction() {
     let valid = system_tx(SystemTx::CycleTick, 0, 2);
     let mut malformed =
-        build_unsigned_system_tx(1, 2, CHAIN_ID, SystemTx::HookEvents.encode().unwrap()).unwrap();
-    malformed.input = Bytes::from_static(b"OSH2\x02\x00");
+        build_unsigned_system_tx(1, 2, CHAIN_ID, SystemTx::Vote.encode().unwrap()).unwrap();
+    malformed.input = Bytes::from_static(b"OSVT\x02\x00");
     let malformed: TransactionSigned = malformed.into_signed(Signature::test_signature()).into();
     let layout = SystemTxLayout {
         begin: vec![&valid, &malformed],
@@ -354,7 +306,7 @@ fn selectors_require_complete_decode_even_after_a_matching_transaction() {
     assert_eq!(
         layout.begin_block_selectors(),
         Err(SystemTxError::UnexpectedBody {
-            kind: "HookEvents",
+            kind: "Vote",
             len: 1
         })
     );
@@ -366,7 +318,7 @@ fn selectors_require_complete_decode_even_after_a_matching_transaction() {
     assert_eq!(
         end_layout.end_block_selectors(),
         Err(SystemTxError::UnexpectedBody {
-            kind: "HookEvents",
+            kind: "Vote",
             len: 1
         })
     );

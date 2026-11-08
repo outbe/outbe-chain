@@ -3,9 +3,10 @@ use alloy_primitives::{address, Address, Bytes, Signature, TxKind, B256, U256};
 use outbe_primitives::system_tx::{
     build_unsigned_system_tx, expected_end_block_selectors, split_system_layout,
     system_tx_visible_gas_limit, validate_active_system_tx_set, SysTxSelector, SystemTx,
-    CALL_EVENT_PROCESSING_ORDINAL, CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_ORDINAL,
-    CLEANUP_PROCESSING_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK, SYSTEM_TX_ARTIFACT_GAS_LIMIT,
-    SYSTEM_TX_VISIBLE_GAS_FLOOR,
+    CREDIS_FACTORY_ORDINAL, CREDIS_FACTORY_SELECTOR, GEM_CLEANUP_ORDINAL, GEM_CLEANUP_SELECTOR,
+    GEM_FACTORY_ORDINAL, GEM_FACTORY_SELECTOR, INTEX_FACTORY_ORDINAL, INTEX_FACTORY_SELECTOR,
+    MAX_SYSTEM_TXS_PER_BLOCK, NOD_FACTORY_ORDINAL, NOD_FACTORY_SELECTOR,
+    SYSTEM_TX_ARTIFACT_GAS_LIMIT,
 };
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, OUTBE_MAX_EXTRA_DATA_SIZE},
@@ -92,11 +93,35 @@ fn canonical_inputs() -> Vec<SystemTx> {
     vec![
         accounting(),
         late_credits(),
-        SystemTx::CycleTick,
         boundary(),
-        SystemTx::OracleSlashWindow,
-        SystemTx::HookEvents,
+        SystemTx::ValidatorLiveness,
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
     ]
+}
+
+fn end_block_inputs() -> [(SystemTx, u8); 5] {
+    [
+        (SystemTx::NodFactory, NOD_FACTORY_ORDINAL),
+        (SystemTx::GemFactory, GEM_FACTORY_ORDINAL),
+        (SystemTx::IntexFactory, INTEX_FACTORY_ORDINAL),
+        (SystemTx::CredisFactory, CREDIS_FACTORY_ORDINAL),
+        (SystemTx::GemCleanup, GEM_CLEANUP_ORDINAL),
+    ]
+}
+
+fn end_block_txs() -> Vec<TransactionSigned> {
+    end_block_inputs()
+        .into_iter()
+        .map(|(input, ordinal)| system_tx(input, ordinal))
+        .collect()
 }
 
 fn system_tx(input: SystemTx, ordinal: u8) -> TransactionSigned {
@@ -123,17 +148,13 @@ fn user_tx() -> TransactionSigned {
 
 #[test]
 fn full_begin_system_prefix_validates_before_user_transactions() {
-    let txs = vec![
-        system_tx(accounting(), 0),
-        system_tx(late_credits(), 1),
-        system_tx(SystemTx::CycleTick, 2),
-        system_tx(boundary(), 3),
-        system_tx(SystemTx::OracleSlashWindow, 4),
-        system_tx(SystemTx::HookEvents, 5),
-        user_tx(),
-        system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
-        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
-    ];
+    let mut txs: Vec<TransactionSigned> = canonical_inputs()
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| system_tx(input, u8::try_from(ordinal).unwrap()))
+        .collect();
+    txs.push(user_tx());
+    txs.extend(end_block_txs());
 
     let layout = split_system_layout(&txs).expect("layout splits");
     validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
@@ -150,8 +171,24 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
     );
     assert_eq!(layout.user.len(), 1);
     assert_eq!(
+        end_block_inputs().map(|(_, ordinal)| ordinal),
+        [24, 25, 26, 27, 28]
+    );
+    assert_eq!(NOD_FACTORY_ORDINAL, 24);
+    assert_eq!(GEM_CLEANUP_ORDINAL, 28);
+    assert_eq!(
         layout.end_block_selectors().expect("end selectors"),
-        vec![CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR]
+        vec![
+            NOD_FACTORY_SELECTOR,
+            GEM_FACTORY_SELECTOR,
+            INTEX_FACTORY_SELECTOR,
+            CREDIS_FACTORY_SELECTOR,
+            GEM_CLEANUP_SELECTOR,
+        ]
+    );
+    assert_eq!(
+        layout.end_block_selectors().unwrap(),
+        expected_end_block_selectors(BLOCK_NUMBER)
     );
 }
 
@@ -162,7 +199,7 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
     let canonical_with_boundary = canonical_inputs();
     let missing_oracle_inputs: Vec<SystemTx> = canonical_inputs()
         .into_iter()
-        .filter(|input| !matches!(input, SystemTx::OracleSlashWindow))
+        .filter(|input| !matches!(input, SystemTx::OracleSlash))
         .collect();
     let missing_oracle: Vec<TransactionSigned> = missing_oracle_inputs
         .iter()
@@ -213,75 +250,69 @@ fn missing_or_extra_receipt_visible_system_txs_are_rejected() {
     );
 }
 
+fn assert_zero_gas(tx: &TransactionSigned, ordinal: u8) {
+    assert_eq!(tx.gas_limit(), 0);
+    assert_eq!(system_tx_visible_gas_limit(tx.input()).unwrap(), 0);
+    assert_eq!(
+        tx.nonce(),
+        BLOCK_NUMBER * u64::from(MAX_SYSTEM_TXS_PER_BLOCK) + u64::from(ordinal)
+    );
+}
+
 #[test]
 fn system_tx_wire_limits_leave_runtime_gas_headroom() {
-    assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 16);
+    assert_eq!(MAX_SYSTEM_TXS_PER_BLOCK, 32);
     assert_eq!(SYSTEM_TX_ARTIFACT_GAS_LIMIT, 10_000_000_000);
 
     for (ordinal, input) in canonical_inputs().into_iter().enumerate() {
-        let tx = system_tx(input, ordinal.try_into().expect("ordinal fits"));
-        assert_eq!(
-            tx.gas_limit(),
-            system_tx_visible_gas_limit(tx.input()).expect("visible system gas computes")
-        );
-        assert!(tx.gas_limit() >= SYSTEM_TX_VISIBLE_GAS_FLOOR);
-        assert!(tx.gas_limit() < USER_BLOCK_GAS_LIMIT);
-        assert!(tx.gas_limit() < SYSTEM_TX_ARTIFACT_GAS_LIMIT);
-        assert_eq!(
-            tx.nonce(),
-            BLOCK_NUMBER * u64::from(MAX_SYSTEM_TXS_PER_BLOCK) + ordinal as u64
-        );
+        let ordinal = u8::try_from(ordinal).unwrap();
+        assert_zero_gas(&system_tx(input, ordinal), ordinal);
+    }
+    for (input, ordinal) in end_block_inputs() {
+        assert_zero_gas(&system_tx(input, ordinal), ordinal);
     }
 }
 
 #[test]
 fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
-    let txs = vec![
-        system_tx(
-            SystemTx::CertifiedParentAccounting {
-                metadata: large_metadata(),
-            },
-            0,
-        ),
-        // mandatory phase. The realistic per-block late-credit count is
-        // <= K (a few in-window targets), so an empty/small artifact here keeps
-        // the worst case dominated by CPA + BoundaryOutcome.
-        system_tx(
-            SystemTx::LateFinalizeCredits {
-                artifact: Default::default(),
-            },
-            1,
-        ),
-        system_tx(SystemTx::CycleTick, 2),
-        system_tx(
-            SystemTx::BoundaryOutcome {
-                artifact: large_boundary(),
-            },
-            3,
-        ),
-        system_tx(SystemTx::OracleSlashWindow, 4),
-        system_tx(SystemTx::HookEvents, 5),
+    let inputs = vec![
+        SystemTx::CertifiedParentAccounting {
+            metadata: large_metadata(),
+        },
+        SystemTx::LateFinalizeCredits {
+            artifact: Default::default(),
+        },
+        SystemTx::BoundaryOutcome {
+            artifact: large_boundary(),
+        },
+        SystemTx::ValidatorLiveness,
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
     ];
+    let txs: Vec<TransactionSigned> = inputs
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, input)| system_tx(input, u8::try_from(ordinal).unwrap()))
+        .collect();
     let mut layout_txs = txs.clone();
-    layout_txs.extend([
-        system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
-        system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
-    ]);
+    layout_txs.extend(end_block_txs());
     let layout = split_system_layout(&layout_txs).expect("worst-case system prefix layout splits");
     validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
         .expect("worst-case active system tx set validates");
-    assert_eq!(txs.len(), 6);
+    assert_eq!(txs.len(), canonical_inputs().len());
     assert!(txs.len() <= usize::from(MAX_SYSTEM_TXS_PER_BLOCK));
 
     let aggregate_envelope_gas: u64 = txs.iter().map(|tx| tx.gas_limit()).sum();
     for tx in &txs {
-        assert_eq!(
-            tx.gas_limit(),
-            system_tx_visible_gas_limit(tx.input()).expect("visible system gas computes"),
-            "GAS-12: each worst-case system tx must carry deterministic visible gas"
-        );
-        assert!(tx.gas_limit() >= SYSTEM_TX_VISIBLE_GAS_FLOOR);
-        assert!(tx.gas_limit() < SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+        assert_eq!(tx.gas_limit(), 0);
+        assert_eq!(system_tx_visible_gas_limit(tx.input()).unwrap(), 0);
     }
 
     assert!(
@@ -295,16 +326,7 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
 fn gas_15_visible_system_tx_gas_must_not_exceed_visible_block_gas_limit_for_generic_replay() {
     let cycle = system_tx(SystemTx::CycleTick, 1);
 
-    assert!(
-        cycle.gas_limit() <= USER_BLOCK_GAS_LIMIT,
-        "GAS-15: visible system tx gas {} exceeds visible block gas limit {USER_BLOCK_GAS_LIMIT}; \
-         stock Ethereum replay/import will not treat this as a normal user tx",
-        cycle.gas_limit()
-    );
-    assert_eq!(
-        cycle.gas_limit(),
-        system_tx_visible_gas_limit(cycle.input()).expect("visible gas computes")
-    );
-    assert!(cycle.gas_limit() >= SYSTEM_TX_VISIBLE_GAS_FLOOR);
-    assert!(cycle.gas_limit() < SYSTEM_TX_ARTIFACT_GAS_LIMIT);
+    assert_eq!(cycle.gas_limit(), 0);
+    assert_eq!(system_tx_visible_gas_limit(cycle.input()).unwrap(), 0);
+    assert!(cycle.gas_limit() <= USER_BLOCK_GAS_LIMIT);
 }

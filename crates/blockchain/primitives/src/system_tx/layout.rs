@@ -2,15 +2,12 @@ use alloy_consensus::Transaction as _;
 use reth_ethereum::TransactionSigned;
 
 use super::{
-    is_reserved_system_tx, BlockHeightRegime, BodyZone, SysTxSelector, SystemTx, SystemTxError,
-    BOUNDARY_OUTCOME_SELECTOR, CALL_EVENT_PROCESSING_SELECTOR,
-    CERTIFIED_PARENT_ACCOUNTING_SELECTOR, CLEANUP_PROCESSING_SELECTOR, CYCLE_TICK_SELECTOR,
-    HOOK_EVENTS_SELECTOR, LATE_FINALIZE_CREDITS_SELECTOR, MAX_SYSTEM_TXS_PER_BLOCK,
-    ORACLE_SLASH_WINDOW_SELECTOR, RADICLE_PUBLICATION_SELECTOR, TEE_BOOTSTRAP_SELECTOR,
+    is_reserved_system_tx, BlockExecutionStage, BlockHeightRegime, BlockSystemPlan, BodyZone,
+    SysTxSelector, SystemTx, SystemTxError, MAX_SYSTEM_TXS_PER_BLOCK,
 };
 
-/// Structural split of block transactions into system begin-prefix, user middle,
-/// and system end-suffix.
+/// Structural split of block transactions into system begin-prefix (`ConsensusStage` + `BeginBlock`),
+/// user middle (`MidBlock`), and system end-suffix (`EndBlock`).
 #[derive(Debug, Clone)]
 pub struct SystemTxLayout<'a> {
     pub begin: Vec<&'a TransactionSigned>,
@@ -30,27 +27,40 @@ impl<'a> SystemTxLayout<'a> {
     pub fn begin_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
         self.begin
             .iter()
-            .map(|tx| {
-                let tx = *tx;
-                SystemTx::decode(tx.input()).map(|input| input.selector())
-            })
+            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.selector()))
             .collect()
     }
 
     pub fn end_block_selectors(&self) -> Result<Vec<SysTxSelector>, SystemTxError> {
         self.end
             .iter()
-            .map(|tx| {
-                let tx = *tx;
-                SystemTx::decode(tx.input()).map(|input| input.selector())
-            })
+            .map(|tx| SystemTx::decode((*tx).input()).map(|input| input.selector()))
             .collect()
     }
 
-    /// True if the fully decoded begin zone contains a system tx with `selector`. Callers use it to
-    /// derive the layout-signaled optional-phase flags (e.g. the one-time
-    /// [`SystemTx::TeeBootstrap`]). A successful [`split_system_layout`]
-    /// precludes a decode failure. This method treats a decode failure as absent.
+    pub fn consensus_txs(&self) -> Result<Vec<&'a TransactionSigned>, SystemTxError> {
+        let mut out = Vec::new();
+        for tx in &self.begin {
+            let decoded = SystemTx::decode((*tx).input())?;
+            if decoded.stage() == BlockExecutionStage::ConsensusStage {
+                out.push(*tx);
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn begin_stage_txs(&self) -> Result<Vec<&'a TransactionSigned>, SystemTxError> {
+        let mut out = Vec::new();
+        for tx in &self.begin {
+            let decoded = SystemTx::decode((*tx).input())?;
+            if decoded.stage() == BlockExecutionStage::BeginBlock {
+                out.push(*tx);
+            }
+        }
+        Ok(out)
+    }
+
+    /// True if the fully decoded begin zone contains a system tx with `selector`.
     pub fn has_begin_selector(&self, selector: SysTxSelector) -> bool {
         self.begin_block_selectors()
             .map(|selectors| selectors.contains(&selector))
@@ -132,36 +142,17 @@ pub fn expected_begin_block_selectors_for_publication(
     has_tee_bootstrap: bool,
     has_publication: bool,
 ) -> Vec<SysTxSelector> {
-    let regime = BlockHeightRegime::for_block(block_number);
-    if !regime.has_begin_zone_system_txs() {
-        return Vec::new();
-    }
-    let mut expected = Vec::with_capacity(8);
-    if regime.has_parent_finalization_accounting() {
-        expected.push(CERTIFIED_PARENT_ACCOUNTING_SELECTOR);
-        expected.push(LATE_FINALIZE_CREDITS_SELECTOR);
-    }
-    expected.push(CYCLE_TICK_SELECTOR);
-    if has_boundary_outcome {
-        expected.push(BOUNDARY_OUTCOME_SELECTOR);
-    }
-    if has_tee_bootstrap {
-        expected.push(TEE_BOOTSTRAP_SELECTOR);
-    }
-    expected.push(ORACLE_SLASH_WINDOW_SELECTOR);
-    expected.push(HOOK_EVENTS_SELECTOR);
-    if has_publication {
-        expected.push(RADICLE_PUBLICATION_SELECTOR);
-    }
-    expected
+    BlockSystemPlan::for_block(
+        block_number,
+        has_boundary_outcome,
+        has_tee_bootstrap,
+        has_publication,
+    )
+    .begin_zone_selectors()
 }
 
 pub fn expected_end_block_selectors(block_number: u64) -> Vec<SysTxSelector> {
-    if !BlockHeightRegime::for_block(block_number).has_end_zone_system_txs() {
-        Vec::new()
-    } else {
-        vec![CALL_EVENT_PROCESSING_SELECTOR, CLEANUP_PROCESSING_SELECTOR]
-    }
+    BlockSystemPlan::for_block(block_number, false, false, false).end_zone_selectors()
 }
 
 pub fn validate_active_system_tx_set(

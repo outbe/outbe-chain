@@ -87,9 +87,9 @@ fn phase1_witness_validation_rejects_noncanonical_envelope_shape() {
         build_unsigned_system_tx(0, 42, CHAIN_ID, calldata.clone()).expect("phase1 tx builds");
 
     let mut wrong_gas = base.clone();
-    wrong_gas.gas_limit = wrong_gas.gas_limit.saturating_add(1);
+    wrong_gas.gas_limit = 1;
     let signed_wrong_gas = signer.sign_unsigned(wrong_gas).expect("signs");
-    assert!(matches!(
+    assert_eq!(
         validate_phase1_witness_against(
             &signed_wrong_gas,
             calldata.as_ref(),
@@ -97,8 +97,22 @@ fn phase1_witness_validation_rejects_noncanonical_envelope_shape() {
             CHAIN_ID,
             42
         ),
-        Err(SystemTxError::Phase1GasLimitMismatch { .. })
-    ));
+        Err(SystemTxError::NonZeroGasLimit { actual: 1 })
+    );
+
+    let mut wrong_gas_price = base.clone();
+    wrong_gas_price.gas_price = 1;
+    let signed_wrong_gas_price = signer.sign_unsigned(wrong_gas_price).expect("signs");
+    assert_eq!(
+        validate_phase1_witness_against(
+            &signed_wrong_gas_price,
+            calldata.as_ref(),
+            signer.address(),
+            CHAIN_ID,
+            42
+        ),
+        Err(SystemTxError::NonZeroGasPrice { actual: 1 })
+    );
 
     let mut wrong_value = base.clone();
     wrong_value.value = U256::from(1);

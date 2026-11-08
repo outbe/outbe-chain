@@ -10,7 +10,8 @@ use reth_ethereum::TransactionSigned;
 
 mod fixtures;
 use fixtures::{
-    accounting, bootstrap, boundary, inputs, late_credits, publication, sample_metadata, CHAIN_ID,
+    accounting, begin_stage_inputs, bootstrap, boundary, end_stage_inputs, inputs, late_credits,
+    sample_metadata, CHAIN_ID,
 };
 
 mod input;

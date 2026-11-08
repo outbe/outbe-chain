@@ -31,9 +31,26 @@ fn system_inputs() -> Vec<SystemTx> {
         SystemTx::LateFinalizeCredits {
             artifact: Default::default(),
         },
+        SystemTx::ValidatorLiveness,
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
         SystemTx::CycleTick,
-        SystemTx::OracleSlashWindow,
-        SystemTx::HookEvents,
+    ]
+}
+
+fn end_block_inputs() -> [(SystemTx, u8); 5] {
+    [
+        (SystemTx::NodFactory, NOD_FACTORY_ORDINAL),
+        (SystemTx::GemFactory, GEM_FACTORY_ORDINAL),
+        (SystemTx::IntexFactory, INTEX_FACTORY_ORDINAL),
+        (SystemTx::CredisFactory, CREDIS_FACTORY_ORDINAL),
+        (SystemTx::GemCleanup, GEM_CLEANUP_ORDINAL),
     ]
 }
 
@@ -73,7 +90,7 @@ fn active_selectors_have_expected_byte_sequence() {
     ); // "OSA3"
     assert_eq!(CYCLE_TICK_SELECTOR, [0x4f, 0x53, 0x43, 0x32]); // "OSC2"
     assert_eq!(BOUNDARY_OUTCOME_SELECTOR, [0x4f, 0x53, 0x42, 0x32]); // "OSB2"
-    assert_eq!(ORACLE_SLASH_WINDOW_SELECTOR, [0x4f, 0x53, 0x4f, 0x32]); // "OSO2"
+    assert_eq!(ORACLE_SLASH_SELECTOR, [0x4f, 0x53, 0x4f, 0x53]); // "OSOS"
     assert_eq!(SYSTEM_TX_INPUT_VERSION, 2);
 }
 
@@ -90,7 +107,7 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
         CYCLE_TICK_SELECTOR,
         BOUNDARY_OUTCOME_SELECTOR,
-        ORACLE_SLASH_WINDOW_SELECTOR,
+        ORACLE_SLASH_SELECTOR,
     ];
     for v1 in v1_selectors {
         assert!(
@@ -154,18 +171,22 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
         "{err:?}",
     );
 
-    // Expected kinds at block 1 with BoundaryOutcome present:
-    let expected = expected_begin_block_selectors(1, true, false);
+    let missing_tee = validate_active_system_tx_set(&empty_layout(), 1, true, false)
+        .expect_err("block 1 without TeeBootstrap must be rejected under V2");
+    assert!(
+        matches!(missing_tee, SystemTxError::V2Block1MissingTeeBootstrap),
+        "{missing_tee:?}",
+    );
+
+    let expected = expected_begin_block_selectors(1, true, true);
     assert_eq!(
         expected,
         vec![
-            CYCLE_TICK_SELECTOR,
-            BOUNDARY_OUTCOME_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            *b"OSB2", *b"OST3", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW", *b"OSST",
+            *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
         ],
-        "block 1 V2 layout must include CycleTick, BoundaryOutcome, OracleSlashWindow, HookEvents",
     );
+    assert!(expected_end_block_selectors(1).is_empty());
 }
 
 /// Block 0 must not carry any begin-zone system tx under V2.
@@ -196,10 +217,11 @@ fn canonical_transactions() -> Vec<TransactionSigned> {
         .enumerate()
         .map(|(index, kind)| signed_system_tx(kind, index as u8))
         .chain(std::iter::once(user_tx()))
-        .chain([
-            signed_system_tx(SystemTx::CallEventProcessing, CALL_EVENT_PROCESSING_ORDINAL),
-            signed_system_tx(SystemTx::CleanupProcessing, CLEANUP_PROCESSING_ORDINAL),
-        ])
+        .chain(
+            end_block_inputs()
+                .into_iter()
+                .map(|(input, ordinal)| signed_system_tx(input, ordinal)),
+        )
         .collect()
 }
 
@@ -213,7 +235,11 @@ fn native_layout_separates_begin_prefix_and_user_transactions() {
         expected_begin_block_selectors(TEST_BLOCK, false, false)
     );
     assert_eq!(layout.user.len(), 1);
-    assert_eq!(layout.end.len(), 2);
+    assert_eq!(layout.end.len(), 5);
+    assert_eq!(
+        layout.end_block_selectors().unwrap(),
+        expected_end_block_selectors(TEST_BLOCK)
+    );
 }
 
 #[test]
@@ -227,39 +253,35 @@ fn native_layout_accepts_an_empty_user_zone() {
     let layout = split_system_layout(&txs).unwrap();
     validate_active_system_tx_set(&layout, TEST_BLOCK, false, false).unwrap();
     assert!(layout.user.is_empty());
-    assert_eq!(layout.end.len(), 2);
+    assert_eq!(layout.end.len(), 5);
 }
 
-/// V2 begin-zone ordering: CertifiedParentAccounting (>=2), CycleTick (>=1),
-/// BoundaryOutcome (when present),
-/// OracleSlashWindow (>=1).
+/// Steady-state begin zone is the 12-kind schedule without TeeBootstrap.
+/// BoundaryOutcome inserts OSB2 after OSL2. End zone is ordinals 24..=28.
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
-    // Block 2+ canonical layout (no BoundaryOutcome on the parent).
     let expected = expected_begin_block_selectors(2, false, false);
     assert_eq!(
         expected,
         vec![
-            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-            LATE_FINALIZE_CREDITS_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            *b"OSA3", *b"OSL2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW", *b"OSST",
+            *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
         ],
     );
 
-    // Block 2+ with BoundaryOutcome present (e.g. epoch boundary).
     let expected = expected_begin_block_selectors(42, true, false);
     assert_eq!(
         expected,
         vec![
-            CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
-            LATE_FINALIZE_CREDITS_SELECTOR,
-            CYCLE_TICK_SELECTOR,
-            BOUNDARY_OUTCOME_SELECTOR,
-            ORACLE_SLASH_WINDOW_SELECTOR,
-            HOOK_EVENTS_SELECTOR,
+            *b"OSA3", *b"OSL2", *b"OSB2", *b"OSVL", *b"OSVT", *b"OSUP", *b"OSEU", *b"OSRW",
+            *b"OSST", *b"OSOR", *b"OSOS", *b"OSHL", *b"OSC2",
         ],
+    );
+    let end = expected_end_block_selectors(42);
+    assert_eq!(end, vec![*b"OSND", *b"OSGM", *b"OSIX", *b"OSCR", *b"OSGC"]);
+    assert_eq!(
+        end_block_inputs().map(|(_, ordinal)| ordinal),
+        [24, 25, 26, 27, 28]
     );
 
     // All begin-zone kinds resolve to BeginBlock body zone.

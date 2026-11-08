@@ -16,9 +16,6 @@ pub(super) fn sample_metadata() -> CertifiedParentAccountingMetadata {
         vrf_material_version: 3,
         vrf_group_public_key_hash: B256::repeat_byte(0x88),
         proof_kind: crate::consensus_metadata::ParentParticipationProof::Finalization,
-        // The V2 contract requires `missed_proposers` to be empty.
-        // This test fixture keeps it empty to stay consistent with the
-        // verifier rule.
         missed_proposers: Vec::new(),
     }
 }
@@ -193,15 +190,51 @@ pub(super) fn publication() -> SystemTx {
     }
 }
 
-pub(super) fn inputs() -> [SystemTx; 8] {
+pub(super) fn begin_stage_inputs() -> [SystemTx; 9] {
+    [
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
+    ]
+}
+
+pub(super) fn end_stage_inputs() -> [SystemTx; 5] {
+    [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ]
+}
+
+pub(super) fn inputs() -> [SystemTx; 20] {
     [
         accounting(),
         late_credits(),
-        SystemTx::CycleTick,
         boundary(),
         bootstrap(),
-        SystemTx::OracleSlashWindow,
-        SystemTx::HookEvents,
+        SystemTx::ValidatorLiveness,
         publication(),
+        SystemTx::Vote,
+        SystemTx::Update,
+        SystemTx::EnclaveUpgradeDeadline,
+        SystemTx::Rewards,
+        SystemTx::Staking,
+        SystemTx::Oracle,
+        SystemTx::OracleSlash,
+        SystemTx::HyperlaneSlash,
+        SystemTx::CycleTick,
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
     ]
 }
