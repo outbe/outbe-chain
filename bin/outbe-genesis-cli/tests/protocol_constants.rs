@@ -159,6 +159,19 @@ fn default_reference_and_policy_registries_use_the_frozen_slots() {
 }
 
 #[test]
+fn oracle_seed_writes_the_gas_chains_to_slot_85() {
+    let mut storage = StorageBuilder::new();
+    seed_oracle(&mut storage, &json!({ "gas_chains": [97, 11155111] })).expect("seed_oracle");
+
+    assert_eq!(storage.entries[&hex32(85u64)], hex32(2u64));
+    assert_eq!(storage.entries[&hex32(data_slot(85u64))], hex32(97u64));
+    assert_eq!(
+        storage.entries[&hex32(data_slot(85u64) + U256::from(1))],
+        hex32(11_155_111u64)
+    );
+}
+
+#[test]
 fn every_reference_currency_needs_a_policy_rate() {
     let policy_rates: Vec<Value> = DEFAULT_POLICY_RATES
         .iter()
