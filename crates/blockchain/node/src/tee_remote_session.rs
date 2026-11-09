@@ -35,7 +35,7 @@ use std::path::Path;
 
 use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-utils")))]
 const READER_MISSING: &str = "tee session reader is not installed";
 
 /// Reads finalized Registry session state. Header and proof checks stay here.
@@ -72,15 +72,15 @@ pub trait TeeSessionStateReader: Send + Sync {
     ) -> Result<EnclaveUpgradeV1, PrecompileError>;
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-utils")))]
 struct UninstalledTeeSessionReader;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-utils")))]
 fn reader_missing() -> PrecompileError {
     PrecompileError::Fatal(READER_MISSING.into())
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-utils")))]
 impl TeeSessionStateReader for UninstalledTeeSessionReader {
     fn node_binding(
         &self,
@@ -126,10 +126,10 @@ impl TeeSessionStateReader for UninstalledTeeSessionReader {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 struct DomainTeeSessionReader;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl TeeSessionStateReader for DomainTeeSessionReader {
     fn node_binding(
         &self,
@@ -176,11 +176,11 @@ impl TeeSessionStateReader for DomainTeeSessionReader {
 }
 
 fn active_tee_session_reader() -> &'static dyn TeeSessionStateReader {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     {
         &DomainTeeSessionReader
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-utils")))]
     {
         &UninstalledTeeSessionReader
     }

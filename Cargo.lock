@@ -8655,6 +8655,7 @@ dependencies = [
  "outbe-evm",
  "outbe-genesis-cli",
  "outbe-intex",
+ "outbe-node",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-test-utils = ["outbe-primitives/test-utils"]
+test-utils = ["outbe-primitives/test-utils", "dep:outbe-teeregistry"]
 
 [dependencies]
 # Internal
@@ -15,6 +15,7 @@ outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
 outbe-tee.workspace = true
+outbe-teeregistry = { workspace = true, optional = true }
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
@@ -59,6 +60,7 @@ thiserror.workspace = true
 k256.workspace = true
 
 [dev-dependencies]
+outbe-node = { path = ".", features = ["test-utils"] }
 outbe-genesis-cli.workspace = true
 reth-engine-tree = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
