@@ -1,5 +1,12 @@
-use std::{net::Ipv4Addr, path::Path};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    net::Ipv4Addr,
+    os::unix::fs::PermissionsExt,
+    path::Path,
+};
 
+use alloy_primitives::Address;
 use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -70,6 +77,53 @@ impl OperatorConfig {
         Ok((config, sha256(raw.as_bytes())))
     }
 
+    pub fn write_runtime_config(&self, root: &Path, validator: Address) -> Result<()> {
+        for value in self
+            .network
+            .bootnodes
+            .iter()
+            .chain(self.network.consensus_peers.iter())
+            .chain(std::iter::once(&self.network.certified_rpc))
+        {
+            ensure!(
+                !value
+                    .chars()
+                    .any(|character| matches!(character, '"' | '\n' | '\r')),
+                "operator config contains a value that cannot be written to validator.env"
+            );
+        }
+        let extra = if self.network.use_local_defaults {
+            "--consensus.use-local-defaults"
+        } else {
+            ""
+        };
+        let env = format!(
+            concat!(
+                "OUTBE_EXTERNAL_IP=\"{}\"\n",
+                "OUTBE_CERTIFIED_RPC=\"{}\"\n",
+                "OUTBE_VALIDATOR_ADDRESS=\"{:#x}\"\n",
+                "OUTBE_BOOTNODES=\"{}\"\n",
+                "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
+                "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
+                "OUTBE_ENCLAVE_RUNTIME=\"{}\"\n",
+                "OUTBE_CHAIN_ID=\"{}\"\n"
+            ),
+            self.network.external_ip,
+            self.network.certified_rpc,
+            validator,
+            self.network.bootnodes.join(","),
+            self.network.consensus_peers.join(","),
+            extra,
+            self.tee.runtime.as_env(),
+            self.network.chain_id,
+        );
+        write_private(&root.join("validator.env"), env.as_bytes())?;
+        write_private(
+            &root.join("feeder-public.toml"),
+            self.feeder.public_toml.as_bytes(),
+        )
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(
             self.version == CONFIG_VERSION,
@@ -131,6 +185,14 @@ impl OperatorConfig {
             .wrap_err("feeder.public_toml is not valid TOML")?;
         Ok(())
     }
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 pub fn sha256(bytes: &[u8]) -> String {

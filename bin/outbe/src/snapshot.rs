@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{config::OperatorConfig, process};
 
-pub fn restore(path: &Path, config: &OperatorConfig) -> Result<u64> {
+pub fn restore(path: &Path, config: &OperatorConfig, resume: bool) -> Result<u64> {
     let index = outbe_snapshot::archive::read_archive_index(open(path)?, None)
         .wrap_err("snapshot integrity verification failed")?;
     ensure!(
@@ -24,7 +24,11 @@ pub fn restore(path: &Path, config: &OperatorConfig) -> Result<u64> {
         index.manifest.genesis_hash == config.network.genesis_hash,
         "snapshot genesis hash does not match operator config"
     );
-    ensure_empty_destinations(&index.manifest)?;
+    if resume {
+        clear_destinations(&index.manifest)?;
+    } else {
+        ensure_empty_destinations(&index.manifest)?;
+    }
     extract(path, &index.manifest)?;
     process::run(
         "chown",
@@ -36,6 +40,32 @@ pub fn restore(path: &Path, config: &OperatorConfig) -> Result<u64> {
         ],
     )?;
     Ok(index.manifest.progress.finalized.number)
+}
+
+fn clear_destinations(manifest: &SnapshotManifestV1) -> Result<()> {
+    let mut roots = manifest
+        .domains
+        .iter()
+        .map(|domain| destination(domain.native_root))
+        .collect::<Vec<_>>();
+    roots.sort_by_key(|path| path.components().count());
+    roots.dedup();
+    for root in &roots {
+        if roots
+            .iter()
+            .any(|candidate| candidate != root && root.starts_with(candidate))
+        {
+            continue;
+        }
+        match fs::remove_dir_all(root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).wrap_err_with(|| format!("failed to clear {}", root.display()));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn extract(path: &Path, manifest: &SnapshotManifestV1) -> Result<()> {

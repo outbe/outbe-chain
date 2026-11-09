@@ -1,10 +1,4 @@
-use std::{
-    fs::{self, OpenOptions},
-    io::Write,
-    os::unix::fs::PermissionsExt,
-    path::Path,
-    time::Duration,
-};
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, time::Duration};
 
 use alloy_primitives::{keccak256, Address};
 use eyre::{bail, ensure, Context, Result};
@@ -85,7 +79,7 @@ pub async fn prepare(bundle_path: &Path, config_path: &Path) -> Result<()> {
         ],
     )?;
     let validator = validator_address(&keys.join("evm-key.hex"))?;
-    write_runtime_config(staging, &config, validator)?;
+    config.write_runtime_config(staging, validator)?;
     fs::set_permissions(staging, fs::Permissions::from_mode(0o755))?;
 
     progress.stage("installing systemd services without starting them");
@@ -120,15 +114,32 @@ pub async fn sync(snapshot_path: Option<&Path>) -> Result<()> {
             Some(existing) if existing == digest => {
                 progress.done("requested snapshot was already restored");
             }
-            Some(_) => bail!("a different snapshot was already restored on this host"),
+            Some(_) => {
+                bail!("a different snapshot was already restored on this host");
+            }
             None => {
                 ensure!(
                     !process::systemctl_is_active(FULL_NODE),
                     "stop the full node before restoring a snapshot"
                 );
+                let resume = match journal.snapshot_restore_in_progress.as_deref() {
+                    Some(existing) => {
+                        ensure!(
+                            existing == digest,
+                            "an interrupted restore used a different snapshot"
+                        );
+                        true
+                    }
+                    None => {
+                        journal.snapshot_restore_in_progress = Some(digest.clone());
+                        journal.save()?;
+                        false
+                    }
+                };
                 progress.stage("verifying and restoring the snapshot");
-                let height = snapshot::restore(path, &journal.config)?;
+                let height = snapshot::restore(path, &journal.config, resume)?;
                 journal.snapshot_sha256 = Some(digest);
+                journal.snapshot_restore_in_progress = None;
                 journal.snapshot_finalized_height = Some(height);
                 journal.save()?;
                 progress.done(&format!("snapshot restored at finalized height {height}"));
@@ -156,7 +167,7 @@ pub async fn promote() -> Result<()> {
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let validator = validator_address(&Path::new(process::ROOT).join("keys/evm-key.hex"))?;
 
-    progress.stage("checking synchronized full node and validator balance");
+    progress.stage("checking synchronized full node and validator state");
     ensure!(
         process::systemctl_is_active(FULL_NODE) || process::systemctl_is_active(VALIDATOR_SERVICE),
         "run `outbe validator sync` before promotion"
@@ -164,19 +175,6 @@ pub async fn promote() -> Result<()> {
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_sync(&local, &remote, &mut progress).await?;
     let minimum = remote.min_stake().await?;
-    let balance = remote.balance(validator).await?;
-    ensure!(
-        balance >= minimum,
-        "validator {validator:#x} needs at least {minimum} base units; balance is {balance}"
-    );
-
-    progress.stage("starting enclave and completing TEE admission");
-    process::systemctl(&["start", ENCLAVE_SERVICE])?;
-    ensure_join_identity(&mut journal, &remote).await?;
-    run_tee_join(&journal)?;
-    journal.tee_join_complete = true;
-    journal.save()?;
-
     let mut record = remote.validator(validator).await?;
     if !record.registered {
         if let Some(hash) = journal.stake_transaction.as_deref() {
@@ -185,6 +183,21 @@ pub async fn promote() -> Result<()> {
             record = remote.validator(validator).await?;
         }
     }
+    if !record.registered {
+        let balance = remote.balance(validator).await?;
+        ensure!(
+            balance >= minimum,
+            "validator {validator:#x} needs at least {minimum} base units; balance is {balance}"
+        );
+    }
+
+    progress.stage("starting enclave and completing TEE admission");
+    process::systemctl(&["start", ENCLAVE_SERVICE])?;
+    ensure_join_identity(&mut journal, &remote).await?;
+    run_tee_join(&journal)?;
+    journal.tee_join_complete = true;
+    journal.save()?;
+
     if !record.registered {
         progress.stage("bonding the network minimum stake");
         let validator_arg = format!("{validator:#x}");
@@ -276,61 +289,6 @@ fn verify_bundle_network(root: &Path, config: &OperatorConfig) -> Result<()> {
     Ok(())
 }
 
-fn write_runtime_config(root: &Path, config: &OperatorConfig, validator: Address) -> Result<()> {
-    for value in config
-        .network
-        .bootnodes
-        .iter()
-        .chain(config.network.consensus_peers.iter())
-        .chain(std::iter::once(&config.network.certified_rpc))
-    {
-        ensure!(
-            !value
-                .chars()
-                .any(|character| matches!(character, '"' | '\n' | '\r')),
-            "operator config contains a value that cannot be written to validator.env"
-        );
-    }
-    let extra = if config.network.use_local_defaults {
-        "--consensus.use-local-defaults"
-    } else {
-        ""
-    };
-    let env = format!(
-        concat!(
-            "OUTBE_EXTERNAL_IP=\"{}\"\n",
-            "OUTBE_CERTIFIED_RPC=\"{}\"\n",
-            "OUTBE_VALIDATOR_ADDRESS=\"{:#x}\"\n",
-            "OUTBE_BOOTNODES=\"{}\"\n",
-            "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
-            "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
-            "OUTBE_ENCLAVE_RUNTIME=\"{}\"\n",
-            "OUTBE_CHAIN_ID=\"{}\"\n"
-        ),
-        config.network.external_ip,
-        config.network.certified_rpc,
-        validator,
-        config.network.bootnodes.join(","),
-        config.network.consensus_peers.join(","),
-        extra,
-        config.tee.runtime.as_env(),
-        config.network.chain_id,
-    );
-    write_private(&root.join("validator.env"), env.as_bytes())?;
-    write_private(
-        &root.join("feeder-public.toml"),
-        config.feeder.public_toml.as_bytes(),
-    )
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    Ok(())
-}
-
 fn validator_address(path: &Path) -> Result<Address> {
     let encoded = Zeroizing::new(
         fs::read_to_string(path)
@@ -400,14 +358,20 @@ fn run_tee_join(journal: &Journal) -> Result<()> {
 
 fn run_outbe_cli(args: &[&str]) -> Result<String> {
     let journal = Journal::load()?;
+    let binary = Path::new(process::ROOT).join("outbe-cli");
+    let binary = path_text(&binary)?;
     let mut full = vec![
+        "--user",
+        "outbe",
+        "--",
+        binary,
         "--rpc-url",
         journal.config.network.certified_rpc.as_str(),
         "--private-key-file",
         "/opt/outbe-chain/keys/evm-key.hex",
     ];
     full.extend_from_slice(args);
-    process::capture(Path::new(process::ROOT).join("outbe-cli"), &full)
+    process::capture("runuser", &full)
 }
 
 async fn wait_for_rpc_chain(
@@ -497,17 +461,7 @@ async fn wait_for_signer(
             status.next_planned_activation_height,
             remaining
         ));
-        if status.mode == "signer"
-            && status.is_active
-            && status.has_threshold_shares
-            && status.connected_peers > 0
-            && status
-                .enclave
-                .as_ref()
-                .is_some_and(|enclave| enclave.ready && enclave.offer_key_ready)
-            && record.status == 2
-            && record.has_bls_share
-        {
+        if status.is_ready_signer(&record) {
             wait_for_sync(local, remote, progress).await?;
             return Ok(status.next_planned_activation_height);
         }

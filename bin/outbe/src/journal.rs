@@ -35,6 +35,8 @@ pub struct Journal {
     #[serde(default)]
     pub snapshot_sha256: Option<String>,
     #[serde(default)]
+    pub snapshot_restore_in_progress: Option<String>,
+    #[serde(default)]
     pub snapshot_finalized_height: Option<u64>,
 }
 
@@ -52,6 +54,7 @@ impl Journal {
             stake_transaction: None,
             confirm_ready_transaction: None,
             snapshot_sha256: None,
+            snapshot_restore_in_progress: None,
             snapshot_finalized_height: None,
         }
     }
