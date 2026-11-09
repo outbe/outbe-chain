@@ -161,9 +161,9 @@ pub fn read_local_tee_runtime_admission_from_state(
     };
     let mut provider = ReadOnlyStorageProvider::new_with_block_context(reader, context);
     let storage = StorageHandle::new(&mut provider);
-    let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
-    let Some(node_binding) = registry
-        .node_host_enclave_binding_v1(identity.reth_p2p_public)
+    let protocol = crate::protocol_state::active_engine_protocol_state();
+    let Some(node_binding) = protocol
+        .node_host_binding(storage.clone(), identity.reth_p2p_public)
         .map_err(|error| ValidatorsError::ReadLocalNodeHostTeeBinding(format!("{error}")))?
     else {
         return Ok(
@@ -189,13 +189,13 @@ pub fn read_local_tee_runtime_admission_from_state(
 
     if let Some(validator) = identity.validator {
         if let Some(rejection) =
-            read_local_validator_tee_rejection(&registry, storage, &node_binding, validator)?
+            read_local_validator_tee_rejection(storage.clone(), &node_binding, validator)?
         {
             return Ok(LocalTeeRuntimeAdmissionV1::Rejected(rejection));
         }
     }
 
-    if !registry.binding_code_admitted_at_v1(&node_binding, context.block_number)? {
+    if !protocol.binding_code_admitted(storage, &node_binding, context.block_number)? {
         Ok(LocalTeeRuntimeAdmissionV1::Rejected(
             LocalTeeRuntimeRejectionV1::RetiredEnclave,
         ))
@@ -271,31 +271,49 @@ fn read_validator_set_from_state(
     };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
-
-    let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-    let records = match kind {
-        ValidatorSetKind::ActiveValidators => vs
-            .get_active_validators()
-            .map_err(|e| ValidatorsError::ReadActiveValidators(format!("{e}"))),
-        ValidatorSetKind::ConsensusParticipants => vs
-            .get_active_consensus_set()
-            .map_err(|e| ValidatorsError::ReadActiveConsensusSet(format!("{e}"))),
-        ValidatorSetKind::ReshareTarget => vs
-            .get_reshare_target_set()
-            .map_err(|e| ValidatorsError::ReadReshareTargetSet(format!("{e}"))),
-        ValidatorSetKind::PendingValidators => vs
-            .get_pending_validators()
-            .map_err(|e| ValidatorsError::ReadPendingValidators(format!("{e}"))),
-        ValidatorSetKind::AdmittedNonConsensus => vs
-            .get_admitted_non_consensus_validators()
-            .map_err(|e| ValidatorsError::ReadAdmittedNonConsensusValidators(format!("{e}"))),
-    }?;
+    let query = match kind {
+        ValidatorSetKind::ActiveValidators => {
+            crate::protocol_state::EngineValidatorQuery::ActiveValidators
+        }
+        ValidatorSetKind::ConsensusParticipants => {
+            crate::protocol_state::EngineValidatorQuery::ConsensusParticipants
+        }
+        ValidatorSetKind::ReshareTarget => {
+            crate::protocol_state::EngineValidatorQuery::ReshareTarget
+        }
+        ValidatorSetKind::PendingValidators => {
+            crate::protocol_state::EngineValidatorQuery::PendingValidators
+        }
+        ValidatorSetKind::AdmittedNonConsensus => {
+            crate::protocol_state::EngineValidatorQuery::AdmittedNonConsensus
+        }
+    };
+    let records = crate::protocol_state::active_engine_protocol_state()
+        .validator_rows(storage, query)
+        .map_err(|error| match kind {
+            ValidatorSetKind::ActiveValidators => {
+                ValidatorsError::ReadActiveValidators(format!("{error}"))
+            }
+            ValidatorSetKind::ConsensusParticipants => {
+                ValidatorsError::ReadActiveConsensusSet(format!("{error}"))
+            }
+            ValidatorSetKind::ReshareTarget => {
+                ValidatorsError::ReadReshareTargetSet(format!("{error}"))
+            }
+            ValidatorSetKind::PendingValidators => {
+                ValidatorsError::ReadPendingValidators(format!("{error}"))
+            }
+            ValidatorSetKind::AdmittedNonConsensus => {
+                ValidatorsError::ReadAdmittedNonConsensusValidators(format!("{error}"))
+            }
+        })?;
 
     let mut public_keys = Vec::with_capacity(records.len());
     let mut addresses = Vec::with_capacity(records.len());
     let mut p2p_addresses = Vec::with_capacity(records.len());
 
-    for record in &records {
+    for row in &records {
+        let record = &row.record;
         // Read full 48-byte BLS MinPk pubkey (stored across two slots by ValidatorSet).
         let pk =
             bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice()).map_err(|e| {
@@ -307,10 +325,21 @@ fn read_validator_set_from_state(
 
         public_keys.push(pk);
         addresses.push(record.validator_address);
-        let p2p_address = match vs.get_p2p_address(record.validator_address) {
-            Ok(Some((version, encoded))) => match decode_versioned(version, &encoded) {
-                Ok(decoded) => match outbe_p2p_to_commonware(decoded) {
-                    Ok(addr) => ValidatorP2pAddress::Known(addr),
+        let p2p_address = match &row.p2p {
+            crate::protocol_state::EngineP2pRead::Present { version, encoded } => {
+                match decode_versioned(*version, encoded) {
+                    Ok(decoded) => match outbe_p2p_to_commonware(decoded) {
+                        Ok(addr) => ValidatorP2pAddress::Known(addr),
+                        Err(err) => {
+                            tracing::warn!(
+                                validator = %record.validator_address,
+                                version,
+                                error = %err,
+                                "invalid validator p2p address registry entry; excluding peer"
+                            );
+                            ValidatorP2pAddress::Invalid
+                        }
+                    },
                     Err(err) => {
                         tracing::warn!(
                             validator = %record.validator_address,
@@ -320,22 +349,13 @@ fn read_validator_set_from_state(
                         );
                         ValidatorP2pAddress::Invalid
                     }
-                },
-                Err(err) => {
-                    tracing::warn!(
-                        validator = %record.validator_address,
-                        version,
-                        error = %err,
-                        "invalid validator p2p address registry entry; excluding peer"
-                    );
-                    ValidatorP2pAddress::Invalid
                 }
-            },
-            Ok(None) => ValidatorP2pAddress::Missing,
-            Err(err) => {
+            }
+            crate::protocol_state::EngineP2pRead::Missing => ValidatorP2pAddress::Missing,
+            crate::protocol_state::EngineP2pRead::Failed { error } => {
                 tracing::warn!(
                     validator = %record.validator_address,
-                    error = %err,
+                    error = %error,
                     "failed to read validator p2p address registry entry; excluding peer"
                 );
                 ValidatorP2pAddress::Invalid
@@ -472,26 +492,28 @@ pub fn read_consensus_validators_at_latest(
 pub fn read_committee_snapshot_from_state(
     state_access: &dyn RethStateAccess,
     epoch: u64,
-) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+) -> Result<Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>> {
     let reader = RethStateReader {
         state: state_access,
     };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
-    outbe_validatorset::state::read_committee_snapshot_for_epoch(storage, epoch).map_err(|error| {
-        ValidatorsError::ReadCommitteeSnapshot {
-            epoch,
-            error: format!("{error}"),
-        }
-        .into()
-    })
+    crate::protocol_state::active_engine_protocol_state()
+        .committee_snapshot(storage, epoch)
+        .map_err(|error| {
+            ValidatorsError::ReadCommitteeSnapshot {
+                epoch,
+                error: format!("{error}"),
+            }
+            .into()
+        })
 }
 
 /// Latest-state wrapper for [`read_committee_snapshot_from_state`].
 pub fn read_committee_snapshot_at_latest(
     provider: &(impl StateProviderFactory + ?Sized),
     epoch: u64,
-) -> Result<Option<outbe_validatorset::state::CommitteeSnapshot>> {
+) -> Result<Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>> {
     let state = provider
         .latest()
         .map_err(|error| ValidatorsError::GetLatestState(format!("{error}")))?;
@@ -510,11 +532,9 @@ pub fn has_pending_set_change(state_access: &dyn RethStateAccess) -> Result<bool
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
 
-    {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        vs.has_pending_set_change()
-            .map_err(|e| ValidatorsError::CheckPendingSetChange(format!("{e}")).into())
-    }
+    crate::protocol_state::active_engine_protocol_state()
+        .has_pending_set_change(storage)
+        .map_err(|error| ValidatorsError::CheckPendingSetChange(format!("{error}")).into())
 }
 
 /// Read the on-chain registered tribute offer public key (`TeeRegistry` slot 1).
@@ -528,11 +548,9 @@ pub fn read_tee_offer_public_from_state(state_access: &dyn RethStateAccess) -> R
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
 
-    {
-        let reg = outbe_teeregistry::TeeRegistry::new(storage);
-        reg.offer_public_key()
-            .map_err(|e| ValidatorsError::ReadTeeOfferPublicKey(format!("{e}")).into())
-    }
+    crate::protocol_state::active_engine_protocol_state()
+        .tee_offer_public(storage)
+        .map_err(|error| ValidatorsError::ReadTeeOfferPublicKey(format!("{error}")).into())
 }
 
 /// Read the on-chain tribute offer public from the latest committed state.
@@ -572,9 +590,9 @@ pub fn read_tee_offer_epoch_at_latest(
     let reader = RethStateReader { state: &state };
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
-    let reg = outbe_teeregistry::TeeRegistry::new(storage);
-    reg.tribute_offer_epoch()
-        .map_err(|e| ValidatorsError::ReadTeeOfferEpoch(format!("{e}")).into())
+    crate::protocol_state::active_engine_protocol_state()
+        .tee_offer_epoch(storage)
+        .map_err(|error| ValidatorsError::ReadTeeOfferEpoch(format!("{error}")).into())
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` (`TeeRegistry` per-
@@ -591,18 +609,14 @@ pub fn read_tee_recipient_x25519_from_state(
     let mut provider = ReadOnlyStorageProvider::new(reader);
     let storage = StorageHandle::new(&mut provider);
 
-    {
-        let reg = outbe_teeregistry::TeeRegistry::new(storage);
-        reg.validator_enclave_binding_v1(validator)
-            .and_then(|binding| {
-                binding
-                    .map(|binding| binding.recipient_x25519)
-                    .ok_or_else(|| {
-                        ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding.into()
-                    })
+    crate::protocol_state::active_engine_protocol_state()
+        .tee_recipient(storage, validator)
+        .and_then(|recipient| {
+            recipient.ok_or_else(|| {
+                ValidatorsPrecompileError::ValidatorMissingNodeHostEnclaveBinding.into()
             })
-            .map_err(|e| ValidatorsError::ReadTeeRecipientX25519(format!("{e}")).into())
-    }
+        })
+        .map_err(|error| ValidatorsError::ReadTeeRecipientX25519(format!("{error}")).into())
 }
 
 /// Read a validator's on-chain registered `recipient_x25519` from the latest state.
@@ -618,60 +632,29 @@ pub fn read_tee_recipient_x25519_at_latest(
 
 /// Check if current binary version is compatible with active (or approved) proposals.
 /// Also warns if there are approved versions without registered handlers.
-pub fn check_binary_version_compatibility(
+pub fn check_binary_version_compatibility<H>(
     provider: &(impl StateProviderFactory + ?Sized),
-    registry: &outbe_update::handlers::UpgradeHandlerRegistry,
+    _handlers: &H,
 ) -> Result<()> {
-    let active_version = read_active_protocol_version_at_latest(provider)?;
-    outbe_update::startup::assert_binary_protocol_compatible(active_version)
-        .map_err(eyre::Error::msg)?;
-    let waiting = read_waiting_scheduled_updates_at_latest(provider)?;
-    outbe_update::startup::warn_missing_handlers_for_waiting_updates(&waiting, registry);
-    Ok(())
-}
-
-/// Read the on-chain active protocol version from the latest committed state.
-fn read_active_protocol_version_at_latest(
-    provider: &(impl StateProviderFactory + ?Sized),
-) -> Result<outbe_update::ProtocolVersion> {
     let state = provider
         .latest()
-        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
+        .map_err(|error| ValidatorsError::GetLatestState(format!("{error}")))?;
     let reader = RethStateReader { state: &state };
-    let mut provider = ReadOnlyStorageProvider::new(reader);
-    let storage = StorageHandle::new(&mut provider);
-    let update = outbe_update::schema::Update::new(storage);
-    Ok(update.get_active_version()?)
-}
-
-/// Read scheduled updates waiting for activation from the latest committed state.
-fn read_waiting_scheduled_updates_at_latest(
-    provider: &(impl StateProviderFactory + ?Sized),
-) -> Result<Vec<outbe_update::ScheduledUpdateInfo>> {
-    let state = provider
-        .latest()
-        .map_err(|e| ValidatorsError::GetLatestState(format!("{e}")))?;
-    let reader = RethStateReader { state: &state };
-    let mut provider = ReadOnlyStorageProvider::new(reader);
-    let storage = StorageHandle::new(&mut provider);
-    let update = outbe_update::schema::Update::new(storage);
-    let mut scheduled = Vec::new();
-    for proposal_id in update.list_waiting_for_activation_proposal_ids()? {
-        if let Some(record) = update.read_scheduled_update(proposal_id)? {
-            scheduled.push(record);
-        }
-    }
-    Ok(scheduled)
+    let mut storage_provider = ReadOnlyStorageProvider::new(reader);
+    let storage = StorageHandle::new(&mut storage_provider);
+    crate::protocol_state::active_engine_protocol_state()
+        .check_binary_compatibility(storage)
+        .map_err(eyre::Error::msg)
 }
 
 fn read_local_validator_tee_rejection(
-    registry: &outbe_teeregistry::TeeRegistry<'_>,
     storage: StorageHandle<'_>,
-    node_binding: &outbe_teeregistry::NodeEnclaveBindingV1,
+    node_binding: &outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1,
     validator: Address,
 ) -> Result<Option<LocalTeeRuntimeRejectionV1>> {
-    let Some(validator_binding) = registry
-        .validator_enclave_binding_v1(validator)
+    let protocol = crate::protocol_state::active_engine_protocol_state();
+    let Some(validator_binding) = protocol
+        .validator_enclave_binding(storage.clone(), validator)
         .map_err(|error| ValidatorsError::ReadLocalValidatorTeeBinding(format!("{error}")))?
     else {
         return Ok(Some(LocalTeeRuntimeRejectionV1::MissingBinding));
@@ -682,10 +665,9 @@ fn read_local_validator_tee_rejection(
     {
         return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch));
     }
-    let validator_set = outbe_validatorset::contract::ValidatorSet::new(storage);
-    if validator_set
-        .get_validator(validator)?
-        .is_some_and(|record| record.status == outbe_validatorset::runtime::status::JAILED)
+    if protocol
+        .validator_record(storage, validator)?
+        .is_some_and(|record| record.status == crate::protocol_state::VALIDATOR_STATUS_JAILED)
     {
         return Ok(Some(LocalTeeRuntimeRejectionV1::ValidatorJailed));
     }

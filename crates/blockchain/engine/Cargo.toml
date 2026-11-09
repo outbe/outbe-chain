@@ -22,10 +22,7 @@ outbe-evm.workspace = true
 outbe-node.workspace = true
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
-outbe-validatorset.workspace = true
-outbe-teeregistry.workspace = true
 outbe-tee.workspace = true
-outbe-update.workspace = true
 
 # Commonware
 commonware-actor.workspace = true
@@ -84,6 +81,8 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-engine.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
+outbe-teeregistry.workspace = true
+outbe-update.workspace = true
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }

@@ -6,6 +6,7 @@
 mod api;
 pub mod errors;
 mod server;
+pub mod state_reader;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 

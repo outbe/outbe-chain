@@ -4,7 +4,7 @@ use super::{
     review::{self, PreparedPatchReview, PreparedReviewRefs, ReviewSigningContext},
 };
 use crate::manager::{FinalizedPatchApproval, FinalizedPublicationReceipt};
-use outbe_coderegistry::{payload::PatchVotePayloadV1, PatchApprovalRecord};
+use outbe_primitives::code_registry::{PatchApprovalRecord, PatchVotePayloadV1};
 use radicle::{
     cob::{self, object, patch},
     crypto::{BlsEnvelope, RepositoryKey},
@@ -234,7 +234,7 @@ pub fn prepare_patch_merge_from_checkpoint(
 
 fn validate_merge_context(
     reviewed: &outbe_primitives::radicle_publication::PublicationBody,
-    checkpoint: &outbe_coderegistry::publication::PublicationReceipt,
+    checkpoint: &outbe_primitives::code_registry::PublicationReceipt,
     approval: &PatchApprovalRecord,
     decision: &PatchVotePayloadV1,
     context: &ReviewSigningContext,

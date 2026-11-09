@@ -135,11 +135,11 @@ where
                     // is a deterministic activation error, not saturation.
                     // The dealer-only activation path below differs. It logs
                     // the overflow and reuses the current version.
-                    // The single source of truth lives in the
-                    // `outbe-validatorset` crate so proposer and
+                    // The single source of truth lives in
+                    // `outbe_primitives::validator_dto` so proposer and
                     // validator paths cannot diverge.
                     let activated_vrf_material_version =
-                        outbe_validatorset::next_vrf_material_version(
+                        outbe_primitives::validator_dto::next_vrf_material_version(
                             self.state.vrf_material_version,
                         )?;
                     let activated_polynomial = canonical_output.public().clone();
@@ -483,7 +483,7 @@ where
                         "shareless verifier: authenticated DKG handoff complete"
                     );
                     let new_vrf_material_version =
-                        match outbe_validatorset::next_vrf_material_version(
+                        match outbe_primitives::validator_dto::next_vrf_material_version(
                             self.state.vrf_material_version,
                         ) {
                             Ok(version) => version,

@@ -5,17 +5,16 @@ use super::types::{
     FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
+use crate::protocol_state::active_radicle_protocol_state;
 use alloy_primitives::{Address, B256, U256};
 use bytes::Bytes;
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381;
 use futures::StreamExt as _;
-use outbe_coderegistry::CodeRegistry;
 use outbe_primitives::storage::{
     readonly::{ReadOnlyStorageProvider, StorageReader},
     StorageHandle,
 };
-use outbe_validatorset::contract::ValidatorSet;
 use reth_chain_state::ForkChoiceSubscriptions;
 use reth_provider::{BlockIdReader, StateProviderFactory};
 use reth_storage_api::StateProvider;
@@ -88,8 +87,8 @@ impl<P: StateProviderFactory + reth_provider::ReceiptProvider + Send + Sync + 's
             self.chain_id,
             self.genesis_hash,
         );
-        CodeRegistry::new(StorageHandle::new(&mut storage))
-            .governments_descriptor()
+        active_radicle_protocol_state()
+            .governments_descriptor(StorageHandle::new(&mut storage))
             .map_err(snapshot_error)
     }
     fn read_finalized_vote_page(
@@ -141,9 +140,10 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
-        let receipt = registry
-            .publication_receipt(body.sequence)
+        let handle = StorageHandle::new(&mut storage);
+        let protocol = active_radicle_protocol_state();
+        let receipt = protocol
+            .publication_receipt(handle.clone(), body.sequence)
             .map_err(snapshot_error)?;
         let (attesters, receipt) = if let Some(receipt) = receipt {
             if receipt.body != *body || receipt.accepted_height > block.number {
@@ -154,8 +154,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             (vec![], Some(FinalizedPublicationReceipt { block, receipt }))
         } else {
             (
-                registry
-                    .pending_publication_attesters(body)
+                protocol
+                    .pending_publication_attesters(handle, body)
                     .map_err(snapshot_error)?,
                 None,
             )
@@ -214,25 +214,22 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
-        if !registry
-            .network_repository
-            .read()
+        let handle = StorageHandle::new(&mut storage);
+        let protocol = active_radicle_protocol_state();
+        if !protocol
+            .network_repository(handle.clone())
             .map_err(snapshot_error)?
             .is_zero()
-            || registry
-                .publication_sequence
-                .read()
+            || protocol
+                .publication_sequence(handle.clone())
                 .map_err(snapshot_error)?
                 != 0
-            || registry
-                .publication_material_sequence
-                .read()
+            || protocol
+                .publication_material_sequence(handle.clone())
                 .map_err(snapshot_error)?
                 != 0
-            || !registry
-                .publication_receipt_hash
-                .read()
+            || !protocol
+                .publication_receipt_hash(handle.clone())
                 .map_err(snapshot_error)?
                 .is_zero()
         {
@@ -240,8 +237,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 "network bootstrap has already been accepted".into(),
             ));
         }
-        let descriptor = registry
-            .governments_descriptor()
+        let descriptor = protocol
+            .governments_descriptor(handle)
             .map_err(snapshot_error)?
             .ok_or_else(|| {
                 ManagerError::Snapshot("governments genesis descriptor is disabled".into())
@@ -277,9 +274,10 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
-        let approval = registry
-            .patch_approval(proposal_id)
+        let handle = StorageHandle::new(&mut storage);
+        let protocol = active_radicle_protocol_state();
+        let approval = protocol
+            .patch_approval(handle.clone(), proposal_id)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("terminal Approved patch required".into()))?;
         if approval.approved_height > block.number {
@@ -287,35 +285,40 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 "approval is newer than signing state".into(),
             ));
         }
-        let subject =
-            outbe_coderegistry::payload::PatchVotePayloadV1::decode(approval.payload.as_bytes())
-                .map_err(snapshot_error)?;
-        let binding = outbe_coderegistry::repo_id_from_storage_key(
-            registry.network_repository.read().map_err(snapshot_error)?,
+        let subject = outbe_primitives::code_registry::PatchVotePayloadV1::decode(
+            approval.payload.as_bytes(),
+        )
+        .map_err(snapshot_error)?;
+        let binding = outbe_primitives::code_registry::repo_id_from_storage_key(
+            protocol
+                .network_repository(handle.clone())
+                .map_err(snapshot_error)?,
         )
         .map_err(snapshot_error)?;
         let (sequence, material_sequence) = (
-            registry
-                .publication_sequence
-                .read()
+            protocol
+                .publication_sequence(handle.clone())
                 .map_err(snapshot_error)?,
-            registry
-                .publication_material_sequence
-                .read()
+            protocol
+                .publication_material_sequence(handle.clone())
                 .map_err(snapshot_error)?,
         );
         ensure_bound_patch_sequence(binding, subject.repo_id, sequence, material_sequence)?;
-        let read_receipt = |sequence| -> Result<_, ManagerError> {
-            let receipt = registry
-                .publication_receipt(sequence)
-                .map_err(snapshot_error)?
-                .ok_or_else(|| ManagerError::Snapshot("signing checkpoint missing".into()))?;
-            if receipt.accepted_height > block.number {
-                return Err(ManagerError::Snapshot(
-                    "checkpoint is newer than signing state".into(),
-                ));
+        let read_receipt = {
+            let protocol = Arc::clone(&protocol);
+            let handle = handle.clone();
+            move |sequence| -> Result<_, ManagerError> {
+                let receipt = protocol
+                    .publication_receipt(handle.clone(), sequence)
+                    .map_err(snapshot_error)?
+                    .ok_or_else(|| ManagerError::Snapshot("signing checkpoint missing".into()))?;
+                if receipt.accepted_height > block.number {
+                    return Err(ManagerError::Snapshot(
+                        "checkpoint is newer than signing state".into(),
+                    ));
+                }
+                Ok(receipt)
             }
-            Ok(receipt)
         };
         let bootstrap = read_receipt(1)?;
         let checkpoint = if sequence == 1 {
@@ -330,9 +333,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
         } else {
             read_receipt(material_sequence)?
         };
-        let descriptor_hash = registry
-            .config_descriptor_hash
-            .read()
+        let descriptor_hash = protocol
+            .config_descriptor_hash(handle.clone())
             .map_err(snapshot_error)?;
         let players = players_commitment(
             authority
@@ -342,9 +344,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 .map(|member| (member.address, &member.consensus_pubkey)),
         )
         .map_err(snapshot_error)?;
-        let latest_receipt_hash = registry
-            .publication_receipt_hash
-            .read()
+        let latest_receipt_hash = protocol
+            .publication_receipt_hash(handle.clone())
             .map_err(snapshot_error)?;
         if !self.is_patch_signing_bound(
             &authority,
@@ -355,15 +356,14 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 "signing material/checkpoint binding mismatch".into(),
             ));
         }
-        let stage = registry
-            .patch_execution_stage
-            .read(&proposal_id)
+        let stage = protocol
+            .patch_execution_stage(handle, proposal_id)
             .map_err(snapshot_error)?;
         if !matches!(
             stage,
-            outbe_coderegistry::schema::PATCH_EXECUTION_PENDING
-                | outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED
-                | outbe_coderegistry::schema::PATCH_EXECUTION_MERGED
+            outbe_primitives::code_registry::PATCH_EXECUTION_PENDING
+                | outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED
+                | outbe_primitives::code_registry::PATCH_EXECUTION_MERGED
         ) {
             return Err(ManagerError::Snapshot(
                 "unknown patch execution stage".into(),
@@ -422,20 +422,18 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let registry = CodeRegistry::new(handle);
-        let latest_sequence = registry
-            .publication_sequence
-            .read()
+        let protocol = active_radicle_protocol_state();
+        let latest_sequence = protocol
+            .publication_sequence(handle.clone())
             .map_err(snapshot_error)?;
-        let latest_hash = registry
-            .publication_receipt_hash
-            .read()
+        let latest_hash = protocol
+            .publication_receipt_hash(handle.clone())
             .map_err(snapshot_error)?;
         if sequence == 0 || sequence > latest_sequence {
             return Ok(None);
         }
-        let receipt = registry
-            .publication_receipt(sequence)
+        let receipt = protocol
+            .publication_receipt(handle, sequence)
             .map_err(snapshot_error)?
             .ok_or_else(|| ManagerError::Snapshot("publication receipt missing".into()))?;
         if receipt.accepted_height == 0
@@ -534,12 +532,12 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
         &self,
         authority: &FinalizedRepositoryAuthority,
         (bootstrap, material, checkpoint): (
-            &outbe_coderegistry::publication::PublicationReceipt,
-            &outbe_coderegistry::publication::PublicationReceipt,
-            &outbe_coderegistry::publication::PublicationReceipt,
+            &outbe_primitives::code_registry::PublicationReceipt,
+            &outbe_primitives::code_registry::PublicationReceipt,
+            &outbe_primitives::code_registry::PublicationReceipt,
         ),
         (binding, descriptor_hash, latest_receipt_hash, players): (
-            outbe_coderegistry::RepoId,
+            outbe_primitives::code_registry::RepoId,
             B256,
             B256,
             B256,
@@ -578,8 +576,8 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
 
 fn is_material_and_checkpoint_consistent(
     authority: &FinalizedRepositoryAuthority,
-    material: &outbe_coderegistry::publication::PublicationReceipt,
-    checkpoint: &outbe_coderegistry::publication::PublicationReceipt,
+    material: &outbe_primitives::code_registry::PublicationReceipt,
+    checkpoint: &outbe_primitives::code_registry::PublicationReceipt,
     players: B256,
 ) -> bool {
     if material.body.epoch != authority.epoch()
@@ -599,8 +597,8 @@ fn is_material_and_checkpoint_consistent(
 }
 
 fn ensure_bound_patch_sequence(
-    binding: outbe_coderegistry::RepoId,
-    subject_repo: outbe_coderegistry::RepoId,
+    binding: outbe_primitives::code_registry::RepoId,
+    subject_repo: outbe_primitives::code_registry::RepoId,
     sequence: u64,
     material_sequence: u64,
 ) -> Result<(), ManagerError> {
@@ -626,12 +624,15 @@ fn read_repository_authority_from_storage(
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
     let handle = StorageHandle::new(&mut storage);
-    let validators = ValidatorSet::new(handle.clone());
-    let epoch = validators.current_epoch_u64().map_err(snapshot_error)?;
-    let effective = validators
-        .get_active_consensus_set()
+    let protocol = active_radicle_protocol_state();
+    let epoch = protocol
+        .current_epoch(handle.clone())
         .map_err(snapshot_error)?;
-    let committee = outbe_validatorset::state::read_committee_snapshot_for_epoch(handle, epoch)
+    let effective = protocol
+        .active_consensus_set(handle.clone())
+        .map_err(snapshot_error)?;
+    let committee = protocol
+        .committee_snapshot(handle, epoch)
         .map_err(snapshot_error)?
         .ok_or_else(|| {
             ManagerError::Snapshot("current repository signing committee is unavailable".into())
@@ -673,8 +674,8 @@ fn read_patch_approval_from_storage(
 ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let approval = CodeRegistry::new(StorageHandle::new(&mut storage))
-        .patch_approval(proposal_id)
+    let approval = active_radicle_protocol_state()
+        .patch_approval(StorageHandle::new(&mut storage), proposal_id)
         .map_err(snapshot_error)?;
     match approval {
         Some(approval) if approval.approved_height > block.number => Err(ManagerError::Snapshot(
@@ -709,21 +710,22 @@ fn read_snapshot_from_storage(
 ) -> Result<FinalizedSnapshot, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
+    let protocol = active_radicle_protocol_state();
     let validators = {
-        let validator_set = ValidatorSet::new(StorageHandle::new(&mut storage));
-        let active = validator_set
-            .get_active_consensus_set()
+        let handle = StorageHandle::new(&mut storage);
+        let active = protocol
+            .active_consensus_set(handle.clone())
             .map_err(snapshot_error)?;
         let mut validators = Vec::with_capacity(active.len());
         for record in active {
-            let binding = validator_set
-                .get_radicle_node_id(record.validator_address)
+            let binding = protocol
+                .radicle_node_id(handle.clone(), record.validator_address)
                 .map_err(snapshot_error)?;
             let node_id = if binding.is_zero() {
                 None
             } else {
-                let reverse = validator_set
-                    .validator_by_radicle_node_id(binding)
+                let reverse = protocol
+                    .validator_by_radicle_node_id(handle.clone(), binding)
                     .map_err(snapshot_error)?;
                 if reverse != record.validator_address {
                     return Err(
@@ -749,15 +751,20 @@ fn read_snapshot_from_storage(
         validators
     };
     let (registry_generation, repositories) = {
-        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
-        let count = registry.repository_count.read().map_err(snapshot_error)?;
-        let generation = registry
-            .registry_generation
-            .read()
+        let handle = StorageHandle::new(&mut storage);
+        let count = protocol
+            .repository_count(handle.clone())
+            .map_err(snapshot_error)?;
+        let generation = protocol
+            .registry_generation(handle.clone())
             .map_err(snapshot_error)?;
         let mut repositories = Vec::with_capacity(count as usize);
         for index in 0..count {
-            repositories.push(registry.repository_at(index).map_err(snapshot_error)?);
+            repositories.push(
+                protocol
+                    .repository_at(handle.clone(), index)
+                    .map_err(snapshot_error)?,
+            );
         }
         (generation, repositories)
     };
@@ -857,8 +864,10 @@ where
 mod tests {
     use super::*;
     use commonware_cryptography::{bls12381, Signer as _};
-    use outbe_coderegistry::RepoId;
+    use outbe_coderegistry::CodeRegistry;
+    use outbe_primitives::code_registry::RepoId;
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+    use outbe_validatorset::contract::ValidatorSet;
 
     struct MapReader(HashMapStorageProvider);
 

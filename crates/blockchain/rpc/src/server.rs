@@ -38,15 +38,7 @@ use outbe_radicle::integration::{
 fn read_effective_slash_config(
     storage: StorageHandle<'_>,
 ) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
-    let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-    Ok(SlashConfig {
-        proposer_misdemeanor_threshold: si.proposer_misdemeanor_threshold()?,
-        proposer_felony_threshold: si.proposer_felony_threshold()?,
-        voter_misdemeanor_threshold: si.voter_misdemeanor_threshold()?,
-        voter_felony_threshold: si.voter_felony_threshold()?,
-        slash_amount_percent: si.slash_amount_percent()?,
-        evidence_reward_percent: si.evidence_reward_percent()?,
-    })
+    crate::state_reader::active_rpc_state_reader().slash_config(storage)
 }
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -482,75 +474,19 @@ where
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
         self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let records = vs.get_active_validators()?;
-
-            let staking = outbe_staking::contract::Staking::new(storage);
-
-            let mut result = Vec::with_capacity(records.len());
-            for r in &records {
-                let stake = staking.get_stake(r.validator_address).unwrap_or(U256::ZERO);
-                result.push(ValidatorInfo {
-                    address: r.validator_address,
-                    consensus_pubkey: hex::encode(r.consensus_pubkey),
-                    status: r.status,
-                    stake,
-                });
-            }
-            Ok(result)
+            crate::state_reader::active_rpc_state_reader().validators(storage)
         })
     }
 
     async fn get_validator(&self, address: Address) -> RpcResult<Option<ValidatorDetailInfo>> {
         self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let state = vs.validator_state(address)?;
-            if !state.is_registered() {
-                return Ok(None);
-            }
-            let consensus_pubkey = state
-                .consensus_pubkey()
-                .ok_or(crate::errors::RpcValidatorStateError::MissingConsensusPubkey)?;
-            let history = state
-                .history()
-                .ok_or(crate::errors::RpcValidatorStateError::MissingHistory)?;
-            Ok(Some(ValidatorDetailInfo {
-                address,
-                consensus_pubkey: hex::encode(consensus_pubkey),
-                status: state
-                    .lifecycle()
-                    .stored_status()
-                    .ok_or(crate::errors::RpcValidatorStateError::MissingPersistedStatus)?,
-                stake: state.bonded_stake(),
-                slash_count: history.slash_count(),
-                missed_blocks: history.missed_blocks(),
-                missed_votes: history.missed_votes(),
-                blocks_proposed: history.blocks_proposed(),
-                joined_at_height: history.joined_at_height(),
-                deactivated_at_height: history.last_deactivated_at_height().unwrap_or(0),
-                unbonding_end: state.unbonding_end_hint().unwrap_or(0),
-                has_bls_share: state.has_bls_share(),
-            }))
+            crate::state_reader::active_rpc_state_reader().validator(storage, address)
         })
     }
 
     async fn get_epoch_info(&self) -> RpcResult<EpochInfo> {
         self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let epoch = vs.epoch_snapshot()?;
-            let active_count = vs.active_validator_count()?;
-
-            let staking = outbe_staking::contract::Staking::new(storage);
-            let total_staked = staking.get_total_staked()?;
-
-            Ok(EpochInfo {
-                epoch_number: epoch.number,
-                epoch_start_timestamp: epoch.start_timestamp,
-                epoch_start_block: epoch.start_block,
-                epoch_length_blocks: epoch.length_blocks,
-                active_validator_count: active_count,
-                total_staked,
-            })
+            crate::state_reader::active_rpc_state_reader().epoch(storage)
         })
     }
 
@@ -572,19 +508,13 @@ where
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {
         self.with_latest_state(|storage| {
-            let staking = outbe_staking::contract::Staking::new(storage);
-            staking.get_stake(address)
+            crate::state_reader::active_rpc_state_reader().stake(storage, address)
         })
     }
 
     async fn get_slash_info(&self, address: Address) -> RpcResult<SlashInfo> {
         self.with_latest_state(|storage| {
-            let si = outbe_slashindicator::contract::SlashIndicator::new(storage);
-            Ok(SlashInfo {
-                proposer_miss_count: si.proposer_miss_count.read(&address)?,
-                voter_miss_count: si.voter_miss_count.read(&address)?,
-                felony_count: si.felony_count.read(&address)?,
-            })
+            crate::state_reader::active_rpc_state_reader().slash_info(storage, address)
         })
     }
 
@@ -649,10 +579,7 @@ where
     }
 
     async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {
-        Ok(EmissionInfo {
-            validator_reward_percent: outbe_emission::allocation::VALIDATOR_REWARD_PCT,
-            fee_escrow_address: outbe_primitives::addresses::REWARDS_ADDRESS,
-        })
+        Ok(crate::state_reader::active_rpc_state_reader().emission_info())
     }
 
     async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
@@ -661,14 +588,7 @@ where
 
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
         self.with_latest_state(|storage| {
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-            let participation = vs.participation(address)?;
-            Ok(ParticipationInfo {
-                address,
-                blocks_proposed: participation.blocks_proposed,
-                missed_blocks: participation.missed_blocks,
-                missed_votes: participation.missed_votes,
-            })
+            crate::state_reader::active_rpc_state_reader().participation(storage, address)
         })
     }
 

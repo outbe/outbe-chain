@@ -1,8 +1,7 @@
 //! Read existing Vote events; current permission is checked separately by the signer.
 use super::*;
 use crate::manager::{FinalizedVotePage, MAX_VOTE_PAGE};
-use alloy_sol_types::SolEvent as _;
-use outbe_vote::precompile::IVote;
+use crate::protocol_state::active_radicle_protocol_state;
 use reth_provider::ReceiptProvider;
 
 impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
@@ -47,8 +46,8 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let registry = CodeRegistry::new(StorageHandle::new(&mut storage));
-        let proposals = filter_network_proposals(&registry, height, &ids[start..end])?;
+        let proposals =
+            filter_network_proposals(StorageHandle::new(&mut storage), height, &ids[start..end])?;
         Ok(Some(FinalizedVotePage {
             chain_id: self.chain_id,
             genesis_hash: self.genesis_hash,
@@ -69,14 +68,11 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
 fn approved_proposal_ids<R: alloy_consensus::TxReceipt<Log = alloy_primitives::Log>>(
     receipts: &[R],
 ) -> Result<Vec<U256>, ManagerError> {
+    let protocol = active_radicle_protocol_state();
     let mut ids = Vec::new();
     for log in receipts.iter().flat_map(|r| r.logs()) {
-        if log.address == outbe_primitives::addresses::VOTE_ADDRESS
-            && log.data.topics().first() == Some(&IVote::ProposalApproved::SIGNATURE_HASH)
-        {
-            let event =
-                IVote::ProposalApproved::decode_log_validate(log).map_err(snapshot_error)?;
-            ids.push(event.data.proposalId);
+        if let Some(id) = protocol.approved_proposal_id(log).map_err(snapshot_error)? {
+            ids.push(id);
         }
     }
     ids.sort_unstable();
@@ -85,24 +81,32 @@ fn approved_proposal_ids<R: alloy_consensus::TxReceipt<Log = alloy_primitives::L
 }
 
 fn filter_network_proposals(
-    registry: &CodeRegistry<'_>,
+    storage: StorageHandle<'_>,
     height: u64,
     ids: &[U256],
 ) -> Result<Vec<U256>, ManagerError> {
-    let network_repository = registry.network_repository.read().map_err(snapshot_error)?;
+    let protocol = active_radicle_protocol_state();
+    let network_repository = protocol
+        .network_repository(storage.clone())
+        .map_err(snapshot_error)?;
     let mut proposals = Vec::new();
     for id in ids {
-        if let Some(approval) = registry.patch_approval(*id).map_err(snapshot_error)? {
+        if let Some(approval) = protocol
+            .patch_approval(storage.clone(), *id)
+            .map_err(snapshot_error)?
+        {
             if approval.approved_height != height || approval.proposal_id != *id {
                 return Err(ManagerError::Snapshot(
                     "Vote event and approval disagree".into(),
                 ));
             }
-            let subject = outbe_coderegistry::payload::PatchVotePayloadV1::decode(
+            let subject = outbe_primitives::code_registry::PatchVotePayloadV1::decode(
                 approval.payload.as_bytes(),
             )
             .map_err(snapshot_error)?;
-            if outbe_coderegistry::repo_id_storage_key(subject.repo_id) == network_repository {
+            if outbe_primitives::code_registry::repo_id_storage_key(subject.repo_id)
+                == network_repository
+            {
                 proposals.push(*id);
             }
         }

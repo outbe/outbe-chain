@@ -1,11 +1,13 @@
 use super::*;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
-use outbe_coderegistry::{payload::PatchVotePayloadV1, vote_target::CodePatchVoteTarget, RepoId};
+use outbe_coderegistry::{vote_target::CodePatchVoteTarget, CodeRegistry};
+use outbe_primitives::code_registry::{PatchVotePayloadV1, RepoId};
 use outbe_primitives::{
     addresses::CODE_REGISTRY_ADDRESS,
     block::{BlockContext, BlockRuntimeContext},
     storage::hashmap::HashMapStorageProvider,
 };
+use outbe_validatorset::contract::ValidatorSet;
 use reth_chainspec::ChainInfo;
 use reth_provider::{
     test_utils::{ExtendedAccount, MockEthProvider},
@@ -165,7 +167,9 @@ fn snapshot(provider: &HashMapStorageProvider) -> MockEthProvider {
 }
 
 fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
-    use outbe_coderegistry::schema::{PublicationReceiptRecord, PublicationReceiptRecordEntryExt};
+    use outbe_primitives::code_registry::{
+        PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
+    };
     use outbe_primitives::storage::types::StorageKey as _;
     let (mut body, manifest) = crate::integration::publication::tests::bootstrap_fixture();
     body.package_manifest_hash = manifest.hash().unwrap();
@@ -329,7 +333,7 @@ fn local_receipt_reader_samples_own_current_finality_without_archived_fallback()
 
 fn repository_authority_storage() -> (
     HashMapStorageProvider,
-    outbe_validatorset::state::CommitteeSnapshot,
+    outbe_primitives::committee_snapshot::CommitteeSnapshot,
 ) {
     use commonware_codec::Encode as _;
     use commonware_cryptography::Signer as _;
@@ -337,7 +341,8 @@ fn repository_authority_storage() -> (
     use outbe_consensus::{
         bls::bootstrap_dkg_for_participants, dkg_manager::public_polynomial_hash,
     };
-    use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
+    use outbe_primitives::committee_snapshot::{CommitteeEntry, CommitteeSnapshot};
+    use outbe_validatorset::state::write_committee_snapshot;
     let mut keys: Vec<_> = (101..105).map(bls12381::PrivateKey::from_seed).collect();
     keys.sort_by_key(|key| key.public_key().encode());
     let players = keys
@@ -392,7 +397,7 @@ fn repository_authority_storage() -> (
 
 fn repository_authority_fixture() -> (
     RethSnapshotReader<ApprovalProvider>,
-    outbe_validatorset::state::CommitteeSnapshot,
+    outbe_primitives::committee_snapshot::CommitteeSnapshot,
 ) {
     use outbe_validatorset::state::write_committee_snapshot;
     let (mut storage, committee) = repository_authority_storage();
@@ -476,7 +481,7 @@ fn block(number: u64) -> FinalizedBlock {
 }
 
 fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
-    use outbe_coderegistry::schema::{
+    use outbe_primitives::code_registry::{
         PatchApprovalRecordEntryExt, PublicationReceiptRecord, PublicationReceiptRecordEntryExt,
     };
     use outbe_vote::{
@@ -524,7 +529,9 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .unwrap();
         registry
             .network_repository
-            .write(outbe_coderegistry::repo_id_storage_key(body.repo_id))
+            .write(outbe_primitives::code_registry::repo_id_storage_key(
+                body.repo_id,
+            ))
             .unwrap();
         registry.publication_sequence.write(1).unwrap();
         registry.publication_material_sequence.write(1).unwrap();
@@ -593,7 +600,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
             .patch_execution_stage
             .write(
                 &U256::ONE,
-                outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED,
+                outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED,
             )
             .unwrap();
     });
@@ -689,7 +696,7 @@ fn current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_cons
     assert_eq!(current.approval().approval.approved_height, 4);
     assert_eq!(
         current.stage(),
-        outbe_coderegistry::schema::PATCH_EXECUTION_PENDING
+        outbe_primitives::code_registry::PATCH_EXECUTION_PENDING
     );
     assert_eq!(current.anchor(), block(4));
     assert_eq!(current.checkpoint().receipt().body.sequence, 1);
@@ -698,7 +705,7 @@ fn current_patch_signing_state_uses_one_exact_finalized_state_and_preserves_cons
     let reviewed = reader.read_current_patch_signing_state(U256::ONE).unwrap();
     assert_eq!(
         reviewed.stage(),
-        outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED
+        outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED
     );
     assert_eq!(reviewed.approval().approval, current.approval().approval);
 }
@@ -777,7 +784,7 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
             .unwrap();
         repos
             .network_repository
-            .write(outbe_coderegistry::repo_id_storage_key(
+            .write(outbe_primitives::code_registry::repo_id_storage_key(
                 RepoId::repeat_byte(0xaa),
             ))
             .unwrap();
@@ -1036,7 +1043,7 @@ fn finalized_vote_pages_select_only_the_network_repository() {
             if let Some(repo) = selected {
                 registry
                     .network_repository
-                    .write(outbe_coderegistry::repo_id_storage_key(
+                    .write(outbe_primitives::code_registry::repo_id_storage_key(
                         RepoId::repeat_byte(repo),
                     ))
                     .unwrap();

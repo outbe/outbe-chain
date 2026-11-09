@@ -7,6 +7,7 @@ use outbe_primitives::{
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
     },
 };
+use outbe_teeregistry::TeeRegistry;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 const GENESIS: B256 = B256::repeat_byte(0x21);
 const MRENCLAVE: B256 = B256::repeat_byte(0x81);
@@ -145,13 +146,9 @@ fn check(
             genesis_timestamp: 1_700_000_000,
         },
     );
-    let result = live_upgrade_candidate(
-        &TeeRegistry::new(StorageHandle::new(&mut provider)),
-        context,
-        100,
-        legacy,
-    )
-    .map_err(|e| e.to_string());
+    let result = crate::state_reader::active_rpc_state_reader()
+        .live_upgrade_candidate(StorageHandle::new(&mut provider), context, 100, legacy)
+        .map_err(|e| e.to_string());
     let recorded = reads.borrow().clone();
     (result, recorded)
 }
@@ -213,7 +210,7 @@ fn renewal_epoch(number: U256, start: u64, length: u32) -> RenewalEpoch {
         finalized_height: 10,
         finalized_hash: B256::repeat_byte(1),
         finalized_timestamp: 100,
-        epoch: outbe_validatorset::EpochSnapshot {
+        epoch: outbe_primitives::validator_dto::EpochSnapshot {
             number,
             start_timestamp: 0,
             start_block: start,

@@ -28,7 +28,7 @@ use crate::{
     },
 };
 use alloy_primitives::{B256, U256};
-use outbe_coderegistry::publication::PublicationReceipt;
+use outbe_primitives::code_registry::PublicationReceipt;
 use outbe_primitives::radicle_publication::{PublicationBody, PUBLICATION_BODY_LEN};
 use std::{
     fs::{self, File, OpenOptions},

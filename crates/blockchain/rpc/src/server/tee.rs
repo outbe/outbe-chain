@@ -2,7 +2,6 @@
 use super::*;
 use outbe_primitives::storage::readonly::ReadOnlyBlockContext;
 use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
-use outbe_teeregistry::TeeRegistry;
 
 pub(super) struct TeeRpc<'a, P> {
     provider: &'a P,
@@ -123,14 +122,14 @@ where
             })?;
             let mut provider =
                 ReadOnlyStorageProvider::new_with_block_context(reader, read_only_ctx);
-            let registry = outbe_teeregistry::TeeRegistry::new(StorageHandle::new(&mut provider));
-            let check = live_upgrade_candidate(
-                &registry,
-                context,
-                header.timestamp(),
-                legacy_direct_dev_source,
-            )
-            .map_err(internal_err)?;
+            let check = crate::state_reader::active_rpc_state_reader()
+                .live_upgrade_candidate(
+                    StorageHandle::new(&mut provider),
+                    context,
+                    header.timestamp(),
+                    legacy_direct_dev_source,
+                )
+                .map_err(internal_err)?;
             if !check {
                 return Err(internal_err(
                     crate::errors::RpcInternalError::RecipientNotLiveFinalizedUpgradeCandidate,
@@ -191,8 +190,9 @@ where
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
-        let validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-        let epoch = validators.epoch_snapshot().map_err(internal_err)?;
+        let epoch = crate::state_reader::active_rpc_state_reader()
+            .epoch_snapshot(storage)
+            .map_err(internal_err)?;
         Ok(RenewalEpoch {
             finalized_height: finalized.number,
             finalized_hash: finalized.hash,
@@ -205,7 +205,7 @@ struct RenewalEpoch {
     finalized_height: u64,
     finalized_hash: B256,
     finalized_timestamp: u64,
-    epoch: outbe_validatorset::EpochSnapshot,
+    epoch: outbe_primitives::validator_dto::EpochSnapshot,
 }
 impl RenewalEpoch {
     fn schedule(self, config: TeeRenewalScheduleConfigV1) -> RpcResult<TeeRenewalScheduleV1> {
@@ -251,52 +251,6 @@ impl RenewalEpoch {
         .validate()
         .map_err(|error| internal_err(error.to_owned()))
     }
-}
-
-fn live_upgrade_candidate(
-    registry: &TeeRegistry<'_>,
-    context: &DcapOnboardingContextV1,
-    timestamp: u64,
-    legacy_direct_dev_source: bool,
-) -> outbe_primitives::error::Result<bool> {
-    // This function reads the policy even when the first candidate condition rejects.
-    let policy = registry.active_policy_v1()?;
-    if !candidate_binding_matches(registry, context, timestamp)? {
-        return Ok(false);
-    }
-    if !candidate_offer_matches(registry, context)? {
-        return Ok(false);
-    }
-    let chain_matches =
-        context.chain_id == policy.chain_id && context.genesis_hash == policy.genesis_hash;
-    let mode_allowed = !legacy_direct_dev_source
-        || policy.attestation_mode
-            == outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev;
-    Ok(chain_matches && mode_allowed)
-}
-fn candidate_binding_matches(
-    registry: &TeeRegistry<'_>,
-    context: &DcapOnboardingContextV1,
-    timestamp: u64,
-) -> outbe_primitives::error::Result<bool> {
-    let node = context.node_id_hash;
-    let live_context = registry.upgrade_candidate_context.read(&node)? == context.context_hash()
-        && registry.upgrade_candidate_expiry.read(&node)? > timestamp;
-    Ok(live_context
-        && registry.upgrade_candidate_source.read(&node)?
-            == registry.v1_node_binding_id.read(&node)?
-        && !registry.v1_node_binding_id.read(&node)?.is_zero())
-}
-fn candidate_offer_matches(
-    registry: &TeeRegistry<'_>,
-    context: &DcapOnboardingContextV1,
-) -> outbe_primitives::error::Result<bool> {
-    Ok(
-        registry.strict_upgrade_successor.read()? == context.policy_hash
-            && registry.offer_public_key()?.0 == context.tribute_offer_public
-            && registry.key_epoch()? == context.key_epoch
-            && registry.tribute_offer_epoch()? == context.tribute_offer_epoch,
-    )
 }
 
 /// No installed enclave session. Keyless RPC cannot derive keys or export an

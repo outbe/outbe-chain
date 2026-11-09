@@ -35,14 +35,16 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
         chain_id: 2026,
         genesis_hash: B256::repeat_byte(7),
         epoch: 2,
-        committee: outbe_validatorset::state::CommitteeSnapshot {
+        committee: outbe_primitives::committee_snapshot::CommitteeSnapshot {
             committee: keys
                 .iter()
                 .enumerate()
-                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
-                    address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
-                    consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
-                })
+                .map(
+                    |(i, key)| outbe_primitives::committee_snapshot::CommitteeEntry {
+                        address: alloy_primitives::Address::repeat_byte(i as u8 + 1),
+                        consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
+                    },
+                )
                 .collect(),
             vrf_material_version: 7,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
@@ -549,10 +551,10 @@ async fn independent_collectors_prepare_identical_bootstrap_without_promoting_re
 
 fn admit_bootstrap(
     descriptor: &GovernmentsDescriptor,
-    committee: &outbe_validatorset::state::CommitteeSnapshot,
+    committee: &outbe_primitives::committee_snapshot::CommitteeSnapshot,
     body: &PublicationBody,
     attestations: &[outbe_primitives::radicle_publication::PublicationAttestation],
-) -> outbe_coderegistry::publication::PublicationReceipt {
+) -> outbe_primitives::code_registry::PublicationReceipt {
     use outbe_coderegistry::CodeRegistry;
     use outbe_primitives::{
         radicle_publication::PublicationBatch, storage::hashmap::HashMapStorageProvider,
@@ -629,7 +631,7 @@ fn admit_bootstrap(
     state.enter(|s| {
         let registry = CodeRegistry::new(s);
         assert_eq!(
-            outbe_coderegistry::repo_id_from_storage_key(
+            outbe_primitives::code_registry::repo_id_from_storage_key(
                 registry.network_repository.read().unwrap()
             )
             .unwrap(),
@@ -743,7 +745,7 @@ fn accepted_native_history_recovers_without_local_packages_or_signing_material()
             number: 20,
             hash: B256::repeat_byte(20),
         },
-        receipt: outbe_coderegistry::publication::PublicationReceipt {
+        receipt: outbe_primitives::code_registry::PublicationReceipt {
             accepted_height: 18,
             receipt_hash: body.receipt_hash(),
             body,

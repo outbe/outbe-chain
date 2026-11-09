@@ -97,7 +97,7 @@ pub(crate) async fn attestations(
             &signature
         ));
         let mut changed = state.clone();
-        changed.stage = outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED;
+        changed.stage = outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED;
         *reader.current.lock() = Some(changed);
         assert!(matches!(
             resolver.attest_review(publication.clone()).await,
@@ -268,7 +268,7 @@ async fn signing_partials(
         publisher.install_local_signer(provider.clone());
         let partial = request(&resolver, &job).await.unwrap();
         let mut consumed = state.clone();
-        consumed.stage = outbe_coderegistry::schema::PATCH_EXECUTION_REVIEWED;
+        consumed.stage = outbe_primitives::code_registry::PATCH_EXECUTION_REVIEWED;
         *reader.current.lock() = Some(consumed);
         assert!(matches!(
             request(&resolver, &job).await,
@@ -378,14 +378,16 @@ async fn repository_material_bridge_requires_matching_live_output_and_fresh_fina
         chain_id: 2026,
         genesis_hash: B256::repeat_byte(7),
         epoch: 1,
-        committee: outbe_validatorset::state::CommitteeSnapshot {
+        committee: outbe_primitives::committee_snapshot::CommitteeSnapshot {
             committee: keys
                 .iter()
                 .enumerate()
-                .map(|(i, key)| outbe_validatorset::state::CommitteeEntry {
-                    address: Address::repeat_byte(i as u8 + 1),
-                    consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
-                })
+                .map(
+                    |(i, key)| outbe_primitives::committee_snapshot::CommitteeEntry {
+                        address: Address::repeat_byte(i as u8 + 1),
+                        consensus_pubkey: key.public_key().encode().as_ref().try_into().unwrap(),
+                    },
+                )
                 .collect(),
             vrf_material_version: 7,
             vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),

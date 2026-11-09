@@ -14,12 +14,6 @@ test-support = []
 outbe-primitives.workspace = true
 outbe-radicle.workspace = true
 outbe-tee.workspace = true
-outbe-tribute.workspace = true
-outbe-teeregistry.workspace = true
-outbe-validatorset.workspace = true
-outbe-staking.workspace = true
-outbe-emission.workspace = true
-outbe-slashindicator.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["storage-api"] }
@@ -44,7 +38,13 @@ tokio.workspace = true
 tempfile.workspace = true
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-emission.workspace = true
+outbe-slashindicator.workspace = true
+outbe-staking.workspace = true
+outbe-teeregistry.workspace = true
+outbe-tribute.workspace = true
 outbe-update.workspace = true
+outbe-validatorset.workspace = true
 outbe-vote.workspace = true
 alloy-sol-types.workspace = true
 serde_json.workspace = true

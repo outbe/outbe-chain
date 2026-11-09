@@ -5,18 +5,25 @@
 
 pub mod errors;
 pub mod maintain;
+pub mod policy;
+
+pub use policy::{
+    install_txpool_zero_fee_policy, TxPoolPolicyAlreadyInstalled, TxPoolZeroFeePolicy,
+};
 
 mod state_reader;
 
 use crate::errors::{OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError};
+use crate::policy::active_policy;
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_primitives::{
-    addresses::OUTBE_SYSTEM_TX_ADDRESS,
+    addresses::{OUTBE_SYSTEM_TX_ADDRESS, ZEROFEE_ADDRESS},
     storage::{readonly::ReadOnlyStorageProvider, StorageHandle},
+    zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction},
     OutbePrimitives,
 };
-use outbe_zerofee::{BootstrapTransactionView, ZeroFeeHookId, ZeroFeeTransaction};
+
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
@@ -31,7 +38,7 @@ use reth_transaction_pool::{
     TransactionOrdering, TransactionOrigin, TransactionValidationOutcome,
     TransactionValidationTaskExecutor, TransactionValidator,
 };
-use std::{fmt, marker::PhantomData, time::SystemTime};
+use std::{fmt, marker::PhantomData, sync::Arc, time::SystemTime};
 
 fn is_reserved_system_tx<T>(tx: &T) -> bool
 where
@@ -47,17 +54,6 @@ where
     ZeroFeeTransaction::from_transaction(tx, signer)
 }
 
-/// Returns a reserved priority class for zero-fee hooks that must outrank the
-/// normal tip market. Keep this match exhaustive so every new hook makes an
-/// explicit ordering decision.
-fn zero_fee_priority_class(hook: ZeroFeeHookId) -> Option<u8> {
-    match hook {
-        ZeroFeeHookId::OracleSubmitVote => Some(1),
-        ZeroFeeHookId::HyperlaneSubmitCheckpoint => Some(1),
-        ZeroFeeHookId::RenewEnclave => Some(1),
-    }
-}
-
 /// Outbe pool type with guarded ZeroFee validation.
 pub type OutbeTransactionPool<Client, S, Evm, T = reth_transaction_pool::EthPooledTransaction> =
     Pool<
@@ -68,19 +64,33 @@ pub type OutbeTransactionPool<Client, S, Evm, T = reth_transaction_pool::EthPool
 
 /// Orders hook-approved ZeroFee transactions ahead of the normal tip market.
 #[derive(Debug)]
-pub struct OutbeTransactionOrdering<T>(PhantomData<T>);
+pub struct OutbeTransactionOrdering<T> {
+    policy: Arc<dyn TxPoolZeroFeePolicy>,
+    _tx: PhantomData<T>,
+}
 
 impl<T> Clone for OutbeTransactionOrdering<T> {
     fn clone(&self) -> Self {
-        *self
+        Self {
+            policy: Arc::clone(&self.policy),
+            _tx: PhantomData,
+        }
     }
 }
 
-impl<T> Copy for OutbeTransactionOrdering<T> {}
-
 impl<T> Default for OutbeTransactionOrdering<T> {
     fn default() -> Self {
-        Self(PhantomData)
+        Self::new(active_policy())
+    }
+}
+
+impl<T> OutbeTransactionOrdering<T> {
+    /// Orders transactions with `policy`.
+    pub fn new(policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
+        Self {
+            policy,
+            _tx: PhantomData,
+        }
     }
 }
 
@@ -104,8 +114,10 @@ where
                 .into()
         };
 
-        match outbe_zerofee::registry().classify(&zero_fee_tx) {
-            Ok(Some(candidate)) => zero_fee_priority_class(candidate.hook)
+        match self.policy.classify(&zero_fee_tx) {
+            Ok(Some(candidate)) => self
+                .policy
+                .priority_class(candidate.hook)
                 .map(|priority_class| Priority::Value((priority_class, 0)))
                 .unwrap_or_else(normal_priority),
             Ok(None) => normal_priority(),
@@ -153,6 +165,7 @@ where
         let blob_store =
             reth_node_builder::components::create_blob_store_with_cache(ctx, blob_cache_size)?;
 
+        let policy = active_policy();
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .set_eip4844(!blobs_disabled)
@@ -165,7 +178,7 @@ where
                 .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
                 .disable_balance_check()
                 .build_with_tasks(ctx.task_executor().clone(), blob_store.clone())
-                .map(|inner| OutbeTransactionValidator::new(inner));
+                .map(|inner| OutbeTransactionValidator::new(inner, Arc::clone(&policy)));
 
         if validator.validator().inner().eip4844() {
             let kzg_settings = validator.validator().inner().kzg_settings().clone();
@@ -178,7 +191,7 @@ where
         let transaction_pool = TxPoolBuilder::new(ctx)
             .with_validator(validator)
             .build_with_ordering_and_spawn_maintenance_task(
-                OutbeTransactionOrdering::default(),
+                OutbeTransactionOrdering::new(policy),
                 blob_store,
                 pool_config,
             )?;
@@ -268,11 +281,15 @@ where
 /// Transaction validator that keeps reth's Ethereum checks and adds Outbe policy.
 pub struct OutbeTransactionValidator<Client, Tx, Evm> {
     inner: EthTransactionValidator<Client, Tx, Evm>,
+    policy: Arc<dyn TxPoolZeroFeePolicy>,
 }
 
 impl<Client, Tx, Evm> OutbeTransactionValidator<Client, Tx, Evm> {
-    fn new(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
-        Self { inner }
+    fn new(
+        inner: EthTransactionValidator<Client, Tx, Evm>,
+        policy: Arc<dyn TxPoolZeroFeePolicy>,
+    ) -> Self {
+        Self { inner, policy }
     }
 
     fn inner(&self) -> &EthTransactionValidator<Client, Tx, Evm> {
@@ -287,6 +304,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OutbeTransactionValidator")
             .field("inner", &self.inner)
+            .field("policy", &self.policy)
             .finish()
     }
 }
@@ -354,7 +372,7 @@ where
                 valid_outcome(parts)
             }
         };
-        let classification = outbe_zerofee::registry().classify(&zero_fee_tx);
+        let classification = self.policy.classify(&zero_fee_tx);
         match classification {
             Ok(Some(candidate)) => match self.validate_zero_fee_state(candidate) {
                 Ok(()) => {
@@ -372,7 +390,7 @@ where
                     signer,
                     self.inner.chain_id(),
                 )
-                .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
+                .and_then(|view| self.policy.classify_bootstrap(&view));
                 if let Some(candidate) = bootstrap_candidate {
                     match self.validate_bootstrap_state(candidate) {
                         Ok(true) => {
@@ -409,7 +427,7 @@ where
     }
 
     /// Probe whether `signer` has an EIP-7702 delegation to
-    /// [`outbe_zerofee::ZEROFEE_ADDRESS`]. If it has one, run
+    /// [`ZEROFEE_ADDRESS`]. If it has one, run
     /// `classify_sponsorship` + `precheck_sponsorship`. The precheck rejects
     /// self-sponsorship only and reads no quota. The executor runs the
     /// stateful `authorize_sponsorship`, with the daily quota, at block time.
@@ -461,12 +479,12 @@ where
             .as_ref()
             .and_then(|bc| bc.eip7702_address());
 
-        sponsorship_decision(signer, delegated_to, zero_fee_tx)
+        sponsorship_decision(self.policy.as_ref(), signer, delegated_to, zero_fee_tx)
     }
 
     fn validate_zero_fee_state(
         &self,
-        candidate: outbe_zerofee::ZeroFeeCandidate,
+        candidate: outbe_primitives::zero_fee_types::ZeroFeeCandidate,
     ) -> Result<(), OutbeZeroFeePoolError> {
         let state = self
             .inner
@@ -478,15 +496,15 @@ where
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
 
-        outbe_zerofee::registry()
-            .authorize_fee_waiver(storage, candidate)
+        self.policy
+            .authorize(storage, candidate)
             .map(|_| ())
             .map_err(OutbeZeroFeePoolError::from_display)
     }
 
     fn validate_bootstrap_state(
         &self,
-        candidate: outbe_zerofee::BootstrapCandidate,
+        candidate: outbe_primitives::zero_fee_types::BootstrapCandidate,
     ) -> Result<bool, OutbeZeroFeePoolError> {
         let state = self
             .inner
@@ -500,9 +518,9 @@ where
             return Ok(false);
         };
 
-        Ok(outbe_zerofee::authorize_bootstrap(
+        Ok(self.policy.authorize_bootstrap(
             candidate,
-            outbe_zerofee::BootstrapAccountView {
+            outbe_primitives::zero_fee_types::BootstrapAccountView {
                 balance: account.balance,
                 nonce: account.nonce,
                 code_empty: account
@@ -548,22 +566,25 @@ enum SponsorshipOutcome {
 /// authoritative, and quota-exhausted txs must land in the block as
 /// soft-failures (code 110). So the pool admits them.
 fn sponsorship_decision(
+    policy: &dyn TxPoolZeroFeePolicy,
     signer: Address,
     delegated_to: Option<Address>,
     zero_fee_tx: &ZeroFeeTransaction<'_>,
 ) -> Result<SponsorshipOutcome, OutbeZeroFeePoolError> {
-    if delegated_to != Some(outbe_zerofee::ZEROFEE_ADDRESS) {
+    if delegated_to != Some(ZEROFEE_ADDRESS) {
         return Ok(SponsorshipOutcome::NotSponsored);
     }
 
     // Envelope mismatch (e.g. priority_fee > 0) means that the signer does
     // not opt into sponsorship. Fall through to the normal fee path. Do
     // not reject the tx.
-    if outbe_zerofee::classify_sponsorship(zero_fee_tx).is_err() {
+    if policy.classify_sponsorship(zero_fee_tx).is_err() {
         return Ok(SponsorshipOutcome::NotSponsored);
     }
 
-    outbe_zerofee::precheck_sponsorship(signer).map_err(OutbeZeroFeePoolError::from_display)?;
+    policy
+        .precheck_sponsorship(signer)
+        .map_err(OutbeZeroFeePoolError::from_display)?;
 
     Ok(SponsorshipOutcome::Accepted)
 }

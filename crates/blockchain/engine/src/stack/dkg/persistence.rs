@@ -258,7 +258,7 @@ pub(in crate::stack) fn build_completed_dkg_boundary(
     }
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
     let next_vrf_material_version =
-        outbe_validatorset::next_vrf_material_version(vrf_material_version)?;
+        outbe_primitives::validator_dto::next_vrf_material_version(vrf_material_version)?;
     dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: next_epoch,
         validator_set: &activated_validator_set,

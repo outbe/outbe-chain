@@ -188,7 +188,9 @@ where
             );
         }
         let activated_vrf_material_version =
-            outbe_validatorset::next_vrf_material_version(self.state.vrf_material_version)?;
+            outbe_primitives::validator_dto::next_vrf_material_version(
+                self.state.vrf_material_version,
+            )?;
         if boundary_artifact.vrf_material_version != activated_vrf_material_version {
             return Err(
                 crate::errors::StackEpochError::RecoveredVrfVersionMismatch {

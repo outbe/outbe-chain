@@ -19,6 +19,7 @@ pub(crate) mod follow_transport;
 pub mod follower_shutdown;
 pub(crate) mod marshal_update_reporter;
 pub(crate) mod peer_manager;
+pub mod protocol_state;
 pub mod stack;
 pub mod tee_bootstrap;
 pub mod validators;

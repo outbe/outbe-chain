@@ -2,7 +2,7 @@ use crate::endpoint::{
     AnchorError, AnchorSnapshot, AuthorityRecord, EndpointAddress, PeerId, VerifiedEndpoint,
 };
 use alloy_primitives::{Address, B256};
-use outbe_coderegistry::RepoId;
+use outbe_primitives::code_registry::RepoId;
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
@@ -17,21 +17,21 @@ pub struct FinalizedBlock {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPatchApproval {
     pub block: FinalizedBlock,
-    pub approval: outbe_coderegistry::PatchApprovalRecord,
+    pub approval: outbe_primitives::code_registry::PatchApprovalRecord,
 }
 
 /// A receipt read from an exact local canonical finalized state, not a peer certificate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedPublicationReceipt {
     pub(crate) block: FinalizedBlock,
-    pub(crate) receipt: outbe_coderegistry::publication::PublicationReceipt,
+    pub(crate) receipt: outbe_primitives::code_registry::PublicationReceipt,
 }
 
 impl FinalizedPublicationReceipt {
     pub fn block(&self) -> FinalizedBlock {
         self.block
     }
-    pub fn receipt(&self) -> &outbe_coderegistry::publication::PublicationReceipt {
+    pub fn receipt(&self) -> &outbe_primitives::code_registry::PublicationReceipt {
         &self.receipt
     }
 }
@@ -190,7 +190,7 @@ pub struct FinalizedRepositoryAuthority {
     pub(crate) chain_id: u64,
     pub(crate) genesis_hash: B256,
     pub(crate) epoch: u64,
-    pub(crate) committee: outbe_validatorset::state::CommitteeSnapshot,
+    pub(crate) committee: outbe_primitives::committee_snapshot::CommitteeSnapshot,
 }
 
 impl FinalizedRepositoryAuthority {
@@ -206,7 +206,7 @@ impl FinalizedRepositoryAuthority {
     pub fn epoch(&self) -> u64 {
         self.epoch
     }
-    pub fn committee(&self) -> &outbe_validatorset::state::CommitteeSnapshot {
+    pub fn committee(&self) -> &outbe_primitives::committee_snapshot::CommitteeSnapshot {
         &self.committee
     }
 }

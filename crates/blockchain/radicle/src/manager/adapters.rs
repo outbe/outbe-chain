@@ -3,7 +3,7 @@ use super::types::{
     RepositoryStatus, SessionDirection,
 };
 use crate::endpoint::EndpointAddress;
-use outbe_coderegistry::RepoId;
+use outbe_primitives::code_registry::RepoId;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
     io::{BufRead, BufReader, Write},
