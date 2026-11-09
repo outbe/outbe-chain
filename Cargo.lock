@@ -8442,6 +8442,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-chain-constants",
  "outbe-macros",
+ "outbe-oracle",
  "outbe-primitives",
  "outbe-validatorset",
  "serde",
