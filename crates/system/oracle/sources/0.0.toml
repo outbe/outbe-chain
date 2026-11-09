@@ -63,6 +63,8 @@ markets = [
 [[gas_providers]]
 chain_id = 1                                                               # Ethereum
 price_feed = { chainlink = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }   # ETH/USD
+fee_history_blocks = 20   # 20 × 12 s = 4 minutes of gas history
+delay_secs = 60           # 5 blocks behind the start of the vote period
 
 [[deviation_thresholds]]
 base = "COEN"
