@@ -80,14 +80,9 @@ contract ConfigureAll is Script {
             console2.log("  auction.setMaxQuotesPerOrder:", maxQuotes);
         }
 
-        // 3. Allocator -> Router. Skipped when the script reused the router: its allocator is
-        //    already wired.
-        if (allocatorAddress != address(0)) {
-            RouterAllocator(allocatorAddress).addOperator(routerAddress);
-            console2.log("  allocator.addOperator done");
-        } else {
-            console2.log("  allocator.addOperator skipped (router reused)");
-        }
+        // 3. Allocator -> Router
+        RouterAllocator(allocatorAddress).addOperator(routerAddress);
+        console2.log("  allocator.addOperator done");
 
         // Router -> Auction binding is immutable (set at router construction). There is no
         // setAuction step.
