@@ -4,7 +4,7 @@
 //! protocol crate that owns the hooks implements the trait and installs it
 //! before the node builds the pool. Until that install, the pool uses
 //! [`NormalFeePolicy`] and every transaction pays the normal fee.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection.
+//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
 
 use std::sync::{Arc, OnceLock};
 

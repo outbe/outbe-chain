@@ -4,7 +4,7 @@
 //! and TEE admission facts. The crate that owns those contracts implements the
 //! trait and installs it before launch. Until that install, reads fail closed,
 //! including the binary-compatibility check.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection.
+//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
 
 use std::sync::{Arc, OnceLock};
 

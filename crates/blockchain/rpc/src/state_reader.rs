@@ -4,7 +4,7 @@
 //! Install the production reader before the node serves RPC. Until then, chain
 //! reads fail closed. Emission percent is a constant shared with the emission
 //! crate and does not wait for that install.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection.
+//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
 
 use std::sync::{Arc, OnceLock};
 
