@@ -34,7 +34,7 @@ impl fmt::Debug for ZeroFeeTransaction<'_> {
 /// Stable identifier for a registered zero-fee hook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZeroFeeHookId {
-    /// `Oracle.submitVote(ExchangeRateTuple[])`.
+    /// `Oracle.submitVote(ExchangeRateTuple[],GasTuple[])`.
     OracleSubmitVote,
     /// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)`.
     HyperlaneSubmitCheckpoint,

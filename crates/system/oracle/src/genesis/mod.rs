@@ -66,6 +66,8 @@ pub struct OracleGenesisConfig {
     pub vote_period: u64,
     /// Reward band width (1e18 scaled, default: 0.02 * 1e18 = 2e16).
     pub reward_band: U256,
+    /// Reward band width of the gas price votes (1e18 scaled, default: 0.2).
+    pub gas_reward_band: U256,
     /// Slash window in blocks (default: 96).
     pub slash_window: u64,
     /// Minimum valid-vote ratio per window (1e18 scaled, default: 0.05 * 1e18 = 5e16).
@@ -99,6 +101,7 @@ impl OracleGenesisConfig {
         Self {
             vote_period: 2,
             reward_band: U256::from(20_000_000_000_000_000u128), // 0.02
+            gas_reward_band: U256::from(200_000_000_000_000_000u128), // 0.2
             slash_window: 96,
             min_valid_per_window: U256::from(50_000_000_000_000_000u128), // 0.05
             slash_fraction: U256::ZERO,

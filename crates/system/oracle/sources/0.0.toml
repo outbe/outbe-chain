@@ -57,6 +57,13 @@ markets = [
   { provider = "pyth" },
 ]
 
+# Gas price of a remote chain in COEN-wei per unit of gas: the feeder reads
+# eth_feeHistory on chain_id and the native token price in USD from
+# price_feed. A Chainlink feed is read on the same chain.
+[[gas_providers]]
+chain_id = 1                                                               # Ethereum
+price_feed = { chainlink = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419" }   # ETH/USD
+
 [[deviation_thresholds]]
 base = "COEN"
 threshold = "2.0"

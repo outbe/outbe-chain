@@ -449,7 +449,7 @@ pub(super) fn submit_sample_vote(
     voter: Address,
 ) -> (Address, Address, U256, U256) {
     let vote = (COEN, USDT, fixed18(50), fixed18(1000));
-    oracle.submit_vote(voter, &[vote]).unwrap();
+    oracle.submit_vote(voter, &[vote], &[]).unwrap();
     vote
 }
 

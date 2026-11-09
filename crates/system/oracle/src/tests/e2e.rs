@@ -135,6 +135,7 @@ fn init_from_genesis_imports_every_custom_config_collection() {
         let config = crate::genesis::OracleGenesisConfig {
             vote_period: 5,
             reward_band: U256::from(10_000_000_000_000_000u128), // 0.01
+            gas_reward_band: U256::from(200_000_000_000_000_000u128),
             slash_window: 200,
             min_valid_per_window: U256::from(100_000_000_000_000_000u128), // 0.10
             slash_fraction: U256::from(1_000_000_000_000_000u128),         // 0.001
@@ -800,6 +801,7 @@ fn export_genesis_round_trips_the_full_oracle_state() {
         }],
         vote_period: 2,
         reward_band: U256::from(20_000_000_000_000_000u128),
+        gas_reward_band: U256::from(200_000_000_000_000_000u128),
         slash_window: 96,
         min_valid_per_window: U256::from(50_000_000_000_000_000u128),
         slash_fraction: U256::ZERO,

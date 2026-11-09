@@ -34,6 +34,7 @@ struct Source {
     version: ProtocolVersion,
     toml: &'static str,
     pairs: &'static [(Asset, Asset)],
+    gas_chains: &'static [u32],
 }
 
 impl Source {
@@ -67,9 +68,11 @@ pub fn sources_for(chain_id: u64, active: ProtocolVersion) -> &'static str {
     select(table(chain_id), active).map_or("", |source| source.toml)
 }
 
-/// Registers the pairs of the active file once per file. Pairs that the
-/// previous file had and the active file drops stop being vote targets. They
-/// keep their registry entry and price history.
+/// Registers the pairs and the gas chains of the active file once per file.
+/// Pairs that the previous file had and the active file drops stop being vote
+/// targets. They keep their registry entry and price history. The gas chains
+/// of the active file replace the earlier list. A dropped chain keeps its last
+/// gas price.
 pub(crate) fn sync_pairs(
     oracle: &mut OracleContract,
     chain_id: u64,
@@ -103,6 +106,10 @@ fn sync(oracle: &mut OracleContract, table: &[Source], active: ProtocolVersion) 
             oracle.vote_target.write(&pair, true)?;
         }
     }
+    oracle.gas_chains.clear()?;
+    for chain_id in current.gas_chains {
+        oracle.gas_chains.push(*chain_id)?;
+    }
     oracle.sources_synced.write(marker)
 }
 
@@ -126,11 +133,13 @@ mod tests {
                 version: encode_protocol_version(0, 0),
                 toml: "",
                 pairs: &[USD, EUR],
+                gas_chains: &[],
             },
             Source {
                 version: encode_protocol_version(1, 4),
                 toml: "",
                 pairs: &[USD, JPY],
+                gas_chains: &[],
             },
         ];
         let mut storage = HashMapStorageProvider::new(1);
@@ -166,6 +175,16 @@ mod tests {
     }
 
     #[test]
+    fn sync_writes_the_gas_chains_of_the_file() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            sync_pairs(&mut oracle, MAINNET_CHAIN_ID, ProtocolVersion::ZERO).unwrap();
+            assert_eq!(oracle.gas_chains.read_all().unwrap(), vec![1]);
+        });
+    }
+
+    #[test]
     fn table_starts_at_zero_and_ascends() {
         assert_eq!(SOURCES[0].version, ProtocolVersion::ZERO);
         assert!(SOURCES
@@ -185,11 +204,13 @@ mod tests {
                 version: encode_protocol_version(0, 0),
                 toml: "base",
                 pairs: &[],
+                gas_chains: &[],
             },
             Source {
                 version: encode_protocol_version(1, 4),
                 toml: "v1.4",
                 pairs: &[],
+                gas_chains: &[],
             },
         ];
         let toml = |active| select(TABLE, active).unwrap().toml;

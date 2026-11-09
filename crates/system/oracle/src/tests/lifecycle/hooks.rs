@@ -18,7 +18,7 @@ fn run_tally_counts_an_abstain_for_every_silent_validator() {
 fn begin_block_tallies_only_on_a_vote_period_boundary() {
     with_coen_usdt_voter(|storage, oracle, v1| {
         oracle
-            .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)])
+            .submit_vote(v1, &[(COEN, USDT, fixed18(42), SCALE_1E18)], &[])
             .unwrap();
 
         // 2020-01-02 keeps the 12-second gap. A block on 2020-01-01 makes the
