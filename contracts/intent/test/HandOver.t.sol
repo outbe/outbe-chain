@@ -4,7 +4,11 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
+import {Create3Factory} from "@shared/Create3Factory.sol";
+import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {HandOver} from "../script/5_HandOver.s.sol";
+import {IntentCreate3} from "../script/IntentCreate3.sol";
+import {Auction} from "../src/Auction.sol";
 import {Proxies} from "./utils/Proxies.sol";
 
 /// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainBridge.
@@ -53,24 +57,32 @@ contract HandOverTest is Test {
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");
     }
 
-    /// @dev A re-run of an existing stack: DeployAll logs only the Router, so the job exports
-    ///      the other addresses empty. A Router governance owns ends the run before they are read.
+    /// @dev A re-run of a handed-over stack: a Router governance owns ends the run before any send.
     function test_Run_StopsWhenTheRouterIsHandedOver() public {
+        Create3Factory factory = new Create3Factory();
+        vm.prank(vm.addr(1));
+        Create3Proxy.deploy(
+            factory,
+            IntentCreate3.salt(IntentCreate3.ROUTER, "v-test"),
+            address(new Auction()),
+            abi.encodeCall(Auction.initialize, (CROSSCHAIN_BRIDGE))
+        );
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
         vm.setEnv("DEPLOYER_PK", "1");
-        vm.setEnv("ROUTER_ADDRESS", vm.toString(address(Proxies.auction(CROSSCHAIN_BRIDGE))));
-        vm.setEnv("AUCTION_ADDRESS", "");
+        vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
+        vm.setEnv("CONTRACT_SALT", "v-test");
 
         script.run();
     }
 
-    function test_Run_NamesAnEmptyAddress() public {
-        vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
-        vm.setEnv("DEPLOYER_PK", "1");
-        vm.setEnv("ROUTER_ADDRESS", vm.toString(address(Proxies.auction(vm.addr(1)))));
-        vm.setEnv("AUCTION_ADDRESS", "");
+    function test_Stack_PredictsTheRouterLast() public {
+        Create3Factory factory = new Create3Factory();
+        vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
+        vm.setEnv("CONTRACT_SALT", "v-test");
 
-        vm.expectRevert(abi.encodeWithSelector(HandOver.MissingAddress.selector, "AUCTION_ADDRESS"));
-        script.run();
+        address[5] memory stack = script.stack(address(this));
+
+        assertEq(stack[0], IntentCreate3.predict(address(factory), address(this), IntentCreate3.AUCTION, "v-test"));
+        assertEq(stack[4], IntentCreate3.predict(address(factory), address(this), IntentCreate3.ROUTER, "v-test"));
     }
 }

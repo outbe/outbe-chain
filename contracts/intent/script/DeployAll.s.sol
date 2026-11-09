@@ -12,10 +12,10 @@ import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Full deployment + configuration in a single script.
 ///
-/// Deploy order:
-///   1. SolverEscrow
+/// Deploy order, every contract a UUPS proxy via Create3Factory:
+///   1. SolverAllocator + SolverEscrow
 ///   2. Auction
-///   3. RouterAllocator + composition Router (via Create3Factory) - talks to the ERC7786Bridge hub
+///   3. RouterAllocator + composition Router - talks to the ERC7786Bridge hub
 ///   4. Wire all contracts together (same-chain)
 ///
 /// The CREATE3 factory is not deployed here: it is built and deployed once from contracts/shared
@@ -46,10 +46,9 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
         address factoryAddr = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         console2.log("Create3Factory:", factoryAddr);
 
-        // Everything below is deterministic from (factory, deployer, salt). If the router already
-        // exists, the whole stack is already deployed, so skip it. A re-deploy of
-        // escrow/auction/allocator would waste gas, and the router's CREATE3 would revert on
-        // collision anyway.
+        // Everything below is deterministic from (factory, deployer, salt). The router comes last, so
+        // an existing router means the whole stack is deployed and wired. A partial stack keeps the
+        // proxies it already has.
         address routerAddr = Create3Factory(factoryAddr).predict(vm.addr(deployerPrivateKey), getRouterSalt(salt));
         if (routerAddr.code.length != 0) {
             console2.log("Already deployed - skipping. Router:", routerAddr);
@@ -59,15 +58,16 @@ contract DeployAll is DeployRouter, DeploySolverEscrow, DeployAuction, Configure
 
         // 1. Deploy SolverEscrow
         console2.log("[1/4] Deploy SolverEscrow...");
-        address escrowAddress = deployEscrow(compact, collateralBps, vm.addr(deployerPrivateKey));
+        address escrowAddress = deployEscrow(factoryAddr, salt, compact, collateralBps, vm.addr(deployerPrivateKey));
         console2.log("  SolverEscrow:", escrowAddress);
 
         // 2. Deploy Auction
         console2.log("[2/4] Deploy Auction...");
-        address auctionAddress = deployAuction(vm.addr(deployerPrivateKey));
+        address auctionAddress =
+            deployAuction(factoryAddr, salt, vm.addr(deployerPrivateKey), vm.addr(deployerPrivateKey));
         console2.log("  Auction:", auctionAddress);
 
-        // 3. Deploy RouterAllocator + Router via Create3Factory
+        // 3. Deploy RouterAllocator + Router
         console2.log("[3/4] Deploy RouterAllocator + Router...");
         (address routerAddress, address allocatorAddress) =
             deployRouter(factoryAddr, salt, bridge, compact, escrowAddress, auctionAddress, vm.addr(deployerPrivateKey));
