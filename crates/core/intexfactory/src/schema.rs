@@ -63,12 +63,6 @@ pub struct IntexFactoryContract {
     /// it was refused, and the time it may go out again.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
-    /// Where the parked-message sweep resumes: every index below it is sent or empty.
-    #[attribute(order = 45)]
-    pub parked_message_cursor: outbe_primitives::storage::dsl::Value<u64>,
-    /// As `parked_message_cursor`, for the proceeds the factory refused.
-    #[attribute(order = 46)]
-    pub parked_proceeds_cursor: outbe_primitives::storage::dsl::Value<u64>,
 }
 
 impl IntexFactoryContract<'_> {

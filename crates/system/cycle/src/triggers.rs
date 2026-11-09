@@ -24,7 +24,6 @@ pub enum TriggerId {
     AuctionClearing = 4,
     CredisCallDaily = 5,
     NodCallDaily = 6,
-    IntexDrainParked = 8,
 }
 
 impl TriggerId {
@@ -85,7 +84,6 @@ pub enum TriggerHandler {
     AuctionClearing,
     CredisCallDaily,
     NodCallDaily,
-    IntexDrainParked,
 }
 
 impl TriggerSpec {
@@ -144,7 +142,6 @@ impl TriggerHandler {
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::schedule_call_pass(ctx),
             Self::NodCallDaily => outbe_nodfactory::called::schedule_call_pass(ctx),
-            Self::IntexDrainParked => outbe_intexfactory::parked::resend_parked_messages(ctx),
         }
     }
 }
@@ -153,6 +150,7 @@ impl TriggerHandler {
 /// the commit window on waiting for the start.
 ///
 /// An e2e day is minutes long, so it advances faster still.
+/// `auction_clearing` uses the same cadence.
 #[cfg(not(feature = "e2e-test"))]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 3_600;
 #[cfg(feature = "e2e-test")]
@@ -164,12 +162,6 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
 #[cfg(feature = "e2e-test")]
 const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
-
-/// Cadence of the auction clearing poll, shortened for the same reason.
-#[cfg(not(feature = "e2e-test"))]
-const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
-#[cfg(feature = "e2e-test")]
-const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
 /// Const `?` is unstable on this toolchain (rust-lang/rust#143874).
 /// The expansion returns the constructor error from the const function.
@@ -197,10 +189,10 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// Budgets use measured successful gross maxima from
 /// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
 /// and rounded up to 1,000 gas. In stable-id order those maxima are
-/// [381500, 50300, 159263, 50300, 2583089, 50300, 50300, 765752].
+/// [381500, 50300, 159263, 50300, 2583089, 50300, 50300].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
-pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleError> {
+pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 7], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
         // observe the parent block's Phase 1 accounting before it fires.
@@ -270,8 +262,8 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             spec.coalesces_backlog = true;
             spec
         },
-        // Polls the fan-in gate `auction_advance` arms, so it runs far more
-        // often than the stage schedule advances.
+        // Polls the fan-in gate that `auction_advance` arms, on the same cadence.
+        // Each firing completes one waiting day.
         // Clears from bids already ingested and the router's frozen target
         // list. It has no dependency on the parent block's settlement accounting.
         // A poll has nothing to replay: a gap collapses to one clearing sweep.
@@ -279,7 +271,7 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AuctionClearing.as_u32(),
                 "auction_clearing",
-                (OUTBOUND_POLL_PERIOD_SECONDS, 0),
+                (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
                 10_333_000,
                 TriggerHandler::AuctionClearing,
             ));
@@ -319,26 +311,10 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
             spec.coalesces_backlog = true;
             spec
         },
-        // Polls what the origin router parked, on the same cadence as the other outbound polls.
-        // Reads the router's own queues. It has no dependency on the parent block's
-        // accounting.
-        // A poll has nothing to replay: a gap collapses to one sweep.
-        {
-            let mut spec = const_spec!(TriggerSpec::new(
-                TriggerId::IntexDrainParked.as_u32(),
-                "intex_drain_parked",
-                (OUTBOUND_POLL_PERIOD_SECONDS, 0),
-                3_064_000,
-                TriggerHandler::IntexDrainParked,
-            ));
-            spec.requires_accounting_window = false;
-            spec.coalesces_backlog = true;
-            spec
-        },
     ])
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] = match active_triggers() {
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] = match active_triggers() {
     Ok(specs) => specs,
     Err(_) => panic!("trigger periods and calibrated work budgets must be nonzero"),
 };
@@ -409,12 +385,11 @@ pub const fn last_fire_at(
 #[cfg(test)]
 mod protocol_parameter_tests {
     use super::*;
-    use outbe_primitives::time::SECONDS_PER_DAY;
 
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            381_500u64, 50_300, 159_263, 50_300, 2_583_089, 50_300, 50_300, 765_752,
+            381_500u64, 50_300, 159_263, 50_300, 2_583_089, 50_300, 50_300,
         ];
         let triggers = active_triggers().expect("calibrated trigger table");
         let mut total = 0u64;
@@ -431,18 +406,26 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 16_369_000);
+        assert_eq!(total, 13_305_000);
     }
 
     #[test]
     fn protocol_cycle_uses_the_hourly_interval() {
         // The call sweeps are daily in a release build; e2e shortens them.
         #[cfg(not(feature = "e2e-test"))]
-        assert_eq!(CALL_SWEEP_PERIOD_SECONDS, SECONDS_PER_DAY);
+        assert_eq!(
+            CALL_SWEEP_PERIOD_SECONDS,
+            outbe_primitives::time::SECONDS_PER_DAY
+        );
         let configured = active_triggers().expect("default triggers");
         assert_eq!(configured[0].period_seconds(), 3_600);
         assert_eq!(configured[0].start_offset_seconds, 0);
-        assert_eq!(configured[1].period_seconds(), SECONDS_PER_DAY);
+        assert_eq!(configured[1].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
+        assert_eq!(
+            configured[2].period_seconds(),
+            AUCTION_ADVANCE_PERIOD_SECONDS
+        );
+        #[cfg(not(feature = "e2e-test"))]
         assert_eq!(configured[2].period_seconds(), 3_600);
         assert_eq!(configured[2].start_offset_seconds, 0);
         assert_eq!(configured[3].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
@@ -450,7 +433,13 @@ mod protocol_parameter_tests {
             configured[3].handler,
             TriggerHandler::GemCallDaily
         ));
-        assert_eq!(configured[4].period_seconds(), 600);
+        assert_eq!(
+            configured[4].period_seconds(),
+            AUCTION_ADVANCE_PERIOD_SECONDS
+        );
+        #[cfg(not(feature = "e2e-test"))]
+        assert_eq!(configured[4].period_seconds(), 3_600);
+        assert_eq!(configured[4].id, TriggerId::AuctionClearing.as_u32());
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::AuctionClearing
@@ -461,17 +450,13 @@ mod protocol_parameter_tests {
             configured[5].handler,
             TriggerHandler::CredisCallDaily
         ));
-        assert_eq!(configured[6].period_seconds(), SECONDS_PER_DAY);
+        assert_eq!(configured[6].period_seconds(), CALL_SWEEP_PERIOD_SECONDS);
         assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
             configured[6].handler,
             TriggerHandler::NodCallDaily
         ));
-        assert_eq!(configured[7].period_seconds(), OUTBOUND_POLL_PERIOD_SECONDS);
-        assert_eq!(configured[7].id, TriggerId::IntexDrainParked.as_u32());
-        assert!(matches!(
-            configured[7].handler,
-            TriggerHandler::IntexDrainParked
-        ));
+        assert_eq!(configured.len(), 7);
+        assert!(configured.iter().all(|spec| spec.id != 8));
     }
 }
