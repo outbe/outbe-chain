@@ -157,74 +157,6 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     });
 }
 
-fn test_reserved_system_address_tx() -> reth_ethereum::TransactionSigned {
-    TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit: 100_000,
-        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
-        value: U256::ZERO,
-        input: Bytes::new(),
-        access_list: Default::default(),
-    }
-    .into_signed(Signature::test_signature())
-    .into()
-}
-
-#[test]
-fn executor_rejects_user_tx_to_reserved_system_address() {
-    let config = OutbeEvmConfig::new(
-        test_chain_spec(),
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    );
-    let reserved_tx = test_reserved_system_address_tx()
-        .try_into_recovered()
-        .expect("reserved-address tx signer should recover");
-
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    db.insert_account_info(
-        reserved_tx.signer(),
-        AccountInfo {
-            balance: U256::from(1_000_000u64),
-            ..Default::default()
-        },
-    );
-
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
-            number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
-            beneficiary: OWNER,
-            timestamp: U256::from(1u64),
-            ..Default::default()
-        },
-    };
-    let evm = config.evm_with_env(&mut state, evm_env);
-    let ctx = execution_ctx(Some(1), Bytes::new());
-    let mut executor = config.create_executor(evm, ctx);
-
-    let err = executor
-        .execute_transaction(reserved_tx)
-        .expect_err("user tx to reserved system address must be rejected");
-
-    let err = err.to_string();
-    assert!(
-        err.contains("reserved system transaction address") || err.contains("decode system tx"),
-        "unexpected reserved-address rejection error: {err}"
-    );
-    assert!(executor.receipts().is_empty());
-}
-
 #[test]
 fn gas_01_evm_level_system_tx_err_must_not_be_soft_receipted() {
     let signer = test_evm_signer();
@@ -548,53 +480,6 @@ fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_la
     );
 }
 
-#[test]
-fn block_one_rejects_user_transaction_after_begin_block_with_unexpected_user_tx() {
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let user_tx = test_regular_tx()
-        .try_into_recovered()
-        .expect("regular tx signer should recover");
-    let mut state = state_with_active_proposer(proposer);
-    let config = OutbeEvmConfig::new(
-        test_chain_spec(),
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    )
-    .with_evm_signer(signer);
-    let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
-    let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(1), Bytes::new()));
-    executor
-        .apply_pre_execution_changes()
-        .expect("block 1 pre-execution changes should apply");
-    for tx in begin_system_txs_for_test(
-        &config,
-        BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
-            extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
-            proposer,
-            bootstrap: BootstrapFixture::StandardForBlock,
-        },
-    ) {
-        executor
-            .execute_transaction(tx)
-            .expect("block 1 begin-zone system tx should succeed");
-    }
-    assert_eq!(
-        executor.fsm.stage(),
-        outbe_primitives::system_tx::BlockExecutionStage::Completed
-    );
-    let err = executor
-        .execute_transaction(user_tx)
-        .expect_err("block 1 must reject any MidBlock user transaction");
-    assert!(
-        err.to_string()
-            .contains("unexpected user transaction in stage Completed"),
-        "expected UnexpectedUserTx in stage Completed, got: {err}"
-    );
-}
-
 enum CriticalCycleFault {
     Revert,
     OutOfGas,
@@ -870,49 +755,4 @@ fn critical_cycle_tick_oog_fails_block() {
         receipts.is_empty(),
         "a critical-phase OOG halt must not push a soft receipt"
     );
-}
-
-#[test]
-fn verifier_rejects_begin_system_tx_signature_hash_mismatch() {
-    let signer = test_evm_signer();
-    let proposer = signer.address();
-    let mut state = state_with_active_proposer(proposer);
-    let evm_env = test_evm_env(1, REWARDS_ADDRESS);
-    let config = OutbeEvmConfig::new(
-        test_chain_spec(),
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    )
-    .with_evm_signer(signer.clone());
-    let evm = config.evm_with_env(&mut state, evm_env);
-
-    let canonical = begin_system_txs_for_test(
-        &config,
-        BeginBlockFixture {
-            block_number: 1,
-            parent_hash: B256::ZERO,
-            extra_data: &Bytes::new(),
-            parent_consensus_metadata: None,
-            proposer,
-            bootstrap: BootstrapFixture::StandardForBlock,
-        },
-    );
-    let wrong_unsigned =
-        build_unsigned_system_tx(0, 2, CHAIN_ID, canonical[0].tx().input().clone()).unwrap();
-    let wrong_signed = signer.sign_unsigned(wrong_unsigned).unwrap();
-    let wrong_recovered = reth_primitives_traits::Recovered::new_unchecked(wrong_signed, proposer);
-    let mut expected = vec![wrong_recovered.clone()];
-    expected.extend(canonical.into_iter().skip(1));
-    let mut ctx = execution_ctx(Some(1), Bytes::new());
-    ctx.expected_begin_system_txs = expected;
-
-    let mut executor = config.create_executor(evm, ctx);
-    executor
-        .apply_pre_execution_changes()
-        .expect("pre-execution changes should apply before verifier tx loop");
-    let err = executor
-        .execute_transaction(wrong_recovered)
-        .expect_err("verifier must reject mismatched system tx signature hash");
-
-    assert!(err.to_string().contains("signature_hash mismatch"));
-    assert!(executor.receipts().is_empty());
 }

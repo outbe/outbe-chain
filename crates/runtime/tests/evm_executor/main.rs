@@ -106,6 +106,7 @@ mod eip7702_support;
 mod end_block_reservation;
 mod end_block_rollback;
 pub mod fixtures;
+pub mod fixtures_execution;
 mod oracle_soft_failure;
 mod receipts_and_gas;
 mod receipts_and_gas_begin_block_events;

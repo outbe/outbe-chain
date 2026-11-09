@@ -7,55 +7,27 @@
 // `END_BLOCK_ORDER` is NodFactory, GemFactory, IntexFactory, CredisFactory,
 // and GemCleanup.
 
-use std::sync::Arc;
-
 use alloy_evm::{block::CommitChanges, Evm as _, RecoveredTx};
-use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
-use outbe_primitives::addresses::REWARDS_ADDRESS;
-use outbe_primitives::block::BlockContext;
-use outbe_primitives::consensus::ConsensusExecutionBridge;
+use alloy_primitives::{Address, Bytes, U256};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
     ExecutionSummaryArtifact, OutbeBlockArtifacts,
 };
-use outbe_primitives::storage::{
-    direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
-};
 use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
-use reth_ethereum::chainspec::ChainSpec;
 use reth_ethereum::{
-    chainspec::MAINNET,
     evm::revm::db::State,
-    primitives::{Account, Bytecode, Header, SealedHeader},
-    trie::{
-        updates::TrieUpdates, AccountProof, HashedPostState, HashedStorage, KeccakKeyHasher,
-        MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
-    },
+    primitives::{Header, SealedHeader},
 };
 use reth_evm::{
     execute::{BlockBuilder, Executor, ProviderError},
-    ConfigureEvm, NextBlockEnvAttributes,
+    ConfigureEvm,
 };
-use reth_provider::{
-    AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
-    StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
-};
-use reth_trie::test_utils::{state_root_prehashed, storage_root_prehashed};
-use revm::{
-    database::CacheDB,
-    database_interface::EmptyDBTyped,
-    state::{AccountInfo, Bytecode as RevmBytecode},
-};
+use reth_provider::{HashedPostStateProvider, StateRootProvider};
+use revm::{database::CacheDB, database_interface::EmptyDBTyped, state::AccountInfo};
 
-use outbe_evm::{
-    config::{OutbeEvmConfig, OutbeNextBlockEnvAttributes},
-    signer::OutbeEvmSigner,
-};
-
-pub(super) const GENESIS_OWNER: Address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
-pub(super) const TEST_BLOCK_ONE_TIMESTAMP: u64 = 1_700_000_001;
+use super::harness::*;
 
 #[test]
 fn final_artifact_adapter_binds_execution_summary_and_preserves_consensus_fields() {
@@ -113,379 +85,6 @@ fn final_artifact_adapter_binds_execution_summary_and_preserves_consensus_fields
         ..Default::default()
     }));
     assert_ne!(first.hash(), second.hash());
-}
-
-#[derive(Debug, Default, Clone)]
-pub(crate) struct DeterministicEmptyStateProvider;
-
-impl AccountReader for DeterministicEmptyStateProvider {
-    fn basic_account(&self, _address: &Address) -> ProviderResult<Option<Account>> {
-        Ok(None)
-    }
-}
-
-impl BlockHashReader for DeterministicEmptyStateProvider {
-    fn block_hash(&self, _number: u64) -> ProviderResult<Option<B256>> {
-        Ok(None)
-    }
-
-    fn canonical_hashes_range(&self, _start: u64, _end: u64) -> ProviderResult<Vec<B256>> {
-        Ok(Vec::new())
-    }
-}
-
-impl StateRootProvider for DeterministicEmptyStateProvider {
-    fn state_root(&self, hashed_state: HashedPostState) -> ProviderResult<B256> {
-        Ok(compute_state_root(hashed_state))
-    }
-
-    fn state_root_from_nodes(&self, _input: TrieInput) -> ProviderResult<B256> {
-        Ok(B256::ZERO)
-    }
-
-    fn state_root_with_updates(
-        &self,
-        hashed_state: HashedPostState,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((compute_state_root(hashed_state), TrieUpdates::default()))
-    }
-
-    fn state_root_from_nodes_with_updates(
-        &self,
-        _input: TrieInput,
-    ) -> ProviderResult<(B256, TrieUpdates)> {
-        Ok((B256::ZERO, TrieUpdates::default()))
-    }
-}
-
-impl StorageRootProvider for DeterministicEmptyStateProvider {
-    fn storage_root(
-        &self,
-        _address: Address,
-        hashed_storage: HashedStorage,
-    ) -> ProviderResult<B256> {
-        let slots = hashed_storage.storage.into_iter().collect::<Vec<_>>();
-        Ok(storage_root_prehashed(slots))
-    }
-
-    fn storage_proof(
-        &self,
-        _address: Address,
-        slot: B256,
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageProof> {
-        Ok(StorageProof::new(slot))
-    }
-
-    fn storage_multiproof(
-        &self,
-        _address: Address,
-        _slots: &[B256],
-        _hashed_storage: HashedStorage,
-    ) -> ProviderResult<StorageMultiProof> {
-        Ok(StorageMultiProof::empty())
-    }
-}
-
-impl StateProofProvider for DeterministicEmptyStateProvider {
-    fn proof(
-        &self,
-        _input: TrieInput,
-        address: Address,
-        _slots: &[B256],
-    ) -> ProviderResult<AccountProof> {
-        Ok(AccountProof::new(address))
-    }
-
-    fn multiproof(
-        &self,
-        _input: TrieInput,
-        _targets: MultiProofTargets,
-    ) -> ProviderResult<MultiProof> {
-        Ok(MultiProof::default())
-    }
-
-    fn multiproof_v2(
-        &self,
-        _targets: reth_trie::MultiProofTargetsV2,
-        _requires_masks: bool,
-    ) -> ProviderResult<reth_trie::DecodedMultiProofV2> {
-        Ok(reth_trie::DecodedMultiProofV2::default())
-    }
-
-    fn witness(
-        &self,
-        _input: TrieInput,
-        _target: HashedPostState,
-        _mode: reth_trie::ExecutionWitnessMode,
-    ) -> ProviderResult<Vec<Bytes>> {
-        Ok(Vec::new())
-    }
-}
-
-impl HashedPostStateProvider for DeterministicEmptyStateProvider {
-    fn hashed_post_state(
-        &self,
-        bundle_state: &revm::database::BundleState,
-    ) -> ProviderResult<HashedPostState> {
-        Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
-            bundle_state.state(),
-        ))
-    }
-}
-
-impl StateProvider for DeterministicEmptyStateProvider {
-    fn storage(
-        &self,
-        _account: Address,
-        _storage_key: StorageKey,
-    ) -> ProviderResult<Option<StorageValue>> {
-        Ok(None)
-    }
-}
-
-impl BytecodeReader for DeterministicEmptyStateProvider {
-    fn bytecode_by_hash(&self, _code_hash: &B256) -> ProviderResult<Option<Bytecode>> {
-        Ok(None)
-    }
-}
-
-pub(super) fn compute_state_root(hashed_state: HashedPostState) -> B256 {
-    let sorted = hashed_state.into_sorted();
-    let storages = sorted.storages;
-    let accounts = sorted
-        .accounts
-        .into_iter()
-        .filter_map(|(hashed_address, maybe_account)| {
-            maybe_account.map(|account| {
-                let storage = storages
-                    .get(&hashed_address)
-                    .map(|hashed_storage| hashed_storage.storage_slots.clone())
-                    .unwrap_or_default();
-                (hashed_address, (account, storage))
-            })
-        });
-    state_root_prehashed(accounts)
-}
-
-pub(super) fn test_bridge() -> ConsensusExecutionBridge {
-    ConsensusExecutionBridge::new()
-}
-
-pub(super) fn test_evm_signer() -> Arc<OutbeEvmSigner> {
-    Arc::new(
-        OutbeEvmSigner::from_hex(
-            "0x0000000000000000000000000000000000000000000000000000000000000001",
-        )
-        .expect("test EVM signer must be valid"),
-    )
-}
-
-pub(super) fn genesis_dev_tee_bootstrap(
-    committee_snapshot_hash: B256,
-) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
-    use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
-    };
-
-    let mut secret = [0_u8; 32];
-    secret[31] = 1;
-    let mut consensus_public = [0_u8; 48];
-    consensus_public[0] = 1;
-    let policy = gramine_direct_policy_v1(
-        GRAMINE_DIRECT_DEV_CHAIN_ID,
-        test_chain_spec().genesis_hash(),
-    )
-    .expect("test GramineDirectDev policy is canonical");
-    gramine_direct_bootstrap_v2(
-        policy,
-        committee_snapshot_hash,
-        1,
-        TEST_BLOCK_ONE_TIMESTAMP + 3_600,
-        &[DevValidatorV1 {
-            evm_secret: secret,
-            bls_minpk_public: consensus_public,
-        }],
-    )
-    .expect("test GramineDirectDev OST3 payload is canonical")
-}
-
-pub(super) fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
-    OutbeEvmConfig::new_with_bridge(
-        test_chain_spec(),
-        bridge,
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    )
-    .with_evm_signer(test_evm_signer())
-}
-
-pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    use outbe_primitives::tee_test_utils::{
-        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
-    };
-
-    // Outbe starts after the Merge; PREVRANDAO must be present at block 1.
-    let mut spec = reth_chainspec::ChainSpecBuilder::from(&*MAINNET)
-        .paris_activated()
-        .build();
-    spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
-    spec.genesis.timestamp = TEST_BLOCK_ONE_TIMESTAMP - 1;
-    let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
-    spec.genesis.config.extra_fields.insert(
-        "teeAttestationV1".to_owned(),
-        tee_attestation_v1_extra_field(&policy).expect("test TEE activation manifest is canonical"),
-    );
-    spec.map_header(OutbeHeader::new).into()
-}
-
-pub(super) fn test_parent() -> SealedHeader<OutbeHeader> {
-    SealedHeader::seal_slow(OutbeHeader::new(Header::default()))
-}
-
-pub(super) fn test_parent_at(number: u64) -> SealedHeader<OutbeHeader> {
-    SealedHeader::seal_slow(OutbeHeader::new(Header {
-        number,
-        ..Default::default()
-    }))
-}
-
-pub(super) fn next_block_attrs(extra_data: Bytes) -> OutbeNextBlockEnvAttributes {
-    OutbeNextBlockEnvAttributes {
-        inner: NextBlockEnvAttributes {
-            timestamp: TEST_BLOCK_ONE_TIMESTAMP,
-            suggested_fee_recipient: REWARDS_ADDRESS,
-            prev_randao: B256::ZERO,
-            gas_limit: 30_000_000,
-            parent_beacon_block_root: None,
-            withdrawals: None,
-            extra_data,
-            slot_number: None,
-        },
-        timestamp_millis_part: 0,
-        parent_consensus_metadata: None,
-        proposer_evm_address: Some(GENESIS_OWNER),
-        execute_outbe_block_hooks: true,
-        prebuilt_phase1_tx: None,
-        parent_artifact_hint: None,
-        pending_tee_bootstrap: None,
-        execution_read_budget: None,
-    }
-}
-
-type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
-
-pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
-    let chain_spec = test_chain_spec();
-    let founders = validators
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(idx, validator)| {
-            let mut consensus_key = [0u8; 48];
-            consensus_key[0] = idx as u8 + 1;
-            (validator, consensus_key)
-        })
-        .collect::<Vec<_>>();
-    let mut metadosis_genesis = HashMapStorageProvider::new_with_chain_identity(
-        chain_spec.chain().id(),
-        chain_spec.genesis_hash(),
-    );
-    metadosis_genesis.set_block_number(1);
-    metadosis_genesis.enter(|storage| {
-        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
-        vs.set_config_max_validators(128).unwrap();
-        vs.config_epoch_length_blocks.write(60).unwrap();
-        vs.config_is_initialized.write(true).unwrap();
-
-        let minimum = U256::from(1_000u64);
-        vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        let staking = outbe_staking::contract::Staking::new(storage.clone());
-        for (validator, consensus_key) in &founders {
-            vs.register_validator(Address::ZERO, *validator, consensus_key)
-                .unwrap();
-            vs.test_seed_authoritative_bonded(*validator, minimum)
-                .unwrap();
-            let total = staking.total_staked.read().unwrap();
-            staking.total_staked.write(total + minimum).unwrap();
-            storage
-                .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
-                .unwrap();
-            vs.mark_pending(*validator).unwrap();
-            vs.confirm_validator_ready(*validator).unwrap();
-            vs.activate_validator_via_boundary_for_test(*validator)
-                .unwrap();
-        }
-        // Seed the COEN/840 pair and a 1.0 rate so products priced in 840 resolve a live rate.
-        outbe_oracle::test_support::publish_day_type_rate(&storage, U256::from(1_000_000u64), 0, 0)
-            .unwrap();
-    });
-    db.insert_account_info(
-        outbe_primitives::addresses::STAKING_ADDRESS,
-        AccountInfo {
-            balance: metadosis_genesis.get_balance(outbe_primitives::addresses::STAKING_ADDRESS),
-            ..Default::default()
-        },
-    );
-    for ((address, slot), value) in metadosis_genesis.storage {
-        db.insert_account_storage(address, slot, value)
-            .expect("production-route genesis seed must install");
-    }
-
-    let marker_code = RevmBytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
-        outbe_primitives::addresses::METADOSIS_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    outbe_evm::test_support::install_call_scan_markers(db, &marker_code);
-}
-
-pub(super) fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {
-    let ctx = BlockContext {
-        block_gas_limit: 0,
-        user_gas_used: 0,
-        block_number: 0,
-        timestamp: 0,
-        chain_id: MAINNET.chain().id(),
-        genesis_hash: alloy_primitives::B256::ZERO,
-        genesis_timestamp: 1,
-        proposer: GENESIS_OWNER,
-        validators: validators.to_vec(),
-    };
-    let mut provider = DirectStorageProvider::new(db, ctx);
-    StorageHandle::enter(&mut provider, |storage| {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        for validator in validators {
-            let record = vs
-                .get_validator(*validator)
-                .unwrap()
-                .expect("seeded validator must exist");
-            assert_eq!(record.status, outbe_validatorset::logic::status::ACTIVE);
-            assert!(record.has_bls_share);
-        }
-    });
 }
 
 #[test]
@@ -671,30 +270,6 @@ fn builder_finish_rejects_block_2_without_end_block_phase() {
     );
 }
 
-// V2 base-block proposer/validator state-root parity.
-//
-// A "base block" carries NO consensus-header artifact. Under V2 that is
-// only a `block_number >= 2` block: block 0 has no begin-zone txs, and
-// block 1 mandatorily carries a `BoundaryOutcome` (genesis DKG boundary).
-// So this test:
-// 1. builds a valid block 2 whose begin-zone is the standard
-//    CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness, and the
-//    nine BEGIN_BLOCK_ORDER kinds. END_BLOCK_ORDER follows user transactions.
-// 2. proposer-builds it through `builder_for_next_block` + `finish`.
-// 3. re-executes it on the validator path via `batch_executor` / `execute_one`.
-// 4. asserts the two state roots match.
-//
-// The test records the parent (block 1) summary into the consensus bridge, so
-// the executor's `AccountedParentArtifactProvider` resolves the
-// `CertifiedParentAccounting` finalized-summary on both paths. The test opts
-// out of the Phase 1 `verify_v2_proof` preflight via the crate-only test escape
-// hatch (`with_phase1_verify_disabled`). This fixture exercises base-block
-// begin-zone determinism, not the certificate verifier itself. So it does
-// not seed a matching `(epoch, committee_set_hash)` committee snapshot. The
-// opt-out wraps every execution entry point (proposer
-// `apply_pre_execution_changes` and validator `execute_one`) so both paths
-// run identically. Block-1 parity (WITH a `BoundaryOutcome`) is covered by
-// `genesis_block_with_header_artifact_reexecutes_deterministically` below.
 #[test]
 fn base_block_height2_reexecutes_with_same_state_root() {
     assert_height2_finalization_parity(false);
@@ -705,21 +280,14 @@ fn mixed_block_height2_reexecutes_with_same_state_root() {
     assert_height2_finalization_parity(true);
 }
 
-pub(super) fn assert_height2_finalization_parity(include_user: bool) {
+fn assert_height2_finalization_parity(include_user: bool) {
     use alloy_consensus::{SignableTransaction as _, TxEip1559};
     use alloy_primitives::{Signature, TxKind};
-    use outbe_primitives::reshare_artifact::ExecutionSummaryArtifact;
     use reth_primitives_traits::SignedTransaction as _;
 
     let active_set = [GENESIS_OWNER];
-    // Parent is block 1 with a non-zero hash; Phase 1 metadata targets it.
     let parent = test_parent_at(1);
 
-    // Record the parent (block 1) execution summary into the bridge. Then the
-    // cache-backed `AccountedParentArtifactProvider` (installed by
-    // `new_with_bridge`) resolves the finalized-parent summary. The
-    // `CertifiedParentAccounting` system tx requires that summary on both build
-    // and re-execute paths.
     let bridge = test_bridge();
     bridge.record_execution_summary_with_state_root(
         1,
@@ -754,16 +322,12 @@ pub(super) fn assert_height2_finalization_parity(include_user: bool) {
         }
     };
 
-    // Phase 1 metadata for block 2 targets the immediate parent (block 1).
-    // An empty committee / bitmap is structurally valid (no voters, no
-    // slashing) and keeps the fixture minimal.
     let metadata = CertifiedParentAccountingMetadata {
         finalized_block_number: 1,
         finalized_block_hash: parent.hash(),
         ..CertifiedParentAccountingMetadata::default()
     };
 
-    // Proposer path: build block 2.
     let mut attrs = next_block_attrs(Bytes::new());
     attrs.parent_consensus_metadata = Some(metadata.clone());
 
@@ -796,9 +360,6 @@ pub(super) fn assert_height2_finalization_parity(include_user: bool) {
                     None,
                 )
                 .expect("begin-zone system txs must build");
-            // Base block: no BoundaryOutcome and no publication. Begin zone is
-            // CertifiedParentAccounting, LateFinalizeCredits, ValidatorLiveness,
-            // then the nine begin-block kinds.
             assert_eq!(
                 begin_system_txs.len(),
                 12,
@@ -849,12 +410,9 @@ pub(super) fn assert_height2_finalization_parity(include_user: bool) {
     let built_block = synchronous.block;
     let built_root = built_block.header().inner.state_root;
 
-    // The base block must carry no consensus-header artifact, only the
-    // proposer-injected execution summary.
-    let built_artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
-        built_block.header().inner.extra_data.as_ref(),
-    )
-    .expect("built header extra_data must decode");
+    let built_artifacts =
+        decode_outbe_block_artifacts(built_block.header().inner.extra_data.as_ref())
+            .expect("built header extra_data must decode");
     assert!(
         built_artifacts.consensus_header_artifact.is_none(),
         "base block must not carry a consensus-header artifact",
@@ -867,7 +425,6 @@ pub(super) fn assert_height2_finalization_parity(include_user: bool) {
         "proposer finish must inject execution summary into final header extra_data",
     );
 
-    // Validator path: re-execute the built block.
     let mut validator_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
     seed_active_validators(&mut validator_db, &active_set);
     seed_user(&mut validator_db);

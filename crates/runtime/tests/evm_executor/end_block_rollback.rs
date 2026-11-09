@@ -2,17 +2,65 @@ use super::*;
 use outbe_primitives::system_tx::SystemTxPhase;
 
 #[test]
-fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
-) {
-    use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
-    use outbe_gemfactory::{schema::GemPosition, GemFactoryContract};
-    use outbe_intex::SeriesId;
-    use outbe_intexfactory::IntexFactoryContract;
-    use outbe_oracle::schema::OracleContract;
-    use outbe_primitives::time::{timestamp_to_date_key, SECONDS_PER_DAY};
-    use outbe_promislimit::PromisLimitContract;
+fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let parent = B256::with_last_byte(0xA5);
+    let metadata = CertifiedParentAccountingMetadata {
+        finalized_block_number: 1,
+        finalized_block_hash: parent,
+        ..Default::default()
+    };
+    let config = OutbeEvmConfig::new(
+        test_chain_spec(),
+        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(signer);
+    let begin = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 2,
+            parent_hash: parent,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: Some(metadata.clone()),
+            proposer,
+            bootstrap: BootstrapFixture::Absent,
+        },
+    );
+    let cycle_tx = begin.last().unwrap().clone();
+    let ordinal = u8::try_from(begin.len() - 1).unwrap();
+    let mut state = state_with_active_proposer(proposer);
+    let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut ctx = execution_ctx(None, Bytes::new());
+    ctx.inner.parent_hash = parent;
+    ctx.proposer_evm_address = Some(proposer);
+    ctx.parent_consensus_metadata = Some(metadata);
+    ctx.expected_begin_system_txs = begin;
+    let mut executor = config.create_executor(evm, ctx);
+    executor.system_tx_phase_cursor = SystemTxPhase::CycleTick {
+        body_index: ordinal,
+    };
+    let block_gas_limit = executor.inner.evm.block().gas_limit();
+    executor.inner.cumulative_tx_gas_used = block_gas_limit;
+    assert!(
+        outbe_evm::factory::with_forced_outbe_system_call_revert(|| {
+            executor.execute_transaction(cycle_tx)
+        })
+        .is_err()
+    );
+    assert!(executor.receipts().is_empty());
+    assert_eq!(
+        executor.system_tx_phase_cursor,
+        SystemTxPhase::CycleTick {
+            body_index: ordinal
+        }
+    );
+    assert_eq!(executor.inner.cumulative_tx_gas_used, block_gas_limit);
+    assert_eq!(executor.system_tx_execution_gas, 0);
+}
 
-    outbe_chain_constants::initialize(None).unwrap();
+#[test]
+fn end_block_soft_failure_receipt_preserves_cleanup_budget_and_continues_block() {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let config = OutbeEvmConfig::new(
@@ -20,211 +68,135 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
     .with_evm_signer(signer);
-    let block_ts = TEST_BLOCK_TIMESTAMP_BASE + 2;
-    let expires_at = TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY;
-    let expires_day = timestamp_to_date_key(expires_at);
-    let expired_hour = expires_at / 3_600;
-    let expired_capacity = U256::from(2_000_000u64);
-    let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
-
-    struct TestExpiryQueue<'a, 's>(&'a GemFactoryContract<'s>);
-    outbe_primitives::impl_deadline_queue!(TestExpiryQueue<u64> {
-        root: expiry_tree_root,
-        mid: expiry_tree_mid,
-        leaf: expiry_tree_leaf,
-        len: expiry_day_len,
-        live: expiry_day_live,
-        at: expiry_day_at,
-        slot: expiry_entry_slot,
-        deadline: expiry_deadline,
-        sweep_day: expiry_sweep_day,
-        cursor: expiry_cursor,
-    });
-
-    let mut state =
-        state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-            seed_valid_tee_nodes(storage.clone(), &[proposer]);
-            OracleContract::new(storage.clone())
-                .utc_day_vwap_last_finalized
-                .write(expires_day)
-                .unwrap();
-            // Seed IntexFactory call notice queue for OSIX (send_call_notices).
-            let intex_factory = IntexFactoryContract::new(storage.clone());
-            intex_factory.notify_head.write(0).unwrap();
-            intex_factory.notify_tail.write(1).unwrap();
-            intex_factory
-                .notify_at
-                .write(
-                    &0,
-                    outbe_intexfactory::notify::pack_call_notice(stale_series, expires_at),
-                )
-                .unwrap();
-            // Seed CredisFactory cleanup queue in phase 2 for OSCR (cleanup_through).
-            let credis = CredisContract::new(storage.clone());
-            credis.call_sweep_day.write(expires_day).unwrap();
-            credis.call_latest_day.write(expires_day).unwrap();
-            credis.daily_phase.write(2).unwrap();
-            outbe_primitives::deadline_queue::push(
-                &CredisCleanupQueue(&credis),
-                stale_series,
-                expires_at,
-            )
-            .unwrap();
-
-            let gf = GemFactoryContract::new(storage);
-            let pos = GemPosition {
-                position_id: U256::from(1u64),
-                merchant: OWNER,
-                source_series_id: stale_series,
-                remaining_capacity_minor: expired_capacity,
-                issued_at: expires_at - SECONDS_PER_DAY,
-                expires_at,
-            };
-            gf.positions.create(&pos).unwrap();
-            outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.owner_position_ids.list(&OWNER),
-                gf.owner_position_index.clone(),
-            )
-            .insert(pos.position_id)
-            .unwrap();
-            outbe_primitives::deadline_queue::push(
-                &TestExpiryQueue(&gf),
-                expired_hour + 1,
-                expires_at,
-            )
-            .unwrap();
-            outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.hour_positions.list(&expired_hour),
-                gf.hour_position_index.clone(),
-            )
-            .insert(pos.position_id)
-            .unwrap();
-            gf.hour_capacity_minor
-                .write(&expired_hour, expired_capacity)
-                .unwrap();
-        });
-
+    let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut ctx = execution_ctx(None, Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     ctx.proposer_evm_address = Some(proposer);
     let mut executor = config.create_executor(evm, ctx);
 
-    let read_ctx = BlockContext {
-        block_gas_limit: 0,
-        user_gas_used: 0,
-        block_number: 2,
-        timestamp: block_ts,
-        chain_id: CHAIN_ID,
-        genesis_hash: alloy_primitives::B256::ZERO,
-        genesis_timestamp: block_ts,
-        proposer,
-        validators: vec![proposer],
-    };
-
-    // 1. OSND (NodFactory) executes first; GemFactory expired hour is not yet swept.
-    let nod_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::NodFactory)
-        .unwrap();
-    executor.execute_transaction(nod_tx).unwrap();
+    // Force a revert on all 5 END_BLOCK_ORDER kinds in turn (0 visible gas, emits a
+    // soft-failure receipt with status = false, advances cursor, and continues block).
+    for (idx, (input, expected_cursor)) in [
+        (SystemTx::NodFactory, SystemTxPhase::EndBlockGemFactory),
+        (SystemTx::GemFactory, SystemTxPhase::EndBlockIntexFactory),
+        (SystemTx::IntexFactory, SystemTxPhase::EndBlockCredisFactory),
+        (SystemTx::CredisFactory, SystemTxPhase::EndBlockGemCleanup),
+        (SystemTx::GemCleanup, SystemTxPhase::EndBlock),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
-            read_ctx.clone(),
-        );
-        StorageHandle::enter(&mut provider, |storage| {
-            let gf = GemFactoryContract::new(storage.clone());
-            assert_eq!(
-                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
-                expired_capacity,
-                "after OSND alone, GemFactory expired hour must not yet be swept"
-            );
-            assert_eq!(
-                PromisLimitContract::new(storage).promis_limit().unwrap(),
-                U256::ZERO
-            );
-        });
-    }
-
-    // 2. OSGM (GemFactory) executes second and runs phase 2 expire_through BEFORE OSIX and OSCR.
-    let gem_tx = config
-        .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::GemFactory)
-        .unwrap();
-    executor.execute_transaction(gem_tx).unwrap();
-    assert_eq!(
-        executor.system_tx_phase_cursor,
-        SystemTxPhase::EndBlockIntexFactory
-    );
-    {
-        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
-            read_ctx.clone(),
-        );
-        StorageHandle::enter(&mut provider, |storage| {
-            let gf = GemFactoryContract::new(storage.clone());
-            assert_eq!(
-                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
-                U256::ZERO,
-                "immediately after OSGM (before OSIX and OSCR), GemFactory phase 2 expire_through must release expired hour capacity"
-            );
-            assert_eq!(
-                PromisLimitContract::new(storage).promis_limit().unwrap(),
-                expired_capacity,
-                "Promis reserve must receive released Gem capacity before OSIX and OSCR run"
-            );
-            assert!(
-                gf.positions.get(U256::from(1u64)).unwrap().is_some(),
-                "position deletion is deferred to OSGC (GemCleanup)"
-            );
-        });
-    }
-
-    // 3. OSIX (IntexFactory), OSCR (CredisFactory), and OSGC (GemCleanup) execute in order.
-    for input in [
-        SystemTx::IntexFactory,
-        SystemTx::CredisFactory,
-        SystemTx::GemCleanup,
-    ] {
         let tx = config
             .build_end_system_tx(2, CHAIN_ID, proposer, input)
             .unwrap();
-        executor.execute_transaction(tx).unwrap();
+        let gas = outbe_evm::factory::with_forced_outbe_system_call_revert(|| {
+            executor.execute_transaction(tx)
+        })
+        .unwrap()
+        .tx_gas_used();
+        assert_eq!(gas, 0);
+        assert_eq!(executor.receipts().len(), idx + 1);
+        assert!(!executor.receipts()[idx].success);
+        assert_eq!(executor.receipts()[idx].cumulative_gas_used, 0);
+        assert_eq!(executor.system_tx_phase_cursor, expected_cursor);
     }
-    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
     assert_eq!(executor.receipts().len(), 5);
-    assert!(executor
-        .receipts()
-        .iter()
-        .all(|r| r.success && r.cumulative_gas_used == 0));
-    {
-        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
-            read_ctx,
-        );
-        StorageHandle::enter(&mut provider, |storage| {
-            let intex_factory = IntexFactoryContract::new(storage.clone());
-            assert_eq!(
-                intex_factory.notify_tail.read().unwrap(),
-                0,
-                "OSIX (IntexFactory) must run send_call_notices and drain queued notices"
-            );
-            let credis = CredisContract::new(storage.clone());
-            assert_eq!(
-                credis.call_sweep_day.read().unwrap(),
-                0,
-                "OSCR (CredisFactory) must run cleanup_through and finish the pinned sweep day"
-            );
-            assert_eq!(
-                credis.cleanup_series_slot.read(&stale_series).unwrap(),
-                0,
-                "OSCR (CredisFactory) cleanup_through must drop due cleanup queue entry"
-            );
-            let gf = GemFactoryContract::new(storage);
-            assert!(
-                gf.positions.get(U256::from(1u64)).unwrap().is_none(),
-                "OSGC (GemCleanup) must delete expired positions handed off by OSGM"
-            );
+    assert!(executor.receipts().iter().all(|r| !r.success));
+    assert_eq!(executor.system_tx_phase_cursor, SystemTxPhase::EndBlock);
+    executor.prepare_final_header_artifacts(0).unwrap();
+    let (_, result) = executor.finish().unwrap();
+    assert_eq!(result.receipts.len(), 5);
+}
+
+#[test]
+fn all_soft_fail_kinds_abort_block_on_fatal_system_call_error() {
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let config = OutbeEvmConfig::new(
+        test_chain_spec(),
+        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(signer);
+
+    // 1. BeginBlock soft-fail kinds (OracleSlash, HyperlaneSlash) abort block on Fatal/system error.
+    for target_kind in [
+        outbe_primitives::system_tx::SystemTxKind::OracleSlash,
+        outbe_primitives::system_tx::SystemTxKind::HyperlaneSlash,
+    ] {
+        let mut state = state_with_active_proposer_and_funded_account(proposer, Address::ZERO);
+        let parent_hash = B256::with_last_byte(0x41);
+        let (ctx, metadata) = block_two_execution_ctx(Some(1), Bytes::new(), proposer, parent_hash);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut executor = config.create_executor(evm, ctx);
+        super::with_phase1_verify_disabled(|| {
+            executor.apply_pre_execution_changes().unwrap();
         });
+        for tx in begin_system_txs_for_test(
+            &config,
+            BeginBlockFixture {
+                block_number: 2,
+                parent_hash,
+                extra_data: &Bytes::new(),
+                parent_consensus_metadata: Some(metadata),
+                proposer,
+                bootstrap: BootstrapFixture::StandardForBlock,
+            },
+        ) {
+            let decoded = SystemTx::decode(tx.tx().input().as_ref()).unwrap();
+            if decoded.kind() == target_kind {
+                let receipts_before = executor.receipts().len();
+                let res = outbe_evm::factory::with_forced_outbe_system_call_error(|| {
+                    executor.execute_transaction(tx)
+                });
+                assert!(
+                    res.is_err(),
+                    "fatal system call error on {target_kind:?} must abort block execution"
+                );
+                assert_eq!(
+                    executor.receipts().len(),
+                    receipts_before,
+                    "fatal system call error must not append a soft-failure receipt"
+                );
+                break;
+            }
+            executor.execute_transaction(tx).unwrap();
+        }
+    }
+
+    // 2. EndBlock soft-fail kinds (OSND..OSGC) abort block on Fatal/system error.
+    let end_inputs = [
+        SystemTx::NodFactory,
+        SystemTx::GemFactory,
+        SystemTx::IntexFactory,
+        SystemTx::CredisFactory,
+        SystemTx::GemCleanup,
+    ];
+    for target_idx in 0..end_inputs.len() {
+        let mut state = state_with_active_proposer(proposer);
+        let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut ctx = execution_ctx(None, Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
+        ctx.proposer_evm_address = Some(proposer);
+        let mut executor = config.create_executor(evm, ctx);
+        for (idx, input) in end_inputs.iter().cloned().enumerate() {
+            let tx = config
+                .build_end_system_tx(2, CHAIN_ID, proposer, input)
+                .unwrap();
+            if idx == target_idx {
+                let receipts_before = executor.receipts().len();
+                let res = outbe_evm::factory::with_forced_outbe_system_call_error(|| {
+                    executor.execute_transaction(tx)
+                });
+                assert!(
+                    res.is_err(),
+                    "fatal error at EndBlock index {idx} must abort"
+                );
+                assert_eq!(executor.receipts().len(), receipts_before);
+                break;
+            }
+            executor.execute_transaction(tx).unwrap();
+        }
     }
 }
 

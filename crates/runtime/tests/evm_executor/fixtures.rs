@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+pub use super::fixtures_execution::*;
 use super::*;
 
 pub const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
@@ -31,11 +32,58 @@ pub(super) fn seed_cycle_genesis(storage: StorageHandle<'_>) {
         .unwrap();
 }
 
+/// Establish the UTC boundary baseline for cycle-tick tests.
+pub(crate) fn seed_cycle_tick_genesis(
+    storage: StorageHandle<'_>,
+    genesis_ts: u64,
+    _proposer: Address,
+) -> outbe_primitives::error::Result<()> {
+    // These tests supply their own genesis, not the default established-parent history.
+    outbe_nod::NodContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_gem::GemContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_intex::IntexContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    outbe_credis::CredisContract::new(storage.clone())
+        .call_latest_day
+        .write(0)?;
+    let cycle = outbe_cycle::schema::Cycle::new(storage);
+    let trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+    cycle.last_executed_at.write(&trigger, genesis_ts + 60)?;
+    Ok(())
+}
+
+/// Publishes `rate` as the COEN/840 VWAP of the UTC day before `block_ts`.
+pub(crate) fn seed_previous_day_vwap(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    block_ts: u64,
+    rate: U256,
+) {
+    let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+    let day = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(block_ts),
+    )
+    .expect("date step");
+    outbe_oracle::schema::OracleContract::new(storage.clone())
+        .record_utc_day_vwap(day, index, rate)
+        .unwrap();
+}
+
 pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
     let mut bytes = [0u8; 20];
     bytes[0] = prefix;
     bytes[12..].copy_from_slice(&n.to_be_bytes());
     Address::from(bytes)
+}
+
+pub fn dummy_pubkey(seed: u8) -> [u8; 48] {
+    let mut pk = [0u8; 48];
+    pk[0] = seed;
+    pk
 }
 
 pub fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
@@ -85,6 +133,238 @@ pub fn test_evm_env(block_number: u64, beneficiary: Address) -> EvmEnv {
     }
 }
 
+pub(crate) fn cache_db_from_storage(
+    seed_storage: HashMapStorageProvider,
+) -> CacheDB<EmptyDBTyped<ProviderError>> {
+    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut addresses: Vec<Address> = seed_storage
+        .storage
+        .keys()
+        .map(|(address, _)| *address)
+        .chain(std::iter::once(
+            outbe_primitives::addresses::STAKING_ADDRESS,
+        ))
+        .collect();
+    addresses.sort_unstable();
+    addresses.dedup();
+    for address in addresses {
+        let balance = seed_storage.get_balance(address);
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                balance,
+                ..Default::default()
+            },
+        );
+    }
+    for ((address, slot), value) in seed_storage.storage {
+        db.insert_account_storage(address, slot, value)
+            .expect("seed storage insert should succeed");
+    }
+    db
+}
+
+/// Independent trie-root projection of the executed test bundle.
+pub fn post_state_root(state: &revm::database::BundleState) -> B256 {
+    use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
+
+    let sorted = HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
+    let storages = sorted.storages;
+    let accounts = sorted
+        .accounts
+        .into_iter()
+        .filter_map(|(address, account)| {
+            account.map(|account| {
+                let storage = storages
+                    .get(&address)
+                    .map(|storage| storage.storage_slots.clone())
+                    .unwrap_or_default();
+                (address, (account, storage))
+            })
+        });
+    state_root_prehashed(accounts)
+}
+
+pub(crate) fn signer_balance(
+    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    addr: Address,
+) -> U256 {
+    state
+        .basic(addr)
+        .expect("signer account read should succeed")
+        .map(|a| a.balance)
+        .unwrap_or_default()
+}
+
+pub(crate) fn test_committee_snapshot(
+    validators: &[(Address, [u8; 48])],
+) -> outbe_validatorset::CommitteeSnapshot {
+    outbe_validatorset::CommitteeSnapshot {
+        committee: validators
+            .iter()
+            .map(
+                |(address, consensus_pubkey)| outbe_validatorset::CommitteeEntry {
+                    address: *address,
+                    consensus_pubkey: *consensus_pubkey,
+                },
+            )
+            .collect(),
+        vrf_material_version: 0,
+        vrf_group_public_key_bytes: vec![0x42; 96],
+        vrf_public_polynomial_hash: B256::ZERO,
+    }
+}
+
+pub(super) fn seed_test_committee_snapshot(
+    storage: StorageHandle,
+    validators: &[(Address, [u8; 48])],
+) -> B256 {
+    let snapshot = test_committee_snapshot(validators);
+    outbe_validatorset::write_committee_snapshot(storage, 0, &snapshot)
+        .expect("seed epoch-0 test committee snapshot")
+        .0
+}
+
+pub(super) fn test_register_waiting(
+    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+    validator: Address,
+    pubkey: &[u8; 48],
+) {
+    vs.test_register_validator_without_pop(validator, pubkey)
+        .unwrap();
+}
+
+fn test_register_active_with_stake(
+    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+    validator: Address,
+    pubkey: &[u8; 48],
+    stake: U256,
+    minimum: U256,
+) {
+    test_register_waiting(vs, validator, pubkey);
+    assert!(stake >= minimum);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
+    vs.test_set_stake_projection(
+        validator,
+        outbe_validatorset::StakeProjection::new(stake, None),
+    )
+    .unwrap();
+    let staking = outbe_staking::contract::Staking::new(vs.storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + stake).unwrap();
+    vs.storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
+        .unwrap();
+    vs.activate_validator_via_boundary_for_test(validator)
+        .unwrap();
+}
+
+pub(super) fn test_register_active(
+    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+    validator: Address,
+    pubkey: &[u8; 48],
+) {
+    test_register_active_with_stake(vs, validator, pubkey, U256::from(1), U256::from(1));
+}
+
+pub(crate) fn seed_registered_active_validator(
+    storage: StorageHandle,
+    validator: Address,
+    pk: &[u8; 48],
+) {
+    let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+    vs.config_owner.write(OWNER).unwrap();
+    vs.set_config_max_validators(128).unwrap();
+    vs.config_epoch_length_blocks.write(60).unwrap();
+    vs.config_is_initialized.write(true).unwrap();
+    let minimum = U256::from(1_000u64);
+    vs.test_seed_authoritative_min_stake(minimum).unwrap();
+    vs.register_validator(OWNER, validator, pk).unwrap();
+    vs.test_seed_authoritative_bonded(validator, minimum)
+        .unwrap();
+    let staking = outbe_staking::contract::Staking::new(storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + minimum).unwrap();
+    storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+        .unwrap();
+    vs.activate_validator_via_boundary_for_test(validator)
+        .unwrap();
+    seed_test_committee_snapshot(storage.clone(), &[(validator, *pk)]);
+    // Seed COEN/840 pair + 1.0 rate so the begin-block NOD/GEM/INTEX call scans
+    // read a registered pair instead of reverting "pair not registered".
+    // 840 also goes on the reference currency list, matching genesis: the
+    // scans read their ISO from there.
+    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    outbe_oracle::api::set_exchange_rate(
+        storage,
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        outbe_oracle::api::RateObservation {
+            rate: U256::from(1_000_000u64),
+            block_number: 0,
+            timestamp: 0,
+        },
+    )
+    .unwrap();
+}
+
+pub(crate) fn register_and_activate_native(
+    validators: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+    validator: Address,
+    consensus_key: &[u8; 48],
+) {
+    let minimum = U256::from(1_000u64);
+    validators
+        .test_seed_authoritative_min_stake(minimum)
+        .unwrap();
+    validators
+        .register_validator(OWNER, validator, consensus_key)
+        .unwrap();
+    validators
+        .test_seed_authoritative_bonded(validator, minimum)
+        .unwrap();
+    let staking = outbe_staking::contract::Staking::new(validators.storage.clone());
+    let total = staking.total_staked.read().unwrap();
+    staking.total_staked.write(total + minimum).unwrap();
+    validators
+        .storage
+        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, minimum)
+        .unwrap();
+    validators.mark_pending(validator).unwrap();
+    validators.confirm_validator_ready(validator).unwrap();
+    validators
+        .activate_validator_via_boundary_for_test(validator)
+        .unwrap();
+}
+
+pub fn seed_valid_tee_nodes(storage: StorageHandle<'_>, addresses: &[Address]) {
+    let registry = outbe_teeregistry::TeeRegistry::new(storage);
+    for (index, validator) in addresses.iter().enumerate() {
+        let node_hash = keccak256((index as u64).to_be_bytes());
+        registry
+            .validator_v1_node_hash
+            .write(validator, node_hash)
+            .unwrap();
+        registry
+            .v1_node_enclave_id
+            .write(&node_hash, B256::with_last_byte(0x11))
+            .unwrap();
+        registry
+            .v1_node_binding_id
+            .write(&node_hash, B256::with_last_byte(0x12))
+            .unwrap();
+        registry
+            .v1_node_intent_hash
+            .write(&node_hash, B256::with_last_byte(0x13))
+            .unwrap();
+        registry
+            .v1_node_valid_until
+            .write(&node_hash, u64::MAX)
+            .unwrap();
+    }
+}
+
 pub(super) fn state_with_active_proposer(
     proposer: Address,
 ) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
@@ -105,46 +385,22 @@ fn state_with_active_proposer_fixture(
 
     let mut db = cache_db_from_storage(seed_storage);
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
+    for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::METADOSIS_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         CYCLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code),
-            ..Default::default()
-        },
-    );
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+    }
     State::builder()
         .with_database(db)
         .with_bundle_update()
@@ -174,38 +430,21 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
 
     let mut db = cache_db_from_storage(seed_storage);
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
+    for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::ORACLE_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::METADOSIS_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code.clone()),
-            ..Default::default()
-        },
-    );
-    db.insert_account_info(
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
-        AccountInfo {
-            code_hash: marker_code.hash_slow(),
-            code: Some(marker_code),
-            ..Default::default()
-        },
-    );
+    ] {
+        db.insert_account_info(
+            address,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+    }
     db.insert_account_info(
         funded,
         AccountInfo {
@@ -345,356 +584,3 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         .with_bundle_update()
         .build()
 }
-
-pub(super) fn execution_ctx<'a>(
-    tx_count_hint: Option<usize>,
-    extra_data: Bytes,
-) -> OutbeBlockExecutionCtx<'a> {
-    OutbeBlockExecutionCtx {
-        inner: EthBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            parent_beacon_block_root: None,
-            ommers: &[],
-            withdrawals: None,
-            extra_data,
-            tx_count_hint,
-            slot_number: None,
-        },
-        timestamp_millis_part: 0,
-        block_hash: None,
-        block_state_root: None,
-        expected_begin_system_txs: Vec::new(),
-        system_layout_error: None,
-        parent_consensus_metadata: None,
-        proposer_evm_address: None,
-        execute_outbe_block_hooks: true,
-        prebuilt_phase1_tx: None,
-        parent_artifact_hint: None,
-        pending_tee_bootstrap: None,
-        execution_read_budget: None,
-    }
-}
-
-pub fn block_one_execution_ctx<'a>(
-    tx_count_hint: Option<usize>,
-    extra_data: Bytes,
-) -> OutbeBlockExecutionCtx<'a> {
-    execution_ctx_with_tee_bootstrap(tx_count_hint, extra_data, sample_tee_bootstrap_payload(1))
-}
-
-pub fn block_two_execution_ctx<'a>(
-    tx_count_hint: Option<usize>,
-    extra_data: Bytes,
-    proposer: Address,
-    parent_hash: B256,
-) -> (
-    OutbeBlockExecutionCtx<'a>,
-    CertifiedParentAccountingMetadata,
-) {
-    let mut metadata = metadata_with(vec![proposer], vec![1], Vec::new());
-    metadata.finalized_block_number = 1;
-    metadata.finalized_block_hash = parent_hash;
-    let mut ctx = execution_ctx(tx_count_hint, extra_data);
-    ctx.inner.parent_hash = parent_hash;
-    ctx.parent_consensus_metadata = Some(metadata.clone());
-    ctx.parent_artifact_hint = Some(AccountedParentArtifact {
-        summary: ExecutionSummaryArtifact {
-            validator_fee_sum: U256::ZERO,
-        },
-        timestamp: 0,
-        state_root: Some(B256::repeat_byte(0x91)),
-    });
-    ctx.proposer_evm_address = Some(proposer);
-    (ctx, metadata)
-}
-
-pub fn seed_valid_tee_nodes(storage: StorageHandle<'_>, addresses: &[Address]) {
-    let registry = outbe_teeregistry::TeeRegistry::new(storage);
-    for (index, validator) in addresses.iter().enumerate() {
-        let node_hash = keccak256((index as u64).to_be_bytes());
-        registry
-            .validator_v1_node_hash
-            .write(validator, node_hash)
-            .unwrap();
-        registry
-            .v1_node_enclave_id
-            .write(&node_hash, B256::with_last_byte(0x11))
-            .unwrap();
-        registry
-            .v1_node_binding_id
-            .write(&node_hash, B256::with_last_byte(0x12))
-            .unwrap();
-        registry
-            .v1_node_intent_hash
-            .write(&node_hash, B256::with_last_byte(0x13))
-            .unwrap();
-        registry
-            .v1_node_valid_until
-            .write(&node_hash, u64::MAX)
-            .unwrap();
-    }
-}
-
-pub(super) fn execution_ctx_with_tee_bootstrap<'a>(
-    tx_count_hint: Option<usize>,
-    extra_data: Bytes,
-    tee_bootstrap: outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
-) -> OutbeBlockExecutionCtx<'a> {
-    let mut ctx = execution_ctx(tx_count_hint, extra_data);
-    ctx.pending_tee_bootstrap = Some(tee_bootstrap);
-    ctx
-}
-
-pub enum BootstrapFixture {
-    StandardForBlock,
-    Payload(Box<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>),
-    Absent,
-}
-
-impl BootstrapFixture {
-    pub(super) fn explicit(
-        payload: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-    ) -> Self {
-        match payload {
-            Some(payload) => Self::Payload(Box::new(payload)),
-            None => Self::Absent,
-        }
-    }
-}
-
-pub struct BeginBlockFixture<'a> {
-    pub block_number: u64,
-    pub parent_hash: B256,
-    pub extra_data: &'a Bytes,
-    pub parent_consensus_metadata: Option<CertifiedParentAccountingMetadata>,
-    pub proposer: Address,
-    pub bootstrap: BootstrapFixture,
-}
-
-pub fn begin_system_txs_for_test(
-    config: &OutbeEvmConfig,
-    input: BeginBlockFixture<'_>,
-) -> Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>> {
-    let BeginBlockFixture {
-        block_number,
-        parent_hash,
-        extra_data,
-        parent_consensus_metadata,
-        proposer,
-        bootstrap,
-    } = input;
-    let pending_tee_bootstrap = match bootstrap {
-        BootstrapFixture::StandardForBlock => {
-            (block_number == 1).then(|| sample_tee_bootstrap_payload(block_number))
-        }
-        BootstrapFixture::Payload(payload) => Some(*payload),
-        BootstrapFixture::Absent => None,
-    };
-    config
-        .build_begin_system_txs(
-            block_number,
-            CHAIN_ID,
-            outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
-            parent_hash,
-            extra_data,
-            parent_consensus_metadata,
-            Some(proposer),
-            None,
-            pending_tee_bootstrap,
-        )
-        .expect("begin-zone system txs should build")
-}
-
-pub(super) fn sample_tee_bootstrap_payload(
-    block_number: u64,
-) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
-    sample_tee_bootstrap_payload_at(
-        block_number,
-        TEST_BLOCK_TIMESTAMP_BASE.saturating_add(block_number),
-    )
-}
-
-pub(super) fn sample_tee_bootstrap_payload_at(
-    block_number: u64,
-    consensus_timestamp: u64,
-) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
-    use outbe_primitives::tee_test_utils::DevValidatorV1;
-
-    let consensus_public = dummy_pubkey(0xA2);
-    let snapshot = test_committee_snapshot(&[(test_evm_signer().address(), consensus_public)]);
-    let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
-    let requested_valid_until = consensus_timestamp
-        .checked_add(3_600)
-        .expect("test lease timestamp fits u64");
-    sample_tee_bootstrap_payload_for(
-        block_number,
-        committee_snapshot_hash,
-        requested_valid_until,
-        &[DevValidatorV1 {
-            evm_secret: [1; 32],
-            bls_minpk_public: consensus_public,
-        }],
-    )
-}
-
-pub(super) fn sample_tee_bootstrap_payload_for(
-    block_number: u64,
-    committee_snapshot_hash: B256,
-    requested_valid_until: u64,
-    validators: &[outbe_primitives::tee_test_utils::DevValidatorV1],
-) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
-    use outbe_primitives::tee_test_utils::{gramine_direct_bootstrap_v2, gramine_direct_policy_v1};
-
-    let policy = gramine_direct_policy_v1(CHAIN_ID, MAINNET.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
-    gramine_direct_bootstrap_v2(
-        policy,
-        committee_snapshot_hash,
-        block_number,
-        requested_valid_until,
-        validators,
-    )
-    .expect("test GramineDirectDev OST3 payload is canonical")
-}
-
-pub(super) fn test_regular_tx() -> reth_ethereum::TransactionSigned {
-    TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit: 21_000,
-        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(Address::ZERO),
-        value: U256::ZERO,
-        input: Bytes::new(),
-        access_list: Default::default(),
-    }
-    .into_signed(Signature::test_signature())
-    .into()
-}
-
-pub(super) fn test_oracle_submit_vote_tx() -> reth_ethereum::TransactionSigned {
-    test_oracle_submit_vote_tx_with_gas_limit(1_000_000)
-}
-
-pub(super) fn test_oracle_submit_vote_tx_with_gas_limit(
-    gas_limit: u64,
-) -> reth_ethereum::TransactionSigned {
-    let input = outbe_oracle::precompile::IOracle::submitVoteCall {
-        tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
-            base: outbe_oracle::api::COEN_ASSET,
-            quote: outbe_oracle::api::currency_address(840),
-            exchangeRate: U256::from(1_000_000u64),
-            volume: U256::from(10_000_000_000u64),
-        }],
-    }
-    .abi_encode();
-
-    TxEip1559 {
-        chain_id: CHAIN_ID,
-        nonce: 0,
-        gas_limit,
-        max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
-        max_priority_fee_per_gas: 0,
-        to: TxKind::Call(ORACLE_ADDRESS),
-        value: U256::ZERO,
-        input: input.into(),
-        access_list: Default::default(),
-    }
-    .into_signed(Signature::test_signature())
-    .into()
-}
-
-pub(super) fn test_metadata() -> CertifiedParentAccountingMetadata {
-    CertifiedParentAccountingMetadata::default()
-}
-
-// `finish_rejects_execution_summary_mismatch` was removed.
-// The previous test asserted mismatch via the `total_emission_limit`
-// field. Wire format v0x04 dropped that field from
-// `ExecutionSummaryArtifact`. The broader
-// `outbe_rewards::finalized_metadata_hook::record_votes_and_fees` hook and the
-// metadata-fingerprint guard in
-// `outbe_rewards::runtime::check_and_record_metadata_fingerprint`
-// verify the remaining `validator_fee_sum` field.
-
-pub fn dummy_pubkey(seed: u8) -> [u8; 48] {
-    let mut pk = [0u8; 48];
-    pk[0] = seed;
-    pk
-}
-
-fn test_committee_snapshot(
-    validators: &[(Address, [u8; 48])],
-) -> outbe_validatorset::CommitteeSnapshot {
-    outbe_validatorset::CommitteeSnapshot {
-        committee: validators
-            .iter()
-            .map(
-                |(address, consensus_pubkey)| outbe_validatorset::CommitteeEntry {
-                    address: *address,
-                    consensus_pubkey: *consensus_pubkey,
-                },
-            )
-            .collect(),
-        vrf_material_version: 0,
-        vrf_group_public_key_bytes: vec![0x42; 96],
-        vrf_public_polynomial_hash: B256::ZERO,
-    }
-}
-
-pub(super) fn seed_test_committee_snapshot(
-    storage: StorageHandle,
-    validators: &[(Address, [u8; 48])],
-) -> B256 {
-    let snapshot = test_committee_snapshot(validators);
-    outbe_validatorset::write_committee_snapshot(storage, 0, &snapshot)
-        .expect("seed epoch-0 test committee snapshot")
-        .0
-}
-
-pub(super) fn test_register_waiting(
-    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
-    validator: Address,
-    pubkey: &[u8; 48],
-) {
-    vs.test_register_validator_without_pop(validator, pubkey)
-        .unwrap();
-}
-
-fn test_register_active_with_stake(
-    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
-    validator: Address,
-    pubkey: &[u8; 48],
-    stake: U256,
-    minimum: U256,
-) {
-    test_register_waiting(vs, validator, pubkey);
-    assert!(stake >= minimum);
-    vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.test_set_stake_projection(
-        validator,
-        outbe_validatorset::StakeProjection::new(stake, None),
-    )
-    .unwrap();
-    let staking = outbe_staking::contract::Staking::new(vs.storage.clone());
-    let total = staking.total_staked.read().unwrap();
-    staking.total_staked.write(total + stake).unwrap();
-    vs.storage
-        .increase_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(validator)
-        .unwrap();
-}
-
-pub(super) fn test_register_active(
-    vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
-    validator: Address,
-    pubkey: &[u8; 48],
-) {
-    test_register_active_with_stake(vs, validator, pubkey, U256::from(1), U256::from(1));
-}
-
-#[path = "fixtures_records.rs"]
-mod records;
-pub(crate) use records::*;

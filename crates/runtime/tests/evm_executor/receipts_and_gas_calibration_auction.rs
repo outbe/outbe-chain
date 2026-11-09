@@ -1,5 +1,153 @@
-use super::receipts_and_gas_calibration_envelope::*;
+use super::receipts_and_gas_support::*;
 use super::*;
+
+#[test]
+fn calibration_populated_auction_and_parked_handlers() {
+    let (_, samples, logs, _) = populated_auction(16);
+    assert_eq!(samples.len(), 8);
+    assert!(logs.iter().any(|log| log.data.topics().first()
+        == Some(&keccak256("IntexAuctionCompletedEmpty(uint32,uint64)"))));
+    let resend = router_abi::IOriginRouter::resendParkedMessageCall::SELECTOR;
+    for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
+        assert_eq!(
+            logs.iter()
+                .filter(|log| log.address == address && log.data.data.starts_with(&resend))
+                .count(),
+            16
+        );
+    }
+    assert!(logs.iter().any(
+        |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+            .is_ok_and(|event| event.data.id == 8)
+    ));
+}
+
+#[test]
+fn oversized_clearing_defers_atomically_and_deterministically_without_blocking_user() {
+    let first = populated_auction(128);
+    let second = populated_auction(128);
+    assert_eq!(
+        first, second,
+        "same prestate must produce identical gross gas, logs and state root"
+    );
+    assert!(first.3.is_some());
+}
+
+fn populated_auction(chain_count: u32) -> Calibration {
+    use router_abi::IOriginRouter;
+    let targets: Vec<u32> = (1..=chain_count).collect();
+    let router = returning_contract(vec![
+        (
+            IOriginRouter::targetsOfCall::SELECTOR,
+            IOriginRouter::targetsOfCall::abi_encode_returns(&targets),
+        ),
+        (
+            IOriginRouter::parkedMessageCountCall::SELECTOR,
+            IOriginRouter::parkedMessageCountCall::abi_encode_returns(&U256::from(64)),
+        ),
+        (
+            IOriginRouter::parkedProceedsCountCall::SELECTOR,
+            IOriginRouter::parkedProceedsCountCall::abi_encode_returns(&U256::from(64)),
+        ),
+        (
+            IOriginRouter::parkedMessageCall::SELECTOR,
+            IOriginRouter::parkedMessageCall::abi_encode_returns(&IOriginRouter::ParkedMessage {
+                dstChainId: 1,
+                gasLimit: 100_000,
+                sent: false,
+                payload: vec![7; 256].into(),
+            }),
+        ),
+        (
+            IOriginRouter::parkedProceedsCall::SELECTOR,
+            IOriginRouter::parkedProceedsCall::abi_encode_returns(&IOriginRouter::ParkedProceeds {
+                emissionDay: 20240101,
+                srcChainId: 1,
+                amount: 1_000_000,
+                settled: false,
+            }),
+        ),
+    ]);
+    let proposer = test_evm_signer().address();
+    let timestamp = GENESIS + SECONDS_PER_DAY + 60;
+    run_prefix(
+        &format!(
+            "populated auction{} bids/{chain_count} chains + parked64",
+            chain_count * 2
+        ),
+        &[(proposer, dummy_pubkey(0xa2))],
+        (if chain_count > 16 { 2 } else { 1 }, timestamp),
+        |storage| {
+            seed_cycle_tick_genesis(storage.clone(), GENESIS, proposer).unwrap();
+            let day = EmissionDate::new(20240101);
+            let auction = outbe_desis::DesisContract::new(storage.clone());
+            auction
+                .auction_stage
+                .write(&day, outbe_desis::AuctionStage::CollectingBids as u8)
+                .unwrap();
+            auction
+                .auction_at
+                .write(&day, u32::try_from(timestamp).unwrap())
+                .unwrap();
+            auction.gate_active_count.write(1).unwrap();
+            auction.gate_active_at.write(&0, day.value()).unwrap();
+            auction.gate_active_slot.write(&day, 1).unwrap();
+            auction.clearing_initiated.write(&day, 1).unwrap();
+            auction
+                .config_promis_load_minor
+                .write(&day, U256::from(1_000_000))
+                .unwrap();
+            auction.config_min_bid_rate.write(&day, 2_000_000).unwrap();
+            for chain in 1..=chain_count {
+                let key = outbe_desis::DesisContract::chain_key(day, chain);
+                auction.chain_done.write(&key, 1).unwrap();
+                auction.chain_bid_count.write(&key, 2).unwrap();
+                for index in 0..2 {
+                    let key = outbe_desis::DesisContract::bid_key(day, chain, index);
+                    auction
+                        .bid_bidder
+                        .write(
+                            &key,
+                            numbered_test_address(0xa1, u64::from(chain * 2 + index)),
+                        )
+                        .unwrap();
+                    let packed = U256::from(1_000_000u64)
+                        | (U256::from((840u64 << 48) | (1 << 32)) << 64)
+                        | (U256::from(840u64) << 128);
+                    auction.bid_packed.write(&key, packed).unwrap();
+                }
+            }
+            auction.day_bid_count.write(&day, chain_count * 2).unwrap();
+            outbe_desis::api::dispatch_auction_brief(
+                storage.clone(),
+                outbe_desis::api::AuctionBrief {
+                    emission_day: EmissionDate::new(20240102),
+                    desis_limit_minor: U256::ZERO,
+                    has_limit: false,
+                },
+                outbe_desis::api::BriefOverflowPolicy::ReturnToPromisLimit,
+            )
+            .unwrap();
+            seed_previous_day_vwap(&storage, timestamp, U256::from(1_000_000));
+            outbe_oracle::schema::OracleContract::new(storage.clone())
+                .utc_day_vwap_last_finalized
+                .write(20240101)
+                .unwrap();
+            for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
+                outbe_cycle::schema::Cycle::new(storage.clone())
+                    .last_executed_at
+                    .write(&spec.id, GENESIS + 60)
+                    .unwrap();
+            }
+        },
+        vec![
+            (outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, router),
+            (RELAY, Bytecode::new_legacy(bridge_work(false).into())),
+        ],
+        None,
+        chain_count > 16,
+    )
+}
 
 #[test]
 fn calibration_live_auction_start() {
@@ -125,61 +273,6 @@ fn seed_accepted_auction(storage: StorageHandle<'_>, timestamp: u64, batches: u1
             )
             .unwrap();
     }
-}
-
-fn accept_auction_batches(storage: StorageHandle<'_>, day: EmissionDate, chain: u32, batches: u16) {
-    for batch in 0..batches {
-        let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
-        let call = outbe_desis::precompile::IDesis::processBidsBatchCall {
-            emissionDay: day.value(),
-            srcChainId: chain,
-            batchIndex: batch,
-            totalBatches: batches,
-            bidderAddresses: indices
-                .clone()
-                .map(|index| {
-                    numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
-                })
-                .collect(),
-            packedBids: indices
-                .map(|index| {
-                    U256::from_limbs([
-                        840 | (840 << 16) | (u64::from(index) << 32),
-                        2_000_000 | (1 << 32),
-                        0,
-                        0,
-                    ])
-                })
-                .collect(),
-        };
-        outbe_desis::precompile::dispatch(
-            storage.clone(),
-            &call.abi_encode(),
-            outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-        )
-        .unwrap();
-    }
-    let done = outbe_desis::precompile::IDesis::processBidsDoneCall {
-        emissionDay: day.value(),
-        srcChainId: chain,
-        totalBatches: batches,
-        totalBids: u32::from(batches) * 64,
-    };
-    outbe_desis::precompile::dispatch(
-        storage.clone(),
-        &done.abi_encode(),
-        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-    )
-    .unwrap();
-    let auction = outbe_desis::DesisContract::new(storage);
-    let key = outbe_desis::DesisContract::chain_key(day, chain);
-    assert_eq!(
-        auction.chain_bid_count.read(&key).unwrap(),
-        u32::from(batches) * 64
-    );
-    assert_eq!(auction.chain_done.read(&key).unwrap(), 1);
 }
 
 #[test]
@@ -540,26 +633,4 @@ fn calibration_desis_cleanup_max_page_and_four_headers() {
             eprintln!("DESIS GC real-provider chains={chains} gross={cost}, pagebound=2560000");
         });
     }
-}
-
-pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
-    let day = EmissionDate::new(20240101);
-    let auction = outbe_desis::DesisContract::new(storage.clone());
-    auction
-        .auction_stage
-        .write(&day, outbe_desis::AuctionStage::CollectingBids as u8)
-        .unwrap();
-    for chain in 1..=chains {
-        accept_auction_batches(
-            storage.clone(),
-            day,
-            chain,
-            if chains == 1 { 17 } else { 1 },
-        );
-    }
-    auction
-        .auction_stage
-        .write(&day, outbe_desis::AuctionStage::Completed as u8)
-        .unwrap();
-    auction.queue_intake_cleanup(day).unwrap();
 }

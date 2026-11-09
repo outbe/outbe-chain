@@ -1,4 +1,4 @@
-use super::schedule_replay::*;
+use super::harness::*;
 
 use alloy_primitives::{Bytes, B256};
 use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;

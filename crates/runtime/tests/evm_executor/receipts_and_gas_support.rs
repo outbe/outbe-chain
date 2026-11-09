@@ -236,3 +236,475 @@ pub(super) fn assert_approved_factory_state(
 
     Ok(())
 }
+
+pub(crate) use outbe_primitives::time::{EmissionDate, SECONDS_PER_DAY};
+
+pub(super) const GENESIS: u64 = 1_704_067_200;
+pub(super) const POPULATION: usize = 256;
+pub(super) const RELAY: Address = Address::repeat_byte(0xc7);
+pub(super) type Calibration = (Vec<(String, u64)>, Vec<(u32, u64)>, Vec<Log>, Option<B256>);
+pub(crate) type CalibrationState = State<CacheDB<EmptyDBTyped<ProviderError>>>;
+
+pub(super) fn committee(proposer: Address) -> Vec<(Address, [u8; 48])> {
+    (0..POPULATION)
+        .map(|index| {
+            let mut key = [0; 48];
+            key[..2].copy_from_slice(&u16::try_from(index + 1).unwrap().to_be_bytes());
+            let address = if index == 0 {
+                proposer
+            } else {
+                numbered_test_address(0x91, index as u64)
+            };
+            (address, key)
+        })
+        .collect()
+}
+
+pub(super) fn run_prefix(
+    label: &str,
+    validators: &[(Address, [u8; 48])],
+    clock: (u64, u64),
+    seed: impl FnOnce(StorageHandle<'_>),
+    contracts: Vec<(Address, Bytecode)>,
+    boundary: Option<outbe_primitives::consensus::DkgBoundaryArtifact>,
+    verify_deferred: bool,
+) -> Calibration {
+    run_prefix_checked(
+        label,
+        validators,
+        clock,
+        seed,
+        contracts,
+        boundary,
+        (verify_deferred, |_, _| {}),
+    )
+}
+
+pub(super) fn run_prefix_checked(
+    label: &str,
+    validators: &[(Address, [u8; 48])],
+    clock: (u64, u64),
+    seed: impl FnOnce(StorageHandle<'_>),
+    contracts: Vec<(Address, Bytecode)>,
+    boundary: Option<outbe_primitives::consensus::DkgBoundaryArtifact>,
+    verification: (bool, impl FnOnce(&mut CalibrationState, &[Log])),
+) -> Calibration {
+    let (verify_deferred, verify_state) = verification;
+    let (block, timestamp) = clock;
+    outbe_cycle::runtime::take_trigger_gas_samples();
+    outbe_cycle::runtime::take_cycle_gas_samples();
+    let signer = test_evm_signer();
+    let proposer = signer.address();
+    let user_tx = test_regular_tx().try_into_recovered().unwrap();
+    let mut state =
+        state_with_active_validators_seeded_at_block(validators, block - 1, |storage| {
+            if block > 1 {
+                storage
+                    .contract::<outbe_cycle::schema::Accounting<'_>>()
+                    .last_accounted_block_number
+                    .write(block - 2)
+                    .unwrap();
+                seed_expiring_tee_nodes(
+                    storage.clone(),
+                    &validators.iter().map(|v| v.0).collect::<Vec<_>>(),
+                    u64::MAX,
+                )
+                .unwrap();
+            }
+            seed(storage);
+        });
+    let mut accounts = revm::state::EvmState::default();
+    if verify_deferred {
+        let mut funded: revm::state::Account = AccountInfo {
+            balance: U256::from(10).pow(U256::from(24)),
+            ..Default::default()
+        }
+        .into();
+        funded.mark_touch();
+        accounts.insert(user_tx.signer(), funded);
+    }
+    for (address, code) in contracts {
+        let mut account: revm::state::Account = AccountInfo {
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        }
+        .into();
+        account.mark_touch();
+        accounts.insert(address, account);
+    }
+    revm::DatabaseCommit::commit(&mut state, accounts);
+    let config = OutbeEvmConfig::new(
+        test_chain_spec_with_genesis_timestamp(GENESIS),
+        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(signer);
+    let mut env = test_evm_env(block, REWARDS_ADDRESS);
+    env.block_env.timestamp = U256::from(timestamp);
+    let parent_hash = B256::repeat_byte(0x91);
+    let metadata = (block > 1).then(|| {
+        let mut metadata = metadata_with(
+            validators.iter().map(|v| v.0).collect(),
+            vec![1; validators.len()],
+            Vec::new(),
+        );
+        metadata.finalized_block_number = block - 1;
+        metadata.finalized_block_hash = parent_hash;
+        metadata
+    });
+    let mut execution = if let Some(metadata) = metadata.clone() {
+        fixtures::parent_accounting_context(fixtures::ParentAccountingFixture {
+            parent_hash,
+            metadata,
+            artifact: AccountedParentArtifact {
+                summary: ExecutionSummaryArtifact {
+                    validator_fee_sum: U256::ZERO,
+                },
+                timestamp: timestamp - 1,
+                state_root: Some(B256::repeat_byte(0x92)),
+            },
+            proposer,
+        })
+    } else {
+        execution_ctx_with_tee_bootstrap(
+            Some(0),
+            Bytes::new(),
+            sample_tee_bootstrap_payload_at(1, timestamp),
+        )
+    };
+    let extra = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        radicle_publication_enabled: false,
+        radicle_publication: None,
+        execution_summary: None,
+        consensus_header_artifact: boundary.map(ConsensusHeaderArtifact::BoundaryOutcome),
+        timestamp_millis_part: 0,
+        late_finalize_credits: None,
+        enclave_witness: None,
+    })
+    .unwrap();
+    execution.inner.extra_data = extra.clone();
+    let evm = config.evm_with_env(&mut state, env);
+    let mut executor = config.create_executor(evm, execution);
+    super::with_phase1_verify_disabled(|| {
+        executor
+            .apply_pre_execution_changes()
+            .expect("calibration pre-execution")
+    });
+    let txs = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: block,
+            parent_hash: if block == 1 { B256::ZERO } else { parent_hash },
+            extra_data: &extra,
+            parent_consensus_metadata: metadata,
+            proposer,
+            bootstrap: if block == 1 {
+                BootstrapFixture::explicit(Some(sample_tee_bootstrap_payload_at(1, timestamp)))
+            } else {
+                BootstrapFixture::StandardForBlock
+            },
+        },
+    );
+    let mut phases = Vec::new();
+    for tx in txs {
+        let phase = SystemTx::decode(tx.tx().input().as_ref()).unwrap();
+        let before = executor.system_tx_gross_gas;
+        executor
+            .execute_transaction(tx)
+            .expect("calibration begin phase");
+        assert!(
+            executor.receipts().last().unwrap().success,
+            "{label}: {}",
+            phase.name()
+        );
+        phases.push((
+            phase.name().to_owned(),
+            executor.system_tx_gross_gas - before,
+        ));
+    }
+    let samples = outbe_cycle::runtime::take_trigger_gas_samples();
+    let body = outbe_cycle::runtime::take_cycle_gas_samples();
+    for (gross, handlers) in &body {
+        assert!(gross >= handlers);
+    }
+    eprintln!(
+        "CALIBRATION {label}: phases={phases:?}, triggers={samples:?}, body={body:?}, aggregate={}",
+        executor.system_tx_gross_gas
+    );
+    assert!(
+        executor.system_tx_gross_gas < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT
+    );
+    let logs: Vec<Log> = executor
+        .receipts()
+        .iter()
+        .flat_map(|receipt| receipt.logs.clone())
+        .collect();
+    if verify_deferred {
+        let over: Vec<_> = logs
+            .iter()
+            .filter_map(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).ok())
+            .collect();
+        assert_eq!(over.len(), 1);
+        let over = &over[0].data;
+        assert_eq!(over.id, 4);
+        assert_eq!(over.blockNumber, block);
+        let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
+            .iter()
+            .find(|spec| spec.id == 4)
+            .unwrap()
+            .work_budget_gas();
+        assert_eq!(over.budgetGas, budget);
+        assert_eq!(
+            samples.iter().find(|(id, _)| *id == 4).unwrap().1,
+            over.consumedGas
+        );
+        assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
+        assert!(executor.system_tx_gross_gas > over.consumedGas);
+        assert!(!logs.iter().any(
+            |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+                .is_ok_and(|event| event.data.id == 4)
+                || outbe_cycle::ICycle::CycleTriggerFailed::decode_log(log)
+                    .is_ok_and(|event| event.data.id == 4)
+        ));
+        for id in [5, 6] {
+            assert!(logs
+                .iter()
+                .any(
+                    |log| outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log)
+                        .is_ok_and(|event| event.data.id == id)
+                ));
+        }
+        let receipts_before = executor.receipts().len();
+        let gross_before = executor.system_tx_gross_gas;
+        executor
+            .execute_transaction(user_tx)
+            .expect("user transaction after complete begin prefix");
+        assert_eq!(executor.receipts().len(), receipts_before + 1);
+        assert!(executor.receipts().last().unwrap().success);
+        assert_eq!(executor.system_tx_gross_gas, gross_before);
+    }
+    drop(executor);
+    verify_state(&mut state, &logs);
+    let root = if verify_deferred {
+        let read_ctx = BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
+            block_number: block,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: GENESIS,
+            proposer,
+            validators: vec![proposer],
+        };
+        let mut provider =
+            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+        StorageHandle::enter(&mut provider, |storage| {
+            let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+            assert_eq!(cycle.last_executed_at.read(&4).unwrap(), GENESIS + 60);
+            assert_eq!(cycle.last_executed_block_number.read(&4).unwrap(), 0);
+            for id in [5, 6] {
+                let scheduled = logs
+                    .iter()
+                    .filter_map(|log| {
+                        outbe_cycle::ICycle::CycleTriggerExecuted::decode_log(log).ok()
+                    })
+                    .find(|event| event.data.id == id)
+                    .unwrap()
+                    .data
+                    .scheduledAt;
+                assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
+                assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
+            }
+            let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
+                dstChainId: 1,
+                emissionDay: 20240101,
+                issuedUnits: 0,
+                auctionClearingRate: 0,
+                wonBidsCount: 0,
+            }
+            .abi_encode();
+            let counter = U256::from_be_bytes(keccak256(first_result).0);
+            for address in [outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
+                assert_eq!(
+                    storage.sload(address, counter).unwrap(),
+                    U256::ZERO,
+                    "rolled-back child economic state must not survive"
+                );
+            }
+            let auction = outbe_desis::DesisContract::new(storage);
+            let day = EmissionDate::new(20240101);
+            assert_eq!(
+                auction.auction_stage.read(&day).unwrap(),
+                outbe_desis::AuctionStage::CollectingBids as u8
+            );
+            assert_eq!(auction.day_bid_count.read(&day).unwrap(), 256);
+            assert_eq!(auction.gate_active_count.read().unwrap(), 1);
+            for chain in 1..=128 {
+                assert_eq!(
+                    auction
+                        .chain_bid_count
+                        .read(&outbe_desis::DesisContract::chain_key(day, chain))
+                        .unwrap(),
+                    2
+                );
+                for index in 0..2 {
+                    let key = outbe_desis::DesisContract::bid_key(day, chain, index);
+                    assert_eq!(
+                        auction.bid_bidder.read(&key).unwrap(),
+                        numbered_test_address(0xa1, u64::from(chain * 2 + index))
+                    );
+                    let packed = U256::from(1_000_000u64)
+                        | (U256::from((840u64 << 48) | (1 << 32)) << 64)
+                        | (U256::from(840u64) << 128);
+                    assert_eq!(auction.bid_packed.read(&key).unwrap(), packed);
+                }
+            }
+        });
+        state.merge_transitions(BundleRetention::Reverts);
+        Some(fixtures::post_state_root(&state.bundle_state))
+    } else {
+        None
+    };
+    (phases, samples, logs, root)
+}
+
+/// Models bridge handling: calldata hashing, a persistent per-message counter,
+/// four state reads, a calldata log and a nested relay with its own state/log.
+/// This is a supported synthetic contract profile, not production router bytecode.
+pub(super) fn bridge_work(forward: bool) -> Vec<u8> {
+    let mut code = vec![
+        0x36, 0x60, 0, 0x60, 0, 0x37, // copy calldata
+        0x36, 0x60, 0, 0x20, // hash the message
+        0x80, 0x54, 0x60, 1, 0x01, 0x90, 0x55, // counter[hash] += 1
+    ];
+    for slot in 1..=4 {
+        code.extend([0x60, slot, 0x54, 0x50]);
+    }
+    code.extend([0x36, 0x60, 0, 0xa0]); // log the full message
+    if forward {
+        code.extend([0x60, 0, 0x60, 0, 0x36, 0x60, 0, 0x60, 0, 0x73]);
+        code.extend(RELAY.as_slice());
+        code.extend([0x5a, 0xf1, 0x50]);
+    }
+    code.extend([0x60, 0x20, 0x60, 0, 0xf3]);
+    code
+}
+
+/// ABI views are pure; state-changing selectors execute the bridge profile above.
+pub(super) fn returning_contract(routes: Vec<([u8; 4], Vec<u8>)>) -> Bytecode {
+    let bridge = bridge_work(true);
+    let header = 6 + 11 * routes.len() + bridge.len();
+    let mut code = vec![0x60, 0, 0x35, 0x60, 0xe0, 0x1c];
+    for (index, (selector, _)) in routes.iter().enumerate() {
+        code.extend([0x80, 0x63]);
+        code.extend(selector);
+        code.push(0x14);
+        code.push(0x61);
+        code.extend(u16::try_from(header + 16 * index).unwrap().to_be_bytes());
+        code.push(0x57);
+    }
+    code.extend(bridge);
+    let mut data_offset = header + 16 * routes.len();
+    for (_, data) in &routes {
+        let len = u16::try_from(data.len()).unwrap();
+        code.extend([0x5b, 0x61]);
+        code.extend(len.to_be_bytes());
+        code.push(0x61);
+        code.extend(u16::try_from(data_offset).unwrap().to_be_bytes());
+        code.extend([0x60, 0, 0x39, 0x61]);
+        code.extend(len.to_be_bytes());
+        code.extend([0x60, 0, 0xf3]);
+        data_offset += data.len();
+    }
+    for (_, data) in routes {
+        code.extend(data);
+    }
+    Bytecode::new_legacy(code.into())
+}
+
+pub(super) mod router_abi {
+    alloy_sol_types::sol!("../../contracts/intex/src/origin/interfaces/IOriginRouter.sol");
+}
+
+pub(super) fn accept_auction_batches(
+    storage: StorageHandle<'_>,
+    day: EmissionDate,
+    chain: u32,
+    batches: u16,
+) {
+    for batch in 0..batches {
+        let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
+        let call = outbe_desis::precompile::IDesis::processBidsBatchCall {
+            emissionDay: day.value(),
+            srcChainId: chain,
+            batchIndex: batch,
+            totalBatches: batches,
+            bidderAddresses: indices
+                .clone()
+                .map(|index| {
+                    numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
+                })
+                .collect(),
+            packedBids: indices
+                .map(|index| {
+                    U256::from_limbs([
+                        840 | (840 << 16) | (u64::from(index) << 32),
+                        2_000_000 | (1 << 32),
+                        0,
+                        0,
+                    ])
+                })
+                .collect(),
+        };
+        outbe_desis::precompile::dispatch(
+            storage.clone(),
+            &call.abi_encode(),
+            outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+        )
+        .unwrap();
+    }
+    let done = outbe_desis::precompile::IDesis::processBidsDoneCall {
+        emissionDay: day.value(),
+        srcChainId: chain,
+        totalBatches: batches,
+        totalBids: u32::from(batches) * 64,
+    };
+    outbe_desis::precompile::dispatch(
+        storage.clone(),
+        &done.abi_encode(),
+        outbe_primitives::addresses::ORIGIN_ROUTER_ADDRESS,
+        U256::ZERO,
+    )
+    .unwrap();
+    let auction = outbe_desis::DesisContract::new(storage);
+    let key = outbe_desis::DesisContract::chain_key(day, chain);
+    assert_eq!(
+        auction.chain_bid_count.read(&key).unwrap(),
+        u32::from(batches) * 64
+    );
+    assert_eq!(auction.chain_done.read(&key).unwrap(), 1);
+}
+
+pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
+    let day = EmissionDate::new(20240101);
+    let auction = outbe_desis::DesisContract::new(storage.clone());
+    auction
+        .auction_stage
+        .write(&day, outbe_desis::AuctionStage::CollectingBids as u8)
+        .unwrap();
+    for chain in 1..=chains {
+        accept_auction_batches(
+            storage.clone(),
+            day,
+            chain,
+            if chains == 1 { 17 } else { 1 },
+        );
+    }
+    auction
+        .auction_stage
+        .write(&day, outbe_desis::AuctionStage::Completed as u8)
+        .unwrap();
+    auction.queue_intake_cleanup(day).unwrap();
+}
