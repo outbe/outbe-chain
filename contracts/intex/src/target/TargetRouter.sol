@@ -54,7 +54,6 @@ contract TargetRouter is
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
 
     function _ts() private pure returns (TargetRouterStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -75,7 +74,6 @@ contract TargetRouter is
     }
 
     /// @dev Upgrades are gated by the admin role.
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     // --- Storage getters ---
@@ -269,7 +267,6 @@ contract TargetRouter is
     function _reportIfAdvanced(uint32 emissionDay, uint16 batchBefore) internal {
         BidsRelayProgress storage p = _ts().bidsRelay[emissionDay];
         if (!TargetInbound.advanced(p, batchBefore)) return;
-        // solhint-disable-next-line no-empty-blocks
         try this.reportBidsRemaining(emissionDay) {}
         catch {
             emit BidsRemainingUnreported(emissionDay, p.nextBatch, p.totalBatches);

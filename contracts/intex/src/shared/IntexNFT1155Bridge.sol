@@ -61,7 +61,6 @@ contract IntexNFT1155Bridge is
     bytes32 private constant _STORAGE_SLOT = 0x769097ec453d253ed110328ac911e291d0940836557f2ebb5d6ffb80fa001500;
 
     function _bs() private pure returns (IntexNFT1155BridgeStorage storage $) {
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -81,7 +80,6 @@ contract IntexNFT1155Bridge is
         _grantRole(DEFAULT_ADMIN_ROLE, _delegate);
     }
 
-    // solhint-disable-next-line no-empty-blocks
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /// @notice Failed crosschainMint snapshot for item `idx` of the message `receiveId`.

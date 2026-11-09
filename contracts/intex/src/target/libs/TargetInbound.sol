@@ -114,7 +114,6 @@ library TargetInbound {
         BidsRelayProgress storage relay = $.bidsRelay[emissionDay];
         if (!relay.done && gasleft() > IntexGas.RELAY_REPORT_GAS) {
             uint16 batchBefore = relay.nextBatch;
-            // solhint-disable-next-line no-empty-blocks
             try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: gasleft() - IntexGas.RELAY_REPORT_GAS}(
                 emissionDay
             ) {}
@@ -122,7 +121,6 @@ library TargetInbound {
                 emit ITargetRouter.BidsRelayIncomplete(emissionDay, batchBefore, relay.totalBatches);
             }
             if (advanced(relay, batchBefore)) {
-                // solhint-disable-next-line no-empty-blocks
                 try ITargetRouterShims(address(this)).reportBidsRemaining(emissionDay) {}
                 catch {
                     emit ITargetRouter.BidsRemainingUnreported(emissionDay, relay.nextBatch, relay.totalBatches);
@@ -229,7 +227,6 @@ library TargetInbound {
     function _stageRequiredCurrent(bytes memory reason) private pure returns (IIntexAuction.AuctionStage current) {
         // [len][selector(4)][requiredStage(32)][currentStage(32)]
         uint256 raw;
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             raw := mload(add(reason, 0x44))
         }
@@ -239,7 +236,6 @@ library TargetInbound {
 
     function _selectorOf(bytes memory reason) private pure returns (bytes4 selector) {
         if (reason.length < 4) return bytes4(0);
-        // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             selector := mload(add(reason, 0x20))
         }
@@ -458,7 +454,6 @@ library TargetInbound {
             _slotMark($, seriesId, calledAt);
             return;
         }
-        // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, calledAt) {}
         catch (bytes memory reason) {
             // Only a series that is already called refuses the mark by its state.
@@ -499,7 +494,6 @@ library TargetInbound {
     function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 emissionDay, uint16 chunkIndex, uint128 amount)
         private
     {
-        // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).routeProceedsExt(emissionDay, chunkIndex, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextParkedProceedsIdx++;
