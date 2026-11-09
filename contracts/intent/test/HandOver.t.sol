@@ -60,11 +60,12 @@ contract HandOverTest is Test {
     /// @dev A re-run of a handed-over stack: a Router governance owns ends the run before any send.
     function test_Run_StopsWhenTheRouterIsHandedOver() public {
         Create3Factory factory = new Create3Factory();
+        address impl = address(new Auction());
         vm.prank(vm.addr(1));
         Create3Proxy.deploy(
             factory,
             IntentCreate3.salt(IntentCreate3.ROUTER, "v-test"),
-            address(new Auction()),
+            impl,
             abi.encodeCall(Auction.initialize, (CROSSCHAIN_BRIDGE))
         );
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));

@@ -44,12 +44,13 @@ contract PrepareUpgradeTest is Test {
         vm.setEnv("CONTRACT_SALT", SALT);
 
         // Only the USDT route has a bridge here.
+        address impl = address(new ERC7786TokenBridge(usdt, HUB, ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
         vm.prank(deployer);
         bridge = ERC7786TokenBridge(
             Create3Proxy.deploy(
                 factory,
                 keccak256(abi.encodePacked("USDTBridge", SALT)),
-                address(new ERC7786TokenBridge(usdt, HUB, ERC7786TokenBridge.TokenBridgeMode.LockUnlock)),
+                impl,
                 abi.encodeCall(ERC7786TokenBridge.initialize, (deployer, new ERC7786TokenBridge.Peer[](0)))
             )
         );
