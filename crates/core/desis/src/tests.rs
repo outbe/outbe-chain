@@ -45,7 +45,7 @@ const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis 
 /// The load any first priced brief picks, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
 const LOAD_MINOR: u128 = 1_000_000 * PROMIS_LOAD_MINOR;
 /// The `auction_advance` work budget in `outbe-cycle`.
-const ADVANCE_BUDGET: u64 = 3_966_000;
+const ADVANCE_BUDGET: u64 = crate::constants::AUCTION_ADVANCE_BUDGET_GAS;
 
 #[test]
 fn the_bridge_caps_match_the_contracts() {

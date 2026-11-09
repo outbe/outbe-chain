@@ -519,7 +519,7 @@ fn calibrated_canonical_envelope_fits_artifact_limit() {
         .try_fold(0u64, |sum, spec| sum.checked_add(spec.work_budget_gas()))
         .unwrap();
     assert_eq!(outbe_cycle::triggers::ACTIVE_TRIGGERS.len(), 8);
-    assert_eq!(handlers, 19_697_000);
+    assert_eq!(handlers, 27_863_000);
     assert!(handlers < outbe_primitives::system_tx::SYSTEM_TX_ARTIFACT_GAS_LIMIT);
 }
 
@@ -1086,17 +1086,21 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     (gross, logs)
 }
 
-/// The reserve pays for the most expensive single day, and one run moves all four days that
-/// are due at 00:00 inside the `auction_advance` budget.
+/// Each step stays inside its Desis bound, and one run moves all four days that are due at
+/// 00:00 inside the `auction_advance` budget.
 #[test]
 fn calibration_four_due_auctions_at_midnight() {
-    let reserve = outbe_desis::constants::ADVANCE_DAY_RESERVE_GAS;
+    use outbe_desis::constants::{ADVANCE_DAY_BASE_GAS, ADVANCE_REVEAL_END_GAS, ADVANCE_START_GAS};
     for step in DueStep::ALL {
         let (gross, _) = due_auctions(&[step]);
-        assert!(
-            gross * 3 <= reserve,
-            "{step:?} gross={gross}, reserve={reserve}"
-        );
+        let bound = ADVANCE_DAY_BASE_GAS
+            + match step {
+                DueStep::Start => ADVANCE_START_GAS,
+                DueStep::CommitEnd => ADVANCE_DAY_BASE_GAS,
+                DueStep::RevealEnd => ADVANCE_REVEAL_END_GAS,
+                DueStep::Waiting => 0,
+            };
+        assert!(gross <= bound, "{step:?} gross={gross}, bound={bound}");
     }
     let (gross, logs) = due_auctions(&DueStep::ALL);
     let budget = outbe_cycle::triggers::ACTIVE_TRIGGERS
@@ -1104,7 +1108,7 @@ fn calibration_four_due_auctions_at_midnight() {
         .find(|spec| spec.id == outbe_cycle::triggers::TriggerId::AuctionAdvance.as_u32())
         .unwrap()
         .work_budget_gas();
-    assert!(gross * 4 <= budget, "gross={gross}, budget={budget}");
+    assert!(gross <= budget, "gross={gross}, budget={budget}");
     let created = logs
         .iter()
         .filter(|log| {
@@ -1491,10 +1495,11 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
             .iter()
             .any(|log| outbe_cycle::ICycle::CycleTriggerOverBudget::decode_log(log).is_ok()));
         let cost = samples.iter().find(|(id, _)| *id == 2).unwrap().1;
-        let reserve = outbe_desis::constants::ADVANCE_DAY_RESERVE_GAS;
-        assert!(cost * 3 <= reserve);
+        let bound =
+            outbe_desis::constants::ADVANCE_DAY_BASE_GAS + outbe_desis::constants::ADVANCE_FAIL_GAS;
+        assert!(cost <= bound);
         eprintln!(
-            "DEADLINE bids={} advance gross={cost}, reserve={reserve}",
+            "DEADLINE bids={} advance gross={cost}, bound={bound}",
             u32::from(batches) * 64
         );
     }

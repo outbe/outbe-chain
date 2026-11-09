@@ -20,14 +20,21 @@ pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 /// targets, so a longer snapshot fails the day instead of the run.
 pub const MAX_TARGET_CHAINS: usize = 16;
 
-/// Trigger budget that the `auction_advance` sweep keeps for one more day. The sweep stops
-/// before a day when less than this remains.
-///
-/// The value is the measured gross maximum of one day × 3, rounded up to 1,000 gas. The
-/// maximum is 847,229: the reveal end of a day with 16 chains, which arms the clearing
-/// (`calibration_four_due_auctions_at_midnight` in `outbe-evm`). The factor is 3, not 4, so
-/// that the budget of `auction_advance` (four due days × 4) also pays for the fourth day.
-pub const ADVANCE_DAY_RESERVE_GAS: u64 = 2_542_000;
+/// Work bounds of the `auction_advance` steps at `MAX_TARGET_CHAINS`: the sends measured on the
+/// deployed testnet stack × 1.2, and the loopback leg at its gas ask (`OriginStageSendGas.t.sol`).
+pub const ADVANCE_START_GAS: u64 = 4_458_000;
+pub const ADVANCE_REVEAL_END_GAS: u64 = 7_574_000;
+pub const ADVANCE_FAIL_GAS: u64 = 99_000;
+/// Any small step of a day: a stage flip, a removal from the schedule, or nothing due.
+pub const ADVANCE_DAY_BASE_GAS: u64 = 20_000;
+
+/// The steps due at one midnight: a start, a commit end, a reveal end and a day that waits.
+pub const AUCTION_ADVANCE_BUDGET_GAS: u64 =
+    ADVANCE_START_GAS + ADVANCE_REVEAL_END_GAS + 5 * ADVANCE_DAY_BASE_GAS;
+
+/// Gas ask of a collecting round on this chain. The loopback runs the round inside the send, so
+/// the ask stays at the floor of `IntexGas.AUCTION_STAGE_COLLECTING_BIDS`.
+pub const OWN_CHAIN_ROUND_GAS: u64 = 2_300_000;
 
 /// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.
 #[cfg(not(feature = "e2e-test"))]

@@ -117,12 +117,8 @@ pub(super) fn fetch_targets(
         .abi_encode()
         .into(),
     )?;
-    let targets = IOriginRouter::targetsOfCall::abi_decode_returns(&ret)
-        .map_err(|_| DesisError::TargetsOfUndecodable)?;
-    if targets.len() > MAX_TARGET_CHAINS {
-        return Err(DesisError::TooManyTargets(emission_day, targets.len()).into());
-    }
-    Ok(targets)
+    IOriginRouter::targetsOfCall::abi_decode_returns(&ret)
+        .map_err(|_| DesisError::TargetsOfUndecodable.into())
 }
 
 /// Split the snapshot into chains whose intake finalized and chains still missing.

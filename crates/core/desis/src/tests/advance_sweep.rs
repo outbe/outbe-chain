@@ -1,6 +1,8 @@
 //! One `auction_advance` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
-use crate::constants::{ADVANCE_DAY_RESERVE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS};
+use crate::constants::{
+    ADVANCE_DAY_BASE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS, OWN_CHAIN_ROUND_GAS,
+};
 use crate::sol_ext::IOriginRouter::{
     sendAuctionStageCollectingBidsCall, sendAuctionStageStartCall,
 };
@@ -166,6 +168,34 @@ fn a_day_above_the_target_cap_reverts_and_the_other_days_move() {
 }
 
 #[test]
+fn the_own_chain_asks_for_the_floor_round_gas() {
+    const OTHER_CHAIN: u32 = 2;
+    let own_chain = u32::try_from(CHAIN_ID).unwrap();
+    let mut provider = fixture_provider(&[own_chain, OTHER_CHAIN]);
+    StorageHandle::enter(&mut provider, |s| {
+        schedule_waiting(&s);
+        let contract = s.contract::<DesisContract>();
+        for chain in [own_chain, OTHER_CHAIN] {
+            let key = DesisContract::chain_key(WAITING, chain);
+            contract.chain_bid_count.write(&key, 640).unwrap();
+        }
+        schedule_revealing(&s, PROMIS_LOAD_MINOR);
+    });
+    let calls_before = provider.sub_call_inputs().len();
+    StorageHandle::enter(&mut provider, |s| runtime::schedule_tick(&s, NOW).unwrap());
+    let asks: Vec<_> = provider.sub_call_inputs()[calls_before..]
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .filter_map(|input| sendAuctionStageCollectingBidsCall::abi_decode(&input.calldata).ok())
+        .map(|call| (call.dstChainId, call.gasLimit))
+        .collect();
+    assert_eq!(asks.len(), 2);
+    assert_eq!(asks[0], (own_chain, U256::from(OWN_CHAIN_ROUND_GAS)));
+    assert_eq!(asks[1].0, OTHER_CHAIN);
+    assert!(asks[1].1 > U256::from(OWN_CHAIN_ROUND_GAS));
+}
+
+#[test]
 fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
     let mut provider = fixture_provider(&[SRC_CHAIN]);
     StorageHandle::enter(&mut provider, |s| {
@@ -174,14 +204,14 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
         brief(&s, true);
     });
     metered(&mut provider);
+    // The first day is due a commit end: one base step for the day and one for the flip.
+    let commit_end = 2 * ADVANCE_DAY_BASE_GAS;
     StorageHandle::enter(&mut provider, |s| {
-        // Below the reserve from the start: the run moves no day and spends no write.
+        // Below the bound of the first day: the run moves no day and spends no write.
         let before = s.gas_used().unwrap();
-        s.with_trigger_budget(ADVANCE_DAY_RESERVE_GAS - 1, || {
-            runtime::schedule_tick(&s, NOW)
-        })
-        .unwrap();
-        assert!(s.gas_used().unwrap() - before < ADVANCE_DAY_RESERVE_GAS);
+        s.with_trigger_budget(commit_end - 1, || runtime::schedule_tick(&s, NOW))
+            .unwrap();
+        assert!(s.gas_used().unwrap() - before < commit_end);
         assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
         assert_eq!(
             s.contract::<DesisContract>()
@@ -191,9 +221,8 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
             0
         );
 
-        // Above the reserve by the two reads before the first day and less than the write of
-        // that day. So the check passes before the first day and fails before the second.
-        let small = ADVANCE_DAY_RESERVE_GAS + 1_000;
+        // Pays for the commit end, not for the reveal end of the second day.
+        let small = commit_end + 1_000;
         let before = s.gas_used().unwrap();
         s.with_trigger_budget(small, || runtime::schedule_tick(&s, NOW))
             .unwrap();

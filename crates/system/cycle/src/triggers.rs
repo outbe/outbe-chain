@@ -201,6 +201,7 @@ pub const PROTOCOL_CYCLE_PERIOD_SECONDS: u64 = 3_600;
 /// [381500, 50300, 991492, 50300, 2583089, 50300, 50300, 765752].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
+/// `auction_advance` takes the step bounds of Desis, measured on the deployed bridge.
 pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleError> {
     Ok([
         // ProtocolCycle settles a contiguous completed UTC day. It MUST
@@ -242,16 +243,14 @@ pub const fn active_triggers() -> core::result::Result<[TriggerSpec; 8], CycleEr
         // A poll, not a calendar slot. The handler reads the block clock and
         // sweeps every scheduled day. So replaying a missed slot does nothing
         // that the next firing would not already do.
-        // The budget is measured on four days due at the same midnight: a start,
-        // a commit end, a reveal end and a day that waits for its bids. The
-        // handler stops before a day when less than `ADVANCE_DAY_RESERVE_GAS`
-        // remains, and the next run starts with that day.
+        // The handler stops before a day whose due steps the rest cannot pay for,
+        // and the next run starts with that day.
         {
             let mut spec = const_spec!(TriggerSpec::new(
                 TriggerId::AuctionAdvance.as_u32(),
                 "auction_advance",
                 (AUCTION_ADVANCE_PERIOD_SECONDS, 0),
-                3_966_000,
+                outbe_desis::constants::AUCTION_ADVANCE_BUDGET_GAS,
                 TriggerHandler::AuctionAdvance,
             ));
             spec.requires_accounting_window = true;
@@ -431,12 +430,19 @@ mod protocol_parameter_tests {
                 .and_then(|units| units.checked_mul(1_000))
                 .expect("measured handler headroom fits u64");
             assert!(spec.work_budget_gas() > 0);
-            assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
+            if spec.id == TriggerId::AuctionAdvance.as_u32() {
+                assert_eq!(
+                    spec.work_budget_gas(),
+                    outbe_desis::constants::AUCTION_ADVANCE_BUDGET_GAS
+                );
+            } else {
+                assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
+            }
             total = total
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 19_697_000);
+        assert_eq!(total, 27_863_000);
     }
 
     #[test]
