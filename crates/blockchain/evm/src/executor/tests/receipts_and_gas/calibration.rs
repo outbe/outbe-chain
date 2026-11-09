@@ -906,11 +906,11 @@ fn calibration_live_auction_start() {
 /// A scheduled day at 00:00, in the step that the `auction_advance` run makes for it.
 #[derive(Clone, Copy, Debug)]
 enum DueStep {
-    /// A briefed day starts and sends START to 16 chains.
+    /// A briefed day starts and sends START to every target chain.
     Start,
     /// A day at its commit end moves to `RevealingBids`.
     CommitEnd,
-    /// A day at its reveal end arms the clearing and sends COLLECTING_BIDS to 16 chains.
+    /// A day at its reveal end arms the clearing and sends COLLECTING_BIDS to every target chain.
     RevealEnd,
     /// A day that waits for its bids. Nothing is due.
     Waiting,
@@ -977,7 +977,11 @@ impl DueStep {
     }
 }
 
-/// One `auction_advance` run at 00:00 over `steps`, with a 16-chain router.
+fn max_targets() -> Vec<u32> {
+    (1..=outbe_desis::constants::MAX_TARGET_CHAINS as u32).collect()
+}
+
+/// One `auction_advance` run at 00:00 over `steps`, with the most target chains Desis takes.
 /// Returns the gross gas of the run and the logs of the block.
 fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     use router_abi::IOriginRouter;
@@ -987,7 +991,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     let router = returning_contract(vec![
         (
             IOriginRouter::targetsOfCall::SELECTOR,
-            IOriginRouter::targetsOfCall::abi_encode_returns(&(1..=16u32).collect::<Vec<_>>()),
+            IOriginRouter::targetsOfCall::abi_encode_returns(&max_targets()),
         ),
         (
             IOriginRouter::parkedMessageCountCall::SELECTOR,
@@ -999,7 +1003,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
         ),
     ]);
     let (_, samples, logs, _) = run_prefix_checked(
-        &format!("due auctions {steps:?} 16 chains"),
+        &format!("due auctions {steps:?} {} chains", max_targets().len()),
         &[(proposer, dummy_pubkey(0xa2))],
         (1, timestamp),
         |storage| {
@@ -1117,7 +1121,7 @@ fn calibration_four_due_auctions_at_midnight() {
                     && log.data.data.starts_with(&collecting)
             )
             .count(),
-        16
+        outbe_desis::constants::MAX_TARGET_CHAINS
     );
 }
 

@@ -1,6 +1,6 @@
 //! One `auction_advance` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
-use crate::constants::{ADVANCE_DAY_RESERVE_GAS, DAY_STATE_LIVE};
+use crate::constants::{ADVANCE_DAY_RESERVE_GAS, DAY_STATE_LIVE, MAX_TARGET_CHAINS};
 use crate::sol_ext::IOriginRouter::{
     sendAuctionStageCollectingBidsCall, sendAuctionStageStartCall,
 };
@@ -145,6 +145,21 @@ fn a_reverting_day_does_not_stop_the_other_days() {
                 .unwrap(),
             0
         );
+        assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
+        assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::CommittingBids);
+    });
+}
+
+#[test]
+fn a_day_above_the_target_cap_reverts_and_the_other_days_move() {
+    let chains: Vec<u32> = (1..=MAX_TARGET_CHAINS as u32 + 1).collect();
+    with_targets(&chains, |s| {
+        schedule_revealing(&s, PROMIS_LOAD_MINOR);
+        schedule_committing(&s);
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        assert_eq!(stage(&s, REVEALING), AuctionStage::RevealingBids);
+        assert!(is_scheduled(&s, REVEALING));
         assert_eq!(stage(&s, COMMITTING), AuctionStage::RevealingBids);
         assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::CommittingBids);
     });

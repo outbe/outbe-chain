@@ -16,6 +16,10 @@ pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
 /// same UTC day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 
+/// Mirrors `OriginRouter.MAX_TARGETS`. The work budgets of Desis are measured with this many
+/// targets, so a longer snapshot fails the day instead of the run.
+pub const MAX_TARGET_CHAINS: usize = 16;
+
 /// Trigger budget that the `auction_advance` sweep keeps for one more day. The sweep stops
 /// before a day when less than this remains.
 ///
