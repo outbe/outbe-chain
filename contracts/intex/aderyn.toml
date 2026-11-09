@@ -15,10 +15,8 @@ exclude = [
     "contract-locks-ether",
     # native value only goes to the hub, the token bridge, IntexFactory or back to the caller as a fee refund
     "eth-send-unchecked-address",
-    # the calls go to the stack own contracts or are view calls; slither checks reentrancy
+    # every flagged call goes to a contract of the stack or is a view call
     "reentrancy-state-change",
-    # forge lint unsafe-typecast requires a justified disable on every cast
-    "unsafe-casting",
 ]
 
 [env]

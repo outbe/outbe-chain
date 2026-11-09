@@ -239,7 +239,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // CEI ok: write before _burn for symmetry with mint. _burn fires no acceptance callback
         // (OZ ERC1155 skips it when to == address(0)), so no read-only-reentrancy surface here.
-        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= balance <= totalSupply (uint32); _burn reverts otherwise
+        // forge-lint: disable-next-line(unsafe-typecast) aderyn-ignore-next-line(unsafe-casting) -- amount <= balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
         _burn(from, tokenId, amount);
     }

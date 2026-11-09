@@ -233,7 +233,7 @@ library TargetInbound {
         assembly ("memory-safe") {
             raw := mload(add(reason, 0x44))
         }
-        // forge-lint: disable-next-line(unsafe-typecast) -- the low byte is the enum value
+        // forge-lint: disable-next-line(unsafe-typecast) aderyn-ignore-next-line(unsafe-casting) -- the low byte is the enum value
         current = IIntexAuction.AuctionStage(uint8(raw));
     }
 
