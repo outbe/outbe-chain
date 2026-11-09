@@ -7771,6 +7771,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "clap",
+ "eyre",
+ "hex",
+ "k256 0.13.4",
+ "outbe-snapshot",
+ "rand 0.8.6",
+ "reqwest 0.12.28",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "yaml_serde",
+ "zeroize",
+ "zstd",
+]
+
+[[package]]
 name = "outbe-agentreward"
 version = "0.1.0"
 dependencies = [

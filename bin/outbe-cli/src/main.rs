@@ -3,8 +3,11 @@
 //! Client-side tool for interacting with a running outbe-chain node via JSON-RPC.
 //! Supports validator management, staking, rewards, slashing evidence, and monitoring.
 
+use std::path::{Path, PathBuf};
+
 use clap::{Parser, Subcommand};
-use eyre::Result;
+use eyre::{bail, Context, Result};
+use zeroize::Zeroizing;
 
 mod abi;
 mod commands;
@@ -20,8 +23,12 @@ struct Cli {
     rpc_url: String,
 
     /// Private key for signing transactions (hex, with or without 0x prefix)
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "private_key_file")]
     private_key: Option<String>,
+
+    /// Read the transaction signing key from a private file.
+    #[arg(long, global = true, conflicts_with = "private_key")]
+    private_key_file: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -110,24 +117,61 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let client = rpc::RpcClient::new(&cli.rpc_url)?;
+    let private_key = resolve_private_key(cli.private_key, cli.private_key_file.as_deref())?;
+    let private_key = private_key.as_deref().map(String::as_str);
 
     match cli.command {
-        Commands::Validator { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Staking { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Rewards { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Validator { cmd } => cmd.run(&client, private_key).await,
+        Commands::Staking { cmd } => cmd.run(&client, private_key).await,
+        Commands::Rewards { cmd } => cmd.run(&client, private_key).await,
         Commands::Epoch { cmd } => cmd.run(&client).await,
-        Commands::Slash { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Slash { cmd } => cmd.run(&client, private_key).await,
         Commands::Chain { cmd } => cmd.run(&client).await,
         Commands::Monitor { cmd } => cmd.run(&client).await,
-        Commands::Oracle { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Tribute { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::ZeroFee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Tee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Vote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Stablecoin { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
-        Commands::Radicle { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Oracle { cmd } => cmd.run(&client, private_key).await,
+        Commands::Tribute { cmd } => cmd.run(&client, private_key).await,
+        Commands::ZeroFee { cmd } => cmd.run(&client, private_key).await,
+        Commands::Tee { cmd } => cmd.run(&client, private_key).await,
+        Commands::Vote { cmd } => cmd.run(&client, private_key).await,
+        Commands::Stablecoin { cmd } => cmd.run(&client, private_key).await,
+        Commands::Radicle { cmd } => cmd.run(&client, private_key).await,
         Commands::Rad { cmd } => cmd.run(&client).await,
     }
+}
+
+fn resolve_private_key(
+    value: Option<String>,
+    path: Option<&Path>,
+) -> Result<Option<Zeroizing<String>>> {
+    if let Some(value) = value {
+        return Ok(Some(Zeroizing::new(value)));
+    }
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let metadata = path
+        .symlink_metadata()
+        .wrap_err_with(|| format!("failed to inspect private key file: {}", path.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        bail!("private key path must be a regular file, not a symlink");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata.permissions().mode() & 0o077 != 0 {
+            bail!("private key file must not be accessible by group or others");
+        }
+    }
+    let value = Zeroizing::new(
+        std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read private key file: {}", path.display()))?,
+    );
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        bail!("private key file is empty");
+    }
+    Ok(Some(Zeroizing::new(trimmed.to_owned())))
 }
 
 #[cfg(test)]
@@ -221,6 +265,28 @@ mod tests {
             "/tmp/reth-p2p-secret-key",
         ]);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn private_key_file_parses_and_conflicts_with_inline_key() {
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "--private-key-file",
+            "/tmp/evm-key.hex",
+            "staking",
+            "claim",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "--private-key",
+            "11",
+            "--private-key-file",
+            "/tmp/evm-key.hex",
+            "staking",
+            "claim",
+        ])
+        .is_err());
     }
 
     #[test]

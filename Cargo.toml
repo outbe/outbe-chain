@@ -65,6 +65,7 @@ members = [
     "crates/core/common",
     "crates/core/enclave",
     # binaries
+    "bin/outbe",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -149,6 +150,7 @@ default-members = [
     "crates/core/stablecoinfactory",
     "crates/core/common",
     # binaries
+    "bin/outbe",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -417,6 +419,7 @@ flate2 = "1"
 sha2 = "0.10"
 walkdir = "2"
 tar = "0.4"
+zstd = "=0.13.3"
 
 [profile.dev]
 debug = "line-tables-only"

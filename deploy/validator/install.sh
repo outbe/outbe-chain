@@ -35,7 +35,7 @@ while IFS= read -r line || [[ -n $line ]]; do
   case $name in
     OUTBE_EXTERNAL_IP|OUTBE_CERTIFIED_RPC|OUTBE_VALIDATOR_ADDRESS|\
     OUTBE_BOOTNODES|OUTBE_CONSENSUS_PEERS|\
-    OUTBE_ENCLAVE_RUNTIME|OUTBE_CHAIN_ID)
+    OUTBE_CONSENSUS_EXTRA_ARGS|OUTBE_ENCLAVE_RUNTIME|OUTBE_CHAIN_ID)
       ;;
     *)
       fail "unknown validator.env key: $name"
@@ -68,6 +68,9 @@ done
   fail 'OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address'
 [[ $OUTBE_CHAIN_ID =~ ^[1-9][0-9]*$ ]] || fail 'OUTBE_CHAIN_ID must be positive'
 [[ $OUTBE_BOOTNODES == enode://* ]] || fail 'OUTBE_BOOTNODES is invalid'
+[[ ${OUTBE_CONSENSUS_EXTRA_ARGS:-} == '' || \
+   ${OUTBE_CONSENSUS_EXTRA_ARGS:-} == '--consensus.use-local-defaults' ]] || \
+  fail 'OUTBE_CONSENSUS_EXTRA_ARGS is invalid'
 
 IFS=, read -r -a consensus_peers <<<"$OUTBE_CONSENSUS_PEERS"
 [[ ${#consensus_peers[@]} -gt 0 ]] || fail 'OUTBE_CONSENSUS_PEERS is empty'
@@ -109,6 +112,7 @@ required_files=(
   SHA256SUMS
 )
 required_binaries=(
+  outbe
   outbe-chain
   outbe-cli
   outbe-keygen
@@ -127,6 +131,8 @@ done
   cd "$OUTBE_ROOT"
   sha256sum -c --quiet SHA256SUMS
 ) || fail 'bundle checksum verification failed'
+
+install -o root -g root -m 0755 "$OUTBE_ROOT/outbe" /usr/local/bin/outbe
 
 [[ $(jq -er '.config.chainId' "$OUTBE_ROOT/genesis.json") == "$OUTBE_CHAIN_ID" ]] || \
   fail 'genesis chain ID does not match validator.env'

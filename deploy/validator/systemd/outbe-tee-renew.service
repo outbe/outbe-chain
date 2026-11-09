@@ -8,13 +8,12 @@ Type=oneshot
 User=outbe
 Group=outbe
 EnvironmentFile=/opt/outbe-chain/validator.env
-ExecStart=:/bin/sh -ec 'KEY=$(cat /opt/outbe-chain/keys/evm-key.hex); \
-  exec /opt/outbe-chain/outbe-cli tee renew \
+ExecStart=/opt/outbe-chain/outbe-cli tee renew \
   --enclave-socket 127.0.0.1:17000 \
   --node-data-dir /opt/outbe-chain/validator-0/data \
   --reth-p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \
-  --private-key "$KEY" \
-  --rpc-url "${OUTBE_CERTIFIED_RPC:?OUTBE_CERTIFIED_RPC is required}"'
+  --private-key-file /opt/outbe-chain/keys/evm-key.hex \
+  --rpc-url ${OUTBE_CERTIFIED_RPC}
 TimeoutStartSec=10min
 UMask=0077
 LimitCORE=0
