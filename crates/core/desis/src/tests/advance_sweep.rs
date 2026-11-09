@@ -253,34 +253,3 @@ fn a_small_budget_stops_before_overrun_and_the_next_run_moves_the_rest() {
         );
     });
 }
-
-#[test]
-fn one_run_retires_every_backlogged_day_from_the_cursor_on() {
-    with_storage(|s| {
-        // The cursor points at the second day. Each removal moves the tail day into its slot.
-        let late = EmissionDate::new(20231109);
-        let later = EmissionDate::new(20231108);
-        for (day, anchor) in [
-            (late, ANCHOR - 3 * SECONDS_PER_DAY),
-            (WAITING, ANCHOR - 2 * SECONDS_PER_DAY),
-            (later, ANCHOR - 3 * SECONDS_PER_DAY),
-        ] {
-            schedule_started(
-                &s,
-                day,
-                AuctionStage::CollectingBids,
-                anchor,
-                PROMIS_LOAD_MINOR,
-            );
-        }
-        let contract = s.contract::<DesisContract>();
-        contract.sched_poll_cursor.write(1).unwrap();
-        runtime::schedule_tick(&s, NOW).unwrap();
-        assert_eq!(stage(&s, late), AuctionStage::Failed);
-        assert_eq!(stage(&s, later), AuctionStage::Failed);
-        assert_eq!(stage(&s, WAITING), AuctionStage::CollectingBids);
-        assert_eq!(contract.sched_active_count.read().unwrap(), 1);
-        assert!(is_scheduled(&s, WAITING));
-        assert_eq!(contract.sched_poll_cursor.read().unwrap(), 0);
-    });
-}

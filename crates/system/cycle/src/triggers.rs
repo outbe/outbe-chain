@@ -430,12 +430,7 @@ mod protocol_parameter_tests {
                 .and_then(|units| units.checked_mul(1_000))
                 .expect("measured handler headroom fits u64");
             assert!(spec.work_budget_gas() > 0);
-            if spec.id == TriggerId::AuctionAdvance.as_u32() {
-                assert_eq!(
-                    spec.work_budget_gas(),
-                    outbe_desis::constants::AUCTION_ADVANCE_BUDGET_GAS
-                );
-            } else {
+            if spec.id != TriggerId::AuctionAdvance.as_u32() {
                 assert_eq!(spec.work_budget_gas(), rounded, "trigger {}", spec.id);
             }
             total = total

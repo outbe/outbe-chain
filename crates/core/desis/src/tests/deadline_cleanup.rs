@@ -1,4 +1,5 @@
 use super::*;
+use crate::constants::{ADVANCE_DAY_BASE_GAS, ADVANCE_FAIL_GAS};
 use crate::precompile::IDesis;
 use outbe_promislimit::PromisLimitContract;
 
@@ -68,7 +69,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
             s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, deadline))
                 .unwrap();
             let cost = s.gas_used().unwrap() - gas_before;
-            assert!(cost <= ADVANCE_BUDGET);
+            assert!(cost <= ADVANCE_DAY_BASE_GAS + ADVANCE_FAIL_GAS);
             if let Some(previous) = retirement_cost.replace(cost) {
                 assert_eq!(
                     cost, previous,

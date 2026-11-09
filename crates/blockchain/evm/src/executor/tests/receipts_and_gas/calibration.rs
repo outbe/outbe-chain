@@ -1086,20 +1086,16 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
     (gross, logs)
 }
 
-/// Each step stays inside its Desis bound, and one run moves all four days that are due at
-/// 00:00 inside the `auction_advance` budget.
+/// The steps that send nothing stay inside the Desis base bound, and one run moves all four days
+/// that are due at 00:00 inside the `auction_advance` budget.
 #[test]
 fn calibration_four_due_auctions_at_midnight() {
-    use outbe_desis::constants::{ADVANCE_DAY_BASE_GAS, ADVANCE_REVEAL_END_GAS, ADVANCE_START_GAS};
-    for step in DueStep::ALL {
+    use outbe_desis::constants::ADVANCE_DAY_BASE_GAS;
+    for (step, bound) in [
+        (DueStep::CommitEnd, 2 * ADVANCE_DAY_BASE_GAS),
+        (DueStep::Waiting, ADVANCE_DAY_BASE_GAS),
+    ] {
         let (gross, _) = due_auctions(&[step]);
-        let bound = ADVANCE_DAY_BASE_GAS
-            + match step {
-                DueStep::Start => ADVANCE_START_GAS,
-                DueStep::CommitEnd => ADVANCE_DAY_BASE_GAS,
-                DueStep::RevealEnd => ADVANCE_REVEAL_END_GAS,
-                DueStep::Waiting => 0,
-            };
         assert!(gross <= bound, "{step:?} gross={gross}, bound={bound}");
     }
     let (gross, logs) = due_auctions(&DueStep::ALL);

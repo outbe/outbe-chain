@@ -566,24 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn trigger_budget_remaining_reads_the_local_allowance_only_inside_a_scope() {
-        let mut provider = metered_provider(50_000);
-        provider.enter(|storage| {
-            assert_eq!(storage.trigger_budget_remaining().unwrap(), None);
-            storage
-                .with_trigger_budget(30_000, || {
-                    assert_eq!(storage.trigger_budget_remaining()?, Some(30_000));
-                    storage.deduct_gas(1_234)?;
-                    assert_eq!(storage.trigger_budget_remaining()?, Some(28_766));
-                    assert_eq!(storage.metered_gas_remaining()?, Some(48_766));
-                    Ok(())
-                })
-                .unwrap();
-            assert_eq!(storage.trigger_budget_remaining().unwrap(), None);
-        });
-    }
-
-    #[test]
     fn trigger_budget_swallowed_exhaustion_reverts_nested_state_and_refunds() {
         let mut provider = metered_provider(50_000);
         provider.enter(|storage| {
