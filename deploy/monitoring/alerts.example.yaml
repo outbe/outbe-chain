@@ -259,7 +259,7 @@ groups:
   # --- TEE enclave observability (2026-08-22 incident follow-up) ---
   #
   # Source metrics (node-side, emitted by the tee-canary worker and the
-  # enclave-client session in `crates/system/tee` / `crates/blockchain/node`):
+  # enclave-client session in `crates/blockchain/tee` / `crates/blockchain/node`):
   #   outbe_tee_canary_latency_ms              - canary decrypt round-trip
   #   outbe_tee_canary_failures_total          - failed canary ticks
   #   outbe_tee_canary_consecutive_failures    - current failure streak
