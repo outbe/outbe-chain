@@ -162,17 +162,16 @@ pub(crate) fn active_engine_protocol_state() -> Arc<dyn EngineProtocolState> {
     }
 }
 
-#[cfg(not(test))]
+/// Fail-closed stand-in used when no protocol state is installed.
+/// `check_binary_compatibility` returns [`EngineProtocolError::Compatibility`].
 struct UninstalledEngineState;
 
-#[cfg(not(test))]
 fn not_installed<T>() -> PrecompileResult<T> {
     Err(outbe_primitives::error::PrecompileError::storage(
         "engine protocol state is not installed",
     ))
 }
 
-#[cfg(not(test))]
 impl EngineProtocolState for UninstalledEngineState {
     fn validator_rows(
         &self,
@@ -389,11 +388,29 @@ impl EngineProtocolState for StorageEngineState {
 
 #[cfg(test)]
 mod tests {
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    use super::EngineProtocolState;
+
     #[test]
     fn jailed_status_byte_matches_validator_set() {
         assert_eq!(
             super::VALIDATOR_STATUS_JAILED,
             outbe_validatorset::runtime::status::JAILED
         );
+    }
+
+    #[test]
+    fn uninstalled_binary_check_fails_closed() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let storage = StorageHandle::new(&mut provider);
+        let error = super::UninstalledEngineState
+            .check_binary_compatibility(storage)
+            .expect_err("uninstalled binary check must fail closed");
+        match error {
+            super::EngineProtocolError::Compatibility(message) => {
+                assert_eq!(message, "engine protocol state is not installed");
+            }
+        }
     }
 }
