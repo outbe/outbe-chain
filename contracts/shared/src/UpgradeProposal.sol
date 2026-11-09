@@ -9,14 +9,18 @@ import {IUUPSUpgradeable} from "@shared/IUUPSUpgradeable.sol";
 /// @notice Prepares an upgrade of a project's UUPS proxies on every chain of its stack: it deploys
 ///         new implementations with the immutables read from the live proxies, and prints one
 ///         `upgradeContracts` payload for the Update vote.
-/// @dev Env: `RPC_URLS` (RPC URLs or `rpc_endpoints` aliases, comma-separated; unset means the
+/// @dev Anyone can run it: the implementations hold no rights, and only the vote upgrades.
+///      Env: `PRIVATE_KEY` (any funded key; it sends the implementation deploys), `DEPLOYER_ADDRESS`
+///      (the deployer of the stack, which fixes the CREATE3 addresses; default the key's address),
+///      `RPC_URLS` (RPC URLs or `rpc_endpoints` aliases, comma-separated; unset means the
 ///      `--rpc-url` chain only) and `SOURCE_COMMIT` (the commit the implementations are built from,
-///      required for a payload). A proxy the deployer still owns, as on a stack deployed with
-///      `KEEP_DEPLOYER_AS_OWNER`, is upgraded with the key instead. A stack where the deployer owns
-///      some proxies and governance the others reverts.
+///      required for a payload). A stack the deployer still owns, as one deployed with
+///      `KEEP_DEPLOYER_AS_OWNER`, is upgraded directly, which needs the deployer's key. A stack where
+///      the deployer owns some proxies and governance the others reverts.
 abstract contract UpgradeProposal is Script {
     error MixedOwnership(address proxy);
     error MissingSourceCommit();
+    error NotTheDeployerKey(address deployer);
 
     enum Mode {
         Unknown,
@@ -28,9 +32,6 @@ abstract contract UpgradeProposal is Script {
     string[] internal upgrades;
     mapping(uint256 chainId => bool) internal prepared;
 
-    /// @dev The private key that deploys the implementations and, before the hand-over, upgrades.
-    function _deployerKey() internal view virtual returns (uint256);
-
     /// @dev Every proxy of the project on the selected chain, deployed or not.
     function _proxies(address deployer) internal view virtual returns (address[] memory);
 
@@ -41,13 +42,18 @@ abstract contract UpgradeProposal is Script {
     /// @dev Whether `deployer` still holds the upgrade authority of `proxy`.
     function _deployerOwns(address proxy, address deployer) internal view virtual returns (bool);
 
+    /// @dev The deployer of the stack. The CREATE3 addresses of its proxies depend on it.
+    function _deployerAddress(uint256 pk) internal view virtual returns (address) {
+        return vm.envOr("DEPLOYER_ADDRESS", vm.addr(pk));
+    }
+
     /// @dev The commit the implementations are built from.
     function _sourceCommit() internal view virtual returns (string memory) {
         return vm.envOr("SOURCE_COMMIT", string(""));
     }
 
     function run() external {
-        uint256 pk = _deployerKey();
+        uint256 pk = vm.envUint("PRIVATE_KEY");
         string[] memory rpcs = vm.envOr("RPC_URLS", ",", new string[](0));
         if (rpcs.length == 0) {
             prepareChain(pk);
@@ -65,12 +71,13 @@ abstract contract UpgradeProposal is Script {
     function prepareChain(uint256 pk) public {
         if (prepared[block.chainid]) return;
         prepared[block.chainid] = true;
-        address deployer = vm.addr(pk);
+        address deployer = _deployerAddress(pk);
         address[] memory proxies = _proxies(deployer);
         for (uint256 i = 0; i < proxies.length; i++) {
             if (proxies[i].code.length != 0) _setMode(proxies[i], deployer);
         }
         if (mode == Mode.Vote && bytes(_sourceCommit()).length == 0) revert MissingSourceCommit();
+        if (mode == Mode.Key && vm.addr(pk) != deployer) revert NotTheDeployerKey(deployer);
 
         vm.startBroadcast(pk);
         for (uint256 i = 0; i < proxies.length; i++) {

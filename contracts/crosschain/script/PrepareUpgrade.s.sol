@@ -15,13 +15,8 @@ import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 ///      (see UpgradeProposal). Each implementation gets the immutables of the live proxy: the
 ///      mailbox, the LayerZero endpoint or the hub.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`,
-///   `RPC_URLS`, `SOURCE_COMMIT`.
+/// Env: the UpgradeProposal ones, `CREATE3_FACTORY_ADDRESS` and `CONTRACT_SALT` (default `SALT_VERSION`).
 contract PrepareUpgrade is UpgradeProposal {
-    function _deployerKey() internal view override returns (uint256) {
-        return vm.envUint("DEPLOYER_PK");
-    }
-
     function _proxies(address deployer) internal view override returns (address[] memory proxies) {
         string[4] memory labels =
             ["ERC7786Bridge", "HyperlaneGatewayAdapter", "LayerZeroGatewayAdapter", "LoopbackGatewayAdapter"];

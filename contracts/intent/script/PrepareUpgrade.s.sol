@@ -16,13 +16,8 @@ import {IntentCreate3} from "./IntentCreate3.sol";
 ///      UpgradeProposal). Each implementation gets the immutables of the live proxy: The Compact,
 ///      the lock tag, the hub, the escrow and the auction.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`,
-///   `RPC_URLS`, `SOURCE_COMMIT`.
+/// Env: the UpgradeProposal ones, `CREATE3_FACTORY_ADDRESS` and `CONTRACT_SALT` (default `SALT_VERSION`).
 contract PrepareUpgrade is UpgradeProposal {
-    function _deployerKey() internal view override returns (uint256) {
-        return vm.envUint("DEPLOYER_PK");
-    }
-
     function _proxies(address deployer) internal view override returns (address[] memory proxies) {
         string[5] memory labels = [
             IntentCreate3.AUCTION,

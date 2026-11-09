@@ -12,12 +12,22 @@ import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol"
 import {PrepareUpgrade} from "../script/PrepareUpgrade.s.sol";
 import {MockHyperlaneMailbox} from "./mocks/MockHyperlaneMailbox.sol";
 
-/// @dev The test sets the source commit itself, so parallel tests share no env value that differs.
+/// @dev The test sets the source commit and the deployer itself, so parallel tests share no env
+///      value that differs.
 contract PrepareUpgradeHarness is PrepareUpgrade {
     string internal commit;
+    address internal deployer;
 
     function setSourceCommit(string memory commit_) external {
         commit = commit_;
+    }
+
+    function setDeployer(address deployer_) external {
+        deployer = deployer_;
+    }
+
+    function _deployerAddress(uint256 pk) internal view override returns (address) {
+        return deployer == address(0) ? super._deployerAddress(pk) : deployer;
     }
 
     function _sourceCommit() internal view override returns (string memory) {
@@ -28,6 +38,7 @@ contract PrepareUpgradeHarness is PrepareUpgrade {
 contract PrepareUpgradeTest is Test {
     string internal constant SALT = "v-prepare-upgrade";
     uint256 internal constant PK = 0xA11CE;
+    uint256 internal constant OTHER_PK = 0xB0B0;
     address internal constant GOVERNANCE = address(0x60F);
 
     PrepareUpgradeHarness internal script;
@@ -101,6 +112,23 @@ contract PrepareUpgradeTest is Test {
         script.prepareChain(PK);
 
         assertFalse(vm.keyExistsJson(script.proposal(), ".upgrades[2]"), "no duplicate upgrades");
+    }
+
+    function test_AnyKey_PreparesThePayloadOfTheDeployersStack() public {
+        _handOver();
+        script.setSourceCommit("abc123");
+        script.setDeployer(deployer);
+
+        script.prepareChain(OTHER_PK);
+
+        assertEq(vm.parseJsonAddress(script.proposal(), ".upgrades[1].proxy"), address(adapter));
+    }
+
+    function test_RevertWhen_AnotherKeyUpgradesTheDeployersStack() public {
+        script.setDeployer(deployer);
+
+        vm.expectRevert(abi.encodeWithSelector(UpgradeProposal.NotTheDeployerKey.selector, deployer));
+        script.prepareChain(OTHER_PK);
     }
 
     function test_RevertWhen_PayloadHasNoSourceCommit() public {

@@ -40,7 +40,6 @@ contract PrepareUpgradeTest is Test {
         factory = new Create3Factory();
         deployer = vm.addr(PK);
         usdt = address(new USDT());
-        vm.setEnv("DEPLOYER_PK", "0xA11CE");
         vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
         vm.setEnv("CONTRACT_SALT", SALT);
 

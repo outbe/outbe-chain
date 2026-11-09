@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {Create3Factory} from "@shared/Create3Factory.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
 import {UpgradeProposal} from "@shared/UpgradeProposal.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
@@ -12,20 +13,16 @@ import {Route, Routes} from "./routes/Routes.sol";
 ///      UpgradeProposal). Each implementation gets the token, the hub and the mode of the live
 ///      proxy; the token decimals follow from the token.
 ///
-/// Required env: `DEPLOYER_PK`, `CONTRACT_SALT` (default `SALT_VERSION`), `CREATE3_FACTORY_ADDRESS`,
-///   `RPC_URLS`, `SOURCE_COMMIT`.
+/// Env: the UpgradeProposal ones, `CREATE3_FACTORY_ADDRESS` and `CONTRACT_SALT` (default `SALT_VERSION`).
 contract PrepareUpgrade is Routes, UpgradeProposal {
-    function _deployerKey() internal view override returns (uint256) {
-        return _pk();
-    }
-
-    function _proxies(address) internal view override returns (address[] memory proxies) {
+    function _proxies(address deployer) internal view override returns (address[] memory proxies) {
         address factory = vm.envAddress("CREATE3_FACTORY_ADDRESS");
         string memory salt = vm.envOr("CONTRACT_SALT", SALT_VERSION);
         Route[] memory list = routes();
         proxies = new address[](list.length);
         for (uint256 i = 0; i < list.length; i++) {
-            proxies[i] = _bridgeAddress(factory, salt, list[i].spec);
+            proxies[i] = Create3Factory(factory)
+                .predict(deployer, _salt(string.concat(list[i].spec.tokenLabel, "Bridge"), salt));
         }
     }
 
