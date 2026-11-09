@@ -12,6 +12,17 @@ before:
 # Actually builds the binaries.
 builds:
   - builder: rust
+    id: outbe
+    binary: outbe
+    tool: cargo
+    command: build
+    flags:
+      - --release
+      - --locked
+      - --package=outbe
+    targets:
+      - x86_64-unknown-linux-gnu
+  - builder: rust
     id: outbe-chain
     binary: outbe-chain
     tool: cargo

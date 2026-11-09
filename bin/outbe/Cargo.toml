@@ -1,0 +1,35 @@
+[package]
+name = "outbe"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "outbe"
+path = "src/main.rs"
+
+[dependencies]
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+clap.workspace = true
+eyre.workspace = true
+hex.workspace = true
+k256.workspace = true
+outbe-snapshot.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+toml.workspace = true
+zstd.workspace = true
+zeroize.workspace = true
+
+[lints]
+workspace = true
