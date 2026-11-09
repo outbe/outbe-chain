@@ -65,6 +65,24 @@ pub struct ValidatorRecord {
     pub has_bls_share: bool,
 }
 
+impl ConsensusStatus {
+    pub fn is_ready_signer(&self, record: &ValidatorRecord) -> bool {
+        if self.mode != "signer" || !self.is_active {
+            return false;
+        }
+        if !self.has_threshold_shares || self.connected_peers == 0 {
+            return false;
+        }
+        let Some(enclave) = self.enclave.as_ref() else {
+            return false;
+        };
+        if !enclave.ready || !enclave.offer_key_ready {
+            return false;
+        }
+        record.status == 2 && record.has_bls_share
+    }
+}
+
 #[derive(Serialize)]
 struct Request<'a> {
     jsonrpc: &'static str,
