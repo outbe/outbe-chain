@@ -600,11 +600,10 @@ mod tests {
 
     #[test]
     fn extracts_the_exact_type_five_pck_chain_and_rejects_trailing_bytes() {
-        let quote =
-            fs::read(repo_root().join(
-                "crates/system/tee/tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin",
-            ))
-            .expect("read quote fixture");
+        let quote = fs::read(repo_root().join(
+            "crates/blockchain/tee/tests/fixtures/intel-dcap-1.26/sgx-processor-quote-v3.bin",
+        ))
+        .expect("read quote fixture");
         let pck_chain = extract_type5_pck_chain(&quote).expect("extract type-5 PCK chain");
         assert!(pck_chain.starts_with(b"-----BEGIN CERTIFICATE-----\n"));
         assert!(pck_chain.ends_with(b"\0"));
@@ -640,7 +639,7 @@ mod tests {
     #[test]
     fn crl_provenance_records_issuer_type_and_validity() {
         let crl_path = repo_root().join(
-            "crates/system/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor/pck.crl.der",
+            "crates/blockchain/tee/tests/fixtures/intel-dcap-1.26-intent-bound-processor/pck.crl.der",
         );
         let meta = crl_provenance(&crl_path, "processor").expect("crl_provenance");
         assert_eq!(meta["type"], "processor");

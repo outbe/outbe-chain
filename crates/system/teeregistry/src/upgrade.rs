@@ -3,14 +3,7 @@ use crate::{errors::TeeRegistryError, NodeEnclaveBindingV1, TeeRegistry};
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::{error::Result, tee_attestation_v1::TeePolicyV1};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct EnclaveUpgradeV1 {
-    pub proposal_id: U256,
-    pub activation_height: u64,
-    pub mrenclave: B256,
-    pub successor_policy_hash: B256,
-    pub predecessor_policy_hash: B256,
-}
+pub use outbe_primitives::enclave_upgrade::EnclaveUpgradeV1;
 
 impl TeeRegistry<'_> {
     #[cfg(feature = "tee-attestation-v1")]

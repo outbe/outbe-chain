@@ -25,12 +25,7 @@ use crate::{
 
 mod validate;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PublicationReceipt {
-    pub body: PublicationBody,
-    pub accepted_height: u64,
-    pub receipt_hash: B256,
-}
+pub use outbe_primitives::code_registry::PublicationReceipt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicationProgress {

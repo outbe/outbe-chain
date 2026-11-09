@@ -41,7 +41,6 @@
 //! `force_exit_validator`, `record_missed_block`, and `hooks::record_participation`
 //! have no production caller.
 
-use alloy_primitives::{Address, U256};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::errors::ValidatorSetError;
@@ -81,27 +80,7 @@ pub mod status {
 /// This is not a configurable product capacity.
 pub const CONSENSUS_VALIDATOR_BOUND: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
-/// Legacy flat read/ABI projection.
-///
-/// Lifecycle decisions must use [`crate::state_machine::ValidatorState`] or [`ValidatorLifecycle`].
-/// This shape remains public for compatibility with existing Rust consumers
-/// and the Solidity `validatorByAddress` / `validatorByIndex` tuples.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ValidatorRecord {
-    pub validator_address: Address,
-    /// 48-byte BLS MinPk consensus public key.
-    pub consensus_pubkey: [u8; 48],
-    pub stake: U256,
-    pub status: u8,
-    pub slash_count: u64,
-    pub missed_blocks: u64,
-    pub missed_votes: u64,
-    pub blocks_proposed: u64,
-    pub joined_at_height: u64,
-    pub deactivated_at_height: u64,
-    pub unbonding_end: u64,
-    pub has_bls_share: bool,
-}
+pub use outbe_primitives::validator_dto::{EpochSnapshot, ValidatorParticipation, ValidatorRecord};
 
 impl ValidatorSet<'_> {
     /// Store the configured validator cap only when it fits the canonical
@@ -116,23 +95,6 @@ impl ValidatorSet<'_> {
         }
         self.config_max_validators.write(max_validators)
     }
-}
-
-/// Read-only epoch metadata exposed without leaking raw storage slots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EpochSnapshot {
-    pub number: U256,
-    pub start_timestamp: u64,
-    pub start_block: u64,
-    pub length_blocks: u32,
-}
-
-/// Read-only participation counters exposed independently of lifecycle writes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ValidatorParticipation {
-    pub blocks_proposed: u64,
-    pub missed_blocks: u64,
-    pub missed_votes: u64,
 }
 
 fn registered_status(lifecycle: &ValidatorLifecycle) -> Result<u8> {

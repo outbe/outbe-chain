@@ -23,7 +23,7 @@ members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/system/tee",
+    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -104,7 +104,7 @@ default-members = [
     "crates/system/zerofee",
     "crates/system/emission",
     "crates/system/cycle",
-    "crates/system/tee",
+    "crates/blockchain/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
     "crates/system/coderegistry",
@@ -204,7 +204,7 @@ outbe-oracle = { path = "crates/system/oracle" }
 outbe-zerofee = { path = "crates/system/zerofee" }
 outbe-emission = { path = "crates/system/emission" }
 outbe-cycle = { path = "crates/system/cycle" }
-outbe-tee = { path = "crates/system/tee", default-features = false }
+outbe-tee = { path = "crates/blockchain/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }

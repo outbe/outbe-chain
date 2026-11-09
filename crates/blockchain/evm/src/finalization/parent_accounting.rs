@@ -13,7 +13,6 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::Result as OutbeResult,
-    reshare_artifact::ExecutionSummaryArtifact,
     storage::StorageHandle,
     system_tx::{build_unsigned_system_tx, validate_phase1_witness_against},
 };
@@ -94,15 +93,7 @@ fn validate_binary_signer_bitmap(signer_bitmap: &[u8]) -> OutbeResult<()> {
     Ok(())
 }
 
-/// Parent-block execution artifact (`ExecutionSummaryArtifact`
-/// from `header.extra_data`) paired with the parent block's timestamp.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AccountedParentArtifact {
-    pub summary: ExecutionSummaryArtifact,
-    pub timestamp: u64,
-    /// State root committed by the same exact parent header.
-    pub state_root: Option<B256>,
-}
+pub use outbe_primitives::system_tx_context::AccountedParentArtifact;
 
 /// Exact-hash-first lookup of an accounted-parent's [`ExecutionSummaryArtifact`].
 pub trait AccountedParentArtifactProvider: Send + Sync {

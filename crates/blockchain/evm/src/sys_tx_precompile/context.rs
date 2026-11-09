@@ -1,59 +1,11 @@
-use std::sync::Arc;
-
-use crate::executor::AccountedParentArtifact;
 use alloy_primitives::Address;
-use alloy_primitives::B256;
 use outbe_primitives::block::BlockContext;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::system_tx_context::AccountedParentArtifact;
 
-/// Execution context preloaded by the executor before calling the
-/// begin-block precompile.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PreloadedSystemTxContext {
-    pub proposer: Address,
-    pub finalized_summary: Option<AccountedParentArtifact>,
-    /// True only for a block carrying a validator-set-changing BoundaryOutcome
-    /// whose target set includes `proposer`. This lets a next-epoch leader produce
-    /// the activation block before BoundaryOutcome updates parent-state consensus
-    /// membership.
-    pub allow_boundary_proposer: bool,
-    /// canonical hash of the VRF proof carried in the verified
-    /// parent certificate (`keccak256(VrfProof::encode())`). The executor's
-    /// Phase 1 preflight derives it from
-    /// `outbe_consensus::proof::VerifiedProof::vrf_proof_hash` and feeds it
-    /// into the V3 Rewards fingerprint. Thus two parent certificates with
-    /// different VRF proofs cannot collide. The value is `B256::ZERO` when the
-    /// preflight was skipped (genesis bootstrap / test-only opt-out).
-    pub canonical_vrf_proof_hash: B256,
-    /// Pre-verified signer indices per `LateFinalizeCredits` batch from
-    /// `verify_late_finalize_credits_in_preexec`, eliminating a second BLS
-    /// pairing inside `run_late_finalize_credits`.
-    pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
-    /// Block gas limit for user transactions.
-    pub block_gas_limit: u64,
-    /// Cumulative gas consumed by user transactions before `EndBlock`.
-    pub user_gas_used: u64,
-}
-
-impl PreloadedSystemTxContext {
-    pub(crate) const fn for_end_block(
-        proposer: Address,
-        block_gas_limit: u64,
-        user_gas_used: u64,
-    ) -> Self {
-        Self {
-            proposer,
-            finalized_summary: None,
-            allow_boundary_proposer: false,
-            canonical_vrf_proof_hash: B256::ZERO,
-            verified_late_credit_signers: None,
-            block_gas_limit,
-            user_gas_used,
-        }
-    }
-}
+pub(crate) use outbe_primitives::system_tx_context::SystemTxExecutionContext as PreloadedSystemTxContext;
 
 thread_local! {
     static PRELOADED_SYSTEM_TX_CONTEXT: std::cell::RefCell<Option<PreloadedSystemTxContext>> =

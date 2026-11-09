@@ -17,14 +17,11 @@
 //! See `hooks.rs::ZeroFeePolicyError::code` for the authoritative mapping.
 
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use alloy_primitives::Address;
-use alloy_sol_types::SolCall;
-use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
 use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-mod tribute_factory_abi {
-    alloy_sol_types::sol!("../../../contracts/precompiles/src/ITributeFactory.sol");
-}
+pub use outbe_primitives::zero_fee_types::{
+    ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+};
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
 pub const FREE_TX_DAILY_LIMIT: u32 = 8;
@@ -37,31 +34,6 @@ pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 /// `(target, selector)` grants in [`ELEVATED_SPONSORED_GAS`] can select a
 /// larger ceiling for specific operations.
 pub const FREE_TX_DAILY_GAS_LIMIT: u64 = 500_000;
-
-/// Maximum gas limit for the one-time self-authorized EIP-7702 bootstrap.
-///
-/// The bootstrap transaction only installs the canonical ZeroFee delegation
-/// and calls the paymaster's read-only authorization view. It is deliberately
-/// narrower than the ordinary sponsored-call budget.
-pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
-
-/// Maximum sponsored gas limit for `TributeFactory.offerTribute` calls.
-///
-/// This matches the explicit transaction limit that `outbe-cli tribute
-/// offer` uses. It leaves headroom above the verifier's 300,000 base gas. It
-/// does not broaden the limit for other selectors or sponsored targets.
-pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
-
-/// Operation-specific sponsored gas ceilings, keyed by `(target, selector)`.
-///
-/// `offerTribute` performs UltraHonk proof verification with a 300,000 base
-/// gas charge. This grant preserves its existing 8M headroom without
-/// reassessing that ceiling. Selector matching does not validate arguments.
-pub const ELEVATED_SPONSORED_GAS: &[(Address, [u8; 4], u64)] = &[(
-    TRIBUTE_FACTORY_ADDRESS,
-    tribute_factory_abi::ITributeFactory::offerTributeCall::SELECTOR,
-    FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-)];
 
 // Reject duplicate keys even when their gas ceilings differ.
 const _: () = {
@@ -121,3 +93,20 @@ pub const FREE_TX_DAILY_CALLDATA_BYTES: usize = 16 * 1024;
 /// the same lower bound. A free tx with `max_fee_per_gas` below this is
 /// rejected with [`super::hooks::ZeroFeePolicyError::FeeCapTooLow`].
 pub const MIN_FREE_TX_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
+
+#[cfg(test)]
+mod selector_tests {
+    use super::*;
+    use alloy_sol_types::SolCall;
+    use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
+
+    alloy_sol_types::sol!("../../../contracts/precompiles/src/ITributeFactory.sol");
+
+    #[test]
+    fn elevated_offer_tribute_matches_the_tribute_factory_abi() {
+        let (target, selector, gas) = ELEVATED_SPONSORED_GAS[0];
+        assert_eq!(target, TRIBUTE_FACTORY_ADDRESS);
+        assert_eq!(selector, ITributeFactory::offerTributeCall::SELECTOR);
+        assert_eq!(gas, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT);
+    }
+}

@@ -11,6 +11,7 @@ outbe-primitives.workspace = true
 outbe-validatorset = { path = "../validatorset" }
 outbe-staking = { path = "../staking" }
 outbe-consensus.workspace = true
+outbe-teeregistry = { workspace = true }
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 

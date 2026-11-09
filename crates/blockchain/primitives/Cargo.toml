@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+outbe-macros.workspace = true
 alloy-trie = { workspace = true, optional = true }
 alloy-consensus.workspace = true
 alloy-eips.workspace = true
