@@ -3,6 +3,7 @@
 //! Snapshot code keeps the signing checks. This trait supplies registry rows,
 //! validator-set bindings, committee snapshots, and approved Vote log ids.
 //! Install the production reader before launch. Until then, reads fail closed.
+//! The process-wide `OnceLock` is a temporary bridge until constructor injection.
 
 use std::sync::{Arc, OnceLock};
 

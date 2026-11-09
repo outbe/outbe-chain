@@ -2,9 +2,9 @@
 //!
 //! Consensus startup asks this trait for validator sets, committee snapshots,
 //! and TEE admission facts. The crate that owns those contracts implements the
-//! trait and installs it before launch. Until that install, reads fail closed.
-//! The binary-compatibility check is a no-op until install, because the engine
-//! no longer names the update crate.
+//! trait and installs it before launch. Until that install, reads fail closed,
+//! including the binary-compatibility check.
+//! The process-wide `OnceLock` is a temporary bridge until constructor injection.
 
 use std::sync::{Arc, OnceLock};
 
@@ -132,8 +132,7 @@ pub trait EngineProtocolState: Send + Sync {
 
     /// Startup check against the active protocol version and waiting updates.
     ///
-    /// The uninstalled state returns `Ok(())`. Install the production state
-    /// before launch to restore the check.
+    /// Fails closed when no protocol state is installed.
     fn check_binary_compatibility(
         &self,
         storage: StorageHandle<'_>,
@@ -248,7 +247,9 @@ impl EngineProtocolState for UninstalledEngineState {
         &self,
         _storage: StorageHandle<'_>,
     ) -> std::result::Result<(), EngineProtocolError> {
-        Ok(())
+        Err(EngineProtocolError::Compatibility(
+            "engine protocol state is not installed".to_string(),
+        ))
     }
 }
 
