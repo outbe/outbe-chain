@@ -223,6 +223,7 @@ contract OriginRouter is
         ParkedMessage storage p = _os().parkedMessages[idx];
         if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
         p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
+        // aderyn-ignore-next-line(storage-array-memory-edit) -- the payload is only read
         bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
         emit ParkedMessageResent(idx, p.dstChainId, sendId);
     }

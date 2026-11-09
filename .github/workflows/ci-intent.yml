@@ -28,3 +28,4 @@ jobs:
       project: intent
       abi-check: true
       upgrade-check: true
+      slither-check: true

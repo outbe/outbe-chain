@@ -1,0 +1,19 @@
+version = 1
+
+root = "./."
+src = "src/"
+
+exclude = [
+    "/vendor/",
+    "/Mock",
+    # a forge script, never deployed
+    "src/UpgradeProposal.sol",
+]
+
+[detectors]
+exclude = [
+    # Create3Factory.deploy forwards its value to the created contract
+    "contract-locks-ether",
+]
+
+[env]

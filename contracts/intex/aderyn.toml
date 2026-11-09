@@ -10,5 +10,15 @@ exclude = [
 ]
 
 [detectors]
+exclude = [
+    # every UUPS proxy has a payable upgradeToAndCall and forwards all other native value
+    "contract-locks-ether",
+    # native value only goes to the hub, the token bridge, IntexFactory or back to the caller as a fee refund
+    "eth-send-unchecked-address",
+    # the calls go to the stack own contracts or are view calls; slither checks reentrancy
+    "reentrancy-state-change",
+    # forge lint unsafe-typecast requires a justified disable on every cast
+    "unsafe-casting",
+]
 
 [env]

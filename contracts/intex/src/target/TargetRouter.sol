@@ -299,6 +299,7 @@ contract TargetRouter is
         }
 
         uint16 batch = progress.nextBatch;
+        // aderyn-ignore-next-line(msg-value-in-loop) -- relayBids is not payable; each chunk pays from the float
         while (batch < totalBatches) {
             // The last chunk has to leave room for the marker that follows it in the same round.
             uint256 need = batch + 1 == totalBatches
