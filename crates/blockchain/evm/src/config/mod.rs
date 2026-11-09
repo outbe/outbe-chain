@@ -55,6 +55,8 @@ pub struct OutbeEvmConfig {
     accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
     /// Validator-mode EVM signer used to authenticate system-tx artifacts.
     evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Host installed for this config. `None` uses the process-wide host.
+    runtime_host: Option<Arc<dyn crate::EvmRuntimeHost>>,
 }
 
 impl std::fmt::Debug for OutbeEvmConfig {
@@ -72,6 +74,7 @@ impl std::fmt::Debug for OutbeEvmConfig {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_host", &self.runtime_host.is_some())
             .finish()
     }
 }
@@ -132,6 +135,7 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: None,
             evm_signer: None,
+            runtime_host: None,
         }
     }
 
@@ -161,6 +165,7 @@ impl OutbeEvmConfig {
                 BridgeAccountedParentArtifactProvider::new(summary_cache),
             )),
             evm_signer: None,
+            runtime_host: None,
         }
     }
 
@@ -187,6 +192,7 @@ impl OutbeEvmConfig {
             bridge: Some(bridge),
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_host: None,
         }
     }
 
@@ -220,7 +226,16 @@ impl OutbeEvmConfig {
             bridge: None,
             accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
             evm_signer: None,
+            runtime_host: None,
         }
+    }
+
+    /// Installs `host` unless one is already installed, then stores the winner.
+    #[must_use]
+    pub fn with_runtime_host(mut self, host: Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        let _ = crate::install_evm_runtime_host(Arc::clone(&host));
+        self.runtime_host = Some(crate::active_evm_runtime_host());
+        self
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {

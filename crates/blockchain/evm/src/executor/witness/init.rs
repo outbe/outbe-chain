@@ -113,14 +113,12 @@ where
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let ctx = self.block_context(block_number, timestamp, proposer);
+        let host = self.runtime_host.clone();
         let db = self.inner.evm.db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
-        let registry = outbe_teeregistry::TeeRegistry::new(storage);
-        Ok(registry
-            .validator_enclave_binding_v1(proposer)
-            .map_err(binding_lookup_error)?
-            .map(|binding| binding.attestation_ed25519.0))
+        host.proposer_attestation(storage, proposer)
+            .map_err(binding_lookup_error)
     }
 
     fn block_one_bootstrap_attestation(

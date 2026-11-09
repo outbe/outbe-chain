@@ -86,10 +86,8 @@ where
         &mut self,
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::BurnedFeeSettlementError;
-        use outbe_primitives::addresses::SYSTEM_ADDRESS;
         use outbe_primitives::error::PrecompileError;
         use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
-        use outbe_promislimit::{BurnSource, PromisLimitContract};
 
         if self.burned_fees_settled {
             return Ok(());
@@ -102,10 +100,10 @@ where
         }
 
         let block_ctx = self.fee_route_context()?;
+        let host = self.runtime_host.clone();
         let mut provider = DirectStorageProvider::new(self.inner.evm.db_mut(), block_ctx);
         StorageHandle::enter(&mut provider, |storage| {
-            let mut promis = PromisLimitContract::new(storage);
-            promis.burn_to_promis_limit(SYSTEM_ADDRESS, burned_fees, BurnSource::BaseFee)
+            host.settle_block_burned_fees(storage, burned_fees)
         })
         .map_err(|err| {
             if err.is_node_local()

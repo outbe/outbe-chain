@@ -1,10 +1,11 @@
-use alloy_primitives::Address;
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_primitives::block::BlockContext;
+#[cfg(feature = "test-utils")]
 use outbe_primitives::block::BlockRuntimeContext;
+#[cfg(feature = "test-utils")]
 use outbe_primitives::error::Result;
+#[cfg(feature = "test-utils")]
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::system_tx_context::AccountedParentArtifact;
-
 pub(crate) use outbe_primitives::system_tx_context::SystemTxExecutionContext as PreloadedSystemTxContext;
 
 thread_local! {
@@ -51,6 +52,7 @@ pub(crate) fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxC
     PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
+#[cfg(feature = "test-utils")]
 pub(super) fn block_runtime_context_from_storage(
     storage: StorageHandle,
     include_validator_snapshot: bool,
@@ -74,14 +76,7 @@ pub(super) fn block_runtime_context_from_storage(
         .unwrap_or(0);
 
     let validators = if include_validator_snapshot {
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let mut validators: Vec<Address> = vs
-            .get_active_consensus_set()?
-            .into_iter()
-            .map(|record| record.validator_address)
-            .collect();
-        validators.sort();
-        validators
+        crate::active_evm_runtime_host().consensus_validators(storage.clone())?
     } else {
         Vec::new()
     };
@@ -101,10 +96,4 @@ pub(super) fn block_runtime_context_from_storage(
     OBSERVED_RUNTIME_BLOCK_CONTEXTS.with(|slot| slot.borrow_mut().push(block_ctx.clone()));
 
     Ok(BlockRuntimeContext::new(block_ctx, storage))
-}
-
-pub(crate) fn read_preloaded_finalized_summary(
-    _storage: &StorageHandle<'_>,
-) -> Result<Option<AccountedParentArtifact>> {
-    Ok(current_preloaded_system_tx_context().and_then(|context| context.finalized_summary))
 }

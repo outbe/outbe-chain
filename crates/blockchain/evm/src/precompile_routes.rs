@@ -4,47 +4,66 @@
 //! dispatch adapter and base-gas function. Activation, persistence, warming,
 //! sponsorship and future address classes intentionally remain outside this table.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_primitives::{
-    addresses::*,
-    error::Result,
-    storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
-};
+#[cfg(feature = "test-utils")]
+use alloy_primitives::B256;
+use alloy_primitives::{Address, Bytes, U256};
+#[cfg(feature = "test-utils")]
+use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
+use outbe_primitives::{addresses::*, error::Result, storage::StorageHandle};
 
-pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
-pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
+pub(crate) const EXACT_ADDRESSES: &[Address] = &[
+    GRATIS_ADDRESS,
+    GRATIS_FACTORY_ADDRESS,
+    PROMIS_ADDRESS,
+    PROMIS_FACTORY_ADDRESS,
+    TRIBUTE_ADDRESS,
+    NOD_ADDRESS,
+    NOD_FACTORY_ADDRESS,
+    GEM_ADDRESS,
+    GEM_FACTORY_ADDRESS,
+    INTEX_ADDRESS,
+    INTEX_FACTORY_ADDRESS,
+    DESIS_ADDRESS,
+    VAULT_ROUTER_ADDRESS,
+    CREDIS_ADDRESS,
+    CREDIS_FACTORY_ADDRESS,
+    CCA_REGISTRY_ADDRESS,
+    TRIBUTE_FACTORY_ADDRESS,
+    VALIDATOR_SET_ADDRESS,
+    SLASH_INDICATOR_ADDRESS,
+    STAKING_ADDRESS,
+    REWARDS_ADDRESS,
+    AGENT_REWARD_ADDRESS,
+    EMISSION_ADDRESS,
+    METADOSIS_ADDRESS,
+    FIDELITY_ADDRESS,
+    PROMIS_LIMIT_ADDRESS,
+    ORACLE_ADDRESS,
+    ZEROFEE_ADDRESS,
+    OUTBE_SYSTEM_TX_ADDRESS,
+    TEE_REGISTRY_ADDRESS,
+    L2_REGISTRY_ADDRESS,
+    HYPERLANE_CONTROLLER_ADDRESS,
+    CROSSCHAIN_BRIDGE_ADDRESS,
+    STABLECOIN_FACTORY_ADDRESS,
+    STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    CODE_REGISTRY_ADDRESS,
+    VOTE_ADDRESS,
+    UPDATE_ADDRESS,
+];
 
-/// Whether a route's dispatch may receive credited native value. It is declared on
-/// the same line as the dispatch function, alongside the module's own
-/// `PAYABLE_SELECTORS`. `define_exact_routes!` asserts at compile time that the
-/// two agree. Thus a module cannot start accepting `msg.value` without the route
-/// declaring it, and a route cannot declare it without the module.
-///
-/// The module's list is in turn what its own dispatch checks: a payable module
-/// refuses value for every selector it has not published.
+/// Whether a route may be credited native value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ValuePolicy {
-    /// No selector is payable. The boundary rejects any credited value before
-    /// dispatch, so value cannot strand at the address.
+    /// No selector is payable.
     Reject,
-    /// At least one selector is payable. The boundary credits value to the
-    /// address, and the module refuses it for every selector outside its
-    /// published list.
+    /// At least one selector is payable.
     Payable,
-}
-
-/// `const`-usable form of the payable check, for the route-table conformance
-/// assertion below.
-const fn policy_is_payable(policy: ValuePolicy) -> bool {
-    matches!(policy, ValuePolicy::Payable)
 }
 
 #[derive(Clone, Copy)]
 pub(crate) struct ExactRoute {
-    dispatch: DispatchFn,
-    base_gas: BaseGasFn,
-    value_policy: ValuePolicy,
-    payable_selectors: &'static [[u8; 4]],
+    address: Address,
 }
 
 #[derive(Clone, Copy)]
@@ -62,29 +81,24 @@ pub(crate) struct RouteCall<'input> {
 
 impl Route {
     /// The value policy the boundary applies to this route.
-    ///
-    /// Exact routes carry their own policy from the route table. The stablecoin class
-    /// permits value because an empty-calldata send to a reserved token address
-    /// is an ordinary native transfer. [`stablecoin_class_dispatch`] returns
-    /// from it without touching token state. Denying it would make native value
-    /// unspendable across the whole reserved class. This includes an externally
-    /// owned account whose address happens to fall in the prefix.
-    ///
-    /// The class is the one route this policy is not compile-time bound to a
-    /// published selector list, because it has no single dispatch module. What
-    /// keeps value from stranding there is instead tested directly:
-    /// [`stablecoin_class_dispatch`] refuses a plain send at a Factory-issued
-    /// address, and the token dispatch refuses value on every selector.
     pub(crate) fn value_policy(self) -> ValuePolicy {
         match self {
-            Self::Exact(route) => route.value_policy,
+            Self::Exact(route) => {
+                if crate::active_evm_runtime_host().precompile_is_payable(&route.address) {
+                    ValuePolicy::Payable
+                } else {
+                    ValuePolicy::Reject
+                }
+            }
             Self::StablecoinClass => ValuePolicy::Payable,
         }
     }
 
     pub(crate) fn base_gas(self, input: &[u8]) -> u64 {
         match self {
-            Self::Exact(route) => route.base_gas(input),
+            Self::Exact(route) => {
+                crate::active_evm_runtime_host().precompile_base_gas(&route.address, input)
+            }
             Self::StablecoinClass => {
                 outbe_primitives::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base
             }
@@ -92,16 +106,24 @@ impl Route {
     }
 
     pub(crate) fn dispatch(self, storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
-        match self {
-            Self::Exact(route) => route.dispatch(storage, call),
-            Self::StablecoinClass => stablecoin_class_dispatch(storage, call),
-        }
+        let address = match self {
+            Self::Exact(route) => route.address,
+            Self::StablecoinClass => call.callee,
+        };
+        crate::active_evm_runtime_host().dispatch_precompile(
+            storage,
+            &address,
+            call.data,
+            call.caller,
+            call.value,
+        )
     }
 }
 
+#[cfg(test)]
 impl ExactRoute {
     pub(crate) fn base_gas(self, input: &[u8]) -> u64 {
-        (self.base_gas)(input)
+        crate::active_evm_runtime_host().precompile_base_gas(&self.address, input)
     }
 
     pub(crate) fn dispatch(self, storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
@@ -111,11 +133,55 @@ impl ExactRoute {
             value,
             ..
         } = call;
-        // The boundary only decided that this *address* may be credited. The
-        // module's published list decides which selectors may keep the value.
-        // This code enforces the list, so a module cannot omit the check and silently
-        // accept value on every selector it exposes. Payable modules repeat it at
-        // their own entry, which is what covers callers that reach them directly.
+        crate::active_evm_runtime_host().dispatch_precompile(
+            storage,
+            &self.address,
+            data,
+            caller,
+            value,
+        )
+    }
+}
+
+pub(crate) fn lookup(address: &Address) -> Option<ExactRoute> {
+    EXACT_ADDRESSES
+        .contains(address)
+        .then_some(ExactRoute { address: *address })
+}
+
+#[cfg(feature = "test-utils")]
+pub(crate) type DispatchFn = fn(StorageHandle, &[u8], Address, U256) -> Result<Bytes>;
+#[cfg(feature = "test-utils")]
+pub(crate) type BaseGasFn = fn(&[u8]) -> u64;
+
+#[cfg(feature = "test-utils")]
+const fn policy_is_payable(policy: ValuePolicy) -> bool {
+    matches!(policy, ValuePolicy::Payable)
+}
+
+#[cfg(feature = "test-utils")]
+fn default_base_gas(_input: &[u8]) -> u64 {
+    PRECOMPILE_BASE_GAS
+}
+
+#[cfg(feature = "test-utils")]
+#[derive(Clone, Copy)]
+struct DomainExactRoute {
+    dispatch: DispatchFn,
+    base_gas: BaseGasFn,
+    value_policy: ValuePolicy,
+    payable_selectors: &'static [[u8; 4]],
+}
+
+#[cfg(feature = "test-utils")]
+impl DomainExactRoute {
+    fn dispatch(
+        self,
+        storage: StorageHandle,
+        data: &[u8],
+        caller: Address,
+        value: U256,
+    ) -> Result<Bytes> {
         outbe_primitives::dispatch::reject_value_unless_payable(
             data,
             self.payable_selectors,
@@ -125,10 +191,7 @@ impl ExactRoute {
     }
 }
 
-fn default_base_gas(_input: &[u8]) -> u64 {
-    PRECOMPILE_BASE_GAS
-}
-
+#[cfg(feature = "test-utils")]
 fn stablecoin_policy_dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -138,6 +201,7 @@ fn stablecoin_policy_dispatch(
     outbe_stablecoinpolicy::precompile::dispatch(storage, data, caller, value)
 }
 
+#[cfg(feature = "test-utils")]
 fn stablecoin_factory_dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -147,6 +211,7 @@ fn stablecoin_factory_dispatch(
     outbe_stablecoinfactory::precompile::dispatch(storage, data, caller, value)
 }
 
+#[cfg(feature = "test-utils")]
 fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Result<Bytes> {
     let RouteCall {
         callee: token,
@@ -155,37 +220,21 @@ fn stablecoin_class_dispatch(storage: StorageHandle, call: RouteCall<'_>) -> Res
         value,
     } = call;
     let plain_native_transfer = data.is_empty() && !value.is_zero();
-
-    // A plain native send must not be able to abort the whole transaction. A
-    // registry error is fatal to a token call, but here it degrades to a revert.
-    // Thus the frame simply rolls back and the value returns to the sender.
     let registered = read_stablecoin_registration(&storage, token, plain_native_transfer)?;
-
     let Some(factory_token_id) = registered else {
-        // Reserving the address class must not make native value unspendable at
-        // an address the Factory never issued. An externally owned account
-        // whose address happens to fall in the prefix must still receive plain
-        // transfers. This uses only revm's ordinary CALL balance semantics. It
-        // invokes no token ABI and falls through to no account bytecode.
         if plain_native_transfer {
             return Ok(Bytes::new());
         }
         return Err(crate::errors::PrecompileRouteError::UnregisteredStablecoinAddress.into());
     };
-
-    // A Factory-derived token address has no key and no selector that moves
-    // native balance, so accepting a plain transfer there would strand the value
-    // permanently. Refuse it instead, and let the frame's checkpoint return the
-    // funds to the sender.
     if plain_native_transfer {
         return Err(crate::errors::PrecompileRouteError::StablecoinCannotReceiveNativeValue.into());
     }
-
     authenticate_registered_stablecoin(&storage, token, factory_token_id)?;
-
     outbe_stablecoin::precompile::dispatch(storage, token, data, caller, value)
 }
 
+#[cfg(feature = "test-utils")]
 fn read_stablecoin_registration(
     storage: &StorageHandle,
     token: Address,
@@ -200,6 +249,7 @@ fn read_stablecoin_registration(
     }
 }
 
+#[cfg(feature = "test-utils")]
 fn authenticate_registered_stablecoin(
     storage: &StorageHandle,
     token: Address,
@@ -249,6 +299,7 @@ fn authenticate_registered_stablecoin(
     Ok(())
 }
 
+#[cfg(feature = "test-utils")]
 fn vote_dispatch(
     storage: StorageHandle,
     data: &[u8],
@@ -264,13 +315,9 @@ fn vote_dispatch(
     )
 }
 
-macro_rules! define_exact_routes {
+#[cfg(feature = "test-utils")]
+macro_rules! define_domain_routes {
     ($($address:path => ($dispatch:expr, $gas:expr, $value_policy:expr, $payable_selectors:expr)),+ $(,)?) => {
-        pub(crate) const EXACT_ADDRESSES: &[Address] = &[$($address),+];
-
-        // Binds each route's declared policy to the payable surface its own
-        // dispatch module reports. Declaring a payable selector without
-        // flipping the route (or the reverse) fails the build here.
         $(
             const _: () = assert!(
                 policy_is_payable($value_policy) == !$payable_selectors.is_empty(),
@@ -281,10 +328,10 @@ macro_rules! define_exact_routes {
             );
         )+
 
-        pub(crate) fn lookup(address: &Address) -> Option<ExactRoute> {
+        fn domain_route(address: &Address) -> Option<DomainExactRoute> {
             match *address {
                 $(
-                    $address => Some(ExactRoute {
+                    $address => Some(DomainExactRoute {
                         dispatch: $dispatch,
                         base_gas: $gas,
                         value_policy: $value_policy,
@@ -297,11 +344,8 @@ macro_rules! define_exact_routes {
     };
 }
 
-// The only declaration of existing exact routes. Constant match patterns make a
-// duplicate address an unreachable-pattern error under the workspace's denied
-// warnings. The const validator below independently rejects duplicates and Ethereum
-// precompile overlap during compilation.
-define_exact_routes! {
+#[cfg(feature = "test-utils")]
+define_domain_routes! {
     GRATIS_ADDRESS => (outbe_gratis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratis::precompile::PAYABLE_SELECTORS),
     GRATIS_FACTORY_ADDRESS => (outbe_gratisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratisfactory::precompile::PAYABLE_SELECTORS),
     PROMIS_ADDRESS => (outbe_promis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promis::precompile::PAYABLE_SELECTORS),
@@ -330,8 +374,7 @@ define_exact_routes! {
     PROMIS_LIMIT_ADDRESS => (outbe_promislimit::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),
     ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
     ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),
-    OUTBE_SYSTEM_TX_ADDRESS => (crate::sys_tx_precompile::dispatch, default_base_gas, ValuePolicy::Reject, crate::sys_tx_precompile::PAYABLE_SELECTORS),
-    ZKPROOF_VERIFY_ADDRESS => (crate::zk::dispatch_zk_verify, crate::zk::zk_verify_base_gas, ValuePolicy::Reject, crate::zk::ZK_VERIFY_PAYABLE_SELECTORS),
+    OUTBE_SYSTEM_TX_ADDRESS => (crate::sys_tx_precompile::dispatch_system_tx_route, default_base_gas, ValuePolicy::Reject, crate::sys_tx_precompile::PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (outbe_teeregistry::v1_precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (outbe_l2registry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     HYPERLANE_CONTROLLER_ADDRESS => (outbe_hyperlanecontroller::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_hyperlanecontroller::precompile::PAYABLE_SELECTORS),
@@ -341,6 +384,52 @@ define_exact_routes! {
     CODE_REGISTRY_ADDRESS => (outbe_coderegistry::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_coderegistry::precompile::PAYABLE_SELECTORS),
     VOTE_ADDRESS => (vote_dispatch, default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
     UPDATE_ADDRESS => (outbe_update::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
+}
+
+#[cfg(feature = "test-utils")]
+pub(crate) fn dispatch_domain_precompile(
+    storage: StorageHandle,
+    address: &Address,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    if let Some(route) = domain_route(address) {
+        return route.dispatch(storage, data, caller, value);
+    }
+    if is_stablecoin_address(*address) {
+        return stablecoin_class_dispatch(
+            storage,
+            RouteCall {
+                callee: *address,
+                data,
+                caller,
+                value,
+            },
+        );
+    }
+    Err(outbe_primitives::error::PrecompileError::Fatal(
+        "precompile route is not installed".into(),
+    ))
+}
+
+#[cfg(feature = "test-utils")]
+pub(crate) fn domain_is_payable(address: &Address) -> bool {
+    if let Some(route) = domain_route(address) {
+        return policy_is_payable(route.value_policy);
+    }
+    is_stablecoin_address(*address)
+}
+
+#[cfg(feature = "test-utils")]
+pub(crate) fn domain_base_gas(address: &Address, input: &[u8]) -> u64 {
+    if let Some(route) = domain_route(address) {
+        return (route.base_gas)(input);
+    }
+    if is_stablecoin_address(*address) {
+        return outbe_primitives::stablecoin_fork::STABLECOIN_V1_GAS.dispatch_base;
+    }
+    PRECOMPILE_BASE_GAS
 }
 
 pub(crate) fn resolve(address: &Address) -> Option<Route> {

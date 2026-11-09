@@ -17,6 +17,7 @@ use alloy_evm::{
     Database, RecoveredTx,
 };
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
+use outbe_primitives::zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction};
 use outbe_primitives::{
     block::{BlockContext, BlockHeightRegime, BlockRuntimeContext},
     consensus::ConsensusExecutionBridge,
@@ -30,7 +31,6 @@ use outbe_primitives::{
     storage::{direct::DirectStorageProvider, StorageHandle},
     OutbeHeader,
 };
-use outbe_zerofee::{BootstrapTransactionView, ZeroFeeTransaction};
 use reth_ethereum::{
     evm::{primitives::Evm, revm::context::TxEnv, RethReceiptBuilder},
     provider::BlockExecutionResult,
@@ -81,7 +81,9 @@ pub(crate) use inputs::{
 
 pub use boundary::marker_addresses;
 
-pub(crate) use boundary::{apply_boundary_outcome, prepare_boundary_epoch_counters};
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) use boundary::apply_boundary_outcome;
+pub(crate) use boundary::prepare_boundary_epoch_counters;
 
 pub(crate) use system_execution::execute::system_tx_failure_code_for_result;
 pub(crate) use system_execution::layout::ResolvedBeginSystemTx;

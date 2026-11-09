@@ -6,12 +6,15 @@
 //! the system tx body. Thus runtime events are emitted through the
 //! EVM journal and become receipt-visible.
 
+#[cfg(feature = "test-utils")]
 use crate::system_tx::SystemTx;
 use alloy_primitives::Address;
 use alloy_primitives::Bytes;
 use alloy_primitives::U256;
+#[cfg(feature = "test-utils")]
 use outbe_primitives::addresses::SYSTEM_ADDRESS;
-use outbe_primitives::block::ProtocolModule as _;
+#[cfg(feature = "test-utils")]
+use outbe_primitives::block::ProtocolModule;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -19,21 +22,25 @@ mod boundary;
 mod context;
 mod cycle;
 
+#[cfg(feature = "test-utils")]
 use context::block_runtime_context_from_storage;
 #[cfg(test)]
 pub(crate) use context::take_observed_runtime_block_contexts;
 pub(crate) use context::{
-    current_preloaded_system_tx_context, read_preloaded_finalized_summary,
-    with_preloaded_system_tx_context, PreloadedSystemTxContext,
+    current_preloaded_system_tx_context, with_preloaded_system_tx_context, PreloadedSystemTxContext,
 };
 
+#[cfg(feature = "test-utils")]
 pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
 
+#[cfg(feature = "test-utils")]
 pub(crate) use crate::finalization::{run_finalization_and_slashing, run_late_finalize_credits};
 
+#[cfg(feature = "test-utils")]
 pub(crate) use cycle::run_validator_liveness;
 pub use cycle::{enforce_enclave_upgrade_deadline, EnclaveUpgradeDeadline};
 
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) use boundary::run_boundary_outcome;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -48,15 +55,12 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(
+    crate::active_evm_runtime_host().dispatch_system_tx(
         storage,
         data,
         caller,
         value,
-        DispatchAuthorities {
-            tee_attestation_v1:
-                &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
-        },
+        &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
     )
 }
 
@@ -69,12 +73,12 @@ pub fn dispatch_with_tee_attestation(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    dispatch_inner(
+    crate::active_evm_runtime_host().dispatch_system_tx(
         storage,
         data,
         caller,
         value,
-        DispatchAuthorities { tee_attestation_v1 },
+        tee_attestation_v1,
     )
 }
 
@@ -92,15 +96,35 @@ pub(crate) fn dispatch_with_runtime(
     value: U256,
 ) -> Result<Bytes> {
     let SystemTxRuntime { tee_attestation_v1 } = runtime;
-    dispatch_inner(
+    crate::active_evm_runtime_host().dispatch_system_tx(
         storage,
         data,
         caller,
         value,
-        DispatchAuthorities { tee_attestation_v1 },
+        tee_attestation_v1,
     )
 }
 
+#[cfg(feature = "test-utils")]
+pub(crate) fn dispatch_system_tx_route(
+    storage: StorageHandle,
+    data: &[u8],
+    caller: Address,
+    value: U256,
+) -> Result<Bytes> {
+    dispatch_system_tx_domain(
+        storage,
+        data,
+        caller,
+        value,
+        SystemTxRuntime {
+            tee_attestation_v1:
+                &crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::Unbound,
+        },
+    )
+}
+
+#[cfg(feature = "test-utils")]
 type DispatchAuthorities<'a> = SystemTxRuntime<'a>;
 
 #[cfg(test)]
@@ -133,7 +157,8 @@ pub(crate) fn with_forced_dirty_system_precompile_revert<R>(
     f()
 }
 
-fn dispatch_inner(
+#[cfg(feature = "test-utils")]
+pub(crate) fn dispatch_system_tx_domain(
     storage: StorageHandle,
     data: &[u8],
     caller: Address,

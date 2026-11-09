@@ -126,6 +126,8 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub(super) resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
     /// Pre-verified signer indices per `LateFinalizeCredits` batch from `verify_late_finalize_credits_in_preexec`.
     pub(super) verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
+    /// Domain host captured when this executor is built.
+    pub(super) runtime_host: Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
@@ -208,6 +210,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             cached_phase1_input: None,
             resolved_begin_zone: None,
             verified_late_credit_signers: None,
+            runtime_host: crate::active_evm_runtime_host(),
         }
     }
 }

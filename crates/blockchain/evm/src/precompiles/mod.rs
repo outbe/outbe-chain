@@ -9,6 +9,7 @@ use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
 use revm::{primitives::hardfork::SpecId, Database};
 
 mod call_authority;
+pub use call_authority::MetadosisMutationCall;
 mod cancellation;
 pub(crate) use cancellation::ExecutionAbortBridge;
 mod dispatch;

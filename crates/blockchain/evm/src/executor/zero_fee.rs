@@ -109,7 +109,10 @@ where
 
 impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     pub(in crate::executor) fn sponsored_gas_fits(&self, gas_limit: u64) -> bool {
-        !outbe_zerofee::sponsored_gas_exceeds_block_budget(self.sponsored_gas_used, gas_limit)
+        !self
+            .runtime_host
+            .user_fee_policy()
+            .sponsored_gas_exceeds_block_budget(self.sponsored_gas_used, gas_limit)
     }
 
     /// Called only after inclusion of a transaction whose gas limit passed the fit check.

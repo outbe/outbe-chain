@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 /// Checks whether a precompile error is a user revert.
 #[must_use]
+#[cfg(feature = "test-utils")]
 pub(crate) const fn is_revert_error(error: &PrecompileError) -> bool {
     matches!(
         error,
@@ -270,7 +271,19 @@ impl SystemTxExpectationError {
     }
 }
 
-pub use outbe_stablecoinfactory::StablecoinVoteTargetError;
+/// Failures of the block-1 TEE bootstrap check that the runtime host owns.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TeeBootstrapHostError {
+    /// Canonical preflight rejected the payload.
+    #[error("invalid block-1 OST3 bootstrap payload: {0}")]
+    InvalidPayload(String),
+    /// The payload policy is not the policy resolved for this block.
+    #[error("block-1 OST3 policy does not match the immutable ChainSpec schedule")]
+    PolicyScheduleMismatch,
+    /// No runtime host is installed, so the bootstrap check cannot run.
+    #[error("evm runtime host is not installed")]
+    HostNotInstalled,
+}
 
 /// Errors that occur when a route dispatches a precompile call.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -304,31 +317,6 @@ impl From<PrecompileRouteError> for PrecompileError {
                 Self::Revert(error.to_string())
             }
         }
-    }
-}
-
-/// Errors that occur in the canonical ZK verifier precompile.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ZkPrecompileError {
-    #[error("{0}")]
-    DecodeVerifyCall(String),
-    #[error("zk verification backend failed: {0}")]
-    BackendFailed(String),
-}
-
-impl ZkPrecompileError {
-    pub(crate) fn decode_verify_call(error: impl Display) -> PrecompileError {
-        Self::DecodeVerifyCall(error.to_string()).into()
-    }
-
-    pub(crate) fn backend_failed(error: impl Display) -> PrecompileError {
-        Self::BackendFailed(error.to_string()).into()
-    }
-}
-
-impl From<ZkPrecompileError> for PrecompileError {
-    fn from(error: ZkPrecompileError) -> Self {
-        Self::Revert(error.to_string())
     }
 }
 
@@ -472,19 +460,9 @@ pub enum BeginBlockPrecompileError {
 }
 
 impl BeginBlockPrecompileError {
+    #[cfg(feature = "test-utils")]
     pub(crate) fn invalid_system_tx_input(error: impl Display) -> PrecompileError {
         Self::InvalidSystemTxInput(error.to_string()).into()
-    }
-
-    pub(crate) fn late_credit_proof_verify_failed(
-        fb_hash: B256,
-        error: impl Display,
-    ) -> PrecompileError {
-        Self::LateCreditProofVerifyFailed {
-            fb_hash,
-            reason: error.to_string(),
-        }
-        .into()
     }
 
     pub(crate) fn invalid_tee_chain_spec_authority(error: impl Display) -> PrecompileError {
@@ -493,25 +471,6 @@ impl BeginBlockPrecompileError {
 
     pub(crate) fn invalid_active_tee_policy(error: impl Display) -> PrecompileError {
         Self::InvalidActiveTeePolicy(error.to_string()).into()
-    }
-
-    pub(crate) fn tee_cannot_produce_signing_hash(error: impl Display) -> PrecompileError {
-        Self::TeeCannotProduceSigningHash(error.to_string()).into()
-    }
-
-    pub(crate) fn tee_cannot_reconstruct_evidence(
-        index: usize,
-        error: impl Display,
-    ) -> PrecompileError {
-        Self::TeeCannotReconstructEvidence {
-            index,
-            reason: error.to_string(),
-        }
-        .into()
-    }
-
-    pub(crate) fn tee_cannot_hash_authoritative_policy(error: impl Display) -> PrecompileError {
-        Self::TeeCannotHashAuthoritativePolicy(error.to_string()).into()
     }
 }
 

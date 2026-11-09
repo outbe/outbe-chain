@@ -419,6 +419,8 @@ pub struct OutbeEvmFactory {
     genesis_hash: B256,
     genesis_timestamp: u64,
     tee_attestation_v1: TeeAttestationChainSpecStateV1,
+    /// Installed host. `None` leaves the process-wide host in place.
+    runtime_host: Option<std::sync::Arc<dyn crate::EvmRuntimeHost>>,
 }
 
 impl core::fmt::Debug for OutbeEvmFactory {
@@ -428,6 +430,7 @@ impl core::fmt::Debug for OutbeEvmFactory {
             .field("genesis_hash", &self.genesis_hash)
             .field("genesis_timestamp", &self.genesis_timestamp)
             .field("tee_attestation_v1", &self.tee_attestation_v1)
+            .field("runtime_host", &self.runtime_host.is_some())
             .finish()
     }
 }
@@ -447,13 +450,21 @@ impl OutbeEvmFactory {
         self.genesis_hash
     }
 
-    pub const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
+    pub fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
         self.genesis_timestamp = genesis_timestamp;
         self
     }
 
-    pub const fn genesis_timestamp(&self) -> u64 {
+    pub fn genesis_timestamp(&self) -> u64 {
         self.genesis_timestamp
+    }
+
+    /// Stores `host` and installs it when no host is installed yet.
+    #[must_use]
+    pub fn with_runtime_host(mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        let _ = crate::install_evm_runtime_host(std::sync::Arc::clone(&host));
+        self.runtime_host = Some(host);
+        self
     }
 
     #[must_use]

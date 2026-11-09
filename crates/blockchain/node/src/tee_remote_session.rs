@@ -9,6 +9,8 @@
 use alloy_consensus::BlockHeader as _;
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
+    enclave_upgrade::EnclaveUpgradeV1,
+    error::PrecompileError,
     header::OutbeHeader,
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
@@ -17,6 +19,7 @@ use outbe_primitives::{
     tee_attestation_v1::{
         AttestationEvidenceV1, NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1,
     },
+    tee_registry_abi_v1::NodeEnclaveBindingV1,
 };
 use outbe_tee::{
     admit_remote_session_v1, construct_finalized_replacement_authorization_v1,
@@ -25,13 +28,163 @@ use outbe_tee::{
     RemoteSessionAdmissionError, RemoteSessionAdmissionV1, RemoteSessionExpectationV1,
     RemoteSessionTicketV1, TransportError,
 };
-use outbe_teeregistry::{NodeEnclaveBindingV1, TeeRegistry};
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
+
+#[cfg(not(test))]
+const READER_MISSING: &str = "tee session reader is not installed";
+
+/// Reads finalized Registry session state. Header and proof checks stay here.
+pub trait TeeSessionStateReader: Send + Sync {
+    fn node_binding(
+        &self,
+        storage: StorageHandle<'_>,
+        node_id: &NodeIdV1,
+    ) -> Result<Option<NodeEnclaveBindingV1>, PrecompileError>;
+
+    fn binding_admitted(
+        &self,
+        storage: StorageHandle<'_>,
+        binding: &NodeEnclaveBindingV1,
+        height: u64,
+    ) -> Result<bool, PrecompileError>;
+
+    fn binding_slots(
+        &self,
+        storage: StorageHandle<'_>,
+        node_id: &NodeIdV1,
+    ) -> Result<Vec<B256>, PrecompileError>;
+
+    fn retirement_height(&self, storage: StorageHandle<'_>) -> Result<u64, PrecompileError>;
+
+    fn successor(
+        &self,
+        storage: StorageHandle<'_>,
+    ) -> Result<Option<(U256, TeePolicyV1)>, PrecompileError>;
+
+    fn enclave_upgrade(
+        &self,
+        storage: StorageHandle<'_>,
+    ) -> Result<EnclaveUpgradeV1, PrecompileError>;
+}
+
+#[cfg(not(test))]
+struct UninstalledTeeSessionReader;
+
+#[cfg(not(test))]
+fn reader_missing() -> PrecompileError {
+    PrecompileError::Fatal(READER_MISSING.into())
+}
+
+#[cfg(not(test))]
+impl TeeSessionStateReader for UninstalledTeeSessionReader {
+    fn node_binding(
+        &self,
+        _storage: StorageHandle<'_>,
+        _node_id: &NodeIdV1,
+    ) -> Result<Option<NodeEnclaveBindingV1>, PrecompileError> {
+        Err(reader_missing())
+    }
+
+    fn binding_admitted(
+        &self,
+        _storage: StorageHandle<'_>,
+        _binding: &NodeEnclaveBindingV1,
+        _height: u64,
+    ) -> Result<bool, PrecompileError> {
+        Err(reader_missing())
+    }
+
+    fn binding_slots(
+        &self,
+        _storage: StorageHandle<'_>,
+        _node_id: &NodeIdV1,
+    ) -> Result<Vec<B256>, PrecompileError> {
+        Err(reader_missing())
+    }
+
+    fn retirement_height(&self, _storage: StorageHandle<'_>) -> Result<u64, PrecompileError> {
+        Err(reader_missing())
+    }
+
+    fn successor(
+        &self,
+        _storage: StorageHandle<'_>,
+    ) -> Result<Option<(U256, TeePolicyV1)>, PrecompileError> {
+        Err(reader_missing())
+    }
+
+    fn enclave_upgrade(
+        &self,
+        _storage: StorageHandle<'_>,
+    ) -> Result<EnclaveUpgradeV1, PrecompileError> {
+        Err(reader_missing())
+    }
+}
+
+#[cfg(test)]
+struct DomainTeeSessionReader;
+
+#[cfg(test)]
+impl TeeSessionStateReader for DomainTeeSessionReader {
+    fn node_binding(
+        &self,
+        storage: StorageHandle<'_>,
+        node_id: &NodeIdV1,
+    ) -> Result<Option<NodeEnclaveBindingV1>, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).node_enclave_binding_for_identity_v1(node_id)
+    }
+
+    fn binding_admitted(
+        &self,
+        storage: StorageHandle<'_>,
+        binding: &NodeEnclaveBindingV1,
+        height: u64,
+    ) -> Result<bool, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).binding_code_admitted_at_v1(binding, height)
+    }
+
+    fn binding_slots(
+        &self,
+        storage: StorageHandle<'_>,
+        node_id: &NodeIdV1,
+    ) -> Result<Vec<B256>, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).node_enclave_binding_storage_slots_v1(node_id)
+    }
+
+    fn retirement_height(&self, storage: StorageHandle<'_>) -> Result<u64, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).last_enclave_retirement_height_v1()
+    }
+
+    fn successor(
+        &self,
+        storage: StorageHandle<'_>,
+    ) -> Result<Option<(U256, TeePolicyV1)>, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).staged_successor_policy_v1()
+    }
+
+    fn enclave_upgrade(
+        &self,
+        storage: StorageHandle<'_>,
+    ) -> Result<EnclaveUpgradeV1, PrecompileError> {
+        outbe_teeregistry::TeeRegistry::new(storage).enclave_upgrade_v1()
+    }
+}
+
+fn active_tee_session_reader() -> &'static dyn TeeSessionStateReader {
+    #[cfg(test)]
+    {
+        &DomainTeeSessionReader
+    }
+    #[cfg(not(test))]
+    {
+        &UninstalledTeeSessionReader
+    }
+}
 
 /// Exact consensus-finalized number/hash read inside one node-owned Registry
 /// operation. It is deliberately private so callers cannot retain a once-valid
@@ -104,7 +257,7 @@ pub struct LocalFinalizedSuccessorStatusV1 {
     pub view: FinalizedRegistryViewV1,
     pub staged_proposal_id: Option<U256>,
     pub staged_policy: Option<TeePolicyV1>,
-    pub strict_upgrade: outbe_teeregistry::upgrade::EnclaveUpgradeV1,
+    pub strict_upgrade: EnclaveUpgradeV1,
     pub retirement_height: u64,
 }
 
@@ -250,18 +403,19 @@ where
             self.provider,
             self.chain.chain_id,
             self.chain.genesis_hash,
-            |view, registry| {
-                let source = registry
-                    .node_enclave_binding_for_identity_v1(&self.request.source_witness.node_id)
+            |view, reader, storage| {
+                let source = reader
+                    .node_binding(storage.clone(), &self.request.source_witness.node_id)
                     .map_err(registry_error)?
                     .ok_or(LocalRegistryAdmissionError::SourceBindingMissing)?;
-                let target = registry
-                    .node_enclave_binding_for_identity_v1(self.request.target_node)
+                let target = reader
+                    .node_binding(storage.clone(), self.request.target_node)
                     .map_err(registry_error)?
                     .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
 
                 if !binding_codes_admitted(
-                    registry,
+                    reader,
+                    storage.clone(),
                     view.block_number,
                     SessionBindings {
                         source: &source,
@@ -273,9 +427,8 @@ where
                     return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
                 }
 
-                let retirement_height = registry
-                    .last_enclave_retirement_height_v1()
-                    .map_err(registry_error)?;
+                let retirement_height =
+                    reader.retirement_height(storage).map_err(registry_error)?;
                 admit_remote_session_v1(
                     self.request.expected,
                     self.request.source_witness,
@@ -293,14 +446,15 @@ struct SessionBindings<'a> {
     target: &'a NodeEnclaveBindingV1,
 }
 fn binding_codes_admitted(
-    registry: &TeeRegistry<'_>,
+    reader: &dyn TeeSessionStateReader,
+    storage: StorageHandle<'_>,
     block_number: u64,
     bindings: SessionBindings<'_>,
 ) -> outbe_primitives::error::Result<bool> {
-    if !registry.binding_code_admitted_at_v1(bindings.source, block_number)? {
+    if !reader.binding_admitted(storage.clone(), bindings.source, block_number)? {
         return Ok(false);
     }
-    registry.binding_code_admitted_at_v1(bindings.target, block_number)
+    reader.binding_admitted(storage, bindings.target, block_number)
 }
 
 /// Issues the I5 opaque promotion capability from this node's exact
@@ -337,14 +491,19 @@ where
         node_data_dir,
         node_id,
     } = request;
-    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
-        let finalized_binding =
-            read_finalized_replacement_binding(view, registry, node_data_dir, node_id)?;
+    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, reader, storage| {
+        let finalized_binding = read_finalized_replacement_binding(
+            view,
+            reader,
+            storage.clone(),
+            node_data_dir,
+            node_id,
+        )?;
         let authorization =
             construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
                 .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-        let successor_activation_height = registry
-            .staged_successor_policy_v1()
+        let successor_activation_height = reader
+            .successor(storage)
             .map_err(registry_error)?
             .map(|(_, policy)| policy.activation_height);
         Ok(LocalFinalizedReplacementAuthorizationV1 {
@@ -366,12 +525,13 @@ fn valid_checkpoint_state(view: &FinalizedRegistryViewV1) -> bool {
 }
 fn read_finalized_replacement_binding(
     view: FinalizedRegistryViewV1,
-    registry: &TeeRegistry<'_>,
+    reader: &dyn TeeSessionStateReader,
+    storage: StorageHandle<'_>,
     node_data_dir: &Path,
     node_id: &NodeIdV1,
 ) -> Result<FinalizedReplacementBindingV1, LocalRegistryAdmissionError> {
-    let binding = registry
-        .node_enclave_binding_for_identity_v1(node_id)
+    let binding = reader
+        .node_binding(storage, node_id)
         .map_err(registry_error)?
         .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
     let submission = load_replacement_candidate_submission(node_data_dir)
@@ -443,10 +603,8 @@ where
         chain_id,
         genesis_hash,
     } = chain;
-    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
-        let staged = registry
-            .staged_successor_policy_v1()
-            .map_err(registry_error)?;
+    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, reader, storage| {
+        let staged = reader.successor(storage.clone()).map_err(registry_error)?;
         let (staged_proposal_id, staged_policy) = staged
             .map(|(proposal_id, policy)| (Some(proposal_id), Some(policy)))
             .unwrap_or((None, None));
@@ -454,10 +612,10 @@ where
             view,
             staged_proposal_id,
             staged_policy,
-            strict_upgrade: registry.enclave_upgrade_v1().map_err(registry_error)?,
-            retirement_height: registry
-                .last_enclave_retirement_height_v1()
+            strict_upgrade: reader
+                .enclave_upgrade(storage.clone())
                 .map_err(registry_error)?,
+            retirement_height: reader.retirement_height(storage).map_err(registry_error)?,
         })
     })
 }
@@ -468,7 +626,8 @@ fn with_local_finalized_registry<P, T>(
     genesis_hash: B256,
     inspect: impl FnOnce(
         FinalizedRegistryViewV1,
-        &TeeRegistry<'_>,
+        &dyn TeeSessionStateReader,
+        StorageHandle<'_>,
     ) -> Result<T, LocalRegistryAdmissionError>,
 ) -> Result<T, LocalRegistryAdmissionError>
 where
@@ -504,7 +663,7 @@ where
     };
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let registry = TeeRegistry::new(StorageHandle::new(&mut storage));
+    let handle = StorageHandle::new(&mut storage);
     let view = FinalizedRegistryViewV1 {
         chain_id: chain_id_word(chain_id),
         genesis_hash,
@@ -513,7 +672,7 @@ where
         state_root: header.state_root(),
         consensus_timestamp: header.timestamp(),
     };
-    inspect(view, &registry)
+    inspect(view, active_tee_session_reader(), handle)
 }
 
 fn finalized_header_identity_matches(
@@ -553,17 +712,19 @@ pub fn admit_anchored_remote_session_v1(
         chain_id,
         checkpoint.view.genesis_hash,
     );
-    let registry = TeeRegistry::new(StorageHandle::new(&mut storage));
-    let source = registry
-        .node_enclave_binding_for_identity_v1(&source_witness.node_id)
+    let session = active_tee_session_reader();
+    let handle = StorageHandle::new(&mut storage);
+    let source = session
+        .node_binding(handle.clone(), &source_witness.node_id)
         .map_err(ExternalRegistryAdmissionError::registry)?
         .ok_or(ExternalRegistryAdmissionError::SourceBindingMissing)?;
-    let target = registry
-        .node_enclave_binding_for_identity_v1(target_node)
+    let target = session
+        .node_binding(handle.clone(), target_node)
         .map_err(ExternalRegistryAdmissionError::registry)?
         .ok_or(ExternalRegistryAdmissionError::TargetBindingMissing)?;
     if !binding_codes_admitted(
-        &registry,
+        session,
+        handle.clone(),
         checkpoint.view.block_number,
         SessionBindings {
             source: &source,
@@ -574,8 +735,8 @@ pub fn admit_anchored_remote_session_v1(
     {
         return Err(RemoteSessionAdmissionError::RetiredEnclave.into());
     }
-    let retirement_height = registry
-        .last_enclave_retirement_height_v1()
+    let retirement_height = session
+        .retirement_height(handle)
         .map_err(registry_error_external)?;
     admit_remote_session_v1(
         expected,
@@ -600,13 +761,14 @@ fn verify_registry_binding_proof(
         chain_id,
         checkpoint.view.genesis_hash,
     );
-    let layout_registry = TeeRegistry::new(StorageHandle::new(&mut layout_storage));
-    let mut slots = layout_registry
-        .node_enclave_binding_storage_slots_v1(&request.source_witness.node_id)
+    let session = active_tee_session_reader();
+    let layout = StorageHandle::new(&mut layout_storage);
+    let mut slots = session
+        .binding_slots(layout.clone(), &request.source_witness.node_id)
         .map_err(ExternalRegistryAdmissionError::slot_plan)?;
     slots.extend(
-        layout_registry
-            .node_enclave_binding_storage_slots_v1(request.target_node)
+        session
+            .binding_slots(layout, request.target_node)
             .map_err(ExternalRegistryAdmissionError::slot_plan)?,
     );
     slots.sort_unstable();

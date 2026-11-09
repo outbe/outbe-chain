@@ -31,7 +31,8 @@ where
         self.validate_user_tx_gas_bounds(tx.gas_limit())?;
 
         let zero_fee_tx = zero_fee_transaction(tx, signer);
-        let candidate = match outbe_zerofee::registry().classify(&zero_fee_tx) {
+        let candidate = self.runtime_host.user_fee_policy().classify(&zero_fee_tx);
+        let candidate = match candidate {
             Ok(candidate) => candidate,
             Err(error) => return self.include_zero_fee_soft_failure(tx, error),
         };
@@ -41,7 +42,13 @@ where
 
         // Preserve the signer read before both bootstrap and paid routing.
         let account = self.read_fee_route_account(signer, ctx.clone())?;
-        if waiver::bootstrap_fee_waiver_authorized(tx, signer, ctx.chain_id, &account) {
+        if waiver::bootstrap_fee_waiver_authorized(
+            self.runtime_host.user_fee_policy(),
+            tx,
+            signer,
+            ctx.chain_id,
+            &account,
+        ) {
             let gas_limit = tx.gas_limit();
             return if self.sponsored_gas_fits(gas_limit) {
                 let result = self.execute_without_user_fee(tx_env, recovered, f);
@@ -57,8 +64,12 @@ where
         let delegated_to = self.fee_route_delegation(account)?;
         // Delegation is additive: an envelope that opts into paid execution
         // still takes the normal fee path, even when sponsorship is exhausted.
-        let wants_sponsorship = delegated_to == Some(outbe_zerofee::ZEROFEE_ADDRESS)
-            && outbe_zerofee::classify_sponsorship(&zero_fee_tx).is_ok();
+        let wants_sponsorship = delegated_to == Some(outbe_primitives::addresses::ZEROFEE_ADDRESS)
+            && self
+                .runtime_host
+                .user_fee_policy()
+                .classify_sponsorship(&zero_fee_tx)
+                .is_ok();
         if wants_sponsorship {
             return self.execute_sponsored_transaction(ctx, tx_env, recovered, f);
         }
@@ -95,7 +106,7 @@ where
     fn include_zero_fee_soft_failure(
         &mut self,
         tx: &TransactionSigned,
-        error: outbe_zerofee::ZeroFeePolicyError,
+        error: outbe_primitives::zero_fee_types::ZeroFeePolicyError,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let block_gas_limit = self.inner.evm.block().gas_limit();
         let used = self.accounted_block_gas();

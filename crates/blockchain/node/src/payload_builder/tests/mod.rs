@@ -112,8 +112,8 @@ fn active_set_hash(addresses: &[alloy_primitives::Address]) -> B256 {
 fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B256) {
     let active_set = vec![proposer];
     let vrf_group_public_key_bytes = vec![0x42u8; 96];
-    let snapshot = outbe_validatorset::CommitteeSnapshot {
-        committee: vec![outbe_validatorset::CommitteeEntry {
+    let snapshot = outbe_primitives::committee_snapshot::CommitteeSnapshot {
+        committee: vec![outbe_primitives::committee_snapshot::CommitteeEntry {
             address: proposer,
             consensus_pubkey: TEST_CONSENSUS_PUBLIC_KEY,
         }],
@@ -121,7 +121,8 @@ fn genesis_boundary_artifacts(proposer: alloy_primitives::Address) -> (Bytes, B2
         vrf_group_public_key_bytes: vrf_group_public_key_bytes.clone(),
         vrf_public_polynomial_hash: B256::ZERO,
     };
-    let committee_snapshot_hash = outbe_validatorset::committee_set_hash_v2(0, &snapshot);
+    let committee_snapshot_hash =
+        outbe_primitives::committee_snapshot::committee_set_hash_v2(0, &snapshot);
     let artifacts = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
         radicle_publication_enabled: false,
         radicle_publication: None,

@@ -9,12 +9,16 @@ use crate::{
     payload_builder::OutbePayloadBuilder,
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
-use outbe_evm::{OutbeExecutorBuilder, SharedOutbeEvmSigner};
+use std::sync::{Arc, Mutex};
+
+use outbe_evm::{
+    install_evm_runtime_host, EvmRuntimeHost, OutbeExecutorBuilder, SharedOutbeEvmSigner,
+};
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
     OutbeTxEnvelope,
 };
-use outbe_txpool::OutbePoolBuilder;
+use outbe_txpool::{install_txpool_zero_fee_policy, OutbePoolBuilder, TxPoolZeroFeePolicy};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_ethereum::node::node::EthereumEthApiBuilder;
 use reth_ethereum::node::EthereumNetworkBuilder;
@@ -88,6 +92,39 @@ impl OutbeNode {
         self.shutdown = shutdown;
         self
     }
+
+    /// Stashes `host` until [`Node::components_builder`] installs it.
+    ///
+    /// `OutbeNode` has no host field. An external struct literal constructs it,
+    /// so the pending value lives in a process-wide lock.
+    #[must_use]
+    pub fn with_runtime_host(self, host: Arc<dyn EvmRuntimeHost>) -> Self {
+        *pending_host()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(host);
+        self
+    }
+
+    /// Stashes `policy` until [`Node::components_builder`] installs it.
+    ///
+    /// An unset policy leaves the pool on its normal-fee default.
+    #[must_use]
+    pub fn with_pool_policy(self, policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
+        *pending_pool()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(policy);
+        self
+    }
+}
+
+fn pending_host() -> &'static Mutex<Option<Arc<dyn EvmRuntimeHost>>> {
+    static PENDING: Mutex<Option<Arc<dyn EvmRuntimeHost>>> = Mutex::new(None);
+    &PENDING
+}
+
+fn pending_pool() -> &'static Mutex<Option<Arc<dyn TxPoolZeroFeePolicy>>> {
+    static PENDING: Mutex<Option<Arc<dyn TxPoolZeroFeePolicy>>> = Mutex::new(None);
+    &PENDING
 }
 
 impl NodeTypes for OutbeNode {
@@ -127,6 +164,24 @@ where
             Some(signer) => executor.with_evm_signer(signer.clone()),
             None => executor,
         };
+        let executor = match pending_host()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+        {
+            Some(host) => {
+                let _ = install_evm_runtime_host(Arc::clone(&host));
+                executor.with_runtime_host(host)
+            }
+            None => executor,
+        };
+        if let Some(policy) = pending_pool()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+        {
+            let _ = install_txpool_zero_fee_policy(policy);
+        }
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(OutbePoolBuilder)

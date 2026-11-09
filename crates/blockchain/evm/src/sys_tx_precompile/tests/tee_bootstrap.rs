@@ -266,7 +266,7 @@ fn run_bootstrap_v1(provider: &mut HashMapStorageProvider, payload: TeeBootstrap
     );
     provider.enter(|storage| {
         let input = SystemTx::TeeBootstrap { payload }.encode().unwrap();
-        dispatch_inner(
+        dispatch_system_tx_domain(
             storage,
             &input,
             SYSTEM_ADDRESS,

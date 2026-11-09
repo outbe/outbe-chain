@@ -30,11 +30,13 @@ where
         }
         let signer = *recovered.signer();
         // Authorization is a read. Persist the counter only after inclusion.
+        let host = self.runtime_host.clone();
         let authorized = {
             let db = self.inner.evm.db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx.clone());
             let storage = StorageHandle::new(&mut provider);
-            outbe_zerofee::authorize_sponsorship(storage, signer, ctx.timestamp)
+            host.user_fee_policy()
+                .authorize_sponsorship(storage, signer, ctx.timestamp)
         };
         let authorization = match authorized {
             Ok(auth) => auth,
@@ -53,11 +55,12 @@ where
             let mut provider = DirectStorageProvider::new(db, ctx);
             let recorded = {
                 let storage = StorageHandle::new(&mut provider);
-                outbe_zerofee::record_sponsorship_use(storage, authorization)
+                host.user_fee_policy()
+                    .record_sponsorship_use(storage, authorization)
             };
             if let Err(err) = recorded {
                 return Err(match err {
-                    outbe_zerofee::ZeroFeePolicyError::Storage(reason) => {
+                    outbe_primitives::zero_fee_types::ZeroFeePolicyError::Storage(reason) => {
                         BlockExecutionError::other(
                             crate::errors::ExecutorStorageError::sponsored_quota_write(reason),
                         )

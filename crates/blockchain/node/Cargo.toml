@@ -14,10 +14,7 @@ test-utils = ["outbe-primitives/test-utils"]
 outbe-evm.workspace = true
 outbe-primitives.workspace = true
 outbe-txpool.workspace = true
-outbe-oracle.workspace = true
 outbe-tee.workspace = true
-outbe-teeregistry.workspace = true
-outbe-validatorset.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "cli"] }
@@ -98,6 +95,8 @@ outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 reth-trie = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
+outbe-teeregistry.workspace = true
+outbe-evm = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

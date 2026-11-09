@@ -1,4 +1,5 @@
 use crate::signer::SharedOutbeEvmSigner;
+use crate::EvmRuntimeHost;
 
 use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
@@ -25,6 +26,8 @@ pub struct OutbeExecutorBuilder {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Optional validator EVM signer, injected by the node binary in validator mode.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
+    /// Host installed before the config constructors run. `None` does not install.
+    pub runtime_host: Option<Arc<dyn EvmRuntimeHost>>,
 }
 
 impl std::fmt::Debug for OutbeExecutorBuilder {
@@ -35,6 +38,7 @@ impl std::fmt::Debug for OutbeExecutorBuilder {
                 "evm_signer",
                 &self.evm_signer.as_ref().map(|signer| signer.address()),
             )
+            .field("runtime_host", &self.runtime_host.is_some())
             .finish()
     }
 }
@@ -45,7 +49,15 @@ impl OutbeExecutorBuilder {
         Self {
             bridge: Some(bridge),
             evm_signer: None,
+            runtime_host: None,
         }
+    }
+
+    /// Remembers `host` so [`Self::build_evm`] installs it before config construction.
+    #[must_use]
+    pub fn with_runtime_host(mut self, host: Arc<dyn EvmRuntimeHost>) -> Self {
+        self.runtime_host = Some(host);
+        self
     }
 
     pub fn with_evm_signer(mut self, signer: SharedOutbeEvmSigner) -> Self {
@@ -70,6 +82,9 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        if let Some(host) = self.runtime_host.clone() {
+            let _ = crate::install_evm_runtime_host(host);
+        }
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node
@@ -95,8 +110,12 @@ where
             ),
         };
 
-        Ok(match self.evm_signer {
+        let config = match self.evm_signer {
             Some(signer) => config.with_evm_signer(signer),
+            None => config,
+        };
+        Ok(match self.runtime_host {
+            Some(host) => config.with_runtime_host(host),
             None => config,
         })
     }

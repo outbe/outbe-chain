@@ -275,7 +275,7 @@ impl DispatchCall<'_> {
         if admission.protocol_cycle_call {
             let active_utc_day = {
                 let storage = StorageHandle::new(provider);
-                outbe_cycle::handler::derive_active_utc_day(
+                crate::active_evm_runtime_host().derive_active_utc_day(
                     storage,
                     runtime.genesis_timestamp,
                     self.timestamp,
