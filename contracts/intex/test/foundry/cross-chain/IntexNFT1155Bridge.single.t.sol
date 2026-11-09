@@ -9,7 +9,6 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
-import {RejectingReceiver} from "@test-mocks/RejectingReceiver.sol";
 
 /// @title IntexNFT1155BridgeSingleTest
 /// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
@@ -227,46 +226,6 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         // Verify state is identical on chain B
         IIntexNFT1155.SeriesData memory dataB = tokenB.readData(SERIES_ID);
         assertEq(uint8(dataB.state), uint8(IIntexNFT1155.IntexState.Issued));
-    }
-
-    // --- sweepNative Tests ---
-    function test_sweepNative_success() public {
-        vm.deal(address(adapterA), 4 ether);
-        address payable recipient = payable(address(0xBEEF));
-        uint256 before = recipient.balance;
-
-        adapterA.sweepNative(recipient, 4 ether);
-
-        assertEq(recipient.balance - before, 4 ether);
-        assertEq(address(adapterA).balance, 0);
-    }
-
-    function test_sweepNative_revert_zeroTo() public {
-        vm.deal(address(adapterA), 1 ether);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "to"));
-        adapterA.sweepNative(payable(address(0)), 1 ether);
-    }
-
-    function test_sweepNative_revert_insufficientBalance() public {
-        vm.deal(address(adapterA), 1 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155Bridge.NativeBalanceInsufficient.selector, 1 ether, 2 ether)
-        );
-        adapterA.sweepNative(payable(address(0xBEEF)), 2 ether);
-    }
-
-    function test_sweepNative_revert_failedCall() public {
-        vm.deal(address(adapterA), 1 ether);
-        RejectingReceiver rejector = new RejectingReceiver();
-        vm.expectRevert(IIntexNFT1155Bridge.NativeSweepFailed.selector);
-        adapterA.sweepNative(payable(address(rejector)), 1 ether);
-    }
-
-    function test_sweepNative_revert_unauthorized() public {
-        vm.deal(address(adapterA), 1 ether);
-        vm.prank(user);
-        vm.expectRevert();
-        adapterA.sweepNative(payable(address(0xBEEF)), 1 ether);
     }
 
     // --- Inbound crosschainMint isolation ---

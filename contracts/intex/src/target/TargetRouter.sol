@@ -427,20 +427,6 @@ contract TargetRouter is
         emit ProceedsRouted(emissionDay, chunkIndex, amount);
     }
 
-    /// @inheritdoc ITargetRouter
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
-    }
-
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
         return super.supportsInterface(interfaceId);

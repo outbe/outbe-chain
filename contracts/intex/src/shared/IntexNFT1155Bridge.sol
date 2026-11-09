@@ -344,18 +344,4 @@ contract IntexNFT1155Bridge is
             IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
         );
     }
-
-    /// @inheritdoc IIntexNFT1155Bridge
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
-    }
 }

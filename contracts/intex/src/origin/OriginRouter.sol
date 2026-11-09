@@ -580,20 +580,6 @@ contract OriginRouter is
         return super.supportsInterface(interfaceId);
     }
 
-    /// @inheritdoc IOriginRouter
-    function sweepNative(address payable to, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (to == address(0)) revert ZeroAddress("to");
-        uint256 balance = address(this).balance;
-        if (amount > balance) revert NativeBalanceInsufficient(balance, amount);
-
-        // admin-only native recovery. The arbitrary destination is intentional.
-        // slither-disable-next-line arbitrary-send-eth
-        (bool ok,) = to.call{value: amount}("");
-        if (!ok) revert NativeSweepFailed();
-
-        emit NativeSwept(to, amount);
-    }
-
     // --- Proceeds route ---
     /// @inheritdoc IOriginRouter
     function setProceedsRoute(address _tokenBridge, address _wcoen) external onlyRole(DEFAULT_ADMIN_ROLE) {
