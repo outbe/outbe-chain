@@ -4,7 +4,22 @@ use crate::ICycle;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
+use outbe_rewards::accounting::AccountingProgressError;
 use thiserror::Error;
+
+impl From<AccountingProgressError> for CycleError {
+    fn from(error: AccountingProgressError) -> Self {
+        match error {
+            AccountingProgressError::ZeroBlockNumber => Self::ZeroAccountingProgress,
+            AccountingProgressError::BlockNumberRegression { current, attempted } => {
+                Self::BlockNumberRegression { current, attempted }
+            }
+            AccountingProgressError::BlockNumberGap { current, attempted } => {
+                Self::AccountingProgressGap { current, attempted }
+            }
+        }
+    }
+}
 
 /// Represents errors returned by the ProtocolCycle runtime.
 #[derive(Debug, Error, PartialEq, Eq)]

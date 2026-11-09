@@ -41,79 +41,12 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     error::Result,
 };
-use tracing::trace;
 
-use crate::errors::CycleError;
-use crate::schema::Accounting;
 use crate::triggers::TriggerSpec;
 
-/// Reads `last_accounted_block_number` from EVM storage.
-///
-/// Returns `0` on a fresh chain that has not yet committed any V2 Phase 1
-/// (the underlying EVM slot defaults to `U256::ZERO`).
-pub(crate) fn last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u64> {
-    let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
-    accounting.last_accounted_block_number.read()
-}
-
-/// Writes `last_accounted_block_number` to EVM storage. The V2 executor
-/// Phase 1 path is the only intended caller.
-///
-/// The function takes a `BlockRuntimeContext`, not a raw `StorageHandle`.
-/// Thus the storage scope stays bound to the same block whose Phase 1 is
-/// committing. This prevents accidental cross-block writes.
-pub(crate) fn set_last_accounted_block_number(
-    ctx: &BlockRuntimeContext,
-    block_number: u64,
-) -> Result<()> {
-    let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
-    accounting.last_accounted_block_number.write(block_number)
-}
-
-/// Records exact V2 Phase 1 progress for `block_number`.
-///
-/// Input `0` returns [`CycleError::ZeroAccountingProgress`] and does not
-/// read or write the progress slot. A lower height returns
-/// [`CycleError::BlockNumberRegression`]. A positive height equal to the
-/// stored height returns `Ok` and does not write or log. The only write is
-/// the exact successor `current + 1`, including the first commit `0 -> 1`.
-/// Any other forward height returns [`CycleError::AccountingProgressGap`]
-/// and does not write or log.
-pub fn record_phase1_progress(ctx: &BlockRuntimeContext, block_number: u64) -> Result<()> {
-    if block_number == 0 {
-        return Err(CycleError::ZeroAccountingProgress.into());
-    }
-    let current = last_accounted_block_number(ctx)?;
-    if block_number < current {
-        return Err(CycleError::BlockNumberRegression {
-            current,
-            attempted: block_number,
-        }
-        .into());
-    }
-    if block_number == current {
-        return Ok(());
-    }
-    if current.checked_add(1) != Some(block_number) {
-        return Err(CycleError::AccountingProgressGap {
-            current,
-            attempted: block_number,
-        }
-        .into());
-    }
-    trace!(
-        target: "outbe::accounting",
-        block_number,
-        "recording V2 Phase 1 accounting progress",
-    );
-    set_last_accounted_block_number(ctx, block_number)
-}
-
-/// Reads `last_accounted_block_number` from EVM storage. Returns `0` on a
-/// fresh chain that has not yet committed any V2 Phase 1.
-pub fn read_last_accounted_block_number(ctx: &BlockRuntimeContext) -> Result<u64> {
-    last_accounted_block_number(ctx)
-}
+pub use outbe_rewards::accounting::{
+    read_last_accounted_block_number, record_phase1_progress, AccountingProgressError,
+};
 
 /// deterministic accounting window for a Cycle trigger.
 ///

@@ -15,10 +15,12 @@
 //! paths so external callers (RPC, executor, builder, validator set)
 //! keep compiling without a sweeping rename. Migrate call sites
 //! opportunistically when next touched, then drop the re-exports.
+pub mod accounting;
 pub mod api;
 pub mod block_fees;
 pub mod constants;
 pub mod errors;
+pub mod finalization;
 pub mod finalized_metadata_hook;
 pub mod lifecycle;
 pub mod precompile;
@@ -27,6 +29,14 @@ pub mod schema;
 #[cfg(test)]
 mod test_support;
 
+pub use accounting::{
+    read_last_accounted_block_number, record_phase1_progress, Accounting, AccountingProgressError,
+};
+pub use errors::FinalizationError;
+pub use finalization::{
+    authenticate_late_credit, run_finalization_and_slashing, run_late_finalize_credits,
+    validate_finalized_metadata,
+};
 pub use lifecycle::RewardsModule;
 
 /// Delegate absent-voter penalties after the executor resolves the canonical snapshot.
