@@ -19,7 +19,7 @@ abstract contract OriginStageSendGasBase is Test {
     uint32 internal constant BSC = 97;
     uint32 internal constant SEPOLIA = 11155111;
     uint32 internal constant OUTBE = 54322345;
-    uint32 internal constant DAY = 20261201;
+    uint32 internal constant DAY = 20991201;
 
     function setUp() public virtual {
         string memory rpc = vm.envOr("OUTBE_TESTNET_RPC_URL", string(""));
@@ -31,16 +31,16 @@ abstract contract OriginStageSendGasBase is Test {
         vm.deal(address(ROUTER), 1_000 ether);
     }
 
-    function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
+    function _params(uint32 day) internal view returns (IOriginRouter.AuctionStageStartParams memory p) {
         uint16[6] memory isoCodes = [uint16(840), 978, 392, 826, 156, 344];
         p.prices = new IOriginRouter.ReferenceCurrencyPrice[](isoCodes.length);
         for (uint256 i; i < isoCodes.length; ++i) {
             p.prices[i] = IOriginRouter.ReferenceCurrencyPrice(isoCodes[i], 2_000_000, 3_000_000);
         }
         p.emissionDay = day;
-        p.commitEnd = 1_796_169_600;
-        p.revealEnd = 1_796_256_000;
-        p.issuanceEnd = 1_796_342_400;
+        p.commitEnd = uint32(block.timestamp + 1 days);
+        p.revealEnd = uint32(block.timestamp + 2 days);
+        p.issuanceEnd = uint32(block.timestamp + 3 days);
         p.promisLoadMinor = 1e12;
         p.minIntexBidRate = 1_000_000;
         p.callNoticePeriod = 86_400;
