@@ -621,22 +621,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@openzeppelin/contracts-upgradeable@npm:5.6.1":
-  version: 5.6.1
-  resolution: "@openzeppelin/contracts-upgradeable@npm:5.6.1"
-  peerDependencies:
-    "@openzeppelin/contracts": 5.6.1
-  checksum: 10c0/049633532c1b39bbd15dd5be0fd43f7cd1052b6fef4a9925e5caa22886b23dc937daa7410560486699cd90eca928cb8c5c26ec7c623f2b964acb3abeb4254003
-  languageName: node
-  linkType: hard
-
-"@openzeppelin/contracts@npm:5.6.1":
-  version: 5.6.1
-  resolution: "@openzeppelin/contracts@npm:5.6.1"
-  checksum: 10c0/f00ecd2b63ca99361e772a9355a587345a2b2af8ead3e88996e0bd1eef89221c3f762cfb77632c1a6ea866a5d3bc030eea1790bd9d326d8ad71f8edee20a5b37
-  languageName: node
-  linkType: hard
-
 "@openzeppelin/upgrades-core@npm:1.46.0":
   version: 1.46.0
   resolution: "@openzeppelin/upgrades-core@npm:1.46.0"
@@ -663,13 +647,10 @@ __metadata:
   resolution: "@outbe/intex-contracts@workspace:."
   dependencies:
     "@nomicfoundation/hardhat-keystore": "npm:^3.0.0"
-    "@openzeppelin/contracts": "npm:5.6.1"
-    "@openzeppelin/contracts-upgradeable": "npm:5.6.1"
     "@openzeppelin/upgrades-core": "npm:1.46.0"
     "@types/node": "npm:^22.17.2"
     dotenv: "npm:^17.2.2"
     ethers: "npm:^6.14.0"
-    forge-std: "https://github.com/foundry-rs/forge-std.git#v1.9.4"
     fp-ts: "npm:^2.16.9"
     hardhat: "npm:^3.0.0"
     solhint: "npm:^6.0.1"
@@ -1817,13 +1798,6 @@ __metadata:
   dependencies:
     is-callable: "npm:^1.2.7"
   checksum: 10c0/0e0b50f6a843a282637d43674d1fb278dda1dd85f4f99b640024cfb10b85058aac0cc781bf689d5fe50b4b7f638e91e548560723a4e76e04fe96ae35ef039cee
-  languageName: node
-  linkType: hard
-
-"forge-std@https://github.com/foundry-rs/forge-std.git#v1.9.4":
-  version: 1.9.4
-  resolution: "forge-std@https://github.com/foundry-rs/forge-std.git#commit=1eea5bae12ae557d589f9f0f0edae2faa47cb262"
-  checksum: 10c0/dfd1917b83fe53c09df889df71d75b149454e09067ea1a1723ec7fdd67f319d99066d3fc3efbb8f9b712d42607f697b44a77f4321bf356d6a08de852106b2c19
   languageName: node
   linkType: hard
 
