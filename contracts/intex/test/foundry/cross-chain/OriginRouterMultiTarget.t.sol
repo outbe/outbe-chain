@@ -77,6 +77,17 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.addTarget(TARGET_A);
     }
 
+    function test_addTarget_revert_aboveSixteen() public {
+        for (uint32 chainId = 100; chainId < 114; ++chainId) {
+            origin.setRemoteMessenger(chainId, _interop(chainId, peerA));
+            origin.addTarget(chainId);
+        }
+        assertEq(origin.targets().length, 16);
+        origin.setRemoteMessenger(114, _interop(114, peerA));
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.TooManyTargets.selector, uint256(16)));
+        origin.addTarget(114);
+    }
+
     function test_removeTarget_swapPop() public {
         origin.removeTarget(TARGET_A);
         assertFalse(origin.isTarget(TARGET_A));

@@ -39,6 +39,8 @@ contract OriginRouter is
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
     /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
+    /// @dev The Desis work budgets are measured with this many targets.
+    uint256 internal constant MAX_TARGETS = 16;
 
     /// @custom:storage-location erc7201:outbe.intex.OriginRouter
     struct OriginRouterStorage {
@@ -148,6 +150,7 @@ contract OriginRouter is
         _remoteMessenger(chainId);
         OriginRouterStorage storage $ = _os();
         if ($.targetIndexPlus1[chainId] != 0) revert TargetAlreadyRegistered(chainId);
+        if ($.targetChainIds.length == MAX_TARGETS) revert TooManyTargets(MAX_TARGETS);
         $.targetChainIds.push(chainId);
         $.targetIndexPlus1[chainId] = $.targetChainIds.length; // 1-based
         emit TargetAdded(chainId);

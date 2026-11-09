@@ -206,6 +206,8 @@ interface IOriginRouter {
     error ZeroChainId();
     /// @notice Chain is already a registered target.
     error TargetAlreadyRegistered(uint32 chainId);
+    /// @notice The registry already holds the maximum number of targets.
+    error TooManyTargets(uint256 max);
     /// @notice Chain is not a registered target.
     error TargetNotRegistered(uint32 chainId);
     /// @notice No targets are registered, so a broadcast has no destinations.
@@ -249,7 +251,7 @@ interface IOriginRouter {
     function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
     /// @notice Register `chainId` as an auction target. Its peer messenger must already be set.
-    ///         Restricted to admin.
+    ///         At most 16 targets. Restricted to admin.
     function addTarget(uint32 chainId) external;
     /// @notice Deregister `chainId` as an auction target (swap-pop). In-flight series keep their own snapshot.
     ///         Restricted to admin.
