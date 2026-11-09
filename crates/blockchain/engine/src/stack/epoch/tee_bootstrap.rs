@@ -15,6 +15,7 @@ pub(super) struct TeeStartup<'a, E: Clock> {
     pub(super) genesis_dkg_boundary_artifact: &'a Option<DkgBoundaryArtifact>,
     pub(super) tee_dkg_round0: Option<Subchannel<E>>,
     pub(super) tee_bootstrap_round0: Option<Subchannel<E>>,
+    pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
 }
 
 pub(super) async fn prepare_tee<E>(ctx: &E, startup: TeeStartup<'_, E>) -> Result<()>
@@ -44,6 +45,7 @@ where
         genesis_dkg_boundary_artifact,
         mut tee_dkg_round0,
         mut tee_bootstrap_round0,
+        protocol,
     } = startup;
     // -- 7b. One-time TEE DKG + bootstrap coordination (startup, like the DKG) --
     // On a fresh chain (no executed blocks yet), this validator must run the TEE
@@ -276,6 +278,7 @@ where
             require_shareless_resident_offer_key()?;
         } else {
             verify_restarted_validator_holds_chain_offer_key(
+                protocol,
                 proposer_evm_address,
                 node,
                 &socket,
@@ -347,6 +350,7 @@ fn require_shareless_resident_offer_key() -> Result<()> {
 
 /// A restarted active validator must hold the on-chain offer key in its enclave.
 fn verify_restarted_validator_holds_chain_offer_key(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     proposer_evm_address: Option<EthAddress>,
     node: &OutbeFullNode,
     socket: &std::path::Path,
@@ -356,7 +360,7 @@ fn verify_restarted_validator_holds_chain_offer_key(
     // pre-V1 delivery protocol.
     let _my_validator = proposer_evm_address
         .ok_or(crate::errors::StackEpochError::ActiveValidatorStartupRequiresEvmIdentity)?;
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, &node.provider)
         .wrap_err("failed to read the mandatory on-chain TEE offer key")?;
     if on_chain_offer.is_zero() {
         return Err(

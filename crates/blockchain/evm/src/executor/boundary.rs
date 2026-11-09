@@ -71,17 +71,13 @@ pub mod marker_addresses {
 /// - mismatch + `is_validator_set_change == false` -> fatal.
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn apply_boundary_outcome(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
-    crate::active_evm_runtime_host().apply_boundary_outcome(
-        storage,
-        boundary,
-        block_number,
-        timestamp,
-    )
+    host.apply_boundary_outcome(storage, boundary, block_number, timestamp)
 }
 
 /// Resets outgoing-epoch counters only for a block that actually carries the
@@ -89,11 +85,12 @@ pub(crate) fn apply_boundary_outcome(
 /// LateFinalizeCredits. The BoundaryOutcome later advances epoch/set/snapshot
 /// without erasing misses recorded by that earlier phase.
 pub(crate) fn prepare_boundary_epoch_counters(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     boundary: &outbe_primitives::consensus::DkgBoundaryArtifact,
     block_number: u64,
 ) -> outbe_primitives::error::Result<()> {
-    crate::active_evm_runtime_host().prepare_boundary(storage, boundary, block_number)
+    host.prepare_boundary(storage, boundary, block_number)
 }
 
 #[cfg(test)]
@@ -149,10 +146,11 @@ where
         let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
             .map_err(ExecutorValidationError::from)?;
         let ctx = self.block_context(block_number, timestamp, proposer);
+        let host = std::sync::Arc::clone(&self.runtime_host);
         let db = self.inner.evm.db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
-        let host = crate::active_evm_runtime_host();
+        let host = host.as_ref();
         let map_identity = |error: PrecompileError| {
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)

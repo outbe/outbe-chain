@@ -131,8 +131,9 @@ where
             let witness_state = self.witness_state.clone();
             let base_extra_data = self.block_extra_data.clone();
             let ctx = self.block_context(block_number, timestamp, proposer);
+            let host = std::sync::Arc::clone(&self.runtime_host);
             let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(db, ctx)?;
+            let ctx = build_block_context(host.as_ref(), db, ctx)?;
             let _ = run_atomic_storage_hooks_with_pre_flush(
                 db,
                 ctx,
@@ -141,12 +142,14 @@ where
                         block_artifacts.consensus_header_artifact.as_ref()
                     {
                         prepare_boundary_epoch_counters(
+                            host.as_ref(),
                             hook_ctx.storage.clone(),
                             boundary,
                             block_number,
                         )?;
                     }
                     crate::genesis::validate_genesis_state_for_regime(
+                        host.as_ref(),
                         hook_ctx.block.regime(),
                         hook_ctx.storage.clone(),
                         genesis_validators.as_ref(),

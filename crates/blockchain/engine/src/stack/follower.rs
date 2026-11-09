@@ -49,6 +49,7 @@ pub(in crate::stack) struct ValidatorBootstrap {
     pub(in crate::stack) local_key_in_genesis_validator_set: bool,
     pub(in crate::stack) dkg_rotation_params: DkgRotationParams,
     pub(in crate::stack) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+    pub(in crate::stack) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 impl ValidatorBootstrap {
@@ -82,15 +83,23 @@ impl ValidatorBootstrap {
             .block_hash(height)?
             .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
         let state = node.provider.state_by_block_hash(hash)?;
-        let on_chain_offer = validators::read_tee_offer_public_from_state(&state)?;
+        let on_chain_offer =
+            validators::read_tee_offer_public_from_state(self.protocol.as_ref(), &state)?;
         let resident_offer = outbe_tee::resident_offer_public_key_state_v1()?;
-        let local_key_in_validator_set =
-            validators::read_consensus_validators_at_block(&node.provider, hash)?
-                .public_keys
-                .contains(&self.local_consensus_key)
-                || validators::read_admitted_non_consensus_at_block(&node.provider, hash)?
-                    .public_keys
-                    .contains(&self.local_consensus_key);
+        let local_key_in_validator_set = validators::read_consensus_validators_at_block(
+            self.protocol.as_ref(),
+            &node.provider,
+            hash,
+        )?
+        .public_keys
+        .contains(&self.local_consensus_key)
+            || validators::read_admitted_non_consensus_at_block(
+                self.protocol.as_ref(),
+                &node.provider,
+                hash,
+            )?
+            .public_keys
+            .contains(&self.local_consensus_key);
         Ok(bootstrap_ready_from_facts(BootstrapFacts {
             finalized_height: height,
             local_key_in_validator_set,
@@ -199,9 +208,12 @@ where
     // multisig over these keys. So this set, not the VRF group key, is the trust
     // root. It is already in genesis, and the operator provides nothing.
     let follower_genesis_hash = genesis_hash(&node)?;
-    let genesis_validators =
-        validators::read_consensus_validators_at_block(&node.provider, follower_genesis_hash)
-            .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
+    let genesis_validators = validators::read_consensus_validators_at_block(
+        services.protocol.as_ref(),
+        &node.provider,
+        follower_genesis_hash,
+    )
+    .wrap_err("failed to read genesis validator set for the follower trust anchor")?;
     let anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
         genesis_validators
             .public_keys
@@ -315,6 +327,7 @@ pub(in crate::stack) fn build_certified_follower_parent_record(
 }
 
 struct FollowerProofPersistence<'a> {
+    protocol: &'a dyn crate::protocol_state::EngineProtocolState,
     node: &'a OutbeFullNode,
     certificate_scheme_provider: &'a HybridSchemeProvider<MinSig>,
     parent_cert_store:
@@ -363,17 +376,20 @@ impl FollowerProofPersistence<'_> {
     ) -> Result<()> {
         use outbe_consensus::finalization::parent_cert_store::CertifiedParentProofStore as _;
         let Self {
+            protocol: _,
             node,
             certificate_scheme_provider,
             parent_cert_store,
         } = self;
+        let protocol = self.protocol;
 
         let epoch = finalization.proposal.round.epoch();
         let scheme = certificate_scheme_provider.scoped(epoch).ok_or_else(|| {
             crate::errors::FollowerStackError::MissingVerifierSchemeForFinalizedEpoch(epoch.get())
         })?;
-        let snapshot = validators::read_committee_snapshot_at_latest(&node.provider, epoch.get())?
-            .ok_or_else(|| {
+        let snapshot =
+            validators::read_committee_snapshot_at_latest(protocol, &node.provider, epoch.get())?
+                .ok_or_else(|| {
                 crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(epoch.get())
             })?;
         let height = block.number();
@@ -392,13 +408,16 @@ impl FollowerProofPersistence<'_> {
                     )
                 ) =>
             {
-                let refreshed =
-                    validators::read_committee_snapshot_at_latest(&node.provider, epoch.get())?
-                        .ok_or_else(|| {
-                            crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(
-                                epoch.get(),
-                            )
-                        })?;
+                let refreshed = validators::read_committee_snapshot_at_latest(
+                    protocol,
+                    &node.provider,
+                    epoch.get(),
+                )?
+                .ok_or_else(|| {
+                    crate::errors::FollowerStackError::MissingHistoricalCommitteeSnapshot(
+                        epoch.get(),
+                    )
+                })?;
                 build_certified_follower_parent_record(
                     finalization,
                     block,

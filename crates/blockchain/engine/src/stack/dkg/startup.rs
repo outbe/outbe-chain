@@ -161,6 +161,7 @@ fn startup_threshold_material_candidate_available(args: &ConsensusArgs) -> bool 
 }
 
 fn read_startup_dkg_snapshot(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
@@ -226,6 +227,7 @@ fn read_startup_dkg_snapshot(
 
     if let Some(keys_dir) = args.keys_dir.as_ref() {
         if let Some(snapshot) = recover_pending_dkg_boundary_snapshot(
+            protocol,
             keys_dir,
             key_backend,
             local_consensus_key,
@@ -304,6 +306,7 @@ async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesis
 
 pub(in crate::stack) async fn resolve_startup_dkg_snapshot<E>(
     ctx: E,
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
@@ -335,7 +338,7 @@ where
     let started_at = ctx.current();
 
     loop {
-        let mut snapshot = read_startup_dkg_snapshot(node, args, key_backend, &request)?;
+        let mut snapshot = read_startup_dkg_snapshot(protocol, node, args, key_backend, &request)?;
         let evidence = collect_reth_genesis_peer_evidence(node).await;
         let gate = genesis_formation_gate_decision(
             snapshot.context,

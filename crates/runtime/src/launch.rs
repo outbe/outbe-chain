@@ -1,12 +1,19 @@
 use crate::*;
-mod authority;
-mod consensus;
-mod radicle;
-mod tee;
-type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
+use outbe_engine::protocol_state::EngineProtocolState;
+use outbe_evm::EvmRuntimeHost;
+use outbe_node::tee_remote_session::TeeSessionStateReader;
+use outbe_radicle::protocol_state::RadicleProtocolState;
+use outbe_rpc::state_reader::OutbeRpcStateReader;
+use outbe_txpool::TxPoolZeroFeePolicy;
+
+pub(crate) type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
 
 /// Run the main node (Reth execution + Commonware consensus).
-pub(crate) fn run_node() -> eyre::Result<()> {
+pub fn run_node<P, V>() -> eyre::Result<()>
+where
+    P: ChainSpecParser<ChainSpec = ChainSpec<OutbeHeader>>,
+    V: RpcModuleValidator,
+{
     // TEE offer decryption routes exclusively through the enclave sidecar
     // (`--tee-enclave-socket` -> persistent production NodeHost authorization).
     // The offer-decryption key exists only inside the enclave (single path, no
@@ -17,7 +24,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     let _ = outbe_default_txpool_values().try_init();
     let _ = outbe_default_rpc_values().try_init();
 
-    let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
+    let mut cli = Cli::<P, ConsensusArgs, V>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
 
     // Initialize the hash-pinned Barretenberg global CRS before block
@@ -34,6 +41,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     }
 
     let bridge = ConsensusExecutionBridge::new();
+    let runtime_for_launcher = Arc::new(OutbeRuntime::new());
 
     // Channels for the consensus thread in validator or follower mode.
     // In other full-node mode, the launcher spawns no thread and these stay unused.
@@ -50,6 +58,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     let shutdown_token_clone = shutdown_token.clone();
     let radicle_shutdown_for_consensus = radicle_shutdown_token.clone();
     let bridge_for_consensus = bridge.clone();
+    let runtime_for_consensus = Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>;
     let consensus_thread_fn = move || {
         consensus::run(
             node_rx,
@@ -57,13 +66,16 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             shutdown_token_clone,
             radicle_shutdown_for_consensus,
             bridge_for_consensus,
+            runtime_for_consensus,
         )
     };
 
     // Thread 1 (main): Reth execution layer.
     let bridge_for_evm = bridge.clone();
+    let runtime_for_evm = Arc::clone(&runtime_for_launcher);
     let components = move |spec: Arc<ChainSpec<OutbeHeader>>| {
-        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone());
+        let evm = outbe_evm::OutbeEvmConfig::new_with_bridge(spec.clone(), bridge_for_evm.clone())
+            .with_runtime_host(Arc::clone(&runtime_for_evm) as Arc<dyn EvmRuntimeHost>);
         (
             evm,
             Arc::new(
@@ -123,6 +135,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             bridge.clone(),
             evm_signer,
             shutdown.clone(),
+            Arc::clone(&runtime_for_launcher),
         );
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
@@ -149,6 +162,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             })
             .extend_rpc_modules({
                 let bridge = bridge.clone();
+                let runtime_for_rpc = Arc::clone(&runtime_for_launcher);
                 let is_validator = args.is_validator;
                 let is_follower = args.upstream.is_some();
                 let radicle_status = radicle_status_for_rpc.clone();
@@ -168,6 +182,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                         Arc::clone(&provider),
                         bridge,
                         (is_validator, is_follower),
+                        Arc::clone(&runtime_for_rpc) as Arc<dyn OutbeRpcStateReader>,
                     )
                     .with_chain_identity(proof_chain_id, genesis_hash)
                     .with_tee_renewal_schedule(
@@ -200,6 +215,8 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             tee_lease_armed_rx,
             tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
+            Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>,
+            Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
             (&node, &args),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
@@ -210,6 +227,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,
             &args,
+            Arc::clone(&runtime_for_launcher) as Arc<dyn RadicleProtocolState>,
             (radicle_preflight, radicle_status.clone()),
             (
                 radicle_shutdown_token.clone(),
@@ -235,6 +253,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             )));
 
         outbe_engine::validators::check_binary_version_compatibility(
+            runtime_for_launcher.as_ref(),
             &node.provider,
             outbe_update::handlers::registry(),
         )?;
@@ -255,7 +274,7 @@ pub(crate) fn run_node() -> eyre::Result<()> {
                 radicle_drained,
             ));
 
-            let exit_cause = super::shutdown::wait_for_launcher_exit(
+            let exit_cause = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 Some(&mut consensus_dead_rx),
                 &upgrade_promotion,
@@ -263,9 +282,9 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             ).await;
 
             tracing::debug!(?exit_cause, "draining application before global execution shutdown");
-            super::shutdown::join_consensus_thread(consensus_lifecycle, &shutdown);
+            crate::shutdown::join_consensus_thread(consensus_lifecycle, &shutdown);
         } else {
-            let _ = super::shutdown::wait_for_launcher_exit(
+            let _ = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 None,
                 &upgrade_promotion,
@@ -273,10 +292,10 @@ pub(crate) fn run_node() -> eyre::Result<()> {
             ).await;
         }
 
-        super::shutdown::drain_launcher_tasks(
+        crate::shutdown::drain_launcher_tasks(
             &shutdown_token,
             &shutdown,
-            super::shutdown::LauncherDrainTasks {
+            crate::shutdown::LauncherDrainTasks {
                 tee_lease_guard_handle,
                 radicle_observer,
                 tee_canary_handle,
@@ -300,9 +319,14 @@ pub(crate) fn run_node() -> eyre::Result<()> {
     process_shutdown.finish(command_result)
 }
 
-fn runtime_config_for_command(
-    command: &reth_ethereum::cli::interface::Commands<OutbeChainSpecParser, ConsensusArgs>,
-) -> reth_ethereum::tasks::RuntimeConfig {
+fn runtime_config_for_command<C, Ext, SubCmd>(
+    command: &reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+) -> reth_ethereum::tasks::RuntimeConfig
+where
+    C: ChainSpecParser,
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
     // Preserve the pool overrides normally applied by Reth's default CLI runner.
     match command {
         reth_ethereum::cli::interface::Commands::Node(command) => {
@@ -324,23 +348,28 @@ fn build_outbe_node(
     bridge: ConsensusExecutionBridge,
     evm_signer: Option<Arc<OutbeEvmSigner>>,
     shutdown: outbe_node::shutdown::NodeShutdown,
+    runtime: Arc<OutbeRuntime>,
 ) -> OutbeNode {
     let outbe_node = match evm_signer {
         Some(signer) => OutbeNode::with_bridge_and_evm_signer(bridge, signer),
         None => OutbeNode::with_bridge(bridge),
     };
-    outbe_node.with_shutdown(shutdown)
+    outbe_node
+        .with_shutdown(shutdown)
+        .with_runtime_host(Arc::clone(&runtime) as Arc<dyn EvmRuntimeHost>)
+        .with_pool_policy(runtime as Arc<dyn TxPoolZeroFeePolicy>)
 }
 
 fn create_outbe_rpc_handler<P>(
     provider: Arc<P>,
     bridge: ConsensusExecutionBridge,
     (is_validator, is_follower): (bool, bool),
+    reader: Arc<dyn OutbeRpcStateReader>,
 ) -> outbe_rpc::OutbeApiHandler<P> {
     if is_validator || is_follower {
-        outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge)
+        outbe_rpc::OutbeApiHandler::with_bridge(provider, bridge, reader)
     } else {
-        outbe_rpc::OutbeApiHandler::new(provider)
+        outbe_rpc::OutbeApiHandler::new(provider, reader)
     }
 }
 

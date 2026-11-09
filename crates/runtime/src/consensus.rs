@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) type ConsensusLaunch = (
+pub(crate) type ConsensusLaunch = (
     OutbeFullNode,
     ConsensusArgs,
     Arc<dyn FinalizedExecutionBarrier>,
@@ -15,12 +15,13 @@ pub(super) type ConsensusLaunch = (
     Option<oneshot::Receiver<()>>,
 );
 
-pub(super) fn run(
+pub(crate) fn run(
     node_rx: oneshot::Receiver<ConsensusLaunch>,
     consensus_dead_tx: oneshot::Sender<()>,
     shutdown_token_clone: tokio_util::sync::CancellationToken,
     radicle_shutdown_for_consensus: tokio_util::sync::CancellationToken,
     bridge_for_consensus: ConsensusExecutionBridge,
+    protocol: Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
 ) -> eyre::Result<()> {
     let (
         node,
@@ -144,6 +145,7 @@ pub(super) fn run(
                                     task_owner,
                                 }
                             }),
+                            protocol,
                         ),
                     )
                 });

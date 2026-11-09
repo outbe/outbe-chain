@@ -351,7 +351,7 @@ mod tests {
             .set_block_gas_limit(30_000_000)
             .build(blob_store.clone());
         let validator =
-            crate::OutbeTransactionValidator::new(inner, crate::policy::active_policy());
+            crate::OutbeTransactionValidator::new(inner, crate::policy::normal_policy());
         let pool = Pool::new(
             validator,
             crate::OutbeTransactionOrdering::default(),

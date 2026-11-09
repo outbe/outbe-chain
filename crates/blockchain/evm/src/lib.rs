@@ -9,7 +9,6 @@ pub mod finalization;
 pub mod gas;
 pub mod genesis;
 mod native_delegation;
-pub(crate) mod precompile_routes;
 pub mod precompiles;
 pub mod storage;
 pub mod sub_call;
@@ -18,6 +17,8 @@ pub mod tee_attestation_activation;
 pub mod tee_bootstrap;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
+#[cfg(feature = "test-utils")]
+mod test_support_routes;
 
 /// Re-export of the validator EVM signer, which now lives in
 /// `outbe-primitives::signer`. It is a wire/data-only type (no EVM runtime), so it
@@ -47,7 +48,4 @@ pub use signer::{
 };
 
 mod host;
-pub use host::{
-    active_evm_runtime_host, install_evm_runtime_host, EvmHostAlreadyInstalled, EvmRuntimeHost,
-    UserTxFeePolicy,
-};
+pub use host::{EvmRuntimeHost, UserTxFeePolicy};

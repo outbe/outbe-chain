@@ -610,6 +610,7 @@ fn collect_finalized_dealer_logs(
 /// Called at freeze_height so dynamically added/removed validators are applied
 /// from the same historical state on every node.
 pub(in crate::stack) fn refresh_validator_set_at_height(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     freeze_height: u64,
 ) -> Result<FrozenValidatorSetRefresh> {
@@ -659,8 +660,9 @@ pub(in crate::stack) fn refresh_validator_set_at_height(
     // CycleTick has already moved every overdue ACTIVE validator into the jailed
     // lifecycle before this exact freeze state. The ordinary reshare target is
     // therefore authoritative. Legacy boundary expiry fields remain empty.
-    let filtered = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
-        .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
+    let filtered =
+        validators::read_reshare_target_with_empty_tee_exclusions_from_state(protocol, &state)
+            .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
     let new_set = filtered.validator_set;
 
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = new_set

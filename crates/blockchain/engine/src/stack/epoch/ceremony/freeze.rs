@@ -95,7 +95,11 @@ where
         freeze_height: u64,
         planned_activation_height: u64,
     ) -> Result<Option<AdmittedRotationTarget>> {
-        let target = match refresh_validator_set_at_height(&self.node, freeze_height) {
+        let target = match refresh_validator_set_at_height(
+            self.protocol.as_ref(),
+            &self.node,
+            freeze_height,
+        ) {
             Ok(FrozenValidatorSetRefresh::Ready {
                 validator_set: new_set,
                 participants: new_participants,

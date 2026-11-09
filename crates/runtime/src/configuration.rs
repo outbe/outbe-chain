@@ -45,7 +45,7 @@ pub(crate) fn outbe_default_rpc_values() -> reth_node_core::args::DefaultRpcServ
 ///
 /// These defaults also disable the transactions backup journal for the same
 /// reason: a restart must not resurrect transactions the node deliberately evicted.
-pub(crate) fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
+pub fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
     reth_node_core::args::DefaultTxPoolValues::default()
         .with_max_queued_lifetime(OUTBE_TXPOOL_QUEUED_LIFETIME)
         .with_no_locals(OUTBE_TXPOOL_NO_LOCALS)
@@ -61,3 +61,36 @@ const OUTBE_TXPOOL_NO_LOCALS: bool = true;
 
 /// A restart must not resurrect transactions the node deliberately evicted.
 const OUTBE_TXPOOL_DISABLE_BACKUP: bool = true;
+
+/// Ceiling for advised gas price: one COEN per gas.
+const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000_000_000_000_000;
+
+/// Reth suggests a one gwei tip while its oracle has no sampled block to learn
+/// from. Keep the cold-start floor tiny in raw native units and cap sampled
+/// advice at one 18-decimal COEN per gas.
+pub fn apply_outbe_gas_price_oracle_defaults<C, Ext, SubCmd>(
+    command: &mut reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+) where
+    C: reth_cli::chainspec::ChainSpecParser,
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
+    if let reth_ethereum::cli::interface::Commands::Node(node) = command {
+        node.rpc.gas_price_oracle.default_suggested_fee = Some(alloy_primitives::U256::from(
+            alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE,
+        ));
+        node.rpc.gas_price_oracle.max_price = OUTBE_MAX_SUGGESTED_GAS_PRICE;
+    }
+}
+
+/// Node commands execute proofs. Database and other operator commands do not.
+pub fn command_requires_crs<C, Ext, SubCmd>(
+    command: &reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+) -> bool
+where
+    C: reth_cli::chainspec::ChainSpecParser,
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
+    matches!(command, reth_ethereum::cli::interface::Commands::Node(_))
+}

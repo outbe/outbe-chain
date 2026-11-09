@@ -6,7 +6,11 @@ fn run_late_finalize_credits(
     artifact: &LateFinalizeCreditsArtifact,
 ) -> outbe_primitives::error::Result<()> {
     ctx.storage.with_checkpoint(|| {
-        crate::finalization::late_credits::run_late_finalize_credits(ctx, artifact)
+        crate::finalization::late_credits::run_late_finalize_credits(
+            &crate::test_support::DomainEvmHost::new(),
+            ctx,
+            artifact,
+        )
     })
 }
 
@@ -370,6 +374,7 @@ fn window_close_miss_survives_epoch_boundary_reset() {
         // Real begin-zone order for a block that actually carries the
         // certified boundary: boundary-conditioned pre-block reset first...
         crate::executor::prepare_boundary_epoch_counters(
+            &crate::test_support::DomainEvmHost::new(),
             ctx.storage.clone(),
             &boundary_noop(),
             ctx.block.block_number,

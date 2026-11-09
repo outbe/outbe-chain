@@ -62,6 +62,7 @@ fn build_extended_precompiles() -> PrecompilesMap {
         &mut precompiles,
         OutbePrecompileExecutionContext::new(spec, B256::ZERO),
         OutbePrecompileRuntime::new(),
+        std::sync::Arc::new(outbe_evm::test_support::DomainEvmHost::new()),
     );
     precompiles
 }

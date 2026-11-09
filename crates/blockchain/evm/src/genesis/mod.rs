@@ -47,21 +47,19 @@ pub fn validate_genesis_enclave_witness(
 /// Validates genesis validator-set and staking state when executing in a
 /// non-steady-state regime (`Genesis` or `GenesisBootstrap`).
 pub fn validate_genesis_state_for_regime(
+    host: &dyn crate::EvmRuntimeHost,
     regime: BlockHeightRegime,
     storage: StorageHandle,
     genesis_validators: Option<&GenesisValidators>,
 ) -> OutbeResult<()> {
-    crate::active_evm_runtime_host().validate_genesis_state_for_regime(
-        regime,
-        storage,
-        genesis_validators,
-    )
+    host.validate_genesis_state_for_regime(regime, storage, genesis_validators)
 }
 
 /// Verifies that the canonical genesis storage matches the configured [`GenesisValidators`].
 pub fn validate_genesis_state(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     genesis: &GenesisValidators,
 ) -> OutbeResult<()> {
-    crate::active_evm_runtime_host().validate_genesis_state(storage, genesis)
+    host.validate_genesis_state(storage, genesis)
 }

@@ -1,7 +1,7 @@
 use super::super::value_policy::{
     classify_boundary_value, BoundaryValue::Credited, BoundaryValue::Rejected,
 };
-use crate::precompile_routes::{self, ValuePolicy};
+use crate::precompiles::routes::{self, ValuePolicy};
 use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::{
     CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, CROSSCHAIN_BRIDGE_ADDRESS, DESIS_ADDRESS,
@@ -20,9 +20,10 @@ const PAYABLE: [Address; 6] = [
 ];
 
 fn policy(address: Address) -> ValuePolicy {
-    precompile_routes::resolve(&address)
+    let host = crate::test_support::DomainEvmHost::new();
+    routes::resolve(&address)
         .expect("address must be a routed precompile")
-        .value_policy()
+        .value_policy(&host)
 }
 
 /// Apparent value names an amount that was never transferred. Delegated
@@ -100,7 +101,7 @@ fn the_stablecoin_class_permits_value() {
 /// entrypoint rather than as stranded value.
 #[test]
 fn only_the_expected_routes_accept_value_among_exact_routes() {
-    for address in precompile_routes::EXACT_ADDRESSES {
+    for address in routes::EXACT_ADDRESSES {
         assert_eq!(
             policy(*address) == ValuePolicy::Payable,
             PAYABLE.contains(address),

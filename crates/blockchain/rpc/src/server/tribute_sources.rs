@@ -12,6 +12,7 @@ pub(super) fn serve<P>(
     chain_identity: Option<(u64, B256)>,
     subject: TributeSourceSubject,
     tribute_id: WwdEntityId,
+    rpc_reader: &dyn crate::state_reader::OutbeRpcStateReader,
 ) -> RpcResult<TributeStateSource>
 where
     P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + BlockIdReader,
@@ -24,7 +25,7 @@ where
     let mut readonly =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
     let (tribute, day_index, expected_words) = StorageHandle::enter(&mut readonly, |storage| {
-        crate::state_reader::active_rpc_state_reader().tribute_words(storage, &subject, tribute_id)
+        rpc_reader.tribute_words(storage, &subject, tribute_id)
     })
     .map_err(internal_err)?;
     let slots = expected_words

@@ -1,3 +1,4 @@
+use super::storage_state;
 use super::*;
 use alloy_eips::{BlockNumHash, BlockNumberOrTag};
 use outbe_coderegistry::{vote_target::CodePatchVoteTarget, CodeRegistry};
@@ -234,6 +235,7 @@ fn publication_receipt_fixture() -> RethSnapshotReader<ApprovalProvider> {
         },
         2026,
         B256::repeat_byte(7),
+        storage_state(),
     )
 }
 
@@ -415,7 +417,7 @@ fn repository_authority_fixture() -> (
         reads: Mutex::new(vec![]),
     };
     (
-        RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7)),
+        RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7), storage_state()),
         committee,
     )
 }
@@ -673,6 +675,7 @@ fn signing_fixture() -> RethSnapshotReader<ApprovalProvider> {
         },
         2026,
         B256::repeat_byte(7),
+        storage_state(),
     )
 }
 
@@ -818,7 +821,10 @@ fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
         finalized: Some(BlockNumHash::new(3, block(3).hash)),
         reads: Mutex::new(vec![]),
     };
-    (RethSnapshotReader::new(provider, 1, B256::ZERO), payload)
+    (
+        RethSnapshotReader::new(provider, 1, B256::ZERO, storage_state()),
+        payload,
+    )
 }
 
 #[test]
@@ -1097,6 +1103,7 @@ fn finalized_vote_pages_select_only_the_network_repository() {
             },
             1,
             B256::ZERO,
+            storage_state(),
         );
         let page = reader.read_finalized_vote_page(3, 0).unwrap().unwrap();
         assert_eq!(
@@ -1183,7 +1190,7 @@ fn bootstrap_permission_uses_one_current_finalized_state_and_stops_after_binding
         finalized: Some(BlockNumHash::new(3, block(3).hash)),
         reads: Mutex::new(vec![]),
     };
-    let mut reader = RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7));
+    let mut reader = RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7), storage_state());
     let state = reader.read_current_bootstrap_signing_state().unwrap();
     assert_eq!(state.authority().block(), block(3));
     assert_eq!(state.authority().epoch(), 2);
@@ -1287,7 +1294,7 @@ fn publication_delivery_progress_uses_one_finalized_state_and_preserves_accepted
         finalized: Some(BlockNumHash::new(3, block(3).hash)),
         reads: Mutex::new(vec![]),
     };
-    let mut reader = RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7));
+    let mut reader = RethSnapshotReader::new(provider, 2026, B256::repeat_byte(7), storage_state());
     let progress = reader.read_current_publication_progress(&body).unwrap();
     assert_eq!(progress.block(), block(3));
     assert_eq!(progress.body_hash(), body.receipt_hash());

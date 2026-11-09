@@ -17,6 +17,7 @@ use revm::{
     state::Bytecode,
     Context,
 };
+use std::sync::Arc;
 
 fn precompiles() -> PrecompilesMap {
     let mut precompiles =
@@ -25,6 +26,7 @@ fn precompiles() -> PrecompilesMap {
         &mut precompiles,
         OutbePrecompileExecutionContext::new(SpecId::PRAGUE, B256::ZERO),
         OutbePrecompileRuntime::new(),
+        Arc::new(crate::test_support::DomainEvmHost::new()),
     );
     precompiles
 }
@@ -59,9 +61,10 @@ fn wide_timestamp_dispatch_reverts_before_value_admission_or_mutation_authority(
             ctx.block.timestamp = timestamp;
             ctx.block.number = U256::from(1);
             let journal_before = ctx.journaled_state.inner.clone();
-            let base_gas = crate::precompile_routes::resolve(&address)
+            let host = crate::test_support::DomainEvmHost::new();
+            let base_gas = crate::precompiles::routes::resolve(&address)
                 .unwrap()
-                .base_gas(data.as_ref())
+                .base_gas(&host, data.as_ref())
                 .max(PRECOMPILE_BASE_GAS);
             let call = inputs(address, value, base_gas + 100_000, data);
             let output = precompiles().run(&mut ctx, &call).unwrap().unwrap();

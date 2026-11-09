@@ -61,6 +61,7 @@ pub(super) async fn start_transport<E>(
     ctx: &E,
     args: &ConsensusArgs,
     node: &OutbeFullNode,
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     admission: TransportAdmission<'_>,
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
@@ -162,9 +163,12 @@ where
 
     // Build peer set from validator config + bootnodes.
     let peer_map = build_peer_map(validator_set, &bootnode_map);
-    let admitted_set =
-        validators::read_admitted_non_consensus_at_block(&node.provider, initial_peer_hash)
-            .wrap_err("failed to read startup non-consensus P2P admission")?;
+    let admitted_set = validators::read_admitted_non_consensus_at_block(
+        protocol,
+        &node.provider,
+        initial_peer_hash,
+    )
+    .wrap_err("failed to read startup non-consensus P2P admission")?;
     let initial_peers = commonware_p2p::AddressableTrackedPeers::new(
         peer_map,
         build_peer_map(&admitted_set, &bootnode_map),

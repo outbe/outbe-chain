@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::*;
 
 pub(in crate::executor) const CHAIN_ID: u64 = GRAMINE_DIRECT_DEV_CHAIN_ID;
@@ -927,6 +929,7 @@ pub(super) fn empty_executor_inputs(parent_hash: B256) -> BlockExecutorInputs {
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer: None,
+            runtime_host: Arc::new(crate::test_support::DomainEvmHost::new()),
         },
     }
 }
@@ -967,6 +970,7 @@ pub(super) fn executor_inputs_from_ctx(
         dependencies: BlockExecutionDependencies {
             bridge: None,
             evm_signer,
+            runtime_host: Arc::new(crate::test_support::DomainEvmHost::new()),
         },
     }
 }

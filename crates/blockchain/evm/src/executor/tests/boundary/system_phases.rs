@@ -611,7 +611,8 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
                 storage.clone(),
             );
 
-            enforce_enclave_upgrade_deadline(&ctx).unwrap();
+            enforce_enclave_upgrade_deadline(&crate::test_support::DomainEvmHost::new(), &ctx)
+                .unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(staking.get_total_staked().unwrap(), stake - slashed);
             assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
@@ -628,7 +629,8 @@ fn enclave_upgrade_deadline_uses_configured_slash_and_credits_promis_limit_once(
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
             assert_eq!(limit.rest_minor().unwrap(), U256::from(expected_percent));
 
-            enforce_enclave_upgrade_deadline(&ctx).unwrap();
+            enforce_enclave_upgrade_deadline(&crate::test_support::DomainEvmHost::new(), &ctx)
+                .unwrap();
             assert_eq!(staking.get_stake(validator).unwrap(), stake - slashed);
             assert_eq!(storage.balance(STAKING_ADDRESS).unwrap(), stake - slashed);
             assert_eq!(limit.promis_limit().unwrap(), U256::from(expected_percent));
@@ -722,7 +724,11 @@ fn update_activates_enclave_upgrade_and_enclave_upgrade_deadline_enforces_it_in_
         );
 
         // 2. OSEU (EnclaveUpgradeDeadline::begin_block) immediately follows OSUP in BeginBlock at height H.
-        crate::sys_tx_precompile::EnclaveUpgradeDeadline::begin_block(&ctx).unwrap();
+        crate::sys_tx_precompile::EnclaveUpgradeDeadline::begin_block(
+            &crate::test_support::DomainEvmHost::new(),
+            &ctx,
+        )
+        .unwrap();
         assert!(registry.upgrade_sweep_due_v1().unwrap().is_none());
         assert_eq!(
             staking.get_stake(validator).unwrap(),

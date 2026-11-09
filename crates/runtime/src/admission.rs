@@ -1,5 +1,6 @@
 use crate::errors::LaunchError;
 use crate::*;
+use outbe_engine::protocol_state::EngineProtocolState;
 use outbe_node::tee_remote_session::{
     inspect_local_finalized_successor_status_v1, RegistryChainIdentity,
 };
@@ -301,6 +302,7 @@ pub(crate) fn validator_recovery_startup_admission_rejection(
 }
 
 fn read_local_tee_admission_at_height<P>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -318,6 +320,7 @@ where
         .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?;
     let block_hash = header.hash();
     read_local_tee_admission_at_block(
+        protocol,
         provider,
         chain,
         identity,
@@ -330,6 +333,7 @@ where
 }
 
 fn validate_local_anchor_at_height<P>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
     fullnode_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -339,6 +343,7 @@ where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     let (mut hash, mut admission) = read_local_tee_admission_at_height(
+        protocol,
         provider,
         chain,
         fullnode_identity,
@@ -346,6 +351,7 @@ where
     )?;
     if hash != anchor.finalized_hash {
         (hash, admission) = read_local_tee_admission_at_height(
+            protocol,
             provider,
             chain,
             fullnode_identity,
@@ -392,6 +398,7 @@ where
 }
 
 fn read_local_tee_admission_at_block<P>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -410,6 +417,7 @@ where
         .state_by_block_hash(finalized.hash)
         .wrap_err("read exact state for TEE lease admission")?;
     outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+        protocol,
         &state,
         outbe_primitives::storage::readonly::ReadOnlyBlockContext::try_new(
             chain.chain_id,
@@ -423,6 +431,7 @@ where
 }
 
 pub(crate) fn read_finalized_local_tee_admission<P>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
@@ -437,6 +446,7 @@ where
         return Ok(None);
     };
     read_local_tee_admission_at_block(
+        protocol,
         provider,
         RegistryChainIdentity {
             chain_id,
@@ -449,6 +459,7 @@ where
 }
 
 pub(crate) fn read_gated_finalized_local_tee_admission<P>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -458,6 +469,7 @@ where
     P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     read_gated_finalized_local_tee_admission_with_resident_offer(
+        protocol,
         provider,
         chain,
         identity,
@@ -470,6 +482,7 @@ where
 }
 
 pub(crate) fn read_gated_finalized_local_tee_admission_with_resident_offer<P, F>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     chain: RegistryChainIdentity,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -494,7 +507,7 @@ where
     let Some(anchor) = gate.anchor_to_validate(finalized.number) else {
         return gate
             .is_armed()
-            .then(|| read_local_tee_admission_at_block(provider, chain, identity, head))
+            .then(|| read_local_tee_admission_at_block(protocol, provider, chain, identity, head))
             .transpose();
     };
 
@@ -503,16 +516,16 @@ where
         ..identity
     };
     let anchor_fullnode_admission =
-        validate_local_anchor_at_height(provider, chain, fullnode_identity, anchor)?;
+        validate_local_anchor_at_height(protocol, provider, chain, fullnode_identity, anchor)?;
     if let Some(durable) = durable.filter(|durable| *durable != anchor) {
-        validate_local_anchor_at_height(provider, chain, fullnode_identity, durable)?;
+        validate_local_anchor_at_height(protocol, provider, chain, fullnode_identity, durable)?;
     }
 
     let fullnode_now =
         if finalized.number == anchor.finalized_height && finalized.hash == anchor.finalized_hash {
             anchor_fullnode_admission
         } else {
-            read_local_tee_admission_at_block(provider, chain, fullnode_identity, head)?
+            read_local_tee_admission_at_block(protocol, provider, chain, fullnode_identity, head)?
         };
     if !matches!(fullnode_now, LocalTeeRuntimeAdmissionV1::Ready { .. }) {
         return Ok(Some(fullnode_now));
@@ -528,8 +541,10 @@ where
         return Ok(Some(fullnode_now));
     }
 
-    let validator_now = read_local_tee_admission_at_block(provider, chain, identity, head)?;
+    let validator_now =
+        read_local_tee_admission_at_block(protocol, provider, chain, identity, head)?;
     try_arm_validator_tee_gate(
+        protocol,
         provider,
         finalized,
         (fullnode_now, validator_now),
@@ -540,6 +555,7 @@ where
 }
 
 fn try_arm_validator_tee_gate<P, F>(
+    protocol: &dyn EngineProtocolState,
     provider: &P,
     finalized: alloy_eips::BlockNumHash,
     (fullnode_now, validator_now): (
@@ -562,9 +578,12 @@ where
         }
         LocalTeeRuntimeAdmissionV1::Rejected(_) => Ok(validator_now),
         LocalTeeRuntimeAdmissionV1::Ready { .. } => {
-            let on_chain_offer =
-                outbe_engine::validators::read_tee_offer_public_at_block(provider, finalized.hash)
-                    .wrap_err("read the canonical offer key for gated TEE lease admission")?;
+            let on_chain_offer = outbe_engine::validators::read_tee_offer_public_at_block(
+                protocol,
+                provider,
+                finalized.hash,
+            )
+            .wrap_err("read the canonical offer key for gated TEE lease admission")?;
             let Some(resident_offer) = (!on_chain_offer.is_zero())
                 .then(read_resident_offer)
                 .transpose()?
@@ -632,6 +651,8 @@ pub(crate) struct TeeLeaseGuardConfigV1 {
 
 pub(crate) async fn run_tee_lease_guard_v1<P>(
     provider: P,
+    protocol: Arc<dyn EngineProtocolState>,
+    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
     config: TeeLeaseGuardConfigV1,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> eyre::Result<Option<String>>
@@ -662,11 +683,21 @@ where
             _ = interval.tick() => {}
         }
         if anchors.gate.is_armed() {
-            retire_superseded_remote_sessions_v1(&provider, chain, &mut retired_at)?;
+            retire_superseded_remote_sessions_v1(
+                &provider,
+                chain,
+                session.as_ref(),
+                &mut retired_at,
+            )?;
         }
-        let admission =
-            read_gated_finalized_local_tee_admission(&provider, chain, identity, &mut anchors)
-                .map_err(|error| error.wrap_err("finalized TEE lease admission failed closed"))?;
+        let admission = read_gated_finalized_local_tee_admission(
+            protocol.as_ref(),
+            &provider,
+            chain,
+            identity,
+            &mut anchors,
+        )
+        .map_err(|error| error.wrap_err("finalized TEE lease admission failed closed"))?;
         if let Some(reason) = admission.and_then(tee_lease_admission_rejection) {
             return Ok(Some(reason));
         }
@@ -682,6 +713,7 @@ where
 fn retire_superseded_remote_sessions_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
+    session: &dyn outbe_node::tee_remote_session::TeeSessionStateReader,
     retired_at: &mut u64,
 ) -> eyre::Result<()>
 where
@@ -693,7 +725,7 @@ where
     {
         return Ok(());
     }
-    let status = inspect_local_finalized_successor_status_v1(provider, chain)?;
+    let status = inspect_local_finalized_successor_status_v1(provider, chain, session)?;
     if status.retirement_height <= *retired_at {
         return Ok(());
     }

@@ -1,12 +1,8 @@
 //! Protocol facts the engine reads from chain state.
 //!
 //! Consensus startup asks this trait for validator sets, committee snapshots,
-//! and TEE admission facts. The crate that owns those contracts implements the
-//! trait and installs it before launch. Until that install, reads fail closed,
-//! including the binary-compatibility check.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
-
-use std::sync::{Arc, OnceLock};
+//! and TEE admission facts. Callers pass the installed state. [`UninstalledEngineState`]
+//! fails closed, including the binary-compatibility check.
 
 use alloy_primitives::{Address, B256};
 use outbe_primitives::committee_snapshot::CommitteeSnapshot;
@@ -15,8 +11,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
 use outbe_primitives::validator_dto::ValidatorRecord;
 use thiserror::Error;
-
-static INSTALLED: OnceLock<Arc<dyn EngineProtocolState>> = OnceLock::new();
 
 /// ABI status byte for a jailed validator.
 pub(crate) const VALIDATOR_STATUS_JAILED: u8 = 6;
@@ -63,11 +57,6 @@ pub enum EngineProtocolError {
     #[error("{0}")]
     Compatibility(String),
 }
-
-/// The production state was already installed.
-#[derive(Debug, Error)]
-#[error("engine protocol state is already installed")]
-pub struct EngineProtocolStateAlreadyInstalled;
 
 /// Object-safe chain reads used by the engine.
 pub trait EngineProtocolState: Send + Sync {
@@ -139,32 +128,9 @@ pub trait EngineProtocolState: Send + Sync {
     ) -> std::result::Result<(), EngineProtocolError>;
 }
 
-/// Install `state` for this process. The engine copies it on each read.
-pub fn install_engine_protocol_state(
-    state: Arc<dyn EngineProtocolState>,
-) -> std::result::Result<(), EngineProtocolStateAlreadyInstalled> {
-    INSTALLED
-        .set(state)
-        .map_err(|_| EngineProtocolStateAlreadyInstalled)
-}
-
-pub(crate) fn active_engine_protocol_state() -> Arc<dyn EngineProtocolState> {
-    if let Some(installed) = INSTALLED.get() {
-        return Arc::clone(installed);
-    }
-    #[cfg(test)]
-    {
-        Arc::new(StorageEngineState)
-    }
-    #[cfg(not(test))]
-    {
-        Arc::new(UninstalledEngineState)
-    }
-}
-
 /// Fail-closed stand-in used when no protocol state is installed.
 /// `check_binary_compatibility` returns [`EngineProtocolError::Compatibility`].
-struct UninstalledEngineState;
+pub struct UninstalledEngineState;
 
 fn not_installed<T>() -> PrecompileResult<T> {
     Err(outbe_primitives::error::PrecompileError::storage(
@@ -253,7 +219,7 @@ impl EngineProtocolState for UninstalledEngineState {
 }
 
 #[cfg(test)]
-struct StorageEngineState;
+pub(crate) struct StorageEngineState;
 
 #[cfg(test)]
 fn rows_for(

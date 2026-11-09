@@ -152,6 +152,9 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub genesis_timestamp: u64,
     /// Least-authority off-chain body readers propagated to nested precompiles.
     pub(crate) abort_bridge: crate::precompiles::ExecutionAbortBridge,
+    /// Runtime host for nested precompile dispatch. Production sets the
+    /// executor host after construction. The default fails closed.
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 
     /// One-shot authority for the active Metadosis mutation frame.
     dispatch_frames: DispatchFrameAuthority,
@@ -258,6 +261,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             genesis_timestamp: 0,
 
             abort_bridge: config.abort_bridge,
+            host: crate::host::default_runtime_host(),
 
             dispatch_frames: DispatchFrameAuthority {
                 metadosis: MetadosisMutationFrameState::new(config.metadosis_mutation_entitlements),
@@ -272,6 +276,10 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     pub(crate) const fn with_genesis_timestamp(mut self, genesis_timestamp: u64) -> Self {
         self.genesis_timestamp = genesis_timestamp;
         self
+    }
+
+    pub(crate) fn set_runtime_host(&mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) {
+        self.host = host;
     }
 
     pub(crate) fn replace_metadosis_mutation_entitlements(

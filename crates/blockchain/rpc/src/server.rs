@@ -36,9 +36,10 @@ use outbe_radicle::integration::{
 };
 
 fn read_effective_slash_config(
+    reader: &dyn crate::state_reader::OutbeRpcStateReader,
     storage: StorageHandle<'_>,
 ) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
-    crate::state_reader::active_rpc_state_reader().slash_config(storage)
+    reader.slash_config(storage)
 }
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
@@ -64,6 +65,7 @@ pub struct OutbeApiHandler<P> {
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     radicle_status: RadicleStatusHandle,
     tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel,
+    reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -91,7 +93,10 @@ impl<P> std::fmt::Debug for OutbeApiHandler<P> {
 impl<P> OutbeApiHandler<P> {
     /// Create a new handler backed by the given state provider factory (no
     /// bridge, plain EL full node).
-    pub fn new(provider: Arc<P>) -> Self {
+    pub fn new(
+        provider: Arc<P>,
+        reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
+    ) -> Self {
         Self {
             provider,
             chain_identity: None,
@@ -99,12 +104,17 @@ impl<P> OutbeApiHandler<P> {
             tee_renewal_schedule: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
             tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
+            reader,
         }
     }
 
     /// Create a handler with access to the consensus bridge.
-    pub fn with_bridge(provider: Arc<P>, bridge: ConsensusExecutionBridge) -> Self {
-        let mut handler = Self::new(provider);
+    pub fn with_bridge(
+        provider: Arc<P>,
+        bridge: ConsensusExecutionBridge,
+        reader: std::sync::Arc<dyn crate::state_reader::OutbeRpcStateReader>,
+    ) -> Self {
+        let mut handler = Self::new(provider, reader);
         handler.bridge = Some(bridge);
         handler
     }
@@ -444,8 +454,15 @@ where
     ) -> RpcResult<outbe_tee::tribute_source::TributeStateSource> {
         let provider = Arc::clone(&self.provider);
         let chain_identity = self.chain_identity;
+        let reader = Arc::clone(&self.reader);
         tokio::task::spawn_blocking(move || {
-            tribute_sources::serve(&*provider, chain_identity, subject, tribute_id)
+            tribute_sources::serve(
+                &*provider,
+                chain_identity,
+                subject,
+                tribute_id,
+                reader.as_ref(),
+            )
         })
         .await
         .map_err(|error| internal_err(format!("Tribute source worker failed: {error}")))?
@@ -473,21 +490,15 @@ where
     }
 
     async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().validators(storage)
-        })
+        self.with_latest_state(|storage| self.reader.validators(storage))
     }
 
     async fn get_validator(&self, address: Address) -> RpcResult<Option<ValidatorDetailInfo>> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().validator(storage, address)
-        })
+        self.with_latest_state(|storage| self.reader.validator(storage, address))
     }
 
     async fn get_epoch_info(&self) -> RpcResult<EpochInfo> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().epoch(storage)
-        })
+        self.with_latest_state(|storage| self.reader.epoch(storage))
     }
 
     async fn upgrade_key_v1(
@@ -496,26 +507,22 @@ where
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> RpcResult<Bytes> {
-        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+        tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
             .upgrade_key(context, proof, legacy_direct_dev_source)
             .await
     }
 
     async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
-        tee::TeeRpc::new(&*self.provider, self.chain_identity)
+        tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
             .renewal_schedule(self.tee_renewal_schedule)
     }
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().stake(storage, address)
-        })
+        self.with_latest_state(|storage| self.reader.stake(storage, address))
     }
 
     async fn get_slash_info(&self, address: Address) -> RpcResult<SlashInfo> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().slash_info(storage, address)
-        })
+        self.with_latest_state(|storage| self.reader.slash_info(storage, address))
     }
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
@@ -579,17 +586,15 @@ where
     }
 
     async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {
-        Ok(crate::state_reader::active_rpc_state_reader().emission_info())
+        Ok(self.reader.emission_info())
     }
 
     async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
-        self.with_latest_state(read_effective_slash_config)
+        self.with_latest_state(|storage| read_effective_slash_config(self.reader.as_ref(), storage))
     }
 
     async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
-        self.with_latest_state(|storage| {
-            crate::state_reader::active_rpc_state_reader().participation(storage, address)
-        })
+        self.with_latest_state(|storage| self.reader.participation(storage, address))
     }
 
     async fn sync_status(&self) -> RpcResult<SyncStatusInfo> {

@@ -1,15 +1,13 @@
 //! Executes an admitted call and settles its gas and typed outcome.
 use super::{
-    call_authority::{
-        is_protocol_cycle_call, metadosis_mutation_entitlements, MetadosisMutationCall,
-    },
+    call_authority::{metadosis_mutation_entitlements, MetadosisMutationCall},
     outcome::map_outbe_precompile_result_with_refund,
+    routes,
     value_policy::{classify_boundary_value, BoundaryValue},
     ExecutionAbortBridge,
 };
 use crate::{
     gas::SubcallGasMeter,
-    precompile_routes,
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
@@ -35,12 +33,14 @@ pub(super) struct OutbeDispatchRuntime<'a> {
     pub(super) genesis_hash: B256,
     pub(super) genesis_timestamp: u64,
     pub(super) tee_attestation_v1: &'a TeeAttestationChainSpecStateV1,
+    pub(super) host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
 /// Captures the frame and consensus inputs before borrowing the context for storage.
 struct DispatchCall<'a> {
     inputs: &'a CallInputs,
-    route: precompile_routes::Route,
+    route: routes::Route,
+    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
     data: Bytes,
     block_number: u64,
     chain_id: u64,
@@ -71,7 +71,7 @@ where
 {
     use revm::context_interface::{Block as _, ContextTr};
 
-    let Some(route) = precompile_routes::resolve(&inputs.bytecode_address) else {
+    let Some(route) = routes::resolve(&inputs.bytecode_address) else {
         return Ok(None);
     };
     let block_number = ctx.block().number().saturating_to::<u64>();
@@ -79,7 +79,9 @@ where
     // Materialize the exact calldata before choosing the consensus gas charge.
     // SharedBuffer and top-level Bytes calls must pay the same activation charge.
     let data: Bytes = inputs.input.bytes_local(ctx.local());
-    let base_gas = route.base_gas(data.as_ref()).max(PRECOMPILE_BASE_GAS);
+    let base_gas = route
+        .base_gas(runtime.host.as_ref(), data.as_ref())
+        .max(PRECOMPILE_BASE_GAS);
     let timestamp = match outbe_primitives::time::timestamp_secs(ctx.block().timestamp()) {
         Ok(timestamp) => timestamp,
         Err(error) => {
@@ -102,6 +104,7 @@ where
     let call = DispatchCall {
         inputs,
         route,
+        host: std::sync::Arc::clone(&runtime.host),
         data,
         block_number,
         chain_id,
@@ -136,7 +139,10 @@ impl DispatchCall<'_> {
     fn admit_value(&self) -> DomainResult<CallAdmission> {
         let address = self.inputs.bytecode_address;
         let caller = self.inputs.caller;
-        let value = match classify_boundary_value(self.route.value_policy(), &self.inputs.value) {
+        let value = match classify_boundary_value(
+            self.route.value_policy(self.host.as_ref()),
+            &self.inputs.value,
+        ) {
             BoundaryValue::Credited(v) => v,
             BoundaryValue::Rejected(reason) => {
                 return Err(
@@ -147,7 +153,11 @@ impl DispatchCall<'_> {
         };
         Ok(CallAdmission {
             value,
-            protocol_cycle_call: is_protocol_cycle_call(address, caller, self.data.as_ref()),
+            protocol_cycle_call: self.host.is_protocol_cycle_call(
+                address,
+                caller,
+                self.data.as_ref(),
+            ),
         })
     }
 
@@ -186,6 +196,7 @@ impl DispatchCall<'_> {
             abort_bridge: runtime.abort_bridge.clone(),
 
             metadosis_mutation_entitlements: metadosis_mutation_entitlements(
+                self.host.as_ref(),
                 self.mutation_call(admission, None),
             ),
         }
@@ -225,6 +236,7 @@ impl DispatchCall<'_> {
             );
             let mut provider =
                 CtxStorageProvider::new(ctx, gas_meter, self.provider_config(runtime, &admission));
+            provider.set_runtime_host(std::sync::Arc::clone(&self.host));
             // A failing probe or command must still settle consumed provider gas.
             let mut result = self.dispatch_with_provider(&mut provider, runtime, &admission);
             if provider.subcall_out_of_gas {
@@ -275,19 +287,21 @@ impl DispatchCall<'_> {
         if admission.protocol_cycle_call {
             let active_utc_day = {
                 let storage = StorageHandle::new(provider);
-                crate::active_evm_runtime_host().derive_active_utc_day(
+                self.host.derive_active_utc_day(
                     storage,
                     runtime.genesis_timestamp,
                     self.timestamp,
                 )?
             };
             provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
+                self.host.as_ref(),
                 self.mutation_call(admission, Some(active_utc_day)),
             ));
         }
         let storage = StorageHandle::new(provider);
         if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
             crate::sys_tx_precompile::dispatch_with_runtime(
+                self.host.as_ref(),
                 storage,
                 crate::sys_tx_precompile::SystemTxRuntime {
                     tee_attestation_v1: runtime.tee_attestation_v1,
@@ -298,8 +312,9 @@ impl DispatchCall<'_> {
             )
         } else {
             self.route.dispatch(
+                self.host.as_ref(),
                 storage,
-                precompile_routes::RouteCall {
+                routes::RouteCall {
                     callee: self.inputs.bytecode_address,
                     data: self.data.as_ref(),
                     caller: self.inputs.caller,

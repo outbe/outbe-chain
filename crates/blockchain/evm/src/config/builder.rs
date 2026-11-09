@@ -82,9 +82,6 @@ where
     type EVM = OutbeEvmConfig;
 
     async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
-        if let Some(host) = self.runtime_host.clone() {
-            let _ = crate::install_evm_runtime_host(host);
-        }
         // always install a provider-backed
         // `AccountedParentArtifactProvider` so the executor can resolve the
         // parent artifact in both bridge mode (cache + provider) and full-node

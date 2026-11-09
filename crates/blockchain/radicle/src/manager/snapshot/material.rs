@@ -18,6 +18,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
             block,
+            self.protocol.as_ref(),
         )?;
         let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
             RethStateReader {
@@ -27,7 +28,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let storage = StorageHandle::new(&mut storage);
-        let protocol = crate::protocol_state::active_radicle_protocol_state();
+        let protocol = self.protocol.as_ref();
         let sequence = protocol
             .publication_sequence(storage.clone())
             .map_err(snapshot_error)?;

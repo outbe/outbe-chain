@@ -1,12 +1,9 @@
 //! Chain reads behind the `outbe_*` RPC methods.
 //!
 //! The handler keeps the RPC wire types. This trait supplies the chain facts.
-//! Install the production reader before the node serves RPC. Until then, chain
-//! reads fail closed. Emission percent is a constant shared with the emission
-//! crate and does not wait for that install.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
-
-use std::sync::{Arc, OnceLock};
+//! Callers pass the installed reader. [`UninstalledRpcStateReader`] fails closed.
+//! Emission percent is a constant shared with the emission crate and does not
+//! read chain state.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -27,8 +24,6 @@ const VALIDATOR_REWARD_PERCENT: u64 = 4;
 
 /// Encrypted tribute, its day index, and the storage words a proof must cover.
 pub type TributeWords = (EncryptedTributeV2, u32, Vec<(B256, U256)>);
-
-static INSTALLED: OnceLock<Arc<dyn OutbeRpcStateReader>> = OnceLock::new();
 
 /// Object-safe chain reads for the RPC handler.
 pub trait OutbeRpcStateReader: Send + Sync {
@@ -90,45 +85,15 @@ pub trait OutbeRpcStateReader: Send + Sync {
     ) -> Result<bool>;
 }
 
-/// The production reader was already installed.
-#[derive(Debug, thiserror::Error)]
-#[error("rpc state reader is already installed")]
-pub struct RpcStateReaderAlreadyInstalled;
+/// Fail-closed reader used when no composition root installed chain reads.
+pub struct UninstalledRpcStateReader;
 
-/// Install `reader` for this process.
-pub fn install_rpc_state_reader(
-    reader: Arc<dyn OutbeRpcStateReader>,
-) -> std::result::Result<(), RpcStateReaderAlreadyInstalled> {
-    INSTALLED
-        .set(reader)
-        .map_err(|_| RpcStateReaderAlreadyInstalled)
-}
-
-pub(crate) fn active_rpc_state_reader() -> Arc<dyn OutbeRpcStateReader> {
-    if let Some(installed) = INSTALLED.get() {
-        return Arc::clone(installed);
-    }
-    #[cfg(test)]
-    {
-        Arc::new(StorageRpcStateReader)
-    }
-    #[cfg(not(test))]
-    {
-        Arc::new(UninstalledRpcStateReader)
-    }
-}
-
-#[cfg(not(test))]
-struct UninstalledRpcStateReader;
-
-#[cfg(not(test))]
 fn not_installed<T>() -> Result<T> {
     Err(PrecompileError::storage(
         "rpc state reader is not installed",
     ))
 }
 
-#[cfg(not(test))]
 impl OutbeRpcStateReader for UninstalledRpcStateReader {
     fn validators(&self, _storage: StorageHandle<'_>) -> Result<Vec<ValidatorInfo>> {
         not_installed()
@@ -191,7 +156,7 @@ impl OutbeRpcStateReader for UninstalledRpcStateReader {
 }
 
 #[cfg(test)]
-struct StorageRpcStateReader;
+pub(crate) struct StorageRpcStateReader;
 
 #[cfg(test)]
 impl OutbeRpcStateReader for StorageRpcStateReader {

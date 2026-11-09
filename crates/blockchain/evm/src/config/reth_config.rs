@@ -240,7 +240,14 @@ impl ConfigureEvm for OutbeEvmConfig {
                             parent_consensus_metadata,
                             parent_artifact_hint,
                         },
-                        dependencies: BlockExecutionDependencies { bridge, evm_signer },
+                        dependencies: BlockExecutionDependencies {
+                            bridge,
+                            evm_signer,
+                            runtime_host: self
+                                .runtime_host
+                                .clone()
+                                .unwrap_or_else(crate::host::default_runtime_host),
+                        },
                     },
                 )
             },

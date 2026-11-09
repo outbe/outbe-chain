@@ -5,8 +5,8 @@ use outbe_primitives::test_utils::state_proof::{
 mod block_num_reader;
 
 use alloy_consensus::{Header, Sealable as _};
-use alloy_eips::{BlockNumHash, BlockNumberOrTag};
-use alloy_primitives::{BlockHash, BlockNumber, Bytes, B256, U256};
+use alloy_eips::BlockNumHash;
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_trie::{TrieAccount, KECCAK_EMPTY};
 use outbe_node::state_proof::{PublicAccountProofV1, PublicStorageProofV1};
 use outbe_node::tee_remote_session::{
@@ -37,17 +37,9 @@ use outbe_tee_enclave::{
     transport::{serve_connection_with, SharedTributeOfferKey},
 };
 use outbe_teeregistry::TeeRegistry;
-use reth_chainspec::{ChainInfo, ChainSpec, ChainSpecBuilder};
-use reth_primitives_traits::SealedHeader;
-use reth_provider::{
-    test_utils::{ExtendedAccount, MockEthProvider},
-    BlockHashReader, BlockIdReader, BlockNumReader, HeaderProvider, ProviderResult,
-    StateProviderBox, StateProviderFactory,
-};
-use std::{
-    ops::RangeBounds,
-    sync::{Arc, OnceLock, RwLock},
-};
+use reth_chainspec::{ChainSpec, ChainSpecBuilder};
+use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+use std::sync::{Arc, OnceLock};
 
 const CHAIN_ID: u64 = 31_337;
 const CONSENSUS_TIMESTAMP: u64 = 1_700_000_000;
@@ -157,6 +149,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                 source_witness: &source_witness,
                 target_node: &target_node,
             },
+            &outbe_node::tee_remote_session::DomainTeeSessionReader,
         )
         .unwrap();
 
@@ -180,6 +173,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     node_data_dir: missing_candidate_dir.path(),
                     node_id: &source_node,
                 },
+                &outbe_node::tee_remote_session::DomainTeeSessionReader
             ),
             Err(LocalRegistryAdmissionError::ReplacementAuthorization(_))
         ));
@@ -202,6 +196,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     source_witness: &source_witness,
                     target_node: &target_node,
                 },
+                &outbe_node::tee_remote_session::DomainTeeSessionReader
             ),
             Err(LocalRegistryAdmissionError::SourceBindingMissing)
         ));
@@ -216,6 +211,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     node_data_dir: missing_candidate_dir.path(),
                     node_id: &source_node,
                 },
+                &outbe_node::tee_remote_session::DomainTeeSessionReader
             ),
             Err(LocalRegistryAdmissionError::ReplacementBindingMissing)
         ));
@@ -239,6 +235,7 @@ fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_s
                     source_witness: &source_witness,
                     target_node: &target_node,
                 },
+                &outbe_node::tee_remote_session::DomainTeeSessionReader
             ),
             Err(LocalRegistryAdmissionError::FinalizedBlockUnavailable)
         ));
@@ -412,6 +409,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
             source_witness: &source_witness,
             target_node: &target_node,
         },
+        &outbe_node::tee_remote_session::DomainTeeSessionReader,
     )
     .unwrap();
     assert_eq!(ticket.finalized_block_hash(), block_hash);
@@ -595,6 +593,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
             node_data_dir: &node_data_dir,
             node_id: &node_id,
         },
+        &outbe_node::tee_remote_session::DomainTeeSessionReader,
     )
     .unwrap();
     assert_eq!(authorized.view.block_number, 90);
@@ -607,6 +606,7 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
                 chain_id,
                 genesis_hash,
             },
+            &outbe_node::tee_remote_session::DomainTeeSessionReader,
         )
         .unwrap();
     assert_eq!(successor_status.view, authorized.view);
@@ -740,6 +740,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
             source_witness: &source_witness,
             target_node: &target_node,
         },
+        &outbe_node::tee_remote_session::DomainTeeSessionReader,
     )
     .unwrap();
 
@@ -764,6 +765,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
                 source_witness: &source_witness,
                 target_node: &target_node,
             },
+            &outbe_node::tee_remote_session::DomainTeeSessionReader
         ),
         Err(ExternalRegistryAdmissionError::Proof(_))
     ));
@@ -879,139 +881,6 @@ fn chain_id_word(chain_id: u64) -> [u8; 32] {
     word
 }
 
-struct FinalizedMockProvider {
-    inner: TestProvider,
-    finalized: Arc<RwLock<BlockNumHash>>,
-    historical_states: Arc<RwLock<std::collections::BTreeMap<B256, TestProvider>>>,
-}
-
-impl FinalizedMockProvider {
-    fn new(inner: TestProvider, finalized: BlockNumHash) -> Self {
-        Self {
-            inner,
-            finalized: Arc::new(RwLock::new(finalized)),
-            historical_states: Arc::new(RwLock::new(std::collections::BTreeMap::new())),
-        }
-    }
-
-    fn set_finalized(&self, finalized: BlockNumHash) {
-        *self.finalized.write().unwrap() = finalized;
-    }
-
-    fn override_state(&self, block_hash: B256, state: TestProvider) {
-        self.historical_states
-            .write()
-            .unwrap()
-            .insert(block_hash, state);
-    }
-}
-
-impl BlockHashReader for FinalizedMockProvider {
-    fn block_hash(&self, number: u64) -> ProviderResult<Option<B256>> {
-        self.inner.block_hash(number)
-    }
-
-    fn canonical_hashes_range(&self, start: u64, end: u64) -> ProviderResult<Vec<B256>> {
-        self.inner.canonical_hashes_range(start, end)
-    }
-}
-
-block_num_reader::delegate_block_num_reader!(FinalizedMockProvider, inner);
-
-impl BlockIdReader for FinalizedMockProvider {
-    fn pending_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(None)
-    }
-
-    fn safe_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(Some(*self.finalized.read().unwrap()))
-    }
-
-    fn finalized_block_num_hash(&self) -> ProviderResult<Option<BlockNumHash>> {
-        Ok(Some(*self.finalized.read().unwrap()))
-    }
-}
-
-impl HeaderProvider for FinalizedMockProvider {
-    type Header = OutbeHeader;
-
-    fn header(&self, block_hash: BlockHash) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header(block_hash)
-    }
-
-    fn header_by_number(&self, number: u64) -> ProviderResult<Option<Self::Header>> {
-        self.inner.header_by_number(number)
-    }
-
-    fn headers_range(
-        &self,
-        range: impl RangeBounds<BlockNumber>,
-    ) -> ProviderResult<Vec<Self::Header>> {
-        self.inner.headers_range(range)
-    }
-
-    fn sealed_header(
-        &self,
-        number: BlockNumber,
-    ) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
-        self.inner.sealed_header(number)
-    }
-
-    fn sealed_headers_while(
-        &self,
-        range: impl RangeBounds<BlockNumber>,
-        predicate: impl FnMut(&SealedHeader<Self::Header>) -> bool,
-    ) -> ProviderResult<Vec<SealedHeader<Self::Header>>> {
-        self.inner.sealed_headers_while(range, predicate)
-    }
-}
-
-impl StateProviderFactory for FinalizedMockProvider {
-    type Primitives = <TestProvider as StateProviderFactory>::Primitives;
-
-    fn latest(&self) -> ProviderResult<StateProviderBox> {
-        self.inner.latest()
-    }
-
-    fn state_with_block_appended(
-        &self,
-        parent_hash: BlockHash,
-        block: reth_chain_state::ExecutedBlock<Self::Primitives>,
-    ) -> ProviderResult<StateProviderBox> {
-        self.inner.state_with_block_appended(parent_hash, block)
-    }
-
-    fn state_by_block_number_or_tag(
-        &self,
-        number_or_tag: BlockNumberOrTag,
-    ) -> ProviderResult<StateProviderBox> {
-        self.inner.state_by_block_number_or_tag(number_or_tag)
-    }
-
-    fn history_by_block_number(&self, block: BlockNumber) -> ProviderResult<StateProviderBox> {
-        self.inner.history_by_block_number(block)
-    }
-
-    fn history_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
-        self.inner.history_by_block_hash(block)
-    }
-
-    fn state_by_block_hash(&self, block: BlockHash) -> ProviderResult<StateProviderBox> {
-        if let Some(state) = self.historical_states.read().unwrap().get(&block).cloned() {
-            return Ok(Box::new(state));
-        }
-        self.inner.state_by_block_hash(block)
-    }
-
-    fn pending(&self) -> ProviderResult<StateProviderBox> {
-        self.inner.pending()
-    }
-
-    fn pending_state_by_hash(&self, block_hash: B256) -> ProviderResult<Option<StateProviderBox>> {
-        self.inner.pending_state_by_hash(block_hash)
-    }
-
-    fn maybe_pending(&self) -> ProviderResult<Option<StateProviderBox>> {
-        self.inner.maybe_pending()
-    }
-}
+#[path = "tee_remote_session/provider.rs"]
+mod provider;
+use provider::FinalizedMockProvider;

@@ -19,7 +19,7 @@ impl Drop for ExecutionRuntimeOwner {
 }
 
 /// Called only at the synchronous CLI boundary, before NodeShutdown::finish.
-pub(super) fn run_with_execution_runtime(
+pub(crate) fn run_with_execution_runtime(
     mut config: RuntimeConfig,
     run: impl FnOnce(CliRunner) -> Result<()>,
 ) -> Result<()> {

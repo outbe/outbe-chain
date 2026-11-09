@@ -11,14 +11,12 @@ use crate::{
 };
 use std::sync::Arc;
 
-use outbe_evm::{
-    install_evm_runtime_host, EvmRuntimeHost, OutbeExecutorBuilder, SharedOutbeEvmSigner,
-};
+use outbe_evm::{EvmRuntimeHost, OutbeExecutorBuilder, SharedOutbeEvmSigner};
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge, OutbeHeader, OutbePayloadTypes, OutbePrimitives,
     OutbeTxEnvelope,
 };
-use outbe_txpool::{install_txpool_zero_fee_policy, OutbePoolBuilder, TxPoolZeroFeePolicy};
+use outbe_txpool::{OutbePoolBuilder, TxPoolZeroFeePolicy};
 use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_ethereum::node::node::EthereumEthApiBuilder;
 use reth_ethereum::node::EthereumNetworkBuilder;
@@ -158,18 +156,13 @@ where
             None => executor,
         };
         let executor = match self.runtime_host.clone() {
-            Some(host) => {
-                let _ = install_evm_runtime_host(Arc::clone(&host));
-                executor.with_runtime_host(host)
-            }
+            Some(host) => executor.with_runtime_host(host),
             None => executor,
         };
-        if let Some(policy) = self.pool_policy.clone() {
-            let _ = install_txpool_zero_fee_policy(policy);
-        }
+        let pool = OutbePoolBuilder::new(self.pool_policy.clone());
         ComponentsBuilder::default()
             .node_types::<N>()
-            .pool(OutbePoolBuilder)
+            .pool(pool)
             .executor(executor)
             .payload(OutbePayloadServiceBuilder::new(self.shutdown.clone()))
             .network(EthereumNetworkBuilder::default())

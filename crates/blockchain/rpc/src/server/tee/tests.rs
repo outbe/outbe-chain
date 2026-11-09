@@ -146,7 +146,9 @@ fn check(
             genesis_timestamp: 1_700_000_000,
         },
     );
-    let result = crate::state_reader::active_rpc_state_reader()
+    let rpc_reader = &crate::state_reader::StorageRpcStateReader
+        as &dyn crate::state_reader::OutbeRpcStateReader;
+    let result = rpc_reader
         .live_upgrade_candidate(StorageHandle::new(&mut provider), context, 100, legacy)
         .map_err(|e| e.to_string());
     let recorded = reads.borrow().clone();

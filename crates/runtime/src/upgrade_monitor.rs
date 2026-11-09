@@ -1,8 +1,10 @@
 use super::*;
+use crate::upgrade::CycleOutcome;
+use crate::upgrade_ports::UpgradePromotionIo;
 use outbe_node::tee_remote_session::LocalFinalizedSuccessorStatusV1;
 use outbe_operator::tee::UpgradeContextV1;
 
-pub(super) fn policy_matches(
+pub(crate) fn policy_matches(
     context: &UpgradeContextV1,
     status: &LocalFinalizedSuccessorStatusV1,
 ) -> bool {
@@ -26,7 +28,7 @@ pub(super) fn policy_matches(
     true
 }
 
-pub(super) fn check_deadline(
+pub(crate) fn check_deadline(
     io: &impl UpgradePromotionIo,
     context: &UpgradeContextV1,
     status: &LocalFinalizedSuccessorStatusV1,
@@ -78,7 +80,7 @@ pub(super) fn check_deadline(
     CycleOutcome::Wait
 }
 
-pub(super) fn observe_pending(
+pub(crate) fn observe_pending(
     io: &impl UpgradePromotionIo,
     snapshot: &outbe_operator::tee::UpgradeJournalSnapshotV1,
     config: &UpgradePromotionWorkerConfigV1,
@@ -95,7 +97,7 @@ pub(super) fn observe_pending(
         return CycleOutcome::Stop;
     }
     if matches!(snapshot.lifecycle, UpgradeJournalStateV1::Submitted { .. }) {
-        let outcome = promotion::reconcile_submitted(io, &config.promoted);
+        let outcome = crate::upgrade_promotion::reconcile_submitted(io, &config.promoted);
         if let Some(outcome) = outcome {
             return outcome;
         }

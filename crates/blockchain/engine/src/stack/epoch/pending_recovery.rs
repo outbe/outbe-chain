@@ -34,6 +34,7 @@ where
         self.dkg_manager
             .note_recovered_pending_boundary(snapshot.artifact.clone());
         let restored = restore_pending_dkg_activation(
+            self.protocol.as_ref(),
             snapshot,
             &keys_dir,
             &self.key_backend,

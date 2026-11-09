@@ -383,11 +383,12 @@ pub(in crate::stack) fn pending_boundary_is_finalized(
 }
 
 fn require_frozen_validator_set(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     freeze_height: u64,
     unavailable: impl FnOnce() -> eyre::Report,
 ) -> Result<(validators::ValidatorSet, Vec<EthAddress>)> {
-    match refresh_validator_set_at_height(node, freeze_height)? {
+    match refresh_validator_set_at_height(protocol, node, freeze_height)? {
         FrozenValidatorSetRefresh::Ready {
             validator_set,
             tee_expired_target_exclusions,
@@ -398,6 +399,7 @@ fn require_frozen_validator_set(
 }
 
 fn validate_pending_boundary_snapshot(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     snapshot: &PendingDkgBoundarySnapshot,
     local_output: &Output<MinSig, bls12381::PublicKey>,
     node: &OutbeFullNode,
@@ -410,7 +412,7 @@ fn validate_pending_boundary_snapshot(
         "pending boundary snapshot",
     )?;
     let (frozen, tee_expired_target_exclusions) =
-        require_frozen_validator_set(node, snapshot.artifact.freeze_height, || {
+        require_frozen_validator_set(protocol, node, snapshot.artifact.freeze_height, || {
             crate::errors::StackDkgError::PendingBoundaryFreezeHeightStateUnavailable {
                 height: snapshot.artifact.freeze_height,
             }
@@ -561,6 +563,7 @@ fn retire_finalized_pending_boundary(
 }
 
 fn validate_unfinalized_pending_boundary(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
@@ -576,7 +579,9 @@ fn validate_unfinalized_pending_boundary(
     }) else {
         return Ok(None);
     };
-    if let Err(error) = validate_pending_boundary_snapshot(&snapshot, &boundary_output, node) {
+    if let Err(error) =
+        validate_pending_boundary_snapshot(protocol, &snapshot, &boundary_output, node)
+    {
         if matches!(
             error.downcast_ref::<crate::errors::StackDkgError>(),
             Some(crate::errors::StackDkgError::PendingBoundarySnapshotFreezeMismatch)
@@ -643,6 +648,7 @@ fn check_unfinalized_pending_private_state(
 }
 
 pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
     local_consensus_key: &bls12381::PublicKey,
@@ -672,6 +678,7 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
         return Ok(None);
     }
     validate_unfinalized_pending_boundary(
+        protocol,
         snapshot,
         storage_dir,
         key_backend,
@@ -681,6 +688,7 @@ pub(in crate::stack) fn recover_pending_dkg_boundary_snapshot(
 }
 
 pub(in crate::stack) fn restore_pending_dkg_activation(
+    protocol: &dyn crate::protocol_state::EngineProtocolState,
     snapshot: PendingDkgBoundarySnapshot,
     storage_dir: &std::path::Path,
     key_backend: &bls::KeyBackend,
@@ -690,7 +698,7 @@ pub(in crate::stack) fn restore_pending_dkg_activation(
     let output = decode_boundary_output(&snapshot.artifact)
         .wrap_err("failed to decode pending DKG output during runtime restore")?;
     let (validator_set, tee_expired_target_exclusions) =
-        require_frozen_validator_set(node, snapshot.artifact.freeze_height, || {
+        require_frozen_validator_set(protocol, node, snapshot.artifact.freeze_height, || {
             crate::errors::StackDkgError::PendingFreezeHeightStateUnavailableDuringRestore {
                 height: snapshot.artifact.freeze_height,
             }

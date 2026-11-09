@@ -459,10 +459,9 @@ impl OutbeEvmFactory {
         self.genesis_timestamp
     }
 
-    /// Stores `host` and installs it when no host is installed yet.
+    /// Stores `host` for every EVM this factory creates.
     #[must_use]
     pub fn with_runtime_host(mut self, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
-        let _ = crate::install_evm_runtime_host(std::sync::Arc::clone(&host));
         self.runtime_host = Some(host);
         self
     }
@@ -497,6 +496,9 @@ impl EvmFactory for OutbeEvmFactory {
                 .with_tee_attestation_v1(self.tee_attestation_v1.clone()),
             crate::precompiles::OutbePrecompileRuntime::new()
                 .with_abort_bridge(abort_bridge.clone()),
+            self.runtime_host
+                .clone()
+                .unwrap_or_else(crate::host::default_runtime_host),
         );
 
         let mut evm = Context::mainnet()

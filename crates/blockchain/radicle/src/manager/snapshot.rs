@@ -5,7 +5,7 @@ use super::types::{
     FinalizedValidator, ManagerError, SnapshotReader,
 };
 use crate::endpoint::PeerId;
-use crate::protocol_state::active_radicle_protocol_state;
+use crate::protocol_state::RadicleProtocolState;
 use alloy_primitives::{Address, B256, U256};
 use bytes::Bytes;
 use commonware_codec::DecodeExt;
@@ -29,15 +29,22 @@ pub struct RethSnapshotReader<P> {
     provider: P,
     chain_id: u64,
     genesis_hash: B256,
+    protocol: Arc<dyn RadicleProtocolState>,
 }
 
 impl<P> RethSnapshotReader<P> {
     #[must_use]
-    pub fn new(provider: P, chain_id: u64, genesis_hash: B256) -> Self {
+    pub fn new(
+        provider: P,
+        chain_id: u64,
+        genesis_hash: B256,
+        protocol: Arc<dyn RadicleProtocolState>,
+    ) -> Self {
         Self {
             provider,
             chain_id,
             genesis_hash,
+            protocol,
         }
     }
 }
@@ -87,7 +94,8 @@ impl<P: StateProviderFactory + reth_provider::ReceiptProvider + Send + Sync + 's
             self.chain_id,
             self.genesis_hash,
         );
-        active_radicle_protocol_state()
+        self.protocol
+            .as_ref()
             .governments_descriptor(StorageHandle::new(&mut storage))
             .map_err(snapshot_error)
     }
@@ -141,7 +149,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let protocol = active_radicle_protocol_state();
+        let protocol = self.protocol.as_ref();
         let receipt = protocol
             .publication_receipt(handle.clone(), body.sequence)
             .map_err(snapshot_error)?;
@@ -206,6 +214,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
             block,
+            self.protocol.as_ref(),
         )?;
         let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
             RethStateReader {
@@ -215,7 +224,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let protocol = active_radicle_protocol_state();
+        let protocol = self.protocol.as_ref();
         if !protocol
             .network_repository(handle.clone())
             .map_err(snapshot_error)?
@@ -266,6 +275,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
             block,
+            self.protocol.as_ref(),
         )?;
         let mut storage = ReadOnlyStorageProvider::new_with_chain_identity(
             RethStateReader {
@@ -275,7 +285,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let protocol = active_radicle_protocol_state();
+        let protocol = self.protocol.as_ref();
         let approval = protocol
             .patch_approval(handle.clone(), proposal_id)
             .map_err(snapshot_error)?
@@ -305,7 +315,6 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
         );
         ensure_bound_patch_sequence(binding, subject.repo_id, sequence, material_sequence)?;
         let read_receipt = {
-            let protocol = Arc::clone(&protocol);
             let handle = handle.clone();
             move |sequence| -> Result<_, ManagerError> {
                 let receipt = protocol
@@ -422,7 +431,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
         );
         let handle = StorageHandle::new(&mut storage);
-        let protocol = active_radicle_protocol_state();
+        let protocol = self.protocol.as_ref();
         let latest_sequence = protocol
             .publication_sequence(handle.clone())
             .map_err(snapshot_error)?;
@@ -473,6 +482,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
                 number: head.number,
                 hash: head.hash,
             },
+            self.protocol.as_ref(),
         )
     }
 
@@ -498,6 +508,7 @@ impl<P: StateProviderFactory> RethSnapshotReader<P> {
             self.genesis_hash,
             block,
             proposal_id,
+            self.protocol.as_ref(),
         )
     }
 
@@ -620,11 +631,11 @@ fn read_repository_authority_from_storage(
     chain_id: u64,
     genesis_hash: B256,
     block: FinalizedBlock,
+    protocol: &dyn RadicleProtocolState,
 ) -> Result<FinalizedRepositoryAuthority, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
     let handle = StorageHandle::new(&mut storage);
-    let protocol = active_radicle_protocol_state();
     let epoch = protocol
         .current_epoch(handle.clone())
         .map_err(snapshot_error)?;
@@ -671,10 +682,11 @@ fn read_patch_approval_from_storage(
     genesis_hash: B256,
     block: FinalizedBlock,
     proposal_id: U256,
+    protocol: &dyn RadicleProtocolState,
 ) -> Result<Option<FinalizedPatchApproval>, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let approval = active_radicle_protocol_state()
+    let approval = protocol
         .patch_approval(StorageHandle::new(&mut storage), proposal_id)
         .map_err(snapshot_error)?;
     match approval {
@@ -698,7 +710,13 @@ where
         let reader = RethStateReader {
             state: state.as_ref(),
         };
-        read_snapshot_from_storage(reader, self.chain_id, self.genesis_hash, block)
+        read_snapshot_from_storage(
+            reader,
+            self.chain_id,
+            self.genesis_hash,
+            block,
+            self.protocol.as_ref(),
+        )
     }
 }
 
@@ -707,10 +725,10 @@ fn read_snapshot_from_storage(
     chain_id: u64,
     genesis_hash: B256,
     block: FinalizedBlock,
+    protocol: &dyn RadicleProtocolState,
 ) -> Result<FinalizedSnapshot, ManagerError> {
     let mut storage =
         ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let protocol = active_radicle_protocol_state();
     let validators = {
         let handle = StorageHandle::new(&mut storage);
         let active = protocol
@@ -794,6 +812,11 @@ impl StorageReader for RethStateReader<'_> {
 
 fn snapshot_error(error: impl std::fmt::Display) -> ManagerError {
     ManagerError::Snapshot(error.to_string())
+}
+
+#[cfg(test)]
+fn storage_state() -> Arc<dyn RadicleProtocolState> {
+    Arc::new(crate::protocol_state::StorageRadicleState)
 }
 
 #[cfg(test)]
@@ -919,9 +942,14 @@ mod tests {
             number: 9,
             hash: B256::repeat_byte(0x99),
         };
-        let snapshot =
-            read_snapshot_from_storage(MapReader(provider), chain_id, genesis_hash, expected)
-                .unwrap();
+        let snapshot = read_snapshot_from_storage(
+            MapReader(provider),
+            chain_id,
+            genesis_hash,
+            expected,
+            &crate::protocol_state::StorageRadicleState,
+        )
+        .unwrap();
         assert_eq!(snapshot.block, expected);
         assert_eq!(snapshot.registry_generation, 1);
         assert_eq!(snapshot.repositories, [repository]);

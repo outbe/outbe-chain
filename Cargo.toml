@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "xtask",
+    "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
@@ -82,6 +83,7 @@ members = [
 # select them for `clippy`, `nextest`, and benchmark runs.
 default-members = [
     "xtask",
+    "crates/runtime",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/constants",
@@ -192,6 +194,7 @@ outbe-engine = { path = "crates/blockchain/engine" }
 outbe-rpc = { path = "crates/blockchain/rpc" }
 outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
+outbe-runtime = { path = "crates/runtime" }
 outbe-operator = { path = "crates/blockchain/operator" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }

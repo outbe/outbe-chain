@@ -52,17 +52,20 @@ fn system_entitlements(input: SystemTx) -> MetadosisMutationEntitlements {
         .expect("date step")
     });
     let data = encoded(input);
-    metadosis_mutation_entitlements(MetadosisMutationCall {
-        address: OUTBE_SYSTEM_TX_ADDRESS,
-        data: data.as_ref(),
-        caller: SYSTEM_ADDRESS,
-        is_static: false,
-        value: U256::ZERO,
-        chain_id: TEST_CHAIN_ID,
-        block_number: TEST_BLOCK_NUMBER,
-        timestamp: TEST_TIMESTAMP,
-        cycle_active_utc_day,
-    })
+    metadosis_mutation_entitlements(
+        &crate::test_support::DomainEvmHost::new(),
+        MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            chain_id: TEST_CHAIN_ID,
+            block_number: TEST_BLOCK_NUMBER,
+            timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day,
+        },
+    )
 }
 
 fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
@@ -91,19 +94,22 @@ fn expected_cycle_entitlements() -> MetadosisMutationEntitlements {
 #[test]
 fn protocol_cycle_entitles_genesis_initialization_at_block_one() {
     let data = encoded(SystemTx::CycleTick);
-    let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
-        address: OUTBE_SYSTEM_TX_ADDRESS,
-        data: data.as_ref(),
-        caller: SYSTEM_ADDRESS,
-        is_static: false,
-        value: U256::ZERO,
-        chain_id: TEST_CHAIN_ID,
-        block_number: 1,
-        timestamp: TEST_TIMESTAMP,
-        cycle_active_utc_day: Some(outbe_primitives::time::timestamp_to_date_key(
-            TEST_TIMESTAMP,
-        )),
-    });
+    let entitlements = metadosis_mutation_entitlements(
+        &crate::test_support::DomainEvmHost::new(),
+        MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            chain_id: TEST_CHAIN_ID,
+            block_number: 1,
+            timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day: Some(outbe_primitives::time::timestamp_to_date_key(
+                TEST_TIMESTAMP,
+            )),
+        },
+    );
 
     assert!(entitlements.expects(
         Purpose::CycleLifecycle,
@@ -142,17 +148,20 @@ fn protocol_cycle_grants_only_oldest_unallocated_day_after_a_multi_day_halt() {
         active_day = outbe_primitives::time::previous_date_key(active_day).expect("date step");
     }
     let data = encoded(SystemTx::CycleTick);
-    let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
-        address: OUTBE_SYSTEM_TX_ADDRESS,
-        data: data.as_ref(),
-        caller: SYSTEM_ADDRESS,
-        is_static: false,
-        value: U256::ZERO,
-        chain_id: TEST_CHAIN_ID,
-        block_number: TEST_BLOCK_NUMBER,
-        timestamp: TEST_TIMESTAMP,
-        cycle_active_utc_day: Some(active_day),
-    });
+    let entitlements = metadosis_mutation_entitlements(
+        &crate::test_support::DomainEvmHost::new(),
+        MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            chain_id: TEST_CHAIN_ID,
+            block_number: TEST_BLOCK_NUMBER,
+            timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day: Some(active_day),
+        },
+    );
 
     assert!(entitlements.expects(
         Purpose::CycleLifecycle,
@@ -223,32 +232,38 @@ fn route_or_envelope_mismatch_grants_no_mutation_authority() {
         ),
     ] {
         assert_eq!(
-            metadosis_mutation_entitlements(MetadosisMutationCall {
-                address,
-                data: cycle.as_ref(),
-                caller,
-                is_static,
-                value,
-                chain_id: TEST_CHAIN_ID,
-                block_number: TEST_BLOCK_NUMBER,
-                timestamp: TEST_TIMESTAMP,
-                cycle_active_utc_day: None,
-            }),
+            metadosis_mutation_entitlements(
+                &crate::test_support::DomainEvmHost::new(),
+                MetadosisMutationCall {
+                    address,
+                    data: cycle.as_ref(),
+                    caller,
+                    is_static,
+                    value,
+                    chain_id: TEST_CHAIN_ID,
+                    block_number: TEST_BLOCK_NUMBER,
+                    timestamp: TEST_TIMESTAMP,
+                    cycle_active_utc_day: None,
+                }
+            ),
             MetadosisMutationEntitlements::NONE
         );
     }
     assert_eq!(
-        metadosis_mutation_entitlements(MetadosisMutationCall {
-            address: OUTBE_SYSTEM_TX_ADDRESS,
-            data: b"malformed",
-            caller: SYSTEM_ADDRESS,
-            is_static: false,
-            value: U256::ZERO,
-            chain_id: TEST_CHAIN_ID,
-            block_number: TEST_BLOCK_NUMBER,
-            timestamp: TEST_TIMESTAMP,
-            cycle_active_utc_day: None,
-        }),
+        metadosis_mutation_entitlements(
+            &crate::test_support::DomainEvmHost::new(),
+            MetadosisMutationCall {
+                address: OUTBE_SYSTEM_TX_ADDRESS,
+                data: b"malformed",
+                caller: SYSTEM_ADDRESS,
+                is_static: false,
+                value: U256::ZERO,
+                chain_id: TEST_CHAIN_ID,
+                block_number: TEST_BLOCK_NUMBER,
+                timestamp: TEST_TIMESTAMP,
+                cycle_active_utc_day: None,
+            }
+        ),
         MetadosisMutationEntitlements::NONE
     );
 

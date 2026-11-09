@@ -2,12 +2,10 @@
 
 pub(crate) mod cli;
 pub(crate) mod genesis;
-pub(crate) mod launch;
 pub(crate) mod snapshot;
 
 pub(crate) use cli::CliError;
 pub(crate) use genesis::TeeGenesisError;
-pub(crate) use launch::LaunchError;
 pub(crate) use snapshot::SnapshotError;
 
 /// Formats any displayable error as a string.

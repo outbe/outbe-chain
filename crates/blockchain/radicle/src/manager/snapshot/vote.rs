@@ -1,7 +1,7 @@
 //! Read existing Vote events; current permission is checked separately by the signer.
 use super::*;
 use crate::manager::{FinalizedVotePage, MAX_VOTE_PAGE};
-use crate::protocol_state::active_radicle_protocol_state;
+use crate::protocol_state::RadicleProtocolState;
 use reth_provider::ReceiptProvider;
 
 impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
@@ -27,7 +27,7 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
             .ok_or_else(|| {
                 ManagerError::Snapshot("finalized Vote receipts are unavailable".into())
             })?;
-        let ids = approved_proposal_ids(&receipts)?;
+        let ids = approved_proposal_ids(self.protocol.as_ref(), &receipts)?;
         let start = offset as usize;
         if start > ids.len() {
             return Err(ManagerError::Snapshot(
@@ -46,8 +46,12 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
             self.chain_id,
             self.genesis_hash,
         );
-        let proposals =
-            filter_network_proposals(StorageHandle::new(&mut storage), height, &ids[start..end])?;
+        let proposals = filter_network_proposals(
+            self.protocol.as_ref(),
+            StorageHandle::new(&mut storage),
+            height,
+            &ids[start..end],
+        )?;
         Ok(Some(FinalizedVotePage {
             chain_id: self.chain_id,
             genesis_hash: self.genesis_hash,
@@ -66,9 +70,9 @@ impl<P: StateProviderFactory + ReceiptProvider> RethSnapshotReader<P> {
 }
 
 fn approved_proposal_ids<R: alloy_consensus::TxReceipt<Log = alloy_primitives::Log>>(
+    protocol: &dyn RadicleProtocolState,
     receipts: &[R],
 ) -> Result<Vec<U256>, ManagerError> {
-    let protocol = active_radicle_protocol_state();
     let mut ids = Vec::new();
     for log in receipts.iter().flat_map(|r| r.logs()) {
         if let Some(id) = protocol.approved_proposal_id(log).map_err(snapshot_error)? {
@@ -81,11 +85,11 @@ fn approved_proposal_ids<R: alloy_consensus::TxReceipt<Log = alloy_primitives::L
 }
 
 fn filter_network_proposals(
+    protocol: &dyn RadicleProtocolState,
     storage: StorageHandle<'_>,
     height: u64,
     ids: &[U256],
 ) -> Result<Vec<U256>, ManagerError> {
-    let protocol = active_radicle_protocol_state();
     let network_repository = protocol
         .network_repository(storage.clone())
         .map_err(snapshot_error)?;

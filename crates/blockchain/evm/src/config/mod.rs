@@ -230,11 +230,20 @@ impl OutbeEvmConfig {
         }
     }
 
-    /// Installs `host` unless one is already installed, then stores the winner.
+    /// Stores `host` on this config and on the factory that builds its EVMs.
     #[must_use]
     pub fn with_runtime_host(mut self, host: Arc<dyn crate::EvmRuntimeHost>) -> Self {
-        let _ = crate::install_evm_runtime_host(Arc::clone(&host));
-        self.runtime_host = Some(crate::active_evm_runtime_host());
+        self.runtime_host = Some(Arc::clone(&host));
+        let evm_factory = self
+            .inner
+            .executor_factory
+            .evm_factory()
+            .clone()
+            .with_runtime_host(host);
+        let receipt_builder = *self.inner.executor_factory.receipt_builder();
+        let spec = self.inner.executor_factory.spec().clone();
+        self.inner.executor_factory =
+            alloy_evm::eth::EthBlockExecutorFactory::new(receipt_builder, spec, evm_factory);
         self
     }
 

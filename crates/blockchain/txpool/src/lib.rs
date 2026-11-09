@@ -7,14 +7,12 @@ pub mod errors;
 pub mod maintain;
 pub mod policy;
 
-pub use policy::{
-    install_txpool_zero_fee_policy, TxPoolPolicyAlreadyInstalled, TxPoolZeroFeePolicy,
-};
+pub use policy::TxPoolZeroFeePolicy;
 
 mod state_reader;
 
 use crate::errors::{OutbeReservedSystemTxPoolError, OutbeZeroFeePoolError};
-use crate::policy::active_policy;
+use crate::policy::normal_policy;
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_primitives::{
@@ -80,7 +78,7 @@ impl<T> Clone for OutbeTransactionOrdering<T> {
 
 impl<T> Default for OutbeTransactionOrdering<T> {
     fn default() -> Self {
-        Self::new(active_policy())
+        Self::new(normal_policy())
     }
 }
 
@@ -127,8 +125,26 @@ where
 }
 
 /// Builds the transaction pool used by Outbe nodes.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct OutbePoolBuilder;
+#[derive(Clone, Default)]
+pub struct OutbePoolBuilder {
+    policy: Option<Arc<dyn TxPoolZeroFeePolicy>>,
+}
+
+impl fmt::Debug for OutbePoolBuilder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OutbePoolBuilder")
+            .field("policy", &self.policy.is_some())
+            .finish()
+    }
+}
+
+impl OutbePoolBuilder {
+    /// Uses `policy` for waiver classification. `None` charges every transaction.
+    pub fn new(policy: Option<Arc<dyn TxPoolZeroFeePolicy>>) -> Self {
+        Self { policy }
+    }
+}
 
 impl<Types, Node, Evm> PoolBuilder<Node, Evm> for OutbePoolBuilder
 where
@@ -165,7 +181,7 @@ where
         let blob_store =
             reth_node_builder::components::create_blob_store_with_cache(ctx, blob_cache_size)?;
 
-        let policy = active_policy();
+        let policy = self.policy.clone().unwrap_or_else(normal_policy);
         let validator =
             TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
                 .set_eip4844(!blobs_disabled)

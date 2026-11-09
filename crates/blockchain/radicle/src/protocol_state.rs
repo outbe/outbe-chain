@@ -2,10 +2,7 @@
 //!
 //! Snapshot code keeps the signing checks. This trait supplies registry rows,
 //! validator-set bindings, committee snapshots, and approved Vote log ids.
-//! Install the production reader before launch. Until then, reads fail closed.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
-
-use std::sync::{Arc, OnceLock};
+//! Callers pass the installed reader. [`UninstalledRadicleState`] fails closed.
 
 use alloy_primitives::{Address, Log, B256, U256};
 use outbe_primitives::code_registry::{PatchApprovalRecord, PublicationReceipt, RepoId};
@@ -17,8 +14,6 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::validator_dto::{EpochSnapshot, ValidatorRecord};
 use thiserror::Error;
 
-static INSTALLED: OnceLock<Arc<dyn RadicleProtocolState>> = OnceLock::new();
-
 /// Chain-read or Vote-log failure. Display matches the source error.
 #[derive(Debug, Error)]
 pub enum RadicleProtocolError {
@@ -29,11 +24,6 @@ pub enum RadicleProtocolError {
     #[error("{0}")]
     VoteLog(String),
 }
-
-/// The production state was already installed.
-#[derive(Debug, Error)]
-#[error("radicle protocol state is already installed")]
-pub struct RadicleProtocolStateAlreadyInstalled;
 
 /// Object-safe chain reads used by the radicle manager.
 pub trait RadicleProtocolState: Send + Sync {
@@ -149,40 +139,15 @@ pub trait RadicleProtocolState: Send + Sync {
     fn approved_proposal_id(&self, log: &Log) -> Result<Option<U256>, RadicleProtocolError>;
 }
 
-/// Install `reader` for this process.
-pub fn install_radicle_protocol_state(
-    reader: Arc<dyn RadicleProtocolState>,
-) -> Result<(), RadicleProtocolStateAlreadyInstalled> {
-    INSTALLED
-        .set(reader)
-        .map_err(|_| RadicleProtocolStateAlreadyInstalled)
-}
+/// Fail-closed reader used when no composition root installed chain reads.
+pub struct UninstalledRadicleState;
 
-pub(crate) fn active_radicle_protocol_state() -> Arc<dyn RadicleProtocolState> {
-    if let Some(installed) = INSTALLED.get() {
-        return Arc::clone(installed);
-    }
-    #[cfg(test)]
-    {
-        Arc::new(StorageRadicleState)
-    }
-    #[cfg(not(test))]
-    {
-        Arc::new(UninstalledRadicleState)
-    }
-}
-
-#[cfg(not(test))]
-struct UninstalledRadicleState;
-
-#[cfg(not(test))]
 fn not_installed<T>() -> Result<T, RadicleProtocolError> {
     Err(RadicleProtocolError::State(PrecompileError::storage(
         "radicle protocol state is not installed",
     )))
 }
 
-#[cfg(not(test))]
 impl RadicleProtocolState for UninstalledRadicleState {
     fn publication_receipt(
         &self,
@@ -325,7 +290,7 @@ impl RadicleProtocolState for UninstalledRadicleState {
 }
 
 #[cfg(test)]
-struct StorageRadicleState;
+pub(crate) struct StorageRadicleState;
 
 #[cfg(test)]
 impl RadicleProtocolState for StorageRadicleState {

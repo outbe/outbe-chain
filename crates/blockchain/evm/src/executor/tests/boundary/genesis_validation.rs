@@ -20,7 +20,12 @@ fn genesis_validation_rejects_active_validator_with_zero_stake() {
             epoch_length_blocks: 60,
         };
 
-        let err = super::super::validate_genesis_state(storage.clone(), &genesis).unwrap_err();
+        let err = super::super::validate_genesis_state(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &genesis,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("stake below min_stake"));
     });
 }
@@ -54,12 +59,22 @@ fn genesis_validation_accepts_staked_active_validator() {
             epoch_length_blocks: 60,
         };
 
-        super::super::validate_genesis_state(storage.clone(), &genesis).unwrap();
+        super::super::validate_genesis_state(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &genesis,
+        )
+        .unwrap();
 
         // When `config_min_stake` is zero (unset in genesis), `validate_genesis_state`
         // defaults to `DEFAULT_MIN_STAKE` (10_000_000 COEN in base units `unit`).
         staking.config_min_stake.write(U256::ZERO).unwrap();
-        let err = super::super::validate_genesis_state(storage.clone(), &genesis).unwrap_err();
+        let err = super::super::validate_genesis_state(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &genesis,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("stake below min_stake"));
 
         let default_min = outbe_staking::contract::DEFAULT_MIN_STAKE;
@@ -71,6 +86,11 @@ fn genesis_validation_accepts_staked_active_validator() {
         .unwrap();
         staking.stake_amount.write(&validator, default_min).unwrap();
         staking.total_staked.write(default_min).unwrap();
-        super::super::validate_genesis_state(storage.clone(), &genesis).unwrap();
+        super::super::validate_genesis_state(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &genesis,
+        )
+        .unwrap();
     });
 }

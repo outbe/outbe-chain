@@ -1075,10 +1075,20 @@ mod copied_genesis_validator_history {
     fn assert_genesis_and_current(root: &Path, genesis_hash: B256, current_hash: B256) {
         let provider = open_native(root);
 
-        let genesis = read_consensus_validators_at_block(&provider, genesis_hash).unwrap();
+        let genesis = read_consensus_validators_at_block(
+            &crate::protocol_state::StorageEngineState,
+            &provider,
+            genesis_hash,
+        )
+        .unwrap();
         assert_eq!(genesis.addresses, vec![FOUNDER]);
         assert_eq!(genesis.public_keys, vec![consensus_key(11)]);
-        let current = read_consensus_validators_at_block(&provider, current_hash).unwrap();
+        let current = read_consensus_validators_at_block(
+            &crate::protocol_state::StorageEngineState,
+            &provider,
+            current_hash,
+        )
+        .unwrap();
         assert_eq!(current.addresses, vec![FOUNDER, JOINER]);
         assert_eq!(
             current.public_keys,
@@ -1126,13 +1136,23 @@ mod copied_genesis_validator_history {
         {
             let provider = open_native(recipient.path());
 
-            let current = read_consensus_validators_at_block(&provider, current_hash).unwrap();
+            let current = read_consensus_validators_at_block(
+                &crate::protocol_state::StorageEngineState,
+                &provider,
+                current_hash,
+            )
+            .unwrap();
             assert_eq!(current.addresses, vec![FOUNDER, JOINER]);
             assert_eq!(
                 current.public_keys,
                 vec![consensus_key(11), consensus_key(22)]
             );
-            let error = read_consensus_validators_at_block(&provider, genesis_hash).unwrap_err();
+            let error = read_consensus_validators_at_block(
+                &crate::protocol_state::StorageEngineState,
+                &provider,
+                genesis_hash,
+            )
+            .unwrap_err();
             let message = format!("{error:#}");
             assert!(message.contains("storage change set"), "{message}");
             assert!(message.contains("at block #1 does not exist"), "{message}");
@@ -1331,7 +1351,9 @@ mod copied_native_dkg_prerequisites {
                     },
                 );
                 let evm = OutbeEvmConfig::new(chain.clone());
-                let pool = OutbePoolBuilder.build_pool(&ctx, evm.clone()).await?;
+                let pool = OutbePoolBuilder::default()
+                    .build_pool(&ctx, evm.clone())
+                    .await?;
                 let network_config = ctx.build_network_config(
                     ctx.network_config_builder()?
                         .disable_discovery()
@@ -1457,9 +1479,11 @@ mod copied_native_dkg_prerequisites {
                 let state = provider
                     .state_by_block_hash(disk.headers[FREEZE as usize].hash_slow())
                     .unwrap();
-                let frozen =
-                    validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
-                        .unwrap();
+                let frozen = validators::read_reshare_target_with_empty_tee_exclusions_from_state(
+                    &crate::protocol_state::StorageEngineState,
+                    &state,
+                )
+                .unwrap();
                 assert_eq!(frozen.validator_set.addresses, MEMBERS);
                 frozen.validator_set
             };
@@ -1512,7 +1536,11 @@ mod copied_native_dkg_prerequisites {
         }
 
         fn assert_restored(&self, root: &Path, node: &OutbeFullNode) -> eyre::Result<()> {
-            let refreshed = refresh_validator_set_at_height(node, FREEZE)?;
+            let refreshed = refresh_validator_set_at_height(
+                &crate::protocol_state::StorageEngineState,
+                node,
+                FREEZE,
+            )?;
             let FrozenValidatorSetRefresh::Ready {
                 validator_set,
                 participants,
@@ -1528,12 +1556,14 @@ mod copied_native_dkg_prerequisites {
                 .provider
                 .state_by_block_hash(self.disk.headers[H as usize].hash_slow())?;
             let current = validators::read_reshare_target_with_empty_tee_exclusions_from_state(
+                &crate::protocol_state::StorageEngineState,
                 &current_state,
             )?;
             ensure!(current.validator_set.addresses == vec![MEMBERS[1], MEMBERS[2], JOINER]);
             let own = root.join("own-dkg");
             let snapshot = load_pending_dkg_boundary(&own)?.expect("durable pending boundary");
             let restored = restore_pending_dkg_activation(
+                &crate::protocol_state::StorageEngineState,
                 snapshot,
                 &own,
                 &bls::KeyBackend::Plaintext,
@@ -1623,20 +1653,32 @@ mod copied_native_dkg_prerequisites {
         match missing {
             MissingPrerequisite::HeaderSegment => {
                 ensure!(matches!(
-                    refresh_validator_set_at_height(node, FREEZE)?,
+                    refresh_validator_set_at_height(
+                        &crate::protocol_state::StorageEngineState,
+                        node,
+                        FREEZE
+                    )?,
                     FrozenValidatorSetRefresh::PendingBlockHash
                 ));
             }
             MissingPrerequisite::CorruptHeaderNumber => {
-                let error = refresh_validator_set_at_height(node, FREEZE)
-                    .err()
-                    .expect("native invalid freeze header must fail");
+                let error = refresh_validator_set_at_height(
+                    &crate::protocol_state::StorageEngineState,
+                    node,
+                    FREEZE,
+                )
+                .err()
+                .expect("native invalid freeze header must fail");
                 ensure!(format!("{error:#}").contains("canonical freeze header number mismatch"));
             }
             MissingPrerequisite::StorageChangeset => {
-                let error = refresh_validator_set_at_height(node, FREEZE)
-                    .err()
-                    .expect("native missing history must fail");
+                let error = refresh_validator_set_at_height(
+                    &crate::protocol_state::StorageEngineState,
+                    node,
+                    FREEZE,
+                )
+                .err()
+                .expect("native missing history must fail");
                 ensure!(format!("{error:#}").contains("storage change set"));
             }
         }
@@ -1653,13 +1695,16 @@ mod copied_native_dkg_prerequisites {
         let current_state = node
             .provider
             .state_by_block_hash(fixture.disk.headers[H as usize].hash_slow())?;
-        let current =
-            validators::read_reshare_target_with_empty_tee_exclusions_from_state(&current_state)?;
+        let current = validators::read_reshare_target_with_empty_tee_exclusions_from_state(
+            &crate::protocol_state::StorageEngineState,
+            &current_state,
+        )?;
         ensure!(current.validator_set.addresses == vec![MEMBERS[1], MEMBERS[2], JOINER]);
         assert_freeze_refresh_rejected(node, missing)?;
         let own = root.join("own-dkg");
         let snapshot = load_pending_dkg_boundary(&own)?.expect("pending boundary still exists");
         let error = restore_pending_dkg_activation(
+            &crate::protocol_state::StorageEngineState,
             snapshot,
             &own,
             &bls::KeyBackend::Plaintext,

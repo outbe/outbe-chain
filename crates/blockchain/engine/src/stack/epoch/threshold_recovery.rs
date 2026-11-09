@@ -28,6 +28,7 @@ pub(super) struct ThresholdRecovery<'a, E: Clock> {
     pub(super) dkg_rotation_params: DkgRotationParams,
     pub(super) last_consensus_finalized: Height,
     pub(super) dkg_mux: &'a mut ChannelMux<E>,
+    pub(super) protocol: &'a dyn crate::protocol_state::EngineProtocolState,
 }
 
 pub(super) async fn recover_threshold<E>(
@@ -57,10 +58,12 @@ where
         dkg_rotation_params,
         last_consensus_finalized,
         dkg_mux,
+        protocol,
     } = input;
     let local_consensus_key = signing_key.public_key();
     let startup_snapshot = resolve_startup_dkg_snapshot(
         ctx.child("startup_dkg_snapshot"),
+        protocol,
         node,
         args,
         key_backend,
@@ -93,7 +96,7 @@ where
         .public_keys
         .iter()
         .any(|key| key == &local_consensus_key);
-    let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
+    let on_chain_offer = validators::read_tee_offer_public_at_latest(protocol, &node.provider)
         .wrap_err("failed to read canonical offer key before threshold work")?;
     let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
         .wrap_err("failed to read enclave offer-key readiness before threshold work")?;
@@ -221,7 +224,7 @@ where
             .provider
             .latest()
             .wrap_err("failed to load latest state for EVM signer validation")?;
-        validators::read_reshare_target_from_state(&state)
+        validators::read_reshare_target_from_state(protocol, &state)
             .wrap_err("failed to load current reshare target for EVM signer validation")?
     };
     let recovered_committee_for_signer = recovered_boundary

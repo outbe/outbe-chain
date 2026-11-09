@@ -1,4 +1,6 @@
 //! Per-block construction data, separated from mutable execution state.
+use std::sync::Arc;
+
 use super::*;
 
 pub(crate) struct BlockExecutorInputs {
@@ -34,4 +36,5 @@ pub(crate) struct ParentAccountingInputs {
 pub(crate) struct BlockExecutionDependencies {
     pub(crate) bridge: Option<ConsensusExecutionBridge>,
     pub(crate) evm_signer: Option<SharedOutbeEvmSigner>,
+    pub(crate) runtime_host: Arc<dyn crate::EvmRuntimeHost>,
 }

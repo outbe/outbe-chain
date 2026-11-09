@@ -22,6 +22,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
 }
 
 pub(crate) fn read_committee_snapshot<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     context: BlockContext,
     snapshot_key: B256,
@@ -33,8 +34,7 @@ where
 {
     let mut provider = DirectStorageProvider::new(db, context);
     let storage = StorageHandle::new(&mut provider);
-    crate::active_evm_runtime_host()
-        .read_committee_snapshot(storage, snapshot_key)
+    host.read_committee_snapshot(storage, snapshot_key)
         .map_err(|error| {
             if error.is_node_local() || matches!(error, PrecompileError::Fatal(_)) {
                 BlockExecutionError::other(error)
@@ -45,6 +45,7 @@ where
 }
 
 pub(in crate::executor) fn build_block_context<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     mut context: BlockContext,
 ) -> Result<BlockContext, BlockExecutionError>
@@ -54,15 +55,13 @@ where
 {
     let mut provider = DirectStorageProvider::new(db, context.clone());
     let storage = StorageHandle::new(&mut provider);
-    let validators = crate::active_evm_runtime_host()
-        .consensus_validators(storage)
-        .map_err(|e| {
-            if e.is_node_local() || matches!(e, PrecompileError::Fatal(_)) {
-                BlockExecutionError::other(e)
-            } else {
-                crate::errors::ExecutorValidationError::block_context(e).into()
-            }
-        })?;
+    let validators = host.consensus_validators(storage).map_err(|e| {
+        if e.is_node_local() || matches!(e, PrecompileError::Fatal(_)) {
+            BlockExecutionError::other(e)
+        } else {
+            crate::errors::ExecutorValidationError::block_context(e).into()
+        }
+    })?;
 
     context.validators = validators;
     Ok(context)

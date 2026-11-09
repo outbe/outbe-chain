@@ -1,8 +1,8 @@
 use super::*;
 
-pub(super) struct ThreadDropRecorder {
-    pub(super) runner_returned: Arc<AtomicBool>,
-    pub(super) dropped_on: Arc<Mutex<Option<std::thread::ThreadId>>>,
+pub(crate) struct ThreadDropRecorder {
+    pub(crate) runner_returned: Arc<AtomicBool>,
+    pub(crate) dropped_on: Arc<Mutex<Option<std::thread::ThreadId>>>,
 }
 
 impl Drop for ThreadDropRecorder {
@@ -15,9 +15,9 @@ impl Drop for ThreadDropRecorder {
     }
 }
 
-pub(super) struct ExecutionTeardownSentinel(pub(super) Arc<AtomicBool>);
+pub(crate) struct ExecutionTeardownSentinel(pub(crate) Arc<AtomicBool>);
 
-pub(super) fn full_node_admission_anchor() -> super::LocalTeeAdmissionAnchorV1 {
+pub(crate) fn full_node_admission_anchor() -> super::LocalTeeAdmissionAnchorV1 {
     super::LocalTeeAdmissionAnchorV1 {
         finalized_height: 7,
         finalized_hash: alloy_primitives::B256::repeat_byte(0x77),

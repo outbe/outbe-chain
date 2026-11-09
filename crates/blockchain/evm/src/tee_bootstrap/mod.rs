@@ -24,6 +24,7 @@ use crate::{
 /// Preflights a `TeeBootstrapV2` payload and verifies its policy against the
 /// `ChainSpec` activation schedule when building Block-1 system transactions.
 pub fn validate_tee_bootstrap_for_build(
+    host: &dyn crate::EvmRuntimeHost,
     block_number: u64,
     payload: &TeeBootstrapV2,
     state: &TeeAttestationChainSpecStateV1,
@@ -37,9 +38,7 @@ pub fn validate_tee_bootstrap_for_build(
     let expected_policy = activation
         .policy_at(block_number)
         .map_err(SystemTxBuildError::from)?;
-    match crate::active_evm_runtime_host()
-        .validate_tee_bootstrap_for_build(payload, expected_policy)
-    {
+    match host.validate_tee_bootstrap_for_build(payload, expected_policy) {
         Ok(()) => Ok(()),
         Err(TeeBootstrapHostError::InvalidPayload(reason)) => Err(
             SystemTxBuildError::invalid_block1_ost3_bootstrap_payload(reason),
@@ -91,25 +90,25 @@ pub fn attestation_for_proposer(payload: &TeeBootstrapV2, proposer: Address) -> 
 
 /// Installs the initial authoritative TEE policy and executes the Block-1 DCAP bootstrap.
 pub fn execute_tee_bootstrap(
+    host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
     payload: &TeeBootstrapV2,
     state: &TeeAttestationChainSpecStateV1,
 ) -> Result<()> {
     let expected_policy = resolve_expected_policy(ctx.block.block_number, payload, state)?;
-    let host = crate::active_evm_runtime_host();
     host.install_initial_tee_policy(ctx.storage.clone(), &expected_policy)?;
     host.run_tee_bootstrap(ctx, payload, &expected_policy)
 }
 
 /// Validates the `ChainSpec` TEE activation schedule and installs the initial policy.
 pub fn prepare_tee_bootstrap(
+    host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
     payload: &TeeBootstrapV2,
     state: &TeeAttestationChainSpecStateV1,
 ) -> Result<()> {
     let expected_policy = resolve_expected_policy(ctx.block.block_number, payload, state)?;
-    crate::active_evm_runtime_host()
-        .install_initial_tee_policy(ctx.storage.clone(), &expected_policy)
+    host.install_initial_tee_policy(ctx.storage.clone(), &expected_policy)
 }
 
 fn resolve_expected_policy(

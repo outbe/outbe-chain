@@ -154,6 +154,7 @@ pub(super) struct ValidatorBootstrapFollowInputs<'a> {
     pub(super) finalized_parent_cert_store:
         &'a outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
     pub(super) finalization_notify: &'a Arc<tokio::sync::Notify>,
+    pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 pub(super) async fn maybe_run_validator_bootstrap_follow<E>(
@@ -179,6 +180,7 @@ where
     let local_consensus_key = inputs.signing_key.public_key();
     let bootstrap = super::super::follower::ValidatorBootstrap {
         local_key_in_genesis_validator_set: validators::read_consensus_validators_at_block(
+            inputs.protocol.as_ref(),
             &inputs.node.provider,
             inputs.genesis_hash,
         )?
@@ -187,6 +189,7 @@ where
         local_consensus_key,
         dkg_rotation_params: inputs.dkg_rotation_params,
         tee_lease_armed_rx: inputs.tee_lease_armed_rx,
+        protocol: inputs.protocol.clone(),
     };
     let finalized_height = inputs
         .node
@@ -220,6 +223,7 @@ where
             parent_cert_store: inputs.finalized_parent_cert_store.clone(),
             bootstrap: Some(bootstrap),
             finalization_notify: inputs.finalization_notify.clone(),
+            protocol: inputs.protocol.clone(),
         },
     )
     .await?;

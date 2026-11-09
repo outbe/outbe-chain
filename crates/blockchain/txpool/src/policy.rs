@@ -1,12 +1,10 @@
 //! Pool-facing zero-fee policy.
 //!
-//! The pool asks this trait whether a transaction is a fee waiver. The
-//! protocol crate that owns the hooks implements the trait and installs it
-//! before the node builds the pool. Until that install, the pool uses
-//! [`NormalFeePolicy`] and every transaction pays the normal fee.
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
+//! The pool asks this trait whether a transaction is a fee waiver. The node
+//! passes the policy into [`crate::OutbePoolBuilder`]. Without one, the pool
+//! uses [`NormalFeePolicy`] and every transaction pays the normal fee.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use outbe_primitives::{
     storage::StorageHandle,
@@ -15,15 +13,9 @@ use outbe_primitives::{
         ZeroFeeCandidate, ZeroFeeHookId, ZeroFeePolicyError, ZeroFeeTransaction,
     },
 };
-use thiserror::Error;
-
-static INSTALLED_POLICY: OnceLock<Arc<dyn TxPoolZeroFeePolicy>> = OnceLock::new();
-
 /// Classifies and authorizes zero-fee transactions for the pool.
 ///
-/// Install the production implementation with [`install_txpool_zero_fee_policy`]
-/// before [`crate::OutbePoolBuilder`] builds the pool. The builder copies the
-/// installed policy into the validator and the ordering.
+/// [`crate::OutbePoolBuilder`] copies this policy into the validator and the ordering.
 pub trait TxPoolZeroFeePolicy: Send + Sync + std::fmt::Debug {
     /// `Ok(Some(_))` means the transaction asks this hook for a waiver.
     /// `Ok(None)` means normal fee rules apply. `Err` rejects the transaction.
@@ -78,28 +70,8 @@ pub trait TxPoolZeroFeePolicy: Send + Sync + std::fmt::Debug {
     ) -> Result<(), ZeroFeePolicyError>;
 }
 
-/// The production policy was already installed.
-#[derive(Debug, Error)]
-#[error("txpool zero-fee policy is already installed")]
-pub struct TxPoolPolicyAlreadyInstalled;
-
-/// Install the policy that [`crate::OutbePoolBuilder`] copies into the pool.
-///
-/// Call this before the node builds the pool. A later install does not change
-/// a pool that was already built.
-pub fn install_txpool_zero_fee_policy(
-    policy: Arc<dyn TxPoolZeroFeePolicy>,
-) -> Result<(), TxPoolPolicyAlreadyInstalled> {
-    INSTALLED_POLICY
-        .set(policy)
-        .map_err(|_| TxPoolPolicyAlreadyInstalled)
-}
-
-pub(crate) fn active_policy() -> Arc<dyn TxPoolZeroFeePolicy> {
-    INSTALLED_POLICY
-        .get()
-        .cloned()
-        .unwrap_or_else(|| Arc::new(NormalFeePolicy))
+pub(crate) fn normal_policy() -> Arc<dyn TxPoolZeroFeePolicy> {
+    Arc::new(NormalFeePolicy)
 }
 
 /// Admits nothing as a waiver. Every transaction uses the normal fee path.

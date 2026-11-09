@@ -1,24 +1,24 @@
 use super::*;
 use crate::errors::LaunchError;
 
-pub(super) type Preflight = (
+pub(crate) type Preflight = (
     alloy_primitives::Address,
     outbe_radicle::integration::SidecarInfo,
     outbe_radicle::integration::RadicleStatusPublisher,
 );
-pub(super) type ConsensusEndpoint = (
+pub(crate) type ConsensusEndpoint = (
     outbe_radicle::integration::EndpointNetworkService,
     outbe_radicle::integration::LocalEndpointIdentityHandle,
     outbe_radicle::integration::RadicleStatusHandle,
     outbe_radicle::integration::EndpointTaskOwner,
 );
-pub(super) type RadicleLaunch = (
+pub(crate) type RadicleLaunch = (
     Option<ConsensusEndpoint>,
     Option<tokio::task::JoinHandle<()>>,
     Option<oneshot::Receiver<()>>,
 );
 
-pub(super) async fn preflight(
+pub(crate) async fn preflight(
     args: &ConsensusArgs,
 ) -> eyre::Result<(
     Option<Preflight>,
@@ -56,9 +56,10 @@ pub(super) async fn preflight(
     Ok((radicle_preflight, radicle_status))
 }
 
-pub(super) fn start(
+pub(crate) fn start(
     node: &OutbeFullNode,
     args: &ConsensusArgs,
+    protocol: Arc<dyn outbe_radicle::protocol_state::RadicleProtocolState>,
     (radicle_preflight, radicle_status): (
         Option<Preflight>,
         outbe_radicle::integration::RadicleStatusHandle,
@@ -95,6 +96,7 @@ pub(super) fn start(
             node.provider.clone(),
             proof_chain_id,
             genesis_hash,
+            protocol,
         ));
         let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> =
             repository_snapshots.clone();

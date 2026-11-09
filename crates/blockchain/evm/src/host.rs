@@ -1,9 +1,10 @@
-//! Process-wide runtime host.
-//!
-//! The process-wide `OnceLock` is a temporary bridge until constructor injection in the runtime composition root.
+//! Runtime host seam. Callers pass the host they were constructed with.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
+use crate::errors::TeeBootstrapHostError;
+use crate::precompiles::MetadosisMutationCall;
+use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
 use alloy_primitives::{Address, Bytes, B256, U256};
 #[cfg(not(feature = "test-utils"))]
 use outbe_primitives::error::PrecompileError;
@@ -26,13 +27,6 @@ use outbe_primitives::{
         ZeroFeeTransaction,
     },
 };
-use thiserror::Error;
-
-use crate::errors::TeeBootstrapHostError;
-use crate::precompiles::MetadosisMutationCall;
-use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
-
-static INSTALLED: OnceLock<Arc<dyn EvmRuntimeHost>> = OnceLock::new();
 
 #[cfg(not(feature = "test-utils"))]
 const HOST_MISSING: &str = "evm runtime host is not installed";
@@ -42,39 +36,25 @@ fn missing() -> PrecompileError {
     PrecompileError::Fatal(HOST_MISSING.into())
 }
 
-/// The runtime host was already installed.
-#[derive(Debug, Error)]
-#[error("evm runtime host is already installed")]
-pub struct EvmHostAlreadyInstalled;
-
-/// Install the host that block execution and precompile dispatch call.
-///
-/// The first install wins. A later install leaves the first host in place.
-pub fn install_evm_runtime_host(
-    host: Arc<dyn EvmRuntimeHost>,
-) -> std::result::Result<(), EvmHostAlreadyInstalled> {
-    INSTALLED.set(host).map_err(|_| EvmHostAlreadyInstalled)
-}
-
-/// The installed host, or the feature host, or the fail-closed host.
-///
-/// This function does not install the fail-closed host.
-pub fn active_evm_runtime_host() -> Arc<dyn EvmRuntimeHost> {
-    if let Some(host) = INSTALLED.get() {
-        return Arc::clone(host);
-    }
-    default_host()
-}
-
-#[cfg(feature = "test-utils")]
-fn default_host() -> Arc<dyn EvmRuntimeHost> {
-    static HOST: OnceLock<Arc<dyn EvmRuntimeHost>> = OnceLock::new();
-    Arc::clone(HOST.get_or_init(|| Arc::new(crate::test_support::DomainEvmHost::new())))
-}
-
+/// Fail-closed host used when a caller was built without one.
 #[cfg(not(feature = "test-utils"))]
-fn default_host() -> Arc<dyn EvmRuntimeHost> {
+pub(crate) fn uninstalled_host() -> Arc<dyn EvmRuntimeHost> {
     Arc::new(UninstalledEvmHost)
+}
+
+/// Host for a caller that did not inject one.
+///
+/// `test-utils` keeps the domain host so existing crate tests execute.
+/// A production build stays fail-closed until the process injects a host.
+pub(crate) fn default_runtime_host() -> Arc<dyn EvmRuntimeHost> {
+    #[cfg(feature = "test-utils")]
+    {
+        Arc::new(crate::test_support::DomainEvmHost::new())
+    }
+    #[cfg(not(feature = "test-utils"))]
+    {
+        uninstalled_host()
+    }
 }
 
 /// Classifies and authorizes user-transaction fee waivers and sponsorship.
@@ -255,6 +235,8 @@ pub trait EvmRuntimeHost: std::fmt::Debug + Send + Sync {
         &self,
         call: MetadosisMutationCall<'_>,
     ) -> MetadosisMutationEntitlements;
+    /// True when `data` is a `CycleTick` from the system caller.
+    fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool;
     /// Active UTC day derived from genesis and the block timestamp.
     fn derive_active_utc_day(
         &self,
@@ -345,7 +327,7 @@ struct UninstalledEvmHost;
 #[cfg(not(feature = "test-utils"))]
 impl UninstalledEvmHost {
     fn addresses() -> &'static [Address] {
-        crate::precompile_routes::EXACT_ADDRESSES
+        crate::precompiles::routes::EXACT_ADDRESSES
     }
 }
 
@@ -521,6 +503,15 @@ impl EvmRuntimeHost for UninstalledEvmHost {
         _call: MetadosisMutationCall<'_>,
     ) -> MetadosisMutationEntitlements {
         MetadosisMutationEntitlements::NONE
+    }
+
+    fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool {
+        address == outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS
+            && caller == outbe_primitives::addresses::SYSTEM_ADDRESS
+            && matches!(
+                outbe_primitives::system_tx::SystemTx::decode(data),
+                Ok(outbe_primitives::system_tx::SystemTx::CycleTick)
+            )
     }
 
     fn derive_active_utc_day(

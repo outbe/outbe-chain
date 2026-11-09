@@ -6,7 +6,7 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 #[cfg(feature = "test-utils")]
 use outbe_primitives::storage::StorageHandle;
-pub(crate) use outbe_primitives::system_tx_context::SystemTxExecutionContext as PreloadedSystemTxContext;
+pub use outbe_primitives::system_tx_context::SystemTxExecutionContext as PreloadedSystemTxContext;
 
 thread_local! {
     static PRELOADED_SYSTEM_TX_CONTEXT: std::cell::RefCell<Option<PreloadedSystemTxContext>> =
@@ -48,15 +48,16 @@ pub(crate) fn with_preloaded_system_tx_context<R>(
     f()
 }
 
-pub(crate) fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxContext> {
+pub fn current_preloaded_system_tx_context() -> Option<PreloadedSystemTxContext> {
     PRELOADED_SYSTEM_TX_CONTEXT.with(|slot| slot.borrow().clone())
 }
 
 #[cfg(feature = "test-utils")]
-pub(super) fn block_runtime_context_from_storage(
-    storage: StorageHandle,
+pub(super) fn block_runtime_context_from_storage<'a>(
+    host: &dyn crate::EvmRuntimeHost,
+    storage: StorageHandle<'a>,
     include_validator_snapshot: bool,
-) -> Result<BlockRuntimeContext> {
+) -> Result<BlockRuntimeContext<'a>> {
     let block_number = storage.block_number()?;
     let timestamp = storage.now_secs()?;
     let chain_id = storage.chain_id()?;
@@ -76,7 +77,7 @@ pub(super) fn block_runtime_context_from_storage(
         .unwrap_or(0);
 
     let validators = if include_validator_snapshot {
-        crate::active_evm_runtime_host().consensus_validators(storage.clone())?
+        host.consensus_validators(storage.clone())?
     } else {
         Vec::new()
     };

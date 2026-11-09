@@ -284,8 +284,6 @@ pub enum BeginBlockPrecompileError {
     NativeValueRejected,
     #[error("invalid system tx input: {0}")]
     InvalidSystemTxInput(String),
-    #[error("proposer is not a current consensus participant: {proposer}")]
-    ProposerNotConsensusParticipant { proposer: Address },
     #[error("LateFinalizeCredits: fb_number {fb_number} >= block {block_number}")]
     LateCreditFbNumberAtOrAboveBlock { fb_number: u64, block_number: u64 },
     #[error(
@@ -334,7 +332,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
             | BeginBlockPrecompileError::InvalidSystemCaller
             | BeginBlockPrecompileError::NativeValueRejected
             | BeginBlockPrecompileError::InvalidSystemTxInput(_)
-            | BeginBlockPrecompileError::ProposerNotConsensusParticipant { .. }
             | BeginBlockPrecompileError::LateCreditFbNumberAtOrAboveBlock { .. }
             | BeginBlockPrecompileError::LateCreditOutsideInclusionWindow { .. }
             | BeginBlockPrecompileError::LateCreditInclusionDistanceExceedsU8 { .. }
@@ -342,21 +339,6 @@ impl From<BeginBlockPrecompileError> for PrecompileError {
             | BeginBlockPrecompileError::Ost3PolicyScheduleMismatch => {
                 Self::Revert(error.to_string())
             }
-        }
-    }
-}
-
-/// Errors that occur in executor hooks, boundary updates, and genesis checks.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ExecutorHookError {
-    #[error("Staking min_stake must be initialized in genesis")]
-    StakingMinStakeUninitialized,
-}
-
-impl From<ExecutorHookError> for PrecompileError {
-    fn from(error: ExecutorHookError) -> Self {
-        match error {
-            ExecutorHookError::StakingMinStakeUninitialized => Self::Fatal(error.to_string()),
         }
     }
 }

@@ -375,6 +375,7 @@ async fn wait_for_bootstrap_tee_lease_parks_when_sender_is_dropped() {
         local_key_in_genesis_validator_set: false,
         dkg_rotation_params: rotation(60, 5),
         tee_lease_armed_rx: rx,
+        protocol: std::sync::Arc::new(crate::protocol_state::UninstalledEngineState),
     };
     assert!(
         wait_for_bootstrap_tee_lease(Some(&mut readiness))

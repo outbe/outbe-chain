@@ -276,7 +276,7 @@ mod domain_host {
 
     impl EvmRuntimeHost for DomainEvmHost {
         fn exact_addresses(&self) -> &'static [Address] {
-            crate::precompile_routes::EXACT_ADDRESSES
+            crate::precompiles::routes::EXACT_ADDRESSES
         }
 
         fn marker_addresses(&self) -> &'static [Address] {
@@ -284,11 +284,11 @@ mod domain_host {
         }
 
         fn precompile_is_payable(&self, address: &Address) -> bool {
-            crate::precompile_routes::domain_is_payable(address)
+            crate::test_support_routes::domain_is_payable(address)
         }
 
         fn precompile_base_gas(&self, address: &Address, input: &[u8]) -> u64 {
-            crate::precompile_routes::domain_base_gas(address, input)
+            crate::test_support_routes::domain_base_gas(address, input)
         }
 
         fn dispatch_precompile(
@@ -299,7 +299,7 @@ mod domain_host {
             caller: Address,
             value: U256,
         ) -> Result<Bytes> {
-            crate::precompile_routes::dispatch_domain_precompile(
+            crate::test_support_routes::dispatch_domain_precompile(
                 storage, address, data, caller, value,
             )
         }
@@ -313,6 +313,7 @@ mod domain_host {
             tee: &TeeAttestationChainSpecStateV1,
         ) -> Result<Bytes> {
             crate::sys_tx_precompile::dispatch_system_tx_domain(
+                self,
                 storage,
                 data,
                 caller,
@@ -471,6 +472,10 @@ mod domain_host {
             expected_policy: &TeePolicyV1,
         ) -> Result<()> {
             outbe_teeregistry::run_tee_bootstrap_v1(ctx, payload, expected_policy)
+        }
+
+        fn is_protocol_cycle_call(&self, address: Address, caller: Address, data: &[u8]) -> bool {
+            outbe_cycle::call_authority::is_protocol_cycle_call(address, caller, data)
         }
 
         fn mutation_entitlements(

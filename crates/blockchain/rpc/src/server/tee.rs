@@ -6,12 +6,18 @@ use outbe_tee::dcap_protocol::DcapOnboardingContextV1;
 pub(super) struct TeeRpc<'a, P> {
     provider: &'a P,
     chain_identity: Option<(u64, B256)>,
+    reader: &'a dyn crate::state_reader::OutbeRpcStateReader,
 }
 impl<'a, P> TeeRpc<'a, P> {
-    pub(super) fn new(provider: &'a P, chain_identity: Option<(u64, B256)>) -> Self {
+    pub(super) fn new(
+        provider: &'a P,
+        chain_identity: Option<(u64, B256)>,
+        reader: &'a dyn crate::state_reader::OutbeRpcStateReader,
+    ) -> Self {
         Self {
             provider,
             chain_identity,
+            reader,
         }
     }
 }
@@ -122,7 +128,8 @@ where
             })?;
             let mut provider =
                 ReadOnlyStorageProvider::new_with_block_context(reader, read_only_ctx);
-            let check = crate::state_reader::active_rpc_state_reader()
+            let check = self
+                .reader
                 .live_upgrade_candidate(
                     StorageHandle::new(&mut provider),
                     context,
@@ -190,9 +197,7 @@ where
         let reader = RethStateReader { state: &state };
         let mut provider = ReadOnlyStorageProvider::new(reader);
         let storage = StorageHandle::new(&mut provider);
-        let epoch = crate::state_reader::active_rpc_state_reader()
-            .epoch_snapshot(storage)
-            .map_err(internal_err)?;
+        let epoch = self.reader.epoch_snapshot(storage).map_err(internal_err)?;
         Ok(RenewalEpoch {
             finalized_height: finalized.number,
             finalized_hash: finalized.hash,

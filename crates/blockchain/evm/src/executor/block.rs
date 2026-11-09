@@ -159,7 +159,12 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                     parent_consensus_metadata,
                     parent_artifact_hint,
                 },
-            dependencies: BlockExecutionDependencies { bridge, evm_signer },
+            dependencies:
+                BlockExecutionDependencies {
+                    bridge,
+                    evm_signer,
+                    runtime_host,
+                },
         } = inputs;
         let chain_id = inner.spec.chain.id();
         let genesis_hash = inner.spec.genesis_hash();
@@ -210,7 +215,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             cached_phase1_input: None,
             resolved_begin_zone: None,
             verified_late_credit_signers: None,
-            runtime_host: crate::active_evm_runtime_host(),
+            runtime_host,
         }
     }
 }

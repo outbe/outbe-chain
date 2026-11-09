@@ -100,4 +100,5 @@ pub(super) struct EpochSupervisor<E: Clock> {
         tokio::sync::watch::Receiver<Option<crate::marshal_update_reporter::ConsensusTip>>,
     pub(super) epocher: outbe_consensus::follow::FollowerEpocher,
     pub(super) vote_backup_rx: super::transport::VoteBackupRx,
+    pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }

@@ -1,8 +1,10 @@
 use super::*;
+use crate::upgrade::CycleOutcome;
+use crate::upgrade_ports::UpgradePromotionIo;
 use alloy_eips::BlockNumHash;
 use outbe_operator::tee::UpgradeContextV1;
 
-pub(super) fn recover_finalized(
+pub(crate) fn recover_finalized(
     io: &impl UpgradePromotionIo,
     context: &UpgradeContextV1,
     checkpoint: BlockNumHash,
@@ -59,7 +61,7 @@ fn promote_and_record<I: UpgradePromotionIo>(
     true
 }
 
-pub(super) fn reconcile_submitted(
+pub(crate) fn reconcile_submitted(
     io: &impl UpgradePromotionIo,
     promoted: &tokio::sync::Notify,
 ) -> Option<CycleOutcome> {
@@ -129,7 +131,7 @@ fn committed_manifest_and_hash(
     Some((committed, committed_hash))
 }
 
-pub(super) fn resume_checkpoint(
+pub(crate) fn resume_checkpoint(
     io: &impl UpgradePromotionIo,
     snapshot: outbe_operator::tee::UpgradeJournalSnapshotV1,
     config: &UpgradePromotionWorkerConfigV1,
@@ -159,6 +161,6 @@ pub(super) fn resume_checkpoint(
             BlockNumHash::new(*finalized_height, *finalized_hash),
             &config.promoted,
         ),
-        _ => monitor::observe_pending(io, &snapshot, config),
+        _ => crate::upgrade_monitor::observe_pending(io, &snapshot, config),
     }
 }

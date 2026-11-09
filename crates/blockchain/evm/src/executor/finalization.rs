@@ -80,8 +80,13 @@ where
             .begin_zone_proposer(block_number)?
             .unwrap_or_else(|| self.inner.evm.block().beneficiary());
         let ctx = self.block_context(block_number, timestamp, proposer);
-        let verified_batches =
-            verify_late_finalize_credits_batches(self.inner.evm.db_mut(), ctx, artifact)?;
+        let host = std::sync::Arc::clone(&self.runtime_host);
+        let verified_batches = verify_late_finalize_credits_batches(
+            host.as_ref(),
+            self.inner.evm.db_mut(),
+            ctx,
+            artifact,
+        )?;
         self.verified_late_credit_signers = Some(Arc::new(verified_batches));
         Ok(())
     }
@@ -133,7 +138,9 @@ where
         let prevrandao = self.inner.evm.block().prevrandao();
         let parent_hash = self.parent_hash;
 
+        let host = std::sync::Arc::clone(&self.runtime_host);
         let vrf_proof_hash = verify_phase1_certificate(
+            host.as_ref(),
             self.inner.evm.db_mut(),
             Phase1VerifyInput {
                 block_context,

@@ -1,12 +1,14 @@
 use crate::*;
 use outbe_node::tee_remote_session::RegistryChainIdentity;
 
-mod monitor;
-mod ports;
-mod promotion;
-use ports::{NodeUpgradeIo, UpgradePromotionIo};
+use crate::upgrade_ports::{NodeUpgradeIo, UpgradePromotionIo};
+use crate::upgrade_promotion as promotion;
 
 #[cfg(test)]
+use crate::upgrade_ports as ports;
+
+#[cfg(test)]
+#[path = "upgrade_tests.rs"]
 mod tests;
 
 pub(crate) const TEE_UPGRADE_POLL_SECS: u64 = 30;
@@ -27,6 +29,7 @@ pub(crate) struct UpgradePromotionWorkerConfigV1 {
 
 pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
     provider: P,
+    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
     config: UpgradePromotionWorkerConfigV1,
 ) where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory + Send + Sync + 'static,
@@ -38,12 +41,13 @@ pub(crate) async fn run_upgrade_promotion_worker_v1<P>(
             genesis_hash: config.genesis_hash,
         },
         node_data_dir: config.node_data_dir.clone(),
+        session,
     };
     run_worker(&io, config).await;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CycleOutcome {
+pub(crate) enum CycleOutcome {
     Wait,
     Stop,
 }

@@ -2,6 +2,7 @@ use super::*;
 use alloy_primitives::{B256, U256};
 use fixtures::{config, Action, RecordingIo};
 
+#[path = "upgrade_test_fixtures.rs"]
 mod fixtures;
 
 #[tokio::test]

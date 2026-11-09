@@ -62,6 +62,7 @@ where
         tee_lease_armed_rx,
         radicle_status,
         mut radicle_endpoint,
+        protocol,
     } = services;
     let radicle_updates = radicle_status.subscribe();
 
@@ -127,6 +128,7 @@ where
                 parent_cert_store: finalized_parent_cert_store,
                 bootstrap: None,
                 finalization_notify,
+                protocol: protocol.clone(),
             },
         )
         .await?;
@@ -157,6 +159,7 @@ where
             follower_shutdown,
             finalized_parent_cert_store: &finalized_parent_cert_store,
             finalization_notify: &finalization_notify,
+            protocol: protocol.clone(),
         },
     )
     .await?
@@ -178,9 +181,12 @@ where
         .provider
         .block_hash(initial_peer_height)?
         .ok_or(crate::errors::StackEpochError::StartupP2pAdmissionBlockMissing)?;
-    let validator_set =
-        validators::read_consensus_validators_at_block(&node.provider, initial_peer_hash)
-            .wrap_err("failed to load consensus validator set at startup")?;
+    let validator_set = validators::read_consensus_validators_at_block(
+        protocol.as_ref(),
+        &node.provider,
+        initial_peer_hash,
+    )
+    .wrap_err("failed to load consensus validator set at startup")?;
 
     info!(
         count = validator_set.public_keys.len(),
@@ -191,6 +197,7 @@ where
         &ctx,
         &args,
         &node,
+        protocol.as_ref(),
         super::transport::TransportAdmission {
             signing_key: &signing_key,
             validator_set: &validator_set,
@@ -280,6 +287,7 @@ where
             dkg_rotation_params,
             last_consensus_finalized,
             dkg_mux: &mut dkg_mux,
+            protocol: protocol.as_ref(),
         },
     )
     .await?;
@@ -297,6 +305,7 @@ where
             coordinate_genesis_bootstrap,
             shareless_verifier,
             genesis_dkg_boundary_artifact: &genesis_dkg_boundary_artifact,
+            protocol: protocol.as_ref(),
             tee_dkg_round0,
             tee_bootstrap_round0,
         },
@@ -503,6 +512,7 @@ where
             bootnode_map: bootnode_map.clone(),
             initial_peers,
             initial_height: initial_peer_height,
+            protocol: protocol.clone(),
         },
     );
     let peer_manager_handle_task = peer_manager_actor.start();
@@ -875,6 +885,7 @@ where
         consensus_tip_rx,
         epocher,
         vote_backup_rx,
+        protocol,
     }
     .run(ctx, recovered_pending_boundary, recovery_anchor_height)
     .await

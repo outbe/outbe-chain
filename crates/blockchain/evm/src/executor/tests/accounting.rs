@@ -152,7 +152,12 @@ fn validate_finalized_metadata_accepts_registered_historical_committee() {
 
         // Finalized-parent metadata still describes the previous committee [A, B, C].
         let metadata = metadata_with(vec![val_a, val_b, val_c], vec![1, 1, 0], vec![]);
-        super::validate_finalized_metadata(storage.clone(), &metadata).unwrap();
+        super::validate_finalized_metadata(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &metadata,
+        )
+        .unwrap();
     });
 }
 
@@ -171,7 +176,12 @@ fn validate_finalized_metadata_rejects_duplicate_committee_member() {
         test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
 
         let metadata = metadata_with(vec![val_a, val_b, val_a], vec![1, 1, 1], vec![]);
-        let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
+        let err = super::validate_finalized_metadata(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &metadata,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("duplicate"),
             "expected duplicate error, got {err}"
@@ -193,7 +203,12 @@ fn validate_finalized_metadata_rejects_unregistered_committee_member() {
 
         let stranger = address!("0x9999999999999999999999999999999999999999");
         let metadata = metadata_with(vec![val_a, stranger], vec![1, 1], vec![]);
-        let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
+        let err = super::validate_finalized_metadata(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &metadata,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("not a registered validator"),
             "expected unregistered error, got {err}"
@@ -218,7 +233,12 @@ fn validate_finalized_metadata_rejects_missed_proposer_outside_committee() {
         }
 
         let metadata = metadata_with(vec![val_a, val_b], vec![1, 1], vec![val_c]);
-        let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
+        let err = super::validate_finalized_metadata(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &metadata,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("not in finalized committee"),
             "expected missed-proposer-outside-committee error, got {err}"
@@ -239,7 +259,12 @@ fn validate_finalized_metadata_rejects_signer_bitmap_length_mismatch() {
         test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
 
         let metadata = metadata_with(vec![val_a], vec![1, 0], vec![]);
-        let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
+        let err = super::validate_finalized_metadata(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &metadata,
+        )
+        .unwrap_err();
         assert!(
             err.to_string().contains("bitmap length mismatch"),
             "expected bitmap length error, got {err}"

@@ -73,6 +73,7 @@ where
             outer_is_static,
             execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
             runtime: OutbePrecompileRuntime::new(),
+            host: fallback_subcall_host(),
         },
         input,
     )
@@ -83,6 +84,11 @@ pub(crate) struct SubCallContext {
     pub(crate) outer_is_static: bool,
     pub(crate) execution: OutbePrecompileExecutionContext,
     pub(crate) runtime: OutbePrecompileRuntime,
+    pub(crate) host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
+}
+
+fn fallback_subcall_host() -> std::sync::Arc<dyn crate::EvmRuntimeHost> {
+    crate::host::default_runtime_host()
 }
 
 pub(crate) fn run_with_context<DB>(
@@ -167,8 +173,11 @@ where
             context.execution.spec_id(),
         );
     crate::create_guard::install(&mut instructions);
-    let precompiles =
-        crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(context.execution, context.runtime);
+    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
+        context.execution,
+        context.runtime,
+        context.host,
+    );
     // A precompile resolves contract-originated calldata through `ctx.local()`, so the child
     // frame has to carve its memory out of that buffer.
     let mut caller_memory = CallerMemory(SharedMemory::new_with_buffer(

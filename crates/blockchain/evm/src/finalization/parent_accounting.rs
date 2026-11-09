@@ -39,10 +39,11 @@ use crate::{
 /// - every `missed_proposer` is a member of `metadata.ordered_committee`
 /// - bitmap entries are 0 or 1 only
 pub fn validate_finalized_metadata(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> OutbeResult<()> {
-    crate::active_evm_runtime_host().validate_finalized_metadata(storage, metadata)
+    host.validate_finalized_metadata(storage, metadata)
 }
 
 pub use outbe_primitives::system_tx_context::AccountedParentArtifact;
@@ -59,6 +60,7 @@ pub trait AccountedParentArtifactProvider: Send + Sync {
 /// `CertifiedParentAccounting` system tx body: apply the immediate parent's
 /// finalization facts, participation, fee settlement, and deterministic slashing.
 pub fn run_finalization_and_slashing(
+    host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
     metadata: &CertifiedParentAccountingMetadata,
 ) -> OutbeResult<()> {
@@ -69,7 +71,7 @@ pub fn run_finalization_and_slashing(
             ctx.block.user_gas_used,
         )
     });
-    crate::active_evm_runtime_host().run_finalization_and_slashing(ctx, metadata, &execution)
+    host.run_finalization_and_slashing(ctx, metadata, &execution)
 }
 
 /// Input parameters for resolving the accounted-parent execution summary.
@@ -144,6 +146,7 @@ pub(crate) struct Phase1VerifyInput<'a> {
 /// historical committee snapshot and block `prevrandao`, returning the verified
 /// canonical VRF proof hash.
 pub(crate) fn verify_phase1_certificate<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     input: Phase1VerifyInput<'_>,
 ) -> Result<B256, BlockExecutionError>
@@ -160,13 +163,14 @@ where
     let block_number = block_context.block_number;
     let snapshot_key =
         committee_snapshot_key(metadata.finalized_epoch, metadata.committee_set_hash);
-    let snapshot = context::read_committee_snapshot(db, block_context, snapshot_key, |error| {
-        ExecutorValidationError::phase1_read_committee_snapshot(
-            metadata.finalized_epoch,
-            snapshot_key,
-            error,
-        )
-    })?;
+    let snapshot =
+        context::read_committee_snapshot(host, db, block_context, snapshot_key, |error| {
+            ExecutorValidationError::phase1_read_committee_snapshot(
+                metadata.finalized_epoch,
+                snapshot_key,
+                error,
+            )
+        })?;
     let snapshot = snapshot.ok_or(ExecutorValidationError::Phase1MissingCommitteeSnapshot {
         epoch: metadata.finalized_epoch,
         snapshot_key,

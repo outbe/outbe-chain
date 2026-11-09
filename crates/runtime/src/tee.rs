@@ -1,7 +1,7 @@
 use super::*;
 use crate::errors::{display_error, LaunchError};
 
-pub(super) async fn prepare(
+pub(crate) async fn prepare(
     config: &LaunchConfig,
     args: &ConsensusArgs,
     node_data_dir: PathBuf,
@@ -9,7 +9,7 @@ pub(super) async fn prepare(
 ) -> eyre::Result<(
     Option<Arc<OutbeEvmSigner>>,
     outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    Option<crate::launch::admission::LocalTeeAdmissionAnchorV1>,
+    Option<crate::admission::LocalTeeAdmissionAnchorV1>,
 )> {
     let evm_signer = if args.is_validator {
         let evm_key_path = args
@@ -221,6 +221,7 @@ async fn upstream_block_hash_v1(
 /// offer key equal to the on-chain key. Returns the admission for the
 /// rejection report.
 fn local_tee_admission_ready_v1(
+    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     (chain_id, genesis_hash): (u64, alloy_primitives::B256),
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
@@ -228,7 +229,8 @@ fn local_tee_admission_ready_v1(
     bool,
     Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>,
 )> {
-    let admission = crate::launch::admission::read_finalized_local_tee_admission(
+    let admission = crate::admission::read_finalized_local_tee_admission(
+        protocol,
         &node.provider,
         chain_id,
         genesis_hash,
@@ -240,8 +242,9 @@ fn local_tee_admission_ready_v1(
     ) {
         return Ok((false, admission));
     }
-    let on_chain_offer = outbe_engine::validators::read_tee_offer_public_at_latest(&node.provider)
-        .wrap_err("read the canonical offer key for the TEE lease guard")?;
+    let on_chain_offer =
+        outbe_engine::validators::read_tee_offer_public_at_latest(protocol, &node.provider)
+            .wrap_err("read the canonical offer key for the TEE lease guard")?;
     let resident_offer = outbe_tee::resident_offer_public_key_state_v1()
         .wrap_err("read the resident offer key for the TEE lease guard")?;
     Ok((
@@ -258,13 +261,14 @@ fn local_tee_admission_ready_v1(
 /// durable join anchor against the upstream chain, and waits at the higher
 /// anchor. Every check fails closed.
 async fn initial_tee_lease_gate_v1(
+    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     chain: (u64, alloy_primitives::B256),
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    prepared_anchor: Option<crate::launch::admission::LocalTeeAdmissionAnchorV1>,
-) -> eyre::Result<crate::launch::admission::TeeLeaseGuardAnchorsV1> {
-    use crate::launch::admission::{
+    prepared_anchor: Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+) -> eyre::Result<crate::admission::TeeLeaseGuardAnchorsV1> {
+    use crate::admission::{
         local_validator_tee_gate_v1, select_validator_upstream_anchor_v1, TeeLeaseGuardAnchorsV1,
     };
 
@@ -282,7 +286,7 @@ async fn initial_tee_lease_gate_v1(
         .map_or(0, |finalized| finalized.number);
     let (local_ready_with_offer, local_admission) =
         if durable.is_none() && local_finalized_height >= 1 {
-            local_tee_admission_ready_v1(node, chain, identity)?
+            local_tee_admission_ready_v1(protocol, node, chain, identity)?
         } else {
             (false, None)
         };
@@ -295,9 +299,12 @@ async fn initial_tee_lease_gate_v1(
         let local_consensus_key =
             outbe_engine::validators::load_signing_public_key(signing_key_path, &key_backend)
                 .wrap_err("failed to load consensus signing public key for TEE lease guard")?;
-        let genesis_validators =
-            outbe_engine::validators::read_consensus_validators_at_block(&node.provider, chain.1)
-                .wrap_err("failed to read genesis consensus validator set for TEE lease guard")?;
+        let genesis_validators = outbe_engine::validators::read_consensus_validators_at_block(
+            protocol,
+            &node.provider,
+            chain.1,
+        )
+        .wrap_err("failed to read genesis consensus validator set for TEE lease guard")?;
         genesis_validators
             .public_keys
             .contains(&local_consensus_key)
@@ -348,23 +355,23 @@ async fn initial_tee_lease_gate_v1(
     Ok(anchors)
 }
 
-pub(super) struct TeeRuntimeWorkers {
-    pub(super) finalization_notify: Arc<tokio::sync::Notify>,
-    pub(super) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
+pub(crate) struct TeeRuntimeWorkers {
+    pub(crate) finalization_notify: Arc<tokio::sync::Notify>,
+    pub(crate) tee_lease_armed_rx: tokio::sync::watch::Receiver<bool>,
     /// Keeps the keyless armed-watch open for the launcher lifetime. The
     /// enclave path moves its sender into the lease guard, so this is `None`.
-    pub(super) tee_lease_armed_tx: Option<tokio::sync::watch::Sender<bool>>,
-    pub(super) tee_lease_exit_rx:
+    pub(crate) tee_lease_armed_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub(crate) tee_lease_exit_rx:
         Option<tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
-    pub(super) tee_lease_guard_handle: Option<tokio::task::JoinHandle<()>>,
-    pub(super) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
-    pub(super) upgrade_promotion: Arc<tokio::sync::Notify>,
-    pub(super) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) tee_lease_guard_handle: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
+    pub(crate) upgrade_promotion: Arc<tokio::sync::Notify>,
+    pub(crate) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Non-validator with no enclave socket. A validator without a socket is not
 /// keyless and still fails in `prepare` with `MissingTeeEnclaveSocket`.
-pub(super) fn keyless_follower_launch(args: &ConsensusArgs) -> bool {
+pub(crate) fn keyless_follower_launch(args: &ConsensusArgs) -> bool {
     !args.is_validator && args.tee_enclave_socket.is_none()
 }
 
@@ -435,15 +442,17 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
 }
 
 fn verify_initial_local_tee_admission_v1(
+    protocol: &dyn outbe_engine::protocol_state::EngineProtocolState,
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     chain: outbe_node::tee_remote_session::RegistryChainIdentity,
     local_tee_identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-    anchors: &mut crate::launch::admission::TeeLeaseGuardAnchorsV1,
+    anchors: &mut crate::admission::TeeLeaseGuardAnchorsV1,
     node_data_dir: &Path,
 ) -> eyre::Result<()> {
     let validator_has_recovery_anchor =
         args.is_validator && anchors.gate.pending_anchor().is_some();
     if let Some(admission) = read_gated_finalized_local_tee_admission(
+        protocol,
         &node.provider,
         chain,
         local_tee_identity,
@@ -458,7 +467,8 @@ fn verify_initial_local_tee_admission_v1(
             return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
         }
         if args.is_validator && args.upstream.is_none() && !anchors.gate.is_armed() {
-            if let Some(reason) = crate::launch::admission::read_finalized_local_tee_admission(
+            if let Some(reason) = crate::admission::read_finalized_local_tee_admission(
+                protocol,
                 &node.provider,
                 chain.chain_id,
                 chain.genesis_hash,
@@ -478,12 +488,14 @@ fn verify_initial_local_tee_admission_v1(
     )
 }
 
-pub(super) async fn start_runtime_workers(
+pub(crate) async fn start_runtime_workers(
+    protocol: Arc<dyn outbe_engine::protocol_state::EngineProtocolState>,
+    session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
     (node, args): (&OutbeFullNode, &ConsensusArgs),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
     (local_tee_identity, tee_admission_anchor, initial_tee_policy): (
         outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-        Option<crate::launch::admission::LocalTeeAdmissionAnchorV1>,
+        Option<crate::admission::LocalTeeAdmissionAnchorV1>,
         &outbe_primitives::tee_attestation_v1::TeePolicyV1,
     ),
     (tee_canary_status, shutdown_token, shutdown): (
@@ -501,6 +513,7 @@ pub(super) async fn start_runtime_workers(
         genesis_hash,
     };
     let mut anchors = initial_tee_lease_gate_v1(
+        protocol.as_ref(),
         node,
         args,
         (proof_chain_id, genesis_hash),
@@ -509,6 +522,7 @@ pub(super) async fn start_runtime_workers(
     )
     .await?;
     verify_initial_local_tee_admission_v1(
+        protocol.as_ref(),
         (node, args),
         chain,
         local_tee_identity,
@@ -521,7 +535,9 @@ pub(super) async fn start_runtime_workers(
     let (tee_lease_exit_tx, tee_lease_exit_rx) = tokio::sync::mpsc::unbounded_channel();
     let lease_check = run_tee_lease_guard_v1(
         node.provider.clone(),
-        crate::launch::admission::TeeLeaseGuardConfigV1 {
+        Arc::clone(&protocol),
+        Arc::clone(&session),
+        crate::admission::TeeLeaseGuardConfigV1 {
             chain,
             identity: local_tee_identity,
             anchors,
@@ -570,6 +586,7 @@ pub(super) async fn start_runtime_workers(
             "enclave-upgrade watcher",
             run_upgrade_promotion_worker_v1(
                 provider,
+                Arc::clone(&session),
                 UpgradePromotionWorkerConfigV1 {
                     chain_id: proof_chain_id,
                     genesis_hash,

@@ -218,6 +218,7 @@ fn test_reshare_activation_idempotent() {
     for provider in [&mut run_a, &mut run_b] {
         StorageHandle::enter(provider, |storage| {
             super::super::apply_boundary_outcome(
+                &crate::test_support::DomainEvmHost::new(),
                 storage,
                 &boundary,
                 activation_block,
@@ -258,6 +259,7 @@ fn test_reshare_activation_idempotent() {
 
         // Stale repeat of the same epoch-1 boundary on the already-advanced post-state must reject.
         let err = super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             activation_block + 1,
@@ -354,10 +356,19 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
             storage.clone(),
         );
 
-        super::super::prepare_boundary_epoch_counters(storage.clone(), &boundary, activation_block)
-            .expect("certified boundary must prepare outgoing counters");
-        crate::sys_tx_precompile::run_boundary_outcome(&ctx, &boundary)
-            .expect("certified delayed boundary must activate");
+        super::super::prepare_boundary_epoch_counters(
+            &crate::test_support::DomainEvmHost::new(),
+            storage.clone(),
+            &boundary,
+            activation_block,
+        )
+        .expect("certified boundary must prepare outgoing counters");
+        crate::sys_tx_precompile::run_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
+            &ctx,
+            &boundary,
+        )
+        .expect("certified delayed boundary must activate");
 
         let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         let epoch = vs_after.epoch_snapshot().unwrap();
@@ -399,6 +410,7 @@ fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
 
         let boundary = boundary_with_epoch(2, false, vec![(validator, dummy_pubkey(0xA1))]);
         let error = super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             301,
@@ -431,6 +443,7 @@ fn apply_boundary_outcome_fatals_on_hash_change_without_set_change() {
         // Boundary claims membership unchanged but carries a different active set.
         let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
         let err = super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,
@@ -471,6 +484,7 @@ fn apply_boundary_outcome_activates_on_validator_set_change_with_hash_change() {
         );
         let new_hash = boundary.reshare.active_set_hash;
         super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,
@@ -511,6 +525,7 @@ fn apply_boundary_outcome_replays_narrow_certified_tee_expiry_demotion() {
             )
             .unwrap();
         super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,
@@ -550,6 +565,7 @@ fn apply_boundary_outcome_rejects_tampered_tee_expiry_commitment() {
         let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
         boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
         let error = super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,
@@ -577,6 +593,7 @@ fn apply_boundary_outcome_writes_snapshot_when_hash_matches() {
 
         let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
         super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,
@@ -619,6 +636,7 @@ fn apply_boundary_outcome_rejects_committee_set_hash_mismatch() {
         boundary.committee_set_hash = B256::with_last_byte(0xFE);
 
         let err = super::super::apply_boundary_outcome(
+            &crate::test_support::DomainEvmHost::new(),
             storage.clone(),
             &boundary,
             1,

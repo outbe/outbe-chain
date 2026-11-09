@@ -26,6 +26,7 @@ pub(crate) struct Config<TOracle> {
     pub(crate) bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
     pub(crate) initial_peers: AddressableTrackedPeers<PublicKey>,
     pub(crate) initial_height: u64,
+    pub(crate) protocol: std::sync::Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 struct FinalizedWaitResult {
@@ -44,6 +45,7 @@ where
     node: OutbeFullNode,
     executor: outbe_consensus::executor::Mailbox,
     bootnode_map: BTreeMap<Vec<u8>, std::net::SocketAddr>,
+    protocol: std::sync::Arc<dyn crate::protocol_state::EngineProtocolState>,
     mailbox: mpsc::UnboundedReceiver<MessageWithCause>,
     pending_refresh: Option<ConsensusBlock>,
     retry_timer: Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
@@ -68,6 +70,7 @@ where
             node: config.node,
             executor: config.executor,
             bootnode_map: config.bootnode_map,
+            protocol: config.protocol,
             mailbox: rx,
             pending_refresh: None,
             retry_timer: Box::pin(std::future::pending()),
@@ -198,12 +201,18 @@ where
         // A joiner must be synced before the reshare, else its DKG output diverges.
         // Voting needs `has_bls_share`, so a secondary peer cannot affect consensus.
         // The tiers are disjoint by status.
-        let consensus_set =
-            read_consensus_validators_at_block(&self.node.provider, block.block_hash())
-                .wrap_err("failed to read consensus validators for peer manager")?;
-        let admitted_set =
-            read_admitted_non_consensus_at_block(&self.node.provider, block.block_hash())
-                .wrap_err("failed to read admitted non-consensus validators for peer manager")?;
+        let consensus_set = read_consensus_validators_at_block(
+            self.protocol.as_ref(),
+            &self.node.provider,
+            block.block_hash(),
+        )
+        .wrap_err("failed to read consensus validators for peer manager")?;
+        let admitted_set = read_admitted_non_consensus_at_block(
+            self.protocol.as_ref(),
+            &self.node.provider,
+            block.block_hash(),
+        )
+        .wrap_err("failed to read admitted non-consensus validators for peer manager")?;
         let primary = crate::stack::build_peer_map(&consensus_set, &self.bootnode_map);
         let secondary = crate::stack::build_peer_map(&admitted_set, &self.bootnode_map);
         let count = primary.len() + secondary.len();

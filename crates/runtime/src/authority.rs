@@ -9,13 +9,13 @@ use outbe_slashindicator::runtime::admit_percent_word;
 use super::*;
 use crate::errors::LaunchError;
 
-pub(super) struct StartupChainAuthority {
+pub(crate) struct StartupChainAuthority {
     pub initial_tee_policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
     pub dkg_prepare_window_blocks: u64,
     pub minimum_block_time_millis: u64,
 }
 
-pub(super) fn validate_startup_authority_and_pruning(
+pub(crate) fn validate_startup_authority_and_pruning(
     config: &LaunchConfig,
 ) -> eyre::Result<StartupChainAuthority> {
     // Validator and follower both enter this function before `launch()`.

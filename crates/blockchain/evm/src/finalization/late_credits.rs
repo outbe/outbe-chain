@@ -133,10 +133,11 @@ fn validate_inclusion_window(
 /// `fb_number` / `epoch` / `committee_set_hash` / `view` / `parent_view`
 /// against the canonical binding escrowed for that finalized block in `Rewards`.
 pub fn authenticate_late_credit(
+    host: &dyn crate::EvmRuntimeHost,
     storage: &StorageHandle,
     credit: &PerBlockCredit,
 ) -> OutbeResult<()> {
-    crate::active_evm_runtime_host().authenticate_late_credit(storage, credit)
+    host.authenticate_late_credit(storage, credit)
 }
 
 /// Executes the `LateFinalizeCredits` system transaction.
@@ -144,11 +145,12 @@ pub fn authenticate_late_credit(
 /// Authenticates each credit, records late voters, records window-close
 /// absentees, and settles the matured reward window.
 pub fn run_late_finalize_credits(
+    host: &dyn crate::EvmRuntimeHost,
     ctx: &BlockRuntimeContext,
     artifact: &LateFinalizeCreditsArtifact,
 ) -> OutbeResult<()> {
     let execution = current_preloaded_system_tx_context();
-    crate::active_evm_runtime_host().run_late_finalize_credits(ctx, artifact, execution.as_ref())
+    host.run_late_finalize_credits(ctx, artifact, execution.as_ref())
 }
 
 /// Pre-execution verification of a block's late-finalize credit batches.
@@ -157,6 +159,7 @@ pub fn run_late_finalize_credits(
 /// the BLS aggregate proof once, returning the verified signer indices per batch
 /// so [`run_late_finalize_credits`] does not repeat the BLS pairing.
 pub(crate) fn verify_late_finalize_credits_batches<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     block_context: BlockContext,
     artifact: &LateFinalizeCreditsArtifact,
@@ -168,6 +171,7 @@ where
     let mut verified_batches = Vec::with_capacity(artifact.batches.len());
     for credit in &artifact.batches {
         verified_batches.push(verify_single_late_credit_batch(
+            host,
             db,
             block_context.clone(),
             credit,
@@ -177,6 +181,7 @@ where
 }
 
 fn verify_single_late_credit_batch<DB>(
+    host: &dyn crate::EvmRuntimeHost,
     db: &mut DB,
     block_context: BlockContext,
     credit: &PerBlockCredit,
@@ -190,13 +195,14 @@ where
         .map_err(ExecutorValidationError::from)?;
 
     let snapshot_key = committee_snapshot_key(credit.epoch, credit.committee_set_hash);
-    let snapshot = context::read_committee_snapshot(db, block_context, snapshot_key, |error| {
-        ExecutorValidationError::late_finalize_read_committee_snapshot(
-            credit.epoch,
-            snapshot_key,
-            error,
-        )
-    })?;
+    let snapshot =
+        context::read_committee_snapshot(host, db, block_context, snapshot_key, |error| {
+            ExecutorValidationError::late_finalize_read_committee_snapshot(
+                credit.epoch,
+                snapshot_key,
+                error,
+            )
+        })?;
     let Some(snapshot) = snapshot else {
         return Err(
             ExecutorValidationError::LateFinalizeMissingCommitteeSnapshot {

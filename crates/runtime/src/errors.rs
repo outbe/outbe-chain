@@ -246,3 +246,8 @@ impl LaunchError {
         }
     }
 }
+
+/// Formats any displayable error as a string.
+pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {
+    error.to_string()
+}

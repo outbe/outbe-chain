@@ -24,11 +24,10 @@ mod cycle;
 
 #[cfg(feature = "test-utils")]
 use context::block_runtime_context_from_storage;
+pub use context::current_preloaded_system_tx_context;
 #[cfg(test)]
 pub(crate) use context::take_observed_runtime_block_contexts;
-pub(crate) use context::{
-    current_preloaded_system_tx_context, with_preloaded_system_tx_context, PreloadedSystemTxContext,
-};
+pub(crate) use context::{with_preloaded_system_tx_context, PreloadedSystemTxContext};
 
 #[cfg(feature = "test-utils")]
 pub(crate) use crate::tee_bootstrap::execute_tee_bootstrap;
@@ -48,6 +47,10 @@ pub(crate) use boundary::run_boundary_outcome;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
+fn fallback_system_tx_host() -> std::sync::Arc<dyn crate::EvmRuntimeHost> {
+    crate::host::default_runtime_host()
+}
+
 /// Dispatch entrypoint registered at [`OUTBE_SYSTEM_TX_ADDRESS`].
 pub fn dispatch(
     storage: StorageHandle,
@@ -55,7 +58,7 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    crate::active_evm_runtime_host().dispatch_system_tx(
+    fallback_system_tx_host().dispatch_system_tx(
         storage,
         data,
         caller,
@@ -73,13 +76,7 @@ pub fn dispatch_with_tee_attestation(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    crate::active_evm_runtime_host().dispatch_system_tx(
-        storage,
-        data,
-        caller,
-        value,
-        tee_attestation_v1,
-    )
+    fallback_system_tx_host().dispatch_system_tx(storage, data, caller, value, tee_attestation_v1)
 }
 
 /// Immutable chain-manifest authorities for system-transaction execution.
@@ -89,6 +86,7 @@ pub(crate) struct SystemTxRuntime<'a> {
 }
 
 pub(crate) fn dispatch_with_runtime(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     runtime: SystemTxRuntime<'_>,
     data: &[u8],
@@ -96,13 +94,7 @@ pub(crate) fn dispatch_with_runtime(
     value: U256,
 ) -> Result<Bytes> {
     let SystemTxRuntime { tee_attestation_v1 } = runtime;
-    crate::active_evm_runtime_host().dispatch_system_tx(
-        storage,
-        data,
-        caller,
-        value,
-        tee_attestation_v1,
-    )
+    host.dispatch_system_tx(storage, data, caller, value, tee_attestation_v1)
 }
 
 #[cfg(feature = "test-utils")]
@@ -112,7 +104,9 @@ pub(crate) fn dispatch_system_tx_route(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
+    let host = crate::test_support::DomainEvmHost::new();
     dispatch_system_tx_domain(
+        &host,
         storage,
         data,
         caller,
@@ -159,6 +153,7 @@ pub(crate) fn with_forced_dirty_system_precompile_revert<R>(
 
 #[cfg(feature = "test-utils")]
 pub(crate) fn dispatch_system_tx_domain(
+    host: &dyn crate::EvmRuntimeHost,
     storage: StorageHandle,
     data: &[u8],
     caller: Address,
@@ -196,82 +191,82 @@ pub(crate) fn dispatch_system_tx_domain(
 
     match input {
         SystemTx::CertifiedParentAccounting { metadata } => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_finalization_and_slashing(&ctx, &metadata)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
+            run_finalization_and_slashing(host, &ctx, &metadata)?;
         }
         SystemTx::LateFinalizeCredits { artifact } => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            run_late_finalize_credits(&ctx, &artifact)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
+            run_late_finalize_credits(host, &ctx, &artifact)?;
         }
         SystemTx::BoundaryOutcome { artifact } => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_boundary_outcome(&ctx, &artifact)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
+            run_boundary_outcome(host, &ctx, &artifact)?;
         }
         SystemTx::TeeBootstrap { payload } => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
-            execute_tee_bootstrap(&ctx, &payload, tee_attestation_v1)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
+            execute_tee_bootstrap(host, &ctx, &payload, tee_attestation_v1)?;
         }
         SystemTx::ValidatorLiveness => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
-            run_validator_liveness(&ctx)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
+            run_validator_liveness(host, &ctx)?;
         }
         SystemTx::RadiclePublication { batch } => {
             outbe_coderegistry::CodeRegistry::new(storage).apply_publication_batch(&batch)?;
         }
         SystemTx::Vote => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
             outbe_vote::VoteModule::begin_block(&ctx)?;
         }
         SystemTx::Update => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_update::UpdateModule::begin_block(&ctx)?;
         }
         SystemTx::EnclaveUpgradeDeadline => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
-            cycle::EnclaveUpgradeDeadline::begin_block(&ctx)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
+            cycle::EnclaveUpgradeDeadline::begin_block(host, &ctx)?;
         }
         SystemTx::Rewards => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_rewards::RewardsModule::begin_block(&ctx)?;
         }
         SystemTx::Staking => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_staking::StakingModule::begin_block(&ctx)?;
         }
         SystemTx::Oracle => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
             outbe_oracle::OracleModule::begin_block(&ctx)?;
         }
         SystemTx::OracleSlash => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_oracle::OracleSlashModule::begin_block(&ctx)?;
         }
         SystemTx::HyperlaneSlash => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_hyperlanecontroller::HyperlaneModule::begin_block(&ctx)?;
         }
         SystemTx::CycleTick => {
-            let ctx = block_runtime_context_from_storage(storage, true)?;
+            let ctx = block_runtime_context_from_storage(host, storage, true)?;
             outbe_cycle::CycleModule::begin_block(&ctx)?;
         }
         SystemTx::NodFactory => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_nodfactory::NodFactoryModule::end_block(&ctx)?;
         }
         SystemTx::GemFactory => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_gemfactory::GemFactoryModule::end_block(&ctx)?;
         }
         SystemTx::IntexFactory => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_intexfactory::IntexFactoryModule::end_block(&ctx)?;
         }
         SystemTx::CredisFactory => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_credisfactory::CredisFactoryModule::end_block(&ctx)?;
         }
         SystemTx::GemCleanup => {
-            let ctx = block_runtime_context_from_storage(storage, false)?;
+            let ctx = block_runtime_context_from_storage(host, storage, false)?;
             outbe_gemfactory::GemCleanupModule::end_block(&ctx)?;
         }
     }

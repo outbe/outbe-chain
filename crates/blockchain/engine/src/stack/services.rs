@@ -20,6 +20,7 @@ pub struct ConsensusStackServices {
         outbe_radicle::integration::LocalEndpointIdentityHandle,
         outbe_radicle::integration::EndpointTaskOwner,
     )>,
+    pub(super) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 /// Execution-side services shared with the node's consensus stack.
@@ -58,6 +59,7 @@ impl ConsensusStackServices {
         execution: ConsensusExecutionServices,
         shutdown: ConsensusShutdownServices,
         radicle: Option<ConsensusRadicleServices>,
+        protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
     ) -> Self {
         let ConsensusExecutionServices {
             finalized_execution_barrier,
@@ -88,6 +90,7 @@ impl ConsensusStackServices {
             tee_lease_armed_rx,
             radicle_status,
             radicle_endpoint,
+            protocol,
         }
     }
 }
@@ -100,6 +103,7 @@ pub(in crate::stack) struct FollowerStackServices {
         outbe_consensus::finalization::parent_cert_store::FinalizedParentCertStore,
     pub(in crate::stack) bootstrap: Option<super::follower::ValidatorBootstrap>,
     pub(in crate::stack) finalization_notify: Arc<tokio::sync::Notify>,
+    pub(in crate::stack) protocol: Arc<dyn crate::protocol_state::EngineProtocolState>,
 }
 
 /// The execution node and the transport selected for its follower stack.

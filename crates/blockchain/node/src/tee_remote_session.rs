@@ -35,7 +35,6 @@ use std::path::Path;
 
 use crate::state_proof::{verify_public_account_proof, PublicAccountProofV1};
 
-#[cfg(not(any(test, feature = "test-utils")))]
 const READER_MISSING: &str = "tee session reader is not installed";
 
 /// Reads finalized Registry session state. Header and proof checks stay here.
@@ -72,15 +71,13 @@ pub trait TeeSessionStateReader: Send + Sync {
     ) -> Result<EnclaveUpgradeV1, PrecompileError>;
 }
 
-#[cfg(not(any(test, feature = "test-utils")))]
-struct UninstalledTeeSessionReader;
+/// Fail-closed reader used when no composition root installed chain reads.
+pub struct UninstalledTeeSessionReader;
 
-#[cfg(not(any(test, feature = "test-utils")))]
 fn reader_missing() -> PrecompileError {
     PrecompileError::Fatal(READER_MISSING.into())
 }
 
-#[cfg(not(any(test, feature = "test-utils")))]
 impl TeeSessionStateReader for UninstalledTeeSessionReader {
     fn node_binding(
         &self,
@@ -127,7 +124,7 @@ impl TeeSessionStateReader for UninstalledTeeSessionReader {
 }
 
 #[cfg(any(test, feature = "test-utils"))]
-struct DomainTeeSessionReader;
+pub struct DomainTeeSessionReader;
 
 #[cfg(any(test, feature = "test-utils"))]
 impl TeeSessionStateReader for DomainTeeSessionReader {
@@ -172,17 +169,6 @@ impl TeeSessionStateReader for DomainTeeSessionReader {
         storage: StorageHandle<'_>,
     ) -> Result<EnclaveUpgradeV1, PrecompileError> {
         outbe_teeregistry::TeeRegistry::new(storage).enclave_upgrade_v1()
-    }
-}
-
-fn active_tee_session_reader() -> &'static dyn TeeSessionStateReader {
-    #[cfg(any(test, feature = "test-utils"))]
-    {
-        &DomainTeeSessionReader
-    }
-    #[cfg(not(any(test, feature = "test-utils")))]
-    {
-        &UninstalledTeeSessionReader
     }
 }
 
@@ -329,6 +315,7 @@ pub fn authorize_local_finalized_remote_session_v1<P>(
     local_enclave: &mut AuthorizedEnclaveClient,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'_>,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -337,6 +324,7 @@ where
         provider,
         chain,
         request,
+        session,
     }
     .authorize(local_enclave)
 }
@@ -349,6 +337,7 @@ pub fn admit_local_finalized_remote_session_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'_>,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -357,6 +346,7 @@ where
         provider,
         chain,
         request,
+        session,
     }
     .admit()
 }
@@ -384,6 +374,7 @@ struct LocalRemoteSessionOperation<'a, P> {
     provider: &'a P,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'a>,
+    session: &'a dyn TeeSessionStateReader,
 }
 impl<P> LocalRemoteSessionOperation<'_, P>
 where
@@ -403,6 +394,7 @@ where
             self.provider,
             self.chain.chain_id,
             self.chain.genesis_hash,
+            self.session,
             |view, reader, storage| {
                 let source = reader
                     .node_binding(storage.clone(), &self.request.source_witness.node_id)
@@ -464,12 +456,15 @@ pub fn construct_local_finalized_replacement_authorization_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
     request: ReplacementAuthorizationRequest<'_>,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<FinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
-    construct_local_finalized_replacement_authorization_with_view_v1(provider, chain, request)
-        .map(|result| result.authorization)
+    construct_local_finalized_replacement_authorization_with_view_v1(
+        provider, chain, request, session,
+    )
+    .map(|result| result.authorization)
 }
 
 /// Same authority constructor as
@@ -479,6 +474,7 @@ pub fn construct_local_finalized_replacement_authorization_with_view_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
     request: ReplacementAuthorizationRequest<'_>,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<LocalFinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -491,27 +487,33 @@ where
         node_data_dir,
         node_id,
     } = request;
-    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, reader, storage| {
-        let finalized_binding = read_finalized_replacement_binding(
-            view,
-            reader,
-            storage.clone(),
-            node_data_dir,
-            node_id,
-        )?;
-        let authorization =
-            construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
-                .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-        let successor_activation_height = reader
-            .successor(storage)
-            .map_err(registry_error)?
-            .map(|(_, policy)| policy.activation_height);
-        Ok(LocalFinalizedReplacementAuthorizationV1 {
-            authorization,
-            view,
-            successor_activation_height,
-        })
-    })
+    with_local_finalized_registry(
+        provider,
+        chain_id,
+        genesis_hash,
+        session,
+        |view, reader, storage| {
+            let finalized_binding = read_finalized_replacement_binding(
+                view,
+                reader,
+                storage.clone(),
+                node_data_dir,
+                node_id,
+            )?;
+            let authorization =
+                construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
+                    .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
+            let successor_activation_height = reader
+                .successor(storage)
+                .map_err(registry_error)?
+                .map(|(_, policy)| policy.activation_height);
+            Ok(LocalFinalizedReplacementAuthorizationV1 {
+                authorization,
+                view,
+                successor_activation_height,
+            })
+        },
+    )
 }
 
 fn valid_checkpoint_chain(view: &FinalizedRegistryViewV1) -> bool {
@@ -595,6 +597,7 @@ fn replacement_intent_matches(
 pub fn inspect_local_finalized_successor_status_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -603,27 +606,34 @@ where
         chain_id,
         genesis_hash,
     } = chain;
-    with_local_finalized_registry(provider, chain_id, genesis_hash, |view, reader, storage| {
-        let staged = reader.successor(storage.clone()).map_err(registry_error)?;
-        let (staged_proposal_id, staged_policy) = staged
-            .map(|(proposal_id, policy)| (Some(proposal_id), Some(policy)))
-            .unwrap_or((None, None));
-        Ok(LocalFinalizedSuccessorStatusV1 {
-            view,
-            staged_proposal_id,
-            staged_policy,
-            strict_upgrade: reader
-                .enclave_upgrade(storage.clone())
-                .map_err(registry_error)?,
-            retirement_height: reader.retirement_height(storage).map_err(registry_error)?,
-        })
-    })
+    with_local_finalized_registry(
+        provider,
+        chain_id,
+        genesis_hash,
+        session,
+        |view, reader, storage| {
+            let staged = reader.successor(storage.clone()).map_err(registry_error)?;
+            let (staged_proposal_id, staged_policy) = staged
+                .map(|(proposal_id, policy)| (Some(proposal_id), Some(policy)))
+                .unwrap_or((None, None));
+            Ok(LocalFinalizedSuccessorStatusV1 {
+                view,
+                staged_proposal_id,
+                staged_policy,
+                strict_upgrade: reader
+                    .enclave_upgrade(storage.clone())
+                    .map_err(registry_error)?,
+                retirement_height: reader.retirement_height(storage).map_err(registry_error)?,
+            })
+        },
+    )
 }
 
 fn with_local_finalized_registry<P, T>(
     provider: &P,
     chain_id: u64,
     genesis_hash: B256,
+    session: &dyn TeeSessionStateReader,
     inspect: impl FnOnce(
         FinalizedRegistryViewV1,
         &dyn TeeSessionStateReader,
@@ -672,7 +682,7 @@ where
         state_root: header.state_root(),
         consensus_timestamp: header.timestamp(),
     };
-    inspect(view, active_tee_session_reader(), handle)
+    inspect(view, session, handle)
 }
 
 fn finalized_header_identity_matches(
@@ -692,9 +702,10 @@ pub fn admit_anchored_remote_session_v1(
     checkpoint: TrustedFinalizedRegistryCheckpointV1,
     proof: &PublicAccountProofV1,
     request: RemoteSessionRequest<'_>,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<RemoteSessionAdmissionV1, ExternalRegistryAdmissionError> {
     let chain_id = chain_id_u64(checkpoint.view.chain_id)?;
-    verify_registry_binding_proof(checkpoint, proof, &request, chain_id)?;
+    verify_registry_binding_proof(checkpoint, proof, &request, chain_id, session)?;
     let RemoteSessionRequest {
         expected,
         source_witness,
@@ -712,7 +723,6 @@ pub fn admit_anchored_remote_session_v1(
         chain_id,
         checkpoint.view.genesis_hash,
     );
-    let session = active_tee_session_reader();
     let handle = StorageHandle::new(&mut storage);
     let source = session
         .node_binding(handle.clone(), &source_witness.node_id)
@@ -753,6 +763,7 @@ fn verify_registry_binding_proof(
     proof: &PublicAccountProofV1,
     request: &RemoteSessionRequest<'_>,
     chain_id: u64,
+    session: &dyn TeeSessionStateReader,
 ) -> Result<(), ExternalRegistryAdmissionError> {
     let mut layout_storage = ReadOnlyStorageProvider::new_with_chain_identity(
         ProofStorageReader {
@@ -761,7 +772,6 @@ fn verify_registry_binding_proof(
         chain_id,
         checkpoint.view.genesis_hash,
     );
-    let session = active_tee_session_reader();
     let layout = StorageHandle::new(&mut layout_storage);
     let mut slots = session
         .binding_slots(layout.clone(), &request.source_witness.node_id)

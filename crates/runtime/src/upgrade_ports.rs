@@ -1,5 +1,6 @@
 use super::*;
 use alloy_primitives::B256;
+use outbe_node::tee_remote_session::RegistryChainIdentity;
 use outbe_node::tee_remote_session::{
     construct_local_finalized_replacement_authorization_with_view_v1,
     inspect_local_finalized_successor_status_v1, LocalFinalizedSuccessorStatusV1,
@@ -8,13 +9,13 @@ use outbe_node::tee_remote_session::{
 use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, NodeIdV1};
 use outbe_tee::{FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1};
 
-pub(super) struct PromotionAuthorization<A> {
-    pub(super) authorization: A,
-    pub(super) view: FinalizedRegistryViewV1,
+pub(crate) struct PromotionAuthorization<A> {
+    pub(crate) authorization: A,
+    pub(crate) view: FinalizedRegistryViewV1,
 }
 
 /// External finalized authority and durable host operations used by the watcher.
-pub(super) trait UpgradePromotionIo {
+pub(crate) trait UpgradePromotionIo {
     type Authorization;
 
     fn inspect_journal(
@@ -34,10 +35,11 @@ pub(super) trait UpgradePromotionIo {
     fn record_missed_cutoff(&self, height: u64, activation_height: u64) -> eyre::Result<()>;
 }
 
-pub(super) struct NodeUpgradeIo<P> {
-    pub(super) provider: P,
-    pub(super) chain: RegistryChainIdentity,
-    pub(super) node_data_dir: PathBuf,
+pub(crate) struct NodeUpgradeIo<P> {
+    pub(crate) provider: P,
+    pub(crate) chain: RegistryChainIdentity,
+    pub(crate) node_data_dir: PathBuf,
+    pub(crate) session: Arc<dyn outbe_node::tee_remote_session::TeeSessionStateReader>,
 }
 
 impl<P> UpgradePromotionIo for NodeUpgradeIo<P>
@@ -61,7 +63,7 @@ where
     fn successor_status(
         &self,
     ) -> Result<LocalFinalizedSuccessorStatusV1, LocalRegistryAdmissionError> {
-        inspect_local_finalized_successor_status_v1(&self.provider, self.chain)
+        inspect_local_finalized_successor_status_v1(&self.provider, self.chain, &*self.session)
     }
 
     fn replacement_authorization(
@@ -75,6 +77,7 @@ where
                 node_data_dir: &self.node_data_dir,
                 node_id,
             },
+            &*self.session,
         )?;
         Ok(PromotionAuthorization {
             authorization: authorized.authorization,
