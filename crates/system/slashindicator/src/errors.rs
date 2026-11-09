@@ -781,6 +781,23 @@ impl From<SlashIndicatorError> for PrecompileError {
     }
 }
 
+/// Proposer recorded by validator liveness is not in the active consensus set.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum LivenessError {
+    /// `block.proposer` is not a current consensus participant.
+    #[error("proposer is not a current consensus participant: {proposer}")]
+    ProposerNotConsensusParticipant {
+        /// Rejected proposer.
+        proposer: Address,
+    },
+}
+
+impl From<LivenessError> for PrecompileError {
+    fn from(error: LivenessError) -> Self {
+        PrecompileError::Revert(error.to_string())
+    }
+}
+
 /// Extracts the revert reason string from a precompile result when it reverts.
 pub fn revert_reason<T>(result: Result<T>) -> Option<String> {
     match result {

@@ -11,11 +11,13 @@
 //!
 //! `pub use` re-exports below preserve the old `contract` / `logic`
 //! paths for external callers. Migrate those callers opportunistically.
+pub mod boundary;
 pub mod constants;
 mod equivocation;
 pub mod errors;
 mod evidence;
 pub mod hooks;
+pub mod liveness;
 pub mod metrics;
 mod misses;
 pub mod precompile;
@@ -29,6 +31,13 @@ mod vrf_slashing;
 pub mod test_signing;
 #[cfg(test)]
 mod tests;
+
+pub use boundary::prepare_boundary_epoch_counters;
+pub use errors::LivenessError;
+pub use liveness::{
+    enforce_enclave_upgrade_deadline, enforce_tee_lease_deadlines, run_validator_liveness,
+    EnclaveUpgradeDeadline,
+};
 
 pub mod contract {
     pub use crate::schema::*;
